@@ -1234,15 +1234,7 @@ func TestCodexExecuteTimesOutWhenTurnStopsAfterToolResult(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-stale"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-stale","turn":{"id":"turn-stale"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-stale", "turn-stale", ""+
 		`echo '{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-stale","item":{"type":"commandExecution","id":"cmd-1","command":"git status"}}}'`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-stale","item":{"type":"commandExecution","id":"cmd-1","aggregatedOutput":"clean"}}}'`+"\n"+
 		`sleep 5`+"\n")
@@ -1268,15 +1260,7 @@ func TestCodexExecuteFirstTurnNoProgressSurfacesDiagnostics(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-stuck"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-stuck","turn":{"id":"turn-stuck"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-stuck", "turn-stuck", ""+
 		`echo 'ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit' >&2`+"\n"+
 		`sleep 5`+"\n")
 
@@ -1309,15 +1293,7 @@ func TestCodexExecuteFailsWhenProcessExitsDuringActiveTurn(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-crash"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-crash","turn":{"id":"turn-crash"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-crash", "turn-crash", ""+
 		`echo 'fatal: app-server crashed after turn/start' >&2`+"\n"+
 		`exit 2`+"\n")
 
@@ -1345,15 +1321,7 @@ func TestCodexExecuteTimeoutWinsOverProcessExitDuringActiveTurn(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-timeout"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-timeout","turn":{"id":"turn-timeout"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-timeout", "turn-timeout", ""+
 		`read line`+"\n")
 
 	result := executeFakeCodex(t, fakePath, ExecOptions{
@@ -1377,15 +1345,7 @@ func TestCodexExecuteFirstTurnRetryErrorDoesNotSatisfyProgress(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-retry"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-retry","turn":{"id":"turn-retry"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-retry", "turn-retry", ""+
 		`echo '{"jsonrpc":"2.0","method":"error","params":{"threadId":"thr-retry","error":{"message":"temporary reconnect"},"willRetry":true}}'`+"\n"+
 		`sleep 5`+"\n")
 
@@ -1410,15 +1370,7 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousMessages(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-progress"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-progress","turn":{"id":"turn-progress"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-progress", "turn-progress", ""+
 		`sleep 0.05`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-progress","item":{"type":"agentMessage","id":"msg-1","text":"still working"}}}'`+"\n"+
 		`sleep 0.05`+"\n"+
@@ -1444,15 +1396,7 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousDeltaProgress(t *testing.
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-delta"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-delta","turn":{"id":"turn-delta"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-delta", "turn-delta", ""+
 		`echo '{"jsonrpc":"2.0","method":"item/commandExecution/outputDelta","params":{"threadId":"thr-delta","item":{"type":"commandExecution","id":"cmd-1"},"delta":"line 1\n"}}'`+"\n"+
 		`sleep 0.05`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thr-delta","item":{"type":"agentMessage","id":"msg-1"},"delta":"thinking"}}'`+"\n"+
@@ -1478,15 +1422,7 @@ func TestCodexExecuteSemanticInactivityDoesNotAffectNormalTurnCompletion(t *test
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-normal"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-normal","turn":{"id":"turn-normal"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-normal", "turn-normal", ""+
 		`echo '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-normal","item":{"type":"agentMessage","id":"msg-1","text":"Done"}}}'`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-normal","turn":{"id":"turn-normal","status":"completed"}}}'`+"\n")
 
@@ -1510,6 +1446,20 @@ func writeFakeCodexAppServer(t *testing.T, body string) string {
 		body
 	writeTestExecutable(t, fakePath, []byte(script))
 	return fakePath
+}
+
+func writeFakeCodexTurnServer(t *testing.T, threadID, turnID, body string) string {
+	t.Helper()
+	return writeFakeCodexAppServer(t, ""+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
+		`read line`+"\n"+
+		`read line`+"\n"+
+		fmt.Sprintf(`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"%s"}}}'`, threadID)+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
+		fmt.Sprintf(`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"%s","turn":{"id":"%s"}}}'`, threadID, turnID)+"\n"+
+		body)
 }
 
 func executeFakeCodex(t *testing.T, fakePath string, opts ExecOptions) Result {
@@ -1960,24 +1910,12 @@ func TestEnsureCodexMcpConfigEmptyClearsBlock(t *testing.T) {
 	// When agent.mcp_config is null/empty the managed block is removed
 	// from config.toml, but unrelated content (sandbox block, user-level
 	// `[mcp_servers.user]`) is left untouched.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
 	initial := "sandbox_mode = \"workspace-write\"\n\n" +
 		multicaCodexMcpBeginMarker + "\n" +
 		"[mcp_servers.fetch]\ncommand = \"uvx\"\n" +
 		multicaCodexMcpEndMarker + "\n\n" +
 		"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
-
-	if err := ensureCodexMcpConfig(tmp, nil, slog.Default()); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	data, err := os.ReadFile(tmp)
-	if err != nil {
-		t.Fatalf("read after: %v", err)
-	}
-	got := string(data)
+	got := ensureCodexMcpConfigFromInitial(t, initial, nil)
 	if strings.Contains(got, multicaCodexMcpBeginMarker) {
 		t.Fatalf("managed block should be cleared, got:\n%s", got)
 	}
@@ -2078,21 +2016,12 @@ func TestEnsureCodexMcpConfigStripsUserMcpServersWhenManaged(t *testing.T) {
 	// user's global servers silently being mixed in with the strict
 	// agent-managed list. Sub-tables like `[mcp_servers.x.env]` are also
 	// dropped as part of their parent.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
 	initial := "sandbox_mode = \"workspace-write\"\n\n" +
 		"[mcp_servers.global_fetch]\ncommand = \"uvx-old\"\n\n" +
 		"[mcp_servers.global_fetch.env]\nOLD_KEY = \"old\"\n\n" +
 		"[other_section]\nkeep_me = true\n"
-	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
 	raw := json.RawMessage(`{"mcpServers":{"new_server":{"command":"new"}}}`)
-	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	data, _ := os.ReadFile(tmp)
-	got := string(data)
+	got := ensureCodexMcpConfigFromInitial(t, initial, raw)
 
 	if strings.Contains(got, "global_fetch") {
 		t.Fatalf("user mcp_servers tables must be stripped when agent has its own mcp_config, got:\n%s", got)
@@ -2111,11 +2040,21 @@ func TestEnsureCodexMcpConfigStripsUserMcpServersWhenManaged(t *testing.T) {
 func TestEnsureCodexMcpConfigIdempotent(t *testing.T) {
 	t.Parallel()
 
-	// Running ensure twice with the same input must produce byte-identical
-	// output — needed because Prepare and Reuse may both call into this on
-	// the same per-task config.toml across a task's lifetime.
-	raw := json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx","args":["a","b"]}}}`)
-	assertEnsureCodexMcpConfigIdempotent(t, nil, raw)
+	// Prepare and Reuse may both apply either a populated or an explicitly
+	// empty managed set; neither form may accrete markers or blank lines.
+	for _, tc := range []struct {
+		name    string
+		initial []byte
+		raw     json.RawMessage
+	}{
+		{"populated", nil, json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx","args":["a","b"]}}}`)},
+		{"empty managed set", []byte("sandbox_mode = \"workspace-write\"\n"), json.RawMessage(`{}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertEnsureCodexMcpConfigIdempotent(t, tc.initial, tc.raw)
+		})
+	}
 }
 
 func TestEnsureCodexMcpConfigRejectsBadShapes(t *testing.T) {
@@ -2143,51 +2082,37 @@ func TestEnsureCodexMcpConfigRejectsBadShapes(t *testing.T) {
 	}
 }
 
-func TestEnsureCodexMcpConfigAbsentLeavesUserTablesAlone(t *testing.T) {
+func TestEnsureCodexMcpConfigOwnershipStates(t *testing.T) {
 	t.Parallel()
 
-	// nil / `null` map to the API's "absent" state: the agent has no
-	// managed mcp_config, so the daemon must not touch the user's
-	// inherited `[mcp_servers.*]` tables — the run falls back to the
-	// user's global CLI config.
-	for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`)} {
-		initial := "sandbox_mode = \"workspace-write\"\n\n" +
-			"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-		got := ensureCodexMcpConfigFromInitial(t, initial, raw)
-		if !strings.Contains(got, "[mcp_servers.user_global]") {
-			t.Fatalf("absent mcp_config (%q) must leave user MCP tables alone, got:\n%s", string(raw), got)
-		}
-		if strings.Contains(got, multicaCodexMcpBeginMarker) {
-			t.Fatalf("absent mcp_config (%q) must not write managed markers, got:\n%s", string(raw), got)
-		}
-	}
-}
-
-func TestEnsureCodexMcpConfigEmptyManagedSetStripsUserMcp(t *testing.T) {
-	t.Parallel()
-
-	// `{}` / `{"mcpServers":{}}` map to the API's "present, empty" state.
-	// The admin saved an explicit (empty) MCP list, so the daemon must
-	// strip inherited user `[mcp_servers.*]` tables and pin the managed
-	// markers — equivalent to Claude's --strict-mcp-config with an empty
-	// servers map. Falling back to the user's global MCP would defeat
-	// the affordance.
-	for _, raw := range []json.RawMessage{
-		json.RawMessage(`{}`),
-		json.RawMessage(`{"mcpServers":{}}`),
+	// Absent input preserves inherited user MCP configuration. An explicitly
+	// managed empty set strips it and pins markers, matching strict MCP mode.
+	for _, tc := range []struct {
+		name    string
+		raw     json.RawMessage
+		managed bool
+	}{
+		{"nil is absent", nil, false},
+		{"JSON null is absent", json.RawMessage(`null`), false},
+		{"empty object is managed", json.RawMessage(`{}`), true},
+		{"empty server map is managed", json.RawMessage(`{"mcpServers":{}}`), true},
 	} {
-		initial := "sandbox_mode = \"workspace-write\"\n\n" +
-			"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-		got := ensureCodexMcpConfigFromInitial(t, initial, raw)
-		if strings.Contains(got, "user_global") {
-			t.Fatalf("managed empty set (%q) must strip user MCP tables, got:\n%s", string(raw), got)
-		}
-		if !strings.Contains(got, multicaCodexMcpBeginMarker) || !strings.Contains(got, multicaCodexMcpEndMarker) {
-			t.Fatalf("managed empty set (%q) must still write markers so future runs find them, got:\n%s", string(raw), got)
-		}
-		if !strings.Contains(got, `sandbox_mode = "workspace-write"`) {
-			t.Fatalf("unrelated content must survive (%q), got:\n%s", string(raw), got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			initial := "sandbox_mode = \"workspace-write\"\n\n" +
+				"[mcp_servers.user_global]\ncommand = \"keep\"\n"
+			got := ensureCodexMcpConfigFromInitial(t, initial, tc.raw)
+			if strings.Contains(got, "user_global") == tc.managed {
+				t.Fatalf("managed=%v must determine inherited user MCP ownership, got:\n%s", tc.managed, got)
+			}
+			hasMarkers := strings.Contains(got, multicaCodexMcpBeginMarker) && strings.Contains(got, multicaCodexMcpEndMarker)
+			if hasMarkers != tc.managed {
+				t.Fatalf("managed=%v, markers=%v, got:\n%s", tc.managed, hasMarkers, got)
+			}
+			if !strings.Contains(got, `sandbox_mode = "workspace-write"`) {
+				t.Fatalf("unrelated content must survive, got:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -2206,16 +2131,6 @@ func ensureCodexMcpConfigFromInitial(t *testing.T, initial string, raw json.RawM
 		t.Fatalf("read config: %v", err)
 	}
 	return string(data)
-}
-
-func TestEnsureCodexMcpConfigEmptyManagedSetIdempotent(t *testing.T) {
-	t.Parallel()
-
-	// Running ensure twice with the same `{}` input must produce
-	// byte-identical output — guards against the empty-marker block
-	// accreting blank lines or duplicate markers across reruns.
-	raw := json.RawMessage(`{}`)
-	assertEnsureCodexMcpConfigIdempotent(t, []byte("sandbox_mode = \"workspace-write\"\n"), raw)
 }
 
 func assertEnsureCodexMcpConfigIdempotent(t *testing.T, initial []byte, raw json.RawMessage) {
