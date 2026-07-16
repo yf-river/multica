@@ -216,16 +216,11 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotGet(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	var resp map[string]any
 	if err := client.GetJSON(ctx, "/api/autopilots/"+autopilotRef.ID, &resp); err != nil {
@@ -309,16 +304,11 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	body := map[string]any{}
 	applyChangedStringFlag(cmd, body, "title", "title")
@@ -367,16 +357,11 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotDelete(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/autopilots/"+autopilotRef.ID); err != nil {
 		return fmt.Errorf("delete autopilot: %w", err)
@@ -413,16 +398,11 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotRuns(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	params := url.Values{}
 	if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
@@ -665,6 +645,19 @@ func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+func newAutopilotClientAndRef(cmd *cobra.Command, arg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, ctx, cancel, err := newAPIClientContext(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	autopilotRef, err := resolveAutopilotID(ctx, client, arg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve autopilot: %w", err)
+	}
+	return client, ctx, cancel, autopilotRef, nil
+}
 
 // uuidRegexp matches a canonical UUID (8-4-4-4-12 hex).
 var uuidRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

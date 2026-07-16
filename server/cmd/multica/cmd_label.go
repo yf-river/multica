@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -126,16 +127,11 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelGet(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, labelRef, err := newLabelClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	labelRef, err := resolveLabelID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve label: %w", err)
-	}
 
 	var label map[string]any
 	if err := client.GetJSON(ctx, "/api/labels/"+labelRef.ID, &label); err != nil {
@@ -187,16 +183,11 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelUpdate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, labelRef, err := newLabelClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	labelRef, err := resolveLabelID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve label: %w", err)
-	}
 
 	body := map[string]any{}
 	if v, _ := cmd.Flags().GetString("name"); v != "" {
@@ -233,16 +224,11 @@ func printLabelMutationResult(cmd *cobra.Command, result map[string]any) error {
 }
 
 func runLabelDelete(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	client, ctx, cancel, labelRef, err := newLabelClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
 	defer cancel()
-
-	labelRef, err := resolveLabelID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve label: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/labels/"+labelRef.ID); err != nil {
 		return fmt.Errorf("delete label: %w", err)
@@ -253,4 +239,17 @@ func runLabelDelete(cmd *cobra.Command, args []string) error {
 	}
 	_, err = fmt.Fprintf(os.Stdout, "Label %s deleted.\n", labelRef.Display)
 	return err
+}
+
+func newLabelClientAndRef(cmd *cobra.Command, arg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, ctx, cancel, err := newAPIClientContext(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	labelRef, err := resolveLabelID(ctx, client, arg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve label: %w", err)
+	}
+	return client, ctx, cancel, labelRef, nil
 }

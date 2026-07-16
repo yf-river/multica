@@ -268,15 +268,9 @@ var squadMemberAddCmd = &cobra.Command{
 }
 
 func runSquadMemberAdd(cmd *cobra.Command, args []string) error {
-	memberID, _ := cmd.Flags().GetString("member-id")
-	memberType, _ := cmd.Flags().GetString("type")
-	role, _ := cmd.Flags().GetString("role")
-
-	if memberID == "" {
-		return fmt.Errorf("--member-id is required")
-	}
-	if memberType != "agent" && memberType != "member" {
-		return fmt.Errorf("--type must be 'agent' or 'member'")
+	body, memberID, _, err := squadMemberMutationBody(cmd, "type")
+	if err != nil {
+		return err
 	}
 
 	client, ctx, cancel, err := newAPIClientContext(cmd)
@@ -284,12 +278,6 @@ func runSquadMemberAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cancel()
-
-	body := map[string]any{
-		"member_type": memberType,
-		"member_id":   memberID,
-		"role":        role,
-	}
 
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/squads/"+args[0]+"/members", body, &result); err != nil {
@@ -314,15 +302,9 @@ var squadMemberSetRoleCmd = &cobra.Command{
 }
 
 func runSquadMemberSetRole(cmd *cobra.Command, args []string) error {
-	memberID, _ := cmd.Flags().GetString("member-id")
-	memberType, _ := cmd.Flags().GetString("member-type")
-	role, _ := cmd.Flags().GetString("role")
-
-	if memberID == "" {
-		return fmt.Errorf("--member-id is required")
-	}
-	if memberType != "agent" && memberType != "member" {
-		return fmt.Errorf("--member-type must be 'agent' or 'member'")
+	body, memberID, role, err := squadMemberMutationBody(cmd, "member-type")
+	if err != nil {
+		return err
 	}
 	if role == "" {
 		return fmt.Errorf("--role is required")
@@ -333,12 +315,6 @@ func runSquadMemberSetRole(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cancel()
-
-	body := map[string]any{
-		"member_type": memberType,
-		"member_id":   memberID,
-		"role":        role,
-	}
 
 	var result map[string]any
 	if err := client.PatchJSON(ctx, "/api/squads/"+args[0]+"/members/role", body, &result); err != nil {
@@ -363,14 +339,9 @@ var squadMemberRemoveCmd = &cobra.Command{
 }
 
 func runSquadMemberRemove(cmd *cobra.Command, args []string) error {
-	memberID, _ := cmd.Flags().GetString("member-id")
-	memberType, _ := cmd.Flags().GetString("type")
-
-	if memberID == "" {
-		return fmt.Errorf("--member-id is required")
-	}
-	if memberType != "agent" && memberType != "member" {
-		return fmt.Errorf("--type must be 'agent' or 'member'")
+	body, memberID, _, err := squadMemberMutationBody(cmd, "type")
+	if err != nil {
+		return err
 	}
 
 	client, ctx, cancel, err := newAPIClientContext(cmd)
@@ -378,11 +349,6 @@ func runSquadMemberRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cancel()
-
-	body := map[string]any{
-		"member_type": memberType,
-		"member_id":   memberID,
-	}
 
 	if err := client.DeleteJSONWithBody(ctx, "/api/squads/"+args[0]+"/members", body); err != nil {
 		return fmt.Errorf("remove member: %w", err)
@@ -394,6 +360,24 @@ func runSquadMemberRemove(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Member %s removed from squad.\n", memberID)
 	return nil
+}
+
+func squadMemberMutationBody(cmd *cobra.Command, typeFlag string) (map[string]any, string, string, error) {
+	memberID, _ := cmd.Flags().GetString("member-id")
+	memberType, _ := cmd.Flags().GetString(typeFlag)
+	if memberID == "" {
+		return nil, "", "", fmt.Errorf("--member-id is required")
+	}
+	if memberType != "agent" && memberType != "member" {
+		return nil, "", "", fmt.Errorf("--%s must be 'agent' or 'member'", typeFlag)
+	}
+	body := map[string]any{"member_type": memberType, "member_id": memberID}
+	role := ""
+	if cmd.Flags().Lookup("role") != nil {
+		role, _ = cmd.Flags().GetString("role")
+		body["role"] = role
+	}
+	return body, memberID, role, nil
 }
 
 // ── Activity ────────────────────────────────────────────────────────────────
