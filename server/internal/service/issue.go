@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -969,10 +968,7 @@ func (s *IssueService) captureCreatedAnalytics(issue db.Issue, creatorType, acto
 	))
 }
 
-// classifyOrigin maps the issue's origin_type / origin_id columns into the
-// analytics source labels. Unknown origin_type falls back to SourceManual
-// with the warning logged — analytics drift is preferable to dropping the
-// event entirely.
+// classifyOrigin maps the database-constrained origin values to analytics.
 func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autopilotRunID string) {
 	source = analytics.SourceManual
 	if !issue.OriginType.Valid {
@@ -980,15 +976,10 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 	}
 	originID := util.UUIDToString(issue.OriginID)
 	switch issue.OriginType.String {
-	case "quick_create":
+	case "quick_create", "lark_chat":
 		return analytics.SourceManual, originID, ""
 	case "autopilot":
 		return analytics.SourceAutopilot, "", originID
-	default:
-		slog.Warn("analytics: unknown issue origin type",
-			"origin_type", issue.OriginType.String,
-			"issue_id", util.UUIDToString(issue.ID),
-		)
-		return analytics.SourceManual, "", ""
 	}
+	return source, "", ""
 }
