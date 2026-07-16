@@ -6,21 +6,38 @@ import { api } from "@multica/core/api";
 import { createAgentWithRecovery } from "@multica/core/agents";
 import { useAuthStore } from "@multica/core/auth";
 import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
-import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/paths";
-import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { nameInitials } from "@multica/core/workspace/actor-display";
+import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
-import { useTimeAgo } from "../../i18n";
-import { agentListOptions, memberListOptions, squadMemberStatusOptions, workspaceKeys } from "@multica/core/workspace/queries";
+import { useT, useTimeAgo } from "../../i18n";
+import {
+  agentListOptions,
+  memberListOptions,
+  squadMemberStatusOptions,
+  workspaceKeys,
+} from "@multica/core/workspace/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { CreateAgentDialog } from "../../agents/components/create-agent-dialog";
-import { useNavigation } from "../../navigation";
-import { AppLink } from "../../navigation";
+import { AppLink, useNavigation } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
-import { AlertCircle, Archive, ArchiveRestore, Users, Plus, Trash2, ArrowUpRight, Crown, Camera, Loader2, Pencil, FileText, Save } from "lucide-react";
+import {
+  AlertCircle,
+  Archive,
+  ArchiveRestore,
+  ArrowUpRight,
+  Camera,
+  ChevronDown,
+  Crown,
+  FileText,
+  Loader2,
+  Pencil,
+  Plus,
+  Save,
+  Trash2,
+  UserPlus,
+  Users,
+} from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -53,7 +70,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
-import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { InlineEditPopover } from "../../common/inline-edit-popover";
 import { ContentEditor } from "../../editor/content-editor";
@@ -62,18 +78,25 @@ import {
   PickerSection,
   PickerEmpty,
 } from "../../issues/components/pickers/property-picker";
-import { ChevronDown, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Agent, CreateAgentRequest, MemberWithUser } from "@multica/core/types";
-import { useT } from "../../i18n";
+import type {
+  Agent,
+  CreateAgentRequest,
+  MemberWithUser,
+  Squad,
+  SquadMember,
+  SquadMemberStatus,
+  SquadMemberStatusValue,
+} from "@multica/core/types";
 import { indexBy } from "../../common/collections";
 import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 import { ResourceScopeBadge } from "../../common/resource-scope";
+import { SquadArchiveDialog, useRestoreSquad } from "./squad-lifecycle";
+import { SquadAvatar } from "./squad-avatar";
 
 export function SquadDetailPage() {
   const { t } = useT("squads");
-  const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const { pathname, push } = useNavigation();
@@ -83,22 +106,19 @@ export function SquadDetailPage() {
   const { data: squad, refetch: refetchSquad } = useQuery<Squad>({
     queryKey: [...workspaceKeys.squads(wsId), squadId],
     queryFn: () => api.getSquad(squadId),
-    enabled: !!workspace?.id && !!squadId,
+    enabled: !!wsId && !!squadId,
   });
 
   const { data: members = [], refetch: refetchMembers } = useQuery<SquadMember[]>({
     queryKey: [...workspaceKeys.squads(wsId), squadId, "members"],
     queryFn: () => api.listSquadMembers(squadId),
-    enabled: !!workspace?.id && !!squadId,
+    enabled: !!wsId && !!squadId,
   });
 
-  // Per-squad working/idle/offline + active-issue snapshot. WS task / agent /
-  // daemon events invalidate this via use-realtime-sync; the staleTime is a
-  // tab-focus safety net. Indexed by member_id so SquadMembersTab can look up
-  // its row in O(1).
+  // Realtime events invalidate this snapshot; indexing keeps row lookup O(1).
   const { data: memberStatuses = [] } = useQuery({
     ...squadMemberStatusOptions(wsId, squadId),
-    enabled: !!workspace?.id && !!squadId,
+    enabled: !!wsId && !!squadId,
   });
   const memberStatusById = useMemo(
     () => indexBy(memberStatuses, (status) => status.member_id),
@@ -108,10 +128,7 @@ export function SquadDetailPage() {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: wsMembers = [] } = useQuery(memberListOptions(wsId));
 
-  // Runtimes are only fetched when the Create Agent dialog might open;
-  // gating on isWorkspaceAdmin below means non-admins never trigger the
-  // request. The runtime list mirrors the agents page so the picker
-  // (and the "only my runtimes" filter) behaves identically here.
+  // Only workspace managers can open the create-Agent flow or fetch runtimes.
   const currentUser = useAuthStore((s) => s.user);
   const isWorkspaceAdmin = canManageWorkspace(
     resolveCurrentMember(wsMembers, currentUser?.id).role,
@@ -125,6 +142,7 @@ export function SquadDetailPage() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const restoreMut = useRestoreSquad();
 
   const updateSquadMut = useMutation({
     mutationFn: (data: { name?: string; description?: string; instructions?: string; avatar_url?: string; leader_id?: string; sop_profile?: Record<string, unknown> }) => api.updateSquad(squadId, data),
@@ -178,34 +196,18 @@ export function SquadDetailPage() {
       toast.error(err instanceof Error && err.message ? err.message : "Failed to update leader"),
   });
 
-  const deleteMut = useMutation({
-    mutationFn: () => api.deleteSquad(squadId),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) }); push(p.squads()); toast.success(t(($) => $.archive_dialog.success)); },
-    onError: (err) =>
-      toast.error(err instanceof Error && err.message ? err.message : "归档小队失败"),
-  });
-
-  const restoreMut = useMutation({
-    mutationFn: () => api.restoreSquad(squadId),
+  const restoreSquad = () => restoreMut.mutate(squadId, {
     onSuccess: () => {
       refetchSquad();
       refetchMembers();
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
       toast.success(t(($) => $.archive_dialog.restore_success));
     },
     onError: (err) =>
       toast.error(err instanceof Error && err.message ? err.message : t(($) => $.archive_dialog.restore_failed)),
   });
 
-  // CreateAgentDialog's onCreate contract: hit POST /api/agents and
-  // return the created agent so the dialog can run its skill follow-up.
-  // We deliberately do NOT navigate to the agent detail page (that's
-  // the agents-page behaviour) — the user clicked Create Agent from
-  // inside this squad, so the dialog will stay open just long enough
-  // to also call addSquadMember (handled by the dialog when squadId
-  // is set), then close the user back to Members where they can
-  // verify the new agent appeared. Cache-update keeps the agents list
-  // fresh for any pickers that read from it.
+  // Return the created Agent so the squad-scoped dialog can attach it without
+  // navigating away; update the shared cache for current pickers.
   const handleCreateAgent = async (data: CreateAgentRequest): Promise<Agent> => {
     const agent = await createAgentWithRecovery(data);
     queryClient.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current = []) => {
@@ -237,21 +239,19 @@ export function SquadDetailPage() {
   const isSquadArchived = !!squad.archived_at;
   const canEditSquad = canManageSquad && !isSquadArchived;
 
-  const initials = nameInitials(squad.name);
-
   return (
     <div className="flex flex-1 min-h-0 flex-col">
       <BreadcrumbHeader
         segments={[{ href: p.squads(), label: t(($) => $.page.title) }]}
         leaf={
           <>
-            <SquadHeaderAvatar squad={squad} initials={initials} />
+            <SquadHeaderAvatar squad={squad} />
             <h1 className="truncate text-sm font-medium text-foreground">{squad.name}</h1>
           </>
         }
         actions={canManageSquad ? (
           isSquadArchived ? (
-            <Button size="sm" variant="outline" disabled={restoreMut.isPending} onClick={() => restoreMut.mutate()}>
+            <Button size="sm" variant="outline" disabled={restoreMut.isPending} onClick={restoreSquad}>
               {restoreMut.isPending ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
@@ -280,7 +280,7 @@ export function SquadDetailPage() {
               size="sm"
               className="h-6 text-xs"
               disabled={restoreMut.isPending}
-              onClick={() => restoreMut.mutate()}
+              onClick={restoreSquad}
             >
               {t(($) => $.inspector.restore_button)}
             </Button>
@@ -288,9 +288,7 @@ export function SquadDetailPage() {
         </div>
       )}
 
-      {/* Two-column grid mirrors agent-detail-page: left inspector (identity +
-          properties + leader), right pane with tabs (Members | Instructions).
-          Mobile collapses to stacked single column. */}
+      {/* Mobile stacks the inspector and member/instructions workspace. */}
       <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto p-3 md:grid md:grid-cols-[280px_minmax(0,1fr)] md:gap-4 md:overflow-hidden md:p-6 lg:grid-cols-[320px_minmax(0,1fr)]">
         <SquadDetailInspector
           squad={squad}
@@ -331,12 +329,7 @@ export function SquadDetailPage() {
         />
       )}
 
-      {/* Squad-scoped create flow: same dialog as the Agents page but
-          with squadId set, so the dialog runs api.addSquadMember after
-          api.createAgent and skips the agent-detail navigation. Only
-          mounted for workspace owner/admin since AddSquadMember is
-          owner/admin-gated server-side; for everyone else the trigger
-          never renders. */}
+      {/* squadId makes CreateAgentDialog attach the new Agent before closing. */}
       {showCreateAgent && canEditSquad && (
         <CreateAgentDialog
           runtimes={runtimes}
@@ -349,42 +342,17 @@ export function SquadDetailPage() {
         />
       )}
 
-      {confirmArchive && (
-        <AlertDialog
-          open
-          onOpenChange={(v) => { if (!v && !deleteMut.isPending) setConfirmArchive(false); }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>{t(($) => $.archive_dialog.title)}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {t(($) => $.archive_dialog.description, { name: squad.name })}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={deleteMut.isPending}>
-                {t(($) => $.archive_dialog.cancel)}
-              </AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteMut.mutate()}
-                disabled={deleteMut.isPending}
-                className="bg-destructive text-white hover:bg-destructive/90"
-              >
-                {deleteMut.isPending
-                  ? t(($) => $.archive_dialog.archiving)
-                  : t(($) => $.archive_dialog.confirm)}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <SquadArchiveDialog
+        squad={squad}
+        open={confirmArchive}
+        onOpenChange={setConfirmArchive}
+        onArchived={() => push(p.squads())}
+      />
     </div>
   );
 }
 
-// Initial-load skeleton — mirrors the two-column layout of the loaded page
-// (left inspector + right tabs panel) so the swap to real content doesn't
-// shift layout. Column widths match the md:/lg: breakpoints used below.
+// Match the loaded two-column layout to avoid a loading shift.
 function SquadDetailSkeleton() {
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -416,35 +384,25 @@ function SquadDetailSkeleton() {
   );
 }
 
-// Compact 16px avatar shown next to the name in the page header. Falls back
-// to the Users icon when no custom avatar is set so the squad still has a
-// recognisable glyph in the breadcrumb strip.
-function SquadHeaderAvatar({ squad, initials }: { squad: Squad; initials: string }) {
-  if (!squad.avatar_url) {
-    return <Users className="h-4 w-4 text-muted-foreground" />;
-  }
+// Breadcrumbs use a compact icon fallback instead of the list placeholder.
+function SquadHeaderAvatar({ squad }: { squad: Squad }) {
   return (
-    <ActorAvatarBase
-      name={squad.name}
-      initials={initials}
-      avatarUrl={resolvePublicFileUrl(squad.avatar_url)}
+    <SquadAvatar
+      squad={squad}
       size={16}
       className="rounded"
+      fallback={<Users className="h-4 w-4 text-muted-foreground" />}
     />
   );
 }
 
-// Large click-to-upload avatar editor. Mirrors AvatarEditor in
-// agent-detail-inspector.tsx — square (rounded-md) treatment is reserved
-// for non-human actors (agent, squad), circles for humans.
+// Squads use a square click-to-upload avatar treatment.
 function SquadAvatarEditor({
   squad,
-  initials,
   uploading,
   onUpload,
 }: {
   squad: Squad;
-  initials: string;
   uploading: boolean;
   onUpload: (url: string) => Promise<unknown>;
 }) {
@@ -475,19 +433,16 @@ function SquadAvatarEditor({
         disabled={busy}
         aria-label="Change squad avatar"
       >
-        {squad.avatar_url ? (
-          <ActorAvatarBase
-            name={squad.name}
-            initials={initials}
-            avatarUrl={resolvePublicFileUrl(squad.avatar_url)}
-            size={64}
-            className="rounded-none"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            <Users className="h-7 w-7" />
-          </div>
-        )}
+        <SquadAvatar
+          squad={squad}
+          size={64}
+          className="rounded-none"
+          fallback={(
+            <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+              <Users className="h-7 w-7" />
+            </div>
+          )}
+        />
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
           {busy ? (
             <Loader2 className="h-4 w-4 animate-spin text-white" />
@@ -507,9 +462,6 @@ function SquadAvatarEditor({
   );
 }
 
-// Inline name editor — reveals a Pencil affordance on hover, opens a small
-// popover with a single-line input. Mirrors the NameAndDescription editor
-// in the agent inspector.
 function SquadNameEditor({
   value,
   onSave,
@@ -547,12 +499,7 @@ function SquadNameEditor({
   );
 }
 
-// Two-step add-member dialog (mirrors CreateAgentDialog's compact layout):
-// 1) pick a target — Members + Agents in one searchable popover, each row
-//    with an avatar so visual recognition matches the issue assignee picker;
-// 2) optionally describe the role they'll play in this squad. Description
-//    lives here (not on the picker) because role is per-squad context that
-//    only makes sense at the moment of joining.
+// Membership selection and the squad-specific role are committed together.
 function AddMemberDialog({
   availableMembers,
   availableAgents,
@@ -700,10 +647,7 @@ function AddMemberDialog({
   );
 }
 
-// Inline click-to-edit role line. Renders the current role as muted text;
-// click (or click the placeholder when empty) to swap in an input that
-// commits on blur / Enter and cancels on Escape. Avoids opening a modal
-// for what is usually a one-word change.
+// Role edits commit on blur/Enter and cancel on Escape.
 function RoleEditor({ value, onSave }: { value: string; onSave: (next: string) => Promise<void> }) {
   const { t } = useT("squads");
   const [editing, setEditing] = useState(false);
@@ -756,11 +700,7 @@ function RoleEditor({ value, onSave }: { value: string; onSave: (next: string) =
   );
 }
 
-// ---------------------------------------------------------------------------
-// SquadDetailInspector — left 320px column, mirrors AgentDetailInspector.
-// Holds identity (avatar / name / description) + leader / member count /
-// timestamps. All inline-editable.
-// ---------------------------------------------------------------------------
+// Identity is editable; ownership and timestamps remain read-only.
 function SquadDetailInspector({
   squad,
   memberCount,
@@ -784,15 +724,12 @@ function SquadDetailInspector({
 }) {
   const { t } = useT("squads");
   const timeAgo = useTimeAgo();
-  const initials = nameInitials(squad.name);
-
   return (
     <aside className="flex w-full flex-col rounded-lg border bg-background md:h-full md:min-h-0 md:overflow-y-auto">
       {/* Identity */}
       <div className="flex flex-col gap-3 border-b px-5 pb-5 pt-5">
         <SquadAvatarEditor
           squad={squad}
-          initials={initials}
           uploading={uploadingAvatar}
           onUpload={onUploadAvatar}
         />
@@ -868,10 +805,7 @@ function InspectorRow({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-// Click-to-edit description editor for the inspector. Mirrors
-// agent-detail-inspector's DescriptionEditor: opens a modal with a textarea
-// (enough room for multi-paragraph descriptions); the inline trigger shows
-// the current value (or a placeholder) with a hover-revealed Pencil.
+// Use a modal so multi-paragraph descriptions remain practical to edit.
 function SquadDescriptionEditor({
   value,
   onSave,
@@ -969,11 +903,7 @@ function SquadDescriptionEditorBody({
   );
 }
 
-// ---------------------------------------------------------------------------
-// SquadOverviewPane — right column with two tabs (Members | Instructions).
-// Mirrors AgentOverviewPane: dirty-guard via AlertDialog when switching tabs
-// with unsaved Instructions.
-// ---------------------------------------------------------------------------
+// Unsaved instructions guard tab changes explicitly.
 type SquadDetailTab = "members" | "instructions";
 
 const squadDetailTabs: { id: SquadDetailTab; label: string; icon: typeof FileText }[] = [
@@ -1109,12 +1039,7 @@ function SquadOverviewPane({
   );
 }
 
-// Visual config for the five squad member status buckets. Mirrors
-// availabilityConfig + workloadConfig in packages/views/agents/presence.ts —
-// same semantic tokens so a status dot here matches the agent page's dot.
-// Unknown / null statuses (human members, server-side enum drift) render as
-// a neutral muted pill; this is the "downgrade, don't crash" defense from
-// CLAUDE.md > API Response Compatibility.
+// Unknown or absent statuses use the neutral fallback below.
 const SQUAD_STATUS_DOT_CLASS: Record<SquadMemberStatusValue, string> = {
   working: "bg-success",
   idle: "bg-muted-foreground/40",
@@ -1131,7 +1056,6 @@ const visibleMemberRole = (role: string | null | undefined, name: string) => {
   return trimmedRole && trimmedRole !== name.trim() ? trimmedRole : "";
 };
 
-// Members tab body — re-uses the existing list/role editing patterns.
 function SquadMembersTab({
   members,
   memberStatusById,
@@ -1332,9 +1256,7 @@ function SquadMembersTab({
   );
 }
 
-// Instructions tab body — mirrors agent's InstructionsTab. ContentEditor +
-// Save button. The squad leader's prompt picks these up at task claim time
-// (server/internal/handler/daemon.go).
+// Instructions are read at task claim time by the Squad leader.
 function SquadInstructionsTab({
   squad,
   onSave,

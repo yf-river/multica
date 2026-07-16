@@ -1,6 +1,6 @@
 import type { AgentRuntime, RuntimeModel, SquadScope } from "@multica/core/types";
 
-const DEFAULT_PM_PROVIDER = "codebuddy";
+export const PM_DEFAULT_PROVIDER = "codebuddy";
 const PREFERRED_DEEPSEEK_MODEL_IDS = ["deepseek-v4-pro-ioa", "deepseek-v4-pro"];
 
 function isRuntimeCompatibleWithPMScope(
@@ -43,7 +43,7 @@ export function preferredPMModel(models: RuntimeModel[]) {
 
 function providerSortRank(provider: string) {
   const p = provider.toLowerCase();
-  if (p === DEFAULT_PM_PROVIDER) return 0;
+  if (p === PM_DEFAULT_PROVIDER) return 0;
   if (p === "codex") return 1;
   return 2;
 }
