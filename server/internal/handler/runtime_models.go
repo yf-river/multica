@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -95,22 +94,6 @@ const (
 	modelListStoreRetention = 2 * time.Minute
 )
 
-// ModelListStore is the contract every backend (in-memory single-node,
-// Redis multi-node) must satisfy. Methods take a context so the Redis
-// implementation can honour the heartbeat-side timeout that gates a
-// slow shared store from stalling the rest of the heartbeat.
-type ModelListStore interface {
-	Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error)
-	Get(ctx context.Context, id string) (*ModelListRequest, error)
-	// HasPending is a cheap read-only probe used by the heartbeat hot path
-	// to gate the side-effecting PopPending. A spurious "true" is fine —
-	// PopPending handles "queue empty after probe" by returning nil.
-	HasPending(ctx context.Context, runtimeID string) (bool, error)
-	PopPending(ctx context.Context, runtimeID string) (*ModelListRequest, error)
-	Complete(ctx context.Context, id string, models []ModelEntry, supported bool) error
-	Fail(ctx context.Context, id string, errMsg string) error
-}
-
 // applyModelListTimeout transitions a request to runtimeAsyncTimeout when it has
 // been stuck in a non-terminal state past its threshold. Returns true when
 // the record was modified so callers can persist the change. The pending
@@ -126,70 +109,25 @@ func applyModelListTimeout(req *runtimeAsyncRequestState, now time.Time) bool {
 	)
 }
 
-// InMemoryModelListStore is the single-node implementation. Adequate for
-// self-hosted dev and the test suite, but unsafe in multi-node deploys
-// (each replica gets its own map and the pending request is invisible to
-// every replica that didn't receive the POST).
-type InMemoryModelListStore struct {
-	*inMemoryRuntimeAsyncStore[ModelListRequest]
-}
-
-func NewInMemoryModelListStore() *InMemoryModelListStore {
-	return &InMemoryModelListStore{newInMemoryRuntimeAsyncStore(
+func NewInMemoryModelListStore() *inMemoryRuntimeListStore[ModelListRequest, ModelEntry] {
+	return newInMemoryRuntimeListStore(
 		modelListStoreRetention,
 		func(request *ModelListRequest) *runtimeAsyncRequestState { return &request.runtimeAsyncRequestState },
 		applyModelListTimeout,
-	)}
-}
-
-func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
-	return s.create(requestID, func(now time.Time) *ModelListRequest {
-		return &ModelListRequest{
-			runtimeAsyncRequestState: runtimeAsyncRequestState{
-				ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
-				CreatedAt: now, UpdatedAt: now,
-			},
-			// Default to true; the daemon overrides this in the report
-			// for providers that don't support per-agent model selection.
-			Supported: true,
-		}
-	}, func(existing *ModelListRequest) error {
-		if existing.RuntimeID != runtimeID {
-			return errRuntimeAsyncRequestConflict
-		}
-		return nil
-	})
-}
-
-func (s *InMemoryModelListStore) Get(_ context.Context, id string) (*ModelListRequest, error) {
-	return s.get(id), nil
-}
-
-func (s *InMemoryModelListStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
-	return s.hasPending(runtimeID), nil
-}
-
-func (s *InMemoryModelListStore) PopPending(_ context.Context, runtimeID string) (*ModelListRequest, error) {
-	pending := s.popPending(runtimeID, 1)
-	if len(pending) == 0 {
-		return nil, nil
-	}
-	return pending[0], nil
-}
-
-func (s *InMemoryModelListStore) Complete(_ context.Context, id string, models []ModelEntry, supported bool) error {
-	s.update(id, func(request *ModelListRequest, state *runtimeAsyncRequestState, now time.Time) {
-		state.Status = runtimeAsyncCompleted
-		request.Models = models
-		request.Supported = supported
-		state.UpdatedAt = now
-	})
-	return nil
-}
-
-func (s *InMemoryModelListStore) Fail(_ context.Context, id string, errMsg string) error {
-	s.fail(id, errMsg)
-	return nil
+		func(runtimeID, requestID string, now time.Time) *ModelListRequest {
+			return &ModelListRequest{
+				runtimeAsyncRequestState: runtimeAsyncRequestState{
+					ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+					CreatedAt: now, UpdatedAt: now,
+				},
+				Supported: true,
+			}
+		},
+		func(request *ModelListRequest, models []ModelEntry, supported bool) {
+			request.Models = models
+			request.Supported = supported
+		},
+	)
 }
 
 // ---------------------------------------------------------------------------

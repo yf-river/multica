@@ -86,8 +86,8 @@ type Handler struct {
 	TaskService           *service.TaskService
 	IssueService          *service.IssueService
 	AutopilotService      *service.AutopilotService
-	ModelListStore        ModelListStore
-	LocalSkillListStore   LocalSkillListStore
+	ModelListStore        runtimeListRequestStore[ModelListRequest, ModelEntry]
+	LocalSkillListStore   runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary]
 	LocalSkillImportStore LocalSkillImportStore
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler

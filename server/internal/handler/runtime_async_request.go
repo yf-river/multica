@@ -37,6 +37,19 @@ type runtimeAsyncRequestState struct {
 	RunStartedAt *time.Time                `json:"-"`
 }
 
+// runtimeListRequestStore is the one lifecycle contract shared by runtime
+// inventory requests. Model and local-skill discovery keep distinct payloads,
+// permissions and persistence namespaces, but they do not own separate state
+// machines.
+type runtimeListRequestStore[T any, Item any] interface {
+	Create(ctx context.Context, runtimeID, requestID string) (*T, error)
+	Get(ctx context.Context, id string) (*T, error)
+	HasPending(ctx context.Context, runtimeID string) (bool, error)
+	PopPending(ctx context.Context, runtimeID string) (*T, error)
+	Complete(ctx context.Context, id string, items []Item, supported bool) error
+	Fail(ctx context.Context, id string, message string) error
+}
+
 func applyRuntimeAsyncTimeout(req *runtimeAsyncRequestState, now time.Time, pendingTimeout time.Duration, pendingError string) bool {
 	switch req.Status {
 	case runtimeAsyncPending:
@@ -180,6 +193,67 @@ func (s *inMemoryRuntimeAsyncStore[T]) fail(id, message string) {
 		state.Error = message
 		state.UpdatedAt = now
 	})
+}
+
+type inMemoryRuntimeListStore[T any, Item any] struct {
+	*inMemoryRuntimeAsyncStore[T]
+	newRequest func(runtimeID, requestID string, now time.Time) *T
+	setResult  func(*T, []Item, bool)
+}
+
+func newInMemoryRuntimeListStore[T any, Item any](
+	retention time.Duration,
+	state func(*T) *runtimeAsyncRequestState,
+	applyTimeout func(*runtimeAsyncRequestState, time.Time) bool,
+	newRequest func(runtimeID, requestID string, now time.Time) *T,
+	setResult func(*T, []Item, bool),
+) *inMemoryRuntimeListStore[T, Item] {
+	return &inMemoryRuntimeListStore[T, Item]{
+		inMemoryRuntimeAsyncStore: newInMemoryRuntimeAsyncStore(retention, state, applyTimeout),
+		newRequest:                newRequest,
+		setResult:                 setResult,
+	}
+}
+
+func (s *inMemoryRuntimeListStore[T, Item]) Create(_ context.Context, runtimeID, requestID string) (*T, error) {
+	return s.create(requestID, func(now time.Time) *T {
+		return s.newRequest(runtimeID, requestID, now)
+	}, func(existing *T) error {
+		if s.state(existing).RuntimeID != runtimeID {
+			return errRuntimeAsyncRequestConflict
+		}
+		return nil
+	})
+}
+
+func (s *inMemoryRuntimeListStore[T, Item]) Get(_ context.Context, id string) (*T, error) {
+	return s.get(id), nil
+}
+
+func (s *inMemoryRuntimeListStore[T, Item]) HasPending(_ context.Context, runtimeID string) (bool, error) {
+	return s.hasPending(runtimeID), nil
+}
+
+func (s *inMemoryRuntimeListStore[T, Item]) PopPending(_ context.Context, runtimeID string) (*T, error) {
+	pending := s.popPending(runtimeID, 1)
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	return pending[0], nil
+}
+
+func (s *inMemoryRuntimeListStore[T, Item]) Complete(_ context.Context, id string, items []Item, supported bool) error {
+	s.update(id, func(request *T, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncCompleted
+		s.setResult(request, items, supported)
+		state.UpdatedAt = now
+	})
+	return nil
+}
+
+func (s *inMemoryRuntimeListStore[T, Item]) Fail(_ context.Context, id, message string) error {
+	s.fail(id, message)
+	return nil
 }
 
 // redisRuntimeAsyncStore owns the Redis lifecycle shared by runtime requests.
@@ -434,4 +508,59 @@ func (s *redisRuntimeAsyncStore[T]) fail(ctx context.Context, id, message string
 		state.Error = message
 		state.UpdatedAt = now
 	})
+}
+
+type redisRuntimeListStore[T any, Item any] struct {
+	*redisRuntimeAsyncStore[T]
+	newRequest         func(runtimeID, requestID string, now time.Time) *T
+	setResult          func(*T, []Item, bool)
+	disappearedMessage string
+}
+
+func newRedisRuntimeListStore[T any, Item any](
+	store *redisRuntimeAsyncStore[T],
+	newRequest func(runtimeID, requestID string, now time.Time) *T,
+	setResult func(*T, []Item, bool),
+	disappearedMessage string,
+) *redisRuntimeListStore[T, Item] {
+	return &redisRuntimeListStore[T, Item]{
+		redisRuntimeAsyncStore: store,
+		newRequest:             newRequest,
+		setResult:              setResult,
+		disappearedMessage:     disappearedMessage,
+	}
+}
+
+func (s *redisRuntimeListStore[T, Item]) Create(ctx context.Context, runtimeID, requestID string) (*T, error) {
+	request := s.newRequest(runtimeID, requestID, time.Now())
+	return s.create(ctx, request, func(existing *T) error {
+		if s.state(existing).RuntimeID != runtimeID {
+			return errRuntimeAsyncRequestConflict
+		}
+		return nil
+	}, s.disappearedMessage)
+}
+
+func (s *redisRuntimeListStore[T, Item]) Get(ctx context.Context, id string) (*T, error) {
+	return s.load(ctx, id)
+}
+
+func (s *redisRuntimeListStore[T, Item]) HasPending(ctx context.Context, runtimeID string) (bool, error) {
+	return s.hasPending(ctx, runtimeID)
+}
+
+func (s *redisRuntimeListStore[T, Item]) PopPending(ctx context.Context, runtimeID string) (*T, error) {
+	return s.popPending(ctx, runtimeID)
+}
+
+func (s *redisRuntimeListStore[T, Item]) Complete(ctx context.Context, id string, items []Item, supported bool) error {
+	return s.update(ctx, id, func(request *T, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncCompleted
+		s.setResult(request, items, supported)
+		state.UpdatedAt = now
+	})
+}
+
+func (s *redisRuntimeListStore[T, Item]) Fail(ctx context.Context, id, message string) error {
+	return s.fail(ctx, id, message)
 }

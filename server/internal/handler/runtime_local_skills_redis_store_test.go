@@ -507,11 +507,11 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 	}
 }
 
-// Compile-time assertions: the Redis stores MUST satisfy the interfaces so
+// Compile-time assertions: the stores MUST satisfy the lifecycle contracts so
 // NewRouter's assignment stays type-safe.
 var (
-	_ LocalSkillListStore   = (*RedisLocalSkillListStore)(nil)
-	_ LocalSkillImportStore = (*redisLocalSkillImportStore)(nil)
-	_ LocalSkillListStore   = (*inMemoryLocalSkillListStore)(nil)
-	_ LocalSkillImportStore = (*inMemoryLocalSkillImportStore)(nil)
+	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] = NewRedisLocalSkillListStore(nil)
+	_ LocalSkillImportStore                                                           = (*redisLocalSkillImportStore)(nil)
+	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] = NewInMemoryLocalSkillListStore()
+	_ LocalSkillImportStore                                                           = (*inMemoryLocalSkillImportStore)(nil)
 )

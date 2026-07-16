@@ -24,13 +24,15 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// slowProbeLocalSkillListStore wraps a LocalSkillListStore but blocks inside
+// slowProbeLocalSkillListStore wraps the local-skill list store but blocks inside
 // HasPending until the provided context is cancelled. PopPending delegates
 // to the underlying store. Used to verify that a stalled probe cannot wedge
 // the heartbeat — the bound context must cut it short — while the ack-safe
 // PopPending path is never reached because HasPending returns an error, not
 // true.
-type slowProbeLocalSkillListStore struct{ LocalSkillListStore }
+type slowProbeLocalSkillListStore struct {
+	runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary]
+}
 
 func (s slowProbeLocalSkillListStore) HasPending(ctx context.Context, _ string) (bool, error) {
 	<-ctx.Done()
@@ -48,13 +50,13 @@ func (s slowProbeLocalSkillImportStore) HasPending(ctx context.Context, _ string
 // that the handler never reaches the ack-unsafe side-effecting claim path
 // when HasPending reports an empty queue.
 type popRecordingLocalSkillListStore struct {
-	LocalSkillListStore
+	runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary]
 	popCalls int
 }
 
 func (s *popRecordingLocalSkillListStore) PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
 	s.popCalls++
-	return s.LocalSkillListStore.PopPending(ctx, runtimeID)
+	return s.runtimeListRequestStore.PopPending(ctx, runtimeID)
 }
 
 type popRecordingLocalSkillImportStore struct {
@@ -1016,7 +1018,7 @@ func TestDaemonHeartbeat_EmptyQueueSkipsPopPending(t *testing.T) {
 
 	origList := testHandler.LocalSkillListStore
 	origImport := testHandler.LocalSkillImportStore
-	listSpy := &popRecordingLocalSkillListStore{LocalSkillListStore: origList}
+	listSpy := &popRecordingLocalSkillListStore{runtimeListRequestStore: origList}
 	importSpy := &popRecordingLocalSkillImportStore{LocalSkillImportStore: origImport}
 	testHandler.LocalSkillListStore = listSpy
 	testHandler.LocalSkillImportStore = importSpy

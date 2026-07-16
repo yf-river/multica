@@ -46,24 +46,6 @@ const (
 	runtimeLocalSkillStoreRetention = 5 * time.Minute
 )
 
-// LocalSkillListStore tracks pending / running / completed runtime-local-skill
-// inventory requests. The server MUST stay stateless — any state that needs to
-// outlive a single request has to live in shared storage so multi-node deploys
-// can have POST, heartbeat and poll land on different nodes and still agree
-// on the request's state.
-type LocalSkillListStore interface {
-	Create(ctx context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error)
-	Get(ctx context.Context, id string) (*RuntimeLocalSkillListRequest, error)
-	// HasPending is a cheap read-only probe that reports whether the runtime
-	// has at least one pending request. Callers on the hot path (e.g. the
-	// heartbeat handler) use it to gate the side-effecting PopPending so they
-	// never start a claim they might have to abort.
-	HasPending(ctx context.Context, runtimeID string) (bool, error)
-	PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error)
-	Complete(ctx context.Context, id string, skills []RuntimeLocalSkillSummary, supported bool) error
-	Fail(ctx context.Context, id string, errMsg string) error
-}
-
 // LocalSkillImportRequestInput carries the fields needed to enqueue a
 // runtime-local-skill import.
 type LocalSkillImportRequestInput struct {
@@ -78,8 +60,8 @@ type LocalSkillImportRequestInput struct {
 	TargetSkillID string
 }
 
-// LocalSkillImportStore is the same contract as LocalSkillListStore but for
-// runtime-local-skill import requests. Kept as a separate interface because the
+// LocalSkillImportStore owns runtime-local-skill import requests. It stays
+// separate from the shared list lifecycle because the
 // Create signature carries import-specific fields (skill_key, optional rename).
 type LocalSkillImportStore interface {
 	Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error)
@@ -130,74 +112,31 @@ type RuntimeLocalSkillImportRequest struct {
 
 var errLocalSkillImportRequestConflict = errors.New("local skill import request conflict")
 
-// inMemoryLocalSkillListStore is the single-node implementation — good enough
-// for local dev and the in-process test suite. Production (multi-node) must
-// use RedisLocalSkillListStore so every API node agrees on the same pending
-// set.
-type inMemoryLocalSkillListStore struct {
-	*inMemoryRuntimeAsyncStore[RuntimeLocalSkillListRequest]
-}
-
-func NewInMemoryLocalSkillListStore() *inMemoryLocalSkillListStore {
-	return &inMemoryLocalSkillListStore{newInMemoryRuntimeAsyncStore(
+func NewInMemoryLocalSkillListStore() *inMemoryRuntimeListStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] {
+	return newInMemoryRuntimeListStore(
 		runtimeLocalSkillStoreRetention,
 		func(request *RuntimeLocalSkillListRequest) *runtimeAsyncRequestState {
 			return &request.runtimeAsyncRequestState
 		},
 		applyLocalSkillTimeout,
-	)}
+		func(runtimeID, requestID string, now time.Time) *RuntimeLocalSkillListRequest {
+			return &RuntimeLocalSkillListRequest{
+				runtimeAsyncRequestState: runtimeAsyncRequestState{
+					ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+					CreatedAt: now, UpdatedAt: now,
+				},
+				Supported: true,
+			}
+		},
+		func(request *RuntimeLocalSkillListRequest, skills []RuntimeLocalSkillSummary, supported bool) {
+			request.Skills = skills
+			request.Supported = supported
+		},
+	)
 }
 
-func (s *inMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
-	return s.create(requestID, func(now time.Time) *RuntimeLocalSkillListRequest {
-		return &RuntimeLocalSkillListRequest{
-			runtimeAsyncRequestState: runtimeAsyncRequestState{
-				ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
-				CreatedAt: now, UpdatedAt: now,
-			},
-			Supported: true,
-		}
-	}, func(existing *RuntimeLocalSkillListRequest) error {
-		if existing.RuntimeID != runtimeID {
-			return errRuntimeAsyncRequestConflict
-		}
-		return nil
-	})
-}
-
-func (s *inMemoryLocalSkillListStore) Get(_ context.Context, id string) (*RuntimeLocalSkillListRequest, error) {
-	return s.get(id), nil
-}
-
-func (s *inMemoryLocalSkillListStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
-	return s.hasPending(runtimeID), nil
-}
-
-func (s *inMemoryLocalSkillListStore) PopPending(_ context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
-	pending := s.popPending(runtimeID, 1)
-	if len(pending) == 0 {
-		return nil, nil
-	}
-	return pending[0], nil
-}
-
-func (s *inMemoryLocalSkillListStore) Complete(_ context.Context, id string, skills []RuntimeLocalSkillSummary, supported bool) error {
-	s.update(id, func(request *RuntimeLocalSkillListRequest, state *runtimeAsyncRequestState, now time.Time) {
-		state.Status = runtimeAsyncCompleted
-		request.Skills = skills
-		request.Supported = supported
-		state.UpdatedAt = now
-	})
-	return nil
-}
-
-func (s *inMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg string) error {
-	s.fail(id, errMsg)
-	return nil
-}
-
-// inMemoryLocalSkillImportStore mirrors inMemoryLocalSkillListStore for import
-// requests. Same single-node vs. multi-node caveat.
+// inMemoryLocalSkillImportStore owns the import-specific lifecycle. It has the
+// same single-node vs. multi-node caveat as the shared list store.
 type inMemoryLocalSkillImportStore struct {
 	*inMemoryRuntimeAsyncStore[RuntimeLocalSkillImportRequest]
 }

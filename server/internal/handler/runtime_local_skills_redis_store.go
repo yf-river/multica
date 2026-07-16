@@ -16,78 +16,48 @@ const (
 	localSkillImportPendingPrefix = "mul:local_skill:import:pending:"
 )
 
-type RedisLocalSkillListStore struct {
-	*redisRuntimeAsyncStore[RuntimeLocalSkillListRequest]
-}
-
-func NewRedisLocalSkillListStore(rdb *redis.Client) *RedisLocalSkillListStore {
-	return &RedisLocalSkillListStore{newRedisRuntimeAsyncStore(
-		rdb,
-		localSkillListKeyPrefix,
-		localSkillListPendingPrefix,
-		runtimeLocalSkillStoreRetention,
-		func(request *RuntimeLocalSkillListRequest) *runtimeAsyncRequestState {
-			return &request.runtimeAsyncRequestState
-		},
-		func(request *RuntimeLocalSkillListRequest) ([]byte, error) {
-			data, err := json.Marshal(request)
-			if err != nil {
-				return nil, fmt.Errorf("marshal list request: %w", err)
+func NewRedisLocalSkillListStore(rdb *redis.Client) *redisRuntimeListStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] {
+	return newRedisRuntimeListStore(
+		newRedisRuntimeAsyncStore(
+			rdb,
+			localSkillListKeyPrefix,
+			localSkillListPendingPrefix,
+			runtimeLocalSkillStoreRetention,
+			func(request *RuntimeLocalSkillListRequest) *runtimeAsyncRequestState {
+				return &request.runtimeAsyncRequestState
+			},
+			func(request *RuntimeLocalSkillListRequest) ([]byte, error) {
+				data, err := json.Marshal(request)
+				if err != nil {
+					return nil, fmt.Errorf("marshal list request: %w", err)
+				}
+				return data, nil
+			},
+			func(raw []byte) (*RuntimeLocalSkillListRequest, error) {
+				var request RuntimeLocalSkillListRequest
+				if err := json.Unmarshal(raw, &request); err != nil {
+					return nil, fmt.Errorf("decode list request: %w", err)
+				}
+				return &request, nil
+			},
+			applyLocalSkillTimeout,
+			"list request",
+		),
+		func(runtimeID, requestID string, now time.Time) *RuntimeLocalSkillListRequest {
+			return &RuntimeLocalSkillListRequest{
+				runtimeAsyncRequestState: runtimeAsyncRequestState{
+					ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+					CreatedAt: now, UpdatedAt: now,
+				},
+				Supported: true,
 			}
-			return data, nil
 		},
-		func(raw []byte) (*RuntimeLocalSkillListRequest, error) {
-			var request RuntimeLocalSkillListRequest
-			if err := json.Unmarshal(raw, &request); err != nil {
-				return nil, fmt.Errorf("decode list request: %w", err)
-			}
-			return &request, nil
+		func(request *RuntimeLocalSkillListRequest, skills []RuntimeLocalSkillSummary, supported bool) {
+			request.Skills = skills
+			request.Supported = supported
 		},
-		applyLocalSkillTimeout,
-		"list request",
-	)}
-}
-
-func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
-	now := time.Now()
-	request := &RuntimeLocalSkillListRequest{
-		runtimeAsyncRequestState: runtimeAsyncRequestState{
-			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
-			CreatedAt: now, UpdatedAt: now,
-		},
-		Supported: true,
-	}
-	return s.create(ctx, request, func(existing *RuntimeLocalSkillListRequest) error {
-		if existing.RuntimeID != runtimeID {
-			return errRuntimeAsyncRequestConflict
-		}
-		return nil
-	}, "local skill list request disappeared")
-}
-
-func (s *RedisLocalSkillListStore) Get(ctx context.Context, id string) (*RuntimeLocalSkillListRequest, error) {
-	return s.load(ctx, id)
-}
-
-func (s *RedisLocalSkillListStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
-	return s.hasPending(ctx, runtimeID)
-}
-
-func (s *RedisLocalSkillListStore) PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
-	return s.popPending(ctx, runtimeID)
-}
-
-func (s *RedisLocalSkillListStore) Complete(ctx context.Context, id string, skills []RuntimeLocalSkillSummary, supported bool) error {
-	return s.update(ctx, id, func(request *RuntimeLocalSkillListRequest, state *runtimeAsyncRequestState, now time.Time) {
-		state.Status = runtimeAsyncCompleted
-		request.Skills = skills
-		request.Supported = supported
-		state.UpdatedAt = now
-	})
-}
-
-func (s *RedisLocalSkillListStore) Fail(ctx context.Context, id string, message string) error {
-	return s.fail(ctx, id, message)
+		"local skill list request disappeared",
+	)
 }
 
 // redisImportEnvelope keeps internal idempotency and timeout fields in Redis
