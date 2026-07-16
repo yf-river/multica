@@ -557,9 +557,7 @@ func (s *TaskService) publishTaskIssueStatusProjection(ctx context.Context, proj
 	if projection == nil {
 		return
 	}
-	if s.Bus != nil {
-		s.Bus.Publish(projection.event)
-	}
+	s.Bus.Publish(projection.event)
 	slog.Info("task issue status automated",
 		"issue_id", util.UUIDToString(projection.updated.ID),
 		"from_status", projection.previous.Status,

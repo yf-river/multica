@@ -518,11 +518,9 @@ func (s *TaskService) publishAgentCommentProjection(ctx context.Context, project
 	if projection == nil {
 		return
 	}
-	if s.Bus != nil {
-		s.Bus.Publish(projection.createdEvent)
-		if projection.threadReopened {
-			s.Bus.Publish(projection.unresolvedEvent)
-		}
+	s.Bus.Publish(projection.createdEvent)
+	if projection.threadReopened {
+		s.Bus.Publish(projection.unresolvedEvent)
 	}
 	if projection.comment.Type == "comment" && s.AgentCommentCreated != nil {
 		s.AgentCommentCreated(ctx, projection.issue, projection.comment, projection.parentComment)

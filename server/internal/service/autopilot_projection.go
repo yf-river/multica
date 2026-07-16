@@ -207,15 +207,15 @@ func (s *AutopilotService) CaptureAutopilotRunDone(ctx context.Context, event ev
 	}
 	switch payload.Status {
 	case "completed":
-		if s.TaskSvc != nil && s.TaskSvc.Analytics != nil {
+		if s.TaskSvc.Analytics != nil {
 			obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunCompleted(run.Source))
 		}
 	case "failed":
-		if s.TaskSvc != nil && s.TaskSvc.Analytics != nil {
+		if s.TaskSvc.Analytics != nil {
 			obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunFailed(run.Source))
 		}
 	case "skipped":
-		if s.TaskSvc != nil && s.TaskSvc.Metrics != nil {
+		if s.TaskSvc.Metrics != nil {
 			reason := "unknown"
 			if run.FailureReason.Valid && strings.TrimSpace(run.FailureReason.String) != "" {
 				reason = run.FailureReason.String

@@ -392,9 +392,7 @@ func (s *IssueService) PrepareCreateInTx(
 
 // PublishPreparedCreate emits only post-commit effects for a prepared create.
 func (s *IssueService) PublishPreparedCreate(ctx context.Context, prepared PreparedIssueCreate) {
-	if s.Bus != nil {
-		s.Bus.Publish(prepared.createdEvent)
-	}
+	s.Bus.Publish(prepared.createdEvent)
 	s.captureCreatedAnalytics(prepared.Result.Issue, prepared.creatorType, prepared.actorID, prepared.opts)
 	s.publishIssueCreateProjection(ctx, prepared.projection, prepared.creatorType, prepared.actorID)
 }
@@ -413,9 +411,6 @@ func (s *IssueService) createIssueProjectionInTx(
 ) (issueCreateProjection, error) {
 	projection := issueCreateProjection{}
 	if sourceSummaryAgentID.Valid {
-		if s.TaskService == nil {
-			return projection, errors.New("task service is required for source summary")
-		}
 		task, err := s.TaskService.CreateIssueSourceSummaryTaskInTx(ctx, queries, issue, sourceSummaryAgentID)
 		if err != nil {
 			return projection, err
@@ -436,9 +431,6 @@ func (s *IssueService) createIssueProjectionInTx(
 	if issue.Status == "backlog" && hasProject {
 		switch {
 		case agentLeadReviewRequested:
-			if s.TaskService == nil {
-				return projection, errors.New("task service is required for project owner approval")
-			}
 			task, err := s.TaskService.CreateProjectOwnerApprovalTaskInTx(ctx, queries, issue, project)
 			if err != nil {
 				return projection, err
@@ -466,9 +458,6 @@ func (s *IssueService) createIssueProjectionInTx(
 
 	if suppressAutoEnqueue || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
 		return projection, nil
-	}
-	if s.TaskService == nil {
-		return projection, errors.New("task service is required for assigned issue")
 	}
 
 	switch issue.AssigneeType.String {
@@ -531,7 +520,7 @@ func (s *IssueService) publishIssueCreateProjection(ctx context.Context, project
 	if projection.sourceSummaryTask != nil {
 		s.TaskService.PublishIssueSourceSummaryTaskEnqueued(ctx, *projection.sourceSummaryTask)
 	}
-	if projection.approvalIssue != nil && s.Bus != nil {
+	if projection.approvalIssue != nil {
 		s.Bus.Publish(events.Event{
 			Type:        protocol.EventIssueMetadataChanged,
 			WorkspaceID: util.UUIDToString(projection.approvalIssue.WorkspaceID),
@@ -624,9 +613,6 @@ func (s *IssueService) ReconcileProjectOwnerApprovalInTx(
 
 	switch project.LeadType.String {
 	case "agent":
-		if s.TaskService == nil {
-			return projection, errors.New("task service is required for project owner approval")
-		}
 		leadAgent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          project.LeadID,
 			WorkspaceID: project.WorkspaceID,
@@ -683,7 +669,7 @@ func (s *IssueService) PublishIssueApprovalProjection(ctx context.Context, proje
 	if projection.task != nil {
 		s.TaskService.PublishProjectOwnerApprovalTaskEnqueued(ctx, *projection.task, projection.project)
 	}
-	if projection.metadataChanged && projection.issue != nil && s.Bus != nil {
+	if projection.metadataChanged && projection.issue != nil {
 		s.Bus.Publish(events.Event{
 			Type:        protocol.EventIssueMetadataChanged,
 			WorkspaceID: util.UUIDToString(projection.issue.WorkspaceID),
@@ -695,9 +681,6 @@ func (s *IssueService) PublishIssueApprovalProjection(ctx context.Context, proje
 		})
 	}
 	for _, recipient := range projection.archivedRecipients {
-		if s.Bus == nil {
-			break
-		}
 		s.Bus.Publish(events.Event{
 			Type:        protocol.EventInboxBatchArchived,
 			WorkspaceID: util.UUIDToString(projection.issue.WorkspaceID),
@@ -784,9 +767,6 @@ func createProjectLeadApprovalInbox(
 }
 
 func (s *IssueService) publishProjectLeadApprovalInbox(item db.InboxItem, issueStatus, actorType, actorID string) {
-	if s.Bus == nil {
-		return
-	}
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventInboxNew,
 		WorkspaceID: util.UUIDToString(item.WorkspaceID),

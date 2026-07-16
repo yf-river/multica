@@ -133,7 +133,7 @@ func (s *AutopilotService) dispatchAutopilot(
 		}
 		return nil, fmt.Errorf("create run: %w", err)
 	}
-	if s.TaskSvc != nil && s.TaskSvc.Analytics != nil {
+	if s.TaskSvc.Analytics != nil {
 		obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunStarted(source))
 	}
 
@@ -900,7 +900,7 @@ func (s *AutopilotService) publishRunDone(workspaceID string, run db.AutopilotRu
 }
 
 func (s *AutopilotService) captureIssueCreatedFromAutopilot(ap db.Autopilot, run *db.AutopilotRun, issue db.Issue, leaderID pgtype.UUID) {
-	if s.TaskSvc == nil || s.TaskSvc.Analytics == nil {
+	if s.TaskSvc.Analytics == nil {
 		return
 	}
 	// For PostHog the agent_id should be the agent that will actually run
@@ -930,7 +930,7 @@ func autopilotActorID(ap db.Autopilot) string {
 }
 
 func (s *AutopilotService) resolveAutopilotTriggerTimezone(ctx context.Context, triggerID pgtype.UUID) (string, error) {
-	if !triggerID.Valid || s == nil || s.Queries == nil {
+	if !triggerID.Valid {
 		return DefaultAutopilotTriggerTimezone, nil
 	}
 

@@ -533,7 +533,7 @@ func (s *TaskService) publishSquadSOPTerminalProjection(
 		return
 	}
 	s.publishTaskIssueStatusProjection(ctx, projection.issueStatus)
-	if projection.commentEvent != nil && s.Bus != nil {
+	if projection.commentEvent != nil {
 		s.Bus.Publish(*projection.commentEvent)
 	}
 	if projection.leaderTask == nil {

@@ -263,9 +263,7 @@ func (s *TaskService) projectIssueSourceSummaryTask(
 }
 
 func (s *TaskService) publishIssueSourceSummaryProjection(ctx context.Context, projection issueSourceSummaryProjection) {
-	if s.Bus != nil {
-		s.Bus.Publish(projection.issueEvent)
-	}
+	s.Bus.Publish(projection.issueEvent)
 	if !projection.hasNext {
 		return
 	}
