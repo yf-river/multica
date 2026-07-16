@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,59 +44,11 @@ var allowedWSOrigins atomic.Value // holds []string
 var trustedProxies atomic.Value   // holds []netip.Prefix
 
 func init() {
-	allowedWSOrigins.Store(loadAllowedOrigins())
-	trustedProxies.Store(loadTrustedProxies())
-}
-
-func loadAllowedOrigins() []string {
-	raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
-	}
-	if raw == "" {
-		return []string{
-			"http://localhost:3000",
-			"http://localhost:5173",
-			"http://localhost:5174",
-		}
-	}
-
-	parts := strings.Split(raw, ",")
-	origins := make([]string, 0, len(parts))
-	for _, part := range parts {
-		origin := strings.TrimSpace(part)
-		if origin != "" {
-			origins = append(origins, origin)
-		}
-	}
-	return origins
-}
-
-// loadTrustedProxies reads the same MULTICA_TRUSTED_PROXIES env var the rest of
-// the server uses (see cmd/server/router.go and handler.Config.TrustedProxies),
-// parsing it as a comma-separated list of CIDR prefixes. Invalid entries are
-// dropped with a warn-line rather than crashing. Empty input returns nil, which
-// means "trust no proxy" — X-Forwarded-Host is then never honored. The router
-// overrides this at startup via SetTrustedProxies so both share one config.
-func loadTrustedProxies() []netip.Prefix {
-	raw := strings.TrimSpace(os.Getenv("MULTICA_TRUSTED_PROXIES"))
-	if raw == "" {
-		return nil
-	}
-	var prefixes []netip.Prefix
-	for _, part := range strings.Split(raw, ",") {
-		s := strings.TrimSpace(part)
-		if s == "" {
-			continue
-		}
-		p, err := netip.ParsePrefix(s)
-		if err != nil {
-			slog.Warn("ws: ignoring invalid trusted proxy CIDR", "value", s, "error", err)
-			continue
-		}
-		prefixes = append(prefixes, p)
-	}
-	return prefixes
+	// The server router computes both values once and injects them before it
+	// exposes the WebSocket route. Empty snapshots keep package initialization
+	// fail-closed without duplicating environment parsing here.
+	allowedWSOrigins.Store([]string{})
+	trustedProxies.Store([]netip.Prefix{})
 }
 
 // SetAllowedOrigins overrides the WebSocket origin whitelist.

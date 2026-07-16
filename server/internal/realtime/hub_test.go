@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -365,17 +364,6 @@ func TestWriteWSAuthFrameLogsWriteErrors(t *testing.T) {
 	}
 	if !strings.Contains(logs, testWorkspaceID) {
 		t.Fatalf("expected workspace id in log, got:\n%s", logs)
-	}
-}
-
-func TestLoadAllowedOriginsUsesCanonicalCORSConfig(t *testing.T) {
-	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.test, https://admin.example.test")
-	t.Setenv("FRONTEND_ORIGIN", "https://fallback.example.test")
-
-	got := loadAllowedOrigins()
-	want := []string{"https://app.example.test", "https://admin.example.test"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("loadAllowedOrigins() = %#v, want %#v", got, want)
 	}
 }
 
