@@ -9,9 +9,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
-	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -161,38 +159,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
-		resp := issueToResponse(issue, prefix)
 		actorType, actorID := resolveActor(r, userID)
-
-		delta := prepared.delta(prevIssue, issue, resp, req.Updates)
-		skipBacklogEnqueue := delta.statusChanged && !delta.assigneeChanged && prevIssue.Status == "backlog" &&
-			h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
-		taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, delta.assigneeChanged, delta.statusChanged, delta.projectChanged, skipBacklogEnqueue, actorType, actorID)
-		if err != nil {
+		projection, failure := h.projectIssueUpdateInTx(r.Context(), r, qtx, prevIssue, issue, prepared, req.Updates, actorType, actorID)
+		if failure != nil {
 			_ = tx.Rollback(r.Context())
-			slog.Warn("batch project issue update tasks failed", "issue_id", issueID, "error", err)
-			recordFailure(issueID, "task_projection_failed")
-			continue
-		}
-		approvalProjection := service.IssueApprovalProjection{}
-		if delta.statusChanged || delta.projectChanged {
-			approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, parseUUID(actorID))
-			if err != nil {
-				_ = tx.Rollback(r.Context())
-				slog.Warn("batch project owner approval projection failed", "issue_id", issueID, "error", err)
-				recordFailure(issueID, "approval_projection_failed")
-				continue
-			}
-		}
-		issue = approvalProjection.CurrentIssue(issue)
-		resp = issueToResponse(issue, prefix)
-		updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, delta.changes)
-		updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
-		if err != nil {
-			_ = tx.Rollback(r.Context())
-			slog.Warn("batch enqueue issue update event failed", "issue_id", issueID, "error", err)
-			recordFailure(issueID, "event_failed")
+			slog.Warn("batch project issue update failed", "stage", failure.code, "issue_id", issueID, "error", failure.cause)
+			recordFailure(issueID, failure.code)
 			continue
 		}
 		if err := tx.Commit(r.Context()); err != nil {
@@ -200,12 +172,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			recordFailure(issueID, "transaction_failed")
 			continue
 		}
-		h.publishEvent(updatedEvent)
-		h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
-		h.IssueService.PublishIssueApprovalProjection(r.Context(), approvalProjection, actorType, actorID)
-		if delta.statusChanged {
-			h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
-		}
+		h.publishIssueUpdateProjection(r.Context(), projection, prevIssue, actorType, actorID)
 
 		updated++
 	}

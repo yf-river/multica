@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -1206,33 +1205,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
-	resp := issueToResponse(issue, prefix)
-	delta := prepared.delta(prevIssue, issue, resp, req)
-	skipBacklogEnqueue := delta.statusChanged && !delta.assigneeChanged && prevIssue.Status == "backlog" &&
-		h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
-	taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, delta.assigneeChanged, delta.statusChanged, delta.projectChanged, skipBacklogEnqueue, actorType, actorID)
-	if err != nil {
-		slog.Warn("project issue update tasks failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
-		writeError(w, http.StatusInternalServerError, "failed to reconcile issue tasks")
-		return
-	}
-	approvalProjection := service.IssueApprovalProjection{}
-	if delta.statusChanged || delta.projectChanged {
-		approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, parseUUID(actorID))
-		if err != nil {
-			slog.Warn("project owner approval projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
-			writeError(w, http.StatusInternalServerError, "failed to reconcile project owner approval")
-			return
-		}
-	}
-	issue = approvalProjection.CurrentIssue(issue)
-	resp = issueToResponse(issue, prefix)
-	updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, delta.changes)
-	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
-	if err != nil {
-		slog.Warn("enqueue issue update event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
-		writeError(w, http.StatusInternalServerError, "failed to update issue")
+	projection, failure := h.projectIssueUpdateInTx(r.Context(), r, qtx, prevIssue, issue, prepared, req, actorType, actorID)
+	if failure != nil {
+		slog.Warn("project issue update failed", append(logger.RequestAttrs(r), "stage", failure.code, "error", failure.cause, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, failure.message)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -1242,17 +1218,11 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(metadataChanges) > 0 {
-		h.publishIssueMetadataChanged(workspaceID, actorType, actorID, issue)
+		h.publishIssueMetadataChanged(workspaceID, actorType, actorID, projection.issue)
 	}
-	h.publishEvent(updatedEvent)
+	h.publishIssueUpdateProjection(r.Context(), projection, prevIssue, actorType, actorID)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
-
-	h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
-	h.IssueService.PublishIssueApprovalProjection(r.Context(), approvalProjection, actorType, actorID)
-	if delta.statusChanged {
-		h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, projection.response)
 }
 
 func optionalStringChanged(before, after *string) bool {
