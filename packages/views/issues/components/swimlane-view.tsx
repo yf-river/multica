@@ -26,8 +26,7 @@ import type {
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { filterIssues, type IssueFilters } from "../utils/filter";
 import type { SwimlaneGrouping } from "@multica/core/issues/stores/view-store";
-import { useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/paths";
+import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useLoadMoreByStatus } from "@multica/core/issues/mutations";
@@ -65,6 +64,7 @@ import {
   findCellIn,
   laneIdFor,
   makeSwimLaneCollision,
+  moveIssueBetweenCells,
   parseLaneId,
 } from "./swimlane-dnd";
 
@@ -133,6 +133,22 @@ const EMPTY_PROJECTS: Project[] = [];
 // `cells` memos from busting on every render when there are no headers.
 const EMPTY_HEADER_IDS = new Set<string>();
 
+function orderLanes(
+  lanes: Iterable<LaneGroup>,
+  storedOrder: string[],
+  fallback: (a: LaneGroup, b: LaneGroup) => number = () => 0,
+) {
+  const orderIndex = new Map(storedOrder.map((id, index) => [id, index]));
+  return Array.from(lanes).sort((a, b) => {
+    const ai = orderIndex.get(a.rawId);
+    const bi = orderIndex.get(b.rawId);
+    if (ai !== undefined && bi !== undefined) return ai - bi;
+    if (ai !== undefined) return -1;
+    if (bi !== undefined) return 1;
+    return fallback(a, b);
+  });
+}
+
 /**
  * Build parent-grouping lanes. The "No parent" lane is always pinned at the
  * top; the "Other parents" fallback (children whose parent isn't loaded) is
@@ -175,16 +191,7 @@ function buildParentLanes(
     }
   }
 
-  const orderIndex = new Map<string, number>();
-  storedOrder.forEach((parentId, idx) => orderIndex.set(`parent:${parentId}`, idx));
-  const ordered = Array.from(seen.values()).sort((a, b) => {
-    const ai = orderIndex.get(a.key);
-    const bi = orderIndex.get(b.key);
-    if (ai !== undefined && bi !== undefined) return ai - bi;
-    if (ai !== undefined) return -1;
-    if (bi !== undefined) return 1;
-    return 0;
-  });
+  const ordered = orderLanes(seen.values(), storedOrder);
 
   const lanes: LaneGroup[] = [
     {
@@ -253,16 +260,11 @@ function buildProjectLanes(
     });
   }
 
-  const orderIndex = new Map<string, number>();
-  storedOrder.forEach((id, idx) => orderIndex.set(`project:${id}`, idx));
-  const ordered = Array.from(seen.values()).sort((a, b) => {
-    const ai = orderIndex.get(a.key);
-    const bi = orderIndex.get(b.key);
-    if (ai !== undefined && bi !== undefined) return ai - bi;
-    if (ai !== undefined) return -1;
-    if (bi !== undefined) return 1;
-    return a.title.localeCompare(b.title);
-  });
+  const ordered = orderLanes(
+    seen.values(),
+    storedOrder,
+    (a, b) => a.title.localeCompare(b.title),
+  );
 
   return [
     {
@@ -317,18 +319,10 @@ function buildAssigneeLanes(
 
   // Sort by actor type (members before agents before squads) then by name.
   const typeOrder: Record<string, number> = { member: 0, agent: 1, squad: 2 };
-  const orderIndex = new Map<string, number>();
-  storedOrder.forEach((id, idx) => orderIndex.set(`assignee:${id}`, idx));
-  const ordered = Array.from(seen.values()).sort((a, b) => {
-    const ai = orderIndex.get(a.key);
-    const bi = orderIndex.get(b.key);
-    if (ai !== undefined && bi !== undefined) return ai - bi;
-    if (ai !== undefined) return -1;
-    if (bi !== undefined) return 1;
+  const ordered = orderLanes(seen.values(), storedOrder, (a, b) => {
     const at = typeOrder[a.actor?.type ?? ""] ?? 99;
     const bt = typeOrder[b.actor?.type ?? ""] ?? 99;
-    if (at !== bt) return at - bt;
-    return a.title.localeCompare(b.title);
+    return at - bt || a.title.localeCompare(b.title);
   });
 
   return [
@@ -785,48 +779,7 @@ export function SwimLaneView({
 
         recentlyMovedRef.current = true;
 
-        if (activeCell.laneKey === overCell.laneKey) {
-          // Same lane row, different status column
-          const row = prev[activeCell.laneKey] ?? {};
-          const sourceIds = (row[activeCell.status] ?? []).filter((id) => id !== activeId);
-          const targetIds = (row[overCell.status] ?? []).filter((id) => id !== activeId);
-
-          const overIndex = targetIds.indexOf(overId);
-          const insertIndex = overIndex >= 0 ? overIndex : targetIds.length;
-          targetIds.splice(insertIndex, 0, activeId);
-
-          return {
-            ...prev,
-            [activeCell.laneKey]: {
-              ...row,
-              [activeCell.status]: sourceIds,
-              [overCell.status]: targetIds,
-            },
-          };
-        }
-
-        // Different lane rows
-        const sourceRow = prev[activeCell.laneKey] ?? {};
-        const targetRow = prev[overCell.laneKey] ?? {};
-
-        const sourceIds = (sourceRow[activeCell.status] ?? []).filter((id) => id !== activeId);
-        const targetIds = (targetRow[overCell.status] ?? []).filter((id) => id !== activeId);
-
-        const overIndex = targetIds.indexOf(overId);
-        const insertIndex = overIndex >= 0 ? overIndex : targetIds.length;
-        targetIds.splice(insertIndex, 0, activeId);
-
-        return {
-          ...prev,
-          [activeCell.laneKey]: {
-            ...sourceRow,
-            [activeCell.status]: sourceIds,
-          },
-          [overCell.laneKey]: {
-            ...targetRow,
-            [overCell.status]: targetIds,
-          },
-        };
+        return moveIssueBetweenCells(prev, activeCell, overCell, activeId, overId);
       });
     },
     [cellSet, laneByKey],

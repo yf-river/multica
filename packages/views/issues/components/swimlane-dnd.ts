@@ -11,6 +11,9 @@ export const ORPHAN_LANE_ID = "__orphans__";
 
 const LANE_ID_PREFIX = "lane:";
 
+export type SwimLaneCells = Record<string, Record<string, string[]>>;
+export type SwimLaneCellRef = { laneKey: string; status: string };
+
 export function makeSwimLaneCollision(cellIds: Set<string>): CollisionDetection {
   return (args) => {
     const activeId = args.active.id as string;
@@ -49,10 +52,10 @@ function parseCellId(id: string): { laneKey: string; status: string } | null {
 }
 
 export function findCellIn(
-  data: Record<string, Record<string, string[]>>,
+  data: SwimLaneCells,
   cellIds: Set<string>,
   id: string,
-): { laneKey: string; status: string } | null {
+): SwimLaneCellRef | null {
   if (cellIds.has(id)) return parseCellId(id);
   for (const [laneKey, statusMap] of Object.entries(data)) {
     for (const [status, ids] of Object.entries(statusMap)) {
@@ -60,6 +63,39 @@ export function findCellIn(
     }
   }
   return null;
+}
+
+export function moveIssueBetweenCells(
+  data: SwimLaneCells,
+  source: SwimLaneCellRef,
+  target: SwimLaneCellRef,
+  issueId: string,
+  overId: string,
+): SwimLaneCells {
+  const sourceRow = data[source.laneKey] ?? {};
+  const targetRow = source.laneKey === target.laneKey
+    ? sourceRow
+    : data[target.laneKey] ?? {};
+  const sourceIds = (sourceRow[source.status] ?? []).filter((id) => id !== issueId);
+  const targetIds = (targetRow[target.status] ?? []).filter((id) => id !== issueId);
+  const overIndex = targetIds.indexOf(overId);
+  targetIds.splice(overIndex >= 0 ? overIndex : targetIds.length, 0, issueId);
+
+  if (source.laneKey === target.laneKey) {
+    return {
+      ...data,
+      [source.laneKey]: {
+        ...sourceRow,
+        [source.status]: sourceIds,
+        [target.status]: targetIds,
+      },
+    };
+  }
+  return {
+    ...data,
+    [source.laneKey]: { ...sourceRow, [source.status]: sourceIds },
+    [target.laneKey]: { ...targetRow, [target.status]: targetIds },
+  };
 }
 
 export function cellId(laneKey: string, status: IssueStatus): string {
