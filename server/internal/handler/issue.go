@@ -901,6 +901,165 @@ type UpdateIssueRequest struct {
 	AttachmentIDs []string `json:"attachment_ids"`
 }
 
+type preparedIssueUpdate struct {
+	params          db.UpdateIssueParams
+	touchedAssignee bool
+	touchedProject  bool
+	touchedStart    bool
+	touchedDue      bool
+}
+
+type issueUpdateInputError struct {
+	failureCode   string
+	httpStatus    int
+	httpMessage   string
+	assigneeCause error
+}
+
+func (h *Handler) prepareIssueUpdate(ctx context.Context, r *http.Request, previous db.Issue, req UpdateIssueRequest, rawFields map[string]json.RawMessage) (preparedIssueUpdate, *issueUpdateInputError) {
+	prepared := preparedIssueUpdate{
+		params: db.UpdateIssueParams{
+			ID:            previous.ID,
+			AssigneeType:  previous.AssigneeType,
+			AssigneeID:    previous.AssigneeID,
+			StartDate:     previous.StartDate,
+			DueDate:       previous.DueDate,
+			ParentIssueID: previous.ParentIssueID,
+			ProjectID:     previous.ProjectID,
+		},
+	}
+	if req.Title != nil {
+		prepared.params.Title = pgtype.Text{String: *req.Title, Valid: true}
+	}
+	if req.Description != nil {
+		prepared.params.Description = pgtype.Text{String: *req.Description, Valid: true}
+	}
+	if req.Status != nil {
+		prepared.params.Status = pgtype.Text{String: *req.Status, Valid: true}
+	}
+	if req.Priority != nil {
+		prepared.params.Priority = pgtype.Text{String: *req.Priority, Valid: true}
+	}
+	if req.Position != nil {
+		prepared.params.Position = pgtype.Float8{Float64: *req.Position, Valid: true}
+	}
+
+	_, touchedType := rawFields["assignee_type"]
+	_, touchedID := rawFields["assignee_id"]
+	prepared.touchedAssignee = touchedType || touchedID
+	if touchedType {
+		prepared.params.AssigneeType = pgtype.Text{Valid: false}
+		if req.AssigneeType != nil {
+			prepared.params.AssigneeType = pgtype.Text{String: *req.AssigneeType, Valid: true}
+		}
+	}
+	if touchedID {
+		prepared.params.AssigneeID = pgtype.UUID{Valid: false}
+		if req.AssigneeID != nil {
+			id, err := util.ParseUUID(*req.AssigneeID)
+			if err != nil {
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_assignee", httpStatus: http.StatusBadRequest, httpMessage: "invalid assignee_id"}
+			}
+			prepared.params.AssigneeID = id
+		}
+	}
+
+	_, prepared.touchedStart = rawFields["start_date"]
+	if prepared.touchedStart {
+		prepared.params.StartDate = pgtype.Date{Valid: false}
+		if req.StartDate != nil && *req.StartDate != "" {
+			date, err := util.ParseCalendarDate(*req.StartDate)
+			if err != nil {
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_start_date", httpStatus: http.StatusBadRequest, httpMessage: "invalid start_date format, expected YYYY-MM-DD"}
+			}
+			prepared.params.StartDate = date
+		}
+	}
+	_, prepared.touchedDue = rawFields["due_date"]
+	if prepared.touchedDue {
+		prepared.params.DueDate = pgtype.Date{Valid: false}
+		if req.DueDate != nil && *req.DueDate != "" {
+			date, err := util.ParseCalendarDate(*req.DueDate)
+			if err != nil {
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_due_date", httpStatus: http.StatusBadRequest, httpMessage: "invalid due_date format, expected YYYY-MM-DD"}
+			}
+			prepared.params.DueDate = date
+		}
+	}
+
+	_, touchedParent := rawFields["parent_issue_id"]
+	if touchedParent {
+		prepared.params.ParentIssueID = pgtype.UUID{Valid: false}
+		if req.ParentIssueID != nil {
+			parentID, err := util.ParseUUID(*req.ParentIssueID)
+			if err != nil {
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_parent", httpStatus: http.StatusBadRequest, httpMessage: "invalid parent_issue_id"}
+			}
+			if err := h.validateIssueParentInWorkspace(ctx, previous, parentID); err != nil {
+				message := "circular parent relationship detected"
+				if errors.Is(err, errIssueParentNotFound) {
+					message = "parent issue not found in this workspace"
+				}
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_parent", httpStatus: http.StatusBadRequest, httpMessage: message}
+			}
+			prepared.params.ParentIssueID = parentID
+		}
+	}
+
+	_, prepared.touchedProject = rawFields["project_id"]
+	if prepared.touchedProject {
+		prepared.params.ProjectID = pgtype.UUID{Valid: false}
+		if req.ProjectID != nil {
+			projectID, err := util.ParseUUID(*req.ProjectID)
+			if err != nil {
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_project", httpStatus: http.StatusBadRequest, httpMessage: "invalid project_id"}
+			}
+			if err := h.validateProjectInWorkspace(ctx, previous.WorkspaceID, projectID); err != nil {
+				return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_project", httpStatus: http.StatusBadRequest, httpMessage: "project not found in this workspace"}
+			}
+			prepared.params.ProjectID = projectID
+		}
+	}
+
+	if prepared.touchedAssignee {
+		status, message, err := h.validateAssigneePair(ctx, r, uuidToString(previous.WorkspaceID), prepared.params.AssigneeType, prepared.params.AssigneeID)
+		if err != nil {
+			return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_assignee", assigneeCause: err}
+		}
+		if status != 0 {
+			return preparedIssueUpdate{}, &issueUpdateInputError{failureCode: "invalid_assignee", httpStatus: status, httpMessage: message}
+		}
+	}
+	return prepared, nil
+}
+
+type issueUpdateDelta struct {
+	changes         issueUpdateChanges
+	assigneeChanged bool
+	statusChanged   bool
+	projectChanged  bool
+}
+
+func (prepared preparedIssueUpdate) delta(previous, current db.Issue, response IssueResponse, req UpdateIssueRequest) issueUpdateDelta {
+	assigneeChanged := prepared.touchedAssignee &&
+		(previous.AssigneeType.String != current.AssigneeType.String || uuidToString(previous.AssigneeID) != uuidToString(current.AssigneeID))
+	statusChanged := req.Status != nil && previous.Status != current.Status
+	return issueUpdateDelta{
+		assigneeChanged: assigneeChanged,
+		statusChanged:   statusChanged,
+		projectChanged:  prepared.touchedProject && previous.ProjectID != current.ProjectID,
+		changes: issueUpdateChanges{
+			Assignee:    assigneeChanged,
+			Status:      statusChanged,
+			Priority:    req.Priority != nil && previous.Priority != current.Priority,
+			StartDate:   prepared.touchedStart && optionalStringChanged(dateToPtr(previous.StartDate), response.StartDate),
+			DueDate:     prepared.touchedDue && optionalStringChanged(dateToPtr(previous.DueDate), response.DueDate),
+			Description: req.Description != nil && optionalStringChanged(textToPtr(previous.Description), response.Description),
+			Title:       req.Title != nil && previous.Title != current.Title,
+		},
+	}
+}
+
 func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	prevIssue, ok := h.loadIssueForUser(w, r, id)
@@ -930,132 +1089,26 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-fill nullable fields (bare sqlc.narg) with current values
-	params := db.UpdateIssueParams{
-		ID:            prevIssue.ID,
-		AssigneeType:  prevIssue.AssigneeType,
-		AssigneeID:    prevIssue.AssigneeID,
-		StartDate:     prevIssue.StartDate,
-		DueDate:       prevIssue.DueDate,
-		ParentIssueID: prevIssue.ParentIssueID,
-		ProjectID:     prevIssue.ProjectID,
-	}
-
-	// COALESCE fields — only set when explicitly provided
-	if req.Title != nil {
-		params.Title = pgtype.Text{String: *req.Title, Valid: true}
-	}
-	if req.Description != nil {
-		params.Description = pgtype.Text{String: *req.Description, Valid: true}
-	}
 	if req.Status != nil {
 		if !validateIssueEnum(w, "status", *req.Status, validIssueStatuses) {
 			return
 		}
-		params.Status = pgtype.Text{String: *req.Status, Valid: true}
 	}
 	if req.Priority != nil {
 		if !validateIssueEnum(w, "priority", *req.Priority, validIssuePriorities) {
 			return
 		}
-		params.Priority = pgtype.Text{String: *req.Priority, Valid: true}
 	}
-	if req.Position != nil {
-		params.Position = pgtype.Float8{Float64: *req.Position, Valid: true}
-	}
-	// Nullable fields — only override when explicitly present in JSON
-	if _, ok := rawFields["assignee_type"]; ok {
-		if req.AssigneeType != nil {
-			params.AssigneeType = pgtype.Text{String: *req.AssigneeType, Valid: true}
+	prepared, inputErr := h.prepareIssueUpdate(r.Context(), r, prevIssue, req, rawFields)
+	if inputErr != nil {
+		if inputErr.assigneeCause != nil {
+			writeAssigneeValidationError(w, r, inputErr.assigneeCause)
 		} else {
-			params.AssigneeType = pgtype.Text{Valid: false} // explicit null = unassign
+			writeError(w, inputErr.httpStatus, inputErr.httpMessage)
 		}
+		return
 	}
-	if _, ok := rawFields["assignee_id"]; ok {
-		if req.AssigneeID != nil {
-			id, ok := parseUUIDOrBadRequest(w, *req.AssigneeID, "assignee_id")
-			if !ok {
-				return
-			}
-			params.AssigneeID = id
-		} else {
-			params.AssigneeID = pgtype.UUID{Valid: false} // explicit null = unassign
-		}
-	}
-	if _, ok := rawFields["start_date"]; ok {
-		if req.StartDate != nil && *req.StartDate != "" {
-			d, err := util.ParseCalendarDate(*req.StartDate)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid start_date format, expected YYYY-MM-DD")
-				return
-			}
-			params.StartDate = d
-		} else {
-			params.StartDate = pgtype.Date{Valid: false} // explicit null = clear date
-		}
-	}
-	if _, ok := rawFields["due_date"]; ok {
-		if req.DueDate != nil && *req.DueDate != "" {
-			d, err := util.ParseCalendarDate(*req.DueDate)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid due_date format, expected YYYY-MM-DD")
-				return
-			}
-			params.DueDate = d
-		} else {
-			params.DueDate = pgtype.Date{Valid: false} // explicit null = clear date
-		}
-	}
-	if _, ok := rawFields["parent_issue_id"]; ok {
-		if req.ParentIssueID != nil {
-			newParentID, ok := parseUUIDOrBadRequest(w, *req.ParentIssueID, "parent_issue_id")
-			if !ok {
-				return
-			}
-			if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); errors.Is(err, errIssueParentNotFound) {
-				writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
-				return
-			} else if err != nil {
-				writeError(w, http.StatusBadRequest, "circular parent relationship detected")
-				return
-			}
-			params.ParentIssueID = newParentID
-		} else {
-			params.ParentIssueID = pgtype.UUID{Valid: false} // explicit null = remove parent
-		}
-	}
-	if _, ok := rawFields["project_id"]; ok {
-		if req.ProjectID != nil {
-			projectUUID, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
-			if !ok {
-				return
-			}
-			if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
-				writeError(w, http.StatusBadRequest, "project not found in this workspace")
-				return
-			}
-			params.ProjectID = projectUUID
-		} else {
-			params.ProjectID = pgtype.UUID{Valid: false}
-		}
-	}
-
-	// Validate the resulting (assignee_type, assignee_id) pair when the caller
-	// touches either field. Existing data on the issue is left alone if the
-	// caller is not changing it.
-	_, touchedType := rawFields["assignee_type"]
-	_, touchedID := rawFields["assignee_id"]
-	if touchedType || touchedID {
-		status, msg, err := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID)
-		if err != nil {
-			writeAssigneeValidationError(w, r, err)
-			return
-		}
-		if status != 0 {
-			writeError(w, status, msg)
-			return
-		}
-	}
+	params := prepared.params
 
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
@@ -1158,40 +1211,17 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	assigneeChanged := (touchedType || touchedID) &&
-		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
-	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
-	_, touchedProject := rawFields["project_id"]
-	projectChanged := touchedProject && prevIssue.ProjectID != issue.ProjectID
-	priorityChanged := req.Priority != nil && prevIssue.Priority != issue.Priority
-	descriptionChanged := req.Description != nil && optionalStringChanged(textToPtr(prevIssue.Description), resp.Description)
-	titleChanged := req.Title != nil && prevIssue.Title != issue.Title
-	prevStartDate := dateToPtr(prevIssue.StartDate)
-	_, touchedStartDate := rawFields["start_date"]
-	startDateChanged := touchedStartDate && optionalStringChanged(prevStartDate, resp.StartDate)
-	prevDueDate := dateToPtr(prevIssue.DueDate)
-	_, touchedDueDate := rawFields["due_date"]
-	dueDateChanged := touchedDueDate && optionalStringChanged(prevDueDate, resp.DueDate)
-
-	changes := issueUpdateChanges{
-		Assignee:    assigneeChanged,
-		Status:      statusChanged,
-		Priority:    priorityChanged,
-		StartDate:   startDateChanged,
-		DueDate:     dueDateChanged,
-		Description: descriptionChanged,
-		Title:       titleChanged,
-	}
-	skipBacklogEnqueue := statusChanged && !assigneeChanged && prevIssue.Status == "backlog" &&
+	delta := prepared.delta(prevIssue, issue, resp, req)
+	skipBacklogEnqueue := delta.statusChanged && !delta.assigneeChanged && prevIssue.Status == "backlog" &&
 		h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
-	taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, projectChanged, skipBacklogEnqueue, actorType, actorID)
+	taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, delta.assigneeChanged, delta.statusChanged, delta.projectChanged, skipBacklogEnqueue, actorType, actorID)
 	if err != nil {
 		slog.Warn("project issue update tasks failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to reconcile issue tasks")
 		return
 	}
 	approvalProjection := service.IssueApprovalProjection{}
-	if statusChanged || projectChanged {
+	if delta.statusChanged || delta.projectChanged {
 		approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, parseUUID(actorID))
 		if err != nil {
 			slog.Warn("project owner approval projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
@@ -1201,7 +1231,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	issue = approvalProjection.CurrentIssue(issue)
 	resp = issueToResponse(issue, prefix)
-	updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
+	updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, delta.changes)
 	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 	if err != nil {
 		slog.Warn("enqueue issue update event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
@@ -1225,7 +1255,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
 	h.IssueService.PublishIssueApprovalProjection(r.Context(), approvalProjection, actorType, actorID)
-	if statusChanged {
+	if delta.statusChanged {
 		h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
 	}
 	writeJSON(w, http.StatusOK, resp)

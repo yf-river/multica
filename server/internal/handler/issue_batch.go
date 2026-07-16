@@ -9,7 +9,6 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -55,25 +54,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Short-circuit when no mutation field is present in `updates`. Without
-	// this, the loop below runs N no-op UPDATEs (every if-guard skips, every
-	// COALESCE preserves the existing value) and reports `{"updated": N}` —
-	// the response cheerfully claims success while nothing changed. Most
-	// real-world cases that hit this path are caller mistakes (status placed
-	// at the top level, "update" misspelled as singular). Telling the truth
-	// here — `{"updated": 0}` — keeps the wire shape stable while making the
-	// count match reality. See multica-ai/multica#1660.
-	hasMutation := req.Updates.Title != nil ||
-		req.Updates.Description != nil ||
-		req.Updates.Status != nil ||
-		req.Updates.Priority != nil ||
-		req.Updates.Position != nil
-	if !hasMutation {
-		for _, k := range []string{"assignee_type", "assignee_id", "start_date", "due_date", "parent_issue_id", "project_id"} {
-			if _, ok := rawUpdates[k]; ok {
-				hasMutation = true
-				break
-			}
+	hasMutation := req.Updates.Title != nil || req.Updates.Description != nil || req.Updates.Status != nil || req.Updates.Priority != nil || req.Updates.Position != nil
+	for _, field := range []string{"assignee_type", "assignee_id", "start_date", "due_date", "parent_issue_id", "project_id"} {
+		if _, ok := rawUpdates[field]; ok {
+			hasMutation = true
+			break
 		}
 	}
 	if !hasMutation {
@@ -131,123 +116,16 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		params := db.UpdateIssueParams{
-			ID:            prevIssue.ID,
-			AssigneeType:  prevIssue.AssigneeType,
-			AssigneeID:    prevIssue.AssigneeID,
-			StartDate:     prevIssue.StartDate,
-			DueDate:       prevIssue.DueDate,
-			ParentIssueID: prevIssue.ParentIssueID,
-			ProjectID:     prevIssue.ProjectID,
-		}
-
-		if req.Updates.Title != nil {
-			params.Title = pgtype.Text{String: *req.Updates.Title, Valid: true}
-		}
-		if req.Updates.Description != nil {
-			params.Description = pgtype.Text{String: *req.Updates.Description, Valid: true}
-		}
-		if req.Updates.Status != nil {
-			params.Status = pgtype.Text{String: *req.Updates.Status, Valid: true}
-		}
-		if req.Updates.Priority != nil {
-			params.Priority = pgtype.Text{String: *req.Updates.Priority, Valid: true}
-		}
-		if req.Updates.Position != nil {
-			params.Position = pgtype.Float8{Float64: *req.Updates.Position, Valid: true}
-		}
-		if _, ok := rawUpdates["assignee_type"]; ok {
-			if req.Updates.AssigneeType != nil {
-				params.AssigneeType = pgtype.Text{String: *req.Updates.AssigneeType, Valid: true}
-			} else {
-				params.AssigneeType = pgtype.Text{Valid: false}
-			}
-		}
-		if _, ok := rawUpdates["assignee_id"]; ok {
-			if req.Updates.AssigneeID != nil {
-				assigneeUUID, err := util.ParseUUID(*req.Updates.AssigneeID)
-				if err != nil {
-					recordFailure(issueID, "invalid_assignee")
-					continue
-				}
-				params.AssigneeID = assigneeUUID
-			} else {
-				params.AssigneeID = pgtype.UUID{Valid: false}
-			}
-		}
-		if _, ok := rawUpdates["start_date"]; ok {
-			if req.Updates.StartDate != nil && *req.Updates.StartDate != "" {
-				d, err := util.ParseCalendarDate(*req.Updates.StartDate)
-				if err != nil {
-					recordFailure(issueID, "invalid_start_date")
-					continue
-				}
-				params.StartDate = d
-			} else {
-				params.StartDate = pgtype.Date{Valid: false}
-			}
-		}
-		if _, ok := rawUpdates["due_date"]; ok {
-			if req.Updates.DueDate != nil && *req.Updates.DueDate != "" {
-				d, err := util.ParseCalendarDate(*req.Updates.DueDate)
-				if err != nil {
-					recordFailure(issueID, "invalid_due_date")
-					continue
-				}
-				params.DueDate = d
-			} else {
-				params.DueDate = pgtype.Date{Valid: false}
-			}
-		}
-
-		if _, ok := rawUpdates["parent_issue_id"]; ok {
-			if req.Updates.ParentIssueID != nil {
-				newParentID, err := util.ParseUUID(*req.Updates.ParentIssueID)
-				if err != nil {
-					recordFailure(issueID, "invalid_parent")
-					continue
-				}
-				if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); err != nil {
-					recordFailure(issueID, "invalid_parent")
-					continue
-				}
-				params.ParentIssueID = newParentID
-			} else {
-				params.ParentIssueID = pgtype.UUID{Valid: false}
-			}
-		}
-		if _, ok := rawUpdates["project_id"]; ok {
-			if req.Updates.ProjectID != nil {
-				projectUUID, err := util.ParseUUID(*req.Updates.ProjectID)
-				if err != nil {
-					recordFailure(issueID, "invalid_project")
-					continue
-				}
-				if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
-					recordFailure(issueID, "invalid_project")
-					continue
-				}
-				params.ProjectID = projectUUID
-			} else {
-				params.ProjectID = pgtype.UUID{Valid: false}
-			}
-		}
-
-		// Validate the resulting assignee pair when this batch update touches
-		// either assignee field. Skip the issue silently on failure.
-		_, batchTouchedType := rawUpdates["assignee_type"]
-		_, batchTouchedID := rawUpdates["assignee_id"]
-		if batchTouchedType || batchTouchedID {
-			status, _, err := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID)
-			if err != nil {
-				writeAssigneeValidationError(w, r, err)
+		prepared, inputErr := h.prepareIssueUpdate(r.Context(), r, prevIssue, req.Updates, rawUpdates)
+		if inputErr != nil {
+			if inputErr.assigneeCause != nil {
+				writeAssigneeValidationError(w, r, inputErr.assigneeCause)
 				return
 			}
-			if status != 0 {
-				recordFailure(issueID, "invalid_assignee")
-				continue
-			}
+			recordFailure(issueID, inputErr.failureCode)
+			continue
 		}
+		params := prepared.params
 
 		if params.Status.Valid && params.Status.String == "done" {
 			incomplete, err := h.incompleteChildrenBlockingDone(r.Context(), prevIssue)
@@ -287,26 +165,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		resp := issueToResponse(issue, prefix)
 		actorType, actorID := resolveActor(r, userID)
 
-		assigneeChanged := (batchTouchedType || batchTouchedID) &&
-			(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
-		statusChanged := req.Updates.Status != nil && prevIssue.Status != issue.Status
-		_, batchTouchedProject := rawUpdates["project_id"]
-		projectChanged := batchTouchedProject && prevIssue.ProjectID != issue.ProjectID
-		priorityChanged := req.Updates.Priority != nil && prevIssue.Priority != issue.Priority
-		_, touchedStartDate := rawUpdates["start_date"]
-		_, touchedDueDate := rawUpdates["due_date"]
-		changes := issueUpdateChanges{
-			Assignee:    assigneeChanged,
-			Status:      statusChanged,
-			Priority:    priorityChanged,
-			StartDate:   touchedStartDate && optionalStringChanged(dateToPtr(prevIssue.StartDate), resp.StartDate),
-			DueDate:     touchedDueDate && optionalStringChanged(dateToPtr(prevIssue.DueDate), resp.DueDate),
-			Description: req.Updates.Description != nil && optionalStringChanged(textToPtr(prevIssue.Description), resp.Description),
-			Title:       req.Updates.Title != nil && prevIssue.Title != issue.Title,
-		}
-		skipBacklogEnqueue := statusChanged && !assigneeChanged && prevIssue.Status == "backlog" &&
+		delta := prepared.delta(prevIssue, issue, resp, req.Updates)
+		skipBacklogEnqueue := delta.statusChanged && !delta.assigneeChanged && prevIssue.Status == "backlog" &&
 			h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
-		taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, projectChanged, skipBacklogEnqueue, actorType, actorID)
+		taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, delta.assigneeChanged, delta.statusChanged, delta.projectChanged, skipBacklogEnqueue, actorType, actorID)
 		if err != nil {
 			_ = tx.Rollback(r.Context())
 			slog.Warn("batch project issue update tasks failed", "issue_id", issueID, "error", err)
@@ -314,7 +176,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		approvalProjection := service.IssueApprovalProjection{}
-		if statusChanged || projectChanged {
+		if delta.statusChanged || delta.projectChanged {
 			approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, parseUUID(actorID))
 			if err != nil {
 				_ = tx.Rollback(r.Context())
@@ -325,7 +187,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		issue = approvalProjection.CurrentIssue(issue)
 		resp = issueToResponse(issue, prefix)
-		updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
+		updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, delta.changes)
 		updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 		if err != nil {
 			_ = tx.Rollback(r.Context())
@@ -341,7 +203,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		h.publishEvent(updatedEvent)
 		h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
 		h.IssueService.PublishIssueApprovalProjection(r.Context(), approvalProjection, actorType, actorID)
-		if statusChanged {
+		if delta.statusChanged {
 			h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
 		}
 

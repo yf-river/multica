@@ -181,6 +181,49 @@ func TestBatchUpdateReportsEverySkippedItem(t *testing.T) {
 	}
 }
 
+func TestBatchUpdateReportsInvalidFieldCodes(t *testing.T) {
+	issueID := createTestIssue(t, "BU-invalid-fields", "todo", "low")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+
+	cases := []struct {
+		name    string
+		updates map[string]any
+		code    string
+	}{
+		{name: "assignee", updates: map[string]any{"assignee_id": "invalid"}, code: "invalid_assignee"},
+		{name: "start date", updates: map[string]any{"start_date": "2026-13-01"}, code: "invalid_start_date"},
+		{name: "due date", updates: map[string]any{"due_date": "not-a-date"}, code: "invalid_due_date"},
+		{name: "parent", updates: map[string]any{"parent_issue_id": "invalid"}, code: "invalid_parent"},
+		{name: "project", updates: map[string]any{"project_id": "invalid"}, code: "invalid_project"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest(http.MethodPost, "/api/issues/batch-update", map[string]any{
+				"issue_ids": []string{issueID},
+				"updates":   tc.updates,
+			})
+			testHandler.BatchUpdateIssues(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200 batch envelope, got %d: %s", w.Code, w.Body.String())
+			}
+			var response struct {
+				Updated int `json:"updated"`
+				Failed  []struct {
+					IssueID string `json:"issue_id"`
+					Code    string `json:"code"`
+				} `json:"failed"`
+			}
+			if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+				t.Fatalf("decode batch response: %v", err)
+			}
+			if response.Updated != 0 || len(response.Failed) != 1 || response.Failed[0].IssueID != issueID || response.Failed[0].Code != tc.code {
+				t.Fatalf("response = %#v, want one %s failure", response, tc.code)
+			}
+		})
+	}
+}
+
 // createTestIssue is a small helper to keep the table-driven cases clean.
 // Returns the new issue's id; caller is responsible for cleanup.
 func createTestIssue(t *testing.T, title, status, priority string) string {
