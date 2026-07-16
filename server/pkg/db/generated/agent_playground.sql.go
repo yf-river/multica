@@ -396,19 +396,9 @@ type ListAgentPlaygroundExperimentsParams struct {
 }
 
 type ListAgentPlaygroundExperimentsRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description"`
-	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
-	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
-	JudgeAgentID     pgtype.UUID        `json:"judge_agent_id"`
-	Status           string             `json:"status"`
-	CreatedBy        pgtype.UUID        `json:"created_by"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	InputCount       int32              `json:"input_count"`
-	AgentCount       int32              `json:"agent_count"`
+	AgentPlaygroundExperiment AgentPlaygroundExperiment `json:"agent_playground_experiment"`
+	InputCount                int32                     `json:"input_count"`
+	AgentCount                int32                     `json:"agent_count"`
 }
 
 func (q *Queries) ListAgentPlaygroundExperiments(ctx context.Context, arg ListAgentPlaygroundExperimentsParams) ([]ListAgentPlaygroundExperimentsRow, error) {
@@ -421,17 +411,17 @@ func (q *Queries) ListAgentPlaygroundExperiments(ctx context.Context, arg ListAg
 	for rows.Next() {
 		var i ListAgentPlaygroundExperimentsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.DatasetAssetID,
-			&i.DatasetVersionID,
-			&i.JudgeAgentID,
-			&i.Status,
-			&i.CreatedBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.AgentPlaygroundExperiment.ID,
+			&i.AgentPlaygroundExperiment.WorkspaceID,
+			&i.AgentPlaygroundExperiment.Name,
+			&i.AgentPlaygroundExperiment.Description,
+			&i.AgentPlaygroundExperiment.DatasetAssetID,
+			&i.AgentPlaygroundExperiment.DatasetVersionID,
+			&i.AgentPlaygroundExperiment.JudgeAgentID,
+			&i.AgentPlaygroundExperiment.Status,
+			&i.AgentPlaygroundExperiment.CreatedBy,
+			&i.AgentPlaygroundExperiment.CreatedAt,
+			&i.AgentPlaygroundExperiment.UpdatedAt,
 			&i.InputCount,
 			&i.AgentCount,
 		); err != nil {

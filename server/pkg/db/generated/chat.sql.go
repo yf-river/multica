@@ -465,18 +465,8 @@ type ListChatSessionsByCreatorParams struct {
 }
 
 type ListChatSessionsByCreatorRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	CreatorID   pgtype.UUID        `json:"creator_id"`
-	Title       string             `json:"title"`
-	SessionID   pgtype.Text        `json:"session_id"`
-	WorkDir     pgtype.Text        `json:"work_dir"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	UnreadSince pgtype.Timestamptz `json:"unread_since"`
-	RuntimeID   pgtype.UUID        `json:"runtime_id"`
-	HasUnread   bool               `json:"has_unread"`
+	ChatSession ChatSession `json:"chat_session"`
+	HasUnread   bool        `json:"has_unread"`
 }
 
 // Returns sessions with a boolean unread flag. Unread is strictly
@@ -492,17 +482,17 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 	for rows.Next() {
 		var i ListChatSessionsByCreatorRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.AgentID,
-			&i.CreatorID,
-			&i.Title,
-			&i.SessionID,
-			&i.WorkDir,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.UnreadSince,
-			&i.RuntimeID,
+			&i.ChatSession.ID,
+			&i.ChatSession.WorkspaceID,
+			&i.ChatSession.AgentID,
+			&i.ChatSession.CreatorID,
+			&i.ChatSession.Title,
+			&i.ChatSession.SessionID,
+			&i.ChatSession.WorkDir,
+			&i.ChatSession.CreatedAt,
+			&i.ChatSession.UpdatedAt,
+			&i.ChatSession.UnreadSince,
+			&i.ChatSession.RuntimeID,
 			&i.HasUnread,
 		); err != nil {
 			return nil, err

@@ -1,5 +1,5 @@
 -- name: ListInboxItems :many
-SELECT i.*,
+SELECT sqlc.embed(i),
        iss.status as issue_status
 FROM inbox_item i
 LEFT JOIN issue iss ON iss.id = i.issue_id

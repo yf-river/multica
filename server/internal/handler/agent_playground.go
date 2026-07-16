@@ -125,7 +125,8 @@ func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.
 	}
 	resp := make([]agentPlaygroundExperimentResponse, 0, len(rows))
 	for _, row := range rows {
-		allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), row.ID, row.WorkspaceID, row.JudgeAgentID, allowedAgentIDs)
+		experiment := row.AgentPlaygroundExperiment
+		allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), experiment.ID, experiment.WorkspaceID, experiment.JudgeAgentID, allowedAgentIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to filter agent playground experiments")
 			return
@@ -1009,21 +1010,7 @@ func latestAssistantMessage(ctx context.Context, queries *db.Queries, chatSessio
 }
 
 func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperimentsRow) agentPlaygroundExperimentResponse {
-	return agentPlaygroundExperimentResponse{
-		ID:               uuidToString(row.ID),
-		WorkspaceID:      uuidToString(row.WorkspaceID),
-		Name:             row.Name,
-		Description:      row.Description,
-		DatasetAssetID:   uuidToPtr(row.DatasetAssetID),
-		DatasetVersionID: uuidToPtr(row.DatasetVersionID),
-		JudgeAgentID:     uuidToPtr(row.JudgeAgentID),
-		Status:           row.Status,
-		CreatedBy:        uuidToPtr(row.CreatedBy),
-		CreatedAt:        timestampToString(row.CreatedAt),
-		UpdatedAt:        timestampToString(row.UpdatedAt),
-		InputCount:       row.InputCount,
-		AgentCount:       row.AgentCount,
-	}
+	return agentPlaygroundExperimentToResponse(row.AgentPlaygroundExperiment, row.InputCount, row.AgentCount)
 }
 
 func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment, inputCount, agentCount int32) agentPlaygroundExperimentResponse {

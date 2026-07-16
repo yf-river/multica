@@ -23,7 +23,7 @@ INSERT INTO agent_playground_experiment (
 RETURNING *;
 
 -- name: ListAgentPlaygroundExperiments :many
-SELECT e.*,
+SELECT sqlc.embed(e),
        COALESCE((SELECT COUNT(*) FROM agent_playground_input i WHERE i.experiment_id = e.id), 0)::int AS input_count,
        COALESCE((SELECT COUNT(*) FROM agent_playground_agent a WHERE a.experiment_id = e.id), 0)::int AS agent_count
 FROM agent_playground_experiment e

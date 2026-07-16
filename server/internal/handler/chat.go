@@ -189,19 +189,12 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]chatSessionResponse, 0, len(rows))
 	for _, s := range rows {
-		if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
+		if _, ok := allowed[uuidToString(s.ChatSession.AgentID)]; !ok {
 			continue
 		}
-		resp = append(resp, chatSessionResponse{
-			ID:          uuidToString(s.ID),
-			WorkspaceID: uuidToString(s.WorkspaceID),
-			AgentID:     uuidToString(s.AgentID),
-			CreatorID:   uuidToString(s.CreatorID),
-			Title:       s.Title,
-			HasUnread:   s.HasUnread,
-			CreatedAt:   timestampToString(s.CreatedAt),
-			UpdatedAt:   timestampToString(s.UpdatedAt),
-		})
+		item := chatSessionToResponse(s.ChatSession)
+		item.HasUnread = s.HasUnread
+		resp = append(resp, item)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -886,7 +879,7 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionAgent := make(map[string]string, len(sessions))
 	for _, s := range sessions {
-		sessionAgent[uuidToString(s.ID)] = uuidToString(s.AgentID)
+		sessionAgent[uuidToString(s.ChatSession.ID)] = uuidToString(s.ChatSession.AgentID)
 	}
 
 	items := make([]PendingChatTaskItem, 0, len(rows))

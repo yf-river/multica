@@ -282,22 +282,8 @@ type ListInboxItemsParams struct {
 }
 
 type ListInboxItemsRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	RecipientType string             `json:"recipient_type"`
-	RecipientID   pgtype.UUID        `json:"recipient_id"`
-	Type          string             `json:"type"`
-	Severity      string             `json:"severity"`
-	IssueID       pgtype.UUID        `json:"issue_id"`
-	Title         string             `json:"title"`
-	Body          pgtype.Text        `json:"body"`
-	Read          bool               `json:"read"`
-	Archived      bool               `json:"archived"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	ActorType     pgtype.Text        `json:"actor_type"`
-	ActorID       pgtype.UUID        `json:"actor_id"`
-	Details       []byte             `json:"details"`
-	IssueStatus   pgtype.Text        `json:"issue_status"`
+	InboxItem   InboxItem   `json:"inbox_item"`
+	IssueStatus pgtype.Text `json:"issue_status"`
 }
 
 func (q *Queries) ListInboxItems(ctx context.Context, arg ListInboxItemsParams) ([]ListInboxItemsRow, error) {
@@ -310,21 +296,21 @@ func (q *Queries) ListInboxItems(ctx context.Context, arg ListInboxItemsParams) 
 	for rows.Next() {
 		var i ListInboxItemsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.RecipientType,
-			&i.RecipientID,
-			&i.Type,
-			&i.Severity,
-			&i.IssueID,
-			&i.Title,
-			&i.Body,
-			&i.Read,
-			&i.Archived,
-			&i.CreatedAt,
-			&i.ActorType,
-			&i.ActorID,
-			&i.Details,
+			&i.InboxItem.ID,
+			&i.InboxItem.WorkspaceID,
+			&i.InboxItem.RecipientType,
+			&i.InboxItem.RecipientID,
+			&i.InboxItem.Type,
+			&i.InboxItem.Severity,
+			&i.InboxItem.IssueID,
+			&i.InboxItem.Title,
+			&i.InboxItem.Body,
+			&i.InboxItem.Read,
+			&i.InboxItem.Archived,
+			&i.InboxItem.CreatedAt,
+			&i.InboxItem.ActorType,
+			&i.InboxItem.ActorID,
+			&i.InboxItem.Details,
 			&i.IssueStatus,
 		); err != nil {
 			return nil, err

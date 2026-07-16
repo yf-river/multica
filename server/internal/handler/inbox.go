@@ -55,24 +55,9 @@ func inboxToResponse(i db.InboxItem) InboxItemResponse {
 }
 
 func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
-	return InboxItemResponse{
-		ID:            uuidToString(r.ID),
-		WorkspaceID:   uuidToString(r.WorkspaceID),
-		RecipientType: r.RecipientType,
-		RecipientID:   uuidToString(r.RecipientID),
-		Type:          r.Type,
-		Severity:      r.Severity,
-		IssueID:       uuidToPtr(r.IssueID),
-		Title:         r.Title,
-		Body:          textToPtr(r.Body),
-		Read:          r.Read,
-		Archived:      r.Archived,
-		CreatedAt:     timestampToString(r.CreatedAt),
-		IssueStatus:   textToPtr(r.IssueStatus),
-		ActorType:     textToPtr(r.ActorType),
-		ActorID:       uuidToPtr(r.ActorID),
-		Details:       json.RawMessage(r.Details),
-	}
+	resp := inboxToResponse(r.InboxItem)
+	resp.IssueStatus = textToPtr(r.IssueStatus)
+	return resp
 }
 
 func enrichInboxResponse(ctx context.Context, queries *db.Queries, resp InboxItemResponse, issueID pgtype.UUID) (InboxItemResponse, error) {
