@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -101,7 +102,7 @@ type mockStorageNoCdn struct{ mockStorage }
 
 func (m *mockStorageNoCdn) CdnDomain() string { return "" }
 
-func newIdempotentUploadRequest(t *testing.T, key, filename string, data []byte) *http.Request {
+func newUploadRequest(t *testing.T, filename string, data []byte, fields map[string]string) *http.Request {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -112,6 +113,11 @@ func newIdempotentUploadRequest(t *testing.T, key, filename string, data []byte)
 	if _, err := part.Write(data); err != nil {
 		t.Fatal(err)
 	}
+	for name, value := range fields {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +125,12 @@ func newIdempotentUploadRequest(t *testing.T, key, filename string, data []byte)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("X-User-ID", testUserID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	return req
+}
+
+func newIdempotentUploadRequest(t *testing.T, key, filename string, data []byte) *http.Request {
+	t.Helper()
+	req := newUploadRequest(t, filename, data, nil)
 	req.Header.Set("Idempotency-Key", key)
 	return req
 }
@@ -203,18 +215,8 @@ func TestUploadFileRequiresWorkspaceBeforeWritingObject(t *testing.T) {
 	testHandler.Storage = store
 	defer func() { testHandler.Storage = origStorage }()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "orphan.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("must not be uploaded"))
-	_ = writer.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
+	req := newUploadRequest(t, "orphan.txt", []byte("must not be uploaded"), nil)
+	req.Header.Del("X-Workspace-ID")
 	w := httptest.NewRecorder()
 
 	testHandler.UploadFile(w, req)
@@ -237,19 +239,8 @@ func TestUploadFileForeignWorkspace(t *testing.T) {
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "test.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("hello world"))
-	_ = writer.Close()
-
 	foreignWorkspaceID := "00000000-0000-0000-0000-000000000099"
-	req := httptest.NewRequest("POST", "/api/upload-file", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
+	req := newUploadRequest(t, "test.txt", []byte("hello world"), nil)
 	req.Header.Set("X-Workspace-ID", foreignWorkspaceID)
 
 	w := httptest.NewRecorder()
@@ -392,32 +383,15 @@ func TestUploadFileConcurrentSameKeyConverges(t *testing.T) {
 	}
 }
 
-// TestUploadFileResolvesWorkspaceViaSlugHeader is a regression test for the
-// v2 workspace URL refactor (#1141). The frontend switched from sending
-// X-Workspace-ID (UUID) to X-Workspace-Slug. For endpoints that sit outside
-// the workspace middleware — like /api/upload-file — the handler-side
-// resolver must accept the slug and translate it to a UUID, otherwise the
-// handler silently falls through to the "no workspace context" branch and
-// skips creating the DB attachment record. Files end up in S3 with no row
-// in the attachment table, invisible to the UI.
+// Upload sits outside workspace middleware and therefore resolves the current
+// Web workspace slug directly.
 func TestUploadFileResolvesWorkspaceViaSlugHeader(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "slug-upload.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("hello via slug"))
-	_ = writer.Close()
-
-	req := httptest.NewRequest("POST", "/api/upload-file", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
-	// Intentionally NOT setting X-Workspace-ID — post-v2 clients only send slug.
+	req := newUploadRequest(t, "slug-upload.txt", []byte("hello via slug"), nil)
+	req.Header.Del("X-Workspace-ID")
 	req.Header.Set("X-Workspace-Slug", handlerTestWorkspaceSlug)
 
 	w := httptest.NewRecorder()
@@ -426,18 +400,12 @@ func TestUploadFileResolvesWorkspaceViaSlugHeader(t *testing.T) {
 		t.Fatalf("UploadFile with slug header: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The workspace-aware branch returns the full AttachmentResponse (with
-	// id, workspace_id, uploader, etc.). The no-workspace-context branch
-	// returns only {filename, link}. Distinguish by checking the shape.
-	var resp map[string]any
+	var resp AttachmentResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v; body: %s", err, w.Body.String())
 	}
-	if _, ok := resp["id"]; !ok {
-		t.Fatalf("expected attachment response with 'id' field (DB row created); got fallback link-only response: %s", w.Body.String())
-	}
-	if gotWs, _ := resp["workspace_id"].(string); gotWs != testWorkspaceID {
-		t.Fatalf("attachment workspace_id mismatch: want %s, got %v", testWorkspaceID, resp["workspace_id"])
+	if resp.ID == "" || resp.WorkspaceID != testWorkspaceID {
+		t.Fatalf("attachment identity = %q/%q, want non-empty/%q", resp.ID, resp.WorkspaceID, testWorkspaceID)
 	}
 
 	// Verify the row actually exists in the database.
@@ -472,19 +440,7 @@ func TestUploadFileResolvesWorkspaceViaIDHeader(t *testing.T) {
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "uuid-upload.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("hello via uuid"))
-	_ = writer.Close()
-
-	req := httptest.NewRequest("POST", "/api/upload-file", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req := newUploadRequest(t, "uuid-upload.txt", []byte("hello via uuid"), nil)
 
 	w := httptest.NewRecorder()
 	testHandler.UploadFile(w, req)
@@ -514,23 +470,9 @@ func TestUploadFile_AttachesToChatSession(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatUploadAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("file", "chat-upload.png")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Minimal PNG signature so content-type sniffs as image/png.
-	_, _ = part.Write([]byte("\x89PNG\r\n\x1a\nrest-of-bytes"))
-	if err := writer.WriteField("chat_session_id", sessionID); err != nil {
-		t.Fatal(err)
-	}
-	_ = writer.Close()
-
-	req := httptest.NewRequest("POST", "/api/upload-file", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req := newUploadRequest(t, "chat-upload.png", []byte("\x89PNG\r\n\x1a\nrest-of-bytes"), map[string]string{
+		"chat_session_id": sessionID,
+	})
 
 	w := httptest.NewRecorder()
 	testHandler.UploadFile(w, req)
@@ -584,18 +526,9 @@ func TestUploadFile_RejectsForeignChatSession(t *testing.T) {
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, _ := writer.CreateFormFile("file", "evil.txt")
-	_, _ = part.Write([]byte("payload"))
-	// Random non-existent UUID.
-	_ = writer.WriteField("chat_session_id", "00000000-0000-0000-0000-0000deadbeef")
-	_ = writer.Close()
-
-	req := httptest.NewRequest("POST", "/api/upload-file", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("X-User-ID", testUserID)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req := newUploadRequest(t, "evil.txt", []byte("payload"), map[string]string{
+		"chat_session_id": "00000000-0000-0000-0000-0000deadbeef",
+	})
 
 	w := httptest.NewRecorder()
 	testHandler.UploadFile(w, req)
@@ -647,6 +580,41 @@ func seedAttachmentURL(t *testing.T, rawURL, filename, contentType string, sizeB
 		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, id)
 	})
 	return id
+}
+
+func attachmentResponseForURL(t *testing.T, rawURL, filename, contentType string, sizeBytes int64) (string, AttachmentResponse) {
+	t.Helper()
+	id := seedAttachmentURL(t, rawURL, filename, contentType, sizeBytes)
+	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
+		ID:          parseUUID(id),
+		WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("GetAttachment: %v", err)
+	}
+	return id, testHandler.attachmentToResponse(att)
+}
+
+func useAttachmentDownloadConfig(t *testing.T, store storage.Storage, mode string, signer *auth.CloudFrontSigner) {
+	t.Helper()
+	origStorage, origCfg, origSigner := testHandler.Storage, testHandler.cfg, testHandler.CFSigner
+	testHandler.Storage = store
+	testHandler.cfg.AttachmentDownloadMode = mode
+	testHandler.CFSigner = signer
+	t.Cleanup(func() {
+		testHandler.Storage, testHandler.cfg, testHandler.CFSigner = origStorage, origCfg, origSigner
+	})
+}
+
+func useAttachmentResponseConfig(t *testing.T, store storage.Storage, publicURL string, signer *auth.CloudFrontSigner) {
+	t.Helper()
+	origStorage, origCfg, origSigner := testHandler.Storage, testHandler.cfg, testHandler.CFSigner
+	testHandler.Storage = store
+	testHandler.cfg.PublicURL = publicURL
+	testHandler.CFSigner = signer
+	t.Cleanup(func() {
+		testHandler.Storage, testHandler.cfg, testHandler.CFSigner = origStorage, origCfg, origSigner
+	})
 }
 
 func newPreviewRequest(t *testing.T, attachmentID, workspaceID string) (*http.Request, *httptest.ResponseRecorder) {
@@ -729,17 +697,7 @@ func TestAttachmentToResponse_NonCloudFrontUsesDownloadEndpoint(t *testing.T) {
 }
 
 func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *testing.T) {
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = &mockStorage{}
-	testHandler.cfg.AttachmentDownloadMode = "cloudfront"
-	testHandler.CFSigner = testCloudFrontSigner(t)
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
+	useAttachmentDownloadConfig(t, &mockStorage{}, "cloudfront", testCloudFrontSigner(t))
 
 	id := seedAttachmentURL(t, "https://static.example.test/downloads/cloudfront.md", "cloud front.md", "text/markdown", 10)
 
@@ -762,84 +720,33 @@ func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *test
 	}
 }
 
-func TestDownloadAttachment_BareNavigationWithWorkspaceSlugQueryPassesMiddleware(t *testing.T) {
+// A browser navigation cannot attach X-Workspace-* headers. The handler must
+// resolve membership from the attachment both with and without the optional
+// workspace slug query used by application links.
+func TestDownloadAttachment_BareNavigationServesMember(t *testing.T) {
 	store := &mockStorage{}
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = store
-	testHandler.cfg.AttachmentDownloadMode = "proxy"
-	testHandler.CFSigner = nil
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
-
+	useAttachmentDownloadConfig(t, store, "proxy", nil)
 	key := "downloads/bare-nav.txt"
 	body := []byte("download body")
 	store.put(key, body)
 	id := seedAttachmentURL(t, "https://s3.example.com/test-bucket/"+key, "bare-nav.txt", "text/plain", int64(len(body)))
 
-	req := httptest.NewRequest("GET", "/api/attachments/"+id+"/download?workspace_slug="+url.QueryEscape(handlerTestWorkspaceSlug), nil)
-	req.Header.Set("X-User-ID", testUserID)
-	w := httptest.NewRecorder()
-
-	newDownloadRouter().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	if got := w.Body.String(); got != string(body) {
-		t.Fatalf("body = %q, want %q", got, body)
-	}
-	if req.Header.Get("X-Workspace-ID") != "" || req.Header.Get("X-Workspace-Slug") != "" {
-		t.Fatalf("bare navigation test must not set custom workspace headers")
-	}
-}
-
-// TestDownloadAttachment_BareNavigationServesMemberWithoutWorkspaceHeaders
-// is the regression test for MUL-3130: a markdown image rendered as
-// `<img src="/api/attachments/<id>/download">` produces a native browser
-// resource load that cannot attach X-Workspace-Slug / X-Workspace-ID
-// headers. After the fix the handler self-resolves the workspace from
-// the attachment row, so a bare URL succeeds for a workspace member.
-func TestDownloadAttachment_BareNavigationServesMemberWithoutWorkspaceHeaders(t *testing.T) {
-	store := &mockStorage{}
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = store
-	testHandler.cfg.AttachmentDownloadMode = "proxy"
-	testHandler.CFSigner = nil
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
-
-	key := "downloads/bare-nav.txt"
-	body := []byte("download body")
-	store.put(key, body)
-	id := seedAttachmentURL(t, "https://s3.example.com/test-bucket/"+key, "bare-nav.txt", "text/plain", int64(len(body)))
-
-	// Bare URL — no workspace_slug / workspace_id query, no
-	// X-Workspace-* headers. This is what a browser <img> tag emits
-	// when the markdown stores `/api/attachments/<id>/download`.
-	req := httptest.NewRequest("GET", "/api/attachments/"+id+"/download", nil)
-	req.Header.Set("X-User-ID", testUserID)
-	w := httptest.NewRecorder()
-
-	newDownloadRouter().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	if got := w.Body.String(); got != string(body) {
-		t.Fatalf("body = %q, want %q", got, body)
-	}
-	if req.Header.Get("X-Workspace-ID") != "" || req.Header.Get("X-Workspace-Slug") != "" {
-		t.Fatalf("bare navigation test must not set custom workspace headers")
+	for name, query := range map[string]string{
+		"without workspace query": "",
+		"with workspace slug":     "?workspace_slug=" + url.QueryEscape(handlerTestWorkspaceSlug),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/api/attachments/"+id+"/download"+query, nil)
+			req.Header.Set("X-User-ID", testUserID)
+			w := httptest.NewRecorder()
+			newDownloadRouter().ServeHTTP(w, req)
+			if w.Code != http.StatusOK || w.Body.String() != string(body) {
+				t.Fatalf("status/body = %d/%q, want 200/%q", w.Code, w.Body.String(), body)
+			}
+			if req.Header.Get("X-Workspace-ID") != "" || req.Header.Get("X-Workspace-Slug") != "" {
+				t.Fatal("browser navigation must not set custom workspace headers")
+			}
+		})
 	}
 }
 
@@ -853,17 +760,7 @@ func TestDownloadAttachment_BareNavigationDeniesNonMemberWith404(t *testing.T) {
 		t.Skip("test database not available")
 	}
 	store := &mockStorage{}
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = store
-	testHandler.cfg.AttachmentDownloadMode = "proxy"
-	testHandler.CFSigner = nil
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
+	useAttachmentDownloadConfig(t, store, "proxy", nil)
 
 	// Seed an attachment that lives in a workspace testUserID is NOT
 	// a member of. The workspace row has to exist so the FK on
@@ -927,17 +824,7 @@ func TestDownloadAttachmentClientCanceledReturns499(t *testing.T) {
 
 func TestDownloadAttachment_AutoInternalEndpointProxies(t *testing.T) {
 	store := &mockStorage{}
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = store
-	testHandler.cfg.AttachmentDownloadMode = "auto"
-	testHandler.CFSigner = nil
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
+	useAttachmentDownloadConfig(t, store, "auto", nil)
 
 	key := "downloads/proxy-private.txt"
 	body := []byte("private object")
@@ -972,17 +859,7 @@ func TestDownloadAttachment_AutoInternalEndpointProxies(t *testing.T) {
 
 func TestDownloadAttachment_AutoPublicEndpointPresigns(t *testing.T) {
 	store := &mockStorage{}
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = store
-	testHandler.cfg.AttachmentDownloadMode = "auto"
-	testHandler.CFSigner = nil
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
+	useAttachmentDownloadConfig(t, store, "auto", nil)
 
 	key := "downloads/public-private.txt"
 	id := seedAttachmentURL(t, "https://s3.example.com/test-bucket/"+key, "public.txt", "text/plain", 10)
@@ -1014,17 +891,7 @@ func TestDownloadAttachment_AutoPublicEndpointPresigns(t *testing.T) {
 
 func TestDownloadAttachment_ExplicitProxyStreamsPublicEndpoint(t *testing.T) {
 	store := &mockStorage{}
-	origStorage := testHandler.Storage
-	origCfg := testHandler.cfg
-	origSigner := testHandler.CFSigner
-	testHandler.Storage = store
-	testHandler.cfg.AttachmentDownloadMode = "proxy"
-	testHandler.CFSigner = nil
-	t.Cleanup(func() {
-		testHandler.Storage = origStorage
-		testHandler.cfg = origCfg
-		testHandler.CFSigner = origSigner
-	})
+	useAttachmentDownloadConfig(t, store, "proxy", nil)
 
 	key := "downloads/forced-proxy.png"
 	body := []byte("\x89PNG\r\n\x1a\nimage")
@@ -1239,32 +1106,12 @@ func TestIsTextPreviewable(t *testing.T) {
 //                                              re-opening MUL-3130
 
 func TestBuildMarkdownURL_PublicCdnAbsoluteURLReusedVerbatim(t *testing.T) {
-	origPublic := testHandler.cfg.PublicURL
-	origSigner := testHandler.CFSigner
-	origStorage := testHandler.Storage
-	t.Cleanup(func() {
-		testHandler.cfg.PublicURL = origPublic
-		testHandler.CFSigner = origSigner
-		testHandler.Storage = origStorage
-	})
-	testHandler.cfg.PublicURL = "https://api.multica.test"
-	testHandler.CFSigner = nil
 	// mockStorage.CdnDomain() returns "cdn.example.com" — that's the
 	// operator-set signal that the URL host serves content publicly
 	// without per-request auth. Without this, the new gate routes
 	// through the API endpoint to be safe.
-	testHandler.Storage = &mockStorage{}
-
-	id := seedAttachmentURL(t, "https://cdn.multica.test/uploads/abc.png", "abc.png", "image/png", 1)
-	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
-		ID:          parseUUID(id),
-		WorkspaceID: parseUUID(testWorkspaceID),
-	})
-	if err != nil {
-		t.Fatalf("GetAttachment: %v", err)
-	}
-
-	resp := testHandler.attachmentToResponse(att)
+	useAttachmentResponseConfig(t, &mockStorage{}, "https://api.multica.test", nil)
+	_, resp := attachmentResponseForURL(t, "https://cdn.multica.test/uploads/abc.png", "abc.png", "image/png", 1)
 	if resp.MarkdownURL != "https://cdn.multica.test/uploads/abc.png" {
 		t.Fatalf("markdown_url = %q, want raw a.Url passthrough", resp.MarkdownURL)
 	}
@@ -1277,28 +1124,8 @@ func TestBuildMarkdownURL_PublicCdnAbsoluteURLReusedVerbatim(t *testing.T) {
 // set so the operator has explicitly opted into "URLs from this storage
 // load directly".
 func TestBuildMarkdownURL_PrivateBucketWithoutCdnDomainRoutesThroughAPIEndpoint(t *testing.T) {
-	origPublic := testHandler.cfg.PublicURL
-	origSigner := testHandler.CFSigner
-	origStorage := testHandler.Storage
-	t.Cleanup(func() {
-		testHandler.cfg.PublicURL = origPublic
-		testHandler.CFSigner = origSigner
-		testHandler.Storage = origStorage
-	})
-	testHandler.cfg.PublicURL = "https://api.multica.test"
-	testHandler.CFSigner = nil
-	testHandler.Storage = &mockStorageNoCdn{}
-
-	id := seedAttachmentURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png", "image/png", 1)
-	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
-		ID:          parseUUID(id),
-		WorkspaceID: parseUUID(testWorkspaceID),
-	})
-	if err != nil {
-		t.Fatalf("GetAttachment: %v", err)
-	}
-
-	resp := testHandler.attachmentToResponse(att)
+	useAttachmentResponseConfig(t, &mockStorageNoCdn{}, "https://api.multica.test", nil)
+	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png", "image/png", 1)
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q (private bucket without explicit CDN must not persist raw S3 URL)", resp.MarkdownURL, want)
@@ -1306,26 +1133,10 @@ func TestBuildMarkdownURL_PrivateBucketWithoutCdnDomainRoutesThroughAPIEndpoint(
 }
 
 func TestBuildMarkdownURL_CloudFrontSignedModeNeverPersistsRawStorageURL(t *testing.T) {
-	origPublic := testHandler.cfg.PublicURL
-	origSigner := testHandler.CFSigner
-	t.Cleanup(func() {
-		testHandler.cfg.PublicURL = origPublic
-		testHandler.CFSigner = origSigner
-	})
-	testHandler.cfg.PublicURL = "https://api.multica.test"
-	testHandler.CFSigner = testCloudFrontSigner(t)
+	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test", testCloudFrontSigner(t))
 
 	// Raw S3 URL — private bucket, not loadable directly by clients.
-	id := seedAttachmentURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png", "image/png", 1)
-	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
-		ID:          parseUUID(id),
-		WorkspaceID: parseUUID(testWorkspaceID),
-	})
-	if err != nil {
-		t.Fatalf("GetAttachment: %v", err)
-	}
-
-	resp := testHandler.attachmentToResponse(att)
+	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png", "image/png", 1)
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q", resp.MarkdownURL, want)
@@ -1339,26 +1150,10 @@ func TestBuildMarkdownURL_CloudFrontSignedModeNeverPersistsRawStorageURL(t *test
 }
 
 func TestBuildMarkdownURL_RelativeStorageURLPrefixedWithPublicURL(t *testing.T) {
-	origPublic := testHandler.cfg.PublicURL
-	origSigner := testHandler.CFSigner
-	t.Cleanup(func() {
-		testHandler.cfg.PublicURL = origPublic
-		testHandler.CFSigner = origSigner
-	})
-	testHandler.cfg.PublicURL = "https://api.multica.test"
-	testHandler.CFSigner = nil
+	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test", nil)
 
 	// LocalStorage without LOCAL_UPLOAD_BASE_URL stores a site-relative URL.
-	id := seedAttachmentURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
-	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
-		ID:          parseUUID(id),
-		WorkspaceID: parseUUID(testWorkspaceID),
-	})
-	if err != nil {
-		t.Fatalf("GetAttachment: %v", err)
-	}
-
-	resp := testHandler.attachmentToResponse(att)
+	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q", resp.MarkdownURL, want)
@@ -1366,25 +1161,8 @@ func TestBuildMarkdownURL_RelativeStorageURLPrefixedWithPublicURL(t *testing.T) 
 }
 
 func TestBuildMarkdownURL_PublicURLUnsetFallsBackToSiteRelative(t *testing.T) {
-	origPublic := testHandler.cfg.PublicURL
-	origSigner := testHandler.CFSigner
-	t.Cleanup(func() {
-		testHandler.cfg.PublicURL = origPublic
-		testHandler.CFSigner = origSigner
-	})
-	testHandler.cfg.PublicURL = ""
-	testHandler.CFSigner = nil
-
-	id := seedAttachmentURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
-	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
-		ID:          parseUUID(id),
-		WorkspaceID: parseUUID(testWorkspaceID),
-	})
-	if err != nil {
-		t.Fatalf("GetAttachment: %v", err)
-	}
-
-	resp := testHandler.attachmentToResponse(att)
+	useAttachmentResponseConfig(t, testHandler.Storage, "", nil)
+	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
 	want := "/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want site-relative fallback %q", resp.MarkdownURL, want)
@@ -1392,25 +1170,8 @@ func TestBuildMarkdownURL_PublicURLUnsetFallsBackToSiteRelative(t *testing.T) {
 }
 
 func TestBuildMarkdownURL_StripsTrailingSlashOnPublicURL(t *testing.T) {
-	origPublic := testHandler.cfg.PublicURL
-	origSigner := testHandler.CFSigner
-	t.Cleanup(func() {
-		testHandler.cfg.PublicURL = origPublic
-		testHandler.CFSigner = origSigner
-	})
-	testHandler.cfg.PublicURL = "https://api.multica.test/"
-	testHandler.CFSigner = nil
-
-	id := seedAttachmentURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
-	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
-		ID:          parseUUID(id),
-		WorkspaceID: parseUUID(testWorkspaceID),
-	})
-	if err != nil {
-		t.Fatalf("GetAttachment: %v", err)
-	}
-
-	resp := testHandler.attachmentToResponse(att)
+	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test/", nil)
+	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want exactly one separator %q", resp.MarkdownURL, want)
