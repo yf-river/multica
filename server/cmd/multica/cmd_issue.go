@@ -120,13 +120,6 @@ var issueChildrenCmd = &cobra.Command{
 	RunE:  runIssueChildren,
 }
 
-var issuePullRequestsCmd = &cobra.Command{
-	Use:   "pull-requests <id>",
-	Short: "List pull requests linked to an issue",
-	Args:  exactArgs(1),
-	RunE:  runIssuePullRequests,
-}
-
 var issueSourceFetchCmd = &cobra.Command{
 	Use:   "source-fetch <id>",
 	Short: "Record external source fetch evidence on an issue",
@@ -288,7 +281,6 @@ func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
 	issueCmd.AddCommand(issueChildrenCmd)
-	issueCmd.AddCommand(issuePullRequestsCmd)
 	issueCmd.AddCommand(issueSourceFetchCmd)
 	issueCmd.AddCommand(issueCreateCmd)
 	issueCmd.AddCommand(issueUpdateCmd)
@@ -327,9 +319,6 @@ func init() {
 
 	// issue children
 	issueChildrenCmd.Flags().String("output", "table", "Output format: table or json")
-
-	// issue pull-requests
-	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue source-fetch
 	issueSourceFetchCmd.Flags().String("provider", "tapd", "Source provider: tapd or gongfeng")

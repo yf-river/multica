@@ -441,7 +441,7 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 }
 
 func newIssuePullRequestsTestCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "pull-requests"}
+	cmd := &cobra.Command{Use: "mr list"}
 	cmd.Flags().String("output", "table", "")
 	return cmd
 }
@@ -502,26 +502,9 @@ func TestRunIssueSearchTableUsesCurrentCommentSnippet(t *testing.T) {
 	}
 }
 
-func newIssuePullRequestLinkTestCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "pull-request link"}
-	cmd.Flags().String("provider", "gongfeng", "")
-	cmd.Flags().String("project-path", "", "")
-	cmd.Flags().String("repo-url", "", "")
-	cmd.Flags().Int32("number", 0, "")
-	cmd.Flags().Int32("iid", 0, "")
-	cmd.Flags().String("title", "", "")
-	cmd.Flags().String("state", "open", "")
-	cmd.Flags().String("html-url", "", "")
-	cmd.Flags().String("source-branch", "", "")
-	cmd.Flags().String("target-branch", "", "")
-	cmd.Flags().String("author-login", "", "")
-	cmd.Flags().String("head-sha", "", "")
-	cmd.Flags().String("mergeable-state", "", "")
-	cmd.Flags().Int32("additions", 0, "")
-	cmd.Flags().Int32("deletions", 0, "")
-	cmd.Flags().Int32("changed-files", 0, "")
-	cmd.Flags().Bool("close-intent", false, "")
-	cmd.Flags().String("output", "table", "")
+func newIssueMRLinkTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "mr link"}
+	addIssuePullRequestLinkFlags(cmd)
 	return cmd
 }
 
@@ -667,7 +650,7 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
 	t.Setenv("MULTICA_TOKEN", "test-token")
 
-	cmd := newIssuePullRequestLinkTestCmd()
+	cmd := newIssueMRLinkTestCmd()
 	_ = cmd.Flags().Set("html-url", "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234")
 	_ = cmd.Flags().Set("title", "GOA-61234 user-center add quick entry API")
 	_ = cmd.Flags().Set("source-branch", "goa-61234-usercenter-api")

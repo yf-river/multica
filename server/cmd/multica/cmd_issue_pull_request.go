@@ -10,21 +10,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-var issuePullRequestCmd = &cobra.Command{
-	Use:   "pull-request",
-	Short: "Work with a single issue pull request or merge request",
-}
-
 var issueMRCmd = &cobra.Command{
 	Use:   "mr",
 	Short: "Work with issue merge requests",
-}
-
-var issuePullRequestLinkCmd = &cobra.Command{
-	Use:   "link <issue-id>",
-	Short: "Link a Gongfeng/GitHub merge request to an issue",
-	Args:  exactArgs(1),
-	RunE:  runIssuePullRequestLink,
 }
 
 var issueMRCreateCmd = &cobra.Command{
@@ -49,12 +37,9 @@ var issueMRListCmd = &cobra.Command{
 }
 
 func init() {
-	issueCmd.AddCommand(issuePullRequestCmd)
 	issueCmd.AddCommand(issueMRCmd)
-	issuePullRequestCmd.AddCommand(issuePullRequestLinkCmd)
 	issueMRCmd.AddCommand(issueMRCreateCmd, issueMRLinkCmd, issueMRListCmd)
 
-	addIssuePullRequestLinkFlags(issuePullRequestLinkCmd)
 	addIssuePullRequestLinkFlags(issueMRLinkCmd)
 	addIssueMRCreateFlags(issueMRCreateCmd)
 	issueMRListCmd.Flags().String("output", "table", "Output format: table or json")
