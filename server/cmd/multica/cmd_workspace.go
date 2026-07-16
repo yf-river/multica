@@ -274,14 +274,9 @@ func runWorkspaceSwitch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveWorkspaceArg returns the canonical UUID for a workspace command that
-// takes an optional `[workspace-id]` arg. When the arg is supplied it is
-// resolved against the caller's workspace list (UUID, slug, or short prefix);
-// when omitted it falls back to the standard --workspace-id / env / profile
-// resolution chain — the caller is responsible for guarding against the empty
-// case. A full UUID is forwarded as-is to avoid an extra /api/workspaces
-// round trip; access control is enforced by the downstream endpoint.
-func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
+// requireWorkspaceArg resolves an explicit id/slug/UUID-prefix or the standard
+// workspace selection and rejects a missing selection for every current caller.
+func requireWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 	if len(args) > 0 {
 		trimmed := strings.TrimSpace(args[0])
 		if uuidRegexp.MatchString(trimmed) {
@@ -295,16 +290,20 @@ func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 		}
 		return ws.ID, nil
 	}
-	return resolveWorkspaceID(cmd)
+	wsID, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return "", err
+	}
+	if wsID == "" {
+		return "", fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
+	}
+	return wsID, nil
 }
 
 func runWorkspaceGet(cmd *cobra.Command, args []string) error {
-	wsID, err := resolveWorkspaceArg(cmd, args)
+	wsID, err := requireWorkspaceArg(cmd, args)
 	if err != nil {
 		return err
-	}
-	if wsID == "" {
-		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
 	}
 
 	client, ctx, cancel, err := newAPIClientContext(cmd)
@@ -384,12 +383,9 @@ func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 }
 
 func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
-	wsID, err := resolveWorkspaceArg(cmd, args)
+	wsID, err := requireWorkspaceArg(cmd, args)
 	if err != nil {
 		return err
-	}
-	if wsID == "" {
-		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
 	}
 
 	body, err := buildWorkspaceUpdateBody(cmd)
@@ -421,12 +417,9 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
-	wsID, err := resolveWorkspaceArg(cmd, args)
+	wsID, err := requireWorkspaceArg(cmd, args)
 	if err != nil {
 		return err
-	}
-	if wsID == "" {
-		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
 	}
 
 	members, err := fetchMapList(cmd, "/api/workspaces/"+wsID+"/members", "list members")

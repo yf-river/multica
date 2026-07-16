@@ -527,14 +527,6 @@ func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runIssueSubscriberAdd(cmd *cobra.Command, args []string) error {
-	return runIssueSubscriberMutation(cmd, args[0], "subscribe")
-}
-
-func runIssueSubscriberRemove(cmd *cobra.Command, args []string) error {
-	return runIssueSubscriberMutation(cmd, args[0], "unsubscribe")
-}
-
 // runIssueSubscriberMutation shares subscribe/unsubscribe logic — both endpoints
 // take the same request body and only differ in the path.
 func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) error {

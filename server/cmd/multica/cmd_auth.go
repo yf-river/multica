@@ -28,6 +28,11 @@ import (
 // in server/internal/middleware/auth.go.
 var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix}
 
+type authenticatedUser struct {
+	Name    string `json:"name"`
+	Account string `json:"account"`
+}
+
 // validateLoginTokenPrefix returns nil if token starts with one of the
 // CLI-recognised PAT prefixes, or an error describing the accepted set.
 // Extracted so the prefix list has one obvious test surface.
@@ -132,6 +137,36 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return runAuthLoginToken(cmd, tokenFlag)
 	}
 	return runAuthLoginBrowser(cmd)
+}
+
+func completeAuthentication(
+	ctx context.Context,
+	cmd *cobra.Command,
+	client *cli.APIClient,
+	token, serverURL, appURL, invalidCredentialMessage string,
+) error {
+	var user authenticatedUser
+	if err := client.GetJSON(ctx, "/api/me", &user); err != nil {
+		return cli.WithUserMessage(invalidCredentialMessage, err)
+	}
+
+	profile := resolveProfile(cmd)
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return fmt.Errorf("load CLI config: %w", err)
+	}
+	cfg.WorkspaceID = ""
+	cfg.Token = token
+	cfg.ServerURL = serverURL
+	if appURL != "" {
+		cfg.AppURL = appURL
+	}
+	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", user.Name, user.Account)
+	return nil
 }
 
 // resolveCallbackBinding picks the host that goes into the `cli_callback`
@@ -337,31 +372,15 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 
 	// Verify the PAT works.
 	patClient := cli.NewAPIClient(serverURL, "", patResp.Token)
-	var me struct {
-		Name    string `json:"name"`
-		Account string `json:"account"`
-	}
-	if err := patClient.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", err)
-	}
-
-	// Save to config. Reset workspace data on every login — the user or
-	// server may have changed, so stale workspaces must not persist.
-	profile := resolveProfile(cmd)
-	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err != nil {
-		return fmt.Errorf("load CLI config: %w", err)
-	}
-	cfg.WorkspaceID = ""
-	cfg.Token = patResp.Token
-	cfg.ServerURL = serverURL
-	cfg.AppURL = appURL
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Account)
-	return nil
+	return completeAuthentication(
+		ctx,
+		cmd,
+		patClient,
+		patResp.Token,
+		serverURL,
+		appURL,
+		"Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.",
+	)
 }
 
 func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
@@ -382,28 +401,15 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var me struct {
-		Name    string `json:"name"`
-		Account string `json:"account"`
-	}
-	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
-	}
-
-	profile := resolveProfile(cmd)
-	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err != nil {
-		return fmt.Errorf("load CLI config: %w", err)
-	}
-	cfg.WorkspaceID = ""
-	cfg.Token = token
-	cfg.ServerURL = serverURL
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Account)
-	return nil
+	return completeAuthentication(
+		ctx,
+		cmd,
+		client,
+		token,
+		serverURL,
+		"",
+		"Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.",
+	)
 }
 
 func runAuthStatus(cmd *cobra.Command, _ []string) error {
@@ -426,10 +432,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var me struct {
-		Name    string `json:"name"`
-		Account string `json:"account"`
-	}
+	var me authenticatedUser
 	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
 		fmt.Fprintf(os.Stderr, "Token 无效或已过期：%v\n请运行 'multica login' 重新登录。\n", err)
 		return nil

@@ -202,14 +202,18 @@ var issueSubscriberAddCmd = &cobra.Command{
 	Use:   "add <issue-id>",
 	Short: "Subscribe a user or agent to an issue (defaults to the caller)",
 	Args:  exactArgs(1),
-	RunE:  runIssueSubscriberAdd,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runIssueSubscriberMutation(cmd, args[0], "subscribe")
+	},
 }
 
 var issueSubscriberRemoveCmd = &cobra.Command{
 	Use:   "remove <issue-id>",
 	Short: "Unsubscribe a user or agent from an issue (defaults to the caller)",
 	Args:  exactArgs(1),
-	RunE:  runIssueSubscriberRemove,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runIssueSubscriberMutation(cmd, args[0], "unsubscribe")
+	},
 }
 
 // Execution history subcommands.

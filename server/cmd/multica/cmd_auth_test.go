@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +83,49 @@ func TestAuthCommandsPreserveUnreadableConfig(t *testing.T) {
 	}
 	if string(content) != invalidConfig {
 		t.Fatalf("unreadable config was overwritten: %q", content)
+	}
+}
+
+func TestCompleteAuthenticationOwnsCredentialPersistence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/me" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"CLI User","account":"cli-user"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{
+		AppURL:      "https://existing.example",
+		WorkspaceID: "stale-workspace",
+	}, ""); err != nil {
+		t.Fatalf("seed CLI config: %v", err)
+	}
+
+	cmd := testCmd()
+	client := cli.NewAPIClient(server.URL, "", "mul_current")
+	if err := completeAuthentication(context.Background(), cmd, client, "mul_current", server.URL, "", "invalid credential"); err != nil {
+		t.Fatalf("complete token authentication: %v", err)
+	}
+	cfg, err := cli.LoadCLIConfigForProfile("")
+	if err != nil {
+		t.Fatalf("load token login config: %v", err)
+	}
+	if cfg.Token != "mul_current" || cfg.ServerURL != server.URL || cfg.WorkspaceID != "" || cfg.AppURL != "https://existing.example" {
+		t.Fatalf("token login config = %+v", cfg)
+	}
+
+	if err := completeAuthentication(context.Background(), cmd, client, "mul_browser", server.URL, "https://app.example", "invalid credential"); err != nil {
+		t.Fatalf("complete browser authentication: %v", err)
+	}
+	cfg, err = cli.LoadCLIConfigForProfile("")
+	if err != nil {
+		t.Fatalf("load browser login config: %v", err)
+	}
+	if cfg.Token != "mul_browser" || cfg.AppURL != "https://app.example" || cfg.WorkspaceID != "" {
+		t.Fatalf("browser login config = %+v", cfg)
 	}
 }
 
