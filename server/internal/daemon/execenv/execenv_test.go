@@ -2,7 +2,6 @@ package execenv
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,10 +12,6 @@ import (
 
 func testLogger() *slog.Logger {
 	return slog.Default()
-}
-
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 const oldProviderCodexConfig = `model_provider = "old-provider"

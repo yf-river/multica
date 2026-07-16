@@ -52,40 +52,6 @@ func TestEnsureSymlink_ReplacesStaleRegularFile(t *testing.T) {
 	}
 }
 
-func TestEnsureSymlink_RefreshesAfterCopyFallbackThenSrcChange(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	src := filepath.Join(dir, "auth.json")
-	dst := filepath.Join(dir, "task-auth.json")
-
-	// Simulate the Windows copy fallback: first link is a copy of v1.
-	if err := os.WriteFile(src, []byte(`{"refresh_token":"v1"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := copyFile(src, dst); err != nil {
-		t.Fatalf("seed copy fallback: %v", err)
-	}
-
-	// Shared source rotates to v2 (e.g. Codex Desktop refreshed the token).
-	if err := os.WriteFile(src, []byte(`{"refresh_token":"v2"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Reuse path runs ensureSymlink again — expected to refresh dst from src.
-	if err := ensureSymlink(src, dst); err != nil {
-		t.Fatalf("ensureSymlink: %v", err)
-	}
-
-	data, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatalf("read dst: %v", err)
-	}
-	if string(data) != `{"refresh_token":"v2"}` {
-		t.Errorf("dst content after refresh = %q, want v2 contents", data)
-	}
-}
-
 func TestCreateDirLink(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

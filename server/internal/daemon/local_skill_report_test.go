@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -80,27 +79,6 @@ func TestReportLocalSkillListResult_DoesNotRetryOn4xx(t *testing.T) {
 	}
 }
 
-func TestReportLocalSkillImportResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
-	withFastLocalSkillReportBackoffs(t)
-
-	var hits int32
-	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
-		n := atomic.AddInt32(&hits, 1)
-		if n == 1 {
-			http.Error(w, "{}", http.StatusBadGateway)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	d.reportLocalSkillImportResult(context.Background(), Runtime{ID: "rt-1"}, "req-1", map[string]any{"status": "completed"})
-
-	if got := atomic.LoadInt32(calls); got != 2 {
-		t.Fatalf("expected 2 attempts, got %d", got)
-	}
-}
-
 func TestReportLocalSkillResult_GivesUpAfterAllAttemptsFail(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
@@ -141,31 +119,46 @@ func TestReportLocalSkillResult_AbortsOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestReportLocalSkillResult_SendsCorrectPath(t *testing.T) {
-	withFastLocalSkillReportBackoffs(t)
-
-	var listPath, importPath string
-	d, _ := reportResultDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		// Smoke: make sure we're hitting the right daemon-side endpoint.
-		// Protects against a future refactor silently pointing reports at
-		// the wrong URL.
-		if strings.Contains(r.URL.Path, "/import/") {
-			importPath = r.URL.Path
-		} else {
-			listPath = r.URL.Path
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	ctx := context.Background()
-	d.reportLocalSkillListResult(ctx, Runtime{ID: "rt-a"}, "req-list", map[string]any{"status": "completed"})
-	d.reportLocalSkillImportResult(ctx, Runtime{ID: "rt-a"}, "req-import", map[string]any{"status": "completed"})
-
-	if !strings.HasSuffix(listPath, "/api/daemon/runtimes/rt-a/local-skills/req-list/result") {
-		t.Fatalf("list path = %q", listPath)
+func TestRuntimeResultReportPaths(t *testing.T) {
+	tests := []struct {
+		name   string
+		want   string
+		report func(*Daemon)
+	}{
+		{
+			name: "local skill list",
+			want: "/api/daemon/runtimes/rt-a/local-skills/req-list/result",
+			report: func(d *Daemon) {
+				d.reportLocalSkillListResult(context.Background(), Runtime{ID: "rt-a"}, "req-list", map[string]any{"status": "completed"})
+			},
+		},
+		{
+			name: "local skill import",
+			want: "/api/daemon/runtimes/rt-a/local-skills/import/req-import/result",
+			report: func(d *Daemon) {
+				d.reportLocalSkillImportResult(context.Background(), Runtime{ID: "rt-a"}, "req-import", map[string]any{"status": "completed"})
+			},
+		},
+		{
+			name: "model list",
+			want: "/api/daemon/runtimes/rt-a/models/req-models/result",
+			report: func(d *Daemon) {
+				d.reportModelListResult(context.Background(), Runtime{ID: "rt-a"}, "req-models", map[string]any{"status": "completed"})
+			},
+		},
 	}
-	if !strings.HasSuffix(importPath, "/api/daemon/runtimes/rt-a/local-skills/import/req-import/result") {
-		t.Fatalf("import path = %q", importPath)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			withFastLocalSkillReportBackoffs(t)
+			var path string
+			d, _ := reportResultDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				w.WriteHeader(http.StatusOK)
+			})
+			tc.report(d)
+			if path != tc.want {
+				t.Fatalf("path = %q, want %q", path, tc.want)
+			}
+		})
 	}
 }

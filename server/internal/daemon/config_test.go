@@ -212,7 +212,7 @@ func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
 	// Prove the precondition: with binDir absent from PATH, the daemon
 	// would normally miss this binary.
 	t.Setenv("PATH", "/usr/bin:/bin")
-	if _, err := lookPathInPath("fakeclaude"); err == nil {
+	if _, err := exec.LookPath("fakeclaude"); err == nil {
 		t.Skip("PATH leak — test environment already exposes fakeclaude without shell help")
 	}
 
@@ -246,35 +246,24 @@ func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
 	}
 }
 
-func TestResolveAgentsViaLoginShell_SkipsUnsupportedShell(t *testing.T) {
-	t.Setenv("SHELL", "/usr/bin/fish")
-	got := resolveAgentsViaLoginShell([]string{"claude"})
-	if len(got) != 0 {
-		t.Errorf("expected empty map for unsupported shell, got %v", got)
+func TestResolveAgentsViaLoginShellRejectsInvalidInputs(t *testing.T) {
+	tests := []struct {
+		name  string
+		shell string
+		names []string
+	}{
+		{name: "unsupported shell", shell: "/usr/bin/fish", names: []string{"claude"}},
+		{name: "empty shell", names: []string{"claude"}},
+		{name: "empty command list", shell: "/bin/sh"},
 	}
-}
-
-func TestResolveAgentsViaLoginShell_EmptyShellNoCrash(t *testing.T) {
-	t.Setenv("SHELL", "")
-	got := resolveAgentsViaLoginShell([]string{"claude"})
-	if len(got) != 0 {
-		t.Errorf("expected empty map when SHELL unset, got %v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SHELL", tc.shell)
+			if got := resolveAgentsViaLoginShell(tc.names); len(got) != 0 {
+				t.Fatalf("resolved commands = %v, want none", got)
+			}
+		})
 	}
-}
-
-func TestResolveAgentsViaLoginShell_EmptyInput(t *testing.T) {
-	t.Setenv("SHELL", "/bin/sh")
-	got := resolveAgentsViaLoginShell(nil)
-	if len(got) != 0 {
-		t.Errorf("expected empty map for nil input, got %v", got)
-	}
-}
-
-// lookPathInPath is a thin wrapper used by the test above; matches what
-// exec.LookPath would do but lets the test be explicit about which call it's
-// asserting against.
-func lookPathInPath(name string) (string, error) {
-	return exec.LookPath(name)
 }
 
 // stageFakeAgent writes an executable `claude` script into a temp dir and
@@ -327,7 +316,7 @@ func TestResolveAgentsViaLoginShell_StripsAliasShadowing(t *testing.T) {
 	// Strip PATH so exec.LookPath misses fakeclaude — same precondition as
 	// the happy-path test, so we know the shell did the resolution.
 	t.Setenv("PATH", "/usr/bin:/bin")
-	if _, err := lookPathInPath("fakeclaude"); err == nil {
+	if _, err := exec.LookPath("fakeclaude"); err == nil {
 		t.Skip("PATH leak — fakeclaude already visible to the daemon without shell help")
 	}
 	// Sanity-check that the simulated environment can actually load aliases.
