@@ -327,19 +327,14 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writeReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
+	reservationErr := reserveResourceCreateRequest(r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment, idempotencyKey, requestHash)
+	if reservationErr != nil && !errors.Is(reservationErr, pgx.ErrNoRows) {
+		slog.Warn("reserve comment request failed", append(logger.RequestAttrs(r), "error", reservationErr, "issue_id", issueID)...)
 	}
-	if err != nil {
-		slog.Warn("reserve comment request failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
-		writeError(w, http.StatusInternalServerError, "failed to create comment")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, reservationErr, loadReplay, writeReplayError,
+		"failed to create comment", http.StatusCreated,
+	) {
 		return
 	}
 

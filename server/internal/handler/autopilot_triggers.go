@@ -61,37 +61,28 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 			func(response AutopilotTriggerResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeResourceCreateReplayError(
-			w, replayErr,
-			"Idempotency-Key was already used with a different request",
-			"failed to replay trigger create",
-		)
-		return
-	} else if found {
-		writeIdempotencyReplayJSON(w, http.StatusCreated, replay)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different request",
+		"failed to replay trigger create",
+	)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start trigger create transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start trigger create transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorUUID, resourceTypeAutopilotTrigger, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorUUID, resourceTypeAutopilotTrigger, idempotencyKey, requestHash),
+		loadReplay,
+		func(w http.ResponseWriter, replayErr error) {
 			writeError(w, http.StatusInternalServerError, "trigger create replay disappeared after conflict")
-			return
-		}
-		writeIdempotencyReplayJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve trigger create request")
+		},
+		"failed to reserve trigger create request", http.StatusCreated,
+	) {
 		return
 	}
 	trigger, err := createPreparedAutopilotTrigger(
