@@ -438,12 +438,13 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 	}
 
 	issueStatus := firstNonEmpty(p.Status, "todo")
+	description := "## 需求摘要\n摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要。"
 	if fetchErr != nil {
 		issueStatus = "blocked"
+		description = "## 来源抓取失败\n" + fetched.Error + "\n"
 	}
 	priority := firstNonEmpty(p.Priority, "none")
 	title := firstNonEmpty(fetched.Title, tapdSourceReadFailureTitle(p.Ref))
-	description := buildQuickCreateTAPDDescription(fetched, fetchErr)
 
 	assigneeType := p.AssigneeType
 	assigneeID := p.AssigneeID
@@ -532,24 +533,6 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		Identifier:        issueToResponse(res.Issue, prefix).Identifier,
 		SourceFetchStatus: fetched.Status,
 	}, true
-}
-
-func buildQuickCreateTAPDDescription(fetched RecordIssueSourceFetchRequest, fetchErr error) string {
-	if fetchErr != nil {
-		var b strings.Builder
-		b.WriteString("## 来源抓取失败\n")
-		b.WriteString(fetched.Error)
-		b.WriteString("\n")
-		return b.String()
-	}
-	return buildQuickCreateTAPDSummaryPendingDescription()
-}
-
-func buildQuickCreateTAPDSummaryPendingDescription() string {
-	var b strings.Builder
-	b.WriteString("## 需求摘要\n")
-	b.WriteString("摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要。\n")
-	return strings.TrimSpace(b.String())
 }
 
 func tapdSourceReadFailureTitle(ref tapdSourceRef) string {

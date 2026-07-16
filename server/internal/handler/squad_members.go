@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strconv"
 	"time"
@@ -514,7 +515,7 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 			return
 		}
 		var existingDetails map[string]string
-		if json.Unmarshal(existing.Details, &existingDetails) != nil || !sameSquadLeaderEvaluation(existingDetails, detailMap) {
+		if json.Unmarshal(existing.Details, &existingDetails) != nil || !maps.Equal(existingDetails, detailMap) {
 			writeError(w, http.StatusConflict, "task already has a different squad leader evaluation")
 			return
 		}
@@ -551,18 +552,6 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 	h.publishEvent(event)
 
 	writeJSON(w, http.StatusCreated, squadLeaderEvaluationResponse(activity))
-}
-
-func sameSquadLeaderEvaluation(left, right map[string]string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, value := range left {
-		if right[key] != value {
-			return false
-		}
-	}
-	return true
 }
 
 func squadLeaderEvaluationResponse(activity db.ActivityLog) map[string]string {
