@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTimezoneTestUser(t *testing.T, account string) string {
@@ -54,70 +56,63 @@ func storedUserTimezone(t *testing.T, userID string) *string {
 	return stored
 }
 
-func TestUpdateMeAcceptsTimezone(t *testing.T) {
-	userID := newTimezoneTestUser(t, "tz-set@multica.ai")
+func TestUpdateMeTimezoneContract(t *testing.T) {
+	stringPtr := func(value string) *string { return &value }
+	for _, tc := range []struct {
+		name              string
+		initial           *string
+		body              string
+		wantStatus        int
+		wantStored        *string
+		checkResponse     bool
+		wantResponseValue any
+	}{
+		{
+			name: "set", body: `{"timezone":"Asia/Shanghai"}`,
+			wantStatus: http.StatusOK, wantStored: stringPtr("Asia/Shanghai"),
+			checkResponse: true, wantResponseValue: "Asia/Shanghai",
+		},
+		{
+			name: "reject invalid", body: `{"timezone":"Not/A/Real/Zone"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "preserve when omitted", initial: stringPtr("America/Los_Angeles"),
+			body: `{"name":"Updated Name"}`, wantStatus: http.StatusOK,
+			wantStored: stringPtr("America/Los_Angeles"),
+		},
+		{
+			name: "clear with empty string", initial: stringPtr("Asia/Shanghai"),
+			body: `{"timezone":""}`, wantStatus: http.StatusOK,
+			checkResponse: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			userID := newTimezoneTestUser(t, fmt.Sprintf("tz-%d@multica.ai", time.Now().UnixNano()))
+			if tc.initial != nil {
+				if _, err := testPool.Exec(context.Background(),
+					`UPDATE "user" SET timezone = $1 WHERE id = $2`, *tc.initial, userID,
+				); err != nil {
+					t.Fatalf("preset timezone: %v", err)
+				}
+			}
 
-	w := patchMe(t, userID, `{"timezone":"Asia/Shanghai"}`, http.StatusOK)
-	stored := storedUserTimezone(t, userID)
-	if stored == nil || *stored != "Asia/Shanghai" {
-		t.Fatalf("expected timezone=Asia/Shanghai, got %v", stored)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got, _ := resp["timezone"].(string); got != "Asia/Shanghai" {
-		t.Fatalf("expected response timezone=Asia/Shanghai, got %v", resp["timezone"])
-	}
-}
-
-func TestUpdateMeRejectsInvalidTimezone(t *testing.T) {
-	userID := newTimezoneTestUser(t, "tz-reject@multica.ai")
-
-	patchMe(t, userID, `{"timezone":"Not/A/Real/Zone"}`, http.StatusBadRequest)
-	stored := storedUserTimezone(t, userID)
-	if stored != nil {
-		t.Fatalf("expected timezone unchanged (NULL), got %v", *stored)
-	}
-}
-
-func TestUpdateMePreservesTimezoneWhenNotProvided(t *testing.T) {
-	userID := newTimezoneTestUser(t, "tz-preserve@multica.ai")
-
-	if _, err := testPool.Exec(context.Background(),
-		`UPDATE "user" SET timezone = 'America/Los_Angeles' WHERE id = $1`, userID,
-	); err != nil {
-		t.Fatalf("preset timezone: %v", err)
-	}
-
-	patchMe(t, userID, `{"name":"Updated Name"}`, http.StatusOK)
-	stored := storedUserTimezone(t, userID)
-	if stored == nil || *stored != "America/Los_Angeles" {
-		t.Fatalf("expected timezone preserved, got %v", stored)
-	}
-}
-
-func TestUpdateMeClearsTimezoneOnEmptyString(t *testing.T) {
-	userID := newTimezoneTestUser(t, "tz-clear@multica.ai")
-
-	if _, err := testPool.Exec(context.Background(),
-		`UPDATE "user" SET timezone = 'Asia/Shanghai' WHERE id = $1`, userID,
-	); err != nil {
-		t.Fatalf("preset timezone: %v", err)
-	}
-
-	w := patchMe(t, userID, `{"timezone":""}`, http.StatusOK)
-	stored := storedUserTimezone(t, userID)
-	if stored != nil {
-		t.Fatalf("expected timezone cleared to NULL, got %v", *stored)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["timezone"] != nil {
-		t.Fatalf("expected response timezone=null, got %v", resp["timezone"])
+			response := patchMe(t, userID, tc.body, tc.wantStatus)
+			stored := storedUserTimezone(t, userID)
+			if (stored == nil) != (tc.wantStored == nil) ||
+				(stored != nil && *stored != *tc.wantStored) {
+				t.Fatalf("stored timezone = %v, want %v", stored, tc.wantStored)
+			}
+			if !tc.checkResponse {
+				return
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if payload["timezone"] != tc.wantResponseValue {
+				t.Fatalf("response timezone = %v, want %v", payload["timezone"], tc.wantResponseValue)
+			}
+		})
 	}
 }
