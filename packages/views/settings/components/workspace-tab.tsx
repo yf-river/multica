@@ -7,20 +7,9 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Label } from "@multica/ui/components/ui/label";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
-} from "@multica/ui/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace as hasWorkspaceManagementRole } from "@multica/core/permissions";
+import { canManageWorkspace as hasWorkspaceManagementRole, useCurrentMember } from "@multica/core/permissions";
 import { useLeaveWorkspace, useDeleteWorkspace } from "@multica/core/workspace/mutations";
 import { useWorkspaceId } from "@multica/core/paths";
 import {
@@ -40,13 +29,17 @@ import { setCurrentWorkspace } from "@multica/core/platform";
 import type { Workspace } from "@multica/core/types";
 import { useNavigation } from "../../navigation";
 import { DeleteWorkspaceDialog } from "./delete-workspace-dialog";
+import {
+  SettingsConfirmDialog,
+  type SettingsConfirmAction,
+} from "./settings-confirm-dialog";
 import { useT } from "../../i18n";
 
 export function WorkspaceTab() {
   const { t } = useT("settings");
-  const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
+  const { role } = useCurrentMember(wsId);
   const { data: members = [], isFetched: membersFetched } = useQuery(memberListOptions(wsId));
   const qc = useQueryClient();
   const leaveWorkspace = useLeaveWorkspace();
@@ -103,17 +96,11 @@ export function WorkspaceTab() {
   const [issuePrefix, setIssuePrefix] = useState(workspace?.issue_prefix ?? "");
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    title: string;
-    description: string;
-    variant?: "destructive";
-    onConfirm: () => Promise<void>;
-  } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<SettingsConfirmAction | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = hasWorkspaceManagementRole(currentMember?.role);
-  const isOwner = currentMember?.role === "owner";
+  const canManageWorkspace = hasWorkspaceManagementRole(role);
+  const isOwner = role === "owner";
   // Mirror the backend invariant (server/internal/handler/workspace.go:569):
   // a workspace must always have at least one owner, so the sole owner can't
   // leave. Pre-flight here instead of letting the 400 round-trip become a
@@ -437,26 +424,21 @@ export function WorkspaceTab() {
       </section>
       )}
 
-      <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.workspace.confirm_cancel)}</AlertDialogCancel>
-            <AlertDialogAction
-              variant={confirmAction?.variant === "destructive" ? "destructive" : "default"}
-              onClick={async () => {
-                await confirmAction?.onConfirm();
-                setConfirmAction(null);
-              }}
-            >
-              {t(($) => $.workspace.confirm_action)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SettingsConfirmDialog
+        open={!!confirmAction}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+        title={confirmAction?.title}
+        description={confirmAction?.description}
+        cancelLabel={t(($) => $.workspace.confirm_cancel)}
+        actionLabel={t(($) => $.workspace.confirm_action)}
+        variant={confirmAction?.variant}
+        onConfirm={async () => {
+          await confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+      />
 
       <DeleteWorkspaceDialog
         workspaceName={workspace.name}

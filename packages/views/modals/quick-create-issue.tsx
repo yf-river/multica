@@ -60,8 +60,7 @@ import {
   PickerSection,
   PickerEmpty,
 } from "../issues/components/pickers/property-picker";
-import { useAuthStore } from "@multica/core/auth";
-import { memberListOptions } from "@multica/core/workspace/queries";
+import { useCurrentMember } from "@multica/core/permissions";
 import {
   ContentEditor,
   type ContentEditorRef,
@@ -95,8 +94,7 @@ export function AgentCreatePanel({
   const { t } = useT("modals");
   const workspaceName = useCurrentWorkspace()?.name;
   const wsId = useWorkspaceId();
-  const userId = useAuthStore((s) => s.user?.id);
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { userId, role: memberRole } = useCurrentMember(wsId);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
   // Pull `isSuccess` so the stale-id sweep below can distinguish "still
@@ -104,11 +102,6 @@ export function AgentCreatePanel({
   // empty and incorrectly clears a valid persisted preference on every open.
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
     projectListOptions(wsId),
-  );
-
-  const memberRole = useMemo(
-    () => members.find((m) => m.user_id === userId)?.role,
-    [members, userId],
   );
 
   // Visible = not archived AND assignable by this user. Squads inherit
@@ -121,8 +114,8 @@ export function AgentCreatePanel({
         (a) =>
           !a.archived_at &&
           canAssignAgentToIssue(a, {
-            userId: userId ?? null,
-            role: memberRole ?? null,
+            userId,
+            role: memberRole,
           }).allowed,
       ),
     [agents, userId, memberRole],

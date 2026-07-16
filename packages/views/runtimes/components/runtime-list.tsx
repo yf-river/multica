@@ -15,8 +15,7 @@ import type {
   AgentTask,
   MemberWithUser,
 } from "@multica/core/types";
-import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import {
   agentListOptions,
@@ -499,16 +498,11 @@ export function RuntimeList({
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
-  const user = useAuthStore((s) => s.user);
-
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-
-  const currentMember = user
-    ? members.find((m) => m.user_id === user.id)
-    : null;
-  const isAdmin = canManageWorkspace(currentMember?.role);
+  const { userId, role } = useCurrentMember(wsId);
+  const isAdmin = canManageWorkspace(role);
 
   const workloadIndex = useMemo(
     () => buildWorkloadIndex(agents, snapshot),
@@ -540,9 +534,9 @@ export function RuntimeList({
       workload: workloadIndex.get(runtime.id) ?? EMPTY_WORKLOAD,
       canDelete:
         !isPendingCustomRuntime(runtime) &&
-        (isAdmin || (!!user && runtime.owner_id === user.id)),
+        (isAdmin || (!!userId && runtime.owner_id === userId)),
     }));
-  }, [runtimes, memberById, workloadIndex, isAdmin, user]);
+  }, [runtimes, memberById, workloadIndex, isAdmin, userId]);
 
   // Mirrors RuntimeRowMenu's render guard: the kebab track only earns its
   // width when at least one row will actually show the menu.

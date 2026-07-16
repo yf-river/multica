@@ -5,7 +5,7 @@ import { Lock, UserMinus } from "lucide-react";
 import type { IssueAssigneeType, UpdateIssueRequest } from "@multica/core/types";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { canAssignAgentToIssue, resolveCurrentMember } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions, squadListOptions, assigneeFrequencyOptions } from "@multica/core/workspace/queries";
@@ -45,8 +45,8 @@ export function AssigneePicker({
   const open = controlledOpen ?? internalOpen;
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [filter, setFilter] = useState("");
-  const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
+  const userId = useAuthStore((state) => state.user?.id ?? null);
   const pickerDataEnabled = open && !!wsId;
   const { data: members = [] } = useQuery({
     ...memberListOptions(wsId),
@@ -70,9 +70,7 @@ export function AssigneePicker({
     agents: shouldResolveTriggerLabel && assigneeType === "agent",
     squads: shouldResolveTriggerLabel && assigneeType === "squad",
   });
-
-  const currentMember = members.find((m) => m.user_id === user?.id);
-  const memberRole = currentMember?.role;
+  const { role: memberRole } = resolveCurrentMember(members, userId);
 
   // Build a lookup map from frequency data for sorting.
   const freqMap = useMemo(() => {
@@ -170,7 +168,7 @@ export function AssigneePicker({
         <PickerSection label={t(($) => $.pickers.assignee.agents_group)}>
           {filteredAgents.map((a) => {
             const decision = canAssignAgentToIssue(a, {
-              userId: user?.id ?? null,
+              userId,
               role:
                 memberRole === "owner" ||
                 memberRole === "admin" ||

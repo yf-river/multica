@@ -10,7 +10,7 @@ import { PluginKey } from "@tiptap/pm/state";
 import { useAuthStore } from "@multica/core/auth";
 import { useChatStore } from "@multica/core/chat";
 import { getCurrentWsId } from "@multica/core/platform";
-import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { canAssignAgentToIssue, resolveCurrentMember } from "@multica/core/permissions";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
@@ -119,7 +119,7 @@ function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
   // are intentional here.
   const { selectedAgentId } = useChatStore.getState();
   const userId = useAuthStore.getState().user?.id ?? null;
-  const memberRole = members.find((m) => m.user_id === userId)?.role ?? null;
+  const { role: memberRole } = resolveCurrentMember(members, userId);
 
   const availableAgents = agents.filter(
     (a) =>

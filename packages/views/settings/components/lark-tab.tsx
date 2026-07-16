@@ -16,16 +16,6 @@ import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@multica/ui/components/ui/alert-dialog";
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -33,16 +23,15 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@multica/ui/components/ui/dialog";
-import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
-import { memberListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { larkInstallationsOptions, larkKeys } from "@multica/core/lark";
 import { api, ApiError } from "@multica/core/api";
 import type { LarkInstallation, LarkInstallStatusResponse } from "@multica/core/types";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
+import { SettingsConfirmDialog } from "./settings-confirm-dialog";
 
 // LarkTab is the workspace settings panel for Lark Bot installations.
 // Listing is member-visible; the disconnect action is admin-only (the
@@ -58,11 +47,8 @@ export function LarkTab() {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
-  const user = useAuthStore((s) => s.user);
-
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage = canManageWorkspace(currentMember?.role);
+  const { role } = useCurrentMember(wsId);
+  const canManage = canManageWorkspace(role);
 
   const { data, isLoading } = useQuery({
     ...larkInstallationsOptions(wsId),
@@ -285,7 +271,7 @@ export function LarkAgentBindButton({
 }) {
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
-  const user = useAuthStore((s) => s.user);
+  const { role } = useCurrentMember(wsId);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
 
   const { data: listing } = useQuery({
@@ -294,12 +280,7 @@ export function LarkAgentBindButton({
   });
   const installSupported = listing?.install_supported === true;
 
-  const { data: members = [] } = useQuery({
-    ...memberListOptions(wsId),
-    enabled: !!wsId,
-  });
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage = canManageWorkspace(currentMember?.role);
+  const canManage = canManageWorkspace(role);
 
   if (!canManage) return null;
 
@@ -417,28 +398,17 @@ function LarkDisconnectConfirmDialog({
 }) {
   const { t } = useT("settings");
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {t(($) => $.lark.disconnect_confirm_title)}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {t(($) => $.lark.disconnect_confirm_description)}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={disconnecting}>
-            {t(($) => $.lark.disconnect_confirm_cancel)}
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} disabled={disconnecting}>
-            {disconnecting
-              ? t(($) => $.lark.disconnecting)
-              : t(($) => $.lark.disconnect)}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <SettingsConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t(($) => $.lark.disconnect_confirm_title)}
+      description={t(($) => $.lark.disconnect_confirm_description)}
+      cancelLabel={t(($) => $.lark.disconnect_confirm_cancel)}
+      actionLabel={t(($) => $.lark.disconnect)}
+      pendingActionLabel={t(($) => $.lark.disconnecting)}
+      pending={disconnecting}
+      onConfirm={onConfirm}
+    />
   );
 }
 

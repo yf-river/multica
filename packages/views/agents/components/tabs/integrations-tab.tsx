@@ -3,11 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Webhook } from "lucide-react";
 import type { Agent } from "@multica/core/types";
-import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { larkInstallationsOptions } from "@multica/core/lark";
-import { memberListOptions } from "@multica/core/workspace/queries";
 import { LarkAgentBindButton } from "../../../settings/components/lark-tab";
 import { useT } from "../../../i18n";
 
@@ -28,7 +26,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
   const { t: ts } = useT("settings");
   const wsId = useWorkspaceId();
-  const user = useAuthStore((s) => s.user);
+  const { role } = useCurrentMember(wsId);
 
   // Both queries are already issued by LarkAgentBindButton (and keyed per
   // workspace), so re-reading them here is free — TanStack dedupes by key.
@@ -38,15 +36,9 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
     ...larkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
-  const { data: members = [] } = useQuery({
-    ...memberListOptions(wsId),
-    enabled: !!wsId,
-  });
-
   const configured = listing?.configured === true;
   const installSupported = listing?.install_supported === true;
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage = canManageWorkspace(currentMember?.role);
+  const canManage = canManageWorkspace(role);
   const hasActiveInstall =
     listing?.installations.some(
       (inst) => inst.agent_id === agent.id && inst.status === "active",

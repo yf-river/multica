@@ -9,16 +9,6 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Badge } from "@multica/ui/components/ui/badge";
 import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
-} from "@multica/ui/components/ui/alert-dialog";
-import {
   Select,
   SelectTrigger,
   SelectValue,
@@ -37,14 +27,18 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore, validatePassword } from "@multica/core/auth";
-import { canManageWorkspace as hasWorkspaceManagementRole } from "@multica/core/permissions";
+import { validatePassword } from "@multica/core/auth";
+import { canManageWorkspace as hasWorkspaceManagementRole, useCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import { createMemberWithRecovery } from "@multica/core/workspace";
 import { useT } from "../../i18n";
+import {
+  SettingsConfirmDialog,
+  type SettingsConfirmAction,
+} from "./settings-confirm-dialog";
 
 const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
   owner: Crown,
@@ -186,10 +180,10 @@ function MemberRow({
 export function MembersTab() {
   const { t } = useT("settings");
   const roleConfig = useRoleLabels();
-  const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const { userId, role } = useCurrentMember(wsId);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
 
   const [newAccount, setNewAccount] = useState("");
@@ -198,16 +192,10 @@ export function MembersTab() {
   const [newRole, setNewRole] = useState<MemberRole>("member");
   const [createLoading, setCreateLoading] = useState(false);
   const [memberActionId, setMemberActionId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    title: string;
-    description: string;
-    variant?: "destructive";
-    onConfirm: () => Promise<void>;
-  } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<SettingsConfirmAction | null>(null);
 
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = hasWorkspaceManagementRole(currentMember?.role);
-  const isOwner = currentMember?.role === "owner";
+  const canManageWorkspace = hasWorkspaceManagementRole(role);
+  const isOwner = role === "owner";
   const ownerCount = members.filter((m) => m.role === "owner").length;
 
   const handleCreateMember = async () => {
@@ -347,7 +335,7 @@ export function MembersTab() {
                   canManage={canManageWorkspace}
                   canManageOwners={isOwner}
                   ownerCount={ownerCount}
-                  isSelf={m.user_id === user?.id}
+                  isSelf={m.user_id === userId}
                   busy={memberActionId === m.id}
                   onRoleChange={(role) => handleRoleChange(m.id, role)}
                   onRemove={() => handleRemoveMember(m)}
@@ -360,26 +348,21 @@ export function MembersTab() {
         )}
       </section>
 
-      <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.members.confirm_cancel)}</AlertDialogCancel>
-            <AlertDialogAction
-              variant={confirmAction?.variant === "destructive" ? "destructive" : "default"}
-              onClick={async () => {
-                await confirmAction?.onConfirm();
-                setConfirmAction(null);
-              }}
-            >
-              {t(($) => $.members.confirm_action)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SettingsConfirmDialog
+        open={!!confirmAction}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+        title={confirmAction?.title}
+        description={confirmAction?.description}
+        cancelLabel={t(($) => $.members.confirm_cancel)}
+        actionLabel={t(($) => $.members.confirm_action)}
+        variant={confirmAction?.variant}
+        onConfirm={async () => {
+          await confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+      />
     </div>
   );
 }

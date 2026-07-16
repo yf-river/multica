@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
+import { resolveCurrentMember } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
 import { getCurrentSlug } from "@multica/core/platform";
 import { createSafeId } from "@multica/core/utils";
@@ -90,6 +91,7 @@ export function ChatWindow() {
     ...memberListOptions(wsId),
     enabled: isOpen,
   });
+  const { role: memberRole } = resolveCurrentMember(members, user?.id);
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
   const { data: sessions = [] } = useQuery({
@@ -149,10 +151,8 @@ export function ChatWindow() {
   const createSession = useCreateChatSession();
   const markRead = useMarkChatSessionRead();
 
-  const currentMember = members.find((m) => m.user_id === user?.id);
-  const memberRole = currentMember?.role;
   const availableAgents = useMemo(
-    () => getVisibleChatAgents(agents, user?.id, memberRole),
+    () => getVisibleChatAgents(agents, user?.id, memberRole ?? undefined),
     [agents, user?.id, memberRole],
   );
 

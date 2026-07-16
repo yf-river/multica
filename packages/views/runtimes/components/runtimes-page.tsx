@@ -10,14 +10,13 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useRuntimeNow } from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -114,14 +113,11 @@ function RuntimesPage({
   );
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { role } = useCurrentMember(wsId);
 
   // Custom runtime management is an admin-only affordance, gated the same
   // way the runtime list gates delete: workspace owner/admin role.
-  const currentMember = currentUserId
-    ? members.find((m) => m.user_id === currentUserId)
-    : null;
-  const canManageProfiles = canManageWorkspace(currentMember?.role);
+  const canManageProfiles = canManageWorkspace(role);
   const [showProfilesDialog, setShowProfilesDialog] = useState(false);
 
   const handleDaemonEvent = useCallback(() => {

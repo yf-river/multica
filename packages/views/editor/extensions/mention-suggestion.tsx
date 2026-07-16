@@ -13,7 +13,7 @@ import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
-import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { canAssignAgentToIssue, resolveCurrentMember } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
 import type {
   Issue,
@@ -496,8 +496,7 @@ export function createMentionSuggestion(
     // store. Used to gate personal agents in the @mention list so members
     // don't see (or auto-complete) agents they couldn't assign anyway.
     const userId = useAuthStore.getState().user?.id ?? null;
-    const myRole =
-      members.find((m) => m.user_id === userId)?.role ?? null;
+    const { role: myRole } = resolveCurrentMember(members, userId);
 
     const q = query.toLowerCase();
 

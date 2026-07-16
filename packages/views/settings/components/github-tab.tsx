@@ -8,20 +8,10 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Label } from "@multica/ui/components/ui/label";
 import { Switch } from "@multica/ui/components/ui/switch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@multica/ui/components/ui/alert-dialog";
-import { useAuthStore } from "@multica/core/auth";
+import { useCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
+import { workspaceKeys } from "@multica/core/workspace/queries";
 import {
   deriveGitHubSettings,
   githubInstallationsOptions,
@@ -31,6 +21,7 @@ import type { Workspace } from "@multica/core/types";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { GitHubMark } from "./github-mark";
+import { SettingsConfirmDialog } from "./settings-confirm-dialog";
 
 type SettingsKey =
   | "github_enabled"
@@ -43,15 +34,12 @@ export function GitHubTab() {
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const navigation = useNavigation();
-  const user = useAuthStore((s) => s.user);
-
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
+  const { role } = useCurrentMember(wsId);
   // `canView` gates the read-only installation list (every workspace member
   // sees it after MUL-2413); `canManage` gates the Connect / Disconnect
   // actions and comes from the backend response (`can_manage`) so the
   // frontend never claims management rights the server would reject.
-  const canView = !!currentMember;
+  const canView = role !== null;
 
   const { data: installationData } = useQuery({
     ...githubInstallationsOptions(wsId),
@@ -300,33 +288,19 @@ export function GitHubTab() {
         </Card>
       </section>
 
-      <AlertDialog
+      <SettingsConfirmDialog
         open={!!disconnectTarget}
-        onOpenChange={(v) => {
-          if (!v && !disconnecting) setDisconnectTarget(null);
+        onOpenChange={(open) => {
+          if (!open && !disconnecting) setDisconnectTarget(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t(($) => $.github.disconnect_confirm_title)}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.github.disconnect_confirm_description)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
-              {t(($) => $.github.disconnect_confirm_cancel)}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
-              {disconnecting
-                ? t(($) => $.github.disconnecting)
-                : t(($) => $.github.disconnect_confirm_action)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={t(($) => $.github.disconnect_confirm_title)}
+        description={t(($) => $.github.disconnect_confirm_description)}
+        cancelLabel={t(($) => $.github.disconnect_confirm_cancel)}
+        actionLabel={t(($) => $.github.disconnect_confirm_action)}
+        pendingActionLabel={t(($) => $.github.disconnecting)}
+        pending={disconnecting}
+        onConfirm={handleDisconnect}
+      />
     </div>
   );
 }

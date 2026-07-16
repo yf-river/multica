@@ -11,3 +11,5 @@ export {
   useAgentEditPermission,
   useSkillEditPermission,
 } from "./use-resource-permissions";
+
+export { resolveCurrentMember, useCurrentMember } from "./use-current-member";
