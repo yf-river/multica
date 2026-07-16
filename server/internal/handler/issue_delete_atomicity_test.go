@@ -25,7 +25,7 @@ func assertIssueDeleteRollback(t *testing.T, batch bool) {
 	issueID := createTestIssue(t, "delete rollback "+uuid.NewString(), "todo", "medium")
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
-		SELECT id::text FROM agent WHERE workspace_id = $1 AND runtime_id IS NOT NULL
+		SELECT id::text FROM agent WHERE workspace_id = $1
 		ORDER BY created_at LIMIT 1
 	`, testWorkspaceID).Scan(&agentID); err != nil {
 		t.Fatalf("load agent: %v", err)

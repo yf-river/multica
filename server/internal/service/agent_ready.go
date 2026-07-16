@@ -7,9 +7,9 @@ import (
 )
 
 // AgentReadiness reports whether an agent can accept new work right now.
-// "Ready" means archived_at IS NULL, runtime_id IS NOT NULL, and the bound
-// runtime's status is 'online'. When not ready, reason describes which gate
-// failed in language suitable for autopilot_run.failure_reason.
+// "Ready" means archived_at IS NULL and the required bound runtime's status is
+// 'online'. When not ready, reason describes which gate failed in language
+// suitable for autopilot_run.failure_reason.
 //
 // err is non-nil only on DB lookup failure for the runtime row. Callers that
 // treat a transient DB error as "do not skip" (the autopilot admission gate)

@@ -18,7 +18,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent
-		WHERE workspace_id = $1 AND runtime_id IS NOT NULL
+		WHERE workspace_id = $1
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, testWorkspaceID).Scan(&agentID); err != nil {

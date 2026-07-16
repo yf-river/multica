@@ -18,52 +18,6 @@ BEGIN
     IF TG_OP = 'UPDATE' THEN
         IF OLD.runtime_id IS DISTINCT FROM NEW.runtime_id
            OR OLD.issue_id IS DISTINCT FROM NEW.issue_id THEN
-            -- OLD side. NULL runtime_id rows are not aggregated (no
-            -- runtime → no bucket); skip those.
-            IF OLD.runtime_id IS NOT NULL THEN
-                INSERT INTO task_usage_hourly_dirty (
-                    bucket_hour, workspace_id, runtime_id, agent_id,
-                    project_id, provider, model
-                )
-                SELECT DISTINCT
-                    task_usage_hour_bucket(tu.created_at),
-                    a.workspace_id,
-                    OLD.runtime_id,
-                    OLD.agent_id,
-                    i_old.project_id,
-                    tu.provider,
-                    tu.model
-                  FROM task_usage tu
-                  JOIN agent a ON a.id = OLD.agent_id
-                  LEFT JOIN issue i_old ON i_old.id = OLD.issue_id
-                 WHERE tu.task_id = OLD.id
-                ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
-                    SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
-            END IF;
-            IF NEW.runtime_id IS NOT NULL THEN
-                INSERT INTO task_usage_hourly_dirty (
-                    bucket_hour, workspace_id, runtime_id, agent_id,
-                    project_id, provider, model
-                )
-                SELECT DISTINCT
-                    task_usage_hour_bucket(tu.created_at),
-                    a.workspace_id,
-                    NEW.runtime_id,
-                    NEW.agent_id,
-                    i_new.project_id,
-                    tu.provider,
-                    tu.model
-                  FROM task_usage tu
-                  JOIN agent a ON a.id = NEW.agent_id
-                  LEFT JOIN issue i_new ON i_new.id = NEW.issue_id
-                 WHERE tu.task_id = NEW.id
-                ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
-                    SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
-            END IF;
-        END IF;
-        RETURN NEW;
-    ELSIF TG_OP = 'DELETE' THEN
-        IF OLD.runtime_id IS NOT NULL THEN
             INSERT INTO task_usage_hourly_dirty (
                 bucket_hour, workspace_id, runtime_id, agent_id,
                 project_id, provider, model
@@ -73,16 +27,54 @@ BEGIN
                 a.workspace_id,
                 OLD.runtime_id,
                 OLD.agent_id,
-                i.project_id,
+                i_old.project_id,
                 tu.provider,
                 tu.model
               FROM task_usage tu
               JOIN agent a ON a.id = OLD.agent_id
-              LEFT JOIN issue i ON i.id = OLD.issue_id
+              LEFT JOIN issue i_old ON i_old.id = OLD.issue_id
              WHERE tu.task_id = OLD.id
             ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
                 SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
+            INSERT INTO task_usage_hourly_dirty (
+                bucket_hour, workspace_id, runtime_id, agent_id,
+                project_id, provider, model
+            )
+            SELECT DISTINCT
+                task_usage_hour_bucket(tu.created_at),
+                a.workspace_id,
+                NEW.runtime_id,
+                NEW.agent_id,
+                i_new.project_id,
+                tu.provider,
+                tu.model
+              FROM task_usage tu
+              JOIN agent a ON a.id = NEW.agent_id
+              LEFT JOIN issue i_new ON i_new.id = NEW.issue_id
+             WHERE tu.task_id = NEW.id
+            ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
+                SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
         END IF;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO task_usage_hourly_dirty (
+            bucket_hour, workspace_id, runtime_id, agent_id,
+            project_id, provider, model
+        )
+        SELECT DISTINCT
+            task_usage_hour_bucket(tu.created_at),
+            a.workspace_id,
+            OLD.runtime_id,
+            OLD.agent_id,
+            i.project_id,
+            tu.provider,
+            tu.model
+          FROM task_usage tu
+          JOIN agent a ON a.id = OLD.agent_id
+          LEFT JOIN issue i ON i.id = OLD.issue_id
+         WHERE tu.task_id = OLD.id
+        ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
+            SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
         RETURN OLD;
     END IF;
     RETURN NULL;
@@ -107,7 +99,6 @@ BEGIN
       FROM agent_task_queue atq
       JOIN task_usage tu ON tu.task_id = atq.id
      WHERE atq.issue_id = OLD.id
-       AND atq.runtime_id IS NOT NULL
     ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
         SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
     RETURN OLD;
@@ -134,7 +125,6 @@ BEGIN
           FROM agent_task_queue atq
           JOIN task_usage tu ON tu.task_id = atq.id
          WHERE atq.issue_id = NEW.id
-           AND atq.runtime_id IS NOT NULL
         ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
             SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
         -- NEW project buckets.
@@ -153,7 +143,6 @@ BEGIN
           FROM agent_task_queue atq
           JOIN task_usage tu ON tu.task_id = atq.id
          WHERE atq.issue_id = NEW.id
-           AND atq.runtime_id IS NOT NULL
         ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
             SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
     END IF;
@@ -180,7 +169,6 @@ BEGIN
       JOIN agent a ON a.id = atq.agent_id
       LEFT JOIN issue i ON i.id = atq.issue_id
      WHERE atq.id = OLD.task_id
-       AND atq.runtime_id IS NOT NULL
     ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
         SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
     RETURN OLD;
@@ -227,8 +215,7 @@ BEGIN
                     SELECT tu.updated_at AS candidate_at
                       FROM task_usage tu
                       JOIN agent_task_queue atq ON atq.id = tu.task_id
-                     WHERE atq.runtime_id IS NOT NULL
-                       AND tu.updated_at >= v_from
+                     WHERE tu.updated_at >= v_from
                        AND tu.updated_at <  v_upper
                     UNION ALL
                     SELECT GREATEST(enqueued_at, v_from) AS candidate_at
@@ -296,8 +283,7 @@ BEGIN
           JOIN agent_task_queue atq ON atq.id      = tu.task_id
           JOIN agent            a   ON a.id        = atq.agent_id
           LEFT JOIN issue       i   ON i.id        = atq.issue_id
-         WHERE atq.runtime_id IS NOT NULL
-           AND tu.updated_at >= p_from
+         WHERE tu.updated_at >= p_from
            AND tu.updated_at < p_to
     ),
     dirty_from_queue AS (
