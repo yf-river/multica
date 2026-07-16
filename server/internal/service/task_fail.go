@@ -453,11 +453,6 @@ func (s *TaskService) ReconcileAgentStatus(ctx context.Context, agentID pgtype.U
 		return db.Agent{}, fmt.Errorf("refresh agent status: %w", err)
 	}
 	slog.Debug("agent status reconciled", "agent_id", util.UUIDToString(agentID), "status", agent.Status)
-	s.publishAgentStatus(agent)
-	return agent, nil
-}
-
-func (s *TaskService) publishAgentStatus(agent db.Agent) {
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventAgentStatus,
 		WorkspaceID: util.UUIDToString(agent.WorkspaceID),
@@ -465,6 +460,7 @@ func (s *TaskService) publishAgentStatus(agent db.Agent) {
 		ActorID:     "",
 		Payload:     map[string]any{"agent": agentToMap(agent)},
 	})
+	return agent, nil
 }
 
 // LoadAgentSkills loads an agent's skills with their files for task execution.
@@ -645,7 +641,7 @@ func (s *TaskService) persistIssueUpdateInTx(
 	if err != nil {
 		return db.Issue{}, events.Event{}, err
 	}
-	prefix, err := s.getIssuePrefixWithQueries(ctx, queries, updated.WorkspaceID)
+	workspace, err := queries.GetWorkspace(ctx, updated.WorkspaceID)
 	if err != nil {
 		return db.Issue{}, events.Event{}, fmt.Errorf("load issue prefix: %w", err)
 	}
@@ -655,7 +651,7 @@ func (s *TaskService) persistIssueUpdateInTx(
 		WorkspaceID: util.UUIDToString(updated.WorkspaceID),
 		ActorType:   "system",
 		Payload: map[string]any{
-			"issue":               issueToMap(updated, prefix),
+			"issue":               issueToMap(updated, workspace.IssuePrefix),
 			"status_changed":      changes.Status,
 			"description_changed": changes.Description,
 			"prev_status":         previous.Status,
@@ -669,12 +665,4 @@ func (s *TaskService) persistIssueUpdateInTx(
 		return db.Issue{}, events.Event{}, err
 	}
 	return updated, event, nil
-}
-
-func (s *TaskService) getIssuePrefixWithQueries(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) (string, error) {
-	ws, err := queries.GetWorkspace(ctx, workspaceID)
-	if err != nil {
-		return "", err
-	}
-	return ws.IssuePrefix, nil
 }

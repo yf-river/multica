@@ -239,7 +239,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 		if errors.Is(err, pgx.ErrNoRows) {
 			_ = tx.Rollback(ctx)
 			if existing, getErr := s.Queries.GetAgentTask(ctx, taskID); getErr == nil {
-				return nil, TaskStartConflictError{Status: existing.Status}
+				return nil, fmt.Errorf("%w: current status %s", ErrTaskStartConflict, existing.Status)
 			}
 		}
 		return nil, fmt.Errorf("start task: %w", err)

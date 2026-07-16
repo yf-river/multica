@@ -53,18 +53,6 @@ type TaskService struct {
 
 var ErrTaskStartConflict = errors.New("task is no longer startable")
 
-type TaskStartConflictError struct {
-	Status string
-}
-
-func (e TaskStartConflictError) Error() string {
-	return fmt.Sprintf("%s: current status %s", ErrTaskStartConflict, e.Status)
-}
-
-func (e TaskStartConflictError) Is(target error) bool {
-	return target == ErrTaskStartConflict
-}
-
 type TaskWakeupNotifier interface {
 	NotifyTaskAvailable(runtimeID, taskID string)
 }
