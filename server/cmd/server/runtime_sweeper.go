@@ -122,13 +122,7 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 	}
 	if taskSvc != nil && taskSvc.Analytics != nil {
 		for _, row := range staleRows {
-			obsmetrics.RecordEvent(taskSvc.Analytics, taskSvc.Metrics, analytics.RuntimeOffline(
-				util.UUIDToString(row.OwnerID),
-				util.UUIDToString(row.WorkspaceID),
-				util.UUIDToString(row.ID),
-				row.DaemonID.String,
-				row.Provider,
-			))
+			obsmetrics.RecordEvent(taskSvc.Analytics, taskSvc.Metrics, analytics.RuntimeOffline(row.Provider))
 		}
 	}
 

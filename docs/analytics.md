@@ -131,15 +131,8 @@ Canonical core events should carry these properties whenever the entity exists:
 | `provider` | string | `claude`, `codex`, `cursor`, etc. when a runtime/agent task is involved. |
 | `is_demo` | bool | Currently always `false`; reserved for future demo/test workspace filtering. |
 
-Task terminal events additionally carry `duration_ms`; failures carry
-`failure_reason`, `error_type`, and `will_retry`. Runtime failure events carry
-`recoverable`; runtime ready events carry `runtime_id`, `ready_duration_ms`
-only when it is actually measured, and `daemon_id` for local runtimes.
-
-Schema v2 is the first canonical core-metrics schema. It replaces early v1
-drafts that mirrored `failure_reason` into `error_type`, used `recoverable`
-for task/autopilot failures, and emitted `ready_duration_ms: 0` before the
-registration path had a measured duration.
+Prometheus-only runtime and autopilot events carry only the properties read by
+their metric dispatcher. They are not part of the PostHog property contract.
 
 ## Event contract
 
@@ -174,70 +167,39 @@ funnel with "first time user does X" or a cohort on
 ### `runtime_registered`
 
 > **Prometheus-only — not shipped to PostHog** (see the note at the top of this
-> doc). The `analytics.Event` is still constructed so `metrics.IncForEvent` can
-> derive the Prometheus counter; the fields below are that **event** shape, not
-> a PostHog contract. Only the low-cardinality fields (`runtime_mode`,
-> `provider`) become Prometheus labels — ids like `runtime_id` / `daemon_id`
-> are not labels.
+> doc). Its metric labels are `runtime_mode` and `provider`.
 
 Fires the first time a `(workspace_id, daemon_id, provider)` tuple is
 upserted. Heartbeats and repeat registrations never re-emit. First-time
 detection uses Postgres `xmax = 0` on the upsert RETURNING clause — no
 extra query, no race.
 
-| Property | Type | Description |
-|---|---|---|
-| `runtime_id` | string (UUID) | The newly created agent_runtime row id. |
-| `daemon_id` | string | Local daemon identity when available. |
-| `runtime_mode` | string | Runtime category; first internal release expects local/fixed-machine runtimes. |
-| `provider` | string | e.g. `"codex"`, `"claude"`. |
-| `runtime_version` | string | Version of the agent runtime binary. |
-| `cli_version` | string | Version of the `multica` CLI that registered it. |
-
-`distinct_id` is the authenticated owner's user id when the daemon was
-registered via a member's JWT/PAT; daemon-token registrations fall back to
-`workspace:<workspace_id>` so PostHog doesn't bucket unrelated daemons
-under a single "anonymous" person.
+Both labels describe the current local runtime and its provider.
 
 ### `runtime_ready`
 
-> **Prometheus-only — not shipped to PostHog.**
+> **Prometheus-only — not shipped to PostHog.** Its counter labels are
+> `runtime_mode` and `provider`; a positive measured `ready_duration_ms` also
+> feeds the readiness histogram.
 
 Fires when a runtime is first registered in an online/ready state. This is the
 activation-funnel step that should replace treating `runtime_registered` as
 proof of readiness. The backend emits this only on the INSERT path for a new
 `agent_runtime` row; ordinary daemon reconnects update the existing row and do
-not emit another `runtime_ready`. Dashboard funnels should still count
-distinct `runtime_id`.
-
-| Property | Type | Description |
-|---|---|---|
-| `runtime_id` | string (UUID) | The `agent_runtime` row id. |
-| `daemon_id` | string | Local daemon identity when available. |
-| `ready_duration_ms` | int64 | Optional. Time from registration start to ready; omitted until the registration path can measure it. |
-| `runtime_mode` | string | `local` / `cloud`. |
-| `provider` | string | Runtime provider. |
+not emit another `runtime_ready`.
 
 ### `runtime_failed`
 
-> **Prometheus-only — not shipped to PostHog.**
+> **Prometheus-only — not shipped to PostHog.** Its labels are `runtime_mode`,
+> `provider`, `failure_reason`, and `recoverable`.
 
 Fires when runtime setup/registration fails before a ready runtime can be
-recorded. Today this is scoped to backend registration persistence failures;
-future setup flows should reuse it for provider detection or daemon boot
-failures.
-
-| Property | Type | Description |
-|---|---|---|
-| `daemon_id` | string | Local daemon identity when available. |
-| `provider` | string | Runtime provider attempted. |
-| `failure_reason` | string | Stable coarse reason. |
-| `error_type` | string | Stable error classifier. |
-| `recoverable` | bool | Whether retrying setup may succeed. |
+recorded. Today this is scoped to backend registration persistence failures.
 
 ### `runtime_offline`
 
-> **Prometheus-only — not shipped to PostHog.**
+> **Prometheus-only — not shipped to PostHog.** Its labels are `runtime_mode`
+> and `provider`.
 
 Fires when a runtime is explicitly deregistered or the backend sweeper marks it
 offline after missed heartbeats. This is not an activation step; it supports
@@ -308,26 +270,12 @@ sets in `server/internal/metrics/labels.go`):
 ### `autopilot_run_started` / `autopilot_run_completed` / `autopilot_run_failed`
 
 > **Prometheus-only — not shipped to PostHog.** The `analytics.*` constructors
-> are retained only so `metrics.IncForEvent` can derive the Prometheus counter;
-> `analytics.IsMetricsOnly` keeps them out of PostHog. Only `cadence`,
-> `trigger_kind`, and `terminal_status` become Prometheus labels — the
-> `autopilot_id` / `autopilot_run_id` / `agent_id` fields below are event shape,
-> not labels.
+> exist only so `metrics.IncForEvent` can derive the Prometheus counter;
+> `analytics.IsMetricsOnly` keeps them out of PostHog.
 
-Fires from `autopilot_run` lifecycle changes. `source` is always
-`autopilot`; the trigger origin is carried in `trigger_source` (`manual`,
-`schedule`, `webhook`, or `api`).
-
-| Property | Type | Description |
-|---|---|---|
-| `autopilot_id` | string (UUID) | Autopilot definition. |
-| `autopilot_run_id` | string (UUID) | Run row. |
-| `agent_id` | string (UUID) | Assigned agent. |
-| `trigger_source` | string | `manual`, `schedule`, `webhook`, or `api`. |
-| `duration_ms` | int64 | Terminal events only. |
-| `failure_reason` | string | Failed events only. |
-| `error_type` | string | Failed events only; stable coarse classifier such as `configuration`, `issue_terminal`, `dispatch_error`, `task_error`, or `autopilot_error`. |
-| `will_retry` | bool | Failed events only; currently `false` because autopilot retry cadence is owned by triggers/schedules. |
+Fires from `autopilot_run` lifecycle changes. The run source supplies the
+`cadence` and `trigger_kind` labels; terminal events additionally use the fixed
+`completed` or `failed` label selected by the event name.
 
 ### `issue_executed`
 

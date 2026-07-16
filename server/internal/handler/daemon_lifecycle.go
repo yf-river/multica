@@ -151,15 +151,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				ProfileID:   profileUUID,
 			})
 			if err != nil {
-				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeFailed(
-					uuidToString(ownerID),
-					req.WorkspaceID,
-					req.DaemonID,
-					provider,
-					"registration_failed",
-					"db_error",
-					true,
-				))
+				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeFailed(provider, "registration_failed", true))
 				writeError(w, http.StatusInternalServerError, "failed to register runtime: "+err.Error())
 				return
 			}
@@ -194,15 +186,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				OwnerID:     ownerID,
 			})
 			if err != nil {
-				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeFailed(
-					uuidToString(ownerID),
-					req.WorkspaceID,
-					req.DaemonID,
-					provider,
-					"registration_failed",
-					"db_error",
-					true,
-				))
+				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeFailed(provider, "registration_failed", true))
 				writeError(w, http.StatusInternalServerError, "failed to register runtime: "+err.Error())
 				return
 			}
@@ -229,24 +213,9 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		// Inserted is false for normal daemon reconnects/upserts, so
 		// runtime_ready is a first-ready-per-runtime-row signal.
 		if inserted {
-			obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeRegistered(
-				uuidToString(ownerID),
-				req.WorkspaceID,
-				uuidToString(registered.ID),
-				req.DaemonID,
-				provider,
-				runtime.Version,
-				req.CLIVersion,
-			))
+			obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeRegistered(provider))
 			if registered.Status == "online" {
-				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeReady(
-					uuidToString(ownerID),
-					req.WorkspaceID,
-					uuidToString(registered.ID),
-					req.DaemonID,
-					provider,
-					0,
-				))
+				obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeReady(provider, 0))
 			}
 		}
 
@@ -329,13 +298,7 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("deregister: failed to set offline", "runtime_id", rid, "error", err)
 			continue
 		}
-		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeOffline(
-			uuidToString(rt.OwnerID),
-			wsID,
-			uuidToString(rt.ID),
-			rt.DaemonID.String,
-			rt.Provider,
-		))
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.RuntimeOffline(rt.Provider))
 
 		affectedWorkspaces[wsID] = true
 	}

@@ -10,7 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
+	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -205,13 +207,13 @@ func (s *AutopilotService) CaptureAutopilotRunDone(ctx context.Context, event ev
 	}
 	switch payload.Status {
 	case "completed":
-		s.captureAutopilotRunCompleted(autopilot, run)
-	case "failed":
-		reason := ""
-		if run.FailureReason.Valid {
-			reason = run.FailureReason.String
+		if s.TaskSvc != nil && s.TaskSvc.Analytics != nil {
+			obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunCompleted(run.Source))
 		}
-		s.captureAutopilotRunFailed(autopilot, run, run.Source, reason)
+	case "failed":
+		if s.TaskSvc != nil && s.TaskSvc.Analytics != nil {
+			obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunFailed(run.Source))
+		}
 	case "skipped":
 		if s.TaskSvc != nil && s.TaskSvc.Metrics != nil {
 			reason := "unknown"

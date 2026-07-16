@@ -133,7 +133,9 @@ func (s *AutopilotService) dispatchAutopilot(
 		}
 		return nil, fmt.Errorf("create run: %w", err)
 	}
-	s.captureAutopilotRunStarted(autopilot, run, source)
+	if s.TaskSvc != nil && s.TaskSvc.Analytics != nil {
+		obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunStarted(source))
+	}
 
 	switch autopilot.ExecutionMode {
 	case "create_issue":
@@ -928,96 +930,6 @@ func (s *AutopilotService) captureIssueCreatedFromAutopilot(ap db.Autopilot, run
 	))
 }
 
-func (s *AutopilotService) captureAutopilotRunStarted(ap db.Autopilot, run db.AutopilotRun, triggerSource string) {
-	if s.TaskSvc == nil || s.TaskSvc.Analytics == nil {
-		return
-	}
-	obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunStarted(
-		autopilotActorID(ap),
-		util.UUIDToString(ap.WorkspaceID),
-		util.UUIDToString(ap.ID),
-		util.UUIDToString(run.ID),
-		triggerSource,
-		s.autopilotAssigneeAnalytics(ap),
-		triggerSource,
-	))
-}
-
-func (s *AutopilotService) captureAutopilotRunCompleted(ap db.Autopilot, run db.AutopilotRun) {
-	if s.TaskSvc == nil || s.TaskSvc.Analytics == nil {
-		return
-	}
-	obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunCompleted(
-		autopilotActorID(ap),
-		util.UUIDToString(ap.WorkspaceID),
-		util.UUIDToString(ap.ID),
-		util.UUIDToString(run.ID),
-		run.Source,
-		s.autopilotAssigneeAnalytics(ap),
-		run.Source,
-		autopilotRunDurationMS(run),
-	))
-}
-
-func (s *AutopilotService) captureAutopilotRunFailed(ap db.Autopilot, run db.AutopilotRun, triggerSource, reason string) {
-	if s.TaskSvc == nil || s.TaskSvc.Analytics == nil {
-		return
-	}
-	if reason == "" {
-		reason = "unknown"
-	}
-	obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunFailed(
-		autopilotActorID(ap),
-		util.UUIDToString(ap.WorkspaceID),
-		util.UUIDToString(ap.ID),
-		util.UUIDToString(run.ID),
-		triggerSource,
-		s.autopilotAssigneeAnalytics(ap),
-		triggerSource,
-		reason,
-		autopilotErrorType(reason),
-		false,
-		autopilotRunDurationMS(run),
-	))
-}
-
-// autopilotAssigneeAnalytics builds the PostHog assignee descriptor for an
-// autopilot. For squad autopilots agent_id is best-effort the resolved
-// leader (so per-agent funnels stay consistent); a resolve error degrades
-// to the raw assignee_id rather than dropping the event — incomplete data
-// in the dashboard is preferable to silent attribution gaps.
-func (s *AutopilotService) autopilotAssigneeAnalytics(ap db.Autopilot) analytics.AutopilotAssignee {
-	assignee := analytics.AutopilotAssignee{
-		AssigneeType: ap.AssigneeType,
-	}
-	if ap.AssigneeType == "squad" {
-		assignee.SquadID = util.UUIDToString(ap.AssigneeID)
-		if leader, _, err := s.resolveAutopilotLeader(context.Background(), ap); err == nil {
-			assignee.AgentID = util.UUIDToString(leader.ID)
-		} else {
-			assignee.AgentID = util.UUIDToString(ap.AssigneeID)
-		}
-	} else {
-		assignee.AgentID = util.UUIDToString(ap.AssigneeID)
-	}
-	return assignee
-}
-
-func autopilotErrorType(reason string) string {
-	switch {
-	case strings.Contains(reason, "unknown execution_mode"):
-		return "configuration"
-	case strings.HasPrefix(reason, "issue "):
-		return "issue_terminal"
-	case strings.Contains(reason, "create issue"), strings.Contains(reason, "enqueue task"), strings.Contains(reason, "dispatch"):
-		return "dispatch_error"
-	case strings.HasPrefix(reason, "task "):
-		return "task_error"
-	default:
-		return "autopilot_error"
-	}
-}
-
 func autopilotActorID(ap db.Autopilot) string {
 	id := util.UUIDToString(ap.CreatedByID)
 	if ap.CreatedByType == "agent" && id != "" {
@@ -1027,24 +939,6 @@ func autopilotActorID(ap db.Autopilot) string {
 		return id
 	}
 	return "system"
-}
-
-func autopilotRunDurationMS(run db.AutopilotRun) int64 {
-	if !run.CompletedAt.Valid {
-		return 0
-	}
-	start := run.TriggeredAt
-	if !start.Valid {
-		start = run.CreatedAt
-	}
-	if !start.Valid {
-		return 0
-	}
-	ms := run.CompletedAt.Time.Sub(start.Time).Milliseconds()
-	if ms < 0 {
-		return 0
-	}
-	return ms
 }
 
 func (s *AutopilotService) resolveAutopilotTriggerTimezone(ctx context.Context, triggerID pgtype.UUID) (string, error) {
