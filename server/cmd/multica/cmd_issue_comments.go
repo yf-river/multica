@@ -225,11 +225,7 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Comment added to issue %s.\n", issueRef.Display)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printJSONResult(cmd, result)
 }
 
 func runIssueCommentDelete(cmd *cobra.Command, args []string) error {
@@ -558,11 +554,7 @@ func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) erro
 		fmt.Fprintf(os.Stderr, "Unsubscribed %s from issue %s.\n", target, issueRef.Display)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printJSONResult(cmd, result)
 }
 
 // ---------------------------------------------------------------------------

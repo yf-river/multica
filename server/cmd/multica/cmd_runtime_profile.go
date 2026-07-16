@@ -335,11 +335,16 @@ func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
 
 // outputRuntimeProfile renders a single profile honoring --output.
 func outputRuntimeProfile(cmd *cobra.Command, profile map[string]any) error {
-	if wantsJSONOutput(cmd) {
-		return cli.PrintJSON(os.Stdout, profile)
-	}
-	printRuntimeProfileTable([]map[string]any{profile})
-	return nil
+	return printRecordResult(cmd, profile,
+		[]string{"ID", "DISPLAY_NAME", "PROTOCOL_FAMILY", "COMMAND_NAME", "ENABLED"},
+		[]string{
+			strVal(profile, "id"),
+			strVal(profile, "display_name"),
+			strVal(profile, "protocol_family"),
+			strVal(profile, "command_name"),
+			strVal(profile, "enabled"),
+		},
+	)
 }
 
 // printRuntimeProfileTable renders profiles as a stable, sorted table.

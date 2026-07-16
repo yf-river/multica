@@ -616,20 +616,10 @@ func pullRequestURL(pr map[string]any) string {
 }
 
 func printIssueMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"KEY", "TITLE", "STATUS", "PRIORITY"},
+		[]string{issueDisplayKey(result), strVal(result, "title"), strVal(result, "status"), strVal(result, "priority")},
+	)
 }
 
 func runIssueGet(cmd *cobra.Command, args []string) error {
@@ -1032,11 +1022,7 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Issue %s assigned to %s.\n", issueDisplayKey(result), displayTarget)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printJSONResult(cmd, result)
 }
 
 func runIssueStatus(cmd *cobra.Command, args []string) error {

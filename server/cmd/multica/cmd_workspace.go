@@ -316,27 +316,16 @@ func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get workspace: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		printWorkspaceDetailsTable(ws)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, ws)
+	return printWorkspaceResult(cmd, ws)
 }
 
-func printWorkspaceDetailsTable(ws map[string]any) {
+func printWorkspaceResult(cmd *cobra.Command, ws map[string]any) error {
 	desc := truncateWorkspaceDetail(strVal(ws, "description"))
 	wsContext := truncateWorkspaceDetail(strVal(ws, "context"))
-	headers := []string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"}
-	rows := [][]string{{
-		strVal(ws, "id"),
-		strVal(ws, "name"),
-		strVal(ws, "slug"),
-		desc,
-		wsContext,
-	}}
-	cli.PrintTable(os.Stdout, headers, rows)
+	return printRecordResult(cmd, ws,
+		[]string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"},
+		[]string{strVal(ws, "id"), strVal(ws, "name"), strVal(ws, "slug"), desc, wsContext},
+	)
 }
 
 func truncateWorkspaceDetail(value string) string {
@@ -406,13 +395,7 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update workspace: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		printWorkspaceDetailsTable(ws)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, ws)
+	return printWorkspaceResult(cmd, ws)
 }
 
 func runWorkspaceMembers(cmd *cobra.Command, args []string) error {

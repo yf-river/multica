@@ -136,23 +136,14 @@ func runLabelGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get label: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "NAME", "COLOR", "CREATED"}
-		created := strVal(label, "created_at")
-		if len(created) >= 10 {
-			created = created[:10]
-		}
-		rows := [][]string{{
-			strVal(label, "id"),
-			strVal(label, "name"),
-			strVal(label, "color"),
-			created,
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
+	created := strVal(label, "created_at")
+	if len(created) >= 10 {
+		created = created[:10]
 	}
-	return cli.PrintJSON(os.Stdout, label)
+	return printRecordResult(cmd, label,
+		[]string{"ID", "NAME", "COLOR", "CREATED"},
+		[]string{strVal(label, "id"), strVal(label, "name"), strVal(label, "color"), created},
+	)
 }
 
 func runLabelCreate(cmd *cobra.Command, _ []string) error {
@@ -207,18 +198,10 @@ func runLabelUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func printLabelMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "NAME", "COLOR"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "name"),
-			strVal(result, "color"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "NAME", "COLOR"},
+		[]string{strVal(result, "id"), strVal(result, "name"), strVal(result, "color")},
+	)
 }
 
 func runLabelDelete(cmd *cobra.Command, args []string) error {

@@ -68,6 +68,21 @@ func wantsJSONOutput(cmd *cobra.Command) bool {
 	return output == "json"
 }
 
+func printRecordResult(cmd *cobra.Command, result map[string]any, headers, row []string) error {
+	if wantsJSONOutput(cmd) {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	cli.PrintTable(os.Stdout, headers, [][]string{row})
+	return nil
+}
+
+func printJSONResult(cmd *cobra.Command, result map[string]any) error {
+	if !wantsJSONOutput(cmd) {
+		return nil
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
 func printNamedMutationResult(cmd *cobra.Command, entity, action, nameKey string, result map[string]any) error {
 	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)

@@ -396,19 +396,10 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func printProjectMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TITLE", "STATUS"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "title"),
-			strVal(result, "status"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "TITLE", "STATUS"},
+		[]string{strVal(result, "id"), strVal(result, "title"), strVal(result, "status")},
+	)
 }
 
 func runProjectDelete(cmd *cobra.Command, args []string) error {
@@ -560,18 +551,10 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("add project resource: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TYPE", "REF"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "resource_type"),
-			summarizeResourceRef(result["resource_ref"]),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "TYPE", "REF"},
+		[]string{strVal(result, "id"), strVal(result, "resource_type"), summarizeResourceRef(result["resource_ref"])},
+	)
 }
 
 func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
@@ -648,19 +631,10 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update project resource: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TYPE", "REF", "LABEL"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "resource_type"),
-			summarizeResourceRef(result["resource_ref"]),
-			strVal(result, "label"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "TYPE", "REF", "LABEL"},
+		[]string{strVal(result, "id"), strVal(result, "resource_type"), summarizeResourceRef(result["resource_ref"]), strVal(result, "label")},
+	)
 }
 
 func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, resolvedID, error) {
