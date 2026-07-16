@@ -17,9 +17,9 @@ the expanded JSON and Markdown evidence under ignored
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 190 |
-| Migration files | 4 |
+| Migration files | 12 |
 | sqlc modules | 55 |
-| sqlc queries | 545 |
+| sqlc queries | 544 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand stores | 24 |
