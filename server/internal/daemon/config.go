@@ -339,7 +339,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 	if _, ok := agents["codex"]; ok {
-		if err := ensureCodexRuntimeProfile(daemonID); err != nil {
+		if err := ensureCodexRuntimeProfile(); err != nil {
 			return Config{}, fmt.Errorf("ensure codex runtime profile: %w", err)
 		}
 	}

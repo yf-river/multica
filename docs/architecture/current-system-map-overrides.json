@@ -52,8 +52,7 @@
       "environment": [
         "CODEX_HOME",
         "MULTICA_AGENT_PROVIDERS",
-        "MULTICA_CODEX_HOME",
-        "MULTICA_CODEX_SOURCE_HOME"
+        "MULTICA_CODEX_HOME"
       ],
       "sources": [
         "server/internal/daemon/task_run.go",

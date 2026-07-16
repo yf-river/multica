@@ -901,8 +901,6 @@ function resolveCodexRunnerProfile(item, base) {
   const sourceHome = firstNonEmpty(
     process.env.GOAL_TEST_CODEX_SOURCE_HOME,
     base.GOAL_TEST_CODEX_SOURCE_HOME,
-    process.env.MULTICA_CODEX_SOURCE_HOME,
-    base.MULTICA_CODEX_SOURCE_HOME,
     process.env.CODEX_HOME,
     base.CODEX_HOME,
     defaultGoalTestCodexHome(),
@@ -931,7 +929,6 @@ function codexRunnerEnvLines(runner) {
   }
   if (runner.sourceHome) {
     lines.push(`GOAL_TEST_CODEX_SOURCE_HOME=${runner.sourceHome}`);
-    lines.push(`MULTICA_CODEX_SOURCE_HOME=${runner.sourceHome}`);
   }
   if (runner.codexModel) {
     lines.push(`GOAL_TEST_CODEX_MODEL=${runner.codexModel}`);
@@ -943,7 +940,6 @@ function codexRunnerEnvLines(runner) {
 function applyCodexRunnerRuntimeEnv(env) {
   if (env.GOAL_TEST_CODEX_HOME) env.CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
   if (env.GOAL_TEST_CODEX_HOME) env.MULTICA_CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
-  if (env.GOAL_TEST_CODEX_SOURCE_HOME) env.MULTICA_CODEX_SOURCE_HOME = env.GOAL_TEST_CODEX_SOURCE_HOME;
   if (env.GOAL_TEST_CODEX_PATH) env.MULTICA_CODEX_PATH = env.GOAL_TEST_CODEX_PATH;
   if (env.GOAL_TEST_CODEX_MODEL) env.MULTICA_CODEX_MODEL = env.GOAL_TEST_CODEX_MODEL;
   if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "disabled";

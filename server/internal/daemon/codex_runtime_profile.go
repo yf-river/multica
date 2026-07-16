@@ -18,12 +18,9 @@ var codexRuntimeProfileFiles = []string{
 // task-local CODEX_HOME directories. By default it uses the user's active
 // Codex home directly; an explicit MULTICA_CODEX_HOME remains supported for
 // operators who still want a separate runtime profile.
-func ensureCodexRuntimeProfile(_ string) error {
+func ensureCodexRuntimeProfile() error {
 	target := strings.TrimSpace(os.Getenv("MULTICA_CODEX_HOME"))
-	source := strings.TrimSpace(os.Getenv("MULTICA_CODEX_SOURCE_HOME"))
-	if source == "" {
-		source = strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	}
+	source := strings.TrimSpace(os.Getenv("CODEX_HOME"))
 	if source == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			source = filepath.Join(home, ".codex")
@@ -38,16 +35,14 @@ func ensureCodexRuntimeProfile(_ string) error {
 	if err != nil {
 		return fmt.Errorf("resolve MULTICA_CODEX_HOME %q: %w", target, err)
 	}
-	sourceAbs := ""
-	if source != "" {
-		if abs, err := filepath.Abs(source); err == nil {
-			sourceAbs = abs
-		}
+	sourceAbs, err := filepath.Abs(source)
+	if err != nil {
+		return fmt.Errorf("resolve CODEX_HOME %q: %w", source, err)
 	}
 	if err := os.MkdirAll(targetAbs, 0o700); err != nil {
 		return fmt.Errorf("create codex runtime profile %s: %w", targetAbs, err)
 	}
-	if sourceAbs != "" && sourceAbs != targetAbs {
+	if sourceAbs != targetAbs {
 		if err := seedCodexRuntimeProfile(targetAbs, sourceAbs); err != nil {
 			return err
 		}
