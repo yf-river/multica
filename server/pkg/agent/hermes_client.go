@@ -888,26 +888,13 @@ func extractACPSessionID(result json.RawMessage) string {
 func extractACPCurrentModelID(result json.RawMessage) string {
 	var r struct {
 		Models struct {
-			CurrentModelID      string `json:"currentModelId"`
-			CurrentModelIDSnake string `json:"current_model_id"`
+			CurrentModelID string `json:"currentModelId"`
 		} `json:"models"`
-		CurrentModelID      string `json:"currentModelId"`
-		CurrentModelIDSnake string `json:"current_model_id"`
 	}
 	if err := json.Unmarshal(result, &r); err != nil {
 		return ""
 	}
-	for _, candidate := range []string{
-		r.Models.CurrentModelID,
-		r.Models.CurrentModelIDSnake,
-		r.CurrentModelID,
-		r.CurrentModelIDSnake,
-	} {
-		if model := strings.TrimSpace(candidate); model != "" {
-			return model
-		}
-	}
-	return ""
+	return strings.TrimSpace(r.Models.CurrentModelID)
 }
 
 // A resume response is authoritative. A missing session id invalidates the

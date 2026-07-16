@@ -69,20 +69,6 @@ func TestExtractACPCurrentModelID(t *testing.T) {
 	}
 }
 
-func TestExtractACPCurrentModelIDSnakeCase(t *testing.T) {
-	t.Parallel()
-	raw := json.RawMessage(`{
-		"session_id": "ses_123",
-		"models": {
-			"current_model_id": "openrouter:anthropic/claude-sonnet-4.6"
-		}
-	}`)
-	got := extractACPCurrentModelID(raw)
-	if got != "openrouter:anthropic/claude-sonnet-4.6" {
-		t.Errorf("got %q, want current model", got)
-	}
-}
-
 func TestExtractACPCurrentModelIDMissing(t *testing.T) {
 	t.Parallel()
 	if got := extractACPCurrentModelID(json.RawMessage(`{"sessionId":"ses_123"}`)); got != "" {

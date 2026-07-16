@@ -553,37 +553,24 @@ func discoverACPModels(ctx context.Context, executablePath string, p acpDiscover
 // empty catalog) from "couldn't find the structure at all".
 func parseACPSessionNewModels(raw json.RawMessage) []Model {
 	type acpModelInfo struct {
-		ModelID      string `json:"modelId"`
-		ModelIDSnake string `json:"model_id"`
-		Name         string `json:"name"`
-		Description  string `json:"description"`
+		ModelID     string `json:"modelId"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
 	}
 	var resp struct {
 		Models struct {
-			AvailableModels      []acpModelInfo `json:"availableModels"`
-			AvailableModelsSnake []acpModelInfo `json:"available_models"`
-			CurrentModelID       string         `json:"currentModelId"`
-			CurrentModelIDSnake  string         `json:"current_model_id"`
+			AvailableModels []acpModelInfo `json:"availableModels"`
+			CurrentModelID  string         `json:"currentModelId"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil
 	}
-	availableModels := resp.Models.AvailableModels
-	if len(availableModels) == 0 && resp.Models.AvailableModelsSnake != nil {
-		availableModels = resp.Models.AvailableModelsSnake
-	}
 	currentModelID := strings.TrimSpace(resp.Models.CurrentModelID)
-	if currentModelID == "" {
-		currentModelID = strings.TrimSpace(resp.Models.CurrentModelIDSnake)
-	}
-	models := make([]Model, 0, len(availableModels))
+	models := make([]Model, 0, len(resp.Models.AvailableModels))
 	seen := map[string]bool{}
-	for _, m := range availableModels {
+	for _, m := range resp.Models.AvailableModels {
 		modelID := strings.TrimSpace(m.ModelID)
-		if modelID == "" {
-			modelID = strings.TrimSpace(m.ModelIDSnake)
-		}
 		if modelID == "" || seen[modelID] {
 			continue
 		}
