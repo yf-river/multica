@@ -361,60 +361,35 @@ func createRunOnlyAutopilotForAgent(t *testing.T, ctx context.Context, queries *
 	return ap
 }
 
-// TestAutopilotCreateIssueTaskNoProgressFailureUpdatesRun is the original
-// VEN-661 regression: a Codex no-progress failure with no retries left fails
-// the linked run.
-func TestAutopilotCreateIssueTaskNoProgressFailureUpdatesRun(t *testing.T) {
-	ctx := context.Background()
-	f := dispatchCreateIssueAutopilot(t, "Create-issue no-progress listener")
-
-	// max_attempts = 1 means the failed attempt has no retry budget left.
-	runTaskWithBudget(t, f.queries, f.taskID, 1)
-
-	const errMsg = "codex app-server no progress timeout after 30s"
-	if _, err := f.taskSvc.FailTask(ctx, f.taskID, errMsg, "", "", "codex_semantic_inactivity"); err != nil {
-		t.Fatalf("FailTask: %v", err)
+func TestAutopilotCreateIssueTaskFinalFailuresUpdateRun(t *testing.T) {
+	tests := []struct {
+		name          string
+		errorMessage  string
+		failureReason string
+		wantReason    string
+	}{
+		{name: "no progress", errorMessage: "codex app-server no progress timeout after 30s", failureReason: "codex_semantic_inactivity", wantReason: "no progress timeout"},
+		{name: "agent error", errorMessage: "build failed: ./pkg/foo: undefined: Bar", failureReason: "agent_error", wantReason: "build failed"},
 	}
-	projectTaskTerminalEvent(t, f.queries, f.taskID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := dispatchCreateIssueAutopilot(t, "Create-issue "+tt.name+" listener")
+			runTaskWithBudget(t, f.queries, f.taskID, 1)
 
-	updatedRun, err := f.queries.GetAutopilotRun(ctx, f.run.ID)
-	if err != nil {
-		t.Fatalf("GetAutopilotRun: %v", err)
-	}
-	if updatedRun.Status != "failed" {
-		t.Fatalf("expected run status failed, got %q", updatedRun.Status)
-	}
-	if !updatedRun.FailureReason.Valid || !strings.Contains(updatedRun.FailureReason.String, "no progress timeout") {
-		t.Fatalf("expected no-progress failure reason, got %+v", updatedRun.FailureReason)
-	}
-}
+			if _, err := f.taskSvc.FailTask(ctx, f.taskID, tt.errorMessage, "", "", tt.failureReason); err != nil {
+				t.Fatalf("FailTask: %v", err)
+			}
+			projectTaskTerminalEvent(t, f.queries, f.taskID)
 
-// TestAutopilotCreateIssueTaskAgentErrorFailureUpdatesRun covers the VEN-662
-// generalization: an ordinary, non-retryable agent failure must also close the
-// linked run instead of leaving it stuck in issue_created.
-func TestAutopilotCreateIssueTaskAgentErrorFailureUpdatesRun(t *testing.T) {
-	ctx := context.Background()
-	f := dispatchCreateIssueAutopilot(t, "Create-issue agent-error listener")
-
-	runTaskWithBudget(t, f.queries, f.taskID, 1)
-
-	// agent_error is not in retryableReasons, so the first terminal failure is
-	// final — the run must fail carrying the agent's error text.
-	const errMsg = "build failed: ./pkg/foo: undefined: Bar"
-	if _, err := f.taskSvc.FailTask(ctx, f.taskID, errMsg, "", "", "agent_error"); err != nil {
-		t.Fatalf("FailTask: %v", err)
-	}
-	projectTaskTerminalEvent(t, f.queries, f.taskID)
-
-	updatedRun, err := f.queries.GetAutopilotRun(ctx, f.run.ID)
-	if err != nil {
-		t.Fatalf("GetAutopilotRun: %v", err)
-	}
-	if updatedRun.Status != "failed" {
-		t.Fatalf("expected run status failed, got %q", updatedRun.Status)
-	}
-	if !updatedRun.FailureReason.Valid || !strings.Contains(updatedRun.FailureReason.String, "build failed") {
-		t.Fatalf("expected agent-error failure reason, got %+v", updatedRun.FailureReason)
+			updatedRun, err := f.queries.GetAutopilotRun(ctx, f.run.ID)
+			if err != nil {
+				t.Fatalf("GetAutopilotRun: %v", err)
+			}
+			if updatedRun.Status != "failed" || !updatedRun.FailureReason.Valid || !strings.Contains(updatedRun.FailureReason.String, tt.wantReason) {
+				t.Fatalf("final failure run = status %q reason %+v", updatedRun.Status, updatedRun.FailureReason)
+			}
+		})
 	}
 }
 
@@ -555,22 +530,7 @@ func TestAutopilotIssueTerminalEventsProjectRun(t *testing.T) {
 func TestAutopilotTaskProjectionReturnsTransientDatabaseFailure(t *testing.T) {
 	ctx := context.Background()
 	f := setupAutopilotListenerFixture(t)
-	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
-		Title:              "Durable projection retry",
-		Description:        pgtype.Text{String: "failure propagation", Valid: true},
-		AssigneeType:       "agent",
-		AssigneeID:         util.MustParseUUID(f.agentID),
-		Status:             "active",
-		ExecutionMode:      "run_only",
-		IssueTitleTemplate: pgtype.Text{},
-		CreatedByType:      "member",
-		CreatedByID:        util.MustParseUUID(testUserID),
-	})
-	if err != nil {
-		t.Fatalf("create autopilot: %v", err)
-	}
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID) })
+	ap := createRunOnlyAutopilotForAgent(t, ctx, f.queries, "Durable projection retry", "failure propagation", f.agentID)
 	run, err := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 	if err != nil {
 		t.Fatalf("dispatch autopilot: %v", err)
@@ -621,22 +581,7 @@ func TestAutopilotTaskProjectionReturnsTransientDatabaseFailure(t *testing.T) {
 func TestAutopilotRunOnlyRollsBackTaskWhenRunLinkFails(t *testing.T) {
 	ctx := context.Background()
 	f := setupAutopilotListenerFixture(t)
-	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
-		Title:              "Atomic run-only dispatch",
-		Description:        pgtype.Text{String: "task and run link must commit together", Valid: true},
-		AssigneeType:       "agent",
-		AssigneeID:         util.MustParseUUID(f.agentID),
-		Status:             "active",
-		ExecutionMode:      "run_only",
-		IssueTitleTemplate: pgtype.Text{},
-		CreatedByType:      "member",
-		CreatedByID:        util.MustParseUUID(testUserID),
-	})
-	if err != nil {
-		t.Fatalf("create autopilot: %v", err)
-	}
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID) })
+	ap := createRunOnlyAutopilotForAgent(t, ctx, f.queries, "Atomic run-only dispatch", "task and run link must commit together", f.agentID)
 	installAutopilotTaskLinkFailure(t, util.UUIDToString(ap.ID))
 
 	run, dispatchErr := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
