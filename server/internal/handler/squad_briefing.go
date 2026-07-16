@@ -143,8 +143,7 @@ func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) (strin
 func renderMemberRow(ctx context.Context, q *db.Queries, m db.SquadMember) (string, error) {
 	id := util.UUIDToString(m.MemberID)
 	role := strings.TrimSpace(m.Role)
-	switch m.MemberType {
-	case "agent":
+	if m.MemberType == "agent" {
 		ag, err := q.GetAgent(ctx, m.MemberID)
 		if err != nil {
 			return "", fmt.Errorf("load squad agent member %s: %w", id, err)
@@ -153,18 +152,15 @@ func renderMemberRow(ctx context.Context, q *db.Queries, m db.SquadMember) (stri
 			return "", nil
 		}
 		return formatRosterRow(ag.Name, "agent", role, formatMention(ag.Name, "agent", id)), nil
-	case "member":
-		user, err := q.GetUser(ctx, m.MemberID)
-		if err != nil {
-			return "", fmt.Errorf("load squad member %s: %w", id, err)
-		}
-		// Mention syntax for humans uses the user_id (matches the rest of
-		// the product — see util.MentionRe and frontend mention payloads).
-		userID := util.UUIDToString(m.MemberID)
-		return formatRosterRow(user.Name, "member（人类）", role, formatMention(user.Name, "member", userID)), nil
-	default:
-		return "", fmt.Errorf("unsupported squad member type %q", m.MemberType)
 	}
+	user, err := q.GetUser(ctx, m.MemberID)
+	if err != nil {
+		return "", fmt.Errorf("load squad member %s: %w", id, err)
+	}
+	// Mention syntax for humans uses the user_id (matches the rest of
+	// the product — see util.MentionRe and frontend mention payloads).
+	userID := util.UUIDToString(m.MemberID)
+	return formatRosterRow(user.Name, "member（人类）", role, formatMention(user.Name, "member", userID)), nil
 }
 
 func formatRosterRow(name, kind, role, mention string) string {

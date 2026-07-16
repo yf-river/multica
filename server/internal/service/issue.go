@@ -674,8 +674,6 @@ func (s *IssueService) ReconcileProjectOwnerApprovalInTx(
 		projection.inbox = &item
 		projection.inboxIssueStatus = issue.Status
 		projection.issue = &issue
-	default:
-		projection.issue = &issue
 	}
 	return projection, nil
 }
@@ -843,15 +841,14 @@ func (s *IssueService) defaultProjectLeadAssignee(ctx context.Context, q *db.Que
 	if !project.LeadType.Valid || !project.LeadID.Valid {
 		return pgtype.Text{}, pgtype.UUID{}
 	}
-	switch project.LeadType.String {
-	case "member":
+	if project.LeadType.String == "member" {
 		if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 			UserID:      project.LeadID,
 			WorkspaceID: project.WorkspaceID,
 		}); err != nil {
 			return pgtype.Text{}, pgtype.UUID{}
 		}
-	case "agent":
+	} else {
 		agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          project.LeadID,
 			WorkspaceID: project.WorkspaceID,
@@ -859,8 +856,6 @@ func (s *IssueService) defaultProjectLeadAssignee(ctx context.Context, q *db.Que
 		if err != nil || agent.ArchivedAt.Valid {
 			return pgtype.Text{}, pgtype.UUID{}
 		}
-	default:
-		return pgtype.Text{}, pgtype.UUID{}
 	}
 	return project.LeadType, project.LeadID
 }

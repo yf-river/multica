@@ -1173,12 +1173,7 @@ func isRecoveredRuntimeFailure(issue IssueResponse, node issueTimelineNodeRespon
 }
 
 func isCompletedIssueStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "done", "completed", "已完成":
-		return true
-	default:
-		return false
-	}
+	return status == "done"
 }
 
 func isFailedTimelineStatus(status string) bool {

@@ -181,16 +181,13 @@ func attachIssueListSummary(resp *IssueResponse, summary issueListSummary) {
 	}
 }
 func unknownIssueAssigneeName(assigneeType string) string {
-	switch assigneeType {
-	case "member":
+	if assigneeType == "member" {
 		return "未知成员"
-	case "agent":
-		return "未知智能体"
-	case "squad":
-		return "未知小队"
-	default:
-		return "未知负责人"
 	}
+	if assigneeType == "agent" {
+		return "未知智能体"
+	}
+	return "未知小队"
 }
 func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
 	if assigneeType.Valid && assigneeID.Valid {

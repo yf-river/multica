@@ -137,8 +137,7 @@ func (s *AutopilotService) dispatchAutopilot(
 		obsmetrics.RecordEvent(s.TaskSvc.Analytics, s.TaskSvc.Metrics, analytics.AutopilotRunStarted(source))
 	}
 
-	switch autopilot.ExecutionMode {
-	case "create_issue":
+	if autopilot.ExecutionMode == "create_issue" {
 		triggerTimezone, err := s.resolveAutopilotTriggerTimezone(ctx, triggerID)
 		if err == nil {
 			err = s.dispatchCreateIssue(ctx, autopilot, &run, triggerTimezone)
@@ -151,7 +150,7 @@ func (s *AutopilotService) dispatchAutopilot(
 			dispatchErr := fmt.Errorf("dispatch create_issue: %w", err)
 			return &run, s.failDispatchRun(ctx, autopilot, &run, err.Error(), dispatchErr)
 		}
-	case "run_only":
+	} else {
 		if err := s.dispatchRunOnly(ctx, autopilot, &run); err != nil {
 			skipped, skipErr := s.handleDispatchSkip(ctx, autopilot, &run, err)
 			if skipped {
@@ -160,9 +159,6 @@ func (s *AutopilotService) dispatchAutopilot(
 			dispatchErr := fmt.Errorf("dispatch run_only: %w", err)
 			return &run, s.failDispatchRun(ctx, autopilot, &run, err.Error(), dispatchErr)
 		}
-	default:
-		dispatchErr := fmt.Errorf("unknown execution_mode: %s", autopilot.ExecutionMode)
-		return &run, s.failDispatchRun(ctx, autopilot, &run, dispatchErr.Error(), dispatchErr)
 	}
 
 	// Publish run start event.
@@ -729,31 +725,23 @@ var errSquadArchived = errors.New("squad is archived")
 // the gate still has to fail closed for any row that slips through that
 // transfer (e.g. squad archived through a code path that bypasses the
 // handler) so an archived squad never produces work.
-//
-// Unknown assignee_type values return an error. assignee_type is gated by a
-// CHECK constraint at the DB layer, so this only fires if a future code path
-// inserts a row that bypasses the check.
 func (s *AutopilotService) resolveAutopilotLeader(ctx context.Context, ap db.Autopilot) (agent db.Agent, squadResolved bool, err error) {
-	switch ap.AssigneeType {
-	case "agent":
+	if ap.AssigneeType == "agent" {
 		agent, err = s.Queries.GetAgent(ctx, ap.AssigneeID)
 		return agent, false, err
-	case "squad":
-		squad, err := s.Queries.GetSquad(ctx, ap.AssigneeID)
-		if err != nil {
-			return db.Agent{}, true, fmt.Errorf("load squad: %w", err)
-		}
-		if squad.ArchivedAt.Valid {
-			return db.Agent{}, true, errSquadArchived
-		}
-		agent, err = s.Queries.GetAgent(ctx, squad.LeaderID)
-		if err != nil {
-			return db.Agent{}, true, fmt.Errorf("load squad leader: %w", err)
-		}
-		return agent, true, nil
-	default:
-		return db.Agent{}, false, fmt.Errorf("unknown assignee_type %q", ap.AssigneeType)
 	}
+	squad, err := s.Queries.GetSquad(ctx, ap.AssigneeID)
+	if err != nil {
+		return db.Agent{}, true, fmt.Errorf("load squad: %w", err)
+	}
+	if squad.ArchivedAt.Valid {
+		return db.Agent{}, true, errSquadArchived
+	}
+	agent, err = s.Queries.GetAgent(ctx, squad.LeaderID)
+	if err != nil {
+		return db.Agent{}, true, fmt.Errorf("load squad leader: %w", err)
+	}
+	return agent, true, nil
 }
 
 // autopilotSquadAttribution snapshots the squad id onto autopilot runs so task
@@ -888,10 +876,7 @@ func autopilotRunMaterialized(autopilot db.Autopilot, run db.AutopilotRun) bool 
 	if autopilot.ExecutionMode == "create_issue" {
 		return run.IssueID.Valid
 	}
-	if autopilot.ExecutionMode == "run_only" {
-		return run.TaskID.Valid
-	}
-	return true
+	return run.TaskID.Valid
 }
 
 func isAutopilotRequestKeyConflict(err error) bool {

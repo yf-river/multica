@@ -34,6 +34,7 @@ multica issue mr create <issue-id> --provider gongfeng --project-path <project-p
 type squadSOPTerminalOutcome struct {
 	eventType   string
 	eventStatus string
+	eventReason string
 	result      []byte
 }
 
@@ -41,6 +42,7 @@ func completedSquadSOPOutcome(result []byte) squadSOPTerminalOutcome {
 	return squadSOPTerminalOutcome{
 		eventType:   squadSOPEventCompleted,
 		eventStatus: squadSOPStatusCompleted,
+		eventReason: "Agent task 已完成，自动记录 SOP 阶段完成。",
 		result:      result,
 	}
 }
@@ -49,6 +51,7 @@ func failedSquadSOPOutcome() squadSOPTerminalOutcome {
 	return squadSOPTerminalOutcome{
 		eventType:   squadSOPEventFailed,
 		eventStatus: squadSOPStatusFailed,
+		eventReason: "Agent task 已失败，自动记录 SOP 阶段失败。",
 	}
 }
 
@@ -73,12 +76,7 @@ func lockIssueForTaskTerminalProjection(
 }
 
 func isTerminalTaskStatus(status string) bool {
-	switch status {
-	case "completed", "failed", "cancelled":
-		return true
-	default:
-		return false
-	}
+	return status == "completed" || status == "failed" || status == "cancelled"
 }
 
 // projectSquadSOPTerminal applies the complete automatic terminal projection
@@ -169,7 +167,7 @@ func (s *TaskService) projectSquadSOPTerminal(
 		RoleKey:     step.RoleKey,
 		EventType:   outcome.eventType,
 		Status:      outcome.eventStatus,
-		Reason:      squadSOPTerminalEventReason(outcome.eventType),
+		Reason:      outcome.eventReason,
 		TaskID:      task.ID,
 		DurationMs:  duration,
 	})
@@ -306,17 +304,6 @@ func lockSquadSOPRunForTerminal(
 		return db.SquadSopRun{}, false, fmt.Errorf("lock open Squad SOP run: %w", err)
 	}
 	return run, true, nil
-}
-
-func squadSOPTerminalEventReason(eventType string) string {
-	switch eventType {
-	case squadSOPEventCompleted:
-		return "Agent task 已完成，自动记录 SOP 阶段完成。"
-	case squadSOPEventFailed:
-		return "Agent task 已失败，自动记录 SOP 阶段失败。"
-	default:
-		return "Agent task 状态自动同步到 SOP 阶段。"
-	}
 }
 
 func (s *TaskService) projectSquadSOPIssueState(
