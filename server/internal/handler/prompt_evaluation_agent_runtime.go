@@ -65,8 +65,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 		}
 		if uuidToString(existing.RuntimeID) == uuidToString(runtime.ID) &&
 			existing.Model.String == promptEvaluationAgentModel() &&
-			existing.Instructions == instructions &&
-			existing.Name == promptEvaluationAgentName {
+			existing.Instructions == instructions {
 			if existing.ArchivedAt.Valid {
 				restored, err := h.Queries.RestoreAgent(r.Context(), existing.ID)
 				if err != nil {

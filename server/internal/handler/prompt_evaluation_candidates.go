@@ -54,7 +54,7 @@ func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWrit
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationOptimizationCandidateStatus(value) {
+		if value != "待确认" && value != "已发布" && value != "已拒绝" {
 			writeError(w, http.StatusBadRequest, "status must be 待确认, 已发布 or 已拒绝")
 			return
 		}

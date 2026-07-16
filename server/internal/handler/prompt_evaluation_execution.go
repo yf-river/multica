@@ -274,10 +274,6 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	return cases, true
 }
 
-func validPromptEvaluationOptimizationCandidateStatus(status string) bool {
-	return status == "待确认" || status == "已发布" || status == "已拒绝"
-}
-
 func promptEvaluationRunHasFailure(run db.PromptEvaluationRun) bool {
 	if run.FailedCases > 0 {
 		return true

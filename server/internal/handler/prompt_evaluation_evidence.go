@@ -520,15 +520,7 @@ func promptEvaluationToolStructuredFailureReason(output string) string {
 }
 
 func promptEvaluationToolCommandIsReadOnlyShell(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return false
-	}
-	executable := fields[0]
-	if slash := strings.LastIndex(executable, "/"); slash >= 0 {
-		executable = executable[slash+1:]
-	}
-	switch executable {
+	switch promptEvaluationToolCommandExecutable(command) {
 	case "cat", "sed", "nl", "ls", "head", "tail", "rg", "grep", "find":
 		return true
 	default:
@@ -537,18 +529,23 @@ func promptEvaluationToolCommandIsReadOnlyShell(command string) bool {
 }
 
 func promptEvaluationToolCommandReadsLocalArtifact(command string) bool {
+	executable := promptEvaluationToolCommandExecutable(command)
+	if executable != "curl" && executable != "wget" {
+		return false
+	}
+	return strings.Contains(command, "/uploads/") || strings.Contains(command, "/api/attachments/")
+}
+
+func promptEvaluationToolCommandExecutable(command string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
-		return false
+		return ""
 	}
 	executable := fields[0]
 	if slash := strings.LastIndex(executable, "/"); slash >= 0 {
 		executable = executable[slash+1:]
 	}
-	if executable != "curl" && executable != "wget" {
-		return false
-	}
-	return strings.Contains(command, "/uploads/") || strings.Contains(command, "/api/attachments/")
+	return executable
 }
 
 func promptEvaluationToolOutputHasOnlySuccessFailureCounters(output string) bool {

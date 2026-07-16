@@ -28,18 +28,9 @@ func buildPromptEvaluationSkillInventory(req CreatePromptEvaluationSkillInventor
 	if err != nil {
 		return PromptEvaluationSkillInventoryResult{}, err
 	}
-	branch := strings.TrimSpace(req.Branch)
-	if branch == "" {
-		branch = "HEAD"
-	}
-	headCommit, err := gitOutput(repoPath, "rev-parse", branch)
+	branch, headCommit, err := resolvePromptEvaluationGitBranch(repoPath, req.Branch)
 	if err != nil {
 		return PromptEvaluationSkillInventoryResult{}, fmt.Errorf("failed to resolve branch commit: %w", err)
-	}
-	if branch == "HEAD" {
-		if currentBranch, err := gitOutput(repoPath, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && currentBranch != "" {
-			branch = currentBranch
-		}
 	}
 	rootPath := filepath.Join(repoPath, filepath.FromSlash(skillRoot))
 	if info, err := os.Stat(rootPath); err != nil {
@@ -144,18 +135,9 @@ func buildPromptEvaluationSkillSnapshot(req CreatePromptEvaluationSkillSnapshotR
 	if err != nil {
 		return PromptEvaluationSkillSnapshotResponse{}, err
 	}
-	branch := strings.TrimSpace(req.Branch)
-	if branch == "" {
-		branch = "HEAD"
-	}
-	baseCommit, err := gitOutput(repoPath, "rev-parse", branch)
+	branch, baseCommit, err := resolvePromptEvaluationGitBranch(repoPath, req.Branch)
 	if err != nil {
 		return PromptEvaluationSkillSnapshotResponse{}, fmt.Errorf("failed to resolve branch commit: %w", err)
-	}
-	if branch == "HEAD" {
-		if currentBranch, err := gitOutput(repoPath, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && currentBranch != "" {
-			branch = currentBranch
-		}
 	}
 	content, err := gitBlobContent(repoPath, baseCommit, skillPath)
 	if err != nil {
@@ -314,7 +296,7 @@ func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshness
 			result.PatchCheck = "missing_patch"
 			return result, nil
 		}
-		if err := gitApplyCheck(repoPath, req.CandidatePatch); err != nil {
+		if err := gitApply(repoPath, req.CandidatePatch, "--check"); err != nil {
 			result.Status = "conflict"
 			result.Reason = "create_operation_skill patch does not apply cleanly"
 			result.PatchCheck = "conflict"
@@ -339,7 +321,7 @@ func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshness
 		result.PatchCheck = "missing_patch"
 		return result, nil
 	}
-	if err := gitApplyCheck(repoPath, patch); err != nil {
+	if err := gitApply(repoPath, patch, "--check"); err != nil {
 		result.Status = "conflict"
 		result.Reason = "target skill changed and candidate patch no longer applies cleanly"
 		result.PatchCheck = "conflict"
@@ -364,7 +346,7 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 	}
 	operationID, _ := reEvalContext["operation_id"].(string)
 	delete(reEvalContext, "operation_id")
-	alreadyApplied := gitApplyReverseCheck(repoPath, req.CandidatePatch) == nil
+	alreadyApplied := gitApply(repoPath, req.CandidatePatch, "--reverse", "--check") == nil
 	changelogPath := ""
 	if !req.SkipChangelog {
 		changelogPath, err = normalizePromptEvaluationChangelogPath(skillPath, req.ChangelogPath)
@@ -407,7 +389,7 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 		return result, nil
 	}
 	if !alreadyApplied {
-		if err := gitApplyCheck(repoPath, req.CandidatePatch); err != nil {
+		if err := gitApply(repoPath, req.CandidatePatch, "--check"); err != nil {
 			result.Status = "conflict"
 			result.Reason = "candidate patch does not apply cleanly: " + err.Error()
 			result.PatchCheck = "conflict"
@@ -434,7 +416,7 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 		return result, nil
 	}
 	if !alreadyApplied {
-		if err := gitApplyPatch(repoPath, req.CandidatePatch); err != nil {
+		if err := gitApply(repoPath, req.CandidatePatch); err != nil {
 			result.Status = "conflict"
 			result.Reason = "candidate patch failed during apply: " + err.Error()
 			result.PatchCheck = "conflict"
@@ -444,7 +426,7 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 	if !req.SkipChangelog {
 		if err := appendPromptEvaluationSkillChangelog(repoPath, changelogPath, snapshot, freshness, req, operationID, now); err != nil {
 			if !alreadyApplied {
-				_ = gitReversePatch(repoPath, req.CandidatePatch)
+				_ = gitApply(repoPath, req.CandidatePatch, "--reverse")
 			}
 			return PromptEvaluationSkillApplyResult{}, err
 		}
@@ -888,6 +870,20 @@ func skillNameFromContent(content []byte, fallback string) string {
 	return fallback
 }
 
+func resolvePromptEvaluationGitBranch(repoPath string, requested string) (string, string, error) {
+	branch := firstNonEmpty(requested, "HEAD")
+	commit, err := gitOutput(repoPath, "rev-parse", branch)
+	if err != nil {
+		return "", "", err
+	}
+	if branch == "HEAD" {
+		if current, err := gitOutput(repoPath, "rev-parse", "--abbrev-ref", "HEAD"); err == nil && current != "" {
+			branch = current
+		}
+	}
+	return branch, commit, nil
+}
+
 func gitOutput(repoPath string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
 	var stderr bytes.Buffer
@@ -899,41 +895,9 @@ func gitOutput(repoPath string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func gitApplyCheck(repoPath string, patch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "apply", "--check", "-")
-	cmd.Stdin = strings.NewReader(patch)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
-}
-
-func gitApplyReverseCheck(repoPath string, patch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "apply", "--reverse", "--check", "-")
-	cmd.Stdin = strings.NewReader(patch)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
-}
-
-func gitApplyPatch(repoPath string, patch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "apply", "-")
-	cmd.Stdin = strings.NewReader(patch)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
-}
-
-func gitReversePatch(repoPath string, patch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "apply", "--reverse", "-")
+func gitApply(repoPath string, patch string, options ...string) error {
+	args := append([]string{"-C", repoPath, "apply"}, options...)
+	cmd := exec.Command("git", append(args, "-")...)
 	cmd.Stdin = strings.NewReader(patch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
