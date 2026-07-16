@@ -76,23 +76,62 @@ func metadataTestServer(t *testing.T, metadataHandler http.HandlerFunc) {
 	t.Setenv("MULTICA_TOKEN", "test-token")
 }
 
-func TestRunIssueMetadataListReturnsErrorOn404(t *testing.T) {
-	metadataTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-	})
-
-	cmd := newIssueMetadataListTestCmd()
-	_ = cmd.Flags().Set("output", "json")
-
-	_, err := captureStdout(t, func() error {
-		return runIssueMetadataList(cmd, []string{testIssueUUID})
-	})
-	if err == nil {
-		t.Fatal("runIssueMetadataList returned nil on 404, want error")
+func TestRunIssueMetadataCommandsReturnErrorsOn404(t *testing.T) {
+	tests := []struct {
+		name        string
+		run         func() error
+		errorPrefix string
+	}{
+		{
+			name: "list",
+			run: func() error {
+				return runIssueMetadataList(newIssueMetadataListTestCmd(), []string{testIssueUUID})
+			},
+		},
+		{
+			name: "get",
+			run: func() error {
+				cmd := newIssueMetadataGetTestCmd()
+				_ = cmd.Flags().Set("key", "pr_url")
+				return runIssueMetadataGet(cmd, []string{testIssueUUID})
+			},
+		},
+		{
+			name: "set",
+			run: func() error {
+				cmd := newIssueMetadataSetTestCmd()
+				_ = cmd.Flags().Set("key", "pr_url")
+				_ = cmd.Flags().Set("value", "https://example.com/pr/1")
+				return runIssueMetadataSet(cmd, []string{testIssueUUID})
+			},
+			errorPrefix: "set metadata",
+		},
+		{
+			name: "delete",
+			run: func() error {
+				cmd := newIssueMetadataDeleteTestCmd()
+				_ = cmd.Flags().Set("key", "pr_url")
+				return runIssueMetadataDelete(cmd, []string{testIssueUUID})
+			},
+			errorPrefix: "delete metadata",
+		},
 	}
-	var httpErr *cli.HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound {
-		t.Fatalf("expected 404 *cli.HTTPError, got %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadataTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			})
+
+			_, err := captureStdout(t, tt.run)
+			var httpErr *cli.HTTPError
+			if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound {
+				t.Fatalf("expected 404 *cli.HTTPError, got %v", err)
+			}
+			if tt.errorPrefix != "" && !strings.Contains(err.Error(), tt.errorPrefix) {
+				t.Fatalf("error = %v, want it wrapped with %q prefix", err, tt.errorPrefix)
+			}
+		})
 	}
 }
 
@@ -169,63 +208,5 @@ func TestRunIssueMetadataListPropagates401Error(t *testing.T) {
 	var httpErr *cli.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 *cli.HTTPError, got %v", err)
-	}
-}
-
-func TestRunIssueMetadataGetReturnsErrorOn404(t *testing.T) {
-	metadataTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	})
-
-	cmd := newIssueMetadataGetTestCmd()
-	_ = cmd.Flags().Set("key", "pr_url")
-	_ = cmd.Flags().Set("output", "json")
-
-	_, err := captureStdout(t, func() error {
-		return runIssueMetadataGet(cmd, []string{testIssueUUID})
-	})
-	if err == nil {
-		t.Fatal("runIssueMetadataGet returned nil on 404, want error")
-	}
-}
-
-func TestRunIssueMetadataSetReturnsErrorOn404(t *testing.T) {
-	metadataTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	})
-
-	cmd := newIssueMetadataSetTestCmd()
-	_ = cmd.Flags().Set("key", "pr_url")
-	_ = cmd.Flags().Set("value", "https://example.com/pr/1")
-	_ = cmd.Flags().Set("output", "json")
-
-	_, err := captureStdout(t, func() error {
-		return runIssueMetadataSet(cmd, []string{testIssueUUID})
-	})
-	if err == nil {
-		t.Fatal("runIssueMetadataSet returned nil on 404, want error")
-	}
-	if !strings.Contains(err.Error(), "set metadata") {
-		t.Fatalf("error = %v, want it wrapped with 'set metadata' prefix", err)
-	}
-}
-
-func TestRunIssueMetadataDeleteReturnsErrorOn404(t *testing.T) {
-	metadataTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	})
-
-	cmd := newIssueMetadataDeleteTestCmd()
-	_ = cmd.Flags().Set("key", "pr_url")
-	_ = cmd.Flags().Set("output", "json")
-
-	_, err := captureStdout(t, func() error {
-		return runIssueMetadataDelete(cmd, []string{testIssueUUID})
-	})
-	if err == nil {
-		t.Fatal("runIssueMetadataDelete returned nil on 404, want error")
-	}
-	if !strings.Contains(err.Error(), "delete metadata") {
-		t.Fatalf("error = %v, want it wrapped with 'delete metadata' prefix", err)
 	}
 }

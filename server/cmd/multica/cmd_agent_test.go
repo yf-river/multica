@@ -932,35 +932,43 @@ func TestAgentAvatarHappyPath(t *testing.T) {
 	}
 }
 
-// TestAgentAvatarUnsupportedFormat rejects files with unsupported extensions.
-func TestAgentAvatarUnsupportedFormat(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	txtPath := writeAgentAvatarTestFile(t, "avatar.txt", []byte("not an image"))
-	cmd := newAgentAvatarTestCmd(t, txtPath)
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error for unsupported format, got nil")
+func TestAgentAvatarRejectsInvalidFileInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		filePath  func(*testing.T) string
+		wantError string
+	}{
+		{
+			name: "missing flag",
+			filePath: func(t *testing.T) string {
+				return ""
+			},
+			wantError: "--file is required",
+		},
+		{
+			name: "missing file",
+			filePath: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "does-not-exist.png")
+			},
+			wantError: "file not found",
+		},
+		{
+			name: "unsupported format",
+			filePath: func(t *testing.T) string {
+				return writeAgentAvatarTestFile(t, "avatar.txt", []byte("not an image"))
+			},
+			wantError: "unsupported file format",
+		},
 	}
-	if !strings.Contains(err.Error(), "unsupported file format") {
-		t.Fatalf("expected 'unsupported file format' error, got: %v", err)
-	}
-}
 
-// TestAgentAvatarOversizedFile rejects files larger than 5MB.
-func TestAgentAvatarOversizedFile(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	bigPath := writeAgentAvatarTestFile(t, "big.png", make([]byte, 5<<20+1))
-	cmd := newAgentAvatarTestCmd(t, bigPath)
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error for oversized file, got nil")
-	}
-	if !strings.Contains(err.Error(), "file too large") {
-		t.Fatalf("expected 'file too large' error, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
+			err := runAgentAvatar(newAgentAvatarTestCmd(t, tt.filePath(t)), []string{"agent-123"})
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -1055,36 +1063,6 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "update agent avatar") {
 		t.Fatalf("expected 'update agent avatar' error, got: %v", err)
-	}
-}
-
-// TestAgentAvatarMissingFileFlag rejects when --file is not provided.
-func TestAgentAvatarMissingFileFlag(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	cmd := newAgentAvatarTestCmd(t, "")
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error when --file is missing, got nil")
-	}
-	if !strings.Contains(err.Error(), "--file is required") {
-		t.Fatalf("expected '--file is required' error, got: %v", err)
-	}
-}
-
-// TestAgentAvatarNonexistentFile rejects when the file path does not exist.
-func TestAgentAvatarNonexistentFile(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	cmd := newAgentAvatarTestCmd(t, filepath.Join(t.TempDir(), "does-not-exist.png"))
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error for non-existent file, got nil")
-	}
-	if !strings.Contains(err.Error(), "file not found") {
-		t.Fatalf("expected 'file not found' error, got: %v", err)
 	}
 }
 

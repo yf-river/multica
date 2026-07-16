@@ -2423,56 +2423,42 @@ func TestValidateIssuePriority(t *testing.T) {
 	}
 }
 
-func TestRunIssueCreateRejectsInvalidStatusBeforeRequest(t *testing.T) {
-	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "Invalid status")
-	_ = cmd.Flags().Set("status", "active")
-	err := runIssueCreate(cmd, nil)
-	if err == nil {
-		t.Fatal("runIssueCreate should reject invalid status")
+func TestRunIssueCreateAndUpdateRejectInvalidFieldsBeforeRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		field  string
+		value  string
+		update bool
+		run    func(*cobra.Command) error
+	}{
+		{name: "create status", field: "status", value: "active", run: func(cmd *cobra.Command) error {
+			_ = cmd.Flags().Set("title", "Invalid status")
+			return runIssueCreate(cmd, nil)
+		}},
+		{name: "create priority", field: "priority", value: "P1", run: func(cmd *cobra.Command) error {
+			_ = cmd.Flags().Set("title", "Invalid priority")
+			return runIssueCreate(cmd, nil)
+		}},
+		{name: "update status", field: "status", value: "active", update: true, run: func(cmd *cobra.Command) error {
+			return runIssueUpdate(cmd, []string{"MUL-1"})
+		}},
+		{name: "update priority", field: "priority", value: "P1", update: true, run: func(cmd *cobra.Command) error {
+			return runIssueUpdate(cmd, []string{"MUL-1"})
+		}},
 	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
-	}
-}
 
-func TestRunIssueCreateRejectsInvalidPriorityBeforeRequest(t *testing.T) {
-	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "Invalid priority")
-	_ = cmd.Flags().Set("priority", "P1")
-	err := runIssueCreate(cmd, nil)
-	if err == nil {
-		t.Fatal("runIssueCreate should reject invalid priority")
-	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
-	}
-}
-
-func TestRunIssueUpdateRejectsInvalidStatusBeforeRequest(t *testing.T) {
-	cmd := &cobra.Command{Use: "update"}
-	cmd.Flags().String("status", "", "")
-	cmd.Flags().String("priority", "", "")
-	_ = cmd.Flags().Set("status", "active")
-	err := runIssueUpdate(cmd, []string{"MUL-1"})
-	if err == nil {
-		t.Fatal("runIssueUpdate should reject invalid status")
-	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
-	}
-}
-
-func TestRunIssueUpdateRejectsInvalidPriorityBeforeRequest(t *testing.T) {
-	cmd := &cobra.Command{Use: "update"}
-	cmd.Flags().String("status", "", "")
-	cmd.Flags().String("priority", "", "")
-	_ = cmd.Flags().Set("priority", "P1")
-	err := runIssueUpdate(cmd, []string{"MUL-1"})
-	if err == nil {
-		t.Fatal("runIssueUpdate should reject invalid priority")
-	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newIssueCreateTestCmd()
+			if tt.update {
+				cmd = &cobra.Command{Use: "update"}
+				cmd.Flags().String("status", "", "")
+				cmd.Flags().String("priority", "", "")
+			}
+			_ = cmd.Flags().Set(tt.field, tt.value)
+			if err := tt.run(cmd); err == nil || !strings.Contains(err.Error(), "valid values") {
+				t.Fatalf("error = %v, want invalid %s error listing valid values", err, tt.field)
+			}
+		})
 	}
 }
