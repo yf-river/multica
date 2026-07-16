@@ -364,31 +364,23 @@ func (h *Hub) evictSlowClients(slow []*client) {
 }
 
 func taskAvailableFrame(runtimeID, taskID string) ([]byte, error) {
-	return json.Marshal(protocol.Message{
-		Type: protocol.EventDaemonTaskAvailable,
-		Payload: mustMarshalRaw(protocol.TaskAvailablePayload{
+	return protocol.MarshalMessage(
+		protocol.EventDaemonTaskAvailable,
+		protocol.TaskAvailablePayload{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
-		}),
-	})
+		},
+	)
 }
 
 func runtimeProfilesChangedFrame(workspaceID, profileID string) ([]byte, error) {
-	return json.Marshal(protocol.Message{
-		Type: protocol.EventDaemonRuntimeProfilesChanged,
-		Payload: mustMarshalRaw(protocol.RuntimeProfilesChangedPayload{
+	return protocol.MarshalMessage(
+		protocol.EventDaemonRuntimeProfilesChanged,
+		protocol.RuntimeProfilesChangedPayload{
 			WorkspaceID:      workspaceID,
 			RuntimeProfileID: profileID,
-		}),
-	})
-}
-
-func mustMarshalRaw(v any) json.RawMessage {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	return data
+		},
+	)
 }
 
 func (h *Hub) register(c *client) {
@@ -563,10 +555,7 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 	if ack == nil {
 		return
 	}
-	frame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeatAck,
-		Payload: mustMarshalRaw(ack),
-	})
+	frame, err := protocol.MarshalMessage(protocol.EventDaemonHeartbeatAck, ack)
 	if err != nil {
 		slog.Debug("daemon websocket heartbeat ack marshal failed", "error", err)
 		return

@@ -18,7 +18,6 @@ type TaskDiskUsage struct {
 	TaskShort         string `json:"task_short"`
 	Path              string `json:"path"`
 	Kind              string `json:"kind"`
-	ParentStatus      string `json:"parent_status"`
 	AgeSeconds        int64  `json:"age_seconds"`
 	SizeBytes         int64  `json:"size_bytes"`
 	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`

@@ -810,13 +810,12 @@ func printDiskUsageTaskTable(w io.Writer, report daemon.DiskUsageReport) {
 		rows = append(rows, []string{
 			task.WorkspaceShort + "/" + task.TaskShort,
 			task.Kind,
-			emptyDash(task.ParentStatus),
 			formatAge(task.AgeSeconds),
 			formatBytes(task.SizeBytes),
 			formatBytes(task.ArtifactSizeBytes),
 		})
 	}
-	cli.PrintTable(w, []string{"PATH", "KIND", "STATUS", "AGE", "SIZE", "ARTIFACTS"}, rows)
+	cli.PrintTable(w, []string{"PATH", "KIND", "AGE", "SIZE", "ARTIFACTS"}, rows)
 
 	if len(report.Tasks) < report.TotalTaskCount {
 		// Report-wide totals stay anchored to the full scan; the displayed
@@ -1030,13 +1029,6 @@ func formatRatio(r float64) string {
 		return "0.0%"
 	}
 	return fmt.Sprintf("%.1f%%", r*100)
-}
-
-func emptyDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
 
 // formatBytes renders a byte count in IEC units (KiB/MiB/GiB) with one decimal

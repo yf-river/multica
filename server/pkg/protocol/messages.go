@@ -8,6 +8,15 @@ type Message struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// MarshalMessage encodes a typed payload inside the shared WebSocket envelope.
+func MarshalMessage(messageType string, payload any) ([]byte, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(Message{Type: messageType, Payload: raw})
+}
+
 // TaskAvailablePayload is sent from server to daemon as a wakeup hint. The
 // daemon still claims work through the existing HTTP claim endpoint.
 type TaskAvailablePayload struct {

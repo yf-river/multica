@@ -381,10 +381,10 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 		RuntimeIDs:   []string{"runtime-1"},
 	})
 
-	hbFrame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeat,
-		Payload: mustMarshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-1"}),
-	})
+	hbFrame, err := protocol.MarshalMessage(
+		protocol.EventDaemonHeartbeat,
+		protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-1"},
+	)
 	if err != nil {
 		t.Fatalf("marshal heartbeat: %v", err)
 	}
@@ -434,10 +434,10 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		RuntimeIDs:   []string{"runtime-1"},
 	})
 
-	hbFrame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeat,
-		Payload: mustMarshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-1"}),
-	})
+	hbFrame, err := protocol.MarshalMessage(
+		protocol.EventDaemonHeartbeat,
+		protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-1"},
+	)
 	if err != nil {
 		t.Fatalf("marshal heartbeat: %v", err)
 	}
@@ -470,10 +470,10 @@ func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 		RuntimeIDs:   []string{"runtime-1"},
 	})
 
-	hbFrame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeat,
-		Payload: mustMarshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-other"}),
-	})
+	hbFrame, err := protocol.MarshalMessage(
+		protocol.EventDaemonHeartbeat,
+		protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-other"},
+	)
 	if err != nil {
 		t.Fatalf("marshal heartbeat: %v", err)
 	}

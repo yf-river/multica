@@ -186,7 +186,6 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"kind"`,
-		`"parent_status"`,
 		`"age_seconds"`,
 		`"size_bytes"`,
 		`"artifact_size_bytes"`,

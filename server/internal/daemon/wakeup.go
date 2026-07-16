@@ -209,10 +209,10 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 		if ctx.Err() != nil {
 			return
 		}
-		frame, err := json.Marshal(protocol.Message{
-			Type:    protocol.EventDaemonHeartbeat,
-			Payload: marshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: rid}),
-		})
+		frame, err := protocol.MarshalMessage(
+			protocol.EventDaemonHeartbeat,
+			protocol.DaemonHeartbeatRequestPayload{RuntimeID: rid},
+		)
 		if err != nil {
 			d.logger.Debug("ws heartbeat marshal failed", "error", err, "runtime_id", rid)
 			continue
@@ -227,14 +227,6 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 			d.logger.Debug("ws heartbeat dropped: writer backlog", "runtime_id", rid)
 		}
 	}
-}
-
-func marshalRaw(v any) json.RawMessage {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	return data
 }
 
 // handleWSHeartbeatAck dispatches one heartbeat_ack received over the WS
