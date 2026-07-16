@@ -58,7 +58,7 @@ func requireIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID,
 		})
 		return pgtype.UUID{}, false
 	}
-	if util.UUIDToString(key) != strings.ToLower(strings.TrimSpace(values[0])) {
+	if util.UUIDToString(key) != strings.TrimSpace(values[0]) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "Idempotency-Key must be a canonical UUIDv4",
 			"code":  "idempotency_key_invalid",
