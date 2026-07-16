@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -177,15 +177,25 @@ const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH,
   created: "--pjc-created",
 }, "--pjc-minw");
 
-function ProgressRing({ project }: { project: Project }) {
-  if (project.issue_count === 0) {
-    return <span className="text-xs text-muted-foreground/40">—</span>;
-  }
+function ProjectProgress({
+  project,
+  className,
+  ringClassName,
+  textClassName,
+  empty,
+}: {
+  project: Project;
+  className: string;
+  ringClassName: string;
+  textClassName: string;
+  empty: ReactNode;
+}) {
+  if (project.issue_count === 0) return empty;
   const pct = Math.round((project.done_count / project.issue_count) * 100);
   return (
-    <span className="flex items-center gap-1.5">
-      <span className="relative h-3.5 w-3.5">
-        <svg className="h-3.5 w-3.5 -rotate-90" viewBox="0 0 16 16">
+    <span className={className}>
+      <span className={`relative ${ringClassName}`}>
+        <svg className={`-rotate-90 ${ringClassName}`} viewBox="0 0 16 16">
           <circle className="text-muted" strokeWidth="2" stroke="currentColor" fill="none" r="6" cx="8" cy="8" />
           <circle
             className="text-emerald-500"
@@ -200,10 +210,40 @@ function ProgressRing({ project }: { project: Project }) {
           />
         </svg>
       </span>
-      <span className="text-xs tabular-nums text-muted-foreground">
+      <span className={textClassName}>
         {project.done_count}/{project.issue_count}
       </span>
     </span>
+  );
+}
+
+function ProjectDeleteDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useT("projects");
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.delete_dialog.title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.delete_dialog.description)}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            {t(($) => $.delete_dialog.cancel)}
+          </Button>
+          <Button type="button" variant="destructive" size="sm" onClick={onConfirm}>
+            {t(($) => $.delete_dialog.confirm)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -259,42 +299,17 @@ function ProjectRowActions({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.delete_dialog.title)}</DialogTitle>
-            <DialogDescription>
-              {t(($) => $.delete_dialog.description)}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setDeleteOpen(false)}
-            >
-              {t(($) => $.delete_dialog.cancel)}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                deleteProject.mutate(project.id, {
-                  onError: (err) =>
-                    toast.error(
-                      err instanceof Error ? err.message : String(err),
-                    ),
-                });
-                setDeleteOpen(false);
-              }}
-            >
-              {t(($) => $.delete_dialog.confirm)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ProjectDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onConfirm={() => {
+          deleteProject.mutate(project.id, {
+            onError: (err) =>
+              toast.error(err instanceof Error ? err.message : String(err)),
+          });
+          setDeleteOpen(false);
+        }}
+      />
     </>
   );
 }
@@ -353,7 +368,13 @@ function ProjectTableRow({
 
       {isColVisible("progress") ? (
         <ListGridCell className="hidden @2xl:flex">
-          <ProgressRing project={project} />
+          <ProjectProgress
+            project={project}
+            className="flex items-center gap-1.5"
+            ringClassName="size-3.5"
+            textClassName="text-xs tabular-nums text-muted-foreground"
+            empty={<span className="text-xs text-muted-foreground/40">—</span>}
+          />
         </ListGridCell>
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -504,11 +525,6 @@ function ProjectCard({
     (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
     [project.id, updateProject],
   );
-  const progressPercent =
-    project.issue_count > 0
-      ? Math.round((project.done_count / project.issue_count) * 100)
-      : 0;
-
   return (
     <div className="group/card group/row flex flex-col rounded-md border bg-card transition-colors hover:border-primary/50">
       <div className="p-3 pb-2">
@@ -524,33 +540,17 @@ function ProjectCard({
           <ProjectStatusBadge project={project} handleUpdate={handleUpdate} triggerClassName="shrink-0" />
         </div>
 
-        {project.issue_count > 0 ? (
-          <div className="flex items-center justify-end gap-1.5 pt-2">
-            <div className="relative h-4 w-4">
-              <svg className="h-4 w-4 -rotate-90" viewBox="0 0 16 16">
-                <circle className="text-muted" strokeWidth="2" stroke="currentColor" fill="none" r="6" cx="8" cy="8" />
-                <circle
-                  className="text-emerald-500"
-                  strokeWidth="2"
-                  stroke="currentColor"
-                  fill="none"
-                  r="6"
-                  cx="8"
-                  cy="8"
-                  strokeDasharray={`${progressPercent * 0.377} 37.7`}
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-            <span className="text-[10px] tabular-nums text-muted-foreground">
-              {project.done_count}/{project.issue_count}
+        <ProjectProgress
+          project={project}
+          className="flex items-center justify-end gap-1.5 pt-2"
+          ringClassName="size-4"
+          textClassName="text-[10px] tabular-nums text-muted-foreground"
+          empty={(
+            <span className="flex justify-end pt-2 text-[10px] text-muted-foreground">
+              {t(($) => $.detail.no_issues_yet)}
             </span>
-          </div>
-        ) : (
-          <span className="flex justify-end pt-2 text-[10px] text-muted-foreground">
-            {t(($) => $.detail.no_issues_yet)}
-          </span>
-        )}
+          )}
+        />
       </div>
 
       <div className="mt-0 flex items-center justify-between border-t px-3 pb-3 pt-2">
@@ -655,31 +655,15 @@ function ProjectBatchToolbar({
         )}
       </ListBatchToolbar>
 
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.delete_dialog.title)}</DialogTitle>
-            <DialogDescription>{t(($) => $.delete_dialog.description)}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>
-              {t(($) => $.delete_dialog.cancel)}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                for (const p of rows) deleteProject.mutate(p.id);
-                setConfirmDelete(false);
-                onClear();
-              }}
-            >
-              {t(($) => $.delete_dialog.confirm)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ProjectDeleteDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        onConfirm={() => {
+          for (const p of rows) deleteProject.mutate(p.id);
+          setConfirmDelete(false);
+          onClear();
+        }}
+      />
     </>
   );
 }

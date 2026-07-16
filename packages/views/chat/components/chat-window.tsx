@@ -869,6 +869,74 @@ export function ChatWindow() {
  * (sessions are bound 1:1 to an agent). "New chat" lives in the header's
  * ⊕ button, not inside this dropdown.
  */
+function SessionHistoryButton({
+  onActivate,
+  className,
+  disabled,
+  label,
+  children,
+}: {
+  onActivate: () => void;
+  className: string;
+  disabled?: boolean;
+  label?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onActivate();
+      }}
+      disabled={disabled}
+      className={className}
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SessionHistoryConfirmationActions({
+  cancelLabel,
+  confirmLabel,
+  disabled,
+  onCancel,
+  onConfirm,
+}: {
+  cancelLabel: string;
+  confirmLabel: string;
+  disabled: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <SessionHistoryButton
+        onActivate={onCancel}
+        disabled={disabled}
+        className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+      >
+        {cancelLabel}
+      </SessionHistoryButton>
+      <SessionHistoryButton
+        onActivate={onConfirm}
+        disabled={disabled}
+        className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+      >
+        {confirmLabel}
+      </SessionHistoryButton>
+    </div>
+  );
+}
+
 function SessionDropdown({
   sessions,
   agents,
@@ -1130,79 +1198,25 @@ function SessionDropdown({
         </div>
         {!isRenaming && (
           isConfirmingDelete ? (
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setConfirmingDeleteId(null);
-                }}
-                disabled={deleteSession.isPending}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-              >
-                {t(($) => $.session_history.delete_dialog.cancel)}
-              </button>
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  handleConfirmDelete(session);
-                }}
-                disabled={deleteSession.isPending}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {deleteSession.isPending
-                  ? t(($) => $.session_history.delete_dialog.confirming)
-                  : t(($) => $.session_history.delete_dialog.confirm)}
-              </button>
-            </div>
+            <SessionHistoryConfirmationActions
+              cancelLabel={t(($) => $.session_history.delete_dialog.cancel)}
+              confirmLabel={deleteSession.isPending
+                ? t(($) => $.session_history.delete_dialog.confirming)
+                : t(($) => $.session_history.delete_dialog.confirm)}
+              disabled={deleteSession.isPending}
+              onCancel={() => setConfirmingDeleteId(null)}
+              onConfirm={() => handleConfirmDelete(session)}
+            />
           ) : isConfirmingStop && pendingTask ? (
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setConfirmingStopId(null);
-                }}
-                disabled={stoppingTaskId === pendingTask.task_id}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-              >
-                {t(($) => $.session_history.stop_dialog.cancel)}
-              </button>
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  handleConfirmStop(session, pendingTask);
-                }}
-                disabled={stoppingTaskId === pendingTask.task_id}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {stoppingTaskId === pendingTask.task_id
-                  ? t(($) => $.session_history.stop_dialog.confirming)
-                  : t(($) => $.session_history.stop_dialog.confirm)}
-              </button>
-            </div>
+            <SessionHistoryConfirmationActions
+              cancelLabel={t(($) => $.session_history.stop_dialog.cancel)}
+              confirmLabel={stoppingTaskId === pendingTask.task_id
+                ? t(($) => $.session_history.stop_dialog.confirming)
+                : t(($) => $.session_history.stop_dialog.confirm)}
+              disabled={stoppingTaskId === pendingTask.task_id}
+              onCancel={() => setConfirmingStopId(null)}
+              onConfirm={() => handleConfirmStop(session, pendingTask)}
+            />
           ) : (
             <div className="flex shrink-0 items-center">
               <div className="flex h-7 items-center justify-end gap-1.5 text-xs text-muted-foreground group-hover/history-row:hidden">
@@ -1219,61 +1233,31 @@ function SessionDropdown({
               </div>
               <div className="hidden h-7 items-center gap-0.5 group-hover/history-row:flex">
                 {isRunning && pendingTask && (
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      setConfirmingStopId(session.id);
-                    }}
+                  <SessionHistoryButton
+                    onActivate={() => setConfirmingStopId(session.id)}
                     className="inline-flex h-7 items-center gap-1 rounded px-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none"
-                    aria-label={t(($) => $.session_history.row_stop_aria)}
-                    title={t(($) => $.session_history.row_stop_aria)}
+                    label={t(($) => $.session_history.row_stop_aria)}
                   >
                     <Square className="size-2.5 fill-current" />
                     {t(($) => $.session_history.stop_action)}
-                  </button>
+                  </SessionHistoryButton>
                 )}
                 {!isRunning && (
                   <>
-                    <button
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setRenamingId(session.id);
-                      }}
+                    <SessionHistoryButton
+                      onActivate={() => setRenamingId(session.id)}
                       className="inline-flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none"
-                      aria-label={t(($) => $.session_history.row_rename_aria)}
-                      title={t(($) => $.session_history.row_rename_aria)}
+                      label={t(($) => $.session_history.row_rename_aria)}
                     >
                       <Pencil className="size-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setConfirmingDeleteId(session.id);
-                      }}
+                    </SessionHistoryButton>
+                    <SessionHistoryButton
+                      onActivate={() => setConfirmingDeleteId(session.id)}
                       className="inline-flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none"
-                      aria-label={t(($) => $.session_history.row_delete_aria)}
-                      title={t(($) => $.session_history.row_delete_aria)}
+                      label={t(($) => $.session_history.row_delete_aria)}
                     >
                       <Trash2 className="size-3.5" />
-                    </button>
+                    </SessionHistoryButton>
                   </>
                 )}
               </div>
