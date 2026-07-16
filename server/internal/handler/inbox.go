@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,69 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type InboxItemResponse struct {
-	ID            string          `json:"id"`
-	WorkspaceID   string          `json:"workspace_id"`
-	RecipientType string          `json:"recipient_type"`
-	RecipientID   string          `json:"recipient_id"`
-	Type          string          `json:"type"`
-	Severity      string          `json:"severity"`
-	IssueID       *string         `json:"issue_id"`
-	Title         string          `json:"title"`
-	Body          *string         `json:"body"`
-	Read          bool            `json:"read"`
-	Archived      bool            `json:"archived"`
-	CreatedAt     string          `json:"created_at"`
-	IssueStatus   *string         `json:"issue_status"`
-	ActorType     *string         `json:"actor_type"`
-	ActorID       *string         `json:"actor_id"`
-	Details       json.RawMessage `json:"details"`
-}
-
-func inboxToResponse(i db.InboxItem) InboxItemResponse {
-	return InboxItemResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		RecipientType: i.RecipientType,
-		RecipientID:   uuidToString(i.RecipientID),
-		Type:          i.Type,
-		Severity:      i.Severity,
-		IssueID:       uuidToPtr(i.IssueID),
-		Title:         i.Title,
-		Body:          textToPtr(i.Body),
-		Read:          i.Read,
-		Archived:      i.Archived,
-		CreatedAt:     timestampToString(i.CreatedAt),
-		ActorType:     textToPtr(i.ActorType),
-		ActorID:       uuidToPtr(i.ActorID),
-		Details:       json.RawMessage(i.Details),
-	}
-}
-
-func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
-	resp := inboxToResponse(r.InboxItem)
-	resp.IssueStatus = textToPtr(r.IssueStatus)
+func inboxResponse(item db.InboxItem, issueStatus *string) map[string]any {
+	resp := service.InboxItemFields(item)
+	resp["issue_status"] = issueStatus
 	return resp
 }
 
-func enrichInboxResponse(ctx context.Context, queries *db.Queries, resp InboxItemResponse, issueID pgtype.UUID) (InboxItemResponse, error) {
-	if !issueID.Valid {
-		return resp, nil
+func loadInboxResponse(ctx context.Context, queries *db.Queries, item db.InboxItem) (map[string]any, error) {
+	if !item.IssueID.Valid {
+		return inboxResponse(item, nil), nil
 	}
-	issue, err := queries.GetIssue(ctx, issueID)
+	issue, err := queries.GetIssue(ctx, item.IssueID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return resp, nil
+		return inboxResponse(item, nil), nil
 	}
 	if err != nil {
-		return InboxItemResponse{}, err
+		return nil, err
 	}
-	s := issue.Status
-	resp.IssueStatus = &s
-	return resp, nil
+	return inboxResponse(item, &issue.Status), nil
 }
 
 type inboxRecipientScope struct {
@@ -118,9 +77,9 @@ func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]InboxItemResponse, len(items))
+	resp := make([]map[string]any, len(items))
 	for i, item := range items {
-		resp[i] = inboxRowToResponse(item)
+		resp[i] = inboxResponse(item.InboxItem, textToPtr(item.IssueStatus))
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -145,7 +104,7 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := enrichInboxResponse(r.Context(), queries, inboxToResponse(item), item.IssueID)
+	resp, err := loadInboxResponse(r.Context(), queries, item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load inbox issue")
 		return
@@ -195,7 +154,7 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := enrichInboxResponse(r.Context(), queries, inboxToResponse(item), item.IssueID)
+	resp, err := loadInboxResponse(r.Context(), queries, item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load inbox issue")
 		return

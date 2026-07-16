@@ -790,14 +790,13 @@ func setProjectOwnerReviewTask(ctx context.Context, queries *db.Queries, issue d
 }
 
 func inboxItemEventPayload(item db.InboxItem, issueStatus string) map[string]any {
-	fields := InboxItemEventFields(item)
+	fields := InboxItemFields(item)
 	fields["issue_status"] = issueStatus
 	return map[string]any{"item": fields}
 }
 
-// InboxItemEventFields is the canonical JSON projection for persisted inbox
-// rows published through the event bus.
-func InboxItemEventFields(item db.InboxItem) map[string]any {
+// InboxItemFields is the canonical JSON projection for a persisted inbox row.
+func InboxItemFields(item db.InboxItem) map[string]any {
 	return map[string]any{
 		"id":             util.UUIDToString(item.ID),
 		"workspace_id":   util.UUIDToString(item.WorkspaceID),

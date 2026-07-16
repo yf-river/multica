@@ -9,11 +9,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// PinnedItemResponse carries pin metadata only. Title / status / identifier /
+// pinnedItemResponse carries pin metadata only. Title / status / identifier /
 // icon are intentionally NOT included — clients derive them from their own
 // issue / project query cache so that an `issue:updated` event flows naturally
 // into the sidebar without needing a cross-entity invalidate on `pinKeys`.
-type PinnedItemResponse struct {
+type pinnedItemResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
 	UserID      string  `json:"user_id"`
@@ -23,8 +23,8 @@ type PinnedItemResponse struct {
 	CreatedAt   string  `json:"created_at"`
 }
 
-func pinnedItemToResponse(p db.PinnedItem) PinnedItemResponse {
-	return PinnedItemResponse{
+func pinnedItemToResponse(p db.PinnedItem) pinnedItemResponse {
+	return pinnedItemResponse{
 		ID:          uuidToString(p.ID),
 		WorkspaceID: uuidToString(p.WorkspaceID),
 		UserID:      uuidToString(p.UserID),
@@ -33,18 +33,6 @@ func pinnedItemToResponse(p db.PinnedItem) PinnedItemResponse {
 		Position:    p.Position,
 		CreatedAt:   timestampToString(p.CreatedAt),
 	}
-}
-
-type CreatePinRequest struct {
-	ItemType string `json:"item_type"`
-	ItemID   string `json:"item_id"`
-}
-
-type ReorderPinsRequest struct {
-	Items []struct {
-		ID       string  `json:"id"`
-		Position float64 `json:"position"`
-	} `json:"items"`
 }
 
 func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +51,7 @@ func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]PinnedItemResponse, 0, len(pins))
+	resp := make([]pinnedItemResponse, 0, len(pins))
 	for _, p := range pins {
 		resp = append(resp, pinnedItemToResponse(p))
 	}
@@ -77,7 +65,10 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := h.resolveWorkspaceID(r)
 
-	var req CreatePinRequest
+	var req struct {
+		ItemType string `json:"item_type"`
+		ItemID   string `json:"item_id"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -192,7 +183,12 @@ func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := h.resolveWorkspaceID(r)
 
-	var req ReorderPinsRequest
+	var req struct {
+		Items []struct {
+			ID       string  `json:"id"`
+			Position float64 `json:"position"`
+		} `json:"items"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

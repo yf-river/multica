@@ -261,7 +261,7 @@ func emitAutopilotPausedNotifications(
 			WorkspaceID: workspaceID,
 			ActorType:   "system",
 			ActorID:     "",
-			Payload:     map[string]any{"item": service.InboxItemEventFields(item)},
+			Payload:     map[string]any{"item": service.InboxItemFields(item)},
 		})
 	}
 }

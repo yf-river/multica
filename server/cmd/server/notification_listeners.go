@@ -301,7 +301,7 @@ func notifyIssueSubscribers(
 		}
 
 		notified[subID] = true
-		resp := service.InboxItemEventFields(item)
+		resp := service.InboxItemFields(item)
 		resp["issue_status"] = issueStatus
 		bus.Publish(events.Event{
 			Type:        protocol.EventInboxNew,
@@ -367,7 +367,7 @@ func notifyDirect(
 		return err
 	}
 
-	resp := service.InboxItemEventFields(item)
+	resp := service.InboxItemFields(item)
 	resp["issue_status"] = issueStatus
 	bus.Publish(events.Event{
 		Type:        protocol.EventInboxNew,
@@ -481,7 +481,7 @@ func notifyMentionedMembers(
 		if err != nil {
 			return err
 		}
-		resp := service.InboxItemEventFields(item)
+		resp := service.InboxItemFields(item)
 		resp["issue_status"] = issueStatus
 		bus.Publish(events.Event{
 			Type:        protocol.EventInboxNew,
