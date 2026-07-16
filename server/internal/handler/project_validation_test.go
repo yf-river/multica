@@ -98,27 +98,9 @@ func TestCreateProjectValidStatusReturns201(t *testing.T) {
 
 // Updating to an unknown status is a 400, not a 500.
 func TestUpdateProjectInvalidStatusReturns400(t *testing.T) {
-	// Seed a project to update.
+	project := createProjectResourceTestProject(t, "update validation project")
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "update validation project",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("seed CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	t.Cleanup(func() {
-		req := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		req = withURLParam(req, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), req)
-	})
-
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/projects/"+project.ID, map[string]any{"status": "active"})
+	req := newRequest("PUT", "/api/projects/"+project.ID, map[string]any{"status": "active"})
 	req = withURLParam(req, "id", project.ID)
 	testHandler.UpdateProject(w, req)
 	if w.Code != http.StatusBadRequest {

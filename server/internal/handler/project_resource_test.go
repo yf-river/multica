@@ -65,6 +65,27 @@ func createProjectResourceTestProject(t *testing.T, title string) projectRespons
 	return project
 }
 
+func requireProjectTitleAbsent(t *testing.T, title string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/projects?workspace_id="+testWorkspaceID, nil)
+	testHandler.ListProjects(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
+	}
+	var list struct {
+		Projects []projectResponse `json:"projects"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
+		t.Fatalf("decode ListProjects: %v", err)
+	}
+	for _, project := range list.Projects {
+		if project.Title == title {
+			t.Fatalf("project %q survived rejected transaction as %s", title, project.ID)
+		}
+	}
+}
+
 func TestProjectResourceLifecycle(t *testing.T) {
 	// Create a project to attach resources to.
 	project := createProjectResourceTestProject(t, "Resource lifecycle project")
@@ -798,31 +819,8 @@ func TestParsedGongfengWorkspaceRepoBranch(t *testing.T) {
 // local_path on different projects must be allowed — Bohan explicitly chose
 // not to add a UNIQUE(daemon_id, local_path) constraint.
 func TestProjectResourceLocalDirectoryLifecycle(t *testing.T) {
-	createProject := func(title string) projectResponse {
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-			"title": title,
-		})
-		testHandler.CreateProject(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("CreateProject(%s): %d %s", title, w.Code, w.Body.String())
-		}
-		var p projectResponse
-		if err := json.NewDecoder(w.Body).Decode(&p); err != nil {
-			t.Fatalf("decode CreateProject: %v", err)
-		}
-		return p
-	}
-	deleteProject := func(id string) {
-		r := newRequest("DELETE", "/api/projects/"+id, nil)
-		r = withURLParam(r, "id", id)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}
-
-	projectA := createProject("Local directory project A")
-	defer deleteProject(projectA.ID)
-	projectB := createProject("Local directory project B")
-	defer deleteProject(projectB.ID)
+	projectA := createProjectResourceTestProject(t, "Local directory project A")
+	projectB := createProjectResourceTestProject(t, "Local directory project B")
 
 	const (
 		daemonID  = "daemon-aaaa-bbbb-cccc"
@@ -1192,25 +1190,8 @@ func TestCreateProjectRollsBackOnInvalidResource(t *testing.T) {
 		t.Fatalf("CreateProject with invalid resource: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Confirm no project survived (transactional rollback). Listing all projects
-	// in the workspace and checking for the title is enough.
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/projects?workspace_id="+testWorkspaceID, nil)
-	testHandler.ListProjects(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
-	}
-	var list struct {
-		Projects []projectResponse `json:"projects"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	for _, p := range list.Projects {
-		if p.Title == "Project that should not exist" {
-			t.Errorf("invalid resource should have rolled back project create, but found %s", p.ID)
-		}
-	}
+	// Confirm no project survived the transactional rollback.
+	requireProjectTitleAbsent(t, "Project that should not exist")
 }
 
 // TestProjectResourceUpdateLifecycle covers the PUT endpoint added in MUL-2662:
@@ -1495,23 +1476,7 @@ func TestCreateProjectBundledLocalDirectoryDaemonConflict(t *testing.T) {
 	}
 
 	// Confirm the rollback: no project with the title should exist.
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/projects?workspace_id="+testWorkspaceID, nil)
-	testHandler.ListProjects(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
-	}
-	var list struct {
-		Projects []projectResponse `json:"projects"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	for _, p := range list.Projects {
-		if p.Title == "Bundled label shadow" {
-			t.Errorf("expected no project to survive bundled-create rejection, but found %s", p.ID)
-		}
-	}
+	requireProjectTitleAbsent(t, "Bundled label shadow")
 
 	// Two distinct paths on the same daemon must ALSO 400 — the invariant
 	// is "one local_directory per (project, daemon)", not "one per (project,
