@@ -446,10 +446,11 @@ func runAutopilotRuns(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	kind, _ := cmd.Flags().GetString("kind")
 	if kind == "" {
@@ -477,9 +478,6 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 		copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", false)
 	}
 	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", false)
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
 	if err != nil {
@@ -560,10 +558,11 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	body := map[string]any{}
 	if cmd.Flags().Changed("enabled") {
@@ -576,9 +575,6 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --enabled, --cron, --timezone, or --label")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
 	if err != nil {

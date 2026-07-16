@@ -427,10 +427,11 @@ func runAgentGet(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentCreate(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
@@ -449,9 +450,6 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
 	var result map[string]any
 	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/agents", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create agent: %w", err)
@@ -461,10 +459,11 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runAgentUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	body := map[string]any{}
 	if err := applyAgentBodyFlags(cmd, body, agentBodyUpdate); err != nil {
@@ -474,9 +473,6 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --thinking-level, --custom-args, --mcp-config, --scope, --status, or --max-concurrent-tasks (env vars now live behind `multica agent env set <id>`)")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/agents/"+args[0], body, &result); err != nil {
@@ -731,10 +727,11 @@ func runAgentSkillsList(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentSkillsSet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	if !cmd.Flags().Changed("skill-ids") {
 		return fmt.Errorf("--skill-ids is required (comma-separated skill IDs; use --skill-ids '' to clear all)")
@@ -743,9 +740,6 @@ func runAgentSkillsSet(cmd *cobra.Command, args []string) error {
 	body := map[string]any{
 		"skill_ids": cleanIDs,
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result json.RawMessage
 	if err := client.PutJSON(ctx, "/api/agents/"+args[0]+"/skills", body, &result); err != nil {
@@ -756,10 +750,11 @@ func runAgentSkillsSet(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentSkillsAdd(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	if !cmd.Flags().Changed("skill-ids") {
 		return fmt.Errorf("--skill-ids is required (comma-separated skill IDs)")
@@ -771,9 +766,6 @@ func runAgentSkillsAdd(cmd *cobra.Command, args []string) error {
 	body := map[string]any{
 		"skill_ids": cleanIDs,
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result json.RawMessage
 	if err := client.PostJSON(ctx, "/api/agents/"+args[0]+"/skills/add", body, &result); err != nil {
@@ -872,10 +864,11 @@ func runAgentEnvGet(cmd *cobra.Command, args []string) error {
 // equal to "****" as "preserve the existing entry" (see the **** guard
 // in the handler).
 func runAgentEnvSet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	ce, ok, err := resolveCustomEnv(cmd)
 	if err != nil {
@@ -886,9 +879,6 @@ func runAgentEnvSet(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{"custom_env": ce}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/agents/"+args[0]+"/env", body, &result); err != nil {

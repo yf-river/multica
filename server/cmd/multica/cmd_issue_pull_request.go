@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -165,28 +166,5 @@ func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]a
 }
 
 func flagNameToJSONKey(name string) string {
-	switch name {
-	case "project-path":
-		return "project_path"
-	case "repo-url":
-		return "repo_url"
-	case "html-url":
-		return "html_url"
-	case "source-branch":
-		return "source_branch"
-	case "target-branch":
-		return "target_branch"
-	case "author-login":
-		return "author_login"
-	case "head-sha":
-		return "head_sha"
-	case "changed-files":
-		return "changed_files"
-	case "close-intent":
-		return "close_intent"
-	case "remove-source-branch":
-		return "remove_source_branch"
-	default:
-		return name
-	}
+	return strings.ReplaceAll(name, "-", "_")
 }

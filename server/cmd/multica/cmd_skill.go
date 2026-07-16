@@ -270,10 +270,11 @@ func runSkillGet(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillCreate(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
@@ -302,9 +303,6 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 		body["config"] = config
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
 	var result map[string]any
 	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/skills", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create skill: %w", err)
@@ -314,10 +312,11 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runSkillUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	body := map[string]any{}
 	applyChangedStringFlag(cmd, body, "name", "name")
@@ -341,9 +340,6 @@ func runSkillUpdate(cmd *cobra.Command, args []string) error {
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --name, --description, --content, or --config")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/skills/"+args[0], body, &result); err != nil {
@@ -562,10 +558,11 @@ func runSkillFilesList(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	filePath, _ := cmd.Flags().GetString("path")
 	if filePath == "" {
@@ -583,9 +580,6 @@ func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
 		"path":    filePath,
 		"content": content,
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/skills/"+args[0]+"/files", body, &result); err != nil {
