@@ -205,7 +205,7 @@ func assertRedisSingleRequestStoreContract[T any](
 }
 
 func TestRedisLocalSkillListStore_SharedLifecycle(t *testing.T) {
-	assertRedisSingleRequestStoreContract(t, runtimeLocalSkillPendingTimeout, func(rdb *redis.Client) redisSingleRequestTestHarness[RuntimeLocalSkillListRequest] {
+	assertRedisSingleRequestStoreContract(t, runtimeListPendingTimeout, func(rdb *redis.Client) redisSingleRequestTestHarness[RuntimeLocalSkillListRequest] {
 		store := NewRedisLocalSkillListStore(rdb)
 		return redisSingleRequestTestHarness[RuntimeLocalSkillListRequest]{
 			store:  store.redisRuntimeAsyncStore,

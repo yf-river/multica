@@ -52,7 +52,7 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 }
 
 func TestRedisModelListStore_SharedLifecycle(t *testing.T) {
-	assertRedisSingleRequestStoreContract(t, modelListPendingTimeout, func(rdb *redis.Client) redisSingleRequestTestHarness[ModelListRequest] {
+	assertRedisSingleRequestStoreContract(t, runtimeListPendingTimeout, func(rdb *redis.Client) redisSingleRequestTestHarness[ModelListRequest] {
 		store := NewRedisModelListStore(rdb)
 		return redisSingleRequestTestHarness[ModelListRequest]{
 			store:  store.redisRuntimeAsyncStore,

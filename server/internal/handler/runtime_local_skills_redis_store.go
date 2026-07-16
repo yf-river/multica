@@ -24,9 +24,7 @@ func NewRedisLocalSkillListStore(rdb *redis.Client) *redisRuntimeListStore[Runti
 			localSkillListKeyPrefix,
 			localSkillListPendingPrefix,
 			runtimeLocalSkillStoreRetention,
-			func(request *RuntimeLocalSkillListRequest) *runtimeAsyncRequestState {
-				return &request.runtimeAsyncRequestState
-			},
+			(*RuntimeLocalSkillListRequest).asyncRequestState,
 			func(request *RuntimeLocalSkillListRequest) ([]byte, error) {
 				data, err := json.Marshal(request)
 				if err != nil {
@@ -41,7 +39,7 @@ func NewRedisLocalSkillListStore(rdb *redis.Client) *redisRuntimeListStore[Runti
 				}
 				return &request, nil
 			},
-			applyLocalSkillTimeout,
+			applyRuntimeListTimeout,
 			"list request",
 		),
 		func(runtimeID, requestID string, now time.Time) *RuntimeLocalSkillListRequest {
@@ -80,9 +78,7 @@ func NewRedisLocalSkillImportStore(rdb *redis.Client) *redisLocalSkillImportStor
 		localSkillImportKeyPrefix,
 		localSkillImportPendingPrefix,
 		runtimeLocalSkillStoreRetention,
-		func(request *RuntimeLocalSkillImportRequest) *runtimeAsyncRequestState {
-			return &request.runtimeAsyncRequestState
-		},
+		(*RuntimeLocalSkillImportRequest).asyncRequestState,
 		func(request *RuntimeLocalSkillImportRequest) ([]byte, error) {
 			data, err := json.Marshal(redisImportEnvelope{
 				Public:       request,
@@ -108,7 +104,7 @@ func NewRedisLocalSkillImportStore(rdb *redis.Client) *redisLocalSkillImportStor
 			envelope.Public.RunStartedAt = envelope.RunStartedAt
 			return envelope.Public, nil
 		},
-		applyLocalSkillTimeout,
+		applyRuntimeListTimeout,
 		"import request",
 	)}
 }

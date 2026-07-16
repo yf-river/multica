@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,6 +24,7 @@ const (
 	runtimeAsyncTimeout   runtimeAsyncRequestStatus = "timeout"
 	runtimeAsyncConflict  runtimeAsyncRequestStatus = "conflict"
 
+	runtimeListPendingTimeout   = 30 * time.Second
 	runtimeAsyncRunningTimeout  = 60 * time.Second
 	runtimeAsyncRedisPopRetries = 5
 )
@@ -70,9 +74,98 @@ func applyRuntimeAsyncTimeout(req *runtimeAsyncRequestState, now time.Time, pend
 	return false
 }
 
+func applyRuntimeListTimeout(req *runtimeAsyncRequestState, now time.Time) bool {
+	return applyRuntimeAsyncTimeout(req, now, runtimeListPendingTimeout, "daemon did not respond within 30 seconds")
+}
+
 func runtimeAsyncRequestTerminal(status runtimeAsyncRequestStatus) bool {
 	return status == runtimeAsyncCompleted || status == runtimeAsyncFailed ||
 		status == runtimeAsyncTimeout || status == runtimeAsyncConflict
+}
+
+func createRuntimeListRequest[T any, Item any](
+	w http.ResponseWriter,
+	r *http.Request,
+	runtimeID string,
+	store runtimeListRequestStore[T, Item],
+	enqueueFailure string,
+) {
+	requestID, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+
+	request, err := store.Create(r.Context(), runtimeID, uuidToString(requestID))
+	if err != nil {
+		if errors.Is(err, errRuntimeAsyncRequestConflict) {
+			writeIdempotencyConflict(w, "Idempotency-Key was already used for another runtime")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, enqueueFailure+": "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, request)
+}
+
+func loadRuntimeAsyncRequest[T any](
+	w http.ResponseWriter,
+	r *http.Request,
+	runtimeID string,
+	load func(context.Context, string) (*T, error),
+	state func(*T) *runtimeAsyncRequestState,
+) (*T, string, bool) {
+	requestID := chi.URLParam(r, "requestId")
+	request, err := load(r.Context(), requestID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load request: "+err.Error())
+		return nil, "", false
+	}
+	if request == nil || state(request).RuntimeID != runtimeID {
+		writeError(w, http.StatusNotFound, "request not found")
+		return nil, "", false
+	}
+	return request, requestID, true
+}
+
+func persistRuntimeListResult[T any, Item any](
+	w http.ResponseWriter,
+	r *http.Request,
+	store runtimeListRequestStore[T, Item],
+	requestID string,
+	kind string,
+	status string,
+	items []Item,
+	supported bool,
+	failure string,
+) bool {
+	stage := "failure"
+	var err error
+	if status == "completed" {
+		stage = "completion"
+		err = store.Complete(r.Context(), requestID, items, supported)
+	} else {
+		err = store.Fail(r.Context(), requestID, failure)
+	}
+	if err == nil {
+		return true
+	}
+
+	slog.Error("persist runtime list result failed", "kind", kind, "stage", stage, "error", err, "request_id", requestID)
+	writeError(w, http.StatusInternalServerError, "failed to persist "+stage)
+	return false
+}
+
+func acknowledgeTerminalRuntimeReport(w http.ResponseWriter, runtimeID, requestID, logMessage string, state *runtimeAsyncRequestState) bool {
+	if !runtimeAsyncRequestTerminal(state.Status) {
+		return false
+	}
+	slog.Debug(logMessage, "runtime_id", runtimeID, "request_id", requestID, "status", state.Status)
+	writeRuntimeAsyncOK(w)
+	return true
+}
+
+func writeRuntimeAsyncOK(w http.ResponseWriter) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 type inMemoryRuntimeAsyncStore[T any] struct {

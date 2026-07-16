@@ -28,9 +28,7 @@ func NewRedisModelListStore(rdb *redis.Client) *redisRuntimeListStore[ModelListR
 			modelListKeyPrefix,
 			modelListPendingPrefix,
 			modelListStoreRetention,
-			func(request *ModelListRequest) *runtimeAsyncRequestState {
-				return &request.runtimeAsyncRequestState
-			},
+			(*ModelListRequest).asyncRequestState,
 			func(request *ModelListRequest) ([]byte, error) {
 				data, err := json.Marshal(redisModelListEnvelope{
 					Public:       request,
@@ -52,7 +50,7 @@ func NewRedisModelListStore(rdb *redis.Client) *redisRuntimeListStore[ModelListR
 				envelope.Public.RunStartedAt = envelope.RunStartedAt
 				return envelope.Public, nil
 			},
-			applyModelListTimeout,
+			applyRuntimeListTimeout,
 			"model list request",
 		),
 		func(runtimeID, requestID string, now time.Time) *ModelListRequest {
