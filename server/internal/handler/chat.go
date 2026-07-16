@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -63,8 +62,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createChatSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.AgentID == "" {
@@ -285,8 +283,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Title *string `json:"title"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Title == nil {
@@ -445,8 +442,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req sendChatMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Content == "" {

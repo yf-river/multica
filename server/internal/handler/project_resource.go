@@ -524,8 +524,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req CreateProjectResourceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	req.ResourceType = strings.TrimSpace(req.ResourceType)
@@ -670,8 +669,7 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	// "field present with zero value" — the label clear case in particular
 	// relies on this distinction.
 	var raw map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &raw) {
 		return
 	}
 

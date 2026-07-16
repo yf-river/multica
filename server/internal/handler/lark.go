@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -149,8 +148,7 @@ func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req RedeemLarkBindingTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Token == "" {

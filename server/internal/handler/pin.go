@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -69,8 +68,7 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 		ItemType string `json:"item_type"`
 		ItemID   string `json:"item_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.ItemType != "issue" && req.ItemType != "project" {
@@ -189,8 +187,7 @@ func (h *Handler) ReorderPins(w http.ResponseWriter, r *http.Request) {
 			Position float64 `json:"position"`
 		} `json:"items"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 

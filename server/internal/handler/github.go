@@ -597,8 +597,7 @@ func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req LinkPullRequestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	normalized, ok := normalizeIssuePullRequestLinkRequest(w, req)
@@ -660,8 +659,7 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req createMergeRequestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	normalized, ok := normalizeCreateMergeRequestRequest(w, req)

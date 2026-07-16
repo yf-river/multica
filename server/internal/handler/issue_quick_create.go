@@ -20,8 +20,7 @@ import (
 
 func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	var req QuickCreateIssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	prompt := strings.TrimSpace(req.Prompt)
