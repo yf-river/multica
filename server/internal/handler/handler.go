@@ -25,7 +25,9 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type txStarter interface {
@@ -85,8 +87,8 @@ type Handler struct {
 	TaskService           *service.TaskService
 	IssueService          *service.IssueService
 	AutopilotService      *service.AutopilotService
-	ModelListStore        runtimeListRequestStore[ModelListRequest, ModelEntry]
-	LocalSkillListStore   runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary]
+	ModelListStore        runtimeListRequestStore[ModelListRequest, agent.Model]
+	LocalSkillListStore   runtimeListRequestStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary]
 	LocalSkillImportStore LocalSkillImportStore
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler

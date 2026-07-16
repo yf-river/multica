@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/spf13/cobra"
 )
 
@@ -74,24 +75,19 @@ func init() {
 	repoCmd.AddCommand(repoCheckoutCmd)
 }
 
-type workspaceRepo struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
-}
-
 type repoWorkspaceResponse struct {
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Slug  string          `json:"slug"`
-	Repos []workspaceRepo `json:"repos"`
+	ID    string                    `json:"id"`
+	Name  string                    `json:"name"`
+	Slug  string                    `json:"slug"`
+	Repos []protocol.TaskRepository `json:"repos"`
 }
 
 type repoMutationResult struct {
-	WorkspaceID string          `json:"workspace_id"`
-	Added       []workspaceRepo `json:"added,omitempty"`
-	Updated     []workspaceRepo `json:"updated,omitempty"`
-	Removed     []workspaceRepo `json:"removed,omitempty"`
-	Repos       []workspaceRepo `json:"repos"`
+	WorkspaceID string                    `json:"workspace_id"`
+	Added       []protocol.TaskRepository `json:"added,omitempty"`
+	Updated     []protocol.TaskRepository `json:"updated,omitempty"`
+	Removed     []protocol.TaskRepository `json:"removed,omitempty"`
+	Repos       []protocol.TaskRepository `json:"repos"`
 }
 
 func repoURLsFromArgsAndFlags(cmd *cobra.Command, args []string) ([]string, error) {
@@ -124,18 +120,18 @@ func fetchRepoWorkspace(ctx context.Context, client *cli.APIClient, workspaceID 
 		return repoWorkspaceResponse{}, fmt.Errorf("get workspace: %w", err)
 	}
 	if ws.Repos == nil {
-		ws.Repos = []workspaceRepo{}
+		ws.Repos = []protocol.TaskRepository{}
 	}
 	return ws, nil
 }
 
-func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID string, repos []workspaceRepo) (repoWorkspaceResponse, error) {
+func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID string, repos []protocol.TaskRepository) (repoWorkspaceResponse, error) {
 	var ws repoWorkspaceResponse
 	if err := client.PatchJSON(ctx, "/api/workspaces/"+workspaceID, map[string]any{"repos": repos}, &ws); err != nil {
 		return repoWorkspaceResponse{}, fmt.Errorf("update workspace repos: %w", err)
 	}
 	if ws.Repos == nil {
-		ws.Repos = []workspaceRepo{}
+		ws.Repos = []protocol.TaskRepository{}
 	}
 	return ws, nil
 }
@@ -206,9 +202,9 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		indexByURL[repo.URL] = i
 	}
 
-	added := []workspaceRepo{}
-	updated := []workspaceRepo{}
-	repos := append([]workspaceRepo{}, ws.Repos...)
+	added := []protocol.TaskRepository{}
+	updated := []protocol.TaskRepository{}
+	repos := append([]protocol.TaskRepository{}, ws.Repos...)
 	for _, u := range urls {
 		if idx, ok := indexByURL[u]; ok {
 			if descriptionChanged && repos[idx].Description != description {
@@ -217,7 +213,7 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 			}
 			continue
 		}
-		repo := workspaceRepo{URL: u}
+		repo := protocol.TaskRepository{URL: u}
 		if descriptionChanged {
 			repo.Description = description
 		}
@@ -281,8 +277,8 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 		removeSet[u] = struct{}{}
 	}
 	removedSet := make(map[string]struct{}, len(urls))
-	removed := []workspaceRepo{}
-	repos := make([]workspaceRepo, 0, len(ws.Repos))
+	removed := []protocol.TaskRepository{}
+	repos := make([]protocol.TaskRepository, 0, len(ws.Repos))
 	for _, repo := range ws.Repos {
 		if _, ok := removeSet[repo.URL]; ok {
 			removed = append(removed, repo)

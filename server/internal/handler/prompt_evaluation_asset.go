@@ -149,12 +149,7 @@ type CreatePromptEvaluationDatasetFromTracesRequest struct {
 	Tags             []string `json:"tags"`
 }
 
-type CreatePromptEvaluationDatasetVersionRequest struct {
-	VersionLabel string          `json:"version_label"`
-	Metadata     json.RawMessage `json:"metadata"`
-}
-
-type RestorePromptEvaluationDatasetVersionRequest struct {
+type promptEvaluationDatasetVersionMutationRequest struct {
 	VersionLabel string          `json:"version_label"`
 	Metadata     json.RawMessage `json:"metadata"`
 }
@@ -222,28 +217,28 @@ type RestorePromptEvaluationDatasetVersionResponse struct {
 }
 
 type promptEvaluationRunResult struct {
-	RunAt             string                                     `json:"运行时间"`
-	AssetType         string                                     `json:"资产类型"`
-	PromptName        string                                     `json:"提示词"`
-	PromptVersion     int32                                      `json:"提示词版本"`
-	TotalCases        int                                        `json:"总用例数"`
-	PassedCases       int                                        `json:"通过用例数"`
-	FailedCases       int                                        `json:"失败用例数"`
-	PassRate          float64                                    `json:"通过率"`
-	TotalDurationMs   int64                                      `json:"总耗时毫秒"`
-	AverageDurationMs int64                                      `json:"平均耗时毫秒"`
-	InputTokens       int                                        `json:"输入token"`
-	OutputTokens      int                                        `json:"输出token"`
-	EstimatedCost     float64                                    `json:"预估成本"`
-	AgentName         string                                     `json:"执行Agent"`
-	Model             string                                     `json:"模型"`
-	Runtime           string                                     `json:"runtime"`
-	TraceTaskID       string                                     `json:"trace/task id"`
-	FailureReason     string                                     `json:"失败原因"`
-	Conclusion        string                                     `json:"评估结论"`
-	MissingVarCount   int                                        `json:"缺失变量数"`
-	CaseResults       []promptEvaluationCaseRunResult            `json:"用例结果"`
-	DimensionScores   []promptEvaluationExperimentDimensionScore `json:"实验维度评分"`
+	RunAt             string                                    `json:"运行时间"`
+	AssetType         string                                    `json:"资产类型"`
+	PromptName        string                                    `json:"提示词"`
+	PromptVersion     int32                                     `json:"提示词版本"`
+	TotalCases        int                                       `json:"总用例数"`
+	PassedCases       int                                       `json:"通过用例数"`
+	FailedCases       int                                       `json:"失败用例数"`
+	PassRate          float64                                   `json:"通过率"`
+	TotalDurationMs   int64                                     `json:"总耗时毫秒"`
+	AverageDurationMs int64                                     `json:"平均耗时毫秒"`
+	InputTokens       int                                       `json:"输入token"`
+	OutputTokens      int                                       `json:"输出token"`
+	EstimatedCost     float64                                   `json:"预估成本"`
+	AgentName         string                                    `json:"执行Agent"`
+	Model             string                                    `json:"模型"`
+	Runtime           string                                    `json:"runtime"`
+	TraceTaskID       string                                    `json:"trace/task id"`
+	FailureReason     string                                    `json:"失败原因"`
+	Conclusion        string                                    `json:"评估结论"`
+	MissingVarCount   int                                       `json:"缺失变量数"`
+	CaseResults       []promptEvaluationCaseRunResult           `json:"用例结果"`
+	DimensionScores   []protocol.PromptEvaluationDimensionScore `json:"实验维度评分"`
 }
 
 type promptEvaluationCaseRunResult struct {
@@ -255,17 +250,6 @@ type promptEvaluationCaseRunResult struct {
 	MissingVariables []string          `json:"缺失变量"`
 	ExpectedContains []string          `json:"期望包含"`
 	MatchedContains  []string          `json:"已匹配"`
-}
-
-type promptEvaluationExperimentDimensionScore struct {
-	DimensionIndex int32   `json:"维度序号"`
-	DimensionName  string  `json:"维度名称"`
-	Score          float64 `json:"得分"`
-	PassedCases    int     `json:"通过用例数"`
-	TotalCases     int     `json:"总用例数"`
-	Status         string  `json:"状态"`
-	Rule           string  `json:"评分规则"`
-	Evidence       string  `json:"证据"`
 }
 
 type normalizedPromptEvaluationCase struct {

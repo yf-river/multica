@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/testutil"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -212,7 +213,7 @@ func TestRedisLocalSkillListStore_SharedLifecycle(t *testing.T) {
 			get:    store.Get,
 			pop:    store.PopPending,
 			complete: func(ctx context.Context, id string) error {
-				return store.Complete(ctx, id, []RuntimeLocalSkillSummary{{
+				return store.Complete(ctx, id, []protocol.RuntimeLocalSkillSummary{{
 					Key: "review-helper", Name: "Review Helper", Description: "Review PRs",
 					SourcePath: "~/.claude/skills/review-helper", Provider: "claude", FileCount: 2,
 				}}, true)
@@ -510,8 +511,8 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 // Compile-time assertions: the stores MUST satisfy the lifecycle contracts so
 // NewRouter's assignment stays type-safe.
 var (
-	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] = NewRedisLocalSkillListStore(nil)
-	_ LocalSkillImportStore                                                           = (*redisLocalSkillImportStore)(nil)
-	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] = NewInMemoryLocalSkillListStore()
-	_ LocalSkillImportStore                                                           = (*inMemoryLocalSkillImportStore)(nil)
+	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary] = NewRedisLocalSkillListStore(nil)
+	_ LocalSkillImportStore                                                                    = (*redisLocalSkillImportStore)(nil)
+	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary] = NewInMemoryLocalSkillListStore()
+	_ LocalSkillImportStore                                                                    = (*inMemoryLocalSkillImportStore)(nil)
 )

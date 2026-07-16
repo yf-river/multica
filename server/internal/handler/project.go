@@ -83,24 +83,14 @@ func writeProjectSummaryError(w http.ResponseWriter, r *http.Request, err error)
 }
 
 type CreateProjectRequest struct {
-	Title       string                                `json:"title"`
-	Description *string                               `json:"description"`
-	Icon        *string                               `json:"icon"`
-	Status      string                                `json:"status"`
-	Priority    string                                `json:"priority"`
-	LeadType    *string                               `json:"lead_type"`
-	LeadID      *string                               `json:"lead_id"`
-	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
-}
-
-// CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
-// is embedded inside the project create payload. Kept as a separate type so a
-// future change to the standalone request can't silently break this surface.
-type CreateProjectResourceRequestPayload struct {
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        *string         `json:"label"`
-	Position     *int32          `json:"position"`
+	Title       string                         `json:"title"`
+	Description *string                        `json:"description"`
+	Icon        *string                        `json:"icon"`
+	Status      string                         `json:"status"`
+	Priority    string                         `json:"priority"`
+	LeadType    *string                        `json:"lead_type"`
+	LeadID      *string                        `json:"lead_id"`
+	Resources   []CreateProjectResourceRequest `json:"resources,omitempty"`
 }
 
 type createProjectResponse struct {

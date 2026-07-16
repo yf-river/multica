@@ -31,7 +31,7 @@ import (
 // PopPending path is never reached because HasPending returns an error, not
 // true.
 type slowProbeLocalSkillListStore struct {
-	runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary]
+	runtimeListRequestStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary]
 }
 
 func (s slowProbeLocalSkillListStore) HasPending(ctx context.Context, _ string) (bool, error) {
@@ -50,7 +50,7 @@ func (s slowProbeLocalSkillImportStore) HasPending(ctx context.Context, _ string
 // that the handler never reaches the ack-unsafe side-effecting claim path
 // when HasPending reports an empty queue.
 type popRecordingLocalSkillListStore struct {
-	runtimeListRequestStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary]
+	runtimeListRequestStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary]
 	popCalls int
 }
 

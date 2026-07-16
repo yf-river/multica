@@ -268,15 +268,9 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	return &task, nil
 }
 
-type squadSOPProfileStep struct {
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	RoleKey string `json:"role_key"`
-}
-
 type squadSOPProfile struct {
-	ProfileKey string                `json:"profile_key"`
-	Steps      []squadSOPProfileStep `json:"steps"`
+	ProfileKey string                         `json:"profile_key"`
+	Steps      []protocol.SquadSOPProfileStep `json:"steps"`
 }
 
 func (s *TaskService) projectSquadSOPTaskStarted(
@@ -592,7 +586,7 @@ func isAssignmentIssueTaskForStatusAutomation(task db.AgentTaskQueue) bool {
 	return true
 }
 
-func parseSquadSOPProfileSteps(raw []byte) ([]squadSOPProfileStep, error) {
+func parseSquadSOPProfileSteps(raw []byte) ([]protocol.SquadSOPProfileStep, error) {
 	var profile squadSOPProfile
 	if err := json.Unmarshal(raw, &profile); err != nil {
 		return nil, err
@@ -600,7 +594,7 @@ func parseSquadSOPProfileSteps(raw []byte) ([]squadSOPProfileStep, error) {
 	return profile.Steps, nil
 }
 
-func matchSquadSOPStepForAgentRecord(steps []squadSOPProfileStep, agent db.Agent) (squadSOPProfileStep, int, bool) {
+func matchSquadSOPStepForAgentRecord(steps []protocol.SquadSOPProfileStep, agent db.Agent) (protocol.SquadSOPProfileStep, int, bool) {
 	if roleKey := AgentRoleKey(agent.RuntimeConfig); roleKey != "" {
 		if step, index, ok := matchSquadSOPStepForAgent(steps, roleKey); ok {
 			return step, index, true
@@ -622,10 +616,10 @@ func AgentRoleKey(raw []byte) string {
 	return ""
 }
 
-func matchSquadSOPStepForAgent(steps []squadSOPProfileStep, agentNameOrRoleKey string) (squadSOPProfileStep, int, bool) {
+func matchSquadSOPStepForAgent(steps []protocol.SquadSOPProfileStep, agentNameOrRoleKey string) (protocol.SquadSOPProfileStep, int, bool) {
 	agentKey := normalizeSOPMatchKey(agentNameOrRoleKey)
 	if agentKey == "" {
-		return squadSOPProfileStep{}, -1, false
+		return protocol.SquadSOPProfileStep{}, -1, false
 	}
 	for i, step := range steps {
 		if agentKey == normalizeSOPMatchKey(step.RoleKey) ||
@@ -634,7 +628,7 @@ func matchSquadSOPStepForAgent(steps []squadSOPProfileStep, agentNameOrRoleKey s
 			return step, i, true
 		}
 	}
-	return squadSOPProfileStep{}, -1, false
+	return protocol.SquadSOPProfileStep{}, -1, false
 }
 
 func normalizeSOPMatchKey(value string) string {
@@ -643,7 +637,7 @@ func normalizeSOPMatchKey(value string) string {
 	return strings.Trim(value, "-")
 }
 
-func nextSquadSOPStateForTaskEvent(issue db.Issue, steps []squadSOPProfileStep, stepIndex int, stepKey string, eventType string) (status, currentStepKey string, ok bool) {
+func nextSquadSOPStateForTaskEvent(issue db.Issue, steps []protocol.SquadSOPProfileStep, stepIndex int, stepKey string, eventType string) (status, currentStepKey string, ok bool) {
 	switch eventType {
 	case "步骤开始":
 		return "进行中", stepKey, true

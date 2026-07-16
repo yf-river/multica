@@ -22,25 +22,25 @@ import (
 // ── Response types ──────────────────────────────────────────────────────────
 
 type squadResponse struct {
-	ID            string                       `json:"id"`
-	WorkspaceID   string                       `json:"workspace_id"`
-	Name          string                       `json:"name"`
-	Description   string                       `json:"description"`
-	Instructions  string                       `json:"instructions"`
-	SOPProfile    map[string]any               `json:"sop_profile"`
-	AvatarURL     *string                      `json:"avatar_url"`
-	Scope         string                       `json:"scope"`
-	LeaderID      string                       `json:"leader_id"`
-	CreatorID     string                       `json:"creator_id"`
-	CreatedAt     string                       `json:"created_at"`
-	UpdatedAt     string                       `json:"updated_at"`
-	ArchivedAt    *string                      `json:"archived_at"`
-	ArchivedBy    *string                      `json:"archived_by"`
-	MemberCount   int                          `json:"member_count"`
-	MemberPreview []SquadMemberPreviewResponse `json:"member_preview"`
+	ID            string           `json:"id"`
+	WorkspaceID   string           `json:"workspace_id"`
+	Name          string           `json:"name"`
+	Description   string           `json:"description"`
+	Instructions  string           `json:"instructions"`
+	SOPProfile    map[string]any   `json:"sop_profile"`
+	AvatarURL     *string          `json:"avatar_url"`
+	Scope         string           `json:"scope"`
+	LeaderID      string           `json:"leader_id"`
+	CreatorID     string           `json:"creator_id"`
+	CreatedAt     string           `json:"created_at"`
+	UpdatedAt     string           `json:"updated_at"`
+	ArchivedAt    *string          `json:"archived_at"`
+	ArchivedBy    *string          `json:"archived_by"`
+	MemberCount   int              `json:"member_count"`
+	MemberPreview []SquadMemberRef `json:"member_preview"`
 }
 
-type SquadMemberPreviewResponse struct {
+type SquadMemberRef struct {
 	MemberType string `json:"member_type"`
 	MemberID   string `json:"member_id"`
 	Role       string `json:"role"`
@@ -48,7 +48,7 @@ type SquadMemberPreviewResponse struct {
 
 type squadMemberSummary struct {
 	count   int
-	preview []SquadMemberPreviewResponse
+	preview []SquadMemberRef
 }
 
 type SquadMemberResponse struct {
@@ -60,20 +60,14 @@ type SquadMemberResponse struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-type createSquadMemberInput struct {
-	MemberType string `json:"member_type"`
-	MemberID   string `json:"member_id"`
-	Role       string `json:"role"`
-}
-
 type createSquadRequest struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	LeaderID    string                   `json:"leader_id"`
-	AvatarURL   *string                  `json:"avatar_url"`
-	Scope       string                   `json:"scope"`
-	SOPProfile  json.RawMessage          `json:"sop_profile"`
-	Members     []createSquadMemberInput `json:"members"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	LeaderID    string           `json:"leader_id"`
+	AvatarURL   *string          `json:"avatar_url"`
+	Scope       string           `json:"scope"`
+	SOPProfile  json.RawMessage  `json:"sop_profile"`
+	Members     []SquadMemberRef `json:"members"`
 }
 
 type preparedSquadMember struct {
@@ -557,7 +551,7 @@ func squadToResponse(s db.Squad) (squadResponse, error) {
 		UpdatedAt:     timestampToString(s.UpdatedAt),
 		ArchivedAt:    timestampToPtr(s.ArchivedAt),
 		ArchivedBy:    uuidToPtr(s.ArchivedBy),
-		MemberPreview: []SquadMemberPreviewResponse{},
+		MemberPreview: []SquadMemberRef{},
 	}, nil
 }
 
@@ -622,7 +616,7 @@ func addSquadMemberPreview(summary *squadMemberSummary, memberType string, membe
 	if len(summary.preview) >= 3 {
 		return
 	}
-	summary.preview = append(summary.preview, SquadMemberPreviewResponse{
+	summary.preview = append(summary.preview, SquadMemberRef{
 		MemberType: memberType,
 		MemberID:   uuidToString(memberID),
 		Role:       role,

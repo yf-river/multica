@@ -43,16 +43,22 @@ type TaskAgent struct {
 
 // TaskSkill is a skill and its supporting files delivered with a claimed task.
 type TaskSkill struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Content     string          `json:"content"`
-	Files       []TaskSkillFile `json:"files,omitempty"`
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Content     string      `json:"content"`
+	Files       []SkillFile `json:"files,omitempty"`
 }
 
-type TaskSkillFile struct {
+type SkillFile struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+type SquadSOPProfileStep struct {
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	RoleKey string `json:"role_key"`
 }
 
 // TaskUsage is token usage reported by a daemon for one provider/model pair.

@@ -10,27 +10,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const taskContextEnvRelPath = ".agent_context/task_env.json"
 
-type taskContextEnvFile struct {
-	Token        string `json:"token,omitempty"`
-	ServerURL    string `json:"server_url,omitempty"`
-	DaemonPort   string `json:"daemon_port,omitempty"`
-	WorkspaceID  string `json:"workspace_id,omitempty"`
-	AgentName    string `json:"agent_name,omitempty"`
-	AgentID      string `json:"agent_id,omitempty"`
-	TaskID       string `json:"task_id,omitempty"`
-	TaskSlot     string `json:"task_slot,omitempty"`
-	AutopilotRun string `json:"autopilot_run_id,omitempty"`
-	AutopilotID  string `json:"autopilot_id,omitempty"`
-	QuickCreate  string `json:"quick_create_task_id,omitempty"`
-}
-
 func writeTaskContextEnv(workDir string, env map[string]string) (func(), error) {
 	path := filepath.Join(workDir, taskContextEnvRelPath)
-	data, err := json.MarshalIndent(taskContextEnvFile{
+	data, err := json.MarshalIndent(protocol.TaskContextEnvironment{
 		Token:        env["MULTICA_TOKEN"],
 		ServerURL:    env["MULTICA_SERVER_URL"],
 		DaemonPort:   env["MULTICA_DAEMON_PORT"],

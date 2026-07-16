@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
@@ -509,11 +510,11 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 	}
 }
 
-func buildPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromptEvaluationExperimentDimension, results []promptEvaluationCaseRunResult) []promptEvaluationExperimentDimensionScore {
+func buildPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromptEvaluationExperimentDimension, results []promptEvaluationCaseRunResult) []protocol.PromptEvaluationDimensionScore {
 	if len(dimensions) == 0 {
 		return nil
 	}
-	scores := make([]promptEvaluationExperimentDimensionScore, 0, len(dimensions))
+	scores := make([]protocol.PromptEvaluationDimensionScore, 0, len(dimensions))
 	for idx, dimension := range dimensions {
 		name := strings.TrimSpace(dimension.Name)
 		if name == "" {
@@ -533,7 +534,7 @@ func buildPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromp
 			score = float64(passed) / float64(total)
 			status = "已评分"
 		}
-		scores = append(scores, promptEvaluationExperimentDimensionScore{
+		scores = append(scores, protocol.PromptEvaluationDimensionScore{
 			DimensionIndex: int32(idx),
 			DimensionName:  name,
 			Score:          score,
@@ -547,18 +548,18 @@ func buildPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromp
 	return scores
 }
 
-func pendingPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromptEvaluationExperimentDimension, totalCases int) []promptEvaluationExperimentDimensionScore {
+func pendingPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromptEvaluationExperimentDimension, totalCases int) []protocol.PromptEvaluationDimensionScore {
 	if len(dimensions) == 0 {
 		return nil
 	}
-	scores := make([]promptEvaluationExperimentDimensionScore, 0, len(dimensions))
+	scores := make([]protocol.PromptEvaluationDimensionScore, 0, len(dimensions))
 	for idx, dimension := range dimensions {
 		name := strings.TrimSpace(dimension.Name)
 		if name == "" {
 			name = "维度 " + strconv.Itoa(idx+1)
 		}
 		rule := promptEvaluationDimensionRule(name)
-		scores = append(scores, promptEvaluationExperimentDimensionScore{
+		scores = append(scores, protocol.PromptEvaluationDimensionScore{
 			DimensionIndex: int32(idx),
 			DimensionName:  name,
 			Score:          0,

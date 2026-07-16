@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -75,12 +76,6 @@ type sopStageMetricResponse struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
-}
-
-type sopProfileStep struct {
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	RoleKey string `json:"role_key"`
 }
 
 func squadSOPRunToResponse(run db.SquadSopRun, events []SquadSOPEventResponse) SquadSOPRunResponse {
@@ -293,14 +288,14 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
 
-func sopProfileStepsForHandler(profile []byte) []sopProfileStep {
+func sopProfileStepsForHandler(profile []byte) []protocol.SquadSOPProfileStep {
 	var parsed struct {
-		Steps []sopProfileStep `json:"steps"`
+		Steps []protocol.SquadSOPProfileStep `json:"steps"`
 	}
 	if json.Unmarshal(profile, &parsed) != nil {
 		return nil
 	}
-	steps := make([]sopProfileStep, 0, len(parsed.Steps))
+	steps := make([]protocol.SquadSOPProfileStep, 0, len(parsed.Steps))
 	for _, step := range parsed.Steps {
 		step.Key = strings.TrimSpace(step.Key)
 		if step.Key == "" {

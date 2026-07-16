@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/prompteval"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, runID pgtype.UUID, asset db.PromptEvaluationAsset, result promptEvaluationRunResult, createdBy pgtype.UUID) (db.PromptEvaluationRun, bool) {
@@ -199,7 +200,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, queries *db.Queries, run db.PromptEvaluationRun, scores []promptEvaluationExperimentDimensionScore, source string) error {
+func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, queries *db.Queries, run db.PromptEvaluationRun, scores []protocol.PromptEvaluationDimensionScore, source string) error {
 	if len(scores) == 0 {
 		return nil
 	}

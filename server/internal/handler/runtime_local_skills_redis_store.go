@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -16,7 +17,7 @@ const (
 	localSkillImportPendingPrefix = "mul:local_skill:import:pending:"
 )
 
-func NewRedisLocalSkillListStore(rdb *redis.Client) *redisRuntimeListStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] {
+func NewRedisLocalSkillListStore(rdb *redis.Client) *redisRuntimeListStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary] {
 	return newRedisRuntimeListStore(
 		newRedisRuntimeAsyncStore(
 			rdb,
@@ -52,7 +53,7 @@ func NewRedisLocalSkillListStore(rdb *redis.Client) *redisRuntimeListStore[Runti
 				Supported: true,
 			}
 		},
-		func(request *RuntimeLocalSkillListRequest, skills []RuntimeLocalSkillSummary, supported bool) {
+		func(request *RuntimeLocalSkillListRequest, skills []protocol.RuntimeLocalSkillSummary, supported bool) {
 			request.Skills = skills
 			request.Supported = supported
 		},

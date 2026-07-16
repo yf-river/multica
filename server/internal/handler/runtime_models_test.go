@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
 // TestModelListStore_RunningRequestTimesOut pins the escape hatch for
@@ -58,8 +60,8 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	}
 }
 
-func TestModelEntryDefaultJSONContract(t *testing.T) {
-	var model ModelEntry
+func TestModelDefaultJSONContract(t *testing.T) {
+	var model agent.Model
 	if err := json.Unmarshal([]byte(`{"id":"a","label":"A","default":true}`), &model); err != nil {
 		t.Fatalf("decode model: %v", err)
 	}

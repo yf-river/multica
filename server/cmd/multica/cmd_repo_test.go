@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/spf13/cobra"
 )
 
@@ -25,11 +26,11 @@ func newRepoRegistryTestCmd(serverURL string) *cobra.Command {
 
 type repoRegistryTestServer struct {
 	server     *httptest.Server
-	patched    []workspaceRepo
+	patched    []protocol.TaskRepository
 	patchCount int
 }
 
-func newRepoRegistryTestServer(t *testing.T, initialRepos []workspaceRepo) *repoRegistryTestServer {
+func newRepoRegistryTestServer(t *testing.T, initialRepos []protocol.TaskRepository) *repoRegistryTestServer {
 	t.Helper()
 	fixture := &repoRegistryTestServer{}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +40,7 @@ func newRepoRegistryTestServer(t *testing.T, initialRepos []workspaceRepo) *repo
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
 			fixture.patchCount++
 			var body struct {
-				Repos []workspaceRepo `json:"repos"`
+				Repos []protocol.TaskRepository `json:"repos"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode patch body: %v", err)
@@ -62,7 +63,7 @@ func (s *repoRegistryTestServer) url() string {
 }
 
 func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
-	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git"}}
+	initialRepos := []protocol.TaskRepository{{URL: "https://git.example.com/web.git"}}
 	srv := newRepoRegistryTestServer(t, initialRepos)
 	defer srv.close()
 
@@ -89,7 +90,7 @@ func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
 }
 
 func TestRunRepoAddUpdatesDescriptionForExistingRepo(t *testing.T) {
-	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git", Description: "old"}}
+	initialRepos := []protocol.TaskRepository{{URL: "https://git.example.com/web.git", Description: "old"}}
 	srv := newRepoRegistryTestServer(t, initialRepos)
 	defer srv.close()
 
@@ -120,7 +121,7 @@ func TestRunRepoAddRejectsDescriptionForMultipleRepos(t *testing.T) {
 }
 
 func TestRunRepoRemoveDeletesExistingRepos(t *testing.T) {
-	initialRepos := []workspaceRepo{
+	initialRepos := []protocol.TaskRepository{
 		{URL: "https://git.example.com/web.git"},
 		{URL: "https://git.example.com/api.git"},
 		{URL: "https://git.example.com/mobile.git"},
@@ -141,7 +142,7 @@ func TestRunRepoRemoveDeletesExistingRepos(t *testing.T) {
 }
 
 func TestRunRepoRemoveRejectsMissingRepoWithoutPatch(t *testing.T) {
-	srv := newRepoRegistryTestServer(t, []workspaceRepo{{URL: "https://git.example.com/web.git"}})
+	srv := newRepoRegistryTestServer(t, []protocol.TaskRepository{{URL: "https://git.example.com/web.git"}})
 	defer srv.close()
 
 	cmd := newRepoRegistryTestCmd(srv.url())

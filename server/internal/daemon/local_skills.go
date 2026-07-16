@@ -23,22 +23,13 @@ const (
 	maxLocalSkillDirDepth = 4
 )
 
-type runtimeLocalSkillSummary struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	SourcePath  string `json:"source_path"`
-	Provider    string `json:"provider"`
-	FileCount   int    `json:"file_count"`
-}
-
 type runtimeLocalSkillBundle struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description,omitempty"`
-	Content     string                   `json:"content"`
-	SourcePath  string                   `json:"source_path"`
-	Provider    string                   `json:"provider"`
-	Files       []protocol.TaskSkillFile `json:"files,omitempty"`
+	Name        string               `json:"name"`
+	Description string               `json:"description,omitempty"`
+	Content     string               `json:"content"`
+	SourcePath  string               `json:"source_path"`
+	Provider    string               `json:"provider"`
+	Files       []protocol.SkillFile `json:"files,omitempty"`
 }
 
 // localSkillRootsForProvider returns the ordered user-level skill roots
@@ -169,8 +160,8 @@ func readLocalSkillMainFile(skillDir string) (string, error) {
 	return string(content), nil
 }
 
-func collectLocalSkillFiles(skillDir string, includeContent bool) ([]protocol.TaskSkillFile, error) {
-	files := make([]protocol.TaskSkillFile, 0)
+func collectLocalSkillFiles(skillDir string, includeContent bool) ([]protocol.SkillFile, error) {
+	files := make([]protocol.SkillFile, 0)
 	var totalSize int64
 
 	// filepath.WalkDir does not follow a symlinked root, so when the runtime
@@ -227,7 +218,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]protocol.Ta
 			return fmt.Errorf("local skill exceeds %d bytes in total", maxLocalSkillBundleSize)
 		}
 
-		file := protocol.TaskSkillFile{Path: filepath.ToSlash(rel)}
+		file := protocol.SkillFile{Path: filepath.ToSlash(rel)}
 		if includeContent {
 			content, err := os.ReadFile(path)
 			if err != nil {
@@ -248,7 +239,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]protocol.Ta
 	return files, nil
 }
 
-func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, error) {
+func listRuntimeLocalSkills(provider string) ([]protocol.RuntimeLocalSkillSummary, bool, error) {
 	roots, supported, err := localSkillRootsForProvider(provider)
 	if err != nil || !supported {
 		return nil, supported, err
@@ -263,7 +254,7 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 	//     `release/reporter/SKILL.md`, and `loadRuntimeLocalSkillBundle`
 	//     already accepts slash-delimited keys, so the list endpoint
 	//     must surface those nested skills too.
-	skills := make([]runtimeLocalSkillSummary, 0)
+	skills := make([]protocol.RuntimeLocalSkillSummary, 0)
 	// Dedupe strictly by Key. Roots are visited in priority order
 	// (provider-specific first, ~/.agents/skills last); the first
 	// occurrence of a Key wins, so provider-specific skills take precedence
@@ -284,7 +275,7 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 		// root) and `foo` (agents root) are listed; a shared set would mark
 		// the resolved real path visited from the first root and silently
 		// drop the legitimate second entry.
-		rootSkills := make([]runtimeLocalSkillSummary, 0)
+		rootSkills := make([]protocol.RuntimeLocalSkillSummary, 0)
 		visited := make(map[string]bool)
 		enumerateLocalSkills(provider, root, root, 0, visited, &rootSkills)
 
@@ -319,7 +310,7 @@ func enumerateLocalSkills(
 	provider, walkRoot, currentDir string,
 	depth int,
 	visited map[string]bool,
-	skills *[]runtimeLocalSkillSummary,
+	skills *[]protocol.RuntimeLocalSkillSummary,
 ) {
 	if depth > maxLocalSkillDirDepth {
 		return
@@ -374,7 +365,7 @@ func enumerateLocalSkills(
 				continue
 			}
 
-			*skills = append(*skills, runtimeLocalSkillSummary{
+			*skills = append(*skills, protocol.RuntimeLocalSkillSummary{
 				Key:         key,
 				Name:        skillName,
 				Description: description,

@@ -218,10 +218,9 @@ func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// runtimeUsageByAgentResponse is one (agent, provider, model) row of "Cost by
-// agent". The server computes cost per row; the client groups by agent_id and
-// sums cost across models.
-type runtimeUsageByAgentResponse struct {
+// usageByAgentResponse is one (agent, provider, model) usage row. The server
+// computes cost per row; clients group by agent_id and sum across models.
+type usageByAgentResponse struct {
 	AgentID   string `json:"agent_id"`
 	TaskCount int32  `json:"task_count"`
 	usageResponse
@@ -264,9 +263,9 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := make([]runtimeUsageByAgentResponse, len(rows))
+	resp := make([]usageByAgentResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = runtimeUsageByAgentResponse{
+		resp[i] = usageByAgentResponse{
 			AgentID:   uuidToString(row.AgentID),
 			TaskCount: row.TaskCount,
 			usageResponse: newUsageResponse(

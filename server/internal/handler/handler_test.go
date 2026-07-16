@@ -4011,7 +4011,7 @@ func TestCreateSkillSkipsSkillMdFile(t *testing.T) {
 	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/skills", CreateSkillRequest{
 		Name:    "test-skill-create-skip-skillmd",
 		Content: "# SKILL.md content",
-		Files: []CreateSkillFileRequest{
+		Files: []protocol.SkillFile{
 			{Path: "README.md", Content: "readme"},
 			{Path: "SKILL.md", Content: "should be skipped"},
 			{Path: "helper.go", Content: "package main"},
@@ -4074,7 +4074,7 @@ func TestUpdateSkillRollsBackWhenExistingFilesCannotBeLoaded(t *testing.T) {
 	createReq := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/skills", CreateSkillRequest{
 		Name:    originalName,
 		Content: "original content",
-		Files: []CreateSkillFileRequest{
+		Files: []protocol.SkillFile{
 			{Path: "README.md", Content: "original readme"},
 		},
 	})
@@ -4124,7 +4124,7 @@ func TestUpdateSkillSkipsSkillMdFile(t *testing.T) {
 	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/skills", CreateSkillRequest{
 		Name:    "test-skill-update-skip-skillmd",
 		Content: "# SKILL.md content",
-		Files: []CreateSkillFileRequest{
+		Files: []protocol.SkillFile{
 			{Path: "README.md", Content: "readme"},
 		},
 	})
@@ -4143,7 +4143,7 @@ func TestUpdateSkillSkipsSkillMdFile(t *testing.T) {
 	updateReq := newRequest(http.MethodPut, "/api/skills/"+createResp.ID, UpdateSkillRequest{
 		Name:    strPtr("updated-name"),
 		Content: strPtr("updated content"),
-		Files: []CreateSkillFileRequest{
+		Files: []protocol.SkillFile{
 			{Path: "README.md", Content: "updated readme"},
 			{Path: "SKILL.md", Content: "should be skipped"},
 			{Path: "new.go", Content: "package main"},
@@ -4223,7 +4223,7 @@ func TestUpsertSkillFileRejectsSkillMd(t *testing.T) {
 	}
 
 	// Try to upsert SKILL.md
-	upsertReq := newRequest(http.MethodPut, "/api/skills/"+createResp.ID+"/files", CreateSkillFileRequest{
+	upsertReq := newRequest(http.MethodPut, "/api/skills/"+createResp.ID+"/files", protocol.SkillFile{
 		Path:    "SKILL.md",
 		Content: "should be rejected",
 	})

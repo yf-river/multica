@@ -67,7 +67,7 @@ func loadBuiltinSkill(name string) (protocol.TaskSkill, bool) {
 		if readErr != nil {
 			return nil
 		}
-		skill.Files = append(skill.Files, protocol.TaskSkillFile{Path: rel, Content: string(data)})
+		skill.Files = append(skill.Files, protocol.SkillFile{Path: rel, Content: string(data)})
 		return nil
 	})
 	return skill, true

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -20,7 +21,7 @@ type redisModelListEnvelope struct {
 	RunStartedAt *time.Time        `json:"s,omitempty"`
 }
 
-func NewRedisModelListStore(rdb *redis.Client) *redisRuntimeListStore[ModelListRequest, ModelEntry] {
+func NewRedisModelListStore(rdb *redis.Client) *redisRuntimeListStore[ModelListRequest, agent.Model] {
 	return newRedisRuntimeListStore(
 		newRedisRuntimeAsyncStore(
 			rdb,
@@ -63,7 +64,7 @@ func NewRedisModelListStore(rdb *redis.Client) *redisRuntimeListStore[ModelListR
 				Supported: true,
 			}
 		},
-		func(request *ModelListRequest, models []ModelEntry, supported bool) {
+		func(request *ModelListRequest, models []agent.Model, supported bool) {
 			request.Models = models
 			request.Supported = supported
 		},

@@ -769,7 +769,7 @@ func skillImportOverwriteFailure(err error) (int, string) {
 	}
 }
 
-func createRenamedImportedSkillInTx(ctx context.Context, queries *db.Queries, workspaceID, creatorID pgtype.UUID, baseName string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
+func createRenamedImportedSkillInTx(ctx context.Context, queries *db.Queries, workspaceID, creatorID pgtype.UUID, baseName string, imported *importedSkill, config map[string]any, files []protocol.SkillFile) (SkillWithFilesResponse, error) {
 	for suffix := 2; suffix < maxImportRenameAttempts+2; suffix++ {
 		candidate := fmt.Sprintf("%s-%d", baseName, suffix)
 		resp, err := createSkillWithFilesInTx(ctx, queries, skillCreateInput{
@@ -787,7 +787,7 @@ func createRenamedImportedSkillInTx(ctx context.Context, queries *db.Queries, wo
 	return SkillWithFilesResponse{}, fmt.Errorf("failed to find an available renamed skill name after %d attempts", maxImportRenameAttempts)
 }
 
-func executeSkillImportInTx(ctx context.Context, queries *db.Queries, strategy string, structured bool, workspaceID, creatorID pgtype.UUID, creatorIDText, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest) (skillImportOutcome, error) {
+func executeSkillImportInTx(ctx context.Context, queries *db.Queries, strategy string, structured bool, workspaceID, creatorID pgtype.UUID, creatorIDText, name string, imported *importedSkill, config map[string]any, files []protocol.SkillFile) (skillImportOutcome, error) {
 	if err := queries.LockSkillImportName(ctx, db.LockSkillImportNameParams{WorkspaceID: workspaceID, Name: name}); err != nil {
 		return skillImportOutcome{}, err
 	}
@@ -918,12 +918,12 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files := make([]CreateSkillFileRequest, 0, len(imported.files))
+	files := make([]protocol.SkillFile, 0, len(imported.files))
 	for _, f := range imported.files {
 		if !validateFilePath(f.path) {
 			continue
 		}
-		files = append(files, CreateSkillFileRequest{
+		files = append(files, protocol.SkillFile{
 			Path:    f.path,
 			Content: f.content,
 		})
@@ -1008,7 +1008,7 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateSkillFileRequest
+	var req protocol.SkillFile
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

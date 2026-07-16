@@ -344,54 +344,9 @@ func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID stri
 		return
 	}
 
-	// Wire format matches handler.ModelEntry. Use a struct (not
-	// map[string]string) so the Default bool and the per-model
-	// Thinking catalog round-trip — without it the UI loses its
-	// "default" badge on the advertised pick and the thinking-level
-	// picker for claude/codex (MUL-2339).
-	type thinkingLevelWire struct {
-		Value       string `json:"value"`
-		Label       string `json:"label"`
-		Description string `json:"description,omitempty"`
-	}
-	type modelThinkingWire struct {
-		SupportedLevels []thinkingLevelWire `json:"supported_levels"`
-		DefaultLevel    string              `json:"default_level,omitempty"`
-	}
-	type modelWire struct {
-		ID       string             `json:"id"`
-		Label    string             `json:"label"`
-		Provider string             `json:"provider,omitempty"`
-		Default  bool               `json:"default,omitempty"`
-		Thinking *modelThinkingWire `json:"thinking,omitempty"`
-	}
-	wire := make([]modelWire, 0, len(models))
-	for _, m := range models {
-		entry := modelWire{
-			ID:       m.ID,
-			Label:    m.Label,
-			Provider: m.Provider,
-			Default:  m.Default,
-		}
-		if m.Thinking != nil {
-			levels := make([]thinkingLevelWire, 0, len(m.Thinking.SupportedLevels))
-			for _, lvl := range m.Thinking.SupportedLevels {
-				levels = append(levels, thinkingLevelWire{
-					Value:       lvl.Value,
-					Label:       lvl.Label,
-					Description: lvl.Description,
-				})
-			}
-			entry.Thinking = &modelThinkingWire{
-				SupportedLevels: levels,
-				DefaultLevel:    m.Thinking.DefaultLevel,
-			}
-		}
-		wire = append(wire, entry)
-	}
 	d.reportModelListResult(ctx, rt, requestID, map[string]any{
 		"status":    "completed",
-		"models":    wire,
+		"models":    models,
 		"supported": true,
 	})
 }

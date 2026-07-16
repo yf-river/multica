@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // MembershipChecker verifies a user belongs to a workspace.
@@ -707,13 +708,6 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	go client.readPump()
 }
 
-// inboundFrame describes the subset of inbound JSON messages the server
-// understands today.
-type inboundFrame struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
-}
-
 type subPayload struct {
 	Scope string `json:"scope"`
 	ID    string `json:"id"`
@@ -746,7 +740,7 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) handleFrame(raw []byte) {
-	var f inboundFrame
+	var f protocol.Message
 	if err := json.Unmarshal(raw, &f); err != nil {
 		slog.Debug("ws inbound: invalid json", "error", err, "user_id", c.userID)
 		return

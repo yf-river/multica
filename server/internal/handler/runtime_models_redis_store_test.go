@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/pkg/agent"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -59,7 +60,7 @@ func TestRedisModelListStore_SharedLifecycle(t *testing.T) {
 			get:    store.Get,
 			pop:    store.PopPending,
 			complete: func(ctx context.Context, id string) error {
-				return store.Complete(ctx, id, []ModelEntry{
+				return store.Complete(ctx, id, []agent.Model{
 					{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
 					{ID: "claude-opus-4-7", Label: "Claude Opus 4.7", Provider: "anthropic"},
 				}, true)

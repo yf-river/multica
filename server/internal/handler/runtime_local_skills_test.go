@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func newRequestAsUser(userID, method, path string, body any) *http.Request {
@@ -146,7 +147,7 @@ func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	skills := []RuntimeLocalSkillSummary{{
+	skills := []protocol.RuntimeLocalSkillSummary{{
 		Key: "review-helper", Name: "Review Helper", Description: "Review PRs",
 		SourcePath: "~/.claude/skills/review-helper", Provider: "claude", FileCount: 2,
 	}}

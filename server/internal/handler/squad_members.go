@@ -236,7 +236,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req createSquadMemberInput
+	var req SquadMemberRef
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -301,7 +301,7 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req createSquadMemberInput
+	var req SquadMemberRef
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -344,7 +344,7 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req createSquadMemberInput
+	var req SquadMemberRef
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

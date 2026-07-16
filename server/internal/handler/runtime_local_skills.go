@@ -82,19 +82,10 @@ func applyLocalSkillTimeout(req *runtimeAsyncRequestState, now time.Time) bool {
 	return applyRuntimeAsyncTimeout(req, now, runtimeLocalSkillPendingTimeout, "daemon did not respond within 30 seconds")
 }
 
-type RuntimeLocalSkillSummary struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	SourcePath  string `json:"source_path"`
-	Provider    string `json:"provider"`
-	FileCount   int    `json:"file_count"`
-}
-
 type RuntimeLocalSkillListRequest struct {
 	runtimeAsyncRequestState
-	Skills    []RuntimeLocalSkillSummary `json:"skills,omitempty"`
-	Supported bool                       `json:"supported"`
+	Skills    []protocol.RuntimeLocalSkillSummary `json:"skills,omitempty"`
+	Supported bool                                `json:"supported"`
 }
 
 type RuntimeLocalSkillImportRequest struct {
@@ -112,7 +103,7 @@ type RuntimeLocalSkillImportRequest struct {
 
 var errLocalSkillImportRequestConflict = errors.New("local skill import request conflict")
 
-func NewInMemoryLocalSkillListStore() *inMemoryRuntimeListStore[RuntimeLocalSkillListRequest, RuntimeLocalSkillSummary] {
+func NewInMemoryLocalSkillListStore() *inMemoryRuntimeListStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary] {
 	return newInMemoryRuntimeListStore(
 		runtimeLocalSkillStoreRetention,
 		func(request *RuntimeLocalSkillListRequest) *runtimeAsyncRequestState {
@@ -128,7 +119,7 @@ func NewInMemoryLocalSkillListStore() *inMemoryRuntimeListStore[RuntimeLocalSkil
 				Supported: true,
 			}
 		},
-		func(request *RuntimeLocalSkillListRequest, skills []RuntimeLocalSkillSummary, supported bool) {
+		func(request *RuntimeLocalSkillListRequest, skills []protocol.RuntimeLocalSkillSummary, supported bool) {
 			request.Skills = skills
 			request.Supported = supported
 		},
@@ -221,12 +212,12 @@ type CreateRuntimeLocalSkillImportRequest struct {
 }
 
 type reportedRuntimeLocalSkill struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	Content     string                   `json:"content"`
-	SourcePath  string                   `json:"source_path"`
-	Provider    string                   `json:"provider"`
-	Files       []CreateSkillFileRequest `json:"files,omitempty"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Content     string               `json:"content"`
+	SourcePath  string               `json:"source_path"`
+	Provider    string               `json:"provider"`
+	Files       []protocol.SkillFile `json:"files,omitempty"`
 }
 
 func cleanOptionalString(value *string) *string {
@@ -424,10 +415,10 @@ func (h *Handler) ReportLocalSkillListResult(w http.ResponseWriter, r *http.Requ
 	}
 
 	var body struct {
-		Status    string                     `json:"status"`
-		Skills    []RuntimeLocalSkillSummary `json:"skills"`
-		Supported *bool                      `json:"supported"`
-		Error     string                     `json:"error"`
+		Status    string                              `json:"status"`
+		Skills    []protocol.RuntimeLocalSkillSummary `json:"skills"`
+		Supported *bool                               `json:"supported"`
+		Error     string                              `json:"error"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -520,7 +511,7 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 		description = *req.Description
 	}
 
-	files := make([]CreateSkillFileRequest, 0, len(body.Skill.Files))
+	files := make([]protocol.SkillFile, 0, len(body.Skill.Files))
 	for _, f := range body.Skill.Files {
 		if !validateFilePath(f.Path) {
 			continue

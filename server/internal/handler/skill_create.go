@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type skillCreateInput struct {
@@ -18,14 +19,14 @@ type skillCreateInput struct {
 	Description string
 	Content     string
 	Config      map[string]any
-	Files       []CreateSkillFileRequest
+	Files       []protocol.SkillFile
 	// AllowNameConflict returns pgx.ErrNoRows without aborting the transaction
 	// when another skill owns the name. Rename import uses this to try the next
 	// deterministic suffix inside one transaction.
 	AllowNameConflict bool
 }
 
-func upsertSkillFiles(ctx context.Context, q *db.Queries, skillID pgtype.UUID, files []CreateSkillFileRequest) ([]SkillFileResponse, error) {
+func upsertSkillFiles(ctx context.Context, q *db.Queries, skillID pgtype.UUID, files []protocol.SkillFile) ([]SkillFileResponse, error) {
 	responses := make([]SkillFileResponse, 0, len(files))
 	for _, file := range files {
 		// SKILL.md is the primary skill content stored on skill.Content. Files
@@ -53,7 +54,7 @@ func marshalSkillConfig(config map[string]any) ([]byte, error) {
 	return json.Marshal(config)
 }
 
-func storeSkillFilesResponse(ctx context.Context, q *db.Queries, skill db.Skill, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
+func storeSkillFilesResponse(ctx context.Context, q *db.Queries, skill db.Skill, files []protocol.SkillFile) (SkillWithFilesResponse, error) {
 	fileResponses, err := upsertSkillFiles(ctx, q, skill.ID, files)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -141,7 +142,7 @@ type skillOverwriteInput struct {
 	Description  string
 	Content      string
 	Config       map[string]any
-	Files        []CreateSkillFileRequest
+	Files        []protocol.SkillFile
 }
 
 // overwriteSkillWithFiles re-imports a bundle onto an existing skill in a single

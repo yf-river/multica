@@ -196,24 +196,19 @@ func skillFilesToResponses(files []db.SkillFile) []SkillFileResponse {
 // --- Request structs ---
 
 type CreateSkillRequest struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	Content     string                   `json:"content"`
-	Config      map[string]any           `json:"config"`
-	Files       []CreateSkillFileRequest `json:"files,omitempty"`
-}
-
-type CreateSkillFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Content     string               `json:"content"`
+	Config      map[string]any       `json:"config"`
+	Files       []protocol.SkillFile `json:"files,omitempty"`
 }
 
 type UpdateSkillRequest struct {
-	Name        *string                  `json:"name"`
-	Description *string                  `json:"description"`
-	Content     *string                  `json:"content"`
-	Config      *map[string]any          `json:"config"`
-	Files       []CreateSkillFileRequest `json:"files,omitempty"`
+	Name        *string              `json:"name"`
+	Description *string              `json:"description"`
+	Content     *string              `json:"content"`
+	Config      *map[string]any      `json:"config"`
+	Files       []protocol.SkillFile `json:"files,omitempty"`
 }
 
 type AgentSkillsRequest struct {

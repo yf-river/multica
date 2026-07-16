@@ -120,14 +120,6 @@ func (h *Handler) listDashboardUsageDaily(
 	return resp, nil
 }
 
-// dashboardUsageByAgentResponse is one (agent, provider, model) row. The client
-// folds by agent_id and sums the server-computed cost fields.
-type dashboardUsageByAgentResponse struct {
-	AgentID   string `json:"agent_id"`
-	TaskCount int32  `json:"task_count"`
-	usageResponse
-}
-
 // GetDashboardUsageByAgent returns per-(agent, model) token aggregates
 // for the workspace, optionally scoped to a project. Backed by
 // task_usage_hourly with the viewer's tz applied to the `?days=` cutoff.
@@ -148,7 +140,7 @@ func (h *Handler) GetDashboardUsageByAgent(w http.ResponseWriter, r *http.Reques
 func (h *Handler) listDashboardUsageByAgent(
 	ctx context.Context,
 	scope dashboardQueryScope,
-) ([]dashboardUsageByAgentResponse, error) {
+) ([]usageByAgentResponse, error) {
 	rows, err := h.Queries.ListDashboardUsageByAgent(ctx, db.ListDashboardUsageByAgentParams{
 		WorkspaceID: scope.workspaceID,
 		Since:       scope.since,
@@ -157,9 +149,9 @@ func (h *Handler) listDashboardUsageByAgent(
 	if err != nil {
 		return nil, err
 	}
-	resp := make([]dashboardUsageByAgentResponse, len(rows))
+	resp := make([]usageByAgentResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = dashboardUsageByAgentResponse{
+		resp[i] = usageByAgentResponse{
 			AgentID:   uuidToString(row.AgentID),
 			TaskCount: row.TaskCount,
 			usageResponse: newUsageResponse(

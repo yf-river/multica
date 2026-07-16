@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/prompteval"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ProjectPromptEvaluationTerminalTask applies the current run/trial/snapshot
@@ -457,17 +458,6 @@ func promptEvaluationTrialStatusFromRunStatus(status string) string {
 	}
 }
 
-type promptEvaluationAgentDimensionScore struct {
-	DimensionIndex int32   `json:"维度序号"`
-	DimensionName  string  `json:"维度名称"`
-	Score          float64 `json:"得分"`
-	PassedCases    int     `json:"通过用例数"`
-	TotalCases     int     `json:"总用例数"`
-	Status         string  `json:"状态"`
-	Rule           string  `json:"评分规则"`
-	Evidence       string  `json:"证据"`
-}
-
 type promptEvaluationAgentCaseVerdict struct {
 	CaseIndex     int32
 	Status        string
@@ -492,7 +482,7 @@ func promptEvaluationPreservedRunFacts(run db.PromptEvaluationRun) map[string]an
 	return result
 }
 
-func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, verdicts []promptEvaluationAgentCaseVerdict, scored bool) []promptEvaluationAgentDimensionScore {
+func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, verdicts []promptEvaluationAgentCaseVerdict, scored bool) []protocol.PromptEvaluationDimensionScore {
 	dimensions := promptEvaluationDimensionScoresFromRaw(mustDecodePersistedJSONObject(run.Metrics, "prompt evaluation run metrics"))
 	if len(dimensions) == 0 {
 		dimensions = promptEvaluationDimensionScoresFromRaw(mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence"))
@@ -503,7 +493,7 @@ func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, ver
 	if !scored {
 		return dimensions
 	}
-	result := make([]promptEvaluationAgentDimensionScore, 0, len(dimensions))
+	result := make([]protocol.PromptEvaluationDimensionScore, 0, len(dimensions))
 	for _, dimension := range dimensions {
 		name := strings.TrimSpace(dimension.DimensionName)
 		if name == "" {
@@ -523,7 +513,7 @@ func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, ver
 			status = "已评分"
 		}
 		rule := promptEvaluationAgentDimensionRule(name)
-		result = append(result, promptEvaluationAgentDimensionScore{
+		result = append(result, protocol.PromptEvaluationDimensionScore{
 			DimensionIndex: dimension.DimensionIndex,
 			DimensionName:  name,
 			Score:          score,
@@ -537,7 +527,7 @@ func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, ver
 	return result
 }
 
-func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Queries, run db.PromptEvaluationRun, scores []promptEvaluationAgentDimensionScore) error {
+func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Queries, run db.PromptEvaluationRun, scores []protocol.PromptEvaluationDimensionScore) error {
 	if len(scores) == 0 {
 		return nil
 	}
@@ -579,7 +569,7 @@ func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Quer
 	return nil
 }
 
-func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDimensionScore {
+func promptEvaluationDimensionScoresFromRaw(raw any) []protocol.PromptEvaluationDimensionScore {
 	record, ok := raw.(map[string]any)
 	if !ok {
 		return nil
@@ -588,7 +578,7 @@ func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDime
 	if !ok || len(list) == 0 {
 		return nil
 	}
-	result := make([]promptEvaluationAgentDimensionScore, 0, len(list))
+	result := make([]protocol.PromptEvaluationDimensionScore, 0, len(list))
 	for index, item := range list {
 		row, ok := item.(map[string]any)
 		if !ok {
@@ -608,7 +598,7 @@ func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDime
 		if numeric, ok := floatFromAny(row["得分"]); ok {
 			score = numeric
 		}
-		result = append(result, promptEvaluationAgentDimensionScore{
+		result = append(result, protocol.PromptEvaluationDimensionScore{
 			DimensionIndex: dimensionIndex,
 			DimensionName:  name,
 			Score:          score,

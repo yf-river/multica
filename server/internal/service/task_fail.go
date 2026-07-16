@@ -495,7 +495,7 @@ func loadAgentSkills(ctx context.Context, queries agentSkillReader, agentID pgty
 			return nil, fmt.Errorf("list files for skill %s: %w", util.UUIDToString(sk.ID), err)
 		}
 		for _, f := range files {
-			data.Files = append(data.Files, protocol.TaskSkillFile{Path: f.Path, Content: f.Content})
+			data.Files = append(data.Files, protocol.SkillFile{Path: f.Path, Content: f.Content})
 		}
 		result = append(result, data)
 	}

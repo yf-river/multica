@@ -272,7 +272,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	var req CreatePromptEvaluationDatasetVersionRequest
+	var req promptEvaluationDatasetVersionMutationRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid dataset version payload")
@@ -289,8 +289,8 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	req.VersionLabel = strings.TrimSpace(req.VersionLabel)
 	actorID := parseUUID(userID)
 	requestHash, err := hashRequestFingerprint(struct {
-		AssetID string                                      `json:"asset_id"`
-		Request CreatePromptEvaluationDatasetVersionRequest `json:"request"`
+		AssetID string                                        `json:"asset_id"`
+		Request promptEvaluationDatasetVersionMutationRequest `json:"request"`
 	}{AssetID: uuidToString(asset.ID), Request: req})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint dataset version request")
@@ -531,7 +531,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
-	var req RestorePromptEvaluationDatasetVersionRequest
+	var req promptEvaluationDatasetVersionMutationRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid dataset version restore payload")
@@ -545,9 +545,9 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	req.VersionLabel = strings.TrimSpace(req.VersionLabel)
 	actorID := parseUUID(userID)
 	requestHash, err := hashRequestFingerprint(struct {
-		AssetID   string                                       `json:"asset_id"`
-		VersionID string                                       `json:"version_id"`
-		Request   RestorePromptEvaluationDatasetVersionRequest `json:"request"`
+		AssetID   string                                        `json:"asset_id"`
+		VersionID string                                        `json:"version_id"`
+		Request   promptEvaluationDatasetVersionMutationRequest `json:"request"`
 	}{AssetID: uuidToString(asset.ID), VersionID: uuidToString(versionID), Request: req})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint dataset version restore")
