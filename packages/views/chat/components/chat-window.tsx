@@ -71,6 +71,12 @@ const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
+type CancelChatTask = (
+  taskId: string,
+  sessionId: string,
+  options: { restoreDraftToInput: boolean; source: string },
+) => Promise<void>;
+
 
 export function ChatWindow() {
   const { t } = useT("chat");
@@ -304,7 +310,7 @@ export function ChatWindow() {
     [activeAgent, uploadWithToast],
   );
 
-  const cancelChatTask = useCallback(
+  const cancelChatTask: CancelChatTask = useCallback(
     async (
       taskId: string,
       sessionId: string,
@@ -314,6 +320,13 @@ export function ChatWindow() {
         taskId,
         sessionId,
         source: options.source,
+      });
+      qc.setQueryData<PendingChatTasksResponse>(chatKeys.pendingTasks(wsId), (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          tasks: current.tasks.filter((task) => task.task_id !== taskId),
+        };
       });
       qc.setQueryData(chatKeys.pendingTask(sessionId), {});
 
@@ -331,23 +344,23 @@ export function ChatWindow() {
             });
           }
         }
-        qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
         apiLogger.info("cancelTask.success", {
           taskId,
           sessionId,
+          source: options.source,
           restoredToInput: !!restored?.restore_to_input && options.restoreDraftToInput,
         });
-        return result;
       } catch (err) {
         apiLogger.warn("cancelTask.error (task may have already finished)", {
           taskId,
           sessionId,
+          source: options.source,
           err,
         });
+      } finally {
         qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
         qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
         qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
-        return null;
       }
     },
     [qc, wsId],
@@ -757,6 +770,7 @@ export function ChatWindow() {
             isOpen={isOpen}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
+            onCancelTask={cancelChatTask}
           />
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
@@ -943,12 +957,14 @@ function SessionDropdown({
   isOpen,
   activeSessionId,
   onSelectSession,
+  onCancelTask,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
   isOpen: boolean;
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
+  onCancelTask: CancelChatTask;
 }) {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
@@ -971,7 +987,6 @@ function SessionDropdown({
   const deleteSession = useDeleteChatSession();
   const updateSession = useUpdateChatSession();
   const setActiveSession = useChatStore((s) => s.setActiveSession);
-  const queryClient = useQueryClient();
   const formatTimeAgo = useFormatTimeAgo();
 
   // Aggregate "which sessions have an in-flight task right now". Reuses
@@ -1081,36 +1096,10 @@ function SessionDropdown({
       [...previousInFlightRef.current].filter((sessionId) => sessionId !== session.id),
     );
 
-    // Same optimistic behavior as the active chat Stop button: remove the
-    // running affordance immediately, then let task:cancelled / refetches
-    // converge every open surface on the server truth.
-    queryClient.setQueryData<PendingChatTasksResponse>(chatKeys.pendingTasks(wsId), (current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        tasks: current.tasks.filter((item) => item.task_id !== task.task_id),
-      };
-    });
-    queryClient.setQueryData(chatKeys.pendingTask(session.id), {});
-    queryClient.invalidateQueries({ queryKey: chatKeys.messagesPage(session.id) });
-
-    api.cancelTaskById(task.task_id).then(
-      (result) => {
-        const restored = result.cancelled_chat_message;
-        if (restored?.restore_to_input) {
-          removeChatMessageFromCache(queryClient, restored.chat_session_id, restored.message_id);
-        }
-        apiLogger.info("cancelTask.success (history row)", { taskId: task.task_id, sessionId: session.id });
-      },
-      (err) =>
-        apiLogger.warn("cancelTask.error (history row; task may have already finished)", {
-          taskId: task.task_id,
-          sessionId: session.id,
-          err,
-        }),
-    ).finally(() => {
-      queryClient.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
-      queryClient.invalidateQueries({ queryKey: chatKeys.pendingTask(session.id) });
+    void onCancelTask(task.task_id, session.id, {
+      restoreDraftToInput: false,
+      source: "history-row",
+    }).finally(() => {
       setStoppingTaskId(null);
       setConfirmingStopId(null);
     });
