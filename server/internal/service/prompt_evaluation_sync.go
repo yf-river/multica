@@ -485,7 +485,7 @@ func promptEvaluationPreservedRunFacts(run db.PromptEvaluationRun) map[string]an
 		if !ok {
 			continue
 		}
-		for _, key := range []string{"提示词版本", "prompt_version", "数据集版本", "dataset_versions"} {
+		for _, key := range []string{"提示词版本", "数据集版本"} {
 			if value, exists := record[key]; exists && value != nil {
 				result[key] = value
 			}
@@ -589,7 +589,7 @@ func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDime
 	if !ok {
 		return nil
 	}
-	list, ok := firstValue(record, "实验维度评分", "experiment_dimension_scores").([]any)
+	list, ok := record["实验维度评分"].([]any)
 	if !ok || len(list) == 0 {
 		return nil
 	}
@@ -600,17 +600,17 @@ func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDime
 			continue
 		}
 		dimensionIndex := int32(index)
-		if value, ok := intFromAny(firstValue(row, "维度序号", "dimension_index")); ok {
+		if value, ok := intFromAny(row["维度序号"]); ok {
 			dimensionIndex = int32(value)
 		}
-		name := firstNonEmptyString(row, "维度名称", "dimension_name")
+		name := strings.TrimSpace(util.StringFromAny(row["维度名称"]))
 		if name == "" {
 			name = "维度 " + strconv.Itoa(int(dimensionIndex)+1)
 		}
-		passed, _ := intFromAny(firstValue(row, "通过用例数", "passed_cases"))
-		total, _ := intFromAny(firstValue(row, "总用例数", "total_cases"))
+		passed, _ := intFromAny(row["通过用例数"])
+		total, _ := intFromAny(row["总用例数"])
 		score := 0.0
-		if numeric, ok := floatFromAny(firstValue(row, "得分", "score")); ok {
+		if numeric, ok := floatFromAny(row["得分"]); ok {
 			score = numeric
 		}
 		result = append(result, promptEvaluationAgentDimensionScore{
@@ -619,9 +619,9 @@ func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDime
 			Score:          score,
 			PassedCases:    passed,
 			TotalCases:     total,
-			Status:         firstNonEmptyString(row, "状态", "status"),
-			Rule:           firstNonEmptyString(row, "评分规则", "rule"),
-			Evidence:       firstNonEmptyString(row, "证据", "evidence"),
+			Status:         strings.TrimSpace(util.StringFromAny(row["状态"])),
+			Rule:           strings.TrimSpace(util.StringFromAny(row["评分规则"])),
+			Evidence:       strings.TrimSpace(util.StringFromAny(row["证据"])),
 		})
 	}
 	return result
@@ -631,11 +631,11 @@ func promptEvaluationAgentDimensionVerdictPassed(dimensionName string, verdict p
 	normalized := strings.ToLower(strings.TrimSpace(dimensionName))
 	switch {
 	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
-		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListEmpty(verdict.Evidence, "缺失", "missing", "missing_variables")
+		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListEmpty(verdict.Evidence, "缺失")
 	case strings.Contains(normalized, "中文"):
 		return prompteval.ContainsHan(util.StringFromAny(verdict.Output)) || prompteval.ContainsHan(verdict.Conclusion)
 	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
-		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListNonEmpty(verdict.Evidence, "命中", "matched", "matched_contains")
+		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListNonEmpty(verdict.Evidence, "命中")
 	default:
 		return verdict.Status == "通过"
 	}
@@ -655,8 +655,8 @@ func promptEvaluationAgentDimensionRule(dimensionName string) string {
 	}
 }
 
-func promptEvaluationAgentEvidenceListEmpty(record map[string]any, keys ...string) bool {
-	value := firstValue(record, keys...)
+func promptEvaluationAgentEvidenceListEmpty(record map[string]any, key string) bool {
+	value := record[key]
 	if value == nil {
 		return true
 	}
@@ -669,8 +669,8 @@ func promptEvaluationAgentEvidenceListEmpty(record map[string]any, keys ...strin
 	return true
 }
 
-func promptEvaluationAgentEvidenceListNonEmpty(record map[string]any, keys ...string) bool {
-	value := firstValue(record, keys...)
+func promptEvaluationAgentEvidenceListNonEmpty(record map[string]any, key string) bool {
+	value := record[key]
 	if list, ok := value.([]any); ok {
 		return len(list) > 0
 	}
@@ -890,24 +890,6 @@ func promptEvaluationJSONCandidates(source string) []any {
 		}
 	}
 	return parsed
-}
-
-func firstValue(row map[string]any, keys ...string) any {
-	for _, key := range keys {
-		if value, ok := row[key]; ok && value != nil {
-			return value
-		}
-	}
-	return nil
-}
-
-func firstNonEmptyString(row map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value := strings.TrimSpace(util.StringFromAny(row[key])); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func uniquePromptEvaluationStrings(values []string) []string {
