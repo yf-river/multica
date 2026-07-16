@@ -84,15 +84,12 @@ export function candidateSkillWorkflowEvidence(
   const freshness = firstRecord(asRecord(metrics["skill_freshness"]), asRecord(apply["freshness"]));
   const reEval = asRecord(metrics["skill_re_eval"]);
   const reEvalRun = asRecord(metrics["skill_re_eval_run"]);
-  const sourceSnapshot = isRecord(candidate.source_prompt_snapshot) ? candidate.source_prompt_snapshot : {};
   const snapshot = firstRecord(
     asRecord(apply["snapshot"]),
     asRecord(freshness["snapshot"]),
     asRecord(reEval["re_eval_snapshot"]),
     asRecord(reEval["source_snapshot"]),
     asRecord(skillPatch["source_snapshot"]),
-    asRecord(sourceSnapshot["skill_snapshot"]),
-    hasSkillSnapshotShape(sourceSnapshot) ? sourceSnapshot : {},
   );
   return { snapshot, freshness, apply, reEval, reEvalRun };
 }
@@ -135,8 +132,4 @@ function skillResourceOptionFromProjectResource(
 
 function firstRecord(...values: Record<string, unknown>[]): Record<string, unknown> {
   return values.find((value) => Object.keys(value).length > 0) ?? {};
-}
-
-function hasSkillSnapshotShape(value: Record<string, unknown>): boolean {
-  return Boolean(value["base_commit"] || value["skill_hash"] || value["skill_path"]);
 }

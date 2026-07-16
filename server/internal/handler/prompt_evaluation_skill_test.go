@@ -533,23 +533,24 @@ func TestResolvePromptEvaluationSkillCandidateSnapshotPrecedence(t *testing.T) {
 	requested := &PromptEvaluationSkillSnapshotResponse{SourceResourceID: "requested"}
 	fromPatch := &PromptEvaluationSkillSnapshotResponse{}
 	patch := &PromptEvaluationSkillPatch{SourceSnapshot: fromPatch}
+	candidate := db.PromptEvaluationOptimizationCandidate{Metrics: []byte("{}")}
 
 	got := resolvePromptEvaluationSkillCandidateSnapshot(
-		db.PromptEvaluationOptimizationCandidate{}, patch, requested, "request-resource",
+		candidate, patch, requested, "request-resource",
 	)
 	if got != requested || got.SourceResourceID != "requested" {
 		t.Fatalf("requested snapshot must win without being overwritten: %+v", got)
 	}
 
 	got = resolvePromptEvaluationSkillCandidateSnapshot(
-		db.PromptEvaluationOptimizationCandidate{}, patch, nil, "request-resource",
+		candidate, patch, nil, "request-resource",
 	)
 	if got != fromPatch || got.SourceResourceID != "request-resource" {
 		t.Fatalf("patch snapshot should receive the resolved source resource: %+v", got)
 	}
 
 	if got := resolvePromptEvaluationSkillCandidateSnapshot(
-		db.PromptEvaluationOptimizationCandidate{}, nil, nil, "request-resource",
+		candidate, nil, nil, "request-resource",
 	); got != nil {
 		t.Fatalf("missing snapshot sources should stay missing: %+v", got)
 	}

@@ -131,7 +131,7 @@ func buildPromptEvaluationSkillInventoryItem(repoPath string, headCommit string,
 }
 
 func buildPromptEvaluationSkillSnapshot(req CreatePromptEvaluationSkillSnapshotRequest, now time.Time) (PromptEvaluationSkillSnapshotResponse, error) {
-	repoPath, skillPath, err := validateLocalRepoSkillPath(req.RepoPath, req.SkillPath)
+	repoPath, skillPath, err := validateLocalRepoRelativePath(req.RepoPath, req.SkillPath, "skill_path")
 	if err != nil {
 		return PromptEvaluationSkillSnapshotResponse{}, err
 	}
@@ -166,7 +166,7 @@ func buildPromptEvaluationSkillSnapshot(req CreatePromptEvaluationSkillSnapshotR
 }
 
 func buildPromptEvaluationSkillAppliedWorktreeSnapshot(req CreatePromptEvaluationSkillSnapshotRequest, applyEvidence PromptEvaluationSkillApplyResult, now time.Time) (PromptEvaluationSkillSnapshotResponse, error) {
-	repoPath, skillPath, err := validateLocalRepoSkillPath(req.RepoPath, req.SkillPath)
+	repoPath, skillPath, err := validateLocalRepoRelativePath(req.RepoPath, req.SkillPath, "skill_path")
 	if err != nil {
 		return PromptEvaluationSkillSnapshotResponse{}, err
 	}
@@ -201,7 +201,7 @@ func buildPromptEvaluationSkillAppliedWorktreeSnapshot(req CreatePromptEvaluatio
 }
 
 func buildPromptEvaluationSkillCaseDrafts(req CreatePromptEvaluationSkillCaseDraftsRequest) ([]PromptEvaluationSkillCaseDraft, error) {
-	repoPath, skillPath, err := validateLocalRepoSkillPath(req.RepoPath, req.SkillPath)
+	repoPath, skillPath, err := validateLocalRepoRelativePath(req.RepoPath, req.SkillPath, "skill_path")
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func buildPromptEvaluationSkillCaseDrafts(req CreatePromptEvaluationSkillCaseDra
 }
 
 func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshnessRequest, snapshot PromptEvaluationSkillSnapshotResponse, now time.Time) (PromptEvaluationSkillFreshnessResult, error) {
-	repoPath, skillPath, err := validateLocalRepoSkillPath(firstNonEmpty(req.RepoPath, snapshot.RepoPath), firstNonEmpty(req.SkillPath, snapshot.SkillPath))
+	repoPath, skillPath, err := validateLocalRepoRelativePath(firstNonEmpty(req.RepoPath, snapshot.RepoPath), firstNonEmpty(req.SkillPath, snapshot.SkillPath), "skill_path")
 	if err != nil {
 		return PromptEvaluationSkillFreshnessResult{}, err
 	}
@@ -334,7 +334,7 @@ func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshness
 }
 
 func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidateRequest, snapshot PromptEvaluationSkillSnapshotResponse, reEvalContext map[string]any, now time.Time) (PromptEvaluationSkillApplyResult, error) {
-	repoPath, skillPath, err := validateLocalRepoSkillPath(firstNonEmpty(req.RepoPath, snapshot.RepoPath), firstNonEmpty(req.SkillPath, snapshot.SkillPath))
+	repoPath, skillPath, err := validateLocalRepoRelativePath(firstNonEmpty(req.RepoPath, snapshot.RepoPath), firstNonEmpty(req.SkillPath, snapshot.SkillPath), "skill_path")
 	if err != nil {
 		return PromptEvaluationSkillApplyResult{}, err
 	}
@@ -450,18 +450,9 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 }
 
 func skillSnapshotFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) *PromptEvaluationSkillSnapshotResponse {
-	for _, raw := range [][]byte{candidate.SourceFailureSummary, candidate.Metrics, candidate.SourcePromptSnapshot} {
-		// Zero bytes only occur on deliberately partial in-memory rows. Persisted
-		// rows are NOT NULL with object defaults in the current schema.
-		if len(raw) == 0 {
-			continue
-		}
-		payload := mustDecodePersistedJSONObject(raw, "prompt evaluation optimization candidate skill evidence")
-		for _, key := range []string{"skill_snapshot", "Skill Snapshot", "技能快照"} {
-			if snapshot, ok := decodeSkillSnapshotAny(payload[key]); ok {
-				return &snapshot
-			}
-		}
+	metrics := mustDecodePersistedJSONObject(candidate.Metrics, "prompt evaluation optimization candidate metrics")
+	if snapshot, ok := decodeSkillSnapshotAny(metrics["skill_snapshot"]); ok {
+		return &snapshot
 	}
 	return nil
 }
@@ -639,10 +630,8 @@ func skillApplyFromCandidate(candidate db.PromptEvaluationOptimizationCandidate)
 
 func skillSnapshotFromAsset(asset db.PromptEvaluationAsset) *PromptEvaluationSkillSnapshotResponse {
 	payload := decodePayloadObject(asset.Payload)
-	for _, key := range []string{"skill_snapshot", "re_eval_snapshot", "source_skill_snapshot"} {
-		if snapshot, ok := decodeSkillSnapshotAny(payload[key]); ok {
-			return &snapshot
-		}
+	if snapshot, ok := decodeSkillSnapshotAny(payload["skill_snapshot"]); ok {
+		return &snapshot
 	}
 	return nil
 }
@@ -810,12 +799,11 @@ func buildPromptEvaluationSkillReEvalPayload(sourceAsset db.PromptEvaluationAsse
 		"source_candidate_id":    uuidToString(candidate.ID),
 		"source_run_id":          uuidToString(candidate.RunID),
 		"source_skill_snapshot":  sourceSnapshot,
-		"skill_snapshot":         reEvalSnapshot,
 		"re_eval_snapshot":       reEvalSnapshot,
 		"re_eval_required":       true,
 		"re_eval_reason":         "Old Eval evidence only proves the source snapshot; this asset evaluates the post-apply skill snapshot.",
 		"cases":                  payloadCases,
-		"metric_contract":        []string{"case_count", "pass_rate", "failed_cases", "skill_snapshot", "source_commit"},
+		"metric_contract":        []string{"case_count", "pass_rate", "failed_cases", "re_eval_snapshot", "source_commit"},
 		"metric_notes":           []string{"按 skill 历史 case draft 转换为可运行评测用例", "运行结果只证明 re_eval_snapshot，不反推 source_snapshot"},
 	})
 }
@@ -826,10 +814,6 @@ func shortPromptEvaluationID(value string) string {
 		return value
 	}
 	return value[:8]
-}
-
-func validateLocalRepoSkillPath(repoPath string, skillPath string) (string, string, error) {
-	return validateLocalRepoRelativePath(repoPath, skillPath, "skill_path")
 }
 
 func validateLocalRepoRelativePath(repoPath string, relativePath string, fieldName string) (string, string, error) {

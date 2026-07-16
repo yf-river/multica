@@ -334,7 +334,7 @@ export function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
   if (!run || typeof run !== "object" || Array.isArray(run)) return null;
   const record = run as Record<string, unknown>;
   const status = stringFromRecord(record, "状态") || "未知状态";
-  const taskId = stringFromRecord(record, "trace/任务标识") || stringFromRecord(record, "trace/task id");
+  const taskId = stringFromRecord(record, "trace/task id");
   const agent = stringFromRecord(record, "执行Agent");
   const model = stringFromRecord(record, "模型");
   return `智能体任务：${status}${taskId ? ` · 任务标识 ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;

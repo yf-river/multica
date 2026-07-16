@@ -57,7 +57,7 @@ func TestCheckPromptEvaluationSkillFreshnessFailsWhenEvidenceCannotPersist(t *te
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO prompt_evaluation_optimization_candidate (
 			workspace_id, asset_id, run_id, prompt_id, candidate_name,
-			candidate_content, source_failure_summary, created_by
+			candidate_content, metrics, created_by
 		) VALUES ($1, $2, $3, $4, 'freshness candidate', 'candidate', $5, $6)
 		RETURNING id
 	`, testWorkspaceID, assetID, runID, promptID, mustJSONBytes(map[string]any{"skill_snapshot": snapshot}), testUserID).Scan(&candidateID); err != nil {
