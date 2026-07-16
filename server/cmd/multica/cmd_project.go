@@ -253,7 +253,7 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 }
 
 func runProjectGet(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, args[0])
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
@@ -357,7 +357,7 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, args[0])
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
@@ -413,7 +413,7 @@ func printProjectMutationResult(cmd *cobra.Command, result map[string]any) error
 }
 
 func runProjectDelete(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, args[0])
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
@@ -435,7 +435,7 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, id)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, id, "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runProjectResourceList(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, args[0])
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
@@ -550,7 +550,7 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 		body["label"] = label
 	}
 
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, args[0])
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
@@ -667,7 +667,7 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, resolvedID, error) {
-	client, ctx, cancel, projectRef, err := newProjectClientAndRef(cmd, projectArg)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, projectArg, "project", resolveProjectID)
 	if err != nil {
 		return nil, nil, nil, resolvedID{}, resolvedID{}, err
 	}
@@ -677,19 +677,6 @@ func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg
 		return nil, nil, nil, resolvedID{}, resolvedID{}, fmt.Errorf("resolve project resource: %w", err)
 	}
 	return client, ctx, cancel, projectRef, resourceRef, nil
-}
-
-func newProjectClientAndRef(cmd *cobra.Command, arg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
-	if err != nil {
-		return nil, nil, nil, resolvedID{}, err
-	}
-	projectRef, err := resolveProjectID(ctx, client, arg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve project: %w", err)
-	}
-	return client, ctx, cancel, projectRef, nil
 }
 
 // buildResourceRefFromFlags collects the per-type shortcut flags into a

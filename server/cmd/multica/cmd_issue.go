@@ -559,7 +559,7 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 }
 
 func runIssuePullRequests(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -630,21 +630,8 @@ func printIssueMutationResult(cmd *cobra.Command, result map[string]any) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
-func newIssueClientAndRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
-	if err != nil {
-		return nil, nil, nil, resolvedID{}, err
-	}
-	issueRef, err := resolveIssueRef(ctx, client, issueArg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
-	}
-	return client, ctx, cancel, issueRef, nil
-}
-
 func runIssueGet(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -686,7 +673,7 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueChildren(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -927,7 +914,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -1010,7 +997,7 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--to/--to-id and --unassign are mutually exclusive")
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -1059,7 +1046,7 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, id)
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, id, "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}

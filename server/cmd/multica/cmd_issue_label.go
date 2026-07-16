@@ -55,7 +55,7 @@ func init() {
 }
 
 func runIssueLabelList(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func runIssueLabelList(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueLabelAdd(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func runIssueLabelAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}

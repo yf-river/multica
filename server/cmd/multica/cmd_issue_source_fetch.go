@@ -29,7 +29,7 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 	fetchErr, _ := cmd.Flags().GetString("error")
 	durationMs, _ := cmd.Flags().GetInt64("duration-ms")
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}

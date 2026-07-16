@@ -82,7 +82,7 @@ func addIssueMRCreateFlags(cmd *cobra.Command) {
 }
 
 func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueMRCreate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}

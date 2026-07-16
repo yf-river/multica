@@ -16,7 +16,7 @@ import (
 )
 
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -253,7 +253,7 @@ func runIssueCommentDelete(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runIssueRuns(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -366,7 +366,7 @@ func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runIssueRerun(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -493,7 +493,7 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -538,7 +538,7 @@ func runIssueSubscriberRemove(cmd *cobra.Command, args []string) error {
 // runIssueSubscriberMutation shares subscribe/unsubscribe logic — both endpoints
 // take the same request body and only differ in the path.
 func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, issueID)
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, issueID, "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}

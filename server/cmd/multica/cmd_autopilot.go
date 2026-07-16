@@ -216,7 +216,7 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotGet(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
@@ -304,7 +304,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
@@ -357,7 +357,7 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotDelete(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
@@ -398,7 +398,7 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotRuns(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, autopilotRef, err := newAutopilotClientAndRef(cmd, args[0])
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
@@ -641,19 +641,6 @@ func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-func newAutopilotClientAndRef(cmd *cobra.Command, arg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
-	if err != nil {
-		return nil, nil, nil, resolvedID{}, err
-	}
-	autopilotRef, err := resolveAutopilotID(ctx, client, arg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve autopilot: %w", err)
-	}
-	return client, ctx, cancel, autopilotRef, nil
-}
 
 // uuidRegexp matches a canonical UUID (8-4-4-4-12 hex).
 var uuidRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

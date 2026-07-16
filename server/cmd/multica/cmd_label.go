@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -127,7 +126,7 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelGet(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, labelRef, err := newLabelClientAndRef(cmd, args[0])
+	client, ctx, cancel, labelRef, err := newResolvedAPIClientContext(cmd, args[0], "label", resolveLabelID)
 	if err != nil {
 		return err
 	}
@@ -183,7 +182,7 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelUpdate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, labelRef, err := newLabelClientAndRef(cmd, args[0])
+	client, ctx, cancel, labelRef, err := newResolvedAPIClientContext(cmd, args[0], "label", resolveLabelID)
 	if err != nil {
 		return err
 	}
@@ -224,7 +223,7 @@ func printLabelMutationResult(cmd *cobra.Command, result map[string]any) error {
 }
 
 func runLabelDelete(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, labelRef, err := newLabelClientAndRef(cmd, args[0])
+	client, ctx, cancel, labelRef, err := newResolvedAPIClientContext(cmd, args[0], "label", resolveLabelID)
 	if err != nil {
 		return err
 	}
@@ -239,17 +238,4 @@ func runLabelDelete(cmd *cobra.Command, args []string) error {
 	}
 	_, err = fmt.Fprintf(os.Stdout, "Label %s deleted.\n", labelRef.Display)
 	return err
-}
-
-func newLabelClientAndRef(cmd *cobra.Command, arg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, ctx, cancel, err := newAPIClientContext(cmd)
-	if err != nil {
-		return nil, nil, nil, resolvedID{}, err
-	}
-	labelRef, err := resolveLabelID(ctx, client, arg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve label: %w", err)
-	}
-	return client, ctx, cancel, labelRef, nil
 }

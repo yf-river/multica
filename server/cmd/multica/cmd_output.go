@@ -31,6 +31,24 @@ func newWorkspaceAPIClientContext(cmd *cobra.Command) (*cli.APIClient, context.C
 	return client, ctx, cancel, workspaceID, nil
 }
 
+func newResolvedAPIClientContext(
+	cmd *cobra.Command,
+	arg string,
+	kind string,
+	resolve func(context.Context, *cli.APIClient, string) (resolvedID, error),
+) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, ctx, cancel, err := newAPIClientContext(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	ref, err := resolve(ctx, client, arg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve %s: %w", kind, err)
+	}
+	return client, ctx, cancel, ref, nil
+}
+
 func fetchMapList(cmd *cobra.Command, path, action string) ([]map[string]any, error) {
 	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
