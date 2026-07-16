@@ -21,6 +21,8 @@ func newPATCreateRequest(key string, body map[string]any) *http.Request {
 	req := newRequest(http.MethodPost, "/api/tokens", body)
 	if key != "" {
 		req.Header.Set("Idempotency-Key", key)
+	} else {
+		req.Header.Del("Idempotency-Key")
 	}
 	return req
 }

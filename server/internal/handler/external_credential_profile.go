@@ -184,7 +184,7 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint credential profile request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

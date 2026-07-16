@@ -49,6 +49,7 @@ func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) Attac
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("X-User-ID", testUserID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 
 	w := httptest.NewRecorder()
 	testHandler.UploadFile(w, req)

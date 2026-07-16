@@ -870,7 +870,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create squad")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

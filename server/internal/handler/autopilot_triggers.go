@@ -45,7 +45,7 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actorUUID := parseUUID(userID)
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

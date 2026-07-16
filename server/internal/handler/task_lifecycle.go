@@ -144,7 +144,7 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID := parseUUID(userID)
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

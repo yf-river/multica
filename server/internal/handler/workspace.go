@@ -204,7 +204,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint workspace request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -774,7 +774,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint workspace member request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

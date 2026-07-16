@@ -815,7 +815,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation asset request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -1007,7 +1007,7 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation local run")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -1114,7 +1114,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation agent run")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

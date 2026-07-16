@@ -54,7 +54,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint trace dataset import")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -296,7 +296,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint dataset version request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -553,7 +553,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint dataset version restore")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

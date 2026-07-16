@@ -28,7 +28,7 @@ func executePromptEvaluationSkillAssetMutation[Result, Response any](
 	if !ok {
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

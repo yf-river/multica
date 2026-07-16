@@ -100,7 +100,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint optimization candidate request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -297,7 +297,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint optimization candidate publish request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -532,7 +532,7 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint optimization candidate reject request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

@@ -520,7 +520,7 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation evidence snapshot")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -603,7 +603,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint asset evidence snapshot request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

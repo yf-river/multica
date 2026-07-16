@@ -601,7 +601,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	creatorType, actualCreatorID := resolveActor(r, creatorID)
 	var issueRequestKey pgtype.UUID
 	if req.OriginType == nil && req.OriginID == nil {
-		issueRequestKey, ok = optionalIdempotencyKey(w, r)
+		issueRequestKey, ok = requireIdempotencyKey(w, r)
 		if !ok {
 			return
 		}

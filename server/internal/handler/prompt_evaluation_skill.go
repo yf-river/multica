@@ -442,7 +442,7 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		return
 	}
 	actorID := parseUUID(userID)
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -567,7 +567,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint skill re-eval asset request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -779,7 +779,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint skill re-eval run")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

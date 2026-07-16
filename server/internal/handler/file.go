@@ -413,7 +413,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		params.ChatSessionID = session.ID
 	}
 
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

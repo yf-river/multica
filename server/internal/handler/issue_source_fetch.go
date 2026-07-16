@@ -132,7 +132,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 
 	traceResponse := map[string]any(nil)
 	if taskID := strings.TrimSpace(r.Header.Get("X-Task-ID")); taskID != "" {
-		idempotencyKey, ok := optionalIdempotencyKey(w, r)
+		idempotencyKey, ok := requireIdempotencyKey(w, r)
 		if !ok {
 			return
 		}

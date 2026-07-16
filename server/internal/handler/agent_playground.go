@@ -242,7 +242,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint agent playground request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}

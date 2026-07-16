@@ -45,6 +45,8 @@ func TestCreateChatSessionRequiresCanonicalIdempotencyKey(t *testing.T) {
 			})
 			if testCase.key != "" {
 				req.Header.Set("Idempotency-Key", testCase.key)
+			} else {
+				req.Header.Del("Idempotency-Key")
 			}
 			w := httptest.NewRecorder()
 			testHandler.CreateChatSession(w, req)

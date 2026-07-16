@@ -32,6 +32,7 @@ func TestCreateAutopilotRequiresInitialTriggerAndIdempotencyKey(t *testing.T) {
 		"assignee_id":    "10000000-0000-4000-8000-000000000001",
 		"execution_mode": "run_only",
 	}))
+	req.Header.Del("Idempotency-Key")
 	h.CreateAutopilot(w, req)
 	if w.Code != http.StatusBadRequest || w.Body.String() != "{\"code\":\"idempotency_key_required\",\"error\":\"Idempotency-Key header is required\"}\n" {
 		t.Fatalf("missing key response = %d %s", w.Code, w.Body.String())

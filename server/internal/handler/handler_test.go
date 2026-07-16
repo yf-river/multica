@@ -453,6 +453,9 @@ func newRequest(method, path string, body any) *http.Request {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", testUserID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	if method == http.MethodPost {
+		req.Header.Set("Idempotency-Key", uuid.NewString())
+	}
 	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, testMember))
 }
 

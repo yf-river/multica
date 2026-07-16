@@ -125,6 +125,7 @@ func newUploadRequest(t *testing.T, filename string, data []byte, fields map[str
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("X-User-ID", testUserID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	return req
 }
 

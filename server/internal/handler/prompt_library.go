@@ -434,7 +434,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt library item request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -623,7 +623,7 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt library version request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -828,7 +828,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt trial request")
 		return
 	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
