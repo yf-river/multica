@@ -529,9 +529,6 @@ func agentPlaygroundUnavailableReason(agent db.Agent) (string, bool) {
 	if agent.ArchivedAt.Valid {
 		return "agent is archived", true
 	}
-	if !agent.RuntimeID.Valid {
-		return "agent has no runtime", true
-	}
 	return "", false
 }
 

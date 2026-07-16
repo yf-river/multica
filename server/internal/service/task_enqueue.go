@@ -104,9 +104,6 @@ func (s *TaskService) CreateProjectOwnerApprovalTaskInTx(
 	if agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("project lead agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("project lead agent has no runtime")
-	}
 	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           agent.ID,
 		RuntimeID:         agent.RuntimeID,
@@ -201,9 +198,6 @@ func loadRunnableAgent(ctx context.Context, queries *db.Queries, agentID pgtype.
 	}
 	if agent.ArchivedAt.Valid {
 		return db.Agent{}, errors.New("agent is archived")
-	}
-	if !agent.RuntimeID.Valid {
-		return db.Agent{}, errors.New("agent has no runtime")
 	}
 	return agent, nil
 }
@@ -478,9 +472,6 @@ func (s *TaskService) CreateIssueSourceSummaryTaskInTx(ctx context.Context, quer
 	if agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("source summary agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("source summary agent has no runtime")
-	}
 	ctxPayload := IssueSourceSummaryContext{
 		Type:         IssueSourceSummaryContextType,
 		Provider:     issueMetadataString(issue.Metadata, "source_provider"),
@@ -525,25 +516,13 @@ func (s *TaskService) PublishIssueSourceSummaryTaskEnqueued(ctx context.Context,
 // has been archived" rather than retrying.
 var ErrChatTaskAgentArchived = errors.New("chat task: agent archived")
 
-// ErrChatTaskAgentNoRuntime signals that EnqueueChatTask refused to
-// queue work because the agent has never been associated with a
-// runtime (agent.runtime_id IS NULL). This is the "agent has no
-// daemon configured" case — productizable as "agent offline".
-//
-// IMPORTANT: this is NOT the same as "the daemon is currently
-// disconnected". When agent.runtime_id IS set, EnqueueChatTask
-// enqueues the task and the daemon claims it on next online; that
-// path returns a task row, not this error.
-var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
-
 // EnqueueChatTask creates a queued task for a chat session.
 // Unlike issue tasks, chat tasks have no issue_id.
 //
 // Errors split into two layers:
 //
-//   - Productizable rejections (agent archived, no runtime) return
-//     the sentinel errors above. Callers (e.g. the Lark dispatcher)
-//     can errors.Is them to decide a user-visible outcome.
+//   - An archived agent returns the sentinel error above. Callers can
+//     use errors.Is to decide the user-visible outcome.
 //
 //   - Infrastructure failures (DB load / insert errors) are wrapped
 //     as ordinary errors. The caller should treat them as retryable
@@ -601,10 +580,6 @@ func (s *TaskService) CreateChatTaskInTx(
 	if agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, ErrChatTaskAgentArchived
 	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, ErrChatTaskAgentNoRuntime
-	}
-
 	task, err := queries.CreateChatTask(ctx, db.CreateChatTaskParams{
 		AgentID:         chatSession.AgentID,
 		RuntimeID:       agent.RuntimeID,

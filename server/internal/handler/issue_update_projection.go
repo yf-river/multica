@@ -38,7 +38,7 @@ func (h *Handler) reconcileIssueUpdateTasksInTx(ctx context.Context, queries *db
 		if err != nil {
 			return projection, fmt.Errorf("load assigned agent: %w", err)
 		}
-		if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
+		if agent.ArchivedAt.Valid {
 			return projection, nil
 		}
 		task, err := h.TaskService.CreateIssueTaskInTx(ctx, queries, issue, pgtype.UUID{}, false)

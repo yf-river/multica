@@ -2,7 +2,6 @@ package lark
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -95,33 +94,6 @@ func newOutcomeReplierForTest(stub *stubAPIClientWithRecorder, agent db.Agent) *
 	})
 }
 
-func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
-	t.Parallel()
-	stub := &stubAPIClientWithRecorder{}
-	rep := newOutcomeReplierForTest(stub, db.Agent{Name: "Trump"})
-	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
-	inst.ID = mustUUID("11111111-1111-1111-1111-111111111111")
-	msg := InboundMessage{ChatID: "oc_chat_1", SenderOpenID: "ou_user_1"}
-	rep.Reply(context.Background(), inst, msg, DispatchResult{Outcome: OutcomeAgentOffline})
-
-	if len(stub.interactiveOut) != 1 {
-		t.Fatalf("expected one SendInteractiveCard call, got %d", len(stub.interactiveOut))
-	}
-	got := stub.interactiveOut[0]
-	if got.ChatID != "oc_chat_1" {
-		t.Errorf("ChatID = %q; want oc_chat_1", got.ChatID)
-	}
-	if got.InstallationID.AppID != "cli_x" {
-		t.Errorf("AppID = %q", got.InstallationID.AppID)
-	}
-	if got.InstallationID.AppSecret != "s" {
-		t.Errorf("AppSecret = %q", got.InstallationID.AppSecret)
-	}
-	if !strings.Contains(got.CardJSON, "离线") || !strings.Contains(got.CardJSON, "Trump") {
-		t.Errorf("CardJSON should embed offline copy and agent name: %s", got.CardJSON)
-	}
-}
-
 func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 	t.Parallel()
 	stub := &stubAPIClientWithRecorder{}
@@ -146,13 +118,6 @@ func TestLarkOutcomeReplierDroppedIsSilent(t *testing.T) {
 		t.Errorf("Dropped should not trigger any APIClient call; got interactive=%d binding=%d",
 			len(stub.interactiveOut), len(stub.bindingCalls))
 	}
-}
-
-func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
-	t.Parallel()
-	stub := &stubAPIClientWithRecorder{sendErr: errors.New("lark 5xx")}
-	rep := newOutcomeReplierForTest(stub, db.Agent{})
-	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"}, DispatchResult{Outcome: OutcomeAgentOffline})
 }
 
 func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {

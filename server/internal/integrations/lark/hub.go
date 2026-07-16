@@ -41,10 +41,8 @@ type HubQueries interface {
 //     under backoff) and surface the error to ops, NOT swallow it.
 //   - A nil error with OutcomeNeedsBinding tells the connector to
 //     send the binding-prompt card to the sender's open_id.
-//   - OutcomeAgentOffline / OutcomeAgentArchived tell the connector
-//     to send the respective copy as a Lark card; the chat_message
-//     row is already persisted, so the agent will pick the message
-//     up on resume.
+//   - OutcomeAgentArchived tells the connector to send the archived copy as a
+//     Lark card; the chat_message row is already persisted.
 //   - OutcomeIngested means the message landed and (optionally) a task was
 //     enqueued; the durable outbound consumer delivers the eventual reply.
 //   - OutcomeDropped is informational only (the message was filtered

@@ -87,23 +87,10 @@ const (
 	// issue's UUID).
 	OutcomeIngested Outcome = "ingested"
 
-	// OutcomeAgentOffline — the message landed in chat_session, but
-	// the agent has no runtime bound at all (agent.runtime_id IS
-	// NULL). The adapter should reply with "agent offline, will run
-	// on next online." The chat_message row remains so the agent
-	// picks it up on resume.
-	//
-	// IMPORTANT: this is NOT triggered when a daemon is merely
-	// disconnected. If agent.runtime_id IS set, the chat task is
-	// enqueued and waits for the daemon to claim it on next online;
-	// that path returns OutcomeIngested.
-	OutcomeAgentOffline Outcome = "agent_offline"
-
 	// OutcomeAgentArchived — the message landed in chat_session, but
 	// the agent has been archived. The adapter should reply with a
 	// distinct copy ("this agent has been archived; ask an admin to
-	// unarchive or rebind"). Kept separate from OutcomeAgentOffline
-	// because the user-facing remediation differs.
+	// unarchive or rebind").
 	OutcomeAgentArchived Outcome = "agent_archived"
 )
 
@@ -512,9 +499,8 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 }
 
 // scheduleRun hands the per-session run trigger to the debouncer. The flush
-// closure captures this message's installation + InboundMessage so the
-// offline/archived notice, if any, targets the right chat; the latest message
-// in a window wins.
+// closure captures this message's installation + InboundMessage so an archived
+// notice targets the right chat; the latest message in a window wins.
 func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, initiatorUserID pgtype.UUID) {
 	flush := func() { d.flushChatRun(inst, msg, sessionID, initiatorUserID) }
 	d.batcher.Schedule(string(sessionID.Bytes[:]), flush)
@@ -524,8 +510,8 @@ func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, s
 // window per chat session, detached from the inbound path (on its own
 // goroutine and fresh context). It reloads the session, enqueues exactly
 // one chat task for the whole window's worth of messages, and — because
-// EnqueueChatTask's offline/archived verdict is only known here now —
-// emits the corresponding notice itself via FlushReply. Errors cannot be
+// EnqueueChatTask's archived verdict is only known here now — emits the
+// corresponding notice itself via FlushReply. Errors cannot be
 // returned to a caller (the message is already ACKed and durable), so they
 // are logged: a failed enqueue leaves the message in the session to be
 // picked up by the next message's run.
@@ -543,8 +529,6 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 	}
 	if _, err := d.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
 		switch {
-		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
-			d.emitFlushReply(ctx, inst, msg, OutcomeAgentOffline)
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
 			d.emitFlushReply(ctx, inst, msg, OutcomeAgentArchived)
 		default:

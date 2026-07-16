@@ -1034,7 +1034,7 @@ func TestHubReplyTimeoutCancelsHungReplier(t *testing.T) {
 
 	start := time.Now()
 	hub.scheduleReply(db.LarkInstallation{}, InboundMessage{EventID: "e2"},
-		DispatchResult{Outcome: OutcomeAgentOffline}, newDiscardLogger())
+		DispatchResult{Outcome: OutcomeAgentArchived}, newDiscardLogger())
 
 	select {
 	case <-rep.finishCh:

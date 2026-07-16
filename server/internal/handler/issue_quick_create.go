@@ -119,10 +119,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeEntityLoadError(w, err, "agent", "agent_id", uuidToString(agentUUID))
 		return
 	}
-	if !agent.RuntimeID.Valid {
-		writeAgentUnavailable(w, "agent has no runtime")
-		return
-	}
 	online, err := h.runtimeOnline(r.Context(), agent.RuntimeID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

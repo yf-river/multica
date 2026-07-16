@@ -590,8 +590,8 @@ func (s *AutopilotService) failDispatchRun(ctx context.Context, ap db.Autopilot,
 // shouldSkipDispatch is the pre-flight admission check from MUL-1899.
 // Returns (reason, true) when dispatching now would only enqueue a doomed
 // task — i.e. the assignee (or, for squad autopilots, the squad leader) is
-// gone, archived, has no runtime bound, or its runtime is not currently
-// online. Returns ("", false) on the happy path.
+// gone, archived, or its runtime is not currently online. Returns ("", false)
+// on the happy path.
 //
 // Errors are split into two classes:
 //   - pgx.ErrNoRows / errSquadArchived (the row truly doesn't exist or is
@@ -697,8 +697,6 @@ func formatAdmissionReason(ap db.Autopilot, raw string) string {
 	switch raw {
 	case "agent is archived":
 		return prefix + "agent is archived"
-	case "agent has no runtime bound":
-		return prefix + "agent has no runtime bound"
 	default:
 		// raw is "agent runtime is X"; keep the alert's stable suffix.
 		return raw + " at dispatch time"

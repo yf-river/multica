@@ -824,37 +824,6 @@ func (c *captureReply) reply(_ context.Context, _ db.LarkInstallation, _ Inbound
 	c.results = append(c.results, res)
 }
 
-func TestDispatcher_AgentOfflineRepliesAtFlush(t *testing.T) {
-	f := newDispatcherFixture()
-	f.enqueuer.err = service.ErrChatTaskAgentNoRuntime
-	cap := &captureReply{}
-	f.dispatcher.FlushReply = cap.reply
-
-	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
-		AppID:        "ok",
-		ChatType:     ChatTypeP2P,
-		SenderOpenID: "ou_user_a",
-		Body:         "hi",
-		MessageID:    "msg-off",
-	})
-	if err != nil {
-		t.Fatalf("offline path should not return error, got %v", err)
-	}
-	if res.Outcome != OutcomeIngested {
-		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
-	}
-	f.dispatcher.FlushPendingRuns()
-	if f.enqueuer.called != 1 {
-		t.Fatalf("flush must call EnqueueChatTask exactly once; called=%d", f.enqueuer.called)
-	}
-	if cap.count != 1 {
-		t.Fatalf("expected exactly one flush reply; got %d", cap.count)
-	}
-	if cap.results[0].Outcome != OutcomeAgentOffline {
-		t.Fatalf("expected OutcomeAgentOffline at flush, got %q", cap.results[0].Outcome)
-	}
-}
-
 func TestDispatcher_AgentArchivedRepliesAtFlush(t *testing.T) {
 	f := newDispatcherFixture()
 	f.enqueuer.err = service.ErrChatTaskAgentArchived

@@ -557,9 +557,6 @@ func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQ
 // otherwise the wakeup-driven claim could read the still-current
 // empty verdict and return null.
 func (s *TaskService) notifyTaskAvailable(task db.AgentTaskQueue) {
-	if !task.RuntimeID.Valid {
-		return
-	}
 	runtimeKey := util.UUIDToString(task.RuntimeID)
 	// Use a background context: the cache bump / wakeup must outlive
 	// the request that created the task, otherwise an early client

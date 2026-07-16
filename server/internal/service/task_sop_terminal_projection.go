@@ -490,9 +490,6 @@ func (s *TaskService) projectSquadLeaderContinuation(
 	if leader.ArchivedAt.Valid {
 		return nil, "", errors.New("cannot enqueue Squad continuation for an archived leader")
 	}
-	if !leader.RuntimeID.Valid {
-		return nil, "", errors.New("cannot enqueue Squad continuation for a leader without a runtime")
-	}
 	hasPending, err := queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
 		IssueID: issue.ID,
 		AgentID: squad.LeaderID,

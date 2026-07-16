@@ -661,12 +661,10 @@ func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.Agent
 		tc.Source = analytics.SourceAutopilot
 	}
 
-	if task.RuntimeID.Valid {
-		if rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID); err == nil {
-			tc.WorkspaceID = util.UUIDToString(rt.WorkspaceID)
-			tc.RuntimeMode = rt.RuntimeMode
-			tc.Provider = rt.Provider
-		}
+	if rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID); err == nil {
+		tc.WorkspaceID = util.UUIDToString(rt.WorkspaceID)
+		tc.RuntimeMode = rt.RuntimeMode
+		tc.Provider = rt.Provider
 	}
 	if tc.WorkspaceID == "" || tc.RuntimeMode == "" {
 		if agent, err := s.Queries.GetAgent(ctx, task.AgentID); err == nil {
@@ -763,12 +761,10 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 	squadID := pgtype.UUID{}
 	projectID := pgtype.UUID{}
 
-	if task.RuntimeID.Valid {
-		if rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID); err == nil {
-			workspaceID = rt.WorkspaceID
-			if opts.Provider == "" {
-				opts.Provider = rt.Provider
-			}
+	if rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID); err == nil {
+		workspaceID = rt.WorkspaceID
+		if opts.Provider == "" {
+			opts.Provider = rt.Provider
 		}
 	}
 	if task.IssueID.Valid {
@@ -816,9 +812,6 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 	if !workspaceID.Valid {
 		if agent, err := s.Queries.GetAgent(ctx, task.AgentID); err == nil {
 			workspaceID = agent.WorkspaceID
-			if !runtimeID.Valid {
-				runtimeID = agent.RuntimeID
-			}
 		}
 	}
 	if !workspaceID.Valid {

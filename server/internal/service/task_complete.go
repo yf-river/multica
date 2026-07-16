@@ -402,9 +402,6 @@ func (s *TaskService) createIssueTaskAfterSourceSummary(
 	if agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, errors.New("source summary issue agent is archived")
 	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, errors.New("source summary issue agent has no runtime")
-	}
 	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           agent.ID,
 		RuntimeID:         agent.RuntimeID,

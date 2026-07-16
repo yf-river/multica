@@ -1331,7 +1331,7 @@ func (h *Handler) assignedAgentForCommentTrigger(ctx context.Context, issue db.I
 		}
 		return db.Agent{}, false, fmt.Errorf("load assigned agent for comment trigger: %w", err)
 	}
-	if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if agent.ArchivedAt.Valid {
 		return db.Agent{}, false, nil
 	}
 	allowed, err := h.personalAgentAccess(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID))

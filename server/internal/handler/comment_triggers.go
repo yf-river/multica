@@ -543,7 +543,7 @@ func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, 
 		}
 		return commentAgentTrigger{}, false, fmt.Errorf("load assigned squad leader for comment trigger: %w", err)
 	}
-	if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+	if agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false, nil
 	}
 	allowed, err = h.personalAgentAccess(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID))
@@ -781,7 +781,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 				}
 				return nil, fmt.Errorf("load mentioned squad leader: %w", err)
 			}
-			if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+			if agent.ArchivedAt.Valid {
 				continue
 			}
 			// Private-agent gate: prevent triggering a personal leader via squad mention.
@@ -823,7 +823,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 			}
 			return nil, fmt.Errorf("load mentioned agent: %w", err)
 		}
-		if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+		if agent.ArchivedAt.Valid {
 			continue
 		}
 		// Private-agent gate (member→private requires allowed_principals;

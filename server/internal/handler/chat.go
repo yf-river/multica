@@ -548,10 +548,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent is archived")
 		return
 	}
-	if !lockedAgent.RuntimeID.Valid {
-		writeError(w, http.StatusBadRequest, "agent has no runtime")
-		return
-	}
 	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, requestScope.workspaceID, "you do not have access to this agent") {
 		return
 	}

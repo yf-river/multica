@@ -94,14 +94,6 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 				"err", err.Error(),
 			)
 		}
-	case OutcomeAgentOffline:
-		if err := r.sendChatNotice(ctx, inst, msg, agentOfflineCopy); err != nil {
-			r.log.Warn("lark outcome replier: offline notice failed",
-				"installation_id", util.UUIDToString(inst.ID),
-				"chat_id", string(msg.ChatID),
-				"err", err.Error(),
-			)
-		}
 	case OutcomeAgentArchived:
 		if err := r.sendChatNotice(ctx, inst, msg, agentArchivedCopy); err != nil {
 			r.log.Warn("lark outcome replier: archived notice failed",
@@ -234,11 +226,6 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 	return nil
 }
 
-// agentOfflineCopy and agentArchivedCopy are the user-visible Chinese
-// strings for the two daemon/agent unavailability outcomes. They
-// match the §4.6 design: an offline agent will run when the daemon
-// comes back; an archived agent needs operator action.
-const (
-	agentOfflineCopy  = "Agent 当前离线，消息已记录。下次 daemon 上线后会自动继续处理。"
-	agentArchivedCopy = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"
-)
+// agentArchivedCopy is the user-visible notice for the current archived-agent
+// outcome shared by every Lark transport.
+const agentArchivedCopy = "这个 Agent 已被归档，无法继续处理消息。请联系工作区管理员恢复或重新绑定。"
