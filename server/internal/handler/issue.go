@@ -1245,10 +1245,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(metadataChanges) > 0 {
-		h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-			"issue_id": uuidToString(issue.ID),
-			"metadata": mustDecodePersistedJSONObject(issue.Metadata, "issue metadata"),
-		})
+		h.publishIssueMetadataChanged(workspaceID, actorType, actorID, issue)
 	}
 	h.publishEvent(updatedEvent)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)

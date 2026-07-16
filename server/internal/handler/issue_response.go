@@ -317,40 +317,13 @@ func parseQueryNumber(q string) (int, bool) {
 	return 0, false
 }
 func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, includeClosed bool) (string, []any) {
-	// Lowercase in Go so SQL only needs LOWER() on the column side.
-	phrase = strings.ToLower(phrase)
-	for i, t := range terms {
-		terms[i] = strings.ToLower(t)
-	}
-
-	// Parameter index tracker
-	argIdx := 1
-	args := []any{}
-	nextArg := func(val any) string {
-		args = append(args, val)
-		s := fmt.Sprintf("$%d", argIdx)
-		argIdx++
-		return s
-	}
-
-	escapedPhrase := escapeLike(phrase)
-	// $1: exact phrase (for exact title match)
-	phraseParam := nextArg(escapedPhrase)
-	// $2: "%phrase%" (contains pattern — pre-built for pg_bigm index usage)
-	phraseContainsParam := nextArg("%" + escapedPhrase + "%")
-	// $3: "phrase%" (starts-with pattern)
-	phraseStartsWithParam := nextArg(escapedPhrase + "%")
-
-	wsParam := nextArg(nil) // $4 — workspace_id, will be filled by caller position
-
-	// Build per-term LIKE conditions only for multi-word search.
-	var termContainsParams []string
-	if len(terms) > 1 {
-		for _, t := range terms {
-			et := escapeLike(t)
-			termContainsParams = append(termContainsParams, nextArg("%"+et+"%"))
-		}
-	}
+	var args dynamicQueryArgs
+	patterns := addSearchQueryPatterns(&args, phrase, terms)
+	phraseParam := patterns.exact
+	phraseContainsParam := patterns.contains
+	phraseStartsWithParam := patterns.starts
+	wsParam := patterns.workspace
+	termContainsParams := patterns.terms
 
 	// --- WHERE clause ---
 	var whereParts []string
@@ -377,7 +350,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	// Number match
 	numParam := ""
 	if hasNum {
-		numParam = nextArg(queryNum)
+		numParam = args.add(queryNum)
 		whereParts = append(whereParts, fmt.Sprintf("i.number = %s", numParam))
 	}
 
@@ -502,8 +475,8 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 		)`, phraseContainsParam, strings.Join(commentTerms, " AND "))
 	}
 
-	limitParam := nextArg(nil)  // placeholder
-	offsetParam := nextArg(nil) // placeholder
+	limitParam := args.add(nil)  // placeholder
+	offsetParam := args.add(nil) // placeholder
 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,

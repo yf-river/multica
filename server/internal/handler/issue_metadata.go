@@ -141,6 +141,15 @@ func (h *Handler) ListIssueMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")})
 }
 
+func (h *Handler) publishIssueMetadataChanged(workspaceID, actorType, actorID string, issue db.Issue) map[string]any {
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
+	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
+		"issue_id": uuidToString(issue.ID),
+		"metadata": metadata,
+	})
+	return metadata
+}
+
 func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	key := chi.URLParam(r, "key")
@@ -195,11 +204,7 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := resolveActor(r, userID)
-	metadata := mustDecodePersistedJSONObject(updated.Metadata, "issue metadata")
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id": uuidToString(updated.ID),
-		"metadata": metadata,
-	})
+	metadata := h.publishIssueMetadataChanged(workspaceID, actorType, actorID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata})
 }
 
@@ -237,10 +242,6 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := resolveActor(r, userID)
-	metadata := mustDecodePersistedJSONObject(updated.Metadata, "issue metadata")
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id": uuidToString(updated.ID),
-		"metadata": metadata,
-	})
+	metadata := h.publishIssueMetadataChanged(workspaceID, actorType, actorID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata})
 }

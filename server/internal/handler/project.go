@@ -591,34 +591,13 @@ type SearchProjectResponse struct {
 
 // buildProjectSearchQuery builds a dynamic SQL query for project search.
 func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
-	phrase = strings.ToLower(phrase)
-	for i, t := range terms {
-		terms[i] = strings.ToLower(t)
-	}
-
-	argIdx := 1
-	args := []any{}
-	nextArg := func(val any) string {
-		args = append(args, val)
-		s := fmt.Sprintf("$%d", argIdx)
-		argIdx++
-		return s
-	}
-
-	escapedPhrase := escapeLike(phrase)
-	phraseParam := nextArg(escapedPhrase)
-	phraseContains := "'%' || " + phraseParam + " || '%'"
-	phraseStartsWith := phraseParam + " || '%'"
-
-	wsParam := nextArg(nil) // workspace_id placeholder
-
-	var termParams []string
-	if len(terms) > 1 {
-		for _, t := range terms {
-			et := escapeLike(t)
-			termParams = append(termParams, nextArg(et))
-		}
-	}
+	var args dynamicQueryArgs
+	patterns := addSearchQueryPatterns(&args, phrase, terms)
+	phraseParam := patterns.exact
+	phraseContains := patterns.contains
+	phraseStartsWith := patterns.starts
+	wsParam := patterns.workspace
+	termParams := patterns.terms
 
 	// --- WHERE clause ---
 	var whereParts []string
@@ -634,10 +613,9 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if len(termParams) > 1 {
 		var termConditions []string
 		for _, tp := range termParams {
-			tc := "'%' || " + tp + " || '%'"
 			termConditions = append(termConditions, fmt.Sprintf(
 				"(LOWER(p.title) LIKE %s OR LOWER(COALESCE(p.description, '')) LIKE %s)",
-				tc, tc,
+				tp, tp,
 			))
 		}
 		whereParts = append(whereParts, "("+strings.Join(termConditions, " AND ")+")")
@@ -665,7 +643,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if len(termParams) > 1 {
 		var titleTerms []string
 		for _, tp := range termParams {
-			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE '%s' || %s || '%s'", "%", tp, "%"))
+			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE %s", tp))
 		}
 		rankCases = append(rankCases, fmt.Sprintf("WHEN (%s) THEN 3", strings.Join(titleTerms, " AND ")))
 	}
@@ -684,7 +662,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if len(termParams) > 1 {
 		var titleTerms []string
 		for _, tp := range termParams {
-			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE '%s' || %s || '%s'", "%", tp, "%"))
+			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE %s", tp))
 		}
 		matchSourceExpr = fmt.Sprintf(`CASE
 			WHEN LOWER(p.title) LIKE %s THEN 'title'
@@ -695,8 +673,8 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 		)
 	}
 
-	limitParam := nextArg(nil)
-	offsetParam := nextArg(nil)
+	limitParam := args.add(nil)
+	offsetParam := args.add(nil)
 
 	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
 		p.status, p.priority, p.lead_type, p.lead_id,

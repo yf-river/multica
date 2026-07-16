@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -11,6 +13,38 @@ type searchQueryOptions struct {
 	limit         int
 	offset        int
 	includeClosed bool
+}
+
+type dynamicQueryArgs []any
+
+func (args *dynamicQueryArgs) add(value any) string {
+	*args = append(*args, value)
+	return fmt.Sprintf("$%d", len(*args))
+}
+
+type searchQueryPatterns struct {
+	exact     string
+	contains  string
+	starts    string
+	workspace string
+	terms     []string
+}
+
+func addSearchQueryPatterns(args *dynamicQueryArgs, phrase string, terms []string) searchQueryPatterns {
+	escapedPhrase := escapeLike(strings.ToLower(phrase))
+	patterns := searchQueryPatterns{
+		exact:     args.add(escapedPhrase),
+		contains:  args.add("%" + escapedPhrase + "%"),
+		starts:    args.add(escapedPhrase + "%"),
+		workspace: args.add(nil),
+	}
+	if len(terms) > 1 {
+		patterns.terms = make([]string, 0, len(terms))
+		for _, term := range terms {
+			patterns.terms = append(patterns.terms, args.add("%"+escapeLike(strings.ToLower(term))+"%"))
+		}
+	}
+	return patterns
 }
 
 func (h *Handler) parseSearchRequest(w http.ResponseWriter, r *http.Request) (string, pgtype.UUID, searchQueryOptions, bool) {

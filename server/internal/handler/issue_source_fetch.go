@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type RecordIssueSourceFetchRequest struct {
@@ -216,11 +215,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := resolveActor(r, userID)
-	metadata := mustDecodePersistedJSONObject(updated.Metadata, "issue metadata")
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id": uuidToString(updated.ID),
-		"metadata": metadata,
-	})
+	metadata := h.publishIssueMetadataChanged(workspaceID, actorType, actorID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"metadata":    metadata,
 		"trace_event": traceResponse,
