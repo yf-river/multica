@@ -649,11 +649,8 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 		if err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("update prompt evaluation case tags: %w", err)
 		}
-		if err := syncPromptEvaluationDatasetRow(ctx, queries, job.Asset, updated); err != nil {
-			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation dataset row: %w", err)
-		}
-		if err := syncPromptEvaluationTestSuiteCase(ctx, queries, job.Asset, updated); err != nil {
-			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation test suite case: %w", err)
+		if err := syncPromptEvaluationCaseCollections(ctx, queries, job.Asset, updated); err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation case collection: %w", err)
 		}
 		changed = append(changed, updated)
 		if len(sampleIDs) < 20 {
@@ -974,12 +971,8 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
 		return
 	}
-	if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
-		return
-	}
-	if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, created); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
+	if err := syncPromptEvaluationCaseCollections(r.Context(), qtx, asset, created); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation case collection")
 		return
 	}
 	response := promptEvaluationCaseToResponse(created, assertions)
@@ -1224,12 +1217,8 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case assertions")
 		return
 	}
-	if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, updated); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
-		return
-	}
-	if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, updated); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
+	if err := syncPromptEvaluationCaseCollections(r.Context(), qtx, asset, updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation case collection")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -1263,12 +1252,8 @@ func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	if err := deletePromptEvaluationDatasetRowsForCase(r.Context(), qtx, workspaceUUID, caseID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation dataset row")
-		return
-	}
-	if err := deletePromptEvaluationTestSuiteCasesForCase(r.Context(), qtx, workspaceUUID, caseID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation test suite case")
+	if err := deletePromptEvaluationCaseCollections(r.Context(), qtx, workspaceUUID, caseID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation case collection")
 		return
 	}
 	if err := qtx.DeletePromptEvaluationCase(r.Context(), db.DeletePromptEvaluationCaseParams{ID: caseID, WorkspaceID: workspaceUUID}); err != nil {

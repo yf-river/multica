@@ -347,101 +347,75 @@ func syncPromptEvaluationCaseAssertions(ctx context.Context, qtx *db.Queries, it
 	return assertions, nil
 }
 
-func syncPromptEvaluationDatasetRow(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, item db.PromptEvaluationCase) error {
-	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
-		WorkspaceID: item.WorkspaceID,
-		CaseID:      item.ID,
-	})
-	if err != nil {
+func syncPromptEvaluationCaseCollections(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, item db.PromptEvaluationCase) error {
+	if err := deletePromptEvaluationCaseCollections(ctx, qtx, item.WorkspaceID, item.ID); err != nil {
 		return err
 	}
-	for _, datasetAssetID := range deletedAssets {
-		if err := refreshPromptEvaluationDatasetRowCount(ctx, qtx, item.WorkspaceID, datasetAssetID); err != nil {
+
+	switch asset.AssetType {
+	case promptEvaluationAssetDataset:
+		if _, err := qtx.CreatePromptEvaluationDatasetRow(ctx, db.CreatePromptEvaluationDatasetRowParams{
+			WorkspaceID:      item.WorkspaceID,
+			DatasetAssetID:   item.AssetID,
+			CaseID:           item.ID,
+			RowIndex:         item.CaseIndex,
+			RowName:          item.CaseName,
+			Variables:        item.Variables,
+			ExpectedContains: item.ExpectedContains,
+			Expected:         item.Expected,
+			Tags:             item.Tags,
+			Status:           item.Status,
+			Source:           item.Source,
+			CreatedBy:        item.CreatedBy,
+		}); err != nil {
 			return err
 		}
-	}
-	if asset.AssetType != promptEvaluationAssetDataset {
-		return nil
-	}
-	if _, err := qtx.CreatePromptEvaluationDatasetRow(ctx, db.CreatePromptEvaluationDatasetRowParams{
-		WorkspaceID:      item.WorkspaceID,
-		DatasetAssetID:   item.AssetID,
-		CaseID:           item.ID,
-		RowIndex:         item.CaseIndex,
-		RowName:          item.CaseName,
-		Variables:        item.Variables,
-		ExpectedContains: item.ExpectedContains,
-		Expected:         item.Expected,
-		Tags:             item.Tags,
-		Status:           item.Status,
-		Source:           item.Source,
-		CreatedBy:        item.CreatedBy,
-	}); err != nil {
-		return err
-	}
-	return refreshPromptEvaluationDatasetRowCount(ctx, qtx, item.WorkspaceID, item.AssetID)
-}
-
-func syncPromptEvaluationTestSuiteCase(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, item db.PromptEvaluationCase) error {
-	deletedAssets, err := qtx.DeletePromptEvaluationTestSuiteCasesByCase(ctx, db.DeletePromptEvaluationTestSuiteCasesByCaseParams{
-		WorkspaceID: item.WorkspaceID,
-		CaseID:      item.ID,
-	})
-	if err != nil {
-		return err
-	}
-	for _, testSuiteAssetID := range deletedAssets {
-		if err := refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, testSuiteAssetID); err != nil {
+		return refreshPromptEvaluationDatasetRowCount(ctx, qtx, item.WorkspaceID, item.AssetID)
+	case promptEvaluationAssetTestSuite:
+		if _, err := qtx.CreatePromptEvaluationTestSuiteCase(ctx, db.CreatePromptEvaluationTestSuiteCaseParams{
+			WorkspaceID:      item.WorkspaceID,
+			TestSuiteAssetID: item.AssetID,
+			CaseID:           item.ID,
+			CaseIndex:        item.CaseIndex,
+			CaseName:         item.CaseName,
+			Variables:        item.Variables,
+			ExpectedContains: item.ExpectedContains,
+			Expected:         item.Expected,
+			Tags:             item.Tags,
+			Status:           item.Status,
+			Source:           item.Source,
+			CreatedBy:        item.CreatedBy,
+		}); err != nil {
 			return err
 		}
-	}
-	if asset.AssetType != promptEvaluationAssetTestSuite {
+		return refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, item.AssetID)
+	default:
 		return nil
 	}
-	if _, err := qtx.CreatePromptEvaluationTestSuiteCase(ctx, db.CreatePromptEvaluationTestSuiteCaseParams{
-		WorkspaceID:      item.WorkspaceID,
-		TestSuiteAssetID: item.AssetID,
-		CaseID:           item.ID,
-		CaseIndex:        item.CaseIndex,
-		CaseName:         item.CaseName,
-		Variables:        item.Variables,
-		ExpectedContains: item.ExpectedContains,
-		Expected:         item.Expected,
-		Tags:             item.Tags,
-		Status:           item.Status,
-		Source:           item.Source,
-		CreatedBy:        item.CreatedBy,
-	}); err != nil {
-		return err
-	}
-	return refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, item.AssetID)
 }
 
-func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
-	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
+func deletePromptEvaluationCaseCollections(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
+	datasetAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
 		WorkspaceID: workspaceID,
 		CaseID:      caseID,
 	})
 	if err != nil {
 		return err
 	}
-	for _, datasetAssetID := range deletedAssets {
+	for _, datasetAssetID := range datasetAssets {
 		if err := refreshPromptEvaluationDatasetRowCount(ctx, qtx, workspaceID, datasetAssetID); err != nil {
 			return err
 		}
 	}
-	return nil
-}
 
-func deletePromptEvaluationTestSuiteCasesForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
-	deletedAssets, err := qtx.DeletePromptEvaluationTestSuiteCasesByCase(ctx, db.DeletePromptEvaluationTestSuiteCasesByCaseParams{
+	testSuiteAssets, err := qtx.DeletePromptEvaluationTestSuiteCasesByCase(ctx, db.DeletePromptEvaluationTestSuiteCasesByCaseParams{
 		WorkspaceID: workspaceID,
 		CaseID:      caseID,
 	})
 	if err != nil {
 		return err
 	}
-	for _, testSuiteAssetID := range deletedAssets {
+	for _, testSuiteAssetID := range testSuiteAssets {
 		if err := refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, workspaceID, testSuiteAssetID); err != nil {
 			return err
 		}

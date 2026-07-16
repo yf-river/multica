@@ -137,7 +137,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			writeError(w, http.StatusInternalServerError, "failed to create trace dataset assertions")
 			return
 		}
-		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+		if err := syncPromptEvaluationCaseCollections(r.Context(), qtx, asset, created); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to sync trace dataset row")
 			return
 		}
@@ -653,7 +653,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 			writeError(w, http.StatusInternalServerError, "failed to recreate dataset case assertions")
 			return
 		}
-		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+		if err := syncPromptEvaluationCaseCollections(r.Context(), qtx, asset, created); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to sync restored dataset row")
 			return
 		}

@@ -694,12 +694,8 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
 			return false
 		}
-		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset rows")
-			return false
-		}
-		if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, created); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite cases")
+		if err := syncPromptEvaluationCaseCollections(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation case collections")
 			return false
 		}
 	}
