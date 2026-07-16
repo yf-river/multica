@@ -590,28 +590,14 @@ func parseTAPDSourceURL(value string) (tapdSourceRef, bool) {
 func parseTAPDStoryURL(value string) (tapdSourceRef, bool) {
 	match := tapdProngStoryURLRE.FindStringSubmatch(value)
 	if len(match) == 3 {
-		workspaceID := strings.TrimSpace(match[1])
-		storyID := strings.TrimSpace(match[2])
-		if workspaceID != "" && storyID != "" {
-			return tapdSourceRef{
-				WorkspaceID:  workspaceID,
-				ResourceType: "story",
-				ResourceID:   storyID,
-				URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
-			}, true
+		if ref, ok := tapdStorySourceRef(match[1], match[2]); ok {
+			return ref, true
 		}
 	}
 	match = tapdStoryListURLRE.FindStringSubmatch(strings.ReplaceAll(value, "&amp;", "&"))
 	if len(match) == 3 {
-		workspaceID := strings.TrimSpace(match[1])
-		storyID := strings.TrimSpace(match[2])
-		if workspaceID != "" && storyID != "" {
-			return tapdSourceRef{
-				WorkspaceID:  workspaceID,
-				ResourceType: "story",
-				ResourceID:   storyID,
-				URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
-			}, true
+		if ref, ok := tapdStorySourceRef(match[1], match[2]); ok {
+			return ref, true
 		}
 	}
 	parsed, err := url.Parse(strings.TrimSpace(value))
@@ -628,7 +614,15 @@ func parseTAPDStoryURL(value string) (tapdSourceRef, bool) {
 	if workspaceID == "" || len(previewMatch) != 2 || strings.TrimSpace(previewMatch[1]) == "" {
 		return tapdSourceRef{}, false
 	}
-	storyID := strings.TrimSpace(previewMatch[1])
+	return tapdStorySourceRef(workspaceID, previewMatch[1])
+}
+
+func tapdStorySourceRef(workspaceID, storyID string) (tapdSourceRef, bool) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	storyID = strings.TrimSpace(storyID)
+	if workspaceID == "" || storyID == "" {
+		return tapdSourceRef{}, false
+	}
 	return tapdSourceRef{
 		WorkspaceID:  workspaceID,
 		ResourceType: "story",

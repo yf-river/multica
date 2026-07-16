@@ -334,17 +334,47 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	runs, err := h.listAllWorkspaceSquadSOPRuns(r.Context(), workspaceID, since, squadID, projectID, agentID)
+	runs, err := collectObservabilityPages(func(offset int32) ([]db.SquadSopRun, error) {
+		return h.Queries.ListWorkspaceSquadSOPRuns(r.Context(), db.ListWorkspaceSquadSOPRunsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP runs")
 		return
 	}
-	traces, err := h.listAllWorkspaceTaskTraceEvents(r.Context(), workspaceID, since, squadID, projectID, agentID)
+	traces, err := collectObservabilityPages(func(offset int32) ([]db.TaskTraceEvent, error) {
+		return h.Queries.ListWorkspaceTaskTraceEvents(r.Context(), db.ListWorkspaceTaskTraceEventsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list task trace events")
 		return
 	}
-	events, err := h.listAllWorkspaceSquadSOPStepEvents(r.Context(), workspaceID, since, squadID, projectID, agentID)
+	events, err := collectObservabilityPages(func(offset int32) ([]db.SquadSopStepEvent, error) {
+		return h.Queries.ListWorkspaceSquadSOPStepEvents(r.Context(), db.ListWorkspaceSquadSOPStepEventsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP step events")
 		return
@@ -358,62 +388,10 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, summary)
 }
 
-func (h *Handler) listAllWorkspaceSquadSOPRuns(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.SquadSopRun, error) {
-	var out []db.SquadSopRun
+func collectObservabilityPages[T any](fetch func(offset int32) ([]T, error)) ([]T, error) {
+	var out []T
 	for offset := int32(0); ; offset += observabilitySummaryPageSize {
-		items, err := h.Queries.ListWorkspaceSquadSOPRuns(ctx, db.ListWorkspaceSquadSOPRunsParams{
-			WorkspaceID: workspaceID,
-			Limit:       observabilitySummaryPageSize,
-			Offset:      offset,
-			Since:       since,
-			SquadID:     squadID,
-			ProjectID:   projectID,
-			AgentID:     agentID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
-		if len(items) < observabilitySummaryPageSize {
-			return out, nil
-		}
-	}
-}
-
-func (h *Handler) listAllWorkspaceTaskTraceEvents(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.TaskTraceEvent, error) {
-	var out []db.TaskTraceEvent
-	for offset := int32(0); ; offset += observabilitySummaryPageSize {
-		items, err := h.Queries.ListWorkspaceTaskTraceEvents(ctx, db.ListWorkspaceTaskTraceEventsParams{
-			WorkspaceID: workspaceID,
-			Limit:       observabilitySummaryPageSize,
-			Offset:      offset,
-			Since:       since,
-			SquadID:     squadID,
-			ProjectID:   projectID,
-			AgentID:     agentID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
-		if len(items) < observabilitySummaryPageSize {
-			return out, nil
-		}
-	}
-}
-
-func (h *Handler) listAllWorkspaceSquadSOPStepEvents(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.SquadSopStepEvent, error) {
-	var out []db.SquadSopStepEvent
-	for offset := int32(0); ; offset += observabilitySummaryPageSize {
-		items, err := h.Queries.ListWorkspaceSquadSOPStepEvents(ctx, db.ListWorkspaceSquadSOPStepEventsParams{
-			WorkspaceID: workspaceID,
-			Limit:       observabilitySummaryPageSize,
-			Offset:      offset,
-			Since:       since,
-			SquadID:     squadID,
-			ProjectID:   projectID,
-			AgentID:     agentID,
-		})
+		items, err := fetch(offset)
 		if err != nil {
 			return nil, err
 		}
