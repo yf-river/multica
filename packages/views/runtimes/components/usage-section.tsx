@@ -40,8 +40,8 @@ import {
   DailyTokensChart,
   WeeklyCostChart,
   WeeklyTokensChart,
-  ActivityHeatmap,
-} from "./charts";
+} from "./charts/usage-bar-charts";
+import { ActivityHeatmap } from "./charts/activity-heatmap";
 import { useT } from "../../i18n";
 
 // Single source of truth for the period selector. KPIs, the When-chart, the

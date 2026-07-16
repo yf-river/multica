@@ -32,7 +32,7 @@ import {
   WeeklyTokensChart,
   WeeklyTimeChart,
   WeeklyTasksChart,
-} from "../../runtimes/components/charts";
+} from "../../runtimes/components/charts/usage-bar-charts";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {

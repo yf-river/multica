@@ -76,13 +76,16 @@ vi.mock("@tanstack/react-query", async () => {
   };
 });
 
-// Charts are recharts-heavy; stub them. ActivityHeatmap echoes its `tz`
-// prop so the test can read which tz the heatmap was wired with.
-vi.mock("./charts", () => ({
+// Charts are recharts-heavy; stub their real modules. ActivityHeatmap echoes
+// its `tz` prop so the test can read which tz the heatmap was wired with.
+vi.mock("./charts/usage-bar-charts", () => ({
   DailyCostChart: () => <div data-testid="daily-cost-chart" />,
   DailyTokensChart: () => <div data-testid="daily-tokens-chart" />,
   WeeklyCostChart: () => <div data-testid="weekly-cost-chart" />,
   WeeklyTokensChart: () => <div data-testid="weekly-tokens-chart" />,
+}));
+
+vi.mock("./charts/activity-heatmap", () => ({
   ActivityHeatmap: ({ tz }: { tz: string }) => (
     <div data-testid="heatmap-tz">{tz}</div>
   ),

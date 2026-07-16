@@ -18,7 +18,7 @@ import type {
   DailyTasksData,
   WeeklyTimeData,
   WeeklyTasksData,
-} from "../runtimes/components/charts";
+} from "../runtimes/components/charts/usage-bar-charts";
 
 // ---------------------------------------------------------------------------
 // Dashboard data aggregations
