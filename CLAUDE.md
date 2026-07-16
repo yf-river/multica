@@ -113,6 +113,8 @@ The compact drift-checked current-system inventory is
 [`docs/architecture/current-system-summary.md`](docs/architecture/current-system-summary.md),
 and the maintained high-risk business flows are indexed in
 [`docs/architecture/domain-flows.md`](docs/architecture/domain-flows.md).
+The current product-event and metrics contract is documented in
+[`docs/analytics.md`](docs/analytics.md).
 When routes, persistence, state ownership, environment inputs, WebSocket
 contracts, or external I/O change, run `pnpm generate:current-system-map` for
 expanded ignored evidence. CI rebuilds the inventory, checks the compact
