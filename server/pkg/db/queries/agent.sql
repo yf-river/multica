@@ -402,7 +402,7 @@ LIMIT 1;
 -- if the agent already established a real session before failing (e.g. it
 -- crashed mid-conversation, was cancelled, or hit a tool error) the resume
 -- pointer is preserved on the task row. The next chat task can then fall
--- back to GetLastChatTaskSession and continue the conversation instead of
+-- use GetChatResumePointer and continue the conversation instead of
 -- silently starting over.
 --
 -- failure_reason is classified by TaskService before this write. Keep it a

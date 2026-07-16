@@ -53,13 +53,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		task = t
 		terminalTransitioned = true
 
-		// Keep resume-unsafe sessions on the task row for observability, but
-		// do not promote them to the chat-level resume pointer.
-		if t.ChatSessionID.Valid && !taskfailure.IsResumeUnsafe(failureReason) {
-			if err := s.updateChatSessionResumePointer(ctx, qtx, t, sessionID, workDir); err != nil {
-				return err
-			}
-		}
 		retried, retryCreated, err = s.materializeRetryTask(ctx, qtx, task)
 		if err != nil {
 			return fmt.Errorf("materialize task retry: %w", err)

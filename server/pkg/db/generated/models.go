@@ -287,12 +287,9 @@ type ChatSession struct {
 	AgentID     pgtype.UUID        `json:"agent_id"`
 	CreatorID   pgtype.UUID        `json:"creator_id"`
 	Title       string             `json:"title"`
-	SessionID   pgtype.Text        `json:"session_id"`
-	WorkDir     pgtype.Text        `json:"work_dir"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	UnreadSince pgtype.Timestamptz `json:"unread_since"`
-	RuntimeID   pgtype.UUID        `json:"runtime_id"`
 }
 
 type Comment struct {

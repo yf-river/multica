@@ -261,27 +261,6 @@ func (s *TaskService) cancelTasksInTx(
 	return cancelled, persistedEvents, nil
 }
 
-func (s *TaskService) updateChatSessionResumePointer(
-	ctx context.Context,
-	queries *db.Queries,
-	task db.AgentTaskQueue,
-	sessionID, workDir string,
-) error {
-	var runtimeID pgtype.UUID
-	if sessionID != "" {
-		runtimeID = task.RuntimeID
-	}
-	if err := queries.UpdateChatSessionSession(ctx, db.UpdateChatSessionSessionParams{
-		ID:        task.ChatSessionID,
-		SessionID: pgtype.Text{String: sessionID, Valid: sessionID != ""},
-		WorkDir:   pgtype.Text{String: workDir, Valid: workDir != ""},
-		RuntimeID: runtimeID,
-	}); err != nil {
-		return fmt.Errorf("update chat session resume pointer: %w", err)
-	}
-	return nil
-}
-
 func (s *TaskService) handleTerminalTransitionError(
 	ctx context.Context,
 	operation string,

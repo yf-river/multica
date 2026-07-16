@@ -42,11 +42,6 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		task = t
 		terminalTransitioned = true
 
-		if t.ChatSessionID.Valid {
-			if err := s.updateChatSessionResumePointer(ctx, qtx, t, sessionID, workDir); err != nil {
-				return err
-			}
-		}
 		if err := lockIssueForTaskTerminalProjection(ctx, qtx, task); err != nil {
 			return err
 		}

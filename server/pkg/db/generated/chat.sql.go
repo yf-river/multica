@@ -50,9 +50,9 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 }
 
 const createChatSession = `-- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2))
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, created_at, updated_at, unread_since, runtime_id
+INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+VALUES ($1, $2, $3, $4)
+RETURNING id, workspace_id, agent_id, creator_id, title, created_at, updated_at, unread_since
 `
 
 type CreateChatSessionParams struct {
@@ -76,12 +76,9 @@ func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionPa
 		&i.AgentID,
 		&i.CreatorID,
 		&i.Title,
-		&i.SessionID,
-		&i.WorkDir,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UnreadSince,
-		&i.RuntimeID,
 	)
 	return i, err
 }
@@ -184,8 +181,42 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 	return i, err
 }
 
+const getChatResumePointer = `-- name: GetChatResumePointer :one
+SELECT session_id, work_dir, runtime_id FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND (
+    status = 'completed'
+    OR (
+      status = 'failed'
+      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
+    )
+  )
+  AND session_id IS NOT NULL
+ORDER BY completed_at DESC
+LIMIT 1
+`
+
+type GetChatResumePointerRow struct {
+	SessionID pgtype.Text `json:"session_id"`
+	WorkDir   pgtype.Text `json:"work_dir"`
+	RuntimeID pgtype.UUID `json:"runtime_id"`
+}
+
+// Returns the most recent task in this chat session that managed to record a
+// session_id. Includes both completed and failed tasks: even a failed task
+// may have established a real agent session before failing, and we'd rather
+// resume there than start over and lose conversation memory. The task row is
+// the sole resume-pointer owner. Resume-unsafe failures are excluded because
+// replaying those sessions deterministically reproduces the same terminal state.
+func (q *Queries) GetChatResumePointer(ctx context.Context, chatSessionID pgtype.UUID) (GetChatResumePointerRow, error) {
+	row := q.db.QueryRow(ctx, getChatResumePointer, chatSessionID)
+	var i GetChatResumePointerRow
+	err := row.Scan(&i.SessionID, &i.WorkDir, &i.RuntimeID)
+	return i, err
+}
+
 const getChatSession = `-- name: GetChatSession :one
-SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, created_at, updated_at, unread_since, runtime_id FROM chat_session
+SELECT id, workspace_id, agent_id, creator_id, title, created_at, updated_at, unread_since FROM chat_session
 WHERE id = $1
 `
 
@@ -198,18 +229,15 @@ func (q *Queries) GetChatSession(ctx context.Context, id pgtype.UUID) (ChatSessi
 		&i.AgentID,
 		&i.CreatorID,
 		&i.Title,
-		&i.SessionID,
-		&i.WorkDir,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UnreadSince,
-		&i.RuntimeID,
 	)
 	return i, err
 }
 
 const getChatSessionInWorkspace = `-- name: GetChatSessionInWorkspace :one
-SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, created_at, updated_at, unread_since, runtime_id FROM chat_session
+SELECT id, workspace_id, agent_id, creator_id, title, created_at, updated_at, unread_since FROM chat_session
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -227,48 +255,10 @@ func (q *Queries) GetChatSessionInWorkspace(ctx context.Context, arg GetChatSess
 		&i.AgentID,
 		&i.CreatorID,
 		&i.Title,
-		&i.SessionID,
-		&i.WorkDir,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UnreadSince,
-		&i.RuntimeID,
 	)
-	return i, err
-}
-
-const getLastChatTaskSession = `-- name: GetLastChatTaskSession :one
-SELECT session_id, work_dir, runtime_id FROM agent_task_queue
-WHERE chat_session_id = $1
-  AND (
-    status = 'completed'
-    OR (
-      status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
-    )
-  )
-  AND session_id IS NOT NULL
-ORDER BY completed_at DESC
-LIMIT 1
-`
-
-type GetLastChatTaskSessionRow struct {
-	SessionID pgtype.Text `json:"session_id"`
-	WorkDir   pgtype.Text `json:"work_dir"`
-	RuntimeID pgtype.UUID `json:"runtime_id"`
-}
-
-// Returns the most recent task in this chat session that managed to record a
-// session_id. Includes both completed and failed tasks: even a failed task
-// may have established a real agent session before failing, and we'd rather
-// resume there than start over and lose conversation memory. Used as a
-// fallback when chat_session.session_id is NULL. Resume-unsafe failures are
-// excluded because replaying those sessions deterministically reproduces the
-// same terminal state.
-func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgtype.UUID) (GetLastChatTaskSessionRow, error) {
-	row := q.db.QueryRow(ctx, getLastChatTaskSession, chatSessionID)
-	var i GetLastChatTaskSessionRow
-	err := row.Scan(&i.SessionID, &i.WorkDir, &i.RuntimeID)
 	return i, err
 }
 
@@ -452,7 +442,7 @@ func (q *Queries) ListChatMessagesPage(ctx context.Context, arg ListChatMessages
 }
 
 const listChatSessionsByCreator = `-- name: ListChatSessionsByCreator :many
-SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id,
+SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.created_at, cs.updated_at, cs.unread_since,
        (cs.unread_since IS NOT NULL)::bool AS has_unread
 FROM chat_session cs
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
@@ -487,12 +477,9 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			&i.ChatSession.AgentID,
 			&i.ChatSession.CreatorID,
 			&i.ChatSession.Title,
-			&i.ChatSession.SessionID,
-			&i.ChatSession.WorkDir,
 			&i.ChatSession.CreatedAt,
 			&i.ChatSession.UpdatedAt,
 			&i.ChatSession.UnreadSince,
-			&i.ChatSession.RuntimeID,
 			&i.HasUnread,
 		); err != nil {
 			return nil, err
@@ -570,7 +557,7 @@ func (q *Queries) LockChatSessionForDelete(ctx context.Context, id pgtype.UUID) 
 }
 
 const lockChatSessionForSend = `-- name: LockChatSessionForSend :one
-SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, created_at, updated_at, unread_since, runtime_id FROM chat_session
+SELECT id, workspace_id, agent_id, creator_id, title, created_at, updated_at, unread_since FROM chat_session
 WHERE id = $1 AND workspace_id = $2 AND creator_id = $3
 FOR NO KEY UPDATE
 `
@@ -593,12 +580,9 @@ func (q *Queries) LockChatSessionForSend(ctx context.Context, arg LockChatSessio
 		&i.AgentID,
 		&i.CreatorID,
 		&i.Title,
-		&i.SessionID,
-		&i.WorkDir,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UnreadSince,
-		&i.RuntimeID,
 	)
 	return i, err
 }
@@ -637,41 +621,10 @@ func (q *Queries) TouchChatSession(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
-const updateChatSessionSession = `-- name: UpdateChatSessionSession :exec
-UPDATE chat_session
-SET session_id = COALESCE($1, session_id),
-    work_dir = COALESCE($2, work_dir),
-    runtime_id = COALESCE($3, runtime_id),
-    updated_at = now()
-WHERE id = $4
-`
-
-type UpdateChatSessionSessionParams struct {
-	SessionID pgtype.Text `json:"session_id"`
-	WorkDir   pgtype.Text `json:"work_dir"`
-	RuntimeID pgtype.UUID `json:"runtime_id"`
-	ID        pgtype.UUID `json:"id"`
-}
-
-// Updates the resume pointer for a chat session. Empty/NULL inputs are
-// ignored via COALESCE so a task that completes without a session_id (e.g.
-// the agent crashed before establishing one) cannot wipe out a previously
-// recorded resume pointer. This makes the chat memory robust against
-// intermittent agent failures.
-func (q *Queries) UpdateChatSessionSession(ctx context.Context, arg UpdateChatSessionSessionParams) error {
-	_, err := q.db.Exec(ctx, updateChatSessionSession,
-		arg.SessionID,
-		arg.WorkDir,
-		arg.RuntimeID,
-		arg.ID,
-	)
-	return err
-}
-
 const updateChatSessionTitle = `-- name: UpdateChatSessionTitle :one
 UPDATE chat_session SET title = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, created_at, updated_at, unread_since, runtime_id
+RETURNING id, workspace_id, agent_id, creator_id, title, created_at, updated_at, unread_since
 `
 
 type UpdateChatSessionTitleParams struct {
@@ -688,12 +641,9 @@ func (q *Queries) UpdateChatSessionTitle(ctx context.Context, arg UpdateChatSess
 		&i.AgentID,
 		&i.CreatorID,
 		&i.Title,
-		&i.SessionID,
-		&i.WorkDir,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UnreadSince,
-		&i.RuntimeID,
 	)
 	return i, err
 }

@@ -1,6 +1,6 @@
 -- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2))
+INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetChatSession :one
@@ -25,19 +25,6 @@ ORDER BY cs.updated_at DESC;
 UPDATE chat_session SET title = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
-
--- name: UpdateChatSessionSession :exec
--- Updates the resume pointer for a chat session. Empty/NULL inputs are
--- ignored via COALESCE so a task that completes without a session_id (e.g.
--- the agent crashed before establishing one) cannot wipe out a previously
--- recorded resume pointer. This makes the chat memory robust against
--- intermittent agent failures.
-UPDATE chat_session
-SET session_id = COALESCE(sqlc.narg('session_id'), session_id),
-    work_dir = COALESCE(sqlc.narg('work_dir'), work_dir),
-    runtime_id = COALESCE(sqlc.narg('runtime_id'), runtime_id),
-    updated_at = now()
-WHERE id = sqlc.arg('id');
 
 -- name: LockChatSessionForDelete :one
 -- Acquires an exclusive (FOR UPDATE) row lock on chat_session(id). Used by
@@ -115,14 +102,13 @@ INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, 
 VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
 RETURNING *;
 
--- name: GetLastChatTaskSession :one
+-- name: GetChatResumePointer :one
 -- Returns the most recent task in this chat session that managed to record a
 -- session_id. Includes both completed and failed tasks: even a failed task
 -- may have established a real agent session before failing, and we'd rather
--- resume there than start over and lose conversation memory. Used as a
--- fallback when chat_session.session_id is NULL. Resume-unsafe failures are
--- excluded because replaying those sessions deterministically reproduces the
--- same terminal state.
+-- resume there than start over and lose conversation memory. The task row is
+-- the sole resume-pointer owner. Resume-unsafe failures are excluded because
+-- replaying those sessions deterministically reproduces the same terminal state.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE chat_session_id = $1
   AND (

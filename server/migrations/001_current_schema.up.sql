@@ -690,12 +690,9 @@ CREATE TABLE public.chat_session (
     agent_id uuid NOT NULL,
     creator_id uuid NOT NULL,
     title text DEFAULT ''::text NOT NULL,
-    session_id text,
-    work_dir text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    unread_since timestamp with time zone,
-    runtime_id uuid
+    unread_since timestamp with time zone
 );
 CREATE TABLE public.comment (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -2332,8 +2329,6 @@ ALTER TABLE ONLY public.chat_session
     ADD CONSTRAINT chat_session_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.chat_session
     ADD CONSTRAINT chat_session_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.chat_session
-    ADD CONSTRAINT chat_session_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.chat_session
     ADD CONSTRAINT chat_session_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comment

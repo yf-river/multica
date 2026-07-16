@@ -3471,13 +3471,10 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 
 	var skipSessionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (
-			workspace_id, agent_id, creator_id, title,
-			session_id, work_dir, runtime_id
-		)
-		VALUES ($1, $2, $3, 'runtime guard skip chat', 'old-chat-session', '/tmp/old-chat-workdir', $4)
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'runtime guard skip chat')
 		RETURNING id
-	`, testWorkspaceID, agentID, testUserID, oldRuntimeID).Scan(&skipSessionID); err != nil {
+	`, testWorkspaceID, agentID, testUserID).Scan(&skipSessionID); err != nil {
 		t.Fatalf("setup: create skip chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, skipSessionID) })
@@ -3520,17 +3517,24 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 
 	var resumeSessionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (
-			workspace_id, agent_id, creator_id, title,
-			session_id, work_dir, runtime_id
-		)
-		VALUES ($1, $2, $3, 'runtime guard resume chat', 'same-chat-session', '/tmp/same-chat-workdir', $4)
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'runtime guard resume chat')
 		RETURNING id
-	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&resumeSessionID); err != nil {
+	`, testWorkspaceID, agentID, testUserID).Scan(&resumeSessionID); err != nil {
 		t.Fatalf("setup: create resume chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, resumeSessionID) })
 	insertChatUserMessageFixture(t, ctx, resumeSessionID, "runtime guard resume")
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id,
+			status, priority, started_at, completed_at,
+			session_id, work_dir
+		)
+		VALUES ($1, $2, $3, 'completed', 0, now(), now(), 'same-chat-session', '/tmp/same-chat-workdir')
+	`, agentID, runtimeID, resumeSessionID); err != nil {
+		t.Fatalf("setup: create same-runtime prior chat task: %v", err)
+	}
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3824,13 +3828,10 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 
 	var chatSessionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (
-			workspace_id, agent_id, creator_id, title,
-			session_id, work_dir, runtime_id
-		)
-		VALUES ($1, $2, $3, 'force fresh chat', 'chat-pointer-session', '/tmp/chat-pointer-workdir', $4)
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'force fresh chat')
 		RETURNING id
-	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&chatSessionID); err != nil {
+	`, testWorkspaceID, agentID, testUserID).Scan(&chatSessionID); err != nil {
 		t.Fatalf("setup: create chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, chatSessionID) })
@@ -3862,62 +3863,6 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 	}
 	if task.PriorWorkDir != "" {
 		t.Fatalf("force fresh chat: expected empty PriorWorkDir, got %q", task.PriorWorkDir)
-	}
-}
-
-// Locks the legacy-row fallback: chat_session.runtime_id IS NULL (e.g. a row
-// the migration left untouched because no prior task matched the cs pointer)
-// but a completed task on the claiming runtime exists. ClaimTaskByRuntime
-// must recover the session from the task row, not start a fresh conversation.
-func TestClaimTask_ChatLegacyNullRuntimeFallsBackToTaskRow(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	ctx := context.Background()
-
-	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
-
-	var legacySessionID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (
-			workspace_id, agent_id, creator_id, title,
-			session_id, work_dir, runtime_id
-		)
-		VALUES ($1, $2, $3, 'runtime guard legacy chat', NULL, NULL, NULL)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&legacySessionID); err != nil {
-		t.Fatalf("setup: create legacy chat session: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, legacySessionID) })
-	insertChatUserMessageFixture(t, ctx, legacySessionID, "legacy runtime fallback")
-
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, chat_session_id,
-			status, priority, started_at, completed_at,
-			session_id, work_dir
-		)
-		VALUES ($1, $2, $3, 'completed', 0, now(), now(), 'legacy-fallback-session', '/tmp/legacy-fallback-workdir')
-	`, agentID, runtimeID, legacySessionID); err != nil {
-		t.Fatalf("setup: create matching-runtime prior task: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, chat_session_id,
-			status, priority
-		)
-		VALUES ($1, $2, $3, 'queued', 0)
-	`, agentID, runtimeID, legacySessionID); err != nil {
-		t.Fatalf("setup: create current chat task: %v", err)
-	}
-
-	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if task.PriorSessionID != "legacy-fallback-session" {
-		t.Fatalf("legacy fallback: expected PriorSessionID='legacy-fallback-session', got %q", task.PriorSessionID)
-	}
-	if task.PriorWorkDir != "/tmp/legacy-fallback-workdir" {
-		t.Fatalf("legacy fallback: expected PriorWorkDir='/tmp/legacy-fallback-workdir', got %q", task.PriorWorkDir)
 	}
 }
 

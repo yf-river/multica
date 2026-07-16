@@ -17,13 +17,13 @@ the expanded JSON and Markdown evidence under ignored
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 190 |
-| Migration files | 12 |
+| Migration files | 14 |
 | sqlc modules | 55 |
-| sqlc queries | 544 |
+| sqlc queries | 540 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand stores | 24 |
-| React Query consumer files | 178 |
+| React Query consumer files | 177 |
 | Environment variables | 191 |
 | Manually identified external systems | 12 |
 

@@ -273,9 +273,8 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 
 // UpdateChatSession updates user-editable fields on a chat session — today
 // just `title`, surfaced by the inline rename affordance in the session
-// dropdown. Title is the only field accepted; agent/creator/workspace are
-// immutable, and the resume pointers
-// (session_id / work_dir / runtime_id) are daemon-owned.
+// dropdown. Title is the only field accepted; agent, creator and workspace
+// are immutable while task rows own runtime resume state.
 func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	scope, ok := requireChatRequestScope(w, r)
 	if !ok {

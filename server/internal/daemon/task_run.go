@@ -637,8 +637,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Usage:       usageEntries,
 		}, nil
 	case "timeout":
-		// Surface session_id/work_dir so the chat resume pointer is kept
-		// in sync even when the agent times out after building a session.
+		// Surface session_id/work_dir so the task-owned resume pointer survives
+		// when the agent times out after building a session.
 		// We mark as "blocked" (not a hard error return) so handleTask
 		// goes through the FailTask path that forwards session info.
 		comment := result.Error
@@ -704,9 +704,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		errMsg := agentFailureMessage(provider, result)
 		// Forward SessionID/WorkDir on the blocked path: backends commonly
 		// emit a real session_id before failing (rate-limit, tool error,
-		// model reject, …). Without this the chat_session resume pointer
-		// would either be left stale or overwritten with NULL on the
-		// server, causing the next chat turn to lose context.
+		// model reject, …). Without this the task row would lose the pointer
+		// needed by the next chat turn.
 		//
 		// Request bodies embedded in a rejected session are not resumable.
 		failureReason, _ := classifyPoisonedError(errMsg)

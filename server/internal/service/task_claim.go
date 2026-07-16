@@ -689,8 +689,5 @@ func taskResultOutputText(result []byte) string {
 // issue from in_progress to in_review. Coordinators, comment replies, chat,
 // quick-create, source-summary, and autopilot tasks are intentionally excluded.
 //
-// For chat tasks, CompleteAgentTask and the chat_session resume-pointer
-// update run in a single transaction. This closes a race where the next
-// queued chat message could be claimed in the window between the task
-// flipping to 'completed' and chat_session.session_id being refreshed,
-// causing the new task to resume against a stale (or NULL) session.
+// For chat tasks, CompleteAgentTask atomically writes the terminal state and
+// resume pointer to the same task row before the next queued message can claim.

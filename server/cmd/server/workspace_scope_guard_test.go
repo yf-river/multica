@@ -198,8 +198,8 @@ func seedChatSession(t *testing.T, ctx context.Context) pgtype.UUID {
 	}
 	var s string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id)
-		VALUES ($1, $2, $3, 'scope-guard chat', (SELECT runtime_id FROM agent WHERE id = $2))
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'scope-guard chat')
 		RETURNING id
 	`, testWorkspaceID, agentID, testUserID).Scan(&s); err != nil {
 		t.Fatalf("seed chat_session: %v", err)
