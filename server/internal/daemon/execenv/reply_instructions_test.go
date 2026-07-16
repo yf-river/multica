@@ -31,16 +31,6 @@ func injectedRuntimeConfigContent(t *testing.T, provider string, ctx TaskContext
 	return fileName, string(data)
 }
 
-// TestBuildCommentReplyInstructionsCodexLinux pins that the Linux/macOS
-// reply template now mandates `--content-file` (post-#4182). The previous
-// `--content-stdin` + HEREDOC mandate (#1795 / #1851 / MUL-2904) was kept
-// for years to defend against backtick / `$()` substitution in the body,
-// but the heredoc/flag boundary turned out to be fragile in its own right:
-// when a model wrapped extra flags around the heredoc on `multica issue
-// create`, the flags got swallowed into stdin and silently dropped (OXY-78,
-// OXY-76). The file path defeats both classes — the body never reaches the
-// shell, and all flags live on one shell-token line.
-//
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsLinux(t *testing.T) {
 	setRuntimeGOOS(t, "linux")
@@ -77,12 +67,6 @@ func TestBuildCommentReplyInstructionsLinux(t *testing.T) {
 	}
 }
 
-// TestBuildCommentReplyInstructionsWindowsUsesContentFile pins that Windows
-// gets the `--content-file` template. Piping through PowerShell loses non-ASCII
-// bytes (PS 5.1's `$OutputEncoding` defaults to ASCIIEncoding). Issues
-// #2198 (Chinese, Codex), #2236 (Chinese, Codex), #2376 (Cyrillic,
-// non-Codex agent name) all match this signature.
-//
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 	setRuntimeGOOS(t, "windows")
