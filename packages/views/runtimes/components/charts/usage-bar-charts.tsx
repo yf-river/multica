@@ -41,12 +41,10 @@ const timeChartConfig = {
   totalSeconds: { label: "Run time", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
-type BarRadius = [number, number, number, number];
-
 interface UsageSeries {
   key: string;
   fill: string;
-  radius: BarRadius;
+  radius: [number, number, number, number];
 }
 
 const tokenSeries: UsageSeries[] = [
@@ -78,20 +76,6 @@ interface WeeklyUsageDatum {
   daysCovered: number;
 }
 
-interface UsageBarChartProps<T extends { label: string }> {
-  config: ChartConfig;
-  data: T[];
-  series: UsageSeries[];
-  stackId?: string;
-  yAxisWidth: number;
-  allowDecimals?: boolean;
-  tickFormatter?: (value: number) => string;
-  valueFormatter: (value: number) => string;
-  totalLabel?: ReactNode;
-  totalFormatter?: (total: number) => ReactNode;
-  weeklyLabel?: (row: T) => ReactNode;
-}
-
 function UsageBarChart<T extends { label: string }>({
   config,
   data,
@@ -104,7 +88,19 @@ function UsageBarChart<T extends { label: string }>({
   totalLabel,
   totalFormatter,
   weeklyLabel,
-}: UsageBarChartProps<T>) {
+}: {
+  config: ChartConfig;
+  data: T[];
+  series: UsageSeries[];
+  stackId?: string;
+  yAxisWidth: number;
+  allowDecimals?: boolean;
+  tickFormatter?: (value: number) => string;
+  valueFormatter: (value: number) => string;
+  totalLabel?: ReactNode;
+  totalFormatter?: (total: number) => ReactNode;
+  weeklyLabel?: (row: T) => ReactNode;
+}) {
   return (
     <RuntimeBarChart
       config={config}
@@ -308,19 +304,15 @@ export function WeeklyTasksChart({ data }: { data: WeeklyTasksData[] }) {
   );
 }
 
-interface TimeChartProps<T extends { label: string }> {
-  data: T[];
-  formatY: (seconds: number) => string;
-  formatTooltip: (seconds: number) => string;
-  weeklyLabel?: (row: T) => ReactNode;
-}
-
-function TimeChart<T extends { label: string }>({
+export function DailyTimeChart({
   data,
   formatY,
   formatTooltip,
-  weeklyLabel,
-}: TimeChartProps<T>) {
+}: {
+  data: DailyTimeData[];
+  formatY: (seconds: number) => string;
+  formatTooltip: (seconds: number) => string;
+}) {
   return (
     <UsageBarChart
       config={timeChartConfig}
@@ -329,30 +321,28 @@ function TimeChart<T extends { label: string }>({
       yAxisWidth={56}
       tickFormatter={formatY}
       valueFormatter={formatTooltip}
-      weeklyLabel={weeklyLabel}
     />
   );
-}
-
-export function DailyTimeChart({
-  data,
-  formatY,
-  formatTooltip,
-}: Omit<TimeChartProps<DailyTimeData>, "weeklyLabel">) {
-  return <TimeChart data={data} formatY={formatY} formatTooltip={formatTooltip} />;
 }
 
 export function WeeklyTimeChart({
   data,
   formatY,
   formatTooltip,
-}: Omit<TimeChartProps<WeeklyTimeData>, "weeklyLabel">) {
+}: {
+  data: WeeklyTimeData[];
+  formatY: (seconds: number) => string;
+  formatTooltip: (seconds: number) => string;
+}) {
   const { t } = useT("usage");
   return (
-    <TimeChart
+    <UsageBarChart
+      config={timeChartConfig}
       data={data}
-      formatY={formatY}
-      formatTooltip={formatTooltip}
+      series={timeSeries}
+      yAxisWidth={56}
+      tickFormatter={formatY}
+      valueFormatter={formatTooltip}
       weeklyLabel={(row) =>
         t(($) => $.weekly.partial_label, {
           range: row.rangeLabel,
