@@ -1947,13 +1947,21 @@ func TestCompleteTaskWithoutUsageCreatesUsageUnavailableTrace(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{
-		"output": "完成",
+		"output":      "完成",
+		"branch_name": "agent/usage-proof",
 	}, testWorkspaceID, "usage-unavailable-daemon")
 	req = withURLParam(req, "taskId", taskID)
 
 	testHandler.CompleteTask(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("CompleteTask status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var branchName string
+	if err := testPool.QueryRow(ctx, `SELECT result->>'branch_name' FROM agent_task_queue WHERE id = $1`, taskID).Scan(&branchName); err != nil {
+		t.Fatalf("load completed task branch_name: %v", err)
+	}
+	if branchName != "agent/usage-proof" {
+		t.Fatalf("completed task branch_name = %q, want agent/usage-proof", branchName)
 	}
 
 	usages, err := testHandler.Queries.GetTaskUsage(ctx, parseUUID(taskID))

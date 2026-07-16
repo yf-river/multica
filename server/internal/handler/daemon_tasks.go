@@ -960,7 +960,8 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	Output     string `json:"output"`
+	BranchName string `json:"branch_name,omitempty"`
+	SessionID  string `json:"session_id"` // Claude session ID for future resumption
+	WorkDir    string `json:"work_dir"`   // working directory used during execution
 }
