@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // stubLookPath swaps the package-level lookPath indirection used by
@@ -93,7 +95,7 @@ func TestRegisterRuntimes_AppendsProfileRuntime(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
 
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID:             "prof-1",
 		WorkspaceID:    "ws-1",
 		DisplayName:    "Company Codex",
@@ -151,7 +153,7 @@ func TestRegisterRuntimes_SkipsProfileNotOnPath(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{}) // nothing resolves
 
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID:             "prof-1",
 		WorkspaceID:    "ws-1",
 		DisplayName:    "Company Codex",
@@ -209,7 +211,7 @@ func TestRegisterRuntimes_PrefersCommandPathOverride(t *testing.T) {
 	stubLookPath(t, map[string]string{"company-codex": "/usr/bin/company-codex"})
 	stubProfilePathExecutable(t, map[string]bool{"/opt/custom/company-codex": true})
 
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID:             "prof-1",
 		WorkspaceID:    "ws-1",
 		DisplayName:    "Company Codex",
@@ -243,7 +245,7 @@ func TestRegisterRuntimes_OverrideNotExecutableFallsBackToPath(t *testing.T) {
 	// Override path reports NOT executable -> must fall back to PATH.
 	stubProfilePathExecutable(t, map[string]bool{})
 
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID:             "prof-1",
 		WorkspaceID:    "ws-1",
 		DisplayName:    "Company Codex",

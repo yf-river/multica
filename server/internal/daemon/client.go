@@ -201,27 +201,13 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata j
 	return &resp, nil
 }
 
-// WorkspaceInfo holds minimal workspace metadata returned by the API.
-type WorkspaceInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// RenewTokenResponse mirrors handler.RenewPATResponse — kept loose (string +
-// bool) because the daemon never parses the timestamp itself; it just logs it
-// for operator visibility.
-type RenewTokenResponse struct {
-	ExpiresAt string `json:"expires_at"`
-	Renewed   bool   `json:"renewed"`
-}
-
 // RenewToken asks the server to extend the daemon's current PAT in place when
 // it's within the server-side renewal window. The server is authoritative on
 // the threshold — the daemon doesn't know the token's expires_at locally —
 // so this is safe to call on any cadence; the only thing extra calls cost is
 // one round trip and one cheap SELECT.
-func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
-	var resp RenewTokenResponse
+func (c *Client) RenewToken(ctx context.Context) (*protocol.PersonalAccessTokenRenewalResponse, error) {
+	var resp protocol.PersonalAccessTokenRenewalResponse
 	if err := c.postJSON(ctx, "/api/tokens/current/renew", map[string]any{}, &resp); err != nil {
 		return nil, err
 	}
@@ -229,8 +215,8 @@ func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
 }
 
 // ListWorkspaces fetches all workspaces the authenticated user belongs to.
-func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
-	var workspaces []WorkspaceInfo
+func (c *Client) ListWorkspaces(ctx context.Context) ([]protocol.WorkspaceResponse, error) {
+	var workspaces []protocol.WorkspaceResponse
 	if err := c.getJSON(ctx, "/api/workspaces", &workspaces); err != nil {
 		return nil, err
 	}
@@ -280,36 +266,12 @@ func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*pr
 	return &resp, nil
 }
 
-// RuntimeProfile mirrors the server's workspace custom runtime profile
-// (MUL-3284). protocol_family is the provider used for task routing (it
-// selects the agent backend), while command_name is the actual executable
-// the daemon resolves on PATH and launches. fixed_args are launch arguments
-// every agent on this runtime inherits.
-type RuntimeProfile struct {
-	ID             string   `json:"id"`
-	WorkspaceID    string   `json:"workspace_id"`
-	DisplayName    string   `json:"display_name"`
-	ProtocolFamily string   `json:"protocol_family"`
-	CommandName    string   `json:"command_name"`
-	Description    *string  `json:"description"`
-	FixedArgs      []string `json:"fixed_args"`
-	Enabled        bool     `json:"enabled"`
-}
-
-// RuntimeProfilesResponse is the body of
-// GET /api/daemon/workspaces/{workspaceID}/runtime-profiles. The server only
-// returns enabled profiles for the workspace.
-type RuntimeProfilesResponse struct {
-	WorkspaceID     string           `json:"workspace_id"`
-	RuntimeProfiles []RuntimeProfile `json:"runtime_profiles"`
-}
-
 // GetRuntimeProfiles fetches the workspace's enabled custom runtime profiles.
 // Mirrors GetWorkspaceRepos. A fetch failure is isolated from built-in runtime
 // registration so a transient profile-service outage does not take the whole
 // daemon offline.
-func (c *Client) GetRuntimeProfiles(ctx context.Context, workspaceID string) (*RuntimeProfilesResponse, error) {
-	var resp RuntimeProfilesResponse
+func (c *Client) GetRuntimeProfiles(ctx context.Context, workspaceID string) (*protocol.RuntimeProfilesResponse, error) {
+	var resp protocol.RuntimeProfilesResponse
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/runtime-profiles", workspaceID), &resp); err != nil {
 		return nil, err
 	}

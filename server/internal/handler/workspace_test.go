@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestCreateWorkspaceRecoversTheExactCommittedResult(t *testing.T) {
@@ -586,7 +587,7 @@ VALUES ($1, $2, 'owner')
 		t.Fatalf("expected 200 from UpdateWorkspace, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp WorkspaceResponse
+	var resp protocol.WorkspaceResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -618,7 +619,7 @@ VALUES ($1, $2, 'owner')
 		t.Fatalf("expected 200 from second UpdateWorkspace, got %d: %s", w2.Code, w2.Body.String())
 	}
 
-	var resp2 WorkspaceResponse
+	var resp2 protocol.WorkspaceResponse
 	if err := json.Unmarshal(w2.Body.Bytes(), &resp2); err != nil {
 		t.Fatalf("decode second response: %v", err)
 	}

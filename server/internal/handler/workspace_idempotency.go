@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (h *Handler) loadWorkspaceCreateReplay(
@@ -16,10 +17,10 @@ func (h *Handler) loadWorkspaceCreateReplay(
 	actorID pgtype.UUID,
 	key pgtype.UUID,
 	requestHash string,
-) (WorkspaceResponse, bool, error) {
+) (protocol.WorkspaceResponse, bool, error) {
 	return loadResourceCreateReplay(
 		ctx, h.Queries, workspaceID, actorID, resourceTypeWorkspace, key, requestHash,
-		func(response WorkspaceResponse) bool { return response.ID != "" },
+		func(response protocol.WorkspaceResponse) bool { return response.ID != "" },
 	)
 }
 
@@ -28,7 +29,7 @@ func (h *Handler) writeWorkspaceCreateReplay(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
 	actorID pgtype.UUID,
-	response WorkspaceResponse,
+	response protocol.WorkspaceResponse,
 ) {
 	_, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		WorkspaceID: workspaceID,

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // TestProfileSetSignature_StableUnderReorder ensures the digest only
@@ -18,11 +20,11 @@ import (
 // workspaceSyncLoop would re-register on every tick whenever the server
 // shuffled rows (which the API contract does not forbid).
 func TestProfileSetSignature_StableUnderReorder(t *testing.T) {
-	a := []RuntimeProfile{
+	a := []protocol.RuntimeProfileResponse{
 		{ID: "p-a", ProtocolFamily: "codex", CommandName: "a", Enabled: true},
 		{ID: "p-b", ProtocolFamily: "claude", CommandName: "b", Enabled: true},
 	}
-	b := []RuntimeProfile{
+	b := []protocol.RuntimeProfileResponse{
 		{ID: "p-b", ProtocolFamily: "claude", CommandName: "b", Enabled: true},
 		{ID: "p-a", ProtocolFamily: "codex", CommandName: "a", Enabled: true},
 	}
@@ -36,7 +38,7 @@ func TestProfileSetSignature_StableUnderReorder(t *testing.T) {
 // Coverage gaps here would mean a real server-side change goes undetected
 // and the user has to restart the daemon — the bug MUL-3332 is about.
 func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
-	base := []RuntimeProfile{{
+	base := []protocol.RuntimeProfileResponse{{
 		ID:             "p1",
 		ProtocolFamily: "codex",
 		CommandName:    "company-codex",
@@ -52,28 +54,28 @@ func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		mutate func([]RuntimeProfile) []RuntimeProfile
+		mutate func([]protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse
 	}{
-		{"add new profile", func(in []RuntimeProfile) []RuntimeProfile {
-			return append(in, RuntimeProfile{ID: "p2", ProtocolFamily: "claude", CommandName: "c", Enabled: true})
+		{"add new profile", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			return append(in, protocol.RuntimeProfileResponse{ID: "p2", ProtocolFamily: "claude", CommandName: "c", Enabled: true})
 		}},
-		{"flip enabled", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"flip enabled", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].Enabled = !out[0].Enabled
 			return out
 		}},
-		{"change command_name", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"change command_name", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].CommandName = "different-bin"
 			return out
 		}},
-		{"change protocol_family", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"change protocol_family", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].ProtocolFamily = "claude"
 			return out
 		}},
-		{"change fixed_args", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"change fixed_args", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].FixedArgs = []string{"--foo", "--bar"}
 			return out
 		}},
@@ -103,7 +105,7 @@ type runtimeProfileFixture struct {
 	recoverOrphansMu    sync.Mutex
 	deregisterCalls     [][]string // each entry is one Deregister call's runtime_ids payload, in order
 	deregisterMu        sync.Mutex
-	currentProfiles     []RuntimeProfile
+	currentProfiles     []protocol.RuntimeProfileResponse
 	profilesStatus      int
 }
 
@@ -112,7 +114,7 @@ type runtimeProfileFixture struct {
 // drive the fixture from a single goroutine, so the field is unguarded;
 // add a mutex if a future test publishes profile updates concurrently with
 // daemon background work.
-func (fx *runtimeProfileFixture) setProfiles(profiles []RuntimeProfile) {
+func (fx *runtimeProfileFixture) setProfiles(profiles []protocol.RuntimeProfileResponse) {
 	fx.currentProfiles = profiles
 }
 
@@ -140,7 +142,7 @@ func (fx *runtimeProfileFixture) recordedDeregisters() [][]string {
 	return out
 }
 
-func newRuntimeProfileFixture(t *testing.T, initial []RuntimeProfile) *runtimeProfileFixture {
+func newRuntimeProfileFixture(t *testing.T, initial []protocol.RuntimeProfileResponse) *runtimeProfileFixture {
 	t.Helper()
 	fx := &runtimeProfileFixture{currentProfiles: initial, profilesStatus: http.StatusOK}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +191,7 @@ func newRuntimeProfileFixture(t *testing.T, initial []RuntimeProfile) *runtimePr
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RuntimeProfilesResponse{
+			_ = json.NewEncoder(w).Encode(protocol.RuntimeProfilesResponse{
 				WorkspaceID:     "ws-1",
 				RuntimeProfiles: fx.currentProfiles,
 			})
@@ -213,7 +215,7 @@ func newRuntimeProfileFixture(t *testing.T, initial []RuntimeProfile) *runtimePr
 func TestRefreshWorkspaceRuntimeProfiles_NoDrift_DoesNotReregister(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
@@ -255,7 +257,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 		"company-codex": "/opt/bin/company-codex",
 		"team-claude":   "/opt/bin/team-claude",
 	})
-	initial := []RuntimeProfile{{
+	initial := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
@@ -280,7 +282,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 
 	// User adds a second profile via the web UI: server's response now
 	// includes prof-2.
-	fx.setProfiles([]RuntimeProfile{
+	fx.setProfiles([]protocol.RuntimeProfileResponse{
 		{ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 			ProtocolFamily: "codex", CommandName: "company-codex",
 			Enabled: true},
@@ -350,7 +352,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 	// Mixed setup: one built-in runtime (claude) plus one custom profile,
 	// the closest analogue of "a daemon that is running real work and the
 	// user just added another profile". Profile drift fires next.
-	initial := []RuntimeProfile{{
+	initial := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
@@ -375,7 +377,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 	}
 
 	// User adds a second profile.
-	fx.setProfiles([]RuntimeProfile{
+	fx.setProfiles([]protocol.RuntimeProfileResponse{
 		{ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 			ProtocolFamily: "codex", CommandName: "company-codex",
 			Enabled: true},
@@ -406,7 +408,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	initial := []RuntimeProfile{{
+	initial := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
@@ -505,7 +507,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *tes
 func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	initial := []RuntimeProfile{{
+	initial := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
@@ -580,7 +582,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t 
 func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,

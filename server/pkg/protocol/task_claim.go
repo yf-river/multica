@@ -126,6 +126,46 @@ type DaemonRegisterRequest struct {
 	Runtimes    []DaemonRuntimeRegistration `json:"runtimes"`
 }
 
+// WorkspaceResponse is the current workspace representation returned by the
+// workspace API and consumed by the daemon's workspace sync.
+type WorkspaceResponse struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Slug        string         `json:"slug"`
+	Description *string        `json:"description"`
+	Context     *string        `json:"context"`
+	Settings    map[string]any `json:"settings"`
+	Repos       []any          `json:"repos"`
+	IssuePrefix string         `json:"issue_prefix"`
+	AvatarURL   *string        `json:"avatar_url"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
+}
+
+type PersonalAccessTokenRenewalResponse struct {
+	ExpiresAt string `json:"expires_at"`
+	Renewed   bool   `json:"renewed"`
+}
+
+type RuntimeProfileResponse struct {
+	ID             string   `json:"id"`
+	WorkspaceID    string   `json:"workspace_id"`
+	DisplayName    string   `json:"display_name"`
+	ProtocolFamily string   `json:"protocol_family"`
+	CommandName    string   `json:"command_name"`
+	Description    *string  `json:"description"`
+	FixedArgs      []string `json:"fixed_args"`
+	CreatedBy      *string  `json:"created_by"`
+	Enabled        bool     `json:"enabled"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
+}
+
+type RuntimeProfilesResponse struct {
+	WorkspaceID     string                   `json:"workspace_id"`
+	RuntimeProfiles []RuntimeProfileResponse `json:"runtime_profiles"`
+}
+
 type DaemonWorkspaceReposResponse struct {
 	WorkspaceID  string           `json:"workspace_id"`
 	Repos        []TaskRepository `json:"repos"`

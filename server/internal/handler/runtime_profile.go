@@ -32,29 +32,15 @@ import (
 // agent on this runtime must inherit to enter a compatible mode.
 // ---------------------------------------------------------------------------
 
-type RuntimeProfileResponse struct {
-	ID             string   `json:"id"`
-	WorkspaceID    string   `json:"workspace_id"`
-	DisplayName    string   `json:"display_name"`
-	ProtocolFamily string   `json:"protocol_family"`
-	CommandName    string   `json:"command_name"`
-	Description    *string  `json:"description"`
-	FixedArgs      []string `json:"fixed_args"`
-	CreatedBy      *string  `json:"created_by"`
-	Enabled        bool     `json:"enabled"`
-	CreatedAt      string   `json:"created_at"`
-	UpdatedAt      string   `json:"updated_at"`
-}
-
-func runtimeProfileToResponse(p db.RuntimeProfile) (RuntimeProfileResponse, error) {
+func runtimeProfileToResponse(p db.RuntimeProfile) (protocol.RuntimeProfileResponse, error) {
 	var args []string
 	if err := json.Unmarshal(p.FixedArgs, &args); err != nil {
-		return RuntimeProfileResponse{}, fmt.Errorf("decode runtime profile fixed_args: %w", err)
+		return protocol.RuntimeProfileResponse{}, fmt.Errorf("decode runtime profile fixed_args: %w", err)
 	}
 	if args == nil {
-		return RuntimeProfileResponse{}, errors.New("decode runtime profile fixed_args: expected JSON array")
+		return protocol.RuntimeProfileResponse{}, errors.New("decode runtime profile fixed_args: expected JSON array")
 	}
-	return RuntimeProfileResponse{
+	return protocol.RuntimeProfileResponse{
 		ID:             uuidToString(p.ID),
 		WorkspaceID:    uuidToString(p.WorkspaceID),
 		DisplayName:    p.DisplayName,
@@ -165,10 +151,10 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		"Idempotency-Key was already used with a different runtime profile request",
 		"failed to replay runtime profile create",
 	)
-	loadReplay := func() (RuntimeProfileResponse, bool, error) {
+	loadReplay := func() (protocol.RuntimeProfileResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
-			idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
+			idempotencyKey, requestHash, func(response protocol.RuntimeProfileResponse) bool { return response.ID != "" },
 		)
 	}
 	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
@@ -251,7 +237,7 @@ func (h *Handler) ListRuntimeProfiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runtime profiles")
 		return
 	}
-	resp := make([]RuntimeProfileResponse, len(profiles))
+	resp := make([]protocol.RuntimeProfileResponse, len(profiles))
 	for i, p := range profiles {
 		resp[i], err = runtimeProfileToResponse(p)
 		if err != nil {
@@ -517,7 +503,7 @@ func (h *Handler) DaemonListRuntimeProfiles(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to list runtime profiles")
 		return
 	}
-	resp := make([]RuntimeProfileResponse, len(profiles))
+	resp := make([]protocol.RuntimeProfileResponse, len(profiles))
 	for i, p := range profiles {
 		resp[i], err = runtimeProfileToResponse(p)
 		if err != nil {

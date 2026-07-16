@@ -3147,7 +3147,7 @@ func TestWorkspaceCRUD(t *testing.T) {
 		t.Fatalf("ListWorkspaces: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var workspaces []WorkspaceResponse
+	var workspaces []protocol.WorkspaceResponse
 	if err := json.NewDecoder(w.Body).Decode(&workspaces); err != nil {
 		t.Fatalf("decode workspaces response: %v", err)
 	}
@@ -3184,7 +3184,7 @@ func TestCreateWorkspaceUsesRequestedSlug(t *testing.T) {
 		t.Fatalf("CreateWorkspace: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var created WorkspaceResponse
+	var created protocol.WorkspaceResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("CreateWorkspace: decode response: %v", err)
 	}

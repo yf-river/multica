@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // PATRenewThreshold is the remaining-lifetime window at which a PAT becomes
@@ -185,17 +186,6 @@ func (h *Handler) ListPersonalAccessTokens(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RenewPATResponse is the body returned by RenewCurrentPersonalAccessToken.
-//
-// Renewed=false is a no-op, not an error — it just means the caller polled
-// before the token entered the renewal window. Callers should always read
-// ExpiresAt for the authoritative expiry rather than assuming the old value
-// is still current.
-type RenewPATResponse struct {
-	ExpiresAt string `json:"expires_at"`
-	Renewed   bool   `json:"renewed"`
-}
-
 // RenewCurrentPersonalAccessToken extends the expires_at of the PAT used to
 // authenticate this request, in-place, when it is inside the renewal window.
 //
@@ -257,14 +247,14 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	// "never expires" case). There is nothing to extend — return the current
 	// (absent) expiry and let the caller treat this as a permanent token.
 	if !pat.ExpiresAt.Valid {
-		writeJSON(w, http.StatusOK, RenewPATResponse{ExpiresAt: "", Renewed: false})
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{ExpiresAt: "", Renewed: false})
 		return
 	}
 
 	now := time.Now()
 	remaining := pat.ExpiresAt.Time.Sub(now)
 	if remaining > PATRenewThreshold {
-		writeJSON(w, http.StatusOK, RenewPATResponse{
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{
 			ExpiresAt: timestampToString(pat.ExpiresAt),
 			Renewed:   false,
 		})
@@ -284,7 +274,7 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	})
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, RenewPATResponse{
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{
 			ExpiresAt: timestampToString(updated),
 			Renewed:   true,
 		})
@@ -299,7 +289,7 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 			writeError(w, http.StatusUnauthorized, "token is no longer valid")
 			return
 		}
-		writeJSON(w, http.StatusOK, RenewPATResponse{
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{
 			ExpiresAt: timestampToString(current.ExpiresAt),
 			Renewed:   false,
 		})

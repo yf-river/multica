@@ -639,11 +639,11 @@ func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, 
 // and FixedArgs (the launch args every agent on this runtime inherits).
 // Profiles are sorted by ID first so the digest is order-independent
 // (the server is allowed to return them in any order).
-func profileSetSignature(profiles []RuntimeProfile) string {
+func profileSetSignature(profiles []protocol.RuntimeProfileResponse) string {
 	if len(profiles) == 0 {
 		return "0"
 	}
-	sorted := append([]RuntimeProfile(nil), profiles...)
+	sorted := append([]protocol.RuntimeProfileResponse(nil), profiles...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	h := fnv.New64a()
 	// Field separator chosen to never appear in a UUID, slug, or arg.
@@ -887,7 +887,7 @@ func (d *Daemon) refreshWorkspaceRuntimeProfiles(ctx context.Context, workspaceI
 		// log a noisy warning on every sync tick in that case.
 		return err
 	}
-	var profiles []RuntimeProfile
+	var profiles []protocol.RuntimeProfileResponse
 	if resp != nil {
 		profiles = resp.RuntimeProfiles
 	}

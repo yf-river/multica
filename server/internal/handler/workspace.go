@@ -65,36 +65,22 @@ func generateIssuePrefix(name string) string {
 	return letters
 }
 
-type WorkspaceResponse struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Slug        string         `json:"slug"`
-	Description *string        `json:"description"`
-	Context     *string        `json:"context"`
-	Settings    map[string]any `json:"settings"`
-	Repos       []any          `json:"repos"`
-	IssuePrefix string         `json:"issue_prefix"`
-	AvatarURL   *string        `json:"avatar_url"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
-}
-
-func workspaceToResponse(w db.Workspace) (WorkspaceResponse, error) {
+func workspaceToResponse(w db.Workspace) (protocol.WorkspaceResponse, error) {
 	var settings map[string]any
 	if err := json.Unmarshal(w.Settings, &settings); err != nil {
-		return WorkspaceResponse{}, fmt.Errorf("decode workspace settings: %w", err)
+		return protocol.WorkspaceResponse{}, fmt.Errorf("decode workspace settings: %w", err)
 	}
 	if settings == nil {
-		return WorkspaceResponse{}, fmt.Errorf("decode workspace settings: expected JSON object")
+		return protocol.WorkspaceResponse{}, fmt.Errorf("decode workspace settings: expected JSON object")
 	}
 	var repos []any
 	if err := json.Unmarshal(w.Repos, &repos); err != nil {
-		return WorkspaceResponse{}, fmt.Errorf("decode workspace repos: %w", err)
+		return protocol.WorkspaceResponse{}, fmt.Errorf("decode workspace repos: %w", err)
 	}
 	if repos == nil {
-		return WorkspaceResponse{}, errExpectedWorkspaceReposArray
+		return protocol.WorkspaceResponse{}, errExpectedWorkspaceReposArray
 	}
-	return WorkspaceResponse{
+	return protocol.WorkspaceResponse{
 		ID:          uuidToString(w.ID),
 		Name:        w.Name,
 		Slug:        w.Slug,
@@ -121,7 +107,7 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]WorkspaceResponse, len(workspaces))
+	resp := make([]protocol.WorkspaceResponse, len(workspaces))
 	for i, ws := range workspaces {
 		resp[i], err = workspaceToResponse(ws)
 		if err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func newPATCreateRequest(key string, body map[string]any) *http.Request {
@@ -177,9 +178,9 @@ func newRenewRequest(rawToken string) *http.Request {
 	return req
 }
 
-func decodeRenewResponse(t *testing.T, body *httptest.ResponseRecorder) RenewPATResponse {
+func decodeRenewResponse(t *testing.T, body *httptest.ResponseRecorder) protocol.PersonalAccessTokenRenewalResponse {
 	t.Helper()
-	var resp RenewPATResponse
+	var resp protocol.PersonalAccessTokenRenewalResponse
 	if err := json.NewDecoder(body.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode renew response: %v (body: %s)", err, body.Body.String())
 	}
@@ -399,7 +400,7 @@ func TestRenewPAT_ParallelRenewExtendsExactlyOnce(t *testing.T) {
 			<-start
 			w := httptest.NewRecorder()
 			testHandler.RenewCurrentPersonalAccessToken(w, newRenewRequest(raw))
-			var resp RenewPATResponse
+			var resp protocol.PersonalAccessTokenRenewalResponse
 			_ = json.NewDecoder(w.Body).Decode(&resp)
 			results[i] = result{code: w.Code, expiresAt: resp.ExpiresAt, renewed: resp.Renewed}
 		}(i)
