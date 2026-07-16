@@ -15,21 +15,9 @@ func TestCreateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
-
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'AP Private Leader Create', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "AP Private Leader Create", agentID)
 
 	w := httptest.NewRecorder()
 	r := newAutopilotCreateRequestAs(memberID, "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
@@ -50,24 +38,12 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
-
 	agentID, _, memberID := personalAgentTestFixture(t)
 
 	// Create a non-personal agent for the initial autopilot.
 	publicAgentID := createHandlerTestAgent(t, "ap-personal-leader-public", nil)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'AP Private Leader Update', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "AP Private Leader Update", agentID)
 
 	// Create autopilot as workspace owner assigned to the public agent.
 	w := httptest.NewRecorder()
@@ -108,21 +84,9 @@ func TestCreateAutopilot_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
-
 	agentID, _, _ := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'AP Private Leader Owner', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "AP Private Leader Owner", agentID)
 
 	// testUserID is workspace owner — should succeed.
 	w := httptest.NewRecorder()
@@ -156,17 +120,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 
 	agentID, _, _ := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'AP Private Leader Dispatch', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "AP Private Leader Dispatch", agentID)
 
 	// Create autopilot as owner.
 	w := httptest.NewRecorder()
@@ -242,17 +196,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_PlainMemberCreator_Blocked(t *testi
 
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'AP Private Leader Blocked Dispatch', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "AP Private Leader Blocked Dispatch", agentID)
 
 	// Directly insert an autopilot with the plain member as creator
 	// (simulating legacy data before the save-time gate).
@@ -304,17 +248,7 @@ func TestTriggerAutopilot_RunOnly_SquadPrivateLeader_PlainMemberCreator_Blocked(
 
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'AP RunOnly Private Leader Blocked', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "AP RunOnly Private Leader Blocked", agentID)
 
 	// Legacy autopilot: run_only mode, plain member creator, personal-leader squad.
 	var apID string

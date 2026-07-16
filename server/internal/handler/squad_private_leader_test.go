@@ -15,21 +15,9 @@ func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
-
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'Private Leader Create Test', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "Private Leader Create Test", agentID)
 
 	w := httptest.NewRecorder()
 	r := newRequestAs(memberID, "POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -53,17 +41,7 @@ func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'Private Leader Update Test', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "Private Leader Update Test", agentID)
 
 	// Create an unassigned issue as workspace owner.
 	var issueID string
@@ -96,21 +74,9 @@ func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
-
 	agentID, _, _ := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'Private Leader Owner Test', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "Private Leader Owner Test", agentID)
 
 	// testUserID is workspace owner — should succeed.
 	w := httptest.NewRecorder()
@@ -145,17 +111,7 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'Private Leader Comment Test', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "Private Leader Comment Test", agentID)
 
 	// Create issue assigned to the squad as workspace owner.
 	var issueID string
@@ -207,17 +163,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 
 	agentID, _, memberID := personalAgentTestFixture(t)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'Private Leader ChildDone Test', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createHandlerTestSquad(t, "Private Leader ChildDone Test", agentID)
 
 	// Create parent issue assigned to the squad (as workspace owner).
 	w := httptest.NewRecorder()
