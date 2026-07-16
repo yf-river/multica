@@ -72,8 +72,6 @@ type Task struct {
 	QuickCreateAttachmentIDs []string                          `json:"quick_create_attachment_ids,omitempty"` // attachments uploaded in the quick-create prompt and bound by issue create
 	QuickCreateStatus        string                            `json:"quick_create_status,omitempty"`         // pinned issue status from the create modal
 	QuickCreatePriority      string                            `json:"quick_create_priority,omitempty"`       // pinned issue priority from the create modal
-	QuickCreateAssigneeType  string                            `json:"quick_create_assignee_type,omitempty"`  // pinned assignee type from the create modal
-	QuickCreateAssigneeID    string                            `json:"quick_create_assignee_id,omitempty"`    // pinned assignee UUID from the create modal
 	QuickCreateStartDate     string                            `json:"quick_create_start_date,omitempty"`     // pinned start date from the create modal
 	QuickCreateDueDate       string                            `json:"quick_create_due_date,omitempty"`       // pinned due date from the create modal
 	SquadID                  string                            `json:"squad_id,omitempty"`                    // when the picker was a squad, the squad's UUID; Agent is still the resolved leader

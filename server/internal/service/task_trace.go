@@ -221,8 +221,6 @@ func (s *TaskService) buildQuickCreateUserInputMetadata(task db.AgentTaskQueue, 
 	putStringIfPresent(metadata, "parent_issue_id", qc.ParentIssueID)
 	putStringIfPresent(metadata, "status", qc.Status)
 	putStringIfPresent(metadata, "priority", qc.Priority)
-	putStringIfPresent(metadata, "assignee_type", qc.AssigneeType)
-	putStringIfPresent(metadata, "assignee_id", qc.AssigneeID)
 	putStringIfPresent(metadata, "start_date", qc.StartDate)
 	putStringIfPresent(metadata, "due_date", qc.DueDate)
 	if len(qc.AttachmentIDs) > 0 {

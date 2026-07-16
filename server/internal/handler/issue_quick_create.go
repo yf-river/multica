@@ -193,33 +193,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid priority")
 		return
 	}
-	assigneeType := strings.TrimSpace(req.AssigneeType)
-	assigneeID := strings.TrimSpace(req.AssigneeID)
-	var assigneeUUID pgtype.UUID
-	if assigneeType != "" || assigneeID != "" {
-		if assigneeType == "" || assigneeID == "" {
-			writeError(w, http.StatusBadRequest, "assignee_type and assignee_id must be provided together")
-			return
-		}
-		if !slices.Contains([]string{"member", "agent", "squad"}, assigneeType) {
-			writeError(w, http.StatusBadRequest, "invalid assignee_type")
-			return
-		}
-		parsed, ok := parseUUIDOrBadRequest(w, assigneeID, "assignee_id")
-		if !ok {
-			return
-		}
-		statusCode, msg, err := h.validateAssigneePair(r.Context(), r, workspaceID, pgtype.Text{String: assigneeType, Valid: true}, parsed)
-		if err != nil {
-			writeAssigneeValidationError(w, r, err)
-			return
-		}
-		if statusCode != 0 {
-			writeError(w, statusCode, msg)
-			return
-		}
-		assigneeUUID = parsed
-	}
 	startDate := strings.TrimSpace(req.StartDate)
 	if startDate != "" && !isDateOnly(startDate) {
 		writeError(w, http.StatusBadRequest, "invalid start_date")
@@ -315,8 +288,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 			AttachmentIDs:  attachmentIDs,
 			Status:         status,
 			Priority:       priority,
-			AssigneeType:   assigneeType,
-			AssigneeID:     assigneeUUID,
 			StartDate:      startDate,
 			DueDate:        dueDate,
 			RequestID:      idempotencyKey,
@@ -350,8 +321,6 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		AttachmentIDs: attachmentIDs,
 		Status:        status,
 		Priority:      priority,
-		AssigneeType:  assigneeType,
-		AssigneeID:    assigneeUUID,
 		StartDate:     startDate,
 		DueDate:       dueDate,
 	})
@@ -388,8 +357,6 @@ type quickCreateTAPDSourceIssueParams struct {
 	AttachmentIDs  []pgtype.UUID
 	Status         string
 	Priority       string
-	AssigneeType   string
-	AssigneeID     pgtype.UUID
 	StartDate      string
 	DueDate        string
 }
@@ -442,16 +409,11 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 	priority := firstNonEmpty(p.Priority, "none")
 	title := firstNonEmpty(fetched.Title, tapdSourceReadFailureTitle(p.Ref))
 
-	assigneeType := p.AssigneeType
-	assigneeID := p.AssigneeID
-	if assigneeType == "" || !assigneeID.Valid {
-		if p.HasSquad {
-			assigneeType = "squad"
-			assigneeID = p.SquadID
-		} else {
-			assigneeType = "agent"
-			assigneeID = p.AgentID
-		}
+	assigneeType := "agent"
+	assigneeID := p.AgentID
+	if p.HasSquad {
+		assigneeType = "squad"
+		assigneeID = p.SquadID
 	}
 
 	startDate := pgtype.Date{}

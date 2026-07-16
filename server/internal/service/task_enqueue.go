@@ -307,8 +307,6 @@ type QuickCreateContext struct {
 	SquadID       string   `json:"squad_id,omitempty"`
 	Status        string   `json:"status,omitempty"`
 	Priority      string   `json:"priority,omitempty"`
-	AssigneeType  string   `json:"assignee_type,omitempty"`
-	AssigneeID    string   `json:"assignee_id,omitempty"`
 	StartDate     string   `json:"start_date,omitempty"`
 	DueDate       string   `json:"due_date,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
@@ -317,7 +315,7 @@ type QuickCreateContext struct {
 	// sub issue" on an existing issue; the daemon claim handler resolves the
 	// parent's identifier and the prompt template instructs the agent to
 	// pass `--parent <uuid>` so the sub-issue relationship is preserved
-	// across the manual→agent mode flip.
+	// across the create flow.
 	ParentIssueID string `json:"parent_issue_id,omitempty"`
 	RequestHash   string `json:"request_hash,omitempty"`
 }
@@ -348,8 +346,6 @@ type EnqueueQuickCreateTaskParams struct {
 	AttachmentIDs []pgtype.UUID
 	Status        string
 	Priority      string
-	AssigneeType  string
-	AssigneeID    pgtype.UUID
 	StartDate     string
 	DueDate       string
 }
@@ -406,10 +402,6 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuick
 	}
 	if p.Priority != "" {
 		payload.Priority = p.Priority
-	}
-	if p.AssigneeType != "" && p.AssigneeID.Valid {
-		payload.AssigneeType = p.AssigneeType
-		payload.AssigneeID = util.UUIDToString(p.AssigneeID)
 	}
 	if p.StartDate != "" {
 		payload.StartDate = p.StartDate

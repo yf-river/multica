@@ -529,8 +529,7 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 // ParentIssueID is optional and is set by the "Add sub issue" entry point
 // when the modal is opened from an existing issue. The agent passes it
 // through as `--parent <uuid>` so the new issue is filed as a sub-issue,
-// keeping the sub-issue intent of the entry point regardless of whether
-// the user submits via manual or agent mode.
+// keeping the sub-issue intent of the entry point.
 type QuickCreateIssueRequest struct {
 	AgentID       string   `json:"agent_id,omitempty"`
 	SquadID       string   `json:"squad_id,omitempty"`
@@ -539,8 +538,6 @@ type QuickCreateIssueRequest struct {
 	ParentIssueID string   `json:"parent_issue_id,omitempty"`
 	Status        string   `json:"status,omitempty"`
 	Priority      string   `json:"priority,omitempty"`
-	AssigneeType  string   `json:"assignee_type,omitempty"`
-	AssigneeID    string   `json:"assignee_id,omitempty"`
 	StartDate     string   `json:"start_date,omitempty"`
 	DueDate       string   `json:"due_date,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`

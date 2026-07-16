@@ -274,8 +274,6 @@ type AgentTaskResponse struct {
 	QuickCreateAttachmentIDs []string                      `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
 	QuickCreateStatus        string                        `json:"quick_create_status,omitempty"`
 	QuickCreatePriority      string                        `json:"quick_create_priority,omitempty"`
-	QuickCreateAssigneeType  string                        `json:"quick_create_assignee_type,omitempty"`
-	QuickCreateAssigneeID    string                        `json:"quick_create_assignee_id,omitempty"`
 	QuickCreateStartDate     string                        `json:"quick_create_start_date,omitempty"`
 	QuickCreateDueDate       string                        `json:"quick_create_due_date,omitempty"`
 	SquadID                  string                        `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
