@@ -30,15 +30,3 @@ func (m *Metrics) Snapshot() map[string]any {
 		"wakeup_delivered_miss_total": m.WakeupDeliveredMiss.Load(),
 	}
 }
-
-func (m *Metrics) Reset() {
-	m.ConnectsTotal.Store(0)
-	m.DisconnectsTotal.Store(0)
-	m.ActiveConnections.Store(0)
-	m.SlowEvictionsTotal.Store(0)
-	m.WakeupPublishedTotal.Store(0)
-	m.WakeupPublishErrors.Store(0)
-	m.WakeupReceivedTotal.Store(0)
-	m.WakeupDeliveredHit.Store(0)
-	m.WakeupDeliveredMiss.Store(0)
-}

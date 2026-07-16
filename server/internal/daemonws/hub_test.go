@@ -15,6 +15,18 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func (m *Metrics) Reset() {
+	m.ConnectsTotal.Store(0)
+	m.DisconnectsTotal.Store(0)
+	m.ActiveConnections.Store(0)
+	m.SlowEvictionsTotal.Store(0)
+	m.WakeupPublishedTotal.Store(0)
+	m.WakeupPublishErrors.Store(0)
+	m.WakeupReceivedTotal.Store(0)
+	m.WakeupDeliveredHit.Store(0)
+	m.WakeupDeliveredMiss.Store(0)
+}
+
 func runtimeConnectionCount(hub *Hub, runtimeID string) int {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
