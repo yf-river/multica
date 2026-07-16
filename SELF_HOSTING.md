@@ -140,14 +140,14 @@ The chart creates the following resources in the target namespace:
 - `multica-postgres` — `pgvector/pgvector:pg17` backed by a 10Gi PVC
 - `multica-backend` — Go API/WS server. Backed by a 5Gi `ReadWriteOnce` uploads PVC by default; set `backend.uploads.persistence.enabled=false` when you have configured S3 (`backend.config.s3Bucket`) and don't want the chart to declare the PVC at all.
 - `multica-frontend` — Next.js standalone server
-- Two `Ingress` resources: one for the web host, one for the backend host
+- Two `Ingress` resources: the web host routes `/api`, `/ws`, `/auth`, and
+  `/uploads` directly to the release's backend Service and all other paths to
+  the frontend; the backend host routes directly to the same backend Service
 - `multica-config` ConfigMap (rendered from `values.yaml`)
 
 The `multica-secrets` Secret is **not** managed by the chart — you create it once with `kubectl` so real values never need to land in git.
 
-> **One release per namespace:** the prebuilt `multica-web` image bakes `REMOTE_API_URL=http://backend:8080` at build time, so the chart ships an ExternalName Service literally named `backend`. Because that name is unprefixed, you can run only one Multica release per namespace, and `helm install` will fail if a `Service/backend` already exists there (pass `--take-ownership`, or use a dedicated namespace). If you build a web image with a patched `REMOTE_API_URL`, set `frontend.compatibility.backendAlias: false` to drop the alias.
-
-> **Prerequisites:** `kubectl` and `helm` (v3.13+ for `--take-ownership`, or v4+) configured for the target cluster, an Ingress controller (Traefik / NGINX), and a default StorageClass.
+> **Prerequisites:** `kubectl` and Helm 3.13+ (or Helm 4) configured for the target cluster, an Ingress controller (Traefik / NGINX), and a default StorageClass.
 
 ### Step 1 — Point hostnames at the cluster
 
