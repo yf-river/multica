@@ -46,18 +46,34 @@ func upsertSkillFiles(ctx context.Context, q *db.Queries, skillID pgtype.UUID, f
 	return responses, nil
 }
 
+func marshalSkillConfig(config map[string]any) ([]byte, error) {
+	if config == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(config)
+}
+
+func storeSkillFilesResponse(ctx context.Context, q *db.Queries, skill db.Skill, files []CreateSkillFileRequest) (SkillWithFilesResponse, error) {
+	fileResponses, err := upsertSkillFiles(ctx, q, skill.ID, files)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	skillResponse, err := skillToResponse(skill)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	return SkillWithFilesResponse{SkillResponse: skillResponse, Files: fileResponses}, nil
+}
+
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
 // provided sqlc Queries handle, which must already be bound to an open
 // transaction. Callers compose skill creation with other writes (e.g. agent
 // template materialization) inside one outer transaction. For standalone
 // skill creation, prefer createSkillWithFiles, which manages its own tx.
 func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillCreateInput) (SkillWithFilesResponse, error) {
-	config, err := json.Marshal(input.Config)
+	config, err := marshalSkillConfig(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
-	}
-	if input.Config == nil {
-		config = []byte("{}")
 	}
 
 	params := db.CreateSkillParams{
@@ -78,19 +94,7 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		return SkillWithFilesResponse{}, err
 	}
 
-	fileResps, err := upsertSkillFiles(ctx, qtx, skill.ID, input.Files)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-
-	skillResp, err := skillToResponse(skill)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-	return SkillWithFilesResponse{
-		SkillResponse: skillResp,
-		Files:         fileResps,
-	}, nil
+	return storeSkillFilesResponse(ctx, qtx, skill, input.Files)
 }
 
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
@@ -153,12 +157,9 @@ type skillOverwriteInput struct {
 // bundle are pruned via DeleteSkillFilesBySkill. On any error the tx rolls back,
 // leaving the original skill unchanged.
 func overwriteSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillOverwriteInput) (SkillWithFilesResponse, error) {
-	config, err := json.Marshal(input.Config)
+	config, err := marshalSkillConfig(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
-	}
-	if input.Config == nil {
-		config = []byte("{}")
 	}
 
 	existing, err := qtx.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{
@@ -206,19 +207,7 @@ func overwriteSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input ski
 	if err := qtx.DeleteSkillFilesBySkill(ctx, skill.ID); err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	fileResps, err := upsertSkillFiles(ctx, qtx, skill.ID, input.Files)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-
-	skillResp, err := skillToResponse(skill)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-	return SkillWithFilesResponse{
-		SkillResponse: skillResp,
-		Files:         fileResps,
-	}, nil
+	return storeSkillFilesResponse(ctx, qtx, skill, input.Files)
 }
 
 func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
