@@ -49,6 +49,10 @@ func TestCreateSkill_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 		}
 		return skill.ID
 	})
+	replay := createSkillWithKey(t, key, body)
+	if replay.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay header = %q, want true", replay.Header().Get("Idempotency-Replayed"))
+	}
 
 	conflict := createSkillWithKey(t, key, map[string]any{"name": name + " changed"})
 	if conflict.Code != http.StatusConflict || conflict.Body.String() != "{\"code\":\"idempotency_conflict\",\"error\":\"Idempotency-Key was already used with a different request\"}\n" {

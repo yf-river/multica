@@ -180,7 +180,7 @@ func handleResourceCreateReplay[T any](
 	if !found {
 		return false
 	}
-	writeJSON(w, status, replay)
+	writeIdempotencyReplayJSON(w, status, replay)
 	return true
 }
 
@@ -236,7 +236,7 @@ func handleResourceCreateReservation[T any](
 		writeReplayError(w, err)
 		return false
 	}
-	writeJSON(w, replayStatus, replay)
+	writeIdempotencyReplayJSON(w, replayStatus, replay)
 	return false
 }
 
