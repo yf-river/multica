@@ -8,9 +8,8 @@ import (
 )
 
 // openclawRuntimeConfig is the schema the daemon expects under an openclaw
-// agent's `runtime_config` JSONB column. All fields are optional; absence
-// (or the agent's whole runtime_config being null/empty) keeps the
-// current local execution behaviour.
+// agent's `runtime_config` JSONB column. An absent mode is normalized to
+// local at this boundary so execution only sees local or gateway.
 //
 // Schema (issue #3260):
 //
@@ -51,22 +50,24 @@ type openclawRuntimeGatewayConfig struct {
 // agent's runtime_config payload. Returns the routing mode plus the gateway
 // pin shaped for execenv. The pin is non-zero only in gateway mode — any
 // other mode drops it so a local-mode payload can't smuggle a bearer token
-// into the per-task wrapper. Empty config is the current local default;
+// into the per-task wrapper. Empty config is normalized to the current local default;
 // malformed JSON and unknown modes are configuration errors, not permission to
 // silently run the task through a different execution path.
 func decodeOpenclawRuntimeConfig(raw json.RawMessage) (string, execenv.OpenclawGatewayPin, error) {
 	if len(raw) == 0 {
-		return "", execenv.OpenclawGatewayPin{}, nil
+		return "local", execenv.OpenclawGatewayPin{}, nil
 	}
 	var cfg openclawRuntimeConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return "", execenv.OpenclawGatewayPin{}, fmt.Errorf("decode openclaw runtime_config: %w", err)
 	}
-	if cfg.Mode != "" && cfg.Mode != "local" && cfg.Mode != "gateway" {
+	if cfg.Mode == "" {
+		cfg.Mode = "local"
+	}
+	if cfg.Mode != "local" && cfg.Mode != "gateway" {
 		return "", execenv.OpenclawGatewayPin{}, fmt.Errorf("openclaw runtime_config mode %q is not local or gateway", cfg.Mode)
 	}
-	// Only gateway mode consults the pin. For every other mode (local / empty /
-	// unrecognized) drop the gateway block so a stray
+	// Only gateway mode consults the pin. Local mode drops the gateway block so a stray
 	// {"mode":"local","gateway":{...,"token":"..."}} never writes the bearer
 	// token into the 0o600 per-task wrapper that `--local` makes openclaw ignore.
 	if cfg.Mode != "gateway" {

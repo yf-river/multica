@@ -17,7 +17,6 @@ import { toast } from "sonner";
 import { useT } from "../../../i18n";
 import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
-// The form always resolves optional persisted mode to a controlled value.
 interface FormState {
   mode: OpenclawRoutingMode;
   host: string;
@@ -36,7 +35,7 @@ interface FormState {
 function configToForm(cfg: OpenclawRuntimeConfig): FormState {
   const masked = cfg.gateway?.token === OPENCLAW_GATEWAY_TOKEN_MASK;
   return {
-    mode: cfg.mode ?? "local",
+    mode: cfg.mode,
     host: cfg.gateway?.host ?? "",
     port: cfg.gateway?.port ? String(cfg.gateway.port) : "",
     // Never display the mask sentinel in the input — that would let users
@@ -59,9 +58,8 @@ function formToConfig(state: FormState): OpenclawRuntimeConfig {
     if (state.tokenWasMasked && state.token === "") {
       // User opened a saved token and never touched the field — replay
       // the mask sentinel so the server's preserve hook keeps the
-      // persisted value. The matching client-side serializer drops the
-      // sentinel before it hits the wire, but we need it on the typed
-      // object so the equality check sees an unchanged config.
+      // persisted value. The serializer intentionally sends the sentinel;
+      // the typed object also needs it for equality with the masked response.
       gw.token = OPENCLAW_GATEWAY_TOKEN_MASK;
     } else if (state.token !== "") {
       gw.token = state.token;

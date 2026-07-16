@@ -51,7 +51,7 @@ type ExecOptions struct {
 	// incrementally without breaking unrelated agents).
 	ThinkingLevel string
 	// OpenclawMode chooses between local (embedded) and gateway routing for
-	// the openclaw backend. "" or "local" keeps the historical behaviour —
+	// the openclaw backend. The daemon normalizes absent configuration to local;
 	// the daemon spawns `openclaw agent --local …` and the agent loop runs
 	// in-process on the daemon host. "gateway" instructs the daemon to drop
 	// the --local flag and let openclaw route the turn through a Gateway (the

@@ -10,7 +10,7 @@ export interface OpenclawGatewayPin {
 }
 
 export interface OpenclawRuntimeConfig {
-  mode?: OpenclawRoutingMode;
+  mode: OpenclawRoutingMode;
   gateway?: OpenclawGatewayPin;
 }
 
@@ -20,13 +20,11 @@ export const OPENCLAW_GATEWAY_TOKEN_MASK = "***";
 export function parseOpenclawRuntimeConfig(
   raw: unknown,
 ): OpenclawRuntimeConfig {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { mode: "local" };
   const root = raw as Record<string, unknown>;
-  const out: OpenclawRuntimeConfig = {};
-  if (root.mode === "local" || root.mode === "gateway") {
-    out.mode = root.mode;
-  }
-  if (root.gateway && typeof root.gateway === "object" && !Array.isArray(root.gateway)) {
+  const mode = root.mode === "gateway" ? "gateway" : "local";
+  const out: OpenclawRuntimeConfig = { mode };
+  if (mode === "gateway" && root.gateway && typeof root.gateway === "object" && !Array.isArray(root.gateway)) {
     const gw = root.gateway as Record<string, unknown>;
     const pin: OpenclawGatewayPin = {};
     if (typeof gw.host === "string" && gw.host !== "") pin.host = gw.host;
@@ -41,9 +39,8 @@ export function parseOpenclawRuntimeConfig(
 export function serializeOpenclawRuntimeConfig(
   cfg: OpenclawRuntimeConfig,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (cfg.mode) out.mode = cfg.mode;
-  if (cfg.gateway) {
+  const out: Record<string, unknown> = { mode: cfg.mode };
+  if (cfg.mode === "gateway" && cfg.gateway) {
     const gw: Record<string, unknown> = {};
     if (cfg.gateway.host) gw.host = cfg.gateway.host;
     if (cfg.gateway.port) gw.port = cfg.gateway.port;
@@ -60,7 +57,8 @@ export function openclawRuntimeConfigEquals(
   a: OpenclawRuntimeConfig,
   b: OpenclawRuntimeConfig,
 ): boolean {
-  if ((a.mode ?? "local") !== (b.mode ?? "local")) return false;
+  if (a.mode !== b.mode) return false;
+  if (a.mode === "local") return true;
   const aGw = a.gateway ?? {};
   const bGw = b.gateway ?? {};
   if ((aGw.host ?? "") !== (bGw.host ?? "")) return false;

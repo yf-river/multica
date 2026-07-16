@@ -14,8 +14,8 @@ func TestDecodeOpenclawRuntimeConfigEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode empty config: %v", err)
 	}
-	if mode != "" {
-		t.Errorf("mode for nil payload: got %q, want \"\"", mode)
+	if mode != "local" {
+		t.Errorf("mode for nil payload: got %q, want \"local\"", mode)
 	}
 	if gw != (execenv.OpenclawGatewayPin{}) {
 		t.Errorf("gateway for nil payload: got %+v, want zero", gw)

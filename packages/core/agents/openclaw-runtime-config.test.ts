@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   OPENCLAW_GATEWAY_TOKEN_MASK,
+  parseOpenclawRuntimeConfig,
   serializeOpenclawRuntimeConfig,
 } from "./openclaw-runtime-config";
+
+describe("parseOpenclawRuntimeConfig", () => {
+  it("normalizes absent mode to local and drops an inactive gateway block", () => {
+    expect(parseOpenclawRuntimeConfig({ gateway: { token: "stale" } })).toEqual({
+      mode: "local",
+    });
+  });
+});
 
 describe("serializeOpenclawRuntimeConfig", () => {
   it("keeps the masked gateway token sentinel so the API can preserve the persisted token", () => {
