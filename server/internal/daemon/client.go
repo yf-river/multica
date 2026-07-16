@@ -141,17 +141,7 @@ func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, ste
 	}, nil)
 }
 
-// TaskMessageData represents a single agent execution message for batch reporting.
-type TaskMessageData struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
-}
-
-func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
+func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []protocol.TaskMessage) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
 	}, taskReportRetrySchedule)
@@ -171,7 +161,7 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, defaultTerminalRetrySchedule)
 }
 
-func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []TaskUsageEntry) error {
+func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []protocol.TaskUsage) error {
 	if len(usage) == 0 {
 		return nil
 	}
@@ -301,10 +291,10 @@ func (c *Client) Deregister(ctx context.Context, runtimeIDs []string) error {
 
 // RegisterResponse holds the server's response to a daemon registration.
 type RegisterResponse struct {
-	Runtimes     []Runtime       `json:"runtimes"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	Runtimes     []Runtime                 `json:"runtimes"`
+	Repos        []protocol.TaskRepository `json:"repos"`
+	ReposVersion string                    `json:"repos_version"`
+	Settings     json.RawMessage           `json:"settings,omitempty"`
 }
 
 func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterResponse, error) {
@@ -316,10 +306,10 @@ func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterRes
 }
 
 type WorkspaceReposResponse struct {
-	WorkspaceID  string          `json:"workspace_id"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	WorkspaceID  string                    `json:"workspace_id"`
+	Repos        []protocol.TaskRepository `json:"repos"`
+	ReposVersion string                    `json:"repos_version"`
+	Settings     json.RawMessage           `json:"settings,omitempty"`
 }
 
 func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {

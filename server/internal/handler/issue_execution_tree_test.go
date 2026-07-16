@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) {
@@ -213,7 +214,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 				Result: map[string]any{
 					"output": "等待用户补充确认后，我将继续推进 02-方案设计。",
 				},
-				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
+				Agent: &protocol.TaskAgent{Name: "pm-v2 · PM-项目经理"},
 			},
 		},
 		ActivityLogs: []issueActivityBriefResponse{
@@ -294,7 +295,7 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 				Result: map[string]any{
 					"output": "---\n\n## 01-需求澄清已完成，需等待用户确认\n\n请确认边界后继续。",
 				},
-				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
+				Agent: &protocol.TaskAgent{Name: "pm-v2 · PM-项目经理"},
 			},
 		},
 	}
@@ -327,7 +328,7 @@ func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T)
 		Result: map[string]any{
 			"output": "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。",
 		},
-		Agent: &TaskAgentData{Name: "05-验证测试"},
+		Agent: &protocol.TaskAgent{Name: "05-验证测试"},
 	})
 
 	if summary != "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。" {

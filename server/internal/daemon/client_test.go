@@ -185,7 +185,7 @@ func TestReportTaskMessagesRetriesTransientFailure(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	if err := c.ReportTaskMessages(context.Background(), "task-1", []TaskMessageData{{Seq: 1, Type: "text", Content: "hello"}}); err != nil {
+	if err := c.ReportTaskMessages(context.Background(), "task-1", []protocol.TaskMessage{{Seq: 1, Type: "text", Content: "hello"}}); err != nil {
 		t.Fatalf("ReportTaskMessages: %v", err)
 	}
 	if got := calls.Load(); got != 2 {
@@ -210,7 +210,7 @@ func TestReportTaskUsageRetriesTransientFailure(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	if err := c.ReportTaskUsage(context.Background(), "task-1", []TaskUsageEntry{{Provider: "test", Model: "model-a", InputTokens: 10}}); err != nil {
+	if err := c.ReportTaskUsage(context.Background(), "task-1", []protocol.TaskUsage{{Provider: "test", Model: "model-a", InputTokens: 10}}); err != nil {
 		t.Fatalf("ReportTaskUsage: %v", err)
 	}
 	if got := calls.Load(); got != 2 {

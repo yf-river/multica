@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // TestHandleTask_DoesNotCallStartTaskItself is the regression guard for
@@ -66,7 +67,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 		WorkspaceID: "ws-no-start",
 		RuntimeID:   "rt-1",
 		IssueID:     "issue-no-start",
-		Agent:       &AgentData{Name: "test-agent"},
+		Agent:       &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	d.handleTask(context.Background(), task, 0)
@@ -138,7 +139,7 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 		WorkspaceID: workspaceID,
 		RuntimeID:   "rt-1",
 		IssueID:     "issue-runtask",
-		Agent:       &AgentData{Name: "test-agent"},
+		Agent:       &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -190,7 +191,7 @@ func TestRunTaskDoesNotStartWithPartiallyRefreshedReusedContext(t *testing.T) {
 		RuntimeID:    "rt-reuse",
 		IssueID:      "issue-reuse-context",
 		PriorWorkDir: priorWorkDir,
-		Agent:        &AgentData{Name: "test-agent"},
+		Agent:        &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -236,7 +237,7 @@ func TestRunTaskFailsWhenRuntimeConfigCannotBeInjected(t *testing.T) {
 		RuntimeID:    "rt-config",
 		IssueID:      "issue-runtime-config",
 		PriorWorkDir: priorWorkDir,
-		Agent:        &AgentData{Name: "test-agent"},
+		Agent:        &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -317,7 +318,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 		WorkspaceID: workspaceID,
 		RuntimeID:   "rt-1",
 		IssueID:     "issue-active-during-complete",
-		Agent:       &AgentData{Name: "test-agent"},
+		Agent:       &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	d.handleTask(context.Background(), task, 0)

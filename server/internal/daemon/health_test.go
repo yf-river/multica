@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
@@ -198,7 +199,7 @@ func TestHealthHandlerRespondsWhileTaskRepoLookupWaits(t *testing.T) {
 
 	registerDone := make(chan struct{})
 	go func() {
-		d.registerTaskRepos(workspaceID, []RepoData{{URL: repoURL}})
+		d.registerTaskRepos(workspaceID, []protocol.TaskRepository{{URL: repoURL}})
 		close(registerDone)
 	}()
 	cache.waitForLookup(t)

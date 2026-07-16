@@ -15,7 +15,9 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, prompt string, opts agent.ExecOptions, taskLog *slog.Logger, taskID string) (agent.Result, int32, error) {
@@ -82,14 +84,14 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		var mu sync.Mutex
 		var pendingText strings.Builder
 		var pendingThinking strings.Builder
-		var batch []TaskMessageData
+		var batch []protocol.TaskMessage
 		callIDToTool := map[string]string{}
 
 		flush := func() {
 			mu.Lock()
 			if pendingThinking.Len() > 0 {
 				s := seq.Add(1)
-				batch = append(batch, TaskMessageData{
+				batch = append(batch, protocol.TaskMessage{
 					Seq:     int(s),
 					Type:    "thinking",
 					Content: pendingThinking.String(),
@@ -98,7 +100,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			}
 			if pendingText.Len() > 0 {
 				s := seq.Add(1)
-				batch = append(batch, TaskMessageData{
+				batch = append(batch, protocol.TaskMessage{
 					Seq:     int(s),
 					Type:    "text",
 					Content: pendingText.String(),
@@ -176,7 +178,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					}
 					s := seq.Add(1)
 					mu.Lock()
-					batch = append(batch, TaskMessageData{
+					batch = append(batch, protocol.TaskMessage{
 						Seq:   int(s),
 						Type:  "tool_use",
 						Tool:  msg.Tool,
@@ -211,7 +213,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					}
 					taskLog.Info("tool_result observed", "seq", s, "tool", toolName, "call_id", msg.CallID)
 					mu.Lock()
-					batch = append(batch, TaskMessageData{
+					batch = append(batch, protocol.TaskMessage{
 						Seq:    int(s),
 						Type:   "tool_result",
 						Tool:   toolName,
@@ -235,7 +237,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					taskLog.Error("agent error", "content", msg.Content)
 					s := seq.Add(1)
 					mu.Lock()
-					batch = append(batch, TaskMessageData{
+					batch = append(batch, protocol.TaskMessage{
 						Seq:     int(s),
 						Type:    "error",
 						Content: msg.Content,
@@ -397,8 +399,7 @@ func mergeUsage(a, b map[string]agent.TokenUsage) map[string]agent.TokenUsage {
 	return merged
 }
 
-// repoDataToInfo converts daemon RepoData to repocache RepoInfo.
-func repoDataToInfo(repos []RepoData) []repocache.RepoInfo {
+func repoDataToInfo(repos []protocol.TaskRepository) []repocache.RepoInfo {
 	info := make([]repocache.RepoInfo, len(repos))
 	for i, r := range repos {
 		info[i] = repocache.RepoInfo{URL: r.URL}
@@ -406,7 +407,7 @@ func repoDataToInfo(repos []RepoData) []repocache.RepoInfo {
 	return info
 }
 
-func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
+func convertReposForEnv(repos []protocol.TaskRepository) []execenv.RepoContextForEnv {
 	if len(repos) == 0 {
 		return nil
 	}
@@ -417,9 +418,9 @@ func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
 	return result
 }
 
-func effectiveTaskExecutionPolicy(task Task) TaskExecutionPolicy {
+func effectiveTaskExecutionPolicy(task Task) executionpolicy.Policy {
 	if task.ExecutionPolicy == nil {
-		return TaskExecutionPolicy{
+		return executionpolicy.Policy{
 			RoleKind:         "agent",
 			CanAccessRepo:    true,
 			CanEditRepo:      true,
@@ -456,7 +457,7 @@ func mergeSkillContexts(base []execenv.SkillContextForEnv, extra []execenv.Skill
 	return out
 }
 
-func loadProjectSkillsForPolicy(repoDir string, policy TaskExecutionPolicy) ([]execenv.SkillContextForEnv, error) {
+func loadProjectSkillsForPolicy(repoDir string, policy executionpolicy.Policy) ([]execenv.SkillContextForEnv, error) {
 	if strings.TrimSpace(repoDir) == "" || policy.ProjectSkillMode == "none" {
 		return nil, nil
 	}
@@ -498,7 +499,7 @@ func loadProjectSkillsForPolicy(repoDir string, policy TaskExecutionPolicy) ([]e
 	return result, nil
 }
 
-func projectSkillAllowedByPolicy(name string, policy TaskExecutionPolicy) bool {
+func projectSkillAllowedByPolicy(name string, policy executionpolicy.Policy) bool {
 	key := strings.ToLower(strings.TrimSpace(name))
 	switch policy.ProjectSkillMode {
 	case "none":
@@ -577,7 +578,7 @@ func gitPorcelainStatus(ctx context.Context, repoDir string) (string, error) {
 	return string(out), nil
 }
 
-func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.ProjectResourceForEnv {
+func convertProjectResourcesForEnv(resources []protocol.TaskProjectResource) []execenv.ProjectResourceForEnv {
 	if len(resources) == 0 {
 		return nil
 	}
@@ -644,7 +645,7 @@ func truncateLog(s string, maxLen int) string {
 	return s[:maxLen] + "…"
 }
 
-func convertSkillsForEnv(skills []SkillData) []execenv.SkillContextForEnv {
+func convertSkillsForEnv(skills []protocol.TaskSkill) []execenv.SkillContextForEnv {
 	if len(skills) == 0 {
 		return nil
 	}
@@ -729,14 +730,14 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 	return append([]string(nil), args...)
 }
 
-func executionPolicyForToolEnvelope(task Task, policy TaskExecutionPolicy) TaskExecutionPolicy {
+func executionPolicyForToolEnvelope(task Task, policy executionpolicy.Policy) executionpolicy.Policy {
 	if strings.TrimSpace(task.SourceSummaryPrompt) != "" {
-		return TaskExecutionPolicy{RoleKind: "agent", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none"}
+		return executionpolicy.Policy{RoleKind: "agent", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none"}
 	}
 	return policy
 }
 
-func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+func allowedBuiltinToolsForExecutionPolicy(provider string, policy executionpolicy.Policy) []string {
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return nil
 	}
@@ -755,7 +756,7 @@ func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecution
 	return nil
 }
 
-func allowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+func allowedToolsForExecutionPolicy(provider string, policy executionpolicy.Policy) []string {
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return nil
 	}
@@ -768,7 +769,7 @@ func allowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy)
 	return nil
 }
 
-func permissionModeForExecutionPolicy(provider string, policy TaskExecutionPolicy) string {
+func permissionModeForExecutionPolicy(provider string, policy executionpolicy.Policy) string {
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return ""
 	}
@@ -781,7 +782,7 @@ func permissionModeForExecutionPolicy(provider string, policy TaskExecutionPolic
 	return ""
 }
 
-func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+func disallowedToolsForExecutionPolicy(provider string, policy executionpolicy.Policy) []string {
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return nil
 	}
@@ -834,7 +835,7 @@ func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPoli
 	return nil
 }
 
-func maxTurnsForExecutionPolicy(configured int, policy TaskExecutionPolicy) int {
+func maxTurnsForExecutionPolicy(configured int, policy executionpolicy.Policy) int {
 	if configured > 0 {
 		return configured
 	}

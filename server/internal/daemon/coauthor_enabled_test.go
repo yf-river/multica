@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // workspaceCoAuthoredByEnabled gates the prepare-commit-msg hook installed in
@@ -78,7 +80,7 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 			raw, _ := settingsPayload.Load().(json.RawMessage)
 			_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 				WorkspaceID:  workspaceID,
-				Repos:        []RepoData{},
+				Repos:        []protocol.TaskRepository{},
 				ReposVersion: "v1",
 				Settings:     raw,
 			})

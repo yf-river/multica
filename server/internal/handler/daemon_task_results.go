@@ -109,15 +109,6 @@ func (h *Handler) emitIssueExecutedOnFirstCompletion(r *http.Request, task *db.A
 
 // ReportTaskUsage stores per-task token usage. Called independently of
 // complete/fail so usage is captured even when tasks fail or are blocked.
-type TaskUsagePayload struct {
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-}
-
 func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
@@ -128,7 +119,7 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Usage []TaskUsagePayload `json:"usage"`
+		Usage []protocol.TaskUsage `json:"usage"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -145,7 +136,7 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	// landing as '' and pricing $0.
 	type normalizedUsage struct {
 		provider string
-		usage    TaskUsagePayload
+		usage    protocol.TaskUsage
 	}
 	normalized := make([]normalizedUsage, 0, len(req.Usage))
 	var runtimeProvider string
@@ -220,13 +211,13 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTaskQueue, provider string, u TaskUsagePayload) (TaskUsagePayload, error) {
+func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTaskQueue, provider string, u protocol.TaskUsage) (protocol.TaskUsage, error) {
 	if provider != "codebuddy" {
 		return u, nil
 	}
 	previous, ok, err := h.previousCodebuddySessionUsage(ctx, task, provider, u.Model)
 	if err != nil {
-		return TaskUsagePayload{}, err
+		return protocol.TaskUsage{}, err
 	}
 	if ok {
 		u.InputTokens = nonNegativeDelta(u.InputTokens, previous.InputTokens)
@@ -329,21 +320,12 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 // Task Messages (live agent output)
 // ---------------------------------------------------------------------------
 
-type TaskMessageRequest struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
-}
-
 // ReportTaskMessages receives a batch of agent execution messages from the daemon.
 func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
 	var req struct {
-		Messages []TaskMessageRequest `json:"messages"`
+		Messages []protocol.TaskMessage `json:"messages"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -360,7 +342,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type preparedTaskMessage struct {
-		request TaskMessageRequest
+		request protocol.TaskMessage
 		input   []byte
 	}
 	prepared := make([]preparedTaskMessage, 0, len(req.Messages))

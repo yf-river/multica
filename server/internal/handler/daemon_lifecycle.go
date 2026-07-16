@@ -13,9 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
-	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -747,10 +747,10 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 	)
 }
 
-func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) TaskExecutionPolicyData {
+func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) executionpolicy.Policy {
 	key := strings.ToLower(strings.TrimSpace(roleKey))
 	if isSquadLeader || key == "pm" {
-		return TaskExecutionPolicyData{
+		return executionpolicy.Policy{
 			RoleKey:          "pm",
 			RoleKind:         "coordinator",
 			CanAccessRepo:    false,
@@ -760,20 +760,20 @@ func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) TaskExecutio
 	}
 	switch key {
 	case "01-clarify":
-		return TaskExecutionPolicyData{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
+		return executionpolicy.Policy{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
 	case "02-design":
-		return TaskExecutionPolicyData{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
+		return executionpolicy.Policy{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
 	case "03-task-split":
-		return TaskExecutionPolicyData{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
+		return executionpolicy.Policy{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
 	case "04-implement":
-		return TaskExecutionPolicyData{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
+		return executionpolicy.Policy{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
 	case "05-verify":
-		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
+		return executionpolicy.Policy{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
 	}
-	return TaskExecutionPolicyData{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
+	return executionpolicy.Policy{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
 }
 
-func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
+func filterAgentSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy executionpolicy.Policy) []protocol.TaskSkill {
 	if policy.ProjectSkillMode == "" || policy.ProjectSkillMode == "all" {
 		return skills
 	}
@@ -782,7 +782,7 @@ func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy
 	for _, name := range policy.AllowedProjectSkills {
 		allowed[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
 	}
-	out := make([]service.AgentSkillData, 0, len(skills))
+	out := make([]protocol.TaskSkill, 0, len(skills))
 	for _, skill := range skills {
 		name := strings.ToLower(strings.TrimSpace(skill.Name))
 		if strings.HasPrefix(name, "multica-") {
@@ -799,11 +799,11 @@ func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy
 	return out
 }
 
-func filterBuiltinSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
+func filterBuiltinSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy executionpolicy.Policy) []protocol.TaskSkill {
 	if !policy.IsCoordinatorWithoutRepo() {
 		return skills
 	}
-	out := make([]service.AgentSkillData, 0, len(skills))
+	out := make([]protocol.TaskSkill, 0, len(skills))
 	for _, skill := range skills {
 		name := strings.ToLower(strings.TrimSpace(skill.Name))
 		if coordinatorBuiltinSkillAllowed(name) {

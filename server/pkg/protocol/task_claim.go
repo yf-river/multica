@@ -1,5 +1,80 @@
 package protocol
 
+import "encoding/json"
+
+// TaskRepository identifies a repository available to a claimed task.
+type TaskRepository struct {
+	URL         string `json:"url"`
+	Description string `json:"description,omitempty"`
+}
+
+// TaskProjectResource carries project-scoped context to the daemon. ResourceRef
+// is type-specific JSON and remains opaque except to consumers that understand
+// the corresponding ResourceType.
+type TaskProjectResource struct {
+	ID           string          `json:"id"`
+	ResourceType string          `json:"resource_type"`
+	ResourceRef  json.RawMessage `json:"resource_ref"`
+	Label        string          `json:"label,omitempty"`
+}
+
+// TaskIssueExecutionSpace requests one daemon-managed worktree for all tasks
+// belonging to an issue.
+type TaskIssueExecutionSpace struct {
+	Enabled        bool   `json:"enabled"`
+	IssueID        string `json:"issue_id"`
+	PrimaryRepoURL string `json:"primary_repo_url"`
+	Ref            string `json:"ref,omitempty"`
+}
+
+// TaskAgent is the agent execution configuration returned by task claim.
+type TaskAgent struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Instructions  string            `json:"instructions"`
+	Skills        []TaskSkill       `json:"skills,omitempty"`
+	CustomEnv     map[string]string `json:"custom_env,omitempty"`
+	CustomArgs    []string          `json:"custom_args,omitempty"`
+	McpConfig     json.RawMessage   `json:"mcp_config,omitempty"`
+	Model         string            `json:"model,omitempty"`
+	ThinkingLevel string            `json:"thinking_level,omitempty"`
+	RuntimeConfig json.RawMessage   `json:"runtime_config,omitempty"`
+}
+
+// TaskSkill is a skill and its supporting files delivered with a claimed task.
+type TaskSkill struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Content     string          `json:"content"`
+	Files       []TaskSkillFile `json:"files,omitempty"`
+}
+
+type TaskSkillFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// TaskUsage is token usage reported by a daemon for one provider/model pair.
+type TaskUsage struct {
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+}
+
+// TaskMessage is one live execution message reported by a daemon.
+type TaskMessage struct {
+	Seq     int            `json:"seq"`
+	Type    string         `json:"type"`
+	Tool    string         `json:"tool,omitempty"`
+	Content string         `json:"content,omitempty"`
+	Input   map[string]any `json:"input,omitempty"`
+	Output  string         `json:"output,omitempty"`
+}
+
 // TaskSourceContext is the source and credential context carried by the task
 // claim response from the server to the daemon.
 type TaskSourceContext struct {

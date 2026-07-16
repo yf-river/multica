@@ -7,7 +7,7 @@ numbers after moves; symbol names and tests are the stable anchors.
 
     rg -n "func runAgentCreate|func runAgentUpdate" server/cmd/multica/cmd_agent.go
     rg -n "func .*CreateAgent|func .*UpdateAgent" server/internal/handler/agent.go
-    rg -n "LoadAgentSkills|TaskAgentData" server/internal/handler/daemon_tasks.go
+    rg -n "LoadAgentSkills|protocol.TaskAgent" server/internal/handler/daemon_tasks.go
     go test ./internal/service -run "TestCreatingAgentsSkill|TestBuiltinSkillsConformToTemplate"
 
 ## CLI boundary
@@ -55,7 +55,7 @@ a separate server surface and are not taught by this skill.
 |---|---|
 | Claim handler | server/internal/handler/daemon_tasks.go:21 |
 | Fresh agent read, workspace skills and filtered built-ins | server/internal/handler/daemon_tasks.go:71-80 |
-| TaskAgentData carries instructions, env, args, model, thinking and MCP | server/internal/handler/daemon_tasks.go:105-116 |
+| protocol.TaskAgent carries instructions, env, args, model, thinking and MCP | server/internal/handler/daemon_tasks.go:105-116 |
 | Workspace skill loading | server/internal/service/task_fail.go:541-562 |
 | Embedded built-in skill loader | server/internal/service/builtin_skills.go:10-71 |
 

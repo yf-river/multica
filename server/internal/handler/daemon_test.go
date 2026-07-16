@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -68,7 +69,7 @@ func (s *popRecordingLocalSkillImportStore) PopPendingBatch(ctx context.Context,
 
 func TestCoordinatorExecutionPolicyFiltersExecutionBuiltinSkills(t *testing.T) {
 	t.Parallel()
-	skills := []service.AgentSkillData{
+	skills := []protocol.TaskSkill{
 		{Name: "multica-mentioning"},
 		{Name: "multica-projects-and-resources"},
 		{Name: "multica-squads"},
@@ -76,7 +77,7 @@ func TestCoordinatorExecutionPolicyFiltersExecutionBuiltinSkills(t *testing.T) {
 		{Name: "multica-runtimes-and-repos"},
 		{Name: "04-implement"},
 	}
-	policy := TaskExecutionPolicyData{
+	policy := executionpolicy.Policy{
 		RoleKind:         "coordinator",
 		CanAccessRepo:    false,
 		ProjectSkillMode: "none",
@@ -338,12 +339,12 @@ func claimDaemonTaskRecorder(t *testing.T, runtimeID, daemonID string) *httptest
 }
 
 type daemonRepoClaimTask struct {
-	Repos               []RepoData               `json:"repos"`
-	ProjectID           string                   `json:"project_id"`
-	ProjectResources    []ProjectResourceData    `json:"project_resources"`
-	IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
-	ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy"`
-	Agent               *TaskAgentData           `json:"agent"`
+	Repos               []protocol.TaskRepository         `json:"repos"`
+	ProjectID           string                            `json:"project_id"`
+	ProjectResources    []protocol.TaskProjectResource    `json:"project_resources"`
+	IssueExecutionSpace *protocol.TaskIssueExecutionSpace `json:"issue_execution_space"`
+	ExecutionPolicy     *executionpolicy.Policy           `json:"execution_policy"`
+	Agent               *protocol.TaskAgent               `json:"agent"`
 }
 
 func decodeDaemonRepoClaimTask(t *testing.T, w *httptest.ResponseRecorder) *daemonRepoClaimTask {
@@ -2252,7 +2253,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	if len(task.ProjectResources) != 2 {
 		t.Fatalf("expected 2 project_resources entries, got %d", len(task.ProjectResources))
 	}
-	resourcesByType := map[string]ProjectResourceData{}
+	resourcesByType := map[string]protocol.TaskProjectResource{}
 	for _, resource := range task.ProjectResources {
 		resourcesByType[resource.ResourceType] = resource
 	}
@@ -2439,7 +2440,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 
 	var resp struct {
 		Task *struct {
-			Repos []RepoData `json:"repos"`
+			Repos []protocol.TaskRepository `json:"repos"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
@@ -3065,15 +3066,15 @@ func TestCompleteTask_AssignmentTriggered_DoesNotSuppressTrivialDoneOutput(t *te
 }
 
 type claimRuntimeGuardTask struct {
-	PriorSessionID           string                `json:"prior_session_id"`
-	PriorWorkDir             string                `json:"prior_work_dir"`
-	ChatMessage              string                `json:"chat_message"`
-	ThreadName               string                `json:"thread_name"`
-	QuickCreateAttachmentIDs []string              `json:"quick_create_attachment_ids"`
-	ProjectID                string                `json:"project_id"`
-	ProjectTitle             string                `json:"project_title"`
-	ProjectResources         []ProjectResourceData `json:"project_resources"`
-	Repos                    []RepoData            `json:"repos"`
+	PriorSessionID           string                         `json:"prior_session_id"`
+	PriorWorkDir             string                         `json:"prior_work_dir"`
+	ChatMessage              string                         `json:"chat_message"`
+	ThreadName               string                         `json:"thread_name"`
+	QuickCreateAttachmentIDs []string                       `json:"quick_create_attachment_ids"`
+	ProjectID                string                         `json:"project_id"`
+	ProjectTitle             string                         `json:"project_title"`
+	ProjectResources         []protocol.TaskProjectResource `json:"project_resources"`
+	Repos                    []protocol.TaskRepository      `json:"repos"`
 }
 
 func claimTaskForRuntimeGuard(t *testing.T, runtimeID, daemonID string) *claimRuntimeGuardTask {

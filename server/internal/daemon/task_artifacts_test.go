@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 )
 
 func TestCollectTaskMarkdownArtifactsScansArtifactsTree(t *testing.T) {
@@ -191,7 +193,7 @@ func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
 	task := Task{
 		ID:      "task-1",
 		IssueID: "issue-1",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKey:     "02-design",
 			RoleKind:    "planning_stage",
 			CanEditRepo: false,

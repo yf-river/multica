@@ -20,7 +20,9 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -67,7 +69,7 @@ func TestLoadProjectSkillsForPolicyFiltersSOPStageSkills(t *testing.T) {
 		writeDaemonTestProjectSkill(t, repoDir, name)
 	}
 
-	pmSkills, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "none"})
+	pmSkills, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "none"})
 	if err != nil {
 		t.Fatalf("load PM skills: %v", err)
 	}
@@ -75,7 +77,7 @@ func TestLoadProjectSkillsForPolicyFiltersSOPStageSkills(t *testing.T) {
 		t.Fatalf("PM should not receive project skills, got %+v", pmSkills)
 	}
 
-	stageSkills, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}})
+	stageSkills, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}})
 	if err != nil {
 		t.Fatalf("load stage skills: %v", err)
 	}
@@ -83,7 +85,7 @@ func TestLoadProjectSkillsForPolicyFiltersSOPStageSkills(t *testing.T) {
 		t.Fatalf("03 should receive only its stage skill with files, got %+v", stageSkills)
 	}
 
-	implSkills, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "implementation"})
+	implSkills, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "implementation"})
 	if err != nil {
 		t.Fatalf("load implementation skills: %v", err)
 	}
@@ -103,13 +105,13 @@ func TestLoadProjectSkillsForPolicyRejectsUnreadableActiveSkill(t *testing.T) {
 		t.Fatalf("seed unreadable project skill: %v", err)
 	}
 
-	if _, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "implementation"}); err == nil {
+	if _, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "implementation"}); err == nil {
 		t.Fatal("active project skill read failure should block the task overlay")
 	}
 }
 
 func TestLoadProjectSkillsForPolicyRejectsUnknownMode(t *testing.T) {
-	if _, err := loadProjectSkillsForPolicy(t.TempDir(), TaskExecutionPolicy{ProjectSkillMode: "everything"}); err == nil {
+	if _, err := loadProjectSkillsForPolicy(t.TempDir(), executionpolicy.Policy{ProjectSkillMode: "everything"}); err == nil {
 		t.Fatal("unknown project skill mode should not widen access to every project skill")
 	}
 }
@@ -159,7 +161,7 @@ func TestIsBlockedEnvKey(t *testing.T) {
 func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	t.Parallel()
 
-	pm := TaskExecutionPolicy{RoleKind: "coordinator", CanAccessRepo: false}
+	pm := executionpolicy.Policy{RoleKind: "coordinator", CanAccessRepo: false}
 	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash" {
 		t.Fatalf("coordinator allowed tools = %v, want [Bash]", got)
 	}
@@ -194,7 +196,7 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 		t.Fatalf("coordinator denied tools missing Write: %v", denied)
 	}
 
-	impl := TaskExecutionPolicy{RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true}
+	impl := executionpolicy.Policy{RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true}
 	implAllowed := allowedBuiltinToolsForExecutionPolicy("codebuddy", impl)
 	for _, want := range []string{"Bash", "Read", "Grep", "Glob", "LS", "Edit", "Write", "MultiEdit"} {
 		if !containsString(implAllowed, want) {
@@ -220,7 +222,7 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 		}
 	}
 
-	planning := TaskExecutionPolicy{RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false}
+	planning := executionpolicy.Policy{RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false}
 	planningAllowed := allowedBuiltinToolsForExecutionPolicy("codebuddy", planning)
 	for _, want := range []string{"Bash", "Read", "Grep", "Glob", "LS"} {
 		if !containsString(planningAllowed, want) {
@@ -243,7 +245,7 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 			t.Fatalf("planning stage should retain read/search tool %q: %v", allowed, planningDenied)
 		}
 	}
-	noRepoPlanning := TaskExecutionPolicy{RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false}
+	noRepoPlanning := executionpolicy.Policy{RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false}
 	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", noRepoPlanning); got != nil {
 		t.Fatalf("no-repo planning allowed tools = %v, want nil", got)
 	}
@@ -470,9 +472,9 @@ func TestBuildPromptContainsIssueID(t *testing.T) {
 	issueID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 	prompt := BuildPrompt(Task{
 		IssueID: issueID,
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Name: "Local Codex",
-			Skills: []SkillData{
+			Skills: []protocol.TaskSkill{
 				{Name: "Concise", Content: "Be concise."},
 			},
 		},
@@ -501,7 +503,7 @@ func TestBuildPromptNoIssueDetails(t *testing.T) {
 
 	prompt := BuildPrompt(Task{
 		IssueID: "test-id",
-		Agent:   &AgentData{Name: "Test"},
+		Agent:   &protocol.TaskAgent{Name: "Test"},
 	})
 
 	// Prompt should not contain issue title/description (agent fetches via CLI).
@@ -552,7 +554,7 @@ func TestBuildPromptCommentTriggered(t *testing.T) {
 		IssueID:               issueID,
 		TriggerCommentID:      commentID,
 		TriggerCommentContent: commentContent,
-		Agent:                 &AgentData{Name: "Test"},
+		Agent:                 &protocol.TaskAgent{Name: "Test"},
 	})
 
 	// Prompt should contain the comment content, the trigger comment id, and
@@ -597,7 +599,7 @@ func TestBuildPromptCommentTriggeredByAgent(t *testing.T) {
 		TriggerCommentContent: "thanks, looks good!",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "Atlas",
-		Agent:                 &AgentData{Name: "Test"},
+		Agent:                 &protocol.TaskAgent{Name: "Test"},
 	})
 
 	for _, want := range []string{
@@ -623,7 +625,7 @@ func TestBuildPromptCommentTriggeredByMember(t *testing.T) {
 		TriggerCommentContent: "can you translate this?",
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Alice",
-		Agent:                 &AgentData{Name: "Test"},
+		Agent:                 &protocol.TaskAgent{Name: "Test"},
 	})
 
 	if !strings.Contains(prompt, "A user just left a new comment") {
@@ -652,7 +654,7 @@ func TestBuildPromptCommentTriggeredNoContent(t *testing.T) {
 	prompt := BuildPrompt(Task{
 		IssueID:          "test-id",
 		TriggerCommentID: "comment-id",
-		Agent:            &AgentData{Name: "Test"},
+		Agent:            &protocol.TaskAgent{Name: "Test"},
 	})
 
 	if !strings.Contains(prompt, "multica issue get") {
@@ -669,7 +671,7 @@ func TestBuildPromptNoRepoBoundedStageDoesNotPromptCLIReads(t *testing.T) {
 		TriggerCommentContent: "调度 01-需求澄清",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "PM-项目经理",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKind:      "planning_stage",
 			CanAccessRepo: false,
 			CanEditRepo:   false,
@@ -710,7 +712,7 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 		TriggerCommentContent: "Progress update: tests passing.",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "Worker",
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Name:         "Leader",
 			Instructions: "你负责协调小队。\n\n## 小队负责人操作协议\n\n你是负责人。",
 		},
@@ -733,7 +735,7 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 		TriggerCommentContent: "Progress update: tests passing.",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "Worker",
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Name:         "Regular",
 			Instructions: "You are a regular agent.",
 		},
@@ -1297,14 +1299,14 @@ func TestExecuteAndDrain_CodexInactivityReportsToolResultTranscript(t *testing.T
 	}
 
 	var mu sync.Mutex
-	var reported []TaskMessageData
+	var reported []protocol.TaskMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/daemon/tasks/task-stale/messages" {
 			http.NotFound(w, r)
 			return
 		}
 		var body struct {
-			Messages []TaskMessageData `json:"messages"`
+			Messages []protocol.TaskMessage `json:"messages"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode task messages: %v", err)
@@ -1666,7 +1668,7 @@ func TestEnsureRepoReadyCachedRepoStillRefreshesSettings(t *testing.T) {
 	sourceRepo := createDaemonTestRepo(t)
 	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
 		WorkspaceID:  "ws-1",
-		Repos:        []RepoData{{URL: sourceRepo}},
+		Repos:        []protocol.TaskRepository{{URL: sourceRepo}},
 		ReposVersion: "v2",
 		Settings:     json.RawMessage(`{"github_enabled":false,"co_authored_by_enabled":true}`),
 	})
@@ -1679,7 +1681,7 @@ func TestEnsureRepoReadyCachedRepoStillRefreshesSettings(t *testing.T) {
 	d.workspaces["ws-1"] = newWorkspaceState(
 		"ws-1",
 		nil,
-		[]RepoData{{URL: sourceRepo}},
+		[]protocol.TaskRepository{{URL: sourceRepo}},
 		json.RawMessage(`{"github_enabled":true,"co_authored_by_enabled":true}`),
 	)
 	if !d.workspaceCoAuthoredByEnabled("ws-1") {
@@ -1703,13 +1705,13 @@ func TestEnsureRepoReadyTrimsURL(t *testing.T) {
 	sourceRepo := createDaemonTestRepo(t)
 	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
 		WorkspaceID:  "ws-1",
-		Repos:        []RepoData{{URL: sourceRepo}},
+		Repos:        []protocol.TaskRepository{{URL: sourceRepo}},
 		ReposVersion: "v2",
 	})
 	if err := d.repoCache.Sync("ws-1", []repocache.RepoInfo{{URL: sourceRepo}}); err != nil {
 		t.Fatalf("seed repo cache: %v", err)
 	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, []RepoData{{URL: sourceRepo}}, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, []protocol.TaskRepository{{URL: sourceRepo}}, nil)
 
 	// URL with trailing whitespace should still resolve to the cached repo.
 	if err := d.ensureRepoReady(context.Background(), "ws-1", "  "+sourceRepo+"  "); err != nil {
@@ -1727,7 +1729,7 @@ func TestEnsureRepoReadyRefreshesOnMiss(t *testing.T) {
 	sourceRepo := createDaemonTestRepo(t)
 	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
 		WorkspaceID:  "ws-1",
-		Repos:        []RepoData{{URL: sourceRepo}},
+		Repos:        []protocol.TaskRepository{{URL: sourceRepo}},
 		ReposVersion: "v2",
 	})
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
@@ -1758,7 +1760,7 @@ func TestRegisterTaskReposAllowsProjectOnlyURL(t *testing.T) {
 		// project-only URL must NOT depend on this for allowlist membership.
 		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{},
+			Repos:        []protocol.TaskRepository{},
 			ReposVersion: "v1",
 		})
 	})
@@ -1766,7 +1768,7 @@ func TestRegisterTaskReposAllowsProjectOnlyURL(t *testing.T) {
 	// the only repo URL the agent should be able to check out.
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 
-	d.registerTaskRepos("ws-1", []RepoData{{URL: sourceRepo}})
+	d.registerTaskRepos("ws-1", []protocol.TaskRepository{{URL: sourceRepo}})
 
 	// The async clone goroutine in registerTaskRepos may not have finished;
 	// poll briefly until the cache is populated so the test isn't racy.
@@ -1808,12 +1810,12 @@ func TestRegisterTaskReposSurvivesWorkspaceRefresh(t *testing.T) {
 	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{},
+			Repos:        []protocol.TaskRepository{},
 			ReposVersion: "v2",
 		})
 	})
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
-	d.registerTaskRepos("ws-1", []RepoData{{URL: sourceRepo}})
+	d.registerTaskRepos("ws-1", []protocol.TaskRepository{{URL: sourceRepo}})
 
 	// Wait for the registration to populate the cache.
 	deadline := time.Now().Add(5 * time.Second)
@@ -1836,7 +1838,7 @@ func TestEnsureRepoReadyReturnsNotConfigured(t *testing.T) {
 	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{},
+			Repos:        []protocol.TaskRepository{},
 			ReposVersion: "v1",
 		})
 	})
@@ -1855,7 +1857,7 @@ func TestEnsureRepoReadyReportsSyncFailure(t *testing.T) {
 	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{{URL: missingRepo}},
+			Repos:        []protocol.TaskRepository{{URL: missingRepo}},
 			ReposVersion: "v1",
 		})
 	})
@@ -1876,7 +1878,7 @@ func TestEnsureRepoReadyConcurrentMissRefreshesOnce(t *testing.T) {
 	sourceRepo := createDaemonTestRepo(t)
 	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
 		WorkspaceID:  "ws-1",
-		Repos:        []RepoData{{URL: sourceRepo}},
+		Repos:        []protocol.TaskRepository{{URL: sourceRepo}},
 		ReposVersion: "v2",
 	})
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
@@ -2314,7 +2316,7 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 	runner := taskRunner(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		return TaskResult{
 			Status: "completed",
-			Usage: []TaskUsageEntry{
+			Usage: []protocol.TaskUsage{
 				{Provider: "anthropic", Model: "claude-opus-4-6", InputTokens: 100, OutputTokens: 50},
 			},
 		}, nil
@@ -2325,7 +2327,7 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 		ID:        "task-abc",
 		RuntimeID: "rt-1",
 		IssueID:   "issue-xyz",
-		Agent:     &AgentData{Name: "test-agent"},
+		Agent:     &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	d.handleTask(context.Background(), task, 0)
@@ -2393,7 +2395,7 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 		<-runCtx.Done()
 		return TaskResult{
 			Status: "aborted",
-			Usage: []TaskUsageEntry{
+			Usage: []protocol.TaskUsage{
 				{Provider: "anthropic", Model: "claude-opus-4-6", InputTokens: 200, OutputTokens: 80},
 			},
 		}, nil
@@ -2404,7 +2406,7 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 		ID:        "task-poll",
 		RuntimeID: "rt-1",
 		IssueID:   "issue-poll",
-		Agent:     &AgentData{Name: "test-agent"},
+		Agent:     &protocol.TaskAgent{Name: "test-agent"},
 	}
 
 	d.handleTask(context.Background(), task, 0)

@@ -25,9 +25,9 @@ import (
 // inventory and the subset that can be checked out as repositories. The first
 // repository branch/ref hint is returned separately for issue execution-space
 // setup; callers that do not create an execution space can ignore it.
-func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData, []RepoData, string, error) {
-	resources := make([]ProjectResourceData, 0, len(rows))
-	repos := make([]RepoData, 0, len(rows))
+func projectResourcesForClaim(rows []db.ProjectResource) ([]protocol.TaskProjectResource, []protocol.TaskRepository, string, error) {
+	resources := make([]protocol.TaskProjectResource, 0, len(rows))
+	repos := make([]protocol.TaskRepository, 0, len(rows))
 	repoRef := ""
 	for _, row := range rows {
 		label := ""
@@ -38,7 +38,7 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("project resource %s: %w", uuidToString(row.ID), err)
 		}
-		resources = append(resources, ProjectResourceData{
+		resources = append(resources, protocol.TaskProjectResource{
 			ID:           uuidToString(row.ID),
 			ResourceType: row.ResourceType,
 			ResourceRef:  ref,
@@ -54,7 +54,7 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 			if err := json.Unmarshal(ref, &payload); err != nil {
 				return nil, nil, "", fmt.Errorf("decode normalized GitHub project resource %s: %w", uuidToString(row.ID), err)
 			}
-			repos = append(repos, RepoData{URL: payload.URL})
+			repos = append(repos, protocol.TaskRepository{URL: payload.URL})
 			if repoRef == "" {
 				repoRef = strings.TrimSpace(payload.DefaultBranchHint)
 			}
@@ -69,7 +69,7 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 				return nil, nil, "", fmt.Errorf("decode normalized Gongfeng project resource %s: %w", uuidToString(row.ID), err)
 			}
 			if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-				repos = append(repos, RepoData{URL: cloneURL})
+				repos = append(repos, protocol.TaskRepository{URL: cloneURL})
 				if repoRef == "" {
 					repoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
 				}
@@ -177,7 +177,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
 		runtimeConfig = json.RawMessage(agent.RuntimeConfig)
 	}
-	resp.Agent = &TaskAgentData{
+	resp.Agent = &protocol.TaskAgent{
 		ID:            uuidToString(agent.ID),
 		Name:          agent.Name,
 		Instructions:  agent.Instructions,
@@ -285,7 +285,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			suppressIssueReposForRole = true
 		}
 
-		var projectRepos []RepoData
+		var projectRepos []protocol.TaskRepository
 		projectRepoRef := ""
 		if issue.ProjectID.Valid {
 			resp.ProjectID = uuidToString(issue.ProjectID)
@@ -325,7 +325,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.Repos = projectRepos
 		}
 		if !suppressIssueReposForRole && len(projectRepos) > 0 {
-			resp.IssueExecutionSpace = &IssueExecutionSpaceData{
+			resp.IssueExecutionSpace = &protocol.TaskIssueExecutionSpace{
 				Enabled:        true,
 				IssueID:        uuidToString(issue.ID),
 				PrimaryRepoURL: projectRepos[0].URL,
@@ -610,7 +610,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			// it would for an issue-bound task: the prompt template can name
 			// the project, and `multica repo checkout` sees the project's
 			// github_repo resources instead of the workspace fallback.
-			var projectRepos []RepoData
+			var projectRepos []protocol.TaskRepository
 			if qc.ProjectID != "" {
 				projectUUID, err := util.ParseUUID(qc.ProjectID)
 				if err != nil {
@@ -764,7 +764,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		resp.WorkspaceContext = workspace.Context.String
 	}
 	if len(resp.Repos) == 0 && !suppressIssueReposForRole && workspace.Repos != nil {
-		var repos []RepoData
+		var repos []protocol.TaskRepository
 		if err := json.Unmarshal(workspace.Repos, &repos); err != nil {
 			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "workspace repos", err)
 			outcome = "error_build"

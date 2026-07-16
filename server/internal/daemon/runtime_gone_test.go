@@ -144,7 +144,7 @@ func newHandleRuntimeGoneFixture(t *testing.T) *handleRuntimeGoneFixture {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(RegisterResponse{
 				Runtimes: []Runtime{{ID: "rt-new", Name: "Claude", Provider: "claude", Status: "online"}},
-				Repos:    []RepoData{},
+				Repos:    []protocol.TaskRepository{},
 			})
 		case strings.HasSuffix(r.URL.Path, "/recover-orphans"):
 			w.WriteHeader(http.StatusOK)
@@ -377,7 +377,7 @@ func newMultiProviderRegisterFixture(t *testing.T, providers map[string]string) 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(RegisterResponse{
 				Runtimes: runtimes,
-				Repos:    []RepoData{},
+				Repos:    []protocol.TaskRepository{},
 			})
 		case strings.HasSuffix(r.URL.Path, "/recover-orphans"):
 			w.WriteHeader(http.StatusOK)

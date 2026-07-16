@@ -12,6 +12,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -256,7 +257,7 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
-func coordinatorNeedsInlineSystemPrompt(provider string, policy TaskExecutionPolicy) bool {
+func coordinatorNeedsInlineSystemPrompt(provider string, policy executionpolicy.Policy) bool {
 	return supportsClaudeFamilyToolEnvelope(provider) && policy.IsCoordinatorWithoutRepo()
 }
 

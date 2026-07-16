@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,7 +16,7 @@ import (
 // silently turning the skill into a lie agents act on.
 //
 // The evals live in a _test.go file on purpose: anything *inside* a skill
-// directory is walked into AgentSkillData.Files and shipped to agent machines
+// directory is walked into protocol.TaskSkill.Files and shipped to agent machines
 // (see loadBuiltinSkill). Tests must stay out of that payload.
 
 const (
@@ -511,7 +512,7 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 }
 
-func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
+func findSkill(t *testing.T, name string) (protocol.TaskSkill, bool) {
 	t.Helper()
 	for _, s := range loadBuiltinSkills() {
 		if s.Name == name {
@@ -519,10 +520,10 @@ func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
 		}
 	}
 	t.Errorf("built-in skill %q not found", name)
-	return AgentSkillData{}, false
+	return protocol.TaskSkill{}, false
 }
 
-func skillHasFile(skill AgentSkillData, path string) bool {
+func skillHasFile(skill protocol.TaskSkill, path string) bool {
 	for _, f := range skill.Files {
 		if f.Path == path {
 			return true

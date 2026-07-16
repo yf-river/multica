@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // TestSquadOperatingProtocolWarnsAgainstDualTrigger locks in the rule
@@ -1764,7 +1765,7 @@ func TestBuildSquadLeaderBriefing_MentionsRoundTrip(t *testing.T) {
 
 // claimAndDecodeAgent runs ClaimTaskByRuntime for the given runtime and
 // returns the agent block of the response. Fails the test on non-200.
-func claimAndDecodeAgent(t *testing.T, runtimeID string) *TaskAgentData {
+func claimAndDecodeAgent(t *testing.T, runtimeID string) *protocol.TaskAgent {
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-squad-briefing")
@@ -1775,7 +1776,7 @@ func claimAndDecodeAgent(t *testing.T, runtimeID string) *TaskAgentData {
 	}
 	var resp struct {
 		Task *struct {
-			Agent *TaskAgentData `json:"agent"`
+			Agent *protocol.TaskAgent `json:"agent"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {

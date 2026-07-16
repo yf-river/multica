@@ -18,7 +18,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -203,39 +202,6 @@ func preserveMaskedGatewayToken(incoming map[string]any, persistedRuntimeConfig 
 	gw["token"] = prev.Gateway.Token
 }
 
-// RepoData holds repository information included in claim responses so the
-// daemon can set up worktrees for each workspace repo.
-type RepoData struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
-}
-
-// ProjectResourceData is the wire shape for a project resource included in a
-// claim response. The daemon reads this list and writes it into the agent's
-// working directory so skills/agents can discover project-scoped context.
-//
-// resource_ref is type-specific JSON; the daemon doesn't interpret it beyond
-// well-known fields like url for github_repo. New types can be added without
-// changing this struct.
-type ProjectResourceData struct {
-	ID           string          `json:"id"`
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        string          `json:"label,omitempty"`
-}
-
-// IssueExecutionSpaceData tells the daemon to use one stable, issue-scoped
-// worktree for every agent task on the issue instead of a task-scoped scratch
-// workdir. The daemon owns the concrete local path because it is host-local.
-type IssueExecutionSpaceData struct {
-	Enabled        bool   `json:"enabled"`
-	IssueID        string `json:"issue_id"`
-	PrimaryRepoURL string `json:"primary_repo_url"`
-	Ref            string `json:"ref,omitempty"`
-}
-
-type TaskExecutionPolicyData = executionpolicy.Policy
-
 type AgentTaskResponse struct {
 	ID          string `json:"id"`
 	AgentID     string `json:"agent_id"`
@@ -247,33 +213,33 @@ type AgentTaskResponse struct {
 	// as `## Workspace Context` so every agent running in this workspace —
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
-	WorkspaceContext    string                      `json:"workspace_context,omitempty"`
-	ThreadName          string                      `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status              string                      `json:"status"`
-	Priority            int32                       `json:"priority"`
-	DispatchedAt        *string                     `json:"dispatched_at"`
-	StartedAt           *string                     `json:"started_at"`
-	CompletedAt         *string                     `json:"completed_at"`
-	Result              any                         `json:"result"`
-	Error               *string                     `json:"error"`
-	FailureReason       string                      `json:"failure_reason,omitempty"` // drives the task auto-retry policy
-	Attempt             int32                       `json:"attempt"`
-	MaxAttempts         int32                       `json:"max_attempts"`
-	ParentTaskID        *string                     `json:"parent_task_id,omitempty"`
-	IsLeaderTask        bool                        `json:"is_leader_task,omitempty"`
-	Agent               *TaskAgentData              `json:"agent,omitempty"`
-	Repos               []RepoData                  `json:"repos,omitempty"`
-	ProjectID           string                      `json:"project_id,omitempty"`        // issue's project, when present
-	ProjectTitle        string                      `json:"project_title,omitempty"`     // for surfacing in agent context
-	ProjectResources    []ProjectResourceData       `json:"project_resources,omitempty"` // resources attached to the project
-	IssueExecutionSpace *IssueExecutionSpaceData    `json:"issue_execution_space,omitempty"`
-	ExecutionPolicy     *TaskExecutionPolicyData    `json:"execution_policy,omitempty"`
-	SourceContext       *protocol.TaskSourceContext `json:"source_context,omitempty"` // structured source/MCP context for TAPD/Gongfeng-backed tasks
-	SourceSummaryPrompt string                      `json:"source_summary_prompt,omitempty"`
-	CreatedAt           string                      `json:"created_at"`
-	PriorSessionID      string                      `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir        string                      `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
-	WorkDir             string                      `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
+	WorkspaceContext    string                            `json:"workspace_context,omitempty"`
+	ThreadName          string                            `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status              string                            `json:"status"`
+	Priority            int32                             `json:"priority"`
+	DispatchedAt        *string                           `json:"dispatched_at"`
+	StartedAt           *string                           `json:"started_at"`
+	CompletedAt         *string                           `json:"completed_at"`
+	Result              any                               `json:"result"`
+	Error               *string                           `json:"error"`
+	FailureReason       string                            `json:"failure_reason,omitempty"` // drives the task auto-retry policy
+	Attempt             int32                             `json:"attempt"`
+	MaxAttempts         int32                             `json:"max_attempts"`
+	ParentTaskID        *string                           `json:"parent_task_id,omitempty"`
+	IsLeaderTask        bool                              `json:"is_leader_task,omitempty"`
+	Agent               *protocol.TaskAgent               `json:"agent,omitempty"`
+	Repos               []protocol.TaskRepository         `json:"repos,omitempty"`
+	ProjectID           string                            `json:"project_id,omitempty"`        // issue's project, when present
+	ProjectTitle        string                            `json:"project_title,omitempty"`     // for surfacing in agent context
+	ProjectResources    []protocol.TaskProjectResource    `json:"project_resources,omitempty"` // resources attached to the project
+	IssueExecutionSpace *protocol.TaskIssueExecutionSpace `json:"issue_execution_space,omitempty"`
+	ExecutionPolicy     *executionpolicy.Policy           `json:"execution_policy,omitempty"`
+	SourceContext       *protocol.TaskSourceContext       `json:"source_context,omitempty"` // structured source/MCP context for TAPD/Gongfeng-backed tasks
+	SourceSummaryPrompt string                            `json:"source_summary_prompt,omitempty"`
+	CreatedAt           string                            `json:"created_at"`
+	PriorSessionID      string                            `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir        string                            `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	WorkDir             string                            `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
 	// RelativeWorkDir is a privacy-safe display form of WorkDir intended for
 	// the UI. For standard tasks it strips the daemon's workspaces root so
 	// the user sees `<wsUUID>/<taskShort>/workdir`; for local_directory
@@ -350,26 +316,6 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
-}
-
-// TaskAgentData holds agent info included in claim responses so the daemon
-// can set up the execution environment (branch naming, skill files, instructions).
-type TaskAgentData struct {
-	ID            string                   `json:"id"`
-	Name          string                   `json:"name"`
-	Instructions  string                   `json:"instructions"`
-	Skills        []service.AgentSkillData `json:"skills,omitempty"`
-	CustomEnv     map[string]string        `json:"custom_env,omitempty"`
-	CustomArgs    []string                 `json:"custom_args,omitempty"`
-	McpConfig     json.RawMessage          `json:"mcp_config,omitempty"`
-	Model         string                   `json:"model,omitempty"`
-	ThinkingLevel string                   `json:"thinking_level,omitempty"`
-	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The
-	// daemon decodes it per-provider — e.g. the openclaw backend reads
-	// `mode` + `gateway.*` to choose between embedded and gateway routing
-	// (issue #3260). Other providers ignore the payload entirely. Sent
-	// raw so the daemon can evolve its schema without a server roundtrip.
-	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded

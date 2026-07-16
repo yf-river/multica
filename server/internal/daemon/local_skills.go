@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -32,12 +33,12 @@ type runtimeLocalSkillSummary struct {
 }
 
 type runtimeLocalSkillBundle struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Content     string          `json:"content"`
-	SourcePath  string          `json:"source_path"`
-	Provider    string          `json:"provider"`
-	Files       []SkillFileData `json:"files,omitempty"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description,omitempty"`
+	Content     string                   `json:"content"`
+	SourcePath  string                   `json:"source_path"`
+	Provider    string                   `json:"provider"`
+	Files       []protocol.TaskSkillFile `json:"files,omitempty"`
 }
 
 // localSkillRootsForProvider returns the ordered user-level skill roots
@@ -168,8 +169,8 @@ func readLocalSkillMainFile(skillDir string) (string, error) {
 	return string(content), nil
 }
 
-func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileData, error) {
-	files := make([]SkillFileData, 0)
+func collectLocalSkillFiles(skillDir string, includeContent bool) ([]protocol.TaskSkillFile, error) {
+	files := make([]protocol.TaskSkillFile, 0)
 	var totalSize int64
 
 	// filepath.WalkDir does not follow a symlinked root, so when the runtime
@@ -226,7 +227,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 			return fmt.Errorf("local skill exceeds %d bytes in total", maxLocalSkillBundleSize)
 		}
 
-		file := SkillFileData{Path: filepath.ToSlash(rel)}
+		file := protocol.TaskSkillFile{Path: filepath.ToSlash(rel)}
 		if includeContent {
 			content, err := os.ReadFile(path)
 			if err != nil {

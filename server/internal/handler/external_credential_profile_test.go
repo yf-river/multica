@@ -668,7 +668,7 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	var claim struct {
 		Task *struct {
 			SourceContext *protocol.TaskSourceContext `json:"source_context"`
-			Agent         *TaskAgentData              `json:"agent"`
+			Agent         *protocol.TaskAgent         `json:"agent"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&claim); err != nil {

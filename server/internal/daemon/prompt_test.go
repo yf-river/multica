@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -328,7 +329,7 @@ func TestBuildQuickCreatePromptSquadDefaultsToSquad(t *testing.T) {
 	)
 	out := buildQuickCreatePrompt(Task{
 		QuickCreatePrompt: "fix the login button color",
-		Agent:             &AgentData{ID: leaderID, Name: "leader-agent"},
+		Agent:             &protocol.TaskAgent{ID: leaderID, Name: "leader-agent"},
 		SquadID:           squadID,
 		SquadName:         squadName,
 	})
@@ -486,7 +487,7 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 		TriggerCommentContent: "LGTM",
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
@@ -509,7 +510,7 @@ func TestBuildPromptCoordinatorCommentUsesFinalOutput(t *testing.T) {
 		TriggerCommentContent: "确认按建议推进",
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKind:      "coordinator",
 			CanAccessRepo: false,
 		},
@@ -544,7 +545,7 @@ func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
 		TriggerCommentContent: "请产出 03-task-split",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "PM-项目经理",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKey:       "03-task-split",
 			RoleKind:      "planning_stage",
 			CanAccessRepo: true,
@@ -582,7 +583,7 @@ func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
 		TriggerCommentContent: "Deploy complete.",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "deploy-boy",
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
@@ -618,8 +619,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "please [/deploy](slash://skill/abc-123) this",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "abc-123", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "abc-123", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -635,8 +636,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/hacker-skill](slash://skill/evil-id)",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "good-id", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "good-id", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -649,8 +650,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/deploy](slash://skill/wrong-id)",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "real-id", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "real-id", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -663,8 +664,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/spoofed-name](slash://skill/real-id)",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "real-id", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "real-id", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -683,8 +684,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/deploy](slash://skill/a) and [/deploy](slash://skill/a) again",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "a", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "a", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -697,7 +698,7 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "just a normal message",
-			Agent:         &AgentData{Skills: []SkillData{{ID: "a", Name: "deploy"}}},
+			Agent:         &protocol.TaskAgent{Skills: []protocol.TaskSkill{{ID: "a", Name: "deploy"}}},
 		}
 		out := buildChatPrompt(task)
 		if strings.Contains(out, "Explicitly selected skills") {
@@ -709,7 +710,7 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/deploy](slash://skill/abc-123)",
-			Agent:         &AgentData{},
+			Agent:         &protocol.TaskAgent{},
 		}
 		out := buildChatPrompt(task)
 		if strings.Contains(out, "Explicitly selected skills") {
@@ -750,7 +751,7 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 		TriggerCommentContent: "LGTM",
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Instructions: "Some instructions without the squad marker",
 		},
 	}

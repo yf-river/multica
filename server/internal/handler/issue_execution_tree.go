@@ -90,9 +90,9 @@ type issueExecutionNodeResponse struct {
 	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
 	Artifacts       []AgentTaskArtifactResponse               `json:"artifacts"`
 	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
-	ManualComments  []issueCommentBriefResponse                       `json:"manual_comments,omitempty"`
-	AgentComments   []issueCommentBriefResponse                       `json:"agent_comments,omitempty"`
-	ActivityLogs    []issueActivityBriefResponse                      `json:"activity_logs,omitempty"`
+	ManualComments  []issueCommentBriefResponse               `json:"manual_comments,omitempty"`
+	AgentComments   []issueCommentBriefResponse               `json:"agent_comments,omitempty"`
+	ActivityLogs    []issueActivityBriefResponse              `json:"activity_logs,omitempty"`
 	Children        []issueExecutionNodeResponse              `json:"children"`
 }
 
@@ -201,10 +201,10 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		}
 		agentID := uuidToString(task.AgentID)
 		if name, ok := agentNameByID[agentID]; ok {
-			resp.Agent = &TaskAgentData{ID: agentID, Name: name}
+			resp.Agent = &protocol.TaskAgent{ID: agentID, Name: name}
 		} else if agent, err := h.Queries.GetAgent(ctx, task.AgentID); err == nil {
 			agentNameByID[agentID] = agent.Name
-			resp.Agent = &TaskAgentData{ID: agentID, Name: agent.Name}
+			resp.Agent = &protocol.TaskAgent{ID: agentID, Name: agent.Name}
 		}
 		taskResp = append(taskResp, resp)
 		messages, err := h.Queries.ListTaskMessages(ctx, task.ID)

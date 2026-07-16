@@ -473,11 +473,11 @@ type agentSkillReader interface {
 	ListSkillFiles(context.Context, pgtype.UUID) ([]db.SkillFile, error)
 }
 
-func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) ([]AgentSkillData, error) {
+func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) ([]protocol.TaskSkill, error) {
 	return loadAgentSkills(ctx, s.Queries, agentID)
 }
 
-func loadAgentSkills(ctx context.Context, queries agentSkillReader, agentID pgtype.UUID) ([]AgentSkillData, error) {
+func loadAgentSkills(ctx context.Context, queries agentSkillReader, agentID pgtype.UUID) ([]protocol.TaskSkill, error) {
 	skills, err := queries.ListAgentSkills(ctx, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("list agent skills: %w", err)
@@ -486,9 +486,9 @@ func loadAgentSkills(ctx context.Context, queries agentSkillReader, agentID pgty
 		return nil, nil
 	}
 
-	result := make([]AgentSkillData, 0, len(skills))
+	result := make([]protocol.TaskSkill, 0, len(skills))
 	for _, sk := range skills {
-		data := AgentSkillData{
+		data := protocol.TaskSkill{
 			ID:          util.UUIDToString(sk.ID),
 			Name:        sk.Name,
 			Description: sk.Description,
@@ -499,26 +499,11 @@ func loadAgentSkills(ctx context.Context, queries agentSkillReader, agentID pgty
 			return nil, fmt.Errorf("list files for skill %s: %w", util.UUIDToString(sk.ID), err)
 		}
 		for _, f := range files {
-			data.Files = append(data.Files, AgentSkillFileData{Path: f.Path, Content: f.Content})
+			data.Files = append(data.Files, protocol.TaskSkillFile{Path: f.Path, Content: f.Content})
 		}
 		result = append(result, data)
 	}
 	return result, nil
-}
-
-// AgentSkillData represents a skill for task execution responses.
-type AgentSkillData struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Description string               `json:"description,omitempty"`
-	Content     string               `json:"content"`
-	Files       []AgentSkillFileData `json:"files,omitempty"`
-}
-
-// AgentSkillFileData represents a supporting file within a skill.
-type AgentSkillFileData struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
 }
 
 // ComputeChatElapsedMs returns the wall-clock duration from task creation

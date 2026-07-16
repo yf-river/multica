@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (d *Daemon) tryClaimRegisterSlot(workspaceID string, entryAt, now time.Time) bool {
@@ -663,7 +664,7 @@ func profileSetSignature(profiles []RuntimeProfile) string {
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
-func newWorkspaceState(workspaceID string, runtimeIDs []string, repos []RepoData, settings json.RawMessage) *workspaceState {
+func newWorkspaceState(workspaceID string, runtimeIDs []string, repos []protocol.TaskRepository, settings json.RawMessage) *workspaceState {
 	return &workspaceState{
 		workspaceID:     workspaceID,
 		runtimeIDs:      runtimeIDs,
@@ -672,7 +673,7 @@ func newWorkspaceState(workspaceID string, runtimeIDs []string, repos []RepoData
 	}
 }
 
-func repoAllowlist(repos []RepoData) map[string]struct{} {
+func repoAllowlist(repos []protocol.TaskRepository) map[string]struct{} {
 	allowed := make(map[string]struct{}, len(repos))
 	for _, repo := range repos {
 		if repo.URL == "" {
@@ -749,7 +750,7 @@ func (d *Daemon) workspaceCoAuthoredByEnabled(workspaceID string) bool {
 // idempotent. Called from runTask before the agent spawns so
 // `multica repo checkout` accepts project-only URLs without an extra round
 // trip back to GetWorkspaceRepos (which doesn't carry project resources).
-func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
+func (d *Daemon) registerTaskRepos(workspaceID string, repos []protocol.TaskRepository) {
 	if len(repos) == 0 {
 		return
 	}
@@ -786,12 +787,12 @@ func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
 	}
 	d.mu.Unlock()
 
-	toSync := make([]RepoData, 0, len(candidates))
+	toSync := make([]protocol.TaskRepository, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.tracked && d.repoCache != nil && d.repoCache.Lookup(workspaceID, candidate.url) != "" {
 			continue
 		}
-		toSync = append(toSync, RepoData{URL: candidate.url})
+		toSync = append(toSync, protocol.TaskRepository{URL: candidate.url})
 	}
 
 	if d.repoCache != nil && len(toSync) > 0 {
@@ -807,7 +808,7 @@ func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
 	}
 }
 
-func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []RepoData) {
+func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []protocol.TaskRepository) {
 	if d.repoCache == nil {
 		return
 	}

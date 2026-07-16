@@ -13,6 +13,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -58,7 +59,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	agentName := "agent"
 	var agentID string
-	var skills []SkillData
+	var skills []protocol.TaskSkill
 	var instructions string
 	if task.Agent != nil {
 		agentID = task.Agent.ID
@@ -548,12 +549,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	)
 
 	// Convert agent usage map to task usage entries.
-	var usageEntries []TaskUsageEntry
+	var usageEntries []protocol.TaskUsage
 	for model, u := range result.Usage {
 		if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
 			continue
 		}
-		usageEntries = append(usageEntries, TaskUsageEntry{
+		usageEntries = append(usageEntries, protocol.TaskUsage{
 			Provider:         provider,
 			Model:            model,
 			InputTokens:      u.InputTokens,

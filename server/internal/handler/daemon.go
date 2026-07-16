@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ---------------------------------------------------------------------------
@@ -156,18 +157,18 @@ type DaemonRegisterRequest struct {
 }
 
 type daemonWorkspaceReposResponse struct {
-	WorkspaceID  string          `json:"workspace_id"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	WorkspaceID  string                    `json:"workspace_id"`
+	Repos        []protocol.TaskRepository `json:"repos"`
+	ReposVersion string                    `json:"repos_version"`
+	Settings     json.RawMessage           `json:"settings,omitempty"`
 }
 
-func normalizeWorkspaceRepos(repos []RepoData) []RepoData {
+func normalizeWorkspaceRepos(repos []protocol.TaskRepository) []protocol.TaskRepository {
 	if len(repos) == 0 {
-		return []RepoData{}
+		return []protocol.TaskRepository{}
 	}
 
-	normalized := make([]RepoData, 0, len(repos))
+	normalized := make([]protocol.TaskRepository, 0, len(repos))
 	seen := make(map[string]struct{}, len(repos))
 	for _, repo := range repos {
 		url := strings.TrimSpace(repo.URL)
@@ -178,12 +179,12 @@ func normalizeWorkspaceRepos(repos []RepoData) []RepoData {
 			continue
 		}
 		seen[url] = struct{}{}
-		normalized = append(normalized, RepoData{URL: url, Description: repo.Description})
+		normalized = append(normalized, protocol.TaskRepository{URL: url, Description: repo.Description})
 	}
 	return normalized
 }
 
-func workspaceReposVersion(repos []RepoData) string {
+func workspaceReposVersion(repos []protocol.TaskRepository) string {
 	urls := make([]string, 0, len(repos))
 	for _, repo := range repos {
 		if repo.URL == "" {
@@ -196,14 +197,14 @@ func workspaceReposVersion(repos []RepoData) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func parseWorkspaceRepos(raw []byte) []RepoData {
+func parseWorkspaceRepos(raw []byte) []protocol.TaskRepository {
 	if len(raw) == 0 {
-		return []RepoData{}
+		return []protocol.TaskRepository{}
 	}
 
-	var repos []RepoData
+	var repos []protocol.TaskRepository
 	if err := json.Unmarshal(raw, &repos); err != nil {
-		return []RepoData{}
+		return []protocol.TaskRepository{}
 	}
 	return normalizeWorkspaceRepos(repos)
 }

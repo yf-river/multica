@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 //go:embed builtin_skills
@@ -20,17 +22,17 @@ const builtinSkillsRoot = "builtin_skills"
 // Layout: builtin_skills/<name>/SKILL.md plus optional supporting files. The
 // <name> directory carries a "multica-" prefix so its on-disk slug can never
 // collide with a workspace skill a user authored (see writeSkillFiles, which
-// derives the skill directory from AgentSkillData.Name).
-func (s *TaskService) BuiltinSkills() []AgentSkillData {
+// derives the skill directory from protocol.TaskSkill.Name).
+func (s *TaskService) BuiltinSkills() []protocol.TaskSkill {
 	return loadBuiltinSkills()
 }
 
-func loadBuiltinSkills() []AgentSkillData {
+func loadBuiltinSkills() []protocol.TaskSkill {
 	entries, err := fs.ReadDir(builtinSkillsFS, builtinSkillsRoot)
 	if err != nil {
 		return nil
 	}
-	var skills []AgentSkillData
+	var skills []protocol.TaskSkill
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -42,15 +44,15 @@ func loadBuiltinSkills() []AgentSkillData {
 	return skills
 }
 
-func loadBuiltinSkill(name string) (AgentSkillData, bool) {
+func loadBuiltinSkill(name string) (protocol.TaskSkill, bool) {
 	dir := path.Join(builtinSkillsRoot, name)
 	content, err := fs.ReadFile(builtinSkillsFS, path.Join(dir, "SKILL.md"))
 	if err != nil {
 		// A skill directory without a SKILL.md is malformed — skip it rather
 		// than ship an empty skill.
-		return AgentSkillData{}, false
+		return protocol.TaskSkill{}, false
 	}
-	skill := AgentSkillData{Name: name, Content: string(content)}
+	skill := protocol.TaskSkill{Name: name, Content: string(content)}
 	// Any other file in the directory becomes a supporting file, preserving
 	// its relative path so subdirectories (e.g. rules/styling.md) survive.
 	_ = fs.WalkDir(builtinSkillsFS, dir, func(p string, d fs.DirEntry, walkErr error) error {
@@ -65,7 +67,7 @@ func loadBuiltinSkill(name string) (AgentSkillData, bool) {
 		if readErr != nil {
 			return nil
 		}
-		skill.Files = append(skill.Files, AgentSkillFileData{Path: rel, Content: string(data)})
+		skill.Files = append(skill.Files, protocol.TaskSkillFile{Path: rel, Content: string(data)})
 		return nil
 	})
 	return skill, true
