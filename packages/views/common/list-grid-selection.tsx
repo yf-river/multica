@@ -1,11 +1,24 @@
 "use client";
 
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import { MoreHorizontal } from "lucide-react";
 import {
   ListGridCell,
   ListGridHeaderCell,
 } from "@multica/ui/components/ui/list-grid";
 import type { ComponentProps } from "react";
+
+export function ListGridRowMenuButton({ label }: { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
+    >
+      <MoreHorizontal className="size-4" />
+    </button>
+  );
+}
 
 export function toggleSelectedId(selectedIds: ReadonlySet<string>, id: string) {
   const next = new Set(selectedIds);

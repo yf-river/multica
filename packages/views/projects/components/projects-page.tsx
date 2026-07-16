@@ -8,7 +8,6 @@ import {
   Filter,
   FolderKanban,
   LayoutGrid,
-  MoreHorizontal,
   Pin,
   PinOff,
   Plus,
@@ -48,6 +47,7 @@ import {
 } from "../../common/list-toolbar";
 import {
   ListGridCheckboxCell,
+  ListGridRowMenuButton,
   ListGridSelectAllHeaderCell,
   ListGridToggleableHeaderCell,
   getListGridSelectionState,
@@ -233,15 +233,7 @@ function ProjectRowActions({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.page.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.page.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem onClick={togglePin}>

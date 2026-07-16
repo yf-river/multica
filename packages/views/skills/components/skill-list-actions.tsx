@@ -5,7 +5,6 @@ import {
   Check,
   ChevronRight,
   Loader2,
-  MoreHorizontal,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -45,6 +44,7 @@ import {
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { cn } from "@multica/ui/lib/utils";
 import { ListBatchToolbar } from "../../common/list-toolbar";
+import { ListGridRowMenuButton } from "../../common/list-grid-selection";
 import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 
@@ -473,15 +473,7 @@ export function SkillRowActions({
     >
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.actions.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.actions.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuItem onClick={() => setAddOpen(true)}>

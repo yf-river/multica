@@ -9,7 +9,6 @@ import {
   ChevronDown,
   Filter,
   Loader2,
-  MoreHorizontal,
   Plus,
   Users,
   X,
@@ -98,7 +97,10 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { ListGridToggleableHeaderCell } from "../../common/list-grid-selection";
+import {
+  ListGridRowMenuButton,
+  ListGridToggleableHeaderCell,
+} from "../../common/list-grid-selection";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
@@ -381,15 +383,7 @@ function SquadRowActions({ squad }: { squad: Squad }) {
     >
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.page.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.page.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-40">
           {isArchived ? (

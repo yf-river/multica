@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Loader2,
-  MoreHorizontal,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -63,6 +62,7 @@ import {
   pendingRuntimeCommandName,
 } from "./pending-runtime";
 import { useT } from "../../i18n";
+import { ListGridRowMenuButton } from "../../common/list-grid-selection";
 
 // The machine detail's runtimes table on the shared ListGrid. Paradigm
 // pieces are taken À LA CARTE here: subgrid template + var-width tracks +
@@ -448,15 +448,7 @@ export function RuntimeRowMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.list.row_actions_aria)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.list.row_actions_aria)} />}
         />
         <DropdownMenuContent align="end" className="w-40">
           <DropdownMenuItem

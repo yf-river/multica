@@ -3,7 +3,6 @@
 import { useState } from "react";
 import {
   Loader2,
-  MoreHorizontal,
   Pause,
   Play,
   Trash2,
@@ -31,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ListBatchToolbar } from "../../common/list-toolbar";
+import { ListGridRowMenuButton } from "../../common/list-grid-selection";
 import { useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
@@ -153,15 +153,7 @@ export function AutopilotRowActions({ row }: { row: Autopilot }) {
     >
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.actions.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.actions.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-48">
           {row.status === "active" && (
