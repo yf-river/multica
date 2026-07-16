@@ -582,9 +582,9 @@ func seedAttachmentURL(t *testing.T, rawURL, filename, contentType string, sizeB
 	return id
 }
 
-func attachmentResponseForURL(t *testing.T, rawURL, filename, contentType string, sizeBytes int64) (string, AttachmentResponse) {
+func attachmentResponseForURL(t *testing.T, rawURL, filename string) (string, AttachmentResponse) {
 	t.Helper()
-	id := seedAttachmentURL(t, rawURL, filename, contentType, sizeBytes)
+	id := seedAttachmentURL(t, rawURL, filename, "image/png", 1)
 	att, err := testHandler.Queries.GetAttachment(context.Background(), db.GetAttachmentParams{
 		ID:          parseUUID(id),
 		WorkspaceID: parseUUID(testWorkspaceID),
@@ -1111,7 +1111,7 @@ func TestBuildMarkdownURL_PublicCdnAbsoluteURLReusedVerbatim(t *testing.T) {
 	// without per-request auth. Without this, the new gate routes
 	// through the API endpoint to be safe.
 	useAttachmentResponseConfig(t, &mockStorage{}, "https://api.multica.test", nil)
-	_, resp := attachmentResponseForURL(t, "https://cdn.multica.test/uploads/abc.png", "abc.png", "image/png", 1)
+	_, resp := attachmentResponseForURL(t, "https://cdn.multica.test/uploads/abc.png", "abc.png")
 	if resp.MarkdownURL != "https://cdn.multica.test/uploads/abc.png" {
 		t.Fatalf("markdown_url = %q, want raw a.Url passthrough", resp.MarkdownURL)
 	}
@@ -1125,7 +1125,7 @@ func TestBuildMarkdownURL_PublicCdnAbsoluteURLReusedVerbatim(t *testing.T) {
 // load directly".
 func TestBuildMarkdownURL_PrivateBucketWithoutCdnDomainRoutesThroughAPIEndpoint(t *testing.T) {
 	useAttachmentResponseConfig(t, &mockStorageNoCdn{}, "https://api.multica.test", nil)
-	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png", "image/png", 1)
+	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png")
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q (private bucket without explicit CDN must not persist raw S3 URL)", resp.MarkdownURL, want)
@@ -1136,7 +1136,7 @@ func TestBuildMarkdownURL_CloudFrontSignedModeNeverPersistsRawStorageURL(t *test
 	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test", testCloudFrontSigner(t))
 
 	// Raw S3 URL — private bucket, not loadable directly by clients.
-	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png", "image/png", 1)
+	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png")
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q", resp.MarkdownURL, want)
@@ -1153,7 +1153,7 @@ func TestBuildMarkdownURL_RelativeStorageURLPrefixedWithPublicURL(t *testing.T) 
 	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test", nil)
 
 	// LocalStorage without LOCAL_UPLOAD_BASE_URL stores a site-relative URL.
-	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
+	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png")
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q", resp.MarkdownURL, want)
@@ -1162,7 +1162,7 @@ func TestBuildMarkdownURL_RelativeStorageURLPrefixedWithPublicURL(t *testing.T) 
 
 func TestBuildMarkdownURL_PublicURLUnsetFallsBackToSiteRelative(t *testing.T) {
 	useAttachmentResponseConfig(t, testHandler.Storage, "", nil)
-	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
+	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png")
 	want := "/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want site-relative fallback %q", resp.MarkdownURL, want)
@@ -1171,7 +1171,7 @@ func TestBuildMarkdownURL_PublicURLUnsetFallsBackToSiteRelative(t *testing.T) {
 
 func TestBuildMarkdownURL_StripsTrailingSlashOnPublicURL(t *testing.T) {
 	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test/", nil)
-	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png", "image/png", 1)
+	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png")
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want exactly one separator %q", resp.MarkdownURL, want)

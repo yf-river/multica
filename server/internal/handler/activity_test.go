@@ -51,9 +51,9 @@ func createIssueForTimeline(t *testing.T, title string) string {
 }
 
 // seedTimelineEntries inserts <commentN> comments + <activityN> activities for
-// the given issue with ascending timestamps. Returns the inserted ids in the
-// order they were inserted (chronologically ascending).
-func seedTimelineEntries(t *testing.T, issueID string, commentN, activityN int) (commentIDs, activityIDs []string) {
+// the given issue with ascending timestamps and returns the comment ids in
+// chronological order.
+func seedTimelineEntries(t *testing.T, issueID string, commentN, activityN int) (commentIDs []string) {
 	t.Helper()
 	ctx := context.Background()
 	base := time.Now().UTC().Add(-time.Duration(commentN+activityN) * time.Minute)
@@ -71,23 +71,20 @@ func seedTimelineEntries(t *testing.T, issueID string, commentN, activityN int) 
 		commentIDs = append(commentIDs, id)
 	}
 	for i := 0; i < activityN; i++ {
-		var id string
 		ts := base.Add(time.Duration(commentN+i) * time.Minute)
-		if err := testPool.QueryRow(ctx, `
+		if _, err := testPool.Exec(ctx, `
 			INSERT INTO activity_log (workspace_id, issue_id, actor_type, actor_id, action, details, created_at)
 			VALUES ($1, $2, 'member', $3, 'status_changed', '{"from":"todo","to":"in_progress"}'::jsonb, $4)
-			RETURNING id
-		`, testWorkspaceID, issueID, testUserID, ts).Scan(&id); err != nil {
+		`, testWorkspaceID, issueID, testUserID, ts); err != nil {
 			t.Fatalf("seed activity %d: %v", i, err)
 		}
-		activityIDs = append(activityIDs, id)
 	}
 	return
 }
 
 func TestListTimeline_ReturnsAllEntriesAscending(t *testing.T) {
 	issueID := createIssueForTimeline(t, "All entries test")
-	commentIDs, _ := seedTimelineEntries(t, issueID, 5, 0)
+	commentIDs := seedTimelineEntries(t, issueID, 5, 0)
 
 	entries, status := fetchTimeline(t, issueID)
 	if status != http.StatusOK {

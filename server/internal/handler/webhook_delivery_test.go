@@ -20,11 +20,11 @@ import (
 
 const testSigningSecret = "this-is-a-test-secret-32-chars-x"
 
-func setSigningSecretViaHandler(t *testing.T, apID, triggerID, secret string) {
+func setSigningSecretViaHandler(t *testing.T, apID, triggerID string) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", fmt.Sprintf("/api/autopilots/%s/triggers/%s/signing-secret", apID, triggerID), map[string]any{
-		"signing_secret": secret,
+		"signing_secret": testSigningSecret,
 	})
 	req = withURLParams(req, "id", apID, "triggerId", triggerID)
 	testHandler.SetAutopilotTriggerSigningSecret(w, req)
@@ -189,7 +189,7 @@ func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
 func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	body := map[string]any{"hello": "world"}
 	w := postWebhook(t, *trig.WebhookToken, body, map[string]string{
@@ -227,7 +227,7 @@ func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing
 func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, nil)
 	if w.Code != http.StatusUnauthorized {
@@ -249,7 +249,7 @@ func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
 func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	bodyBytes := []byte(`{"hello":"world"}`)
 	sig := signBody(testSigningSecret, bodyBytes)
@@ -279,7 +279,7 @@ func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
 func TestSigningSecretNotEchoedInTriggerResponse(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	// GET the autopilot — trigger response embedded.
 	w := httptest.NewRecorder()
@@ -318,7 +318,7 @@ func TestSigningSecret_MinLengthEnforced(t *testing.T) {
 func TestSigningSecret_EmptyClearsSecret(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	// Now clear with empty string.
 	w := httptest.NewRecorder()
@@ -408,7 +408,7 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	// Send an invalid-signature request → rejected delivery created.
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"x": 1}, map[string]string{
@@ -596,7 +596,7 @@ func TestWebhookHandler_InvalidSignatureCountsAgainstRateLimit(t *testing.T) {
 	// signature check.
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
-	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
+	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	prev := testHandler.WebhookRateLimiter
 	testHandler.WebhookRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})

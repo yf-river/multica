@@ -40,7 +40,7 @@ func TestCreateIssueInvalidPriorityReturns400(t *testing.T) {
 }
 
 func TestUpdateIssueInvalidStatusReturns400(t *testing.T) {
-	issueID := createTestIssue(t, "update invalid status issue", "todo", "none")
+	issueID := createTestIssue(t, "update invalid status issue", "none")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 
 	w := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestUpdateIssueInvalidStatusReturns400(t *testing.T) {
 }
 
 func TestUpdateIssueInvalidPriorityReturns400(t *testing.T) {
-	issueID := createTestIssue(t, "update invalid priority issue", "todo", "none")
+	issueID := createTestIssue(t, "update invalid priority issue", "none")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 
 	w := httptest.NewRecorder()
@@ -66,9 +66,9 @@ func TestUpdateIssueInvalidPriorityReturns400(t *testing.T) {
 }
 
 func TestUpdateIssueRejectsCrossWorkspaceProject(t *testing.T) {
-	issueID := createTestIssue(t, "update foreign project issue", "todo", "none")
+	issueID := createTestIssue(t, "update foreign project issue", "none")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	_, foreignProjectID := createForeignProjectForIssueValidation(t, "update-foreign-project")
+	foreignProjectID := createForeignProjectForIssueValidation(t, "update-foreign-project")
 
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"project_id": foreignProjectID})
@@ -138,9 +138,9 @@ func TestBatchUpdateIssuesInvalidPriorityReturns400(t *testing.T) {
 }
 
 func TestBatchUpdateIssuesSkipsCrossWorkspaceProject(t *testing.T) {
-	issueID := createTestIssue(t, "batch foreign project issue", "todo", "none")
+	issueID := createTestIssue(t, "batch foreign project issue", "none")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-	_, foreignProjectID := createForeignProjectForIssueValidation(t, "batch-foreign-project")
+	foreignProjectID := createForeignProjectForIssueValidation(t, "batch-foreign-project")
 
 	updated := batchUpdateIssueCount(t, map[string]any{
 		"issue_ids": []string{issueID},
@@ -191,7 +191,7 @@ func batchUpdateIssueCount(t *testing.T, body map[string]any) int {
 	return response.Updated
 }
 
-func createForeignProjectForIssueValidation(t *testing.T, slugSuffix string) (string, string) {
+func createForeignProjectForIssueValidation(t *testing.T, slugSuffix string) string {
 	t.Helper()
 	ctx := context.Background()
 	var workspaceID string
@@ -214,7 +214,7 @@ func createForeignProjectForIssueValidation(t *testing.T, slugSuffix string) (st
 	`, workspaceID, "Issue validation foreign project").Scan(&projectID); err != nil {
 		t.Fatalf("insert foreign project: %v", err)
 	}
-	return workspaceID, projectID
+	return projectID
 }
 
 func createIssueChainForValidationTest(t *testing.T, count int) []string {

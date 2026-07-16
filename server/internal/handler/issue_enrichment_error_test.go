@@ -12,7 +12,7 @@ func TestGetIssuePreservesEnrichmentFailures(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	issueID := createTestIssue(t, "issue enrichment failure", "todo", "none")
+	issueID := createTestIssue(t, "issue enrichment failure", "none")
 	for _, queryName := range []string{"ListLabelsForIssues", "ListIssueReactions", "ListAttachmentsByIssue"} {
 		t.Run(queryName, func(t *testing.T) {
 			h := *testHandler

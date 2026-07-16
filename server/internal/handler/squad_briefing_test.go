@@ -210,15 +210,15 @@ func seededLeaderAgent(t *testing.T) (id, name string) {
 	return id, name
 }
 
-// seededHumanMember returns the (member_row_id, user_id, user_name) of the
+// seededHumanMember returns the (user_id, user_name) of the
 // test fixture's human member in the workspace.
-func seededHumanMember(t *testing.T) (memberID, userID, userName string) {
+func seededHumanMember(t *testing.T) (userID, userName string) {
 	t.Helper()
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT m.id, u.id, u.name
+		SELECT u.id, u.name
 		FROM member m JOIN "user" u ON u.id = m.user_id
 		WHERE m.workspace_id = $1 ORDER BY m.created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&memberID, &userID, &userName); err != nil {
+	`, testWorkspaceID).Scan(&userID, &userName); err != nil {
 		t.Fatalf("load seeded member: %v", err)
 	}
 	return
@@ -256,8 +256,7 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 	addAgentMember(t, squad.ID, helper1, "implementer")
 	addAgentMember(t, squad.ID, helper2, "")
 
-	memberRowID, userID, userName := seededHumanMember(t)
-	_ = memberRowID
+	userID, userName := seededHumanMember(t)
 	addHumanMember(t, squad.ID, userID, "reviewer")
 
 	out, err := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
@@ -1737,8 +1736,7 @@ func TestBuildSquadLeaderBriefing_MentionsRoundTrip(t *testing.T) {
 	helper := createHandlerTestAgent(t, "Round Trip Bot", nil)
 	addAgentMember(t, squad.ID, helper, "")
 
-	memberRowID, userID, _ := seededHumanMember(t)
-	_ = memberRowID
+	userID, _ := seededHumanMember(t)
 	addHumanMember(t, squad.ID, userID, "")
 
 	out, err := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
@@ -1789,10 +1787,12 @@ func claimAndDecodeAgent(t *testing.T, runtimeID string) *protocol.TaskAgent {
 }
 
 // queueSquadIssueTaskFor creates an issue assigned to the squad and a queued
-// task for the given (agentID, runtimeID). Returns the issue + task IDs.
-func queueSquadIssueTaskFor(t *testing.T, squadID, agentID, runtimeID string, issueNumber int) (issueID, taskID string) {
+// task for the given (agentID, runtimeID).
+func queueSquadIssueTaskFor(t *testing.T, squadID, agentID, runtimeID string, issueNumber int) {
 	t.Helper()
 	ctx := context.Background()
+	var issueID string
+	var taskID string
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO issue (
 workspace_id, title, status, priority, creator_id, creator_type,
@@ -1813,7 +1813,6 @@ RETURNING id
 		t.Fatalf("queue task: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-	return
 }
 
 // TestClaimTask_LeaderGetsBriefing — when the squad leader claims a task on

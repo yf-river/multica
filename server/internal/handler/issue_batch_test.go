@@ -23,8 +23,8 @@ import (
 // {"updated": 0} immediately so the count matches reality.
 func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 	// Two fresh issues so we can also assert no fields actually changed.
-	a := createTestIssue(t, "BU-no-mut A", "todo", "low")
-	b := createTestIssue(t, "BU-no-mut B", "todo", "low")
+	a := createTestIssue(t, "BU-no-mut A", "low")
+	b := createTestIssue(t, "BU-no-mut B", "low")
 	t.Cleanup(func() { deleteTestIssue(t, a) })
 	t.Cleanup(func() { deleteTestIssue(t, b) })
 
@@ -94,8 +94,8 @@ func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 // TestBatchUpdateValidUpdatesPersistAndCount — positive case to lock in
 // happy-path behavior alongside the regression test above.
 func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
-	a := createTestIssue(t, "BU-ok A", "todo", "low")
-	b := createTestIssue(t, "BU-ok B", "todo", "low")
+	a := createTestIssue(t, "BU-ok A", "low")
+	b := createTestIssue(t, "BU-ok B", "low")
 	t.Cleanup(func() { deleteTestIssue(t, a) })
 	t.Cleanup(func() { deleteTestIssue(t, b) })
 
@@ -147,7 +147,7 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 }
 
 func TestBatchUpdateReportsEverySkippedItem(t *testing.T) {
-	issueID := createTestIssue(t, "BU-partial", "todo", "low")
+	issueID := createTestIssue(t, "BU-partial", "low")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	missingID := uuid.NewString()
 
@@ -182,7 +182,7 @@ func TestBatchUpdateReportsEverySkippedItem(t *testing.T) {
 }
 
 func TestBatchUpdateReportsInvalidFieldCodes(t *testing.T) {
-	issueID := createTestIssue(t, "BU-invalid-fields", "todo", "low")
+	issueID := createTestIssue(t, "BU-invalid-fields", "low")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 
 	cases := []struct {
@@ -226,12 +226,12 @@ func TestBatchUpdateReportsInvalidFieldCodes(t *testing.T) {
 
 // createTestIssue is a small helper to keep the table-driven cases clean.
 // Returns the new issue's id; caller is responsible for cleanup.
-func createTestIssue(t *testing.T, title, status, priority string) string {
+func createTestIssue(t *testing.T, title, priority string) string {
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
 		"title":    title,
-		"status":   status,
+		"status":   "todo",
 		"priority": priority,
 	})
 	testHandler.CreateIssue(w, req)

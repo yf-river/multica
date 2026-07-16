@@ -14,9 +14,8 @@ import (
 )
 
 // resolveCommentHTTP drives the POST /api/comments/{id}/resolve handler and
-// returns the decoded response. Mirrors the resolve path the web/desktop client
-// hits.
-func resolveCommentHTTP(t *testing.T, commentID string) CommentResponse {
+// mirrors the resolve path the web/desktop client hits.
+func resolveCommentHTTP(t *testing.T, commentID string) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/comments/"+commentID+"/resolve", nil)
@@ -29,7 +28,6 @@ func resolveCommentHTTP(t *testing.T, commentID string) CommentResponse {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode resolve response: %v", err)
 	}
-	return resp
 }
 
 // commentResolved reports whether a comment currently has resolved_at set,

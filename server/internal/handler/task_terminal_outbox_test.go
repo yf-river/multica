@@ -64,7 +64,7 @@ func TestCompleteTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
 	); err == nil {
 		t.Fatal("CompleteTask succeeded without a durable terminal event")
 	}
-	assertTaskStatus(t, fixture.TaskID, "running")
+	assertTaskRunning(t, fixture.TaskID)
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
@@ -97,7 +97,7 @@ func TestFailTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
 	); err == nil {
 		t.Fatal("FailTask succeeded without a durable terminal event")
 	}
-	assertTaskStatus(t, fixture.TaskID, "running")
+	assertTaskRunning(t, fixture.TaskID)
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
@@ -119,7 +119,7 @@ func TestFailStaleTasksRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) 
 	}); err == nil {
 		t.Fatal("FailStaleTasks succeeded without durable terminal events")
 	}
-	assertTaskStatus(t, fixture.TaskID, "running")
+	assertTaskRunning(t, fixture.TaskID)
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
@@ -130,7 +130,7 @@ func TestCancelTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
 	if _, err := testHandler.TaskService.CancelTask(context.Background(), util.MustParseUUID(fixture.TaskID)); err == nil {
 		t.Fatal("CancelTask succeeded without a durable terminal event")
 	}
-	assertTaskStatus(t, fixture.TaskID, "running")
+	assertTaskRunning(t, fixture.TaskID)
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
@@ -174,7 +174,7 @@ func assertNoTerminalTaskEvent(t *testing.T, taskID string) {
 	}
 }
 
-func assertTaskStatus(t *testing.T, taskID, want string) {
+func assertTaskRunning(t *testing.T, taskID string) {
 	t.Helper()
 	var status string
 	if err := testPool.QueryRow(context.Background(), `
@@ -182,7 +182,7 @@ func assertTaskStatus(t *testing.T, taskID, want string) {
 	`, taskID).Scan(&status); err != nil {
 		t.Fatalf("load task status: %v", err)
 	}
-	if status != want {
-		t.Fatalf("task status = %q, want %q", status, want)
+	if status != "running" {
+		t.Fatalf("task status = %q, want running", status)
 	}
 }

@@ -39,7 +39,7 @@ func installIssueTaskFailureTrigger(t *testing.T, operation, predicate string) {
 }
 
 func TestUpdateIssueRollsBackWhenTaskEnqueueFails(t *testing.T) {
-	issueID := createTestIssue(t, "atomic task enqueue", "todo", "medium")
+	issueID := createTestIssue(t, "atomic task enqueue", "medium")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	agentID := createHandlerTestAgent(t, "atomic-task-enqueue-agent-"+uuid.NewString(), nil)
 	installIssueTaskFailureTrigger(t, "INSERT", fmt.Sprintf("NEW.issue_id = '%s'::uuid", issueID))
@@ -68,7 +68,7 @@ func TestUpdateIssueRollsBackWhenTaskEnqueueFails(t *testing.T) {
 }
 
 func TestUpdateIssueRollsBackWhenTaskCancellationFails(t *testing.T) {
-	issueID := createTestIssue(t, "atomic task cancellation", "todo", "medium")
+	issueID := createTestIssue(t, "atomic task cancellation", "medium")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	agentID := createHandlerTestAgent(t, "atomic-task-cancel-agent-"+uuid.NewString(), nil)
 
@@ -104,7 +104,7 @@ func TestUpdateIssueRollsBackWhenTaskCancellationFails(t *testing.T) {
 }
 
 func TestBatchUpdateReportsTaskProjectionFailureWithoutCommitting(t *testing.T) {
-	issueID := createTestIssue(t, "atomic batch task enqueue", "todo", "medium")
+	issueID := createTestIssue(t, "atomic batch task enqueue", "medium")
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	agentID := createHandlerTestAgent(t, "atomic-batch-agent-"+uuid.NewString(), nil)
 	installIssueTaskFailureTrigger(t, "INSERT", fmt.Sprintf("NEW.issue_id = '%s'::uuid", issueID))

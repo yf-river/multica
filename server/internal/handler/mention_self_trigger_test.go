@@ -12,9 +12,9 @@ import (
 // @mention triggers: compute the mention trigger set, then enqueue it. Kept as
 // a test helper so these integration tests keep asserting enqueue side effects
 // without preserving a production wrapper that nothing else calls.
-func enqueueMentionedAgentTasksForTest(t *testing.T, ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, authorType, authorID string) {
+func enqueueMentionedAgentTasksForTest(t *testing.T, ctx context.Context, issue db.Issue, comment db.Comment, authorType, authorID string) {
 	t.Helper()
-	triggers, err := testHandler.computeMentionedAgentCommentTriggers(ctx, issue, comment.Content, parentComment, authorType, authorID, commentTriggerComputeOptions{})
+	triggers, err := testHandler.computeMentionedAgentCommentTriggers(ctx, issue, comment.Content, nil, authorType, authorID, commentTriggerComputeOptions{})
 	if err != nil {
 		t.Fatalf("compute mention triggers: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestEnqueueMentionedAgentTasks_SelfMentionCrossIssueEnqueues(t *testing.T) 
 		t.Fatalf("before: expected 0 pending tasks on parent issue, got %d", got)
 	}
 
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.IssueB, fx.CommentB, nil, "agent", fx.JID)
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.IssueB, fx.CommentB, "agent", fx.JID)
 
 	if got := countQueuedOrDispatched(t, fx.JID, fx.IssueBID); got != 1 {
 		t.Fatalf("after self-mention from another issue: expected 1 queued task on parent issue, got %d", got)
@@ -233,7 +233,7 @@ func TestEnqueueMentionedAgentTasks_SelfMentionWhileRunningQueuesFollowup(t *tes
 		t.Fatalf("before: expected 0 queued/dispatched tasks (only the running task), got %d", got)
 	}
 
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.IssueA, fx.CommentA, nil, "agent", fx.JID)
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.IssueA, fx.CommentA, "agent", fx.JID)
 
 	if got := countQueuedOrDispatched(t, fx.JID, fx.IssueAID); got != 1 {
 		t.Fatalf("after self-mention while running: expected 1 new queued follow-up, got %d", got)
@@ -276,7 +276,7 @@ func TestEnqueueMentionedAgentTasks_SelfMentionDedupesAgainstPendingTask(t *test
 				t.Fatalf("before: expected 1 pre-existing %s task, got %d", tc.status, before)
 			}
 
-			enqueueMentionedAgentTasksForTest(t, ctx, fx.IssueA, fx.CommentA, nil, "agent", fx.JID)
+			enqueueMentionedAgentTasksForTest(t, ctx, fx.IssueA, fx.CommentA, "agent", fx.JID)
 
 			after := countQueuedOrDispatched(t, fx.JID, fx.IssueAID)
 			if after != 1 {

@@ -313,7 +313,7 @@ func createDaemonTestProjectIssue(t *testing.T, projectID, title string) string 
 	return issueID
 }
 
-func createDaemonTestQueuedIssueTask(t *testing.T, agentID, runtimeID, issueID string, leader bool) string {
+func createDaemonTestQueuedIssueTask(t *testing.T, agentID, runtimeID, issueID string, leader bool) {
 	t.Helper()
 	var taskID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -325,7 +325,6 @@ func createDaemonTestQueuedIssueTask(t *testing.T, agentID, runtimeID, issueID s
 		t.Fatalf("create task: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-	return taskID
 }
 
 func claimDaemonTaskRecorder(t *testing.T, runtimeID, daemonID string) *httptest.ResponseRecorder {
@@ -4092,13 +4091,13 @@ func createEphemeralUser(t *testing.T, label string) string {
 // createEphemeralMember creates a throwaway user AND a member row in the
 // given workspace. Returns (userID, memberID). Both rows are cleaned up on
 // test exit.
-func createEphemeralMember(t *testing.T, workspaceID, label, role string) (string, string) {
+func createEphemeralMember(t *testing.T, workspaceID, label string) (string, string) {
 	t.Helper()
 	userID := createEphemeralUser(t, label)
 	var memberID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) RETURNING id
-	`, workspaceID, userID, role).Scan(&memberID); err != nil {
+	`, workspaceID, userID, "admin").Scan(&memberID); err != nil {
 		t.Fatalf("create ephemeral member: %v", err)
 	}
 	t.Cleanup(func() {
@@ -4177,7 +4176,7 @@ func TestMembershipCache_InvalidatedOnDeleteMember(t *testing.T) {
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
-	targetUserID, targetMemberID := createEphemeralMember(t, testWorkspaceID, "delete", "admin")
+	targetUserID, targetMemberID := createEphemeralMember(t, testWorkspaceID, "delete")
 	testHandler.MembershipCache.Set(ctx, targetUserID, testWorkspaceID)
 	if !testHandler.MembershipCache.Get(ctx, targetUserID, testWorkspaceID) {
 		t.Fatal("setup: expected cache hit after Set")
@@ -4208,7 +4207,7 @@ func TestMembershipCache_InvalidatedOnUpdateMember(t *testing.T) {
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
-	targetUserID, targetMemberID := createEphemeralMember(t, testWorkspaceID, "update", "admin")
+	targetUserID, targetMemberID := createEphemeralMember(t, testWorkspaceID, "update")
 	testHandler.MembershipCache.Set(ctx, targetUserID, testWorkspaceID)
 
 	w := httptest.NewRecorder()
@@ -4237,7 +4236,7 @@ func TestMembershipCache_InvalidatedOnLeaveWorkspace(t *testing.T) {
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
-	targetUserID, _ := createEphemeralMember(t, testWorkspaceID, "leave", "admin")
+	targetUserID, _ := createEphemeralMember(t, testWorkspaceID, "leave")
 	testHandler.MembershipCache.Set(ctx, targetUserID, testWorkspaceID)
 
 	w := httptest.NewRecorder()
@@ -4286,7 +4285,7 @@ func TestMembershipCache_InvalidatedOnDeleteWorkspace(t *testing.T) {
 		t.Fatalf("add owner: %v", err)
 	}
 
-	extraUserID, _ := createEphemeralMember(t, wsID, "ws-delete-extra", "admin")
+	extraUserID, _ := createEphemeralMember(t, wsID, "ws-delete-extra")
 
 	testHandler.MembershipCache.Set(ctx, testUserID, wsID)
 	testHandler.MembershipCache.Set(ctx, extraUserID, wsID)

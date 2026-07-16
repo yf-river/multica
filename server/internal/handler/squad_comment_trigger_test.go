@@ -1143,7 +1143,7 @@ func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMis
 	fx := newCrossProjectGateSOPFixture(t, false)
 	comment := insertSOPPMMentionComment(t, fx)
 
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
 
 	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 0 {
 		t.Fatalf("parent 04 task count = %d, want 0 while required child is missing", got)
@@ -1200,7 +1200,7 @@ func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDon
 	fx := newCrossProjectGateSOPFixture(t, true)
 	comment := insertSOPPMMentionComment(t, fx)
 
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
 
 	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
 		t.Fatalf("parent 04 task count = %d, want 1 after required child is done", got)
@@ -1227,7 +1227,7 @@ func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenLatestTaskSplitHasN
 	}
 	comment := insertSOPPMMentionComment(t, fx)
 
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
 
 	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
 		t.Fatalf("parent 04 task count = %d, want 1 when latest 03 has no cross-project dependency", got)
@@ -1266,7 +1266,7 @@ func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildr
 	}
 	comment := insertSOPPMMentionComment(t, fx)
 
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
 
 	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
 		t.Fatalf("child 04 task count = %d, want 1 when no further child is required", got)

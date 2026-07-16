@@ -80,13 +80,13 @@ func countAgentSkillBindings(t *testing.T, skillID string) int {
 	return count
 }
 
-func getSkillRow(t *testing.T, skillID string) (name, description, content, createdBy string) {
+func getSkillDescription(t *testing.T, skillID string) (description string) {
 	t.Helper()
 
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT name, description, content, COALESCE(created_by::text, '')
+		SELECT description
 		FROM skill WHERE id = $1
-	`, skillID).Scan(&name, &description, &content, &createdBy); err != nil {
+	`, skillID).Scan(&description); err != nil {
 		t.Fatalf("get skill row: %v", err)
 	}
 	return
@@ -209,7 +209,7 @@ func TestRuntimeLocalSkillImport_ConflictCreatorCanOverwrite(t *testing.T) {
 	if n := countSkillsByName(t, name); n != 1 {
 		t.Fatalf("expected exactly 1 skill named %q, got %d", name, n)
 	}
-	if _, desc, _, _ := getSkillRow(t, existingID); desc != "original description" {
+	if desc := getSkillDescription(t, existingID); desc != "original description" {
 		t.Fatalf("conflict must not modify the existing skill, description = %q", desc)
 	}
 }
@@ -309,7 +309,7 @@ func TestRuntimeLocalSkillImport_OverwriteNonCreatorFails(t *testing.T) {
 		t.Fatalf("status = %s, want failed", got.Status)
 	}
 	// Original skill (owned by someone else) must be untouched.
-	if _, desc, _, _ := getSkillRow(t, existingID); desc != "original description" {
+	if desc := getSkillDescription(t, existingID); desc != "original description" {
 		t.Fatalf("forbidden overwrite must not mutate the skill, description = %q", desc)
 	}
 }
@@ -370,7 +370,7 @@ func TestRuntimeLocalSkillImport_OverwriteRetryIsIdempotent(t *testing.T) {
 	if got.Status != runtimeAsyncCompleted {
 		t.Fatalf("status = %s, want completed", got.Status)
 	}
-	if _, desc, _, _ := getSkillRow(t, existingID); desc != "first overwrite" {
+	if desc := getSkillDescription(t, existingID); desc != "first overwrite" {
 		t.Fatalf("retry must not re-apply, description = %q", desc)
 	}
 	if n := countSkillFiles(t, existingID); n != 1 {
@@ -421,7 +421,7 @@ func TestRuntimeLocalSkillImport_OverwriteNameMismatchFails(t *testing.T) {
 	if got.Status != runtimeAsyncFailed {
 		t.Fatalf("status = %s, want failed (name mismatch)", got.Status)
 	}
-	if _, desc, _, _ := getSkillRow(t, targetID); desc != "original description" {
+	if desc := getSkillDescription(t, targetID); desc != "original description" {
 		t.Fatalf("name-mismatch overwrite must not mutate the target, description = %q", desc)
 	}
 }

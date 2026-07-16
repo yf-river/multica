@@ -53,7 +53,7 @@ func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
 	}
 
 	// Pre-flush the DB row should still show the stale value.
-	_, lastSeenBefore, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeenBefore := readRuntimeRow(t, runtimeID)
 	if !lastSeenBefore.Equal(stale) {
 		// stale time is rounded by the DB, allow same instant
 		if lastSeenBefore.After(stale.Add(time.Second)) {
@@ -67,7 +67,7 @@ func TestBatchedHeartbeatScheduler_CoalescesAndFlushes(t *testing.T) {
 		t.Fatalf("expected pending=0 after flush, got %d", got)
 	}
 
-	_, lastSeenAfter, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeenAfter := readRuntimeRow(t, runtimeID)
 	if !lastSeenAfter.After(stale.Add(time.Hour)) {
 		t.Fatalf("flush did not bump last_seen_at: stale=%s after=%s", stale, lastSeenAfter)
 	}
@@ -81,7 +81,7 @@ func TestBatchedHeartbeatScheduler_OfflineFallsBackSync(t *testing.T) {
 		t.Skip("database not available")
 	}
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
-	setRuntimeStatus(t, runtimeID, "offline")
+	setRuntimeOffline(t, runtimeID)
 	setRuntimeLastSeenAt(t, runtimeID, time.Now())
 	rt := loadRuntime(t, runtimeID)
 	if rt.Status != "offline" {
@@ -96,7 +96,7 @@ func TestBatchedHeartbeatScheduler_OfflineFallsBackSync(t *testing.T) {
 	if got := sched.PendingCount(); got != 0 {
 		t.Fatalf("offline row should not have been queued, pending=%d", got)
 	}
-	status, _, _ := readRuntimeRow(t, runtimeID)
+	status, _ := readRuntimeRow(t, runtimeID)
 	if status != "online" {
 		t.Fatalf("expected status=online after sync flip, got %q", status)
 	}
@@ -134,7 +134,7 @@ func TestBatchedHeartbeatScheduler_StopDrains(t *testing.T) {
 	if got := sched.PendingCount(); got != 0 {
 		t.Fatalf("expected pending=0 after Stop drain, got %d", got)
 	}
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeen := readRuntimeRow(t, runtimeID)
 	if !lastSeen.After(stale.Add(time.Hour)) {
 		t.Fatalf("Stop did not drain pending bump: stale=%s after=%s", stale, lastSeen)
 	}
@@ -182,7 +182,7 @@ func TestBatchedHeartbeatScheduler_StopFlushesLateSchedule(t *testing.T) {
 	if got := sched.PendingCount(); got != 0 {
 		t.Fatalf("expected pending=0 after Stop's defensive flush, got %d", got)
 	}
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeen := readRuntimeRow(t, runtimeID)
 	if !lastSeen.After(stale.Add(time.Hour)) {
 		t.Fatalf("Stop did not flush late Schedule: stale=%s after=%s", stale, lastSeen)
 	}
@@ -220,12 +220,12 @@ func TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals(t *testing.T) {
 	}
 
 	// Sweeper races us to offline before the flush.
-	setRuntimeStatus(t, runtimeID, "offline")
+	setRuntimeOffline(t, runtimeID)
 
 	sched.FlushNow(context.Background())
 
 	// Bulk UPDATE's status='online' predicate means the row stays offline.
-	status, _, _ := readRuntimeRow(t, runtimeID)
+	status, _ := readRuntimeRow(t, runtimeID)
 	if status != "offline" {
 		t.Fatalf("expected status=offline after raced flush, got %q", status)
 	}
@@ -236,7 +236,7 @@ func TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals(t *testing.T) {
 	if err := sched.Schedule(context.Background(), rt2); err != nil {
 		t.Fatalf("recovery Schedule: %v", err)
 	}
-	status2, _, _ := readRuntimeRow(t, runtimeID)
+	status2, _ := readRuntimeRow(t, runtimeID)
 	if status2 != "online" {
 		t.Fatalf("expected sync recovery to flip back to online, got %q", status2)
 	}

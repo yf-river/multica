@@ -63,11 +63,11 @@ func (f *fakeLivenessStore) touchCount() int {
 }
 
 // readRuntimeRow returns the fresh agent_runtime row for assertions.
-func readRuntimeRow(t *testing.T, runtimeID string) (status string, lastSeen time.Time, updatedAt time.Time) {
+func readRuntimeRow(t *testing.T, runtimeID string) (status string, lastSeen time.Time) {
 	t.Helper()
 	if err := testPool.QueryRow(context.Background(),
-		`SELECT status, last_seen_at, updated_at FROM agent_runtime WHERE id = $1`, runtimeID,
-	).Scan(&status, &lastSeen, &updatedAt); err != nil {
+		`SELECT status, last_seen_at FROM agent_runtime WHERE id = $1`, runtimeID,
+	).Scan(&status, &lastSeen); err != nil {
 		t.Fatalf("read runtime row: %v", err)
 	}
 	return
@@ -82,10 +82,10 @@ func setRuntimeLastSeenAt(t *testing.T, runtimeID string, when time.Time) {
 	}
 }
 
-func setRuntimeStatus(t *testing.T, runtimeID, status string) {
+func setRuntimeOffline(t *testing.T, runtimeID string) {
 	t.Helper()
 	if _, err := testPool.Exec(context.Background(),
-		`UPDATE agent_runtime SET status = $1 WHERE id = $2`, status, runtimeID,
+		`UPDATE agent_runtime SET status = 'offline' WHERE id = $1`, runtimeID,
 	); err != nil {
 		t.Fatalf("force status: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRecordHeartbeat_NoopStoreAlwaysWritesDB(t *testing.T) {
 		t.Fatalf("recordHeartbeat: %v", err)
 	}
 
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeen := readRuntimeRow(t, runtimeID)
 	if !lastSeen.After(before) {
 		t.Fatalf("noop-store heartbeat did not bump last_seen_at: before=%s after=%s", before, lastSeen)
 	}
@@ -171,7 +171,7 @@ func TestRecordHeartbeat_RedisAvailableSkipsDBWithinFlushWindow(t *testing.T) {
 	if fake.touchCount() != 1 {
 		t.Fatalf("expected exactly one Touch, got %d", fake.touchCount())
 	}
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeen := readRuntimeRow(t, runtimeID)
 	if !lastSeen.Equal(before) {
 		t.Fatalf("DB last_seen_at should not have been rewritten within flush window: before=%s after=%s", before, lastSeen)
 	}
@@ -200,7 +200,7 @@ func TestRecordHeartbeat_DBFlushOnStaleRow(t *testing.T) {
 		t.Fatalf("recordHeartbeat: %v", err)
 	}
 
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeen := readRuntimeRow(t, runtimeID)
 	if !lastSeen.After(stale.Add(time.Minute)) {
 		t.Fatalf("DB last_seen_at should have been flushed: stale=%s after=%s", stale, lastSeen)
 	}
@@ -220,7 +220,7 @@ func TestRecordHeartbeat_OfflineToOnlineForcesDBWrite(t *testing.T) {
 	testHandler.LivenessStore = fake
 	t.Cleanup(func() { testHandler.LivenessStore = orig })
 
-	setRuntimeStatus(t, runtimeID, "offline")
+	setRuntimeOffline(t, runtimeID)
 	// Keep last_seen_at fresh so the DB-flush condition is not what's
 	// driving the write — only the offline→online transition is.
 	setRuntimeLastSeenAt(t, runtimeID, time.Now())
@@ -233,7 +233,7 @@ func TestRecordHeartbeat_OfflineToOnlineForcesDBWrite(t *testing.T) {
 		t.Fatalf("recordHeartbeat: %v", err)
 	}
 
-	status, _, _ := readRuntimeRow(t, runtimeID)
+	status, _ := readRuntimeRow(t, runtimeID)
 	if status != "online" {
 		t.Fatalf("expected status=online after offline→online heartbeat, got %q", status)
 	}
@@ -266,7 +266,7 @@ func TestRecordHeartbeat_TouchErrorFallsBackToDB(t *testing.T) {
 		t.Fatalf("recordHeartbeat: %v", err)
 	}
 
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	_, lastSeen := readRuntimeRow(t, runtimeID)
 	if !lastSeen.After(before) {
 		t.Fatalf("Touch failure should have fallen back to a DB write: before=%s after=%s", before, lastSeen)
 	}
@@ -302,13 +302,13 @@ func TestRecordHeartbeat_SweeperRaceRecoversOnline(t *testing.T) {
 
 	// Simulate the sweeper flipping the row to offline between the
 	// snapshot and the heartbeat's UPDATE.
-	setRuntimeStatus(t, runtimeID, "offline")
+	setRuntimeOffline(t, runtimeID)
 
 	if err := testHandler.recordHeartbeat(context.Background(), rt); err != nil {
 		t.Fatalf("recordHeartbeat: %v", err)
 	}
 
-	status, lastSeen, _ := readRuntimeRow(t, runtimeID)
+	status, lastSeen := readRuntimeRow(t, runtimeID)
 	if status != "online" {
 		t.Fatalf("expected sweeper-raced runtime to recover online, got %q", status)
 	}

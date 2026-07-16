@@ -193,7 +193,7 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 	// ?days cutoff isn't clipping yesterday's morning.
 	yesterdayMorning := today.Add(-19 * time.Hour)
 
-	insertTaskWithUsage := func(enqueueAt, usageAt time.Time, inputTokens int64) string {
+	insertTaskWithUsage := func(enqueueAt, usageAt time.Time, inputTokens int64) {
 		var taskID string
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
@@ -211,7 +211,6 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Cleanup(func() {
 			mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 		})
-		return taskID
 	}
 
 	insertTaskWithUsage(yesterdayLate, todayEarly, 1000)          // cross-midnight

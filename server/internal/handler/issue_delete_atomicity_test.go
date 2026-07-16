@@ -22,7 +22,7 @@ func TestBatchDeleteIssues_ReportsFailureAndRollsBackTaskCancellation(t *testing
 func assertIssueDeleteRollback(t *testing.T, batch bool) {
 	t.Helper()
 	ctx := context.Background()
-	issueID := createTestIssue(t, "delete rollback "+uuid.NewString(), "todo", "medium")
+	issueID := createTestIssue(t, "delete rollback "+uuid.NewString(), "medium")
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id::text FROM agent WHERE workspace_id = $1

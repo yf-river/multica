@@ -19,7 +19,6 @@ func TestRuntimeProfileReadsPreserveDatabaseFailures(t *testing.T) {
 		t,
 		context.Background(),
 		"Runtime Profile Read Failure",
-		"codex",
 		"runtime-profile-read-failure",
 	)
 	h := *testHandler

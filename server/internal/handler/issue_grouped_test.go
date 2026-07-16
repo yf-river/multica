@@ -48,7 +48,7 @@ func TestListGroupedIssuesAssigneePaginatesPerGroup(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
-	createIssue := func(title, assigneeType, assigneeID string, position float64) string {
+	createIssue := func(title, assigneeType, assigneeID string, position float64) {
 		t.Helper()
 		var number int32
 		if err := testPool.QueryRow(ctx, `
@@ -78,7 +78,6 @@ func TestListGroupedIssuesAssigneePaginatesPerGroup(t *testing.T) {
 		t.Cleanup(func() {
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id)
 		})
-		return id
 	}
 
 	createIssue("Grouped member one", "member", assigneeID, 1)

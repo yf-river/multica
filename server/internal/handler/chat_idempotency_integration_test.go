@@ -76,7 +76,7 @@ func TestCreateChatSessionReplaysOneConcurrentResult(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			req := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions", createChatSessionRequest{
+			req := newChatIdempotentRequest("/api/chat/sessions", createChatSessionRequest{
 				AgentID: agentID,
 				Title:   title,
 			}, key)
@@ -115,7 +115,7 @@ func TestCreateChatSessionReplaysOneConcurrentResult(t *testing.T) {
 		t.Fatalf("sessions/records = %d/%d, want 1/1", sessions, records)
 	}
 
-	conflict := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions", createChatSessionRequest{
+	conflict := newChatIdempotentRequest("/api/chat/sessions", createChatSessionRequest{
 		AgentID: agentID,
 		Title:   title + " changed",
 	}, key)
@@ -135,11 +135,11 @@ func TestSendChatMessageReplaysWithoutDuplicateWritesOrEvents(t *testing.T) {
 	bus.Subscribe(protocol.EventChatMessage, func(events.Event) { messageEvents.Add(1) })
 
 	session := createIdempotentChatSession(t, h, chatCreateKey, "idempotent send "+uuid.NewString())
-	first := sendIdempotentChatMessage(t, h, session.ID, chatSendKey, "hello exactly once", http.StatusCreated)
+	first := sendIdempotentChatMessage(t, h, session.ID, chatSendKey, "hello exactly once")
 	if _, err := testPool.Exec(context.Background(), `UPDATE chat_session SET title = title || ' changed' WHERE id = $1`, session.ID); err != nil {
 		t.Fatalf("rename session after committed send: %v", err)
 	}
-	second := sendIdempotentChatMessage(t, h, session.ID, chatSendKey, "hello exactly once", http.StatusCreated)
+	second := sendIdempotentChatMessage(t, h, session.ID, chatSendKey, "hello exactly once")
 	if first.MessageID != second.MessageID || first.TaskID != second.TaskID || first.CreatedAt != second.CreatedAt {
 		t.Fatalf("replay response changed: first=%+v second=%+v", first, second)
 	}
@@ -165,7 +165,7 @@ func TestSendChatMessageReplaysWithoutDuplicateWritesOrEvents(t *testing.T) {
 		t.Fatalf("messages/tasks/records = %d/%d/%d, want 1/1/1", messages, tasks, records)
 	}
 
-	conflictReq := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions/"+session.ID+"/messages", sendChatMessageRequest{
+	conflictReq := newChatIdempotentRequest("/api/chat/sessions/"+session.ID+"/messages", sendChatMessageRequest{
 		Content: "different content",
 	}, chatSendKey)
 	conflictReq = withURLParam(conflictReq, "sessionId", session.ID)
@@ -182,7 +182,7 @@ func TestChatLogicalOperationKeySpansCreateAndSendNamespaces(t *testing.T) {
 	h := newChatIdempotencyTestHandler(events.New())
 	key := uuid.NewString()
 	session := createIdempotentChatSession(t, h, key, "shared logical operation "+uuid.NewString())
-	response := sendIdempotentChatMessage(t, h, session.ID, key, "same key, separate operation", http.StatusCreated)
+	response := sendIdempotentChatMessage(t, h, session.ID, key, "same key, separate operation")
 	if response.MessageID == "" || response.TaskID == "" {
 		t.Fatalf("send response missing ids: %+v", response)
 	}
@@ -218,7 +218,6 @@ func TestSendChatMessageConcurrentReplayCreatesOneTask(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			req := newChatIdempotentRequest(
-				http.MethodPost,
 				"/api/chat/sessions/"+session.ID+"/messages",
 				sendChatMessageRequest{Content: "one concurrent intent"},
 				sendKey,
@@ -268,7 +267,7 @@ func TestSendChatMessageRollsBackEveryWriteBeforeRetry(t *testing.T) {
 	session := createIdempotentChatSession(t, h, createKey, "rollback send "+uuid.NewString())
 	removeFailureTrigger := installChatMessageTaskLinkFailure(t, session.ID)
 
-	req := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions/"+session.ID+"/messages", sendChatMessageRequest{
+	req := newChatIdempotentRequest("/api/chat/sessions/"+session.ID+"/messages", sendChatMessageRequest{
 		Content: "must roll back",
 	}, sendKey)
 	req = withURLParam(req, "sessionId", session.ID)
@@ -280,7 +279,7 @@ func TestSendChatMessageRollsBackEveryWriteBeforeRetry(t *testing.T) {
 
 	assertNoChatSendWrites(t, session.ID, sendKey)
 	removeFailureTrigger()
-	response := sendIdempotentChatMessage(t, h, session.ID, sendKey, "must roll back", http.StatusCreated)
+	response := sendIdempotentChatMessage(t, h, session.ID, sendKey, "must roll back")
 	if response.MessageID == "" || response.TaskID == "" {
 		t.Fatalf("retry response = %+v", response)
 	}
@@ -295,7 +294,7 @@ func TestSendChatMessageRollsBackWhenIdempotencyCompletionFails(t *testing.T) {
 	session := createIdempotentChatSession(t, h, createKey, "idempotency completion rollback "+uuid.NewString())
 	removeFailureTrigger := installChatIdempotencyCompletionFailure(t, sendKey)
 
-	req := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions/"+session.ID+"/messages", sendChatMessageRequest{
+	req := newChatIdempotentRequest("/api/chat/sessions/"+session.ID+"/messages", sendChatMessageRequest{
 		Content: "response record must be atomic",
 	}, sendKey)
 	req = withURLParam(req, "sessionId", session.ID)
@@ -307,7 +306,7 @@ func TestSendChatMessageRollsBackWhenIdempotencyCompletionFails(t *testing.T) {
 	assertNoChatSendWrites(t, session.ID, sendKey)
 
 	removeFailureTrigger()
-	response := sendIdempotentChatMessage(t, h, session.ID, sendKey, "response record must be atomic", http.StatusCreated)
+	response := sendIdempotentChatMessage(t, h, session.ID, sendKey, "response record must be atomic")
 	if response.MessageID == "" || response.TaskID == "" {
 		t.Fatalf("retry response = %+v", response)
 	}
@@ -333,8 +332,8 @@ func handlerTestChatAgentID(t *testing.T) string {
 	return agentID
 }
 
-func newChatIdempotentRequest(method, path string, body any, key string) *http.Request {
-	req := newRequest(method, path, body)
+func newChatIdempotentRequest(path string, body any, key string) *http.Request {
+	req := newRequest(http.MethodPost, path, body)
 	req.Header.Set("Idempotency-Key", key)
 	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, db.Member{
 		WorkspaceID: util.MustParseUUID(testWorkspaceID),
@@ -345,7 +344,7 @@ func newChatIdempotentRequest(method, path string, body any, key string) *http.R
 
 func createIdempotentChatSession(t *testing.T, h *Handler, key, title string) chatSessionResponse {
 	t.Helper()
-	req := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions", createChatSessionRequest{
+	req := newChatIdempotentRequest("/api/chat/sessions", createChatSessionRequest{
 		AgentID: handlerTestChatAgentID(t),
 		Title:   title,
 	}, key)
@@ -361,13 +360,13 @@ func createIdempotentChatSession(t *testing.T, h *Handler, key, title string) ch
 	return response
 }
 
-func sendIdempotentChatMessage(t *testing.T, h *Handler, sessionID, key, content string, wantStatus int) SendChatMessageResponse {
+func sendIdempotentChatMessage(t *testing.T, h *Handler, sessionID, key, content string) SendChatMessageResponse {
 	t.Helper()
-	req := newChatIdempotentRequest(http.MethodPost, "/api/chat/sessions/"+sessionID+"/messages", sendChatMessageRequest{Content: content}, key)
+	req := newChatIdempotentRequest("/api/chat/sessions/"+sessionID+"/messages", sendChatMessageRequest{Content: content}, key)
 	req = withURLParam(req, "sessionId", sessionID)
 	w := httptest.NewRecorder()
 	h.SendChatMessage(w, req)
-	if w.Code != wantStatus {
+	if w.Code != http.StatusCreated {
 		t.Fatalf("send chat message = %d: %s", w.Code, w.Body.String())
 	}
 	var response SendChatMessageResponse

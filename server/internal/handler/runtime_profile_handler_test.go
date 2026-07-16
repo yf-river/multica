@@ -63,14 +63,14 @@ func TestCreateRuntimeProfile_ReplaysCommittedResponse(t *testing.T) {
 
 // insertRuntimeProfileFixture creates a runtime_profile in testWorkspaceID and
 // returns its id, registering cleanup.
-func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName, protocolFamily, commandName string) string {
+func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName, commandName string) string {
 	t.Helper()
 	var profileID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO runtime_profile (workspace_id, display_name, protocol_family, command_name, created_by)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, testWorkspaceID, displayName, protocolFamily, commandName, testUserID).Scan(&profileID); err != nil {
+	`, testWorkspaceID, displayName, "codex", commandName, testUserID).Scan(&profileID); err != nil {
 		t.Fatalf("insert runtime_profile fixture: %v", err)
 	}
 	t.Cleanup(func() {
@@ -121,7 +121,7 @@ func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Archived", "codex", "company-codex-arch")
+	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Archived", "company-codex-arch")
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Runtime", "codex")
 	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Archived Agent")
 
@@ -170,7 +170,7 @@ func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Active", "codex", "company-codex-active")
+	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Active", "company-codex-active")
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Active Runtime", "codex")
 	_ = createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Active Agent")
 
@@ -226,7 +226,6 @@ func TestUpdateRuntimeProfileRejectsUnknownFields(t *testing.T) {
 		t,
 		context.Background(),
 		"Unknown Update Field",
-		"codex",
 		"unknown-update-field",
 	)
 
