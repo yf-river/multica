@@ -303,18 +303,14 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	body := map[string]any{"title": title}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
 	if v, _ := cmd.Flags().GetString("status"); v != "" {
 		if err := validateProjectStatus(v); err != nil {
 			return err
 		}
 		body["status"] = v
 	}
-	if v, _ := cmd.Flags().GetString("icon"); v != "" {
-		body["icon"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "icon", "icon")
 	if v, _ := cmd.Flags().GetString("lead"); v != "" {
 		aType, aID, resolveErr := resolveAssignee(ctx, client, v, memberOrAgentKinds)
 		if resolveErr != nil {

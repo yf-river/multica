@@ -179,12 +179,8 @@ func runLabelUpdate(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	body := map[string]any{}
-	if v, _ := cmd.Flags().GetString("name"); v != "" {
-		body["name"] = v
-	}
-	if v, _ := cmd.Flags().GetString("color"); v != "" {
-		body["color"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "name", "name")
+	applyNonEmptyStringFlag(cmd, body, "color", "color")
 	if len(body) == 0 {
 		return fmt.Errorf("nothing to update — provide --name and/or --color")
 	}

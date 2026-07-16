@@ -558,6 +558,12 @@ func applyChangedStringFlag(cmd *cobra.Command, body map[string]any, flag, key s
 	}
 }
 
+func applyNonEmptyStringFlag(cmd *cobra.Command, body map[string]any, flag, key string) {
+	if v, _ := cmd.Flags().GetString(flag); v != "" {
+		body[key] = v
+	}
+}
+
 func runAgentArchive(cmd *cobra.Command, args []string) error {
 	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {

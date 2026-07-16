@@ -278,9 +278,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		"assignee_id":    agentID,
 		"execution_mode": mode,
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
 	applyChangedStringFlag(cmd, body, "priority", "priority")
 	if v, _ := cmd.Flags().GetString("project"); v != "" {
 		projectRef, err := resolveProjectID(ctx, client, v)
@@ -289,9 +287,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		}
 		body["project_id"] = projectRef.ID
 	}
-	if v, _ := cmd.Flags().GetString("issue-title-template"); v != "" {
-		body["issue_title_template"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "issue-title-template", "issue_title_template")
 
 	var result map[string]any
 	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/autopilots", body, uuid.NewString(), &result); err != nil {
@@ -449,9 +445,6 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	kind, _ := cmd.Flags().GetString("kind")
-	if kind == "" {
-		kind = "schedule"
-	}
 	if kind != "schedule" && kind != "webhook" {
 		return fmt.Errorf("--kind must be schedule or webhook")
 	}
@@ -471,9 +464,9 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	body := map[string]any{"kind": kind}
 	if kind == "schedule" {
 		body["cron_expression"] = cron
-		copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", false)
+		applyNonEmptyStringFlag(cmd, body, "timezone", "timezone")
 	}
-	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", false)
+	applyNonEmptyStringFlag(cmd, body, "label", "label")
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
 	if err != nil {
@@ -563,9 +556,9 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetBool("enabled")
 		body["enabled"] = v
 	}
-	copyAutopilotTriggerStringFlag(cmd, body, "cron", "cron_expression", true)
-	copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", true)
-	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", true)
+	applyChangedStringFlag(cmd, body, "cron", "cron_expression")
+	applyChangedStringFlag(cmd, body, "timezone", "timezone")
+	applyChangedStringFlag(cmd, body, "label", "label")
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --enabled, --cron, --timezone, or --label")
 	}
@@ -586,17 +579,6 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Trigger updated: %s\n", strVal(result, "id"))
 	return nil
-}
-
-func copyAutopilotTriggerStringFlag(cmd *cobra.Command, body map[string]any, flagName, bodyKey string, changedOnly bool) {
-	if changedOnly && !cmd.Flags().Changed(flagName) {
-		return
-	}
-	v, _ := cmd.Flags().GetString(flagName)
-	if !changedOnly && v == "" {
-		return
-	}
-	body[bodyKey] = v
 }
 
 func resolveAutopilotTriggerRefs(ctx context.Context, client *cli.APIClient, autopilotArg, triggerArg string) (resolvedID, resolvedID, error) {

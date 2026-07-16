@@ -282,9 +282,7 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	body := map[string]any{
 		"name": name,
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
 	content, hasContent, err := resolveSkillContentFlag(cmd)
 	if err != nil {
 		return err

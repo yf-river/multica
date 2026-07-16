@@ -133,9 +133,7 @@ func runSquadCreate(cmd *cobra.Command, _ []string) error {
 		"name":      name,
 		"leader_id": leaderID,
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
 
 	var result map[string]any
 	if err := client.PostJSONWithIdempotencyKey(
