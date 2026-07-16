@@ -973,8 +973,8 @@ func TestEnsureUserCenterInternalSquadPersonalCreatesPrivateAgents(t *testing.T)
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode ensure response: %v", err)
 	}
-	if resp.Squad.Scope != squadScopePersonal {
-		t.Fatalf("squad scope = %q, want %q", resp.Squad.Scope, squadScopePersonal)
+	if resp.Squad.Scope != scopePersonal {
+		t.Fatalf("squad scope = %q, want %q", resp.Squad.Scope, scopePersonal)
 	}
 	if resp.Squad.Name != projectSOPV2SquadName || resp.Squad.MemberCount != 6 || len(resp.Agents) != 6 {
 		t.Fatalf("ensure response = %+v", resp)
@@ -1042,12 +1042,12 @@ func TestEnsureUserCenterInternalSquadWorkspaceAndPersonalAgentsAreScoped(t *tes
 		return resp
 	}
 
-	workspaceResp := ensure(squadScopeWorkspace)
-	personalResp := ensure(squadScopePersonal)
+	workspaceResp := ensure(scopeWorkspace)
+	personalResp := ensure(scopePersonal)
 	if workspaceResp.Squad.ID == personalResp.Squad.ID {
 		t.Fatalf("workspace and personal squads reused the same squad: %s", workspaceResp.Squad.ID)
 	}
-	if workspaceResp.Squad.Scope != squadScopeWorkspace || personalResp.Squad.Scope != squadScopePersonal {
+	if workspaceResp.Squad.Scope != scopeWorkspace || personalResp.Squad.Scope != scopePersonal {
 		t.Fatalf("unexpected squad visibilities: workspace=%q personal=%q", workspaceResp.Squad.Scope, personalResp.Squad.Scope)
 	}
 
@@ -1088,7 +1088,7 @@ func TestEnsureUserCenterInternalSquadWorkspaceAndPersonalAgentsAreScoped(t *tes
 	}); err != nil {
 		t.Fatalf("archive personal agent: %v", err)
 	}
-	personalAgain := ensure(squadScopePersonal)
+	personalAgain := ensure(scopePersonal)
 	if personalAgain.Agents[0].ID != personalResp.Agents[0].ID {
 		t.Fatalf("personal re-ensure did not restore archived agent: got %s want %s", personalAgain.Agents[0].ID, personalResp.Agents[0].ID)
 	}
@@ -1100,7 +1100,7 @@ func TestEnsureUserCenterInternalSquadWorkspaceAndPersonalAgentsAreScoped(t *tes
 		t.Fatalf("personal re-ensure left agent %s archived", personalResp.Agents[0].ID)
 	}
 
-	workspaceAgain := ensure(squadScopeWorkspace)
+	workspaceAgain := ensure(scopeWorkspace)
 	for _, agent := range workspaceAgain.Agents {
 		if workspaceAgents[agent.Name] != agent.ID {
 			t.Fatalf("workspace re-ensure changed agent %q from %s to %s", agent.Name, workspaceAgents[agent.Name], agent.ID)
@@ -1156,8 +1156,8 @@ func TestEnsureUserCenterInternalSquadSelectsRuntimeByScope(t *testing.T) {
 		return resp
 	}
 
-	workspaceResp := ensure(squadScopeWorkspace)
-	personalResp := ensure(squadScopePersonal)
+	workspaceResp := ensure(scopeWorkspace)
+	personalResp := ensure(scopePersonal)
 	for _, agent := range workspaceResp.Agents {
 		var runtimeID string
 		if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, agent.ID).Scan(&runtimeID); err != nil {

@@ -66,7 +66,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	agentScope := internalSquadAgentScope(scope)
+	agentScope := scope
 	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member, provider, agentScope)
 	if !ok {
 		return
@@ -147,7 +147,7 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 		return nil, err
 	}
 	result := make([]InternalSquadAgent, 0, len(template.Roles))
-	agentScope := internalSquadAgentScope(squadScope)
+	agentScope := squadScope
 	for _, role := range template.Roles {
 		name := strings.TrimSpace(role.AgentName)
 		if name == "" {
@@ -214,16 +214,9 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 	return result, nil
 }
 
-func internalSquadAgentScope(squadScope string) string {
-	if squadScope == squadScopePersonal {
-		return scopePersonal
-	}
-	return scopeWorkspace
-}
-
 func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) []byte {
 	scopeOwnerID := ""
-	if squadScope == squadScopePersonal {
+	if squadScope == scopePersonal {
 		scopeOwnerID = uuidToString(ownerID)
 	}
 	return mustJSONBytes(map[string]any{
@@ -261,7 +254,7 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 	if agent.Name != name || agent.Scope != agentScope {
 		return false
 	}
-	if squadScope == squadScopePersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
+	if squadScope == scopePersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
 		return false
 	}
 	var runtimeConfig map[string]any
@@ -276,7 +269,7 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 		util.StringFromAny(scope["agent_scope"]) != agentScope {
 		return false
 	}
-	return squadScope != squadScopePersonal || util.StringFromAny(scope["owner_id"]) == uuidToString(ownerID)
+	return squadScope != scopePersonal || util.StringFromAny(scope["owner_id"]) == uuidToString(ownerID)
 }
 
 func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
@@ -438,10 +431,8 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 }
 
 func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
-	sameTemplate := squad.Name == template.Name || matchesInternalSquadProfileKey(squad, template)
-	sameScope := squad.Scope == scope
-	sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
-	return sameTemplate && sameScope && sameCreator
+	return (squad.Name == template.Name || matchesInternalSquadProfileKey(squad, template)) &&
+		squad.Scope == scope && internalSquadOwnerMatches(scope, squad.CreatorID, creatorID)
 }
 
 func internalSquadProfileKey(squad db.Squad) string {
@@ -454,17 +445,20 @@ func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTempla
 	return key != "" && (key == template.Key || key == util.StringFromAny(template.Profile["profile_key"]))
 }
 
+func matchesInternalSquadProfile(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
+	return matchesInternalSquadProfileKey(squad, template) &&
+		squad.Scope == scope && internalSquadOwnerMatches(scope, squad.CreatorID, creatorID)
+}
+
+func internalSquadOwnerMatches(scope string, actual, expected pgtype.UUID) bool {
+	return scope != scopePersonal || uuidToString(actual) == uuidToString(expected)
+}
+
 func matchesInternalSquadTarget(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID, requireName bool) bool {
 	if requireName {
-		sameTemplate := matchesInternalSquadProfileKey(squad, template)
-		sameScope := squad.Scope == scope
-		sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
-		return sameTemplate && sameScope && sameCreator && squad.Name == template.Name
+		return squad.Name == template.Name && matchesInternalSquadProfile(squad, template, scope, creatorID)
 	}
-	if !matchesInternalSquadTemplate(squad, template, scope, creatorID) {
-		return false
-	}
-	return true
+	return matchesInternalSquadTemplate(squad, template, scope, creatorID)
 }
 
 func (h *Handler) archiveSupersededInternalSquads(ctx context.Context, squads []db.Squad, currentID pgtype.UUID, template internalSquadTemplate, scope string, creatorID pgtype.UUID) error {
@@ -473,10 +467,7 @@ func (h *Handler) archiveSupersededInternalSquads(ctx context.Context, squads []
 		if item.ArchivedAt.Valid || uuidToString(item.ID) == current {
 			continue
 		}
-		sameTemplate := matchesInternalSquadProfileKey(item, template)
-		sameScope := item.Scope == scope
-		sameCreator := scope != squadScopePersonal || uuidToString(item.CreatorID) == uuidToString(creatorID)
-		if !sameTemplate || !sameScope || !sameCreator {
+		if !matchesInternalSquadProfile(item, template, scope, creatorID) {
 			continue
 		}
 		if _, err := h.DB.Exec(ctx, `
