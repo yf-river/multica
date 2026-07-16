@@ -25,18 +25,7 @@ func TestGetActiveTaskForIssueDoesNotTurnCanceledReadIntoEmptySuccess(t *testing
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
-	tx, err := testPool.Begin(context.Background())
-	if err != nil {
-		t.Fatalf("begin blocker: %v", err)
-	}
-	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	if _, err := tx.Exec(context.Background(), `LOCK TABLE agent_task_queue IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatalf("lock task table: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	time.AfterFunc(100*time.Millisecond, cancel)
+	ctx := canceledTaskTableContext(t)
 	req := newRequest(http.MethodGet, "/api/issues/"+issueID+"/active-task", nil).WithContext(ctx)
 	req = withURLParam(req, "id", issueID)
 	w := httptest.NewRecorder()
@@ -54,18 +43,7 @@ func TestListTaskMessagesByUserPreservesCanceledTaskLookup(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "task-message-cancel-agent", nil)
 	taskID := createHandlerTestTaskForAgent(t, agentID)
 
-	tx, err := testPool.Begin(context.Background())
-	if err != nil {
-		t.Fatalf("begin blocker: %v", err)
-	}
-	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	if _, err := tx.Exec(context.Background(), `LOCK TABLE agent_task_queue IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatalf("lock task table: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	time.AfterFunc(100*time.Millisecond, cancel)
+	ctx := canceledTaskTableContext(t)
 	req := newRequest(http.MethodGet, "/api/tasks/"+taskID+"/messages", nil).WithContext(ctx)
 	req = withURLParam(req, "taskId", taskID)
 	w := httptest.NewRecorder()
@@ -74,6 +52,22 @@ func TestListTaskMessagesByUserPreservesCanceledTaskLookup(t *testing.T) {
 	if w.Code != 499 {
 		t.Fatalf("canceled task lookup = %d %s, want 499 instead of false not-found", w.Code, w.Body.String())
 	}
+}
+
+func canceledTaskTableContext(t *testing.T) context.Context {
+	t.Helper()
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin blocker: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if _, err := tx.Exec(context.Background(), `LOCK TABLE agent_task_queue IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("lock task table: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	time.AfterFunc(100*time.Millisecond, cancel)
+	return ctx
 }
 
 func TestCancelTaskRejectsMalformedTaskIDWithoutPanicking(t *testing.T) {
