@@ -288,7 +288,7 @@ func setupChatCompletionFixture(t *testing.T, ctx context.Context) *chatCompleti
 	fixture := &chatCompletionFixture{queries: queries}
 	bus := events.New()
 	bus.Subscribe(protocol.EventChatDone, func(events.Event) { fixture.chatDoneCount++ })
-	fixture.taskService = service.NewTaskService(queries, testPool, nil, bus)
+	fixture.taskService = service.NewTaskService(queries, testPool, nil, bus, nil)
 
 	var agentID string
 	if err := testPool.QueryRow(ctx, `

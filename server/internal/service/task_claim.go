@@ -493,7 +493,7 @@ type taskIssueStatusProjection struct {
 }
 
 func (s *TaskService) projectTaskCompletionIssueStatus(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*taskIssueStatusProjection, error) {
-	if !shouldConsiderAutoReviewIssueForTask(task) {
+	if !isAssignmentIssueTaskForStatusAutomation(task) || task.IsLeaderTask {
 		return nil, nil
 	}
 	issue, err := queries.GetIssue(ctx, task.IssueID)
@@ -570,12 +570,8 @@ func (s *TaskService) publishTaskIssueStatusProjection(ctx context.Context, proj
 	}
 }
 
-func shouldConsiderAutoReviewIssueForTask(task db.AgentTaskQueue) bool {
-	return isAssignmentIssueTaskForStatusAutomation(task) && !task.IsLeaderTask
-}
-
 func shouldAutoReviewIssueForTask(task db.AgentTaskQueue, issue db.Issue) bool {
-	if !shouldConsiderAutoReviewIssueForTask(task) {
+	if !isAssignmentIssueTaskForStatusAutomation(task) || task.IsLeaderTask {
 		return false
 	}
 	return issue.AssigneeType.Valid &&

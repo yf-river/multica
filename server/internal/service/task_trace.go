@@ -451,9 +451,6 @@ func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTas
 // the session row is locked. The session id is also mirrored into metadata
 // because task_trace_event.chat_session_id is ON DELETE SET NULL.
 func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) {
-	if q == nil {
-		q = s.Queries
-	}
 	var metadata []byte
 	if task.ChatSessionID.Valid {
 		var err error

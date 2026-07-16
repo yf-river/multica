@@ -226,7 +226,7 @@ func setupDispatchedQuickCreateTask(t *testing.T, ctx context.Context, prompt st
 
 	queries := db.New(testPool)
 	bus := events.New()
-	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
+	taskSvc := service.NewTaskService(queries, testPool, nil, bus, nil)
 
 	var agentID string
 	if err := testPool.QueryRow(ctx,

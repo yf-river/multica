@@ -83,7 +83,7 @@ func cleanupSweeperFixture(t *testing.T, issueID, agentID string) {
 
 func failStaleTasksForTest(t *testing.T, queries *db.Queries, bus *events.Bus, params db.FailStaleTasksParams) []db.AgentTaskQueue {
 	t.Helper()
-	taskService := service.NewTaskService(queries, testPool, nil, bus)
+	taskService := service.NewTaskService(queries, testPool, nil, bus, nil)
 	batch, err := taskService.FailStaleTasks(context.Background(), params)
 	if err != nil {
 		t.Fatalf("FailStaleTasks: %v", err)
@@ -443,7 +443,7 @@ func TestOfflineRuntimeTaskSweepRetriesAfterRuntimeAlreadyOffline(t *testing.T) 
 			failedEvent = event
 		}
 	})
-	taskService := service.NewTaskService(db.New(testPool), testPool, nil, bus)
+	taskService := service.NewTaskService(db.New(testPool), testPool, nil, bus, nil)
 	sweepOfflineRuntimeTasks(ctx, taskService)
 
 	var status string
@@ -623,7 +623,7 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	}
 
 	queries := db.New(testPool)
-	taskService := service.NewTaskService(queries, testPool, nil, events.New())
+	taskService := service.NewTaskService(queries, testPool, nil, events.New(), nil)
 	batch, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    3600.0, // 1h TTL — old task is 5h, fresh task is 0s
 		MaxPerTick: 100,
@@ -722,7 +722,7 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	}
 
 	queries := db.New(testPool)
-	taskService := service.NewTaskService(queries, testPool, nil, events.New())
+	taskService := service.NewTaskService(queries, testPool, nil, events.New(), nil)
 	batch, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    3600.0,
 		MaxPerTick: 2, // cap below the backlog

@@ -98,8 +98,12 @@ func (r *mockRow) Scan(dest ...any) error {
 // mockDBTX routes QueryRow calls: complete/fail queries return ErrNoRows,
 // getAgentTask returns the stored task.
 type mockDBTX struct {
+	pgx.Tx
 	task db.AgentTaskQueue
 }
+
+func (m *mockDBTX) Commit(context.Context) error   { return nil }
+func (m *mockDBTX) Rollback(context.Context) error { return nil }
 
 func (m *mockDBTX) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
 	return pgconn.NewCommandTag(""), nil
@@ -117,6 +121,10 @@ func (m *mockDBTX) QueryRow(_ context.Context, sql string, _ ...interface{}) pgx
 	// GetAgentTask — return the existing task
 	return &mockRow{task: &m.task}
 }
+
+type mockTxStarter struct{ tx pgx.Tx }
+
+func (m mockTxStarter) Begin(context.Context) (pgx.Tx, error) { return m.tx, nil }
 
 func testUUID(b byte) pgtype.UUID {
 	var u pgtype.UUID
@@ -147,8 +155,9 @@ func runAlreadyFinalizedTaskCases(t *testing.T, run func(*TaskService, pgtype.UU
 				Status:  tt.status,
 			}}
 			svc := &TaskService{
-				Queries: db.New(mock),
-				Bus:     events.New(),
+				Queries:   db.New(mock),
+				TxStarter: mockTxStarter{tx: mock},
+				Bus:       events.New(),
 			}
 
 			got, err := run(svc, taskID)

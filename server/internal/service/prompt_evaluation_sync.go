@@ -278,7 +278,7 @@ func syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, q *db.Querie
 	if err != nil {
 		return err
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := mustDecodePersistedJSONObject(asset.Payload, "prompt evaluation asset payload")
 	record := map[string]any{
 		"运行时间":            time.Now().UTC().Format(time.RFC3339),
 		"run_id":          util.UUIDToString(run.ID),
@@ -929,10 +929,6 @@ func promptEvaluationPerCaseUsage(totalCases int32, inputTokens int32, outputTok
 		return 0, 0
 	}
 	return inputTokens / totalCases, outputTokens / totalCases
-}
-
-func decodePayloadObject(raw []byte) map[string]any {
-	return mustDecodePersistedJSONObject(raw, "prompt evaluation asset payload")
 }
 
 func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {

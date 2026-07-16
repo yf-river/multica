@@ -31,7 +31,7 @@ func TestCompleteTaskRollsBackWhenSquadTerminalProjectionFails(t *testing.T) {
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-time.Minute), 1, 1)
 	installSquadTerminalProjectionFailureTrigger(t, pool, fixture.taskID, "步骤完成")
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	_, err := service.CompleteTask(
 		context.Background(),
 		fixture.taskID,
@@ -51,7 +51,7 @@ func TestFailTaskRollsBackWhenSquadTerminalProjectionFails(t *testing.T) {
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-time.Minute), 1, 1)
 	installSquadTerminalProjectionFailureTrigger(t, pool, fixture.taskID, "步骤失败")
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	_, err := service.FailTask(
 		context.Background(),
 		fixture.taskID,
@@ -72,7 +72,7 @@ func TestFailStaleTasksRollsBackWhenSquadTerminalProjectionFails(t *testing.T) {
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-2*time.Hour), 1, 1)
 	installSquadTerminalProjectionFailureTrigger(t, pool, fixture.taskID, "步骤失败")
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	_, err := service.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 60,
 		RunningTimeoutSecs:  60,
@@ -106,7 +106,7 @@ func TestCompleteTaskRollsBackWhenMissingMRGateCommentFails(t *testing.T) {
 	}
 	installMissingMRGateCommentFailureTrigger(t, pool, fixture.taskID)
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	_, err := service.CompleteTask(ctx, fixture.taskID, []byte(`{"output":"verified"}`), "", "")
 	if err == nil {
 		t.Fatal("CompleteTask succeeded even though the required missing-MR comment could not be persisted")
@@ -124,7 +124,7 @@ func TestCompleteTaskRollsBackWhenLeaderContinuationFails(t *testing.T) {
 	}
 	installLeaderContinuationFailureTrigger(t, pool, fixture.issueID)
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	_, err := service.CompleteTask(ctx, fixture.taskID, []byte(`{"output":"worker complete"}`), "", "")
 	if err == nil {
 		t.Fatal("CompleteTask succeeded even though the leader continuation could not be persisted")
@@ -136,7 +136,7 @@ func TestCompleteTaskCommitsSquadTerminalProjection(t *testing.T) {
 	pool := openSquadTerminalProjectionTestPool(t)
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-time.Minute), 1, 1)
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	task, err := service.CompleteTask(
 		context.Background(),
 		fixture.taskID,
@@ -157,7 +157,7 @@ func TestFailTaskCommitsSquadTerminalProjection(t *testing.T) {
 	pool := openSquadTerminalProjectionTestPool(t)
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-time.Minute), 1, 1)
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	task, err := service.FailTask(
 		context.Background(),
 		fixture.taskID,
@@ -179,7 +179,7 @@ func TestFailStaleTasksCommitsSquadTerminalProjection(t *testing.T) {
 	pool := openSquadTerminalProjectionTestPool(t)
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-2*time.Hour), 1, 1)
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	batch, err := service.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 60,
 		RunningTimeoutSecs:  60,
@@ -202,7 +202,7 @@ func TestCompleteTaskCreatesOneAtomicLeaderContinuation(t *testing.T) {
 		t.Fatalf("make worker step intermediate: %v", err)
 	}
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	if _, err := service.CompleteTask(ctx, fixture.taskID, []byte(`{"output":"worker complete"}`), "", ""); err != nil {
 		t.Fatalf("complete intermediate Squad worker task: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestFailTaskWithRetryLeavesSquadRunOpen(t *testing.T) {
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-time.Minute), 1, 2)
 	ctx := context.Background()
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	if _, err := service.FailTask(ctx, fixture.taskID, "runtime unavailable", "", "", "runtime_offline"); err != nil {
 		t.Fatalf("fail retryable Squad worker task: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestFailStaleTaskWithDeliveryAndRetryLeavesSquadRunOpen(t *testing.T) {
 		t.Fatalf("seed stale task delivery comment: %v", err)
 	}
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	batch, err := service.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 60,
 		RunningTimeoutSecs:  60,
@@ -349,7 +349,7 @@ func TestConcurrentWorkerCompletionsCreateOneLeaderContinuation(t *testing.T) {
 		t.Fatalf("create concurrent worker task: %v", err)
 	}
 
-	service := NewTaskService(db.New(pool), pool, nil, events.New())
+	service := NewTaskService(db.New(pool), pool, nil, events.New(), nil)
 	taskIDs := []pgtype.UUID{fixture.taskID, secondTaskID}
 	errs := make([]error, len(taskIDs))
 	var wg sync.WaitGroup

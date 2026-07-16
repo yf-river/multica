@@ -20,9 +20,6 @@ import (
 // autopilot-created issue through the caller's transaction-scoped queries.
 // A nil event means the issue is not an active autopilot run.
 func ProjectAutopilotRunFromIssue(ctx context.Context, queries *db.Queries, issue db.Issue) (*events.Event, error) {
-	if queries == nil {
-		return nil, errors.New("project autopilot issue: queries are required")
-	}
 	if !issue.OriginType.Valid || issue.OriginType.String != "autopilot" {
 		return nil, nil
 	}
@@ -58,9 +55,6 @@ func ProjectAutopilotRunFromIssue(ctx context.Context, queries *db.Queries, issu
 // run_only tasks linked directly to a run and create_issue tasks linked through
 // an issue. The caller owns the transaction and delivery receipt.
 func ProjectAutopilotRunFromTask(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*events.Event, error) {
-	if queries == nil {
-		return nil, errors.New("project autopilot task: queries are required")
-	}
 	if task.AutopilotRunID.Valid {
 		return projectDirectAutopilotTask(ctx, queries, task)
 	}

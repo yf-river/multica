@@ -129,11 +129,7 @@ func (s *TaskService) buildCommentTriggerSummaryWithQueries(ctx context.Context,
 	return pgtype.Text{String: summary, Valid: true}
 }
 
-func NewTaskService(q *db.Queries, tx TxStarter, hub *realtime.Hub, bus *events.Bus, wakeups ...TaskWakeupNotifier) *TaskService {
-	var wakeup TaskWakeupNotifier
-	if len(wakeups) > 0 {
-		wakeup = wakeups[0]
-	}
+func NewTaskService(q *db.Queries, tx TxStarter, hub *realtime.Hub, bus *events.Bus, wakeup TaskWakeupNotifier) *TaskService {
 	return &TaskService{Queries: q, TxStarter: tx, Hub: hub, Bus: bus, Wakeup: wakeup}
 }
 

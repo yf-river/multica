@@ -413,13 +413,8 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	}
 }
 
-// runInTx executes fn inside a single DB transaction. If TxStarter is nil
-// (e.g. some tests construct TaskService directly), fn runs against the
-// regular Queries handle without transactional guarantees.
+// runInTx executes fn inside a single DB transaction.
 func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) error {
-	if s.TxStarter == nil {
-		return fn(s.Queries)
-	}
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

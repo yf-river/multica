@@ -28,7 +28,7 @@ func setupAutopilotListenerFixture(t *testing.T) autopilotListenerFixture {
 	ctx := context.Background()
 	queries := db.New(testPool)
 	bus := events.New()
-	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
+	taskSvc := service.NewTaskService(queries, testPool, nil, bus, nil)
 	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
 
 	var agentID string
@@ -782,7 +782,7 @@ func TestAutopilotDispatchSkipsWhenRuntimeOffline(t *testing.T) {
 	ctx := context.Background()
 	queries := db.New(testPool)
 	bus := events.New()
-	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
+	taskSvc := service.NewTaskService(queries, testPool, nil, bus, nil)
 	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
 
 	// Spin up a dedicated runtime + agent so we can flip the runtime to
@@ -852,7 +852,7 @@ func TestManualTriggerDoesNotErrorOnPostAdmissionSkip(t *testing.T) {
 	ctx := context.Background()
 	queries := db.New(testPool)
 	bus := events.New()
-	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
+	taskSvc := service.NewTaskService(queries, testPool, nil, bus, nil)
 	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
 
 	agentID := createOfflineLocalAgent(t, ctx, "Manual-trigger skip runtime", "mul2429_manual_skip_runtime", "mul2429-manual-skip-agent")

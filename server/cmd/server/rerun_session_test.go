@@ -118,7 +118,7 @@ func (f rerunTestFixture) createRetryTask(t *testing.T, parentID string) db.Agen
 func (f rerunTestFixture) taskService() *service.TaskService {
 	hub := realtime.NewHub()
 	go hub.Run()
-	return service.NewTaskService(f.queries, nil, hub, events.New())
+	return service.NewTaskService(f.queries, testPool, hub, events.New(), nil)
 }
 
 func (f rerunTestFixture) rerunSourceTask(t *testing.T, sourceTaskID string) *db.AgentTaskQueue {
