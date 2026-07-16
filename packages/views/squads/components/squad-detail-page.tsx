@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { createAgentWithRecovery } from "@multica/core/agents";
 import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/paths";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
@@ -113,11 +113,9 @@ export function SquadDetailPage() {
   // request. The runtime list mirrors the agents page so the picker
   // (and the "only my runtimes" filter) behaves identically here.
   const currentUser = useAuthStore((s) => s.user);
-  const myRole = useMemo(() => {
-    if (!currentUser) return null;
-    return wsMembers.find((m) => m.user_id === currentUser.id)?.role ?? null;
-  }, [wsMembers, currentUser]);
-  const isWorkspaceAdmin = canManageWorkspace(myRole);
+  const isWorkspaceAdmin = canManageWorkspace(
+    resolveCurrentMember(wsMembers, currentUser?.id).role,
+  );
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery({
     ...runtimeListOptions(wsId),

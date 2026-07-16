@@ -35,7 +35,7 @@ import {
 } from "@multica/core/agents/stores";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -723,11 +723,9 @@ export function AgentsPage() {
   );
   const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const me = members.find((m) => m.user_id === currentUser.id);
-    return canManageWorkspace(me?.role);
-  }, [members, currentUser]);
+  const isWorkspaceAdmin = canManageWorkspace(
+    resolveCurrentMember(members, currentUser?.id).role,
+  );
 
   // Scope counts come from the FULL set (filters never affect them).
   // Archived ignores the ownership lens (see the view store comment).

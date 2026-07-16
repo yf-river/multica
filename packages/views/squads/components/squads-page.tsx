@@ -26,7 +26,7 @@ import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useAuthStore } from "@multica/core/auth";
-import { canManageWorkspace } from "@multica/core/permissions";
+import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
 import {
@@ -41,7 +41,6 @@ import {
 import type {
   Agent,
   EnsureInternalSquadTemplateRequest,
-  MemberWithUser,
   Squad,
   SquadScope,
 } from "@multica/core/types";
@@ -859,11 +858,9 @@ export function SquadsPage() {
   const agentsById = useMemo(() => indexBy(agents, (agent) => agent.id), [agents]);
   const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const me = members.find((mem: MemberWithUser) => mem.user_id === currentUser.id);
-    return canManageWorkspace(me?.role);
-  }, [members, currentUser]);
+  const isWorkspaceAdmin = canManageWorkspace(
+    resolveCurrentMember(members, currentUser?.id).role,
+  );
   const [pmDialogOpen, setPmDialogOpen] = useState(false);
   const [pmName, setPmName] = useState(DEFAULT_PM_SQUAD_NAME);
   const [pmProvider, setPmProvider] = useState(DEFAULT_PM_PROVIDER);

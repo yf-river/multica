@@ -21,6 +21,8 @@ import type {
   MemberWithUser,
   Agent,
   Squad,
+  IssueStatus,
+  ProjectStatus,
 } from "@multica/core/types";
 import { ListTodo } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -29,7 +31,6 @@ import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
-import type { IssueStatus, ProjectStatus } from "@multica/core/types";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { SuggestionOptions } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
@@ -165,7 +166,6 @@ const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
         return;
       }
 
-      let cancelled = false;
       const controller = new AbortController();
       setIsSearching(true);
 
@@ -187,7 +187,7 @@ const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
                   signal: controller.signal,
                 }),
               ]);
-              if (!cancelled && !controller.signal.aborted) {
+              if (!controller.signal.aborted) {
                 setServerItems([
                   ...issues.map((issue) => ({ ...issueToMention(issue), group: "search" as const })),
                   ...projects.map((project) => ({ ...projectToMention(project), group: "search" as const })),
@@ -200,14 +200,14 @@ const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
                 include_closed: true,
                 signal: controller.signal,
               });
-              if (!cancelled && !controller.signal.aborted) {
+              if (!controller.signal.aborted) {
                 setServerItems(res.map(issueToMention));
               }
             }
           } catch {
             // Aborted or network error: keep the synchronous cache results.
           } finally {
-            if (!cancelled && !controller.signal.aborted) {
+            if (!controller.signal.aborted) {
               setSearchedQuery(q);
               setIsSearching(false);
             }
@@ -216,7 +216,6 @@ const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
       }, SERVER_SEARCH_DEBOUNCE_MS);
 
       return () => {
-        cancelled = true;
         clearTimeout(timer);
         controller.abort();
       };
@@ -254,8 +253,9 @@ const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
     }
 
     const groups = groupItems(displayItems);
-    const hasContextGroups = displayItems.some((item) => item.group === "current" || item.group === "recent");
-    const contextLayout = hasContextGroups;
+    const contextLayout = displayItems.some(
+      (item) => item.group === "current" || item.group === "recent",
+    );
     const groupLabel = (label: string): string => {
       if (label === "Current") return t(($) => $.mention.group_current);
       if (label === "Recent") return t(($) => $.mention.group_recent);
@@ -282,13 +282,8 @@ const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
         );
       });
 
-    // One scroll container for every group. Previously the context layout made
-    // only the "Recent" group scrollable while the rest were `shrink-0`, so a
-    // query that mixed context items with search results squeezed Recent toward
-    // zero height and its un-clipped rows painted over the groups below it. With
-    // a single `overflow-y-auto` flex column the groups simply stack and the
-    // whole popup scrolls — no group can collapse onto another. The context
-    // variant only differs in width / max-height / chrome.
+    // One scroll container keeps every group stacked and clipped; the context
+    // variant differs only in width, maximum height and chrome.
     return (
       <div
         className={cn(
@@ -432,9 +427,9 @@ function issueToMention(i: Pick<Issue, "id" | "identifier" | "title" | "status">
   return {
     id: i.id,
     label: i.identifier,
-    type: "issue" as const,
+    type: "issue",
     description: i.title,
-    status: i.status as IssueStatus,
+    status: i.status,
   };
 }
 
@@ -442,7 +437,7 @@ function projectToMention(p: { id: string; title: string; description?: string |
   return {
     id: p.id,
     label: p.title,
-    type: "project" as const,
+    type: "project",
     description: p.description ?? undefined,
     icon: p.icon ?? null,
     projectStatus: p.status,
@@ -500,7 +495,7 @@ export function createMentionSuggestion(
 
     const allItem: MentionItem[] =
       "all members".includes(q) || "all".includes(q)
-        ? [{ id: "all", label: "All members", type: "all" as const }]
+        ? [{ id: "all", label: "All members", type: "all" }]
         : [];
 
     const memberItems: MentionItem[] = members
@@ -508,7 +503,7 @@ export function createMentionSuggestion(
       .map((m) => ({
         id: m.user_id,
         label: m.name,
-        type: "member" as const,
+        type: "member",
       }));
 
     const agentItems: MentionItem[] = agents
@@ -518,11 +513,11 @@ export function createMentionSuggestion(
           matchesTextQuery(a.name, q) &&
           canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
       )
-      .map((a) => ({ id: a.id, label: a.name, type: "agent" as const }));
+      .map((a) => ({ id: a.id, label: a.name, type: "agent" }));
 
     const squadItems: MentionItem[] = squads
       .filter((s) => !s.archived_at && matchesTextQuery(s.name, q))
-      .map((s) => ({ id: s.id, label: s.name, type: "squad" as const }));
+      .map((s) => ({ id: s.id, label: s.name, type: "squad" }));
 
     // Members and agents share a single ranked list — recently mentioned
     // targets come first regardless of type, with an alphabetical fallback
