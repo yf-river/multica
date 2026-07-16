@@ -224,7 +224,7 @@ func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, qu
 			Score:          score.Score,
 			PassedCases:    int32(score.PassedCases),
 			TotalCases:     int32(score.TotalCases),
-			Status:         promptEvaluationDimensionScoreStatus(score.Status),
+			Status:         score.Status,
 			Rule:           score.Rule,
 			Evidence:       score.Evidence,
 			Source:         source,
@@ -233,15 +233,6 @@ func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, qu
 		}
 	}
 	return nil
-}
-
-func promptEvaluationDimensionScoreStatus(status string) string {
-	switch status {
-	case "待执行", "已评分", "无用例":
-		return status
-	default:
-		return "待执行"
-	}
 }
 
 func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset) ([]map[string]any, bool) {
