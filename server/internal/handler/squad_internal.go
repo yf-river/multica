@@ -419,35 +419,25 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	return squad, nil
 }
 
-func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
-	return (squad.Name == template.Name || matchesInternalSquadProfileKey(squad, template)) &&
-		squad.Scope == scope && internalSquadOwnerMatches(scope, squad.CreatorID, creatorID)
-}
-
 func internalSquadProfileKey(squad db.Squad) string {
 	profile := mustDecodePersistedJSONObject(squad.SopProfile, "squad SOP profile")
 	return util.StringFromAny(profile["profile_key"])
 }
 
-func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTemplate) bool {
+func internalSquadProfileMatches(squad db.Squad, template internalSquadTemplate) bool {
 	key := internalSquadProfileKey(squad)
 	return key != "" && (key == template.Key || key == util.StringFromAny(template.Profile["profile_key"]))
 }
 
-func matchesInternalSquadProfile(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
-	return matchesInternalSquadProfileKey(squad, template) &&
-		squad.Scope == scope && internalSquadOwnerMatches(scope, squad.CreatorID, creatorID)
-}
-
-func internalSquadOwnerMatches(scope string, actual, expected pgtype.UUID) bool {
-	return scope != scopePersonal || uuidToString(actual) == uuidToString(expected)
-}
-
 func matchesInternalSquadTarget(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID, requireName bool) bool {
-	if requireName {
-		return squad.Name == template.Name && matchesInternalSquadProfile(squad, template, scope, creatorID)
+	if squad.Scope != scope || (scope == scopePersonal && uuidToString(squad.CreatorID) != uuidToString(creatorID)) {
+		return false
 	}
-	return matchesInternalSquadTemplate(squad, template, scope, creatorID)
+	profileMatches := internalSquadProfileMatches(squad, template)
+	if requireName {
+		return squad.Name == template.Name && profileMatches
+	}
+	return squad.Name == template.Name || profileMatches
 }
 
 func (h *Handler) archiveSupersededInternalSquads(ctx context.Context, squads []db.Squad, currentID pgtype.UUID, template internalSquadTemplate, scope string, creatorID pgtype.UUID) error {
@@ -456,7 +446,9 @@ func (h *Handler) archiveSupersededInternalSquads(ctx context.Context, squads []
 		if item.ArchivedAt.Valid || uuidToString(item.ID) == current {
 			continue
 		}
-		if !matchesInternalSquadProfile(item, template, scope, creatorID) {
+		if item.Scope != scope ||
+			(scope == scopePersonal && uuidToString(item.CreatorID) != uuidToString(creatorID)) ||
+			!internalSquadProfileMatches(item, template) {
 			continue
 		}
 		if _, err := h.DB.Exec(ctx, `
