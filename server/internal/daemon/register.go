@@ -210,7 +210,7 @@ func (d *Daemon) reregisterWorkspaceAfterRuntimeGone(ctx context.Context, worksp
 		d.logger.Info("re-registered runtime after server-side deletion",
 			"workspace_id", workspaceID, "runtime_id", rid)
 	}
-	d.notifyRuntimeSetChanged()
+	d.runtimeSet.notify()
 
 	// Tell the server about any tasks the previous (now-deleted) runtime
 	// was working on, mirroring the registration path's recover-orphans call.
@@ -935,7 +935,7 @@ func (d *Daemon) refreshWorkspaceRuntimeProfiles(ctx context.Context, workspaceI
 		d.logger.Info("re-registered runtime after profile drift",
 			"workspace_id", workspaceID, "runtime_id", rid)
 	}
-	d.notifyRuntimeSetChanged()
+	d.runtimeSet.notify()
 
 	// Drift may have shrunk the runtime set (a profile got disabled while
 	// other runtimes survive). Eagerly mark those server-side rows offline
@@ -996,7 +996,7 @@ func (d *Daemon) convergeWorkspaceRuntimesToZero(ctx context.Context, workspaceI
 				"workspace_id", workspaceID, "runtime_ids", oldRuntimeIDs, "error", err)
 		}
 	}
-	d.notifyRuntimeSetChanged()
+	d.runtimeSet.notify()
 }
 
 func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL string) error {

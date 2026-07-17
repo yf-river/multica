@@ -68,7 +68,7 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	rows, err := h.LarkInstallations.ListByWorkspace(r.Context(), wsUUID)
+	rows, err := h.Queries.ListLarkInstallationsByWorkspace(r.Context(), wsUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list lark installations")
 		return

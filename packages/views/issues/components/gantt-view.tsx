@@ -45,13 +45,6 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / MS_PER_DAY);
 }
 
-// Issue dates arrive as date-only "YYYY-MM-DD" strings (calendar days). Anchor
-// each to UTC midnight so the bar lands on exactly that day, independent of the
-// viewer's timezone. See @multica/core/issues/date.
-function parseDay(iso: string | null): Date | null {
-  return dateOnlyToUTCDate(iso);
-}
-
 function isWeekendUTC(d: Date): boolean {
   const wd = d.getUTCDay();
   return wd === 0 || wd === 6;
@@ -93,8 +86,8 @@ function computeRange(issues: Issue[], today: Date, zoom: GanttZoom): Range {
   let minTs = today.getTime() - defaultPad[zoom] * MS_PER_DAY;
   let maxTs = today.getTime() + defaultPad[zoom] * MS_PER_DAY;
   for (const i of issues) {
-    const s = parseDay(i.start_date);
-    const e = parseDay(i.due_date);
+    const s = dateOnlyToUTCDate(i.start_date);
+    const e = dateOnlyToUTCDate(i.due_date);
     if (s && s.getTime() < minTs) minTs = s.getTime();
     if (e && e.getTime() > maxTs) maxTs = e.getTime();
     if (s && s.getTime() > maxTs) maxTs = s.getTime();
@@ -325,8 +318,9 @@ function ScheduledRow({
   });
   const project = issue.project_id ? projects.find((pr) => pr.id === issue.project_id) : undefined;
 
-  const start = parseDay(issue.start_date);
-  const due = parseDay(issue.due_date);
+  // Date-only values are anchored to UTC by the shared Issue date owner.
+  const start = dateOnlyToUTCDate(issue.start_date);
+  const due = dateOnlyToUTCDate(issue.due_date);
 
   // start > due is a data anomaly (backend only validates RFC3339, not order).
   // Normalize to min/max so the row still draws something, and flag it so the

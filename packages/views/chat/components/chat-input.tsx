@@ -21,10 +21,6 @@ import { useT } from "../../i18n";
 const logger = createLogger("chat.ui");
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 
-function isAttachmentReferenced(content: string, attachment: Attachment): boolean {
-  return contentReferencesAttachment(content, attachment);
-}
-
 interface ChatInputProps {
   onSend: (
     content: string,
@@ -227,7 +223,7 @@ export function ChatInput({
       if (content.includes(url)) activeIds.push(id);
     }
     for (const attachment of draftAttachments) {
-      if (isAttachmentReferenced(content, attachment)) activeIds.push(attachment.id);
+      if (contentReferencesAttachment(content, attachment)) activeIds.push(attachment.id);
     }
     const uniqueActiveIds = Array.from(new Set(activeIds));
     // Capture draft key BEFORE onSend — creating a new session mutates
@@ -342,7 +338,7 @@ export function ChatInput({
               setInputDraft(draftKey, md);
               if (draftAttachments.length > 0) {
                 const referenced = draftAttachments.filter((attachment) =>
-                  isAttachmentReferenced(md, attachment),
+                  contentReferencesAttachment(md, attachment),
                 );
                 if (referenced.length !== draftAttachments.length) {
                   setInputDraftAttachments(draftKey, referenced);

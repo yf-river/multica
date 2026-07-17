@@ -30,15 +30,11 @@ const keys = {
 const AGENT_PLAYGROUND_SYNC_INTERVAL_MS = 2000;
 const TERMINAL_AGENT_PLAYGROUND_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-function isTerminalAgentPlaygroundStatus(status: string): boolean {
-  return TERMINAL_AGENT_PLAYGROUND_STATUSES.has(status);
-}
-
 function hasActiveAgentPlaygroundWork(detail: AgentPlaygroundDetail | null): boolean {
   if (!detail) return false;
   return (
-    detail.results.some((result) => result.task_id && !isTerminalAgentPlaygroundStatus(result.status)) ||
-    detail.judgements.some((judgement) => judgement.task_id && !isTerminalAgentPlaygroundStatus(judgement.status))
+    detail.results.some((result) => result.task_id && !TERMINAL_AGENT_PLAYGROUND_STATUSES.has(result.status)) ||
+    detail.judgements.some((judgement) => judgement.task_id && !TERMINAL_AGENT_PLAYGROUND_STATUSES.has(judgement.status))
   );
 }
 

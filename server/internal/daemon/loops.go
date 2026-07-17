@@ -156,7 +156,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context) error {
 		}
 	}
 	if registered > 0 || removed > 0 {
-		d.notifyRuntimeSetChanged()
+		d.runtimeSet.notify()
 	}
 
 	if len(d.allRuntimeIDs()) == 0 && registered == 0 && len(workspaces) > 0 {
@@ -264,7 +264,7 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
 				// Server says this runtime is gone — recover instead of
 				// looping on the dead UUID. handleRuntimeGone coalesces
 				// concurrent callers and runs the recovery HTTP call under
-				// the daemon root context so notifyRuntimeSetChanged
+				// the daemon root context so runtime-set notification
 				// tearing down this heartbeat goroutine cannot abort it.
 				go d.handleRuntimeGone(rid)
 				return

@@ -646,7 +646,7 @@ func TestTryClaimRegisterSlot_PeerHoldingSlotForcesCoalesce(t *testing.T) {
 
 func TestHandleRuntimeGone_RecoveryContextSurvivesCallerCancellation(t *testing.T) {
 	// Regression for Finding #1: handleRuntimeGone must not use the per-
-	// runtime heartbeat ctx for the register HTTP call. notifyRuntimeSetChanged
+	// runtime heartbeat ctx for the register HTTP call. Runtime-set notification
 	// tears that ctx down as soon as we prune the dead runtime, so forwarding
 	// it would self-cancel the in-flight register.
 	//

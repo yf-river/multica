@@ -427,7 +427,7 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
 	s.recordTaskCancelledTrace(ctx, s.Queries, task)
-	s.recordTaskCancelledMetrics(ctx, task)
+	s.recordTaskTerminalMetrics(ctx, task)
 }
 
 // recordTaskCancelledTrace writes the task.cancelled observability row.
@@ -470,10 +470,6 @@ func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Querie
 	}
 }
 
-func (s *TaskService) recordTaskCancelledMetrics(ctx context.Context, task db.AgentTaskQueue) {
-	s.recordTaskTerminalMetrics(ctx, task)
-}
-
 func (s *TaskService) recordTaskTerminalMetrics(ctx context.Context, task db.AgentTaskQueue) (source, runtimeMode string, ok bool) {
 	if s.Metrics == nil {
 		return "", "", false
@@ -497,7 +493,7 @@ func (s *TaskService) CaptureCancelledTaskTracesInTx(ctx context.Context, q *db.
 // recorded in the business transaction (for example chat session deletion).
 func (s *TaskService) NotifyCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue, persistedEvents []events.Event) {
 	for _, t := range cancelled {
-		s.recordTaskCancelledMetrics(ctx, t)
+		s.recordTaskTerminalMetrics(ctx, t)
 	}
 	s.reconcileCancelledTaskAgents(ctx, cancelled)
 	s.publishTaskEvents(persistedEvents)

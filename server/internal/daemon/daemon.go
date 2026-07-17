@@ -214,10 +214,6 @@ func (d *Daemon) codexBrokerBackend(runtimeID string, cfg agent.Config) agent.Ba
 	return backend
 }
 
-func (d *Daemon) notifyRuntimeSetChanged() {
-	d.runtimeSet.notify()
-}
-
 // reregisterCoalesceWindow caps how often the daemon re-registers a workspace
 // after detecting a runtime_not_found response. Many stale runtime IDs may be
 // reported within seconds of each other (one delete clears all of a daemon's
@@ -256,7 +252,7 @@ const reregisterFailureBackoff = 60 * time.Second
 // independently every DefaultWorkspaceSyncInterval as a safety net.
 //
 // The recovery HTTP call uses the daemon root context, not the caller's. The
-// heartbeat path's per-runtime ctx is cancelled by notifyRuntimeSetChanged the
+// heartbeat path's per-runtime ctx is cancelled when the runtime-set watcher
 // moment we prune the dead UUID, and if we forwarded that ctx the in-flight
 // register would self-cancel mid-flight.
 func (d *Daemon) handleRuntimeGone(runtimeID string) {
@@ -292,7 +288,7 @@ func (d *Daemon) handleRuntimeGone(runtimeID string) {
 
 	d.logger.Info("runtime deleted server-side; pruned from local state",
 		"runtime_id", runtimeID, "workspace_id", workspaceID)
-	d.notifyRuntimeSetChanged()
+	d.runtimeSet.notify()
 
 	if !d.tryClaimRegisterSlot(workspaceID, entryAt, time.Now()) {
 		d.logger.Debug("skip re-register: coalescing with recent attempt",

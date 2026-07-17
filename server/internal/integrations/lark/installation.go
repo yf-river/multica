@@ -85,13 +85,6 @@ func (s *InstallationService) GetInWorkspace(ctx context.Context, id, workspaceI
 	return row, nil
 }
 
-// ListByWorkspace returns every installation rooted at the workspace,
-// active and revoked, oldest first. The status column lets the UI
-// distinguish "wired up" from "torn down but kept for audit".
-func (s *InstallationService) ListByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]db.LarkInstallation, error) {
-	return s.queries.ListLarkInstallationsByWorkspace(ctx, workspaceID)
-}
-
 // ErrInstallationNotFound surfaces "no row matches in this workspace"
 // — used by the HTTP layer to return 404. Distinct from a plain
 // pgx.ErrNoRows so handlers do not need to import pgx.
