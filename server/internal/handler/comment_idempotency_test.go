@@ -2,10 +2,8 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -53,32 +51,9 @@ func TestCreateComment_ConcurrentReplayCreatesOneComment(t *testing.T) {
 	fixture := createHandlerCommentIssueFixture(t, "concurrent comment "+uuid.NewString())
 	key := uuid.NewString()
 	content := "concurrent speech " + uuid.NewString()
-	const callers = 8
-	responses := make(chan *httptest.ResponseRecorder, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			responses <- createCommentWithKey(t, fixture.ID, key, map[string]any{"content": content})
-		}()
-	}
-	wg.Wait()
-	close(responses)
-	ids := map[string]struct{}{}
-	for response := range responses {
-		if response.Code != http.StatusCreated {
-			t.Fatalf("concurrent create = %d %s", response.Code, response.Body.String())
-		}
-		var comment CommentResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &comment); err != nil {
-			t.Fatal(err)
-		}
-		ids[comment.ID] = struct{}{}
-	}
-	if len(ids) != 1 {
-		t.Fatalf("comment ids = %v, want one", ids)
-	}
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
+		return createCommentWithKey(t, fixture.ID, key, map[string]any{"content": content})
+	})
 }
 
 func TestCreateComment_RequestCompletionFailureRollsBackComment(t *testing.T) {

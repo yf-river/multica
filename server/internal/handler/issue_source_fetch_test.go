@@ -17,6 +17,20 @@ type issueSourceFetchFixture struct {
 	TaskID  string
 }
 
+type issueSourceFetchResponse struct {
+	Metadata   map[string]any `json:"metadata"`
+	TraceEvent map[string]any `json:"trace_event"`
+}
+
+func decodeIssueSourceFetchResponse(t *testing.T, w *httptest.ResponseRecorder) issueSourceFetchResponse {
+	t.Helper()
+	var response issueSourceFetchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode source-fetch response: %v", err)
+	}
+	return response
+}
+
 func clearTapdCredentialProfilesForTest(t *testing.T, ctx context.Context) {
 	t.Helper()
 
@@ -115,13 +129,7 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 		t.Fatalf("RecordIssueSourceFetch: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp struct {
-		Metadata   map[string]any `json:"metadata"`
-		TraceEvent map[string]any `json:"trace_event"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := decodeIssueSourceFetchResponse(t, w)
 	if resp.Metadata["source_fetch_status"] != "fetched" {
 		t.Fatalf("source_fetch_status = %v", resp.Metadata["source_fetch_status"])
 	}
@@ -138,12 +146,7 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 	if replay.Code != http.StatusOK {
 		t.Fatalf("source-fetch replay = %d %s, want 200", replay.Code, replay.Body.String())
 	}
-	var replayResp struct {
-		TraceEvent map[string]any `json:"trace_event"`
-	}
-	if err := json.Unmarshal(replay.Body.Bytes(), &replayResp); err != nil {
-		t.Fatalf("decode replay response: %v", err)
-	}
+	replayResp := decodeIssueSourceFetchResponse(t, replay)
 	if replayResp.TraceEvent["id"] != resp.TraceEvent["id"] {
 		t.Fatalf("replay trace = %+v, want original %+v", replayResp.TraceEvent, resp.TraceEvent)
 	}
@@ -251,13 +254,7 @@ func TestRecordIssueSourceFetchAutoFetchesTapdWikiWithAccountProfile(t *testing.
 	if strings.Contains(w.Body.String(), "tapd-test-token") {
 		t.Fatalf("source-fetch response leaked token: %s", w.Body.String())
 	}
-	var resp struct {
-		Metadata   map[string]any `json:"metadata"`
-		TraceEvent map[string]any `json:"trace_event"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := decodeIssueSourceFetchResponse(t, w)
 	if resp.Metadata["source_fetch_status"] != "fetched" || resp.Metadata["source_fetch_title"] != "用户快捷入口需求" {
 		t.Fatalf("metadata = %+v", resp.Metadata)
 	}
@@ -306,12 +303,7 @@ func TestRecordIssueSourceFetchAutoFetchRetriesTransientTapdFailure(t *testing.T
 	})
 
 	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch retry")
-	var resp struct {
-		Metadata map[string]any `json:"metadata"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := decodeIssueSourceFetchResponse(t, w)
 	if requestCount != 2 {
 		t.Fatalf("requestCount = %d, want 2", requestCount)
 	}
@@ -346,12 +338,7 @@ func TestRecordIssueSourceFetchAutoFetchDoesNotRetryUnauthorized(t *testing.T) {
 	})
 
 	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch unauthorized")
-	var resp struct {
-		Metadata map[string]any `json:"metadata"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := decodeIssueSourceFetchResponse(t, w)
 	if requestCount != 1 {
 		t.Fatalf("requestCount = %d, want 1", requestCount)
 	}
@@ -408,12 +395,7 @@ func TestRecordIssueSourceFetchAutoFetchParsesTapdWikiSourceURL(t *testing.T) {
 	if sawWorkspaceID != "47654106" || sawWikiID != "1147654106001004223" {
 		t.Fatalf("TAPD request query workspace_id=%q id=%q", sawWorkspaceID, sawWikiID)
 	}
-	var resp struct {
-		Metadata map[string]any `json:"metadata"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := decodeIssueSourceFetchResponse(t, w)
 	if resp.Metadata["source_fetch_status"] != "fetched" ||
 		resp.Metadata["source_fetch_resource_type"] != "markdown_wiki" ||
 		resp.Metadata["source_fetch_resource_id"] != "1147654106001004223" ||
@@ -436,12 +418,7 @@ func TestRecordIssueSourceFetchAutoFetchRecordsMissingTapdProfile(t *testing.T) 
 	})
 
 	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch missing profile")
-	var resp struct {
-		Metadata map[string]any `json:"metadata"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := decodeIssueSourceFetchResponse(t, w)
 	if resp.Metadata["source_fetch_status"] != "fetch_failed" {
 		t.Fatalf("metadata = %+v", resp.Metadata)
 	}

@@ -457,10 +457,6 @@ func TestFetchFromSkillsSh_ResolvesRootLevelSkillMd(t *testing.T) {
 	if !strings.HasPrefix(result.content, "---\nname: huashu-design") {
 		t.Fatalf("SKILL.md content not populated, got %q", result.content)
 	}
-	// assets/logo.png is intentionally dropped by addFile's binary-extension
-	// guard — PG TEXT columns can't store image bytes, and agents never read
-	// them as text. The directory is still walked (the listing request below
-	// confirms it), but the .png never reaches result.files.
 	gotPaths := importedFilePaths(result.files)
 	wantPaths := []string{"README.md"}
 	if !equalStrings(gotPaths, wantPaths) {
@@ -472,10 +468,6 @@ func TestFetchFromSkillsSh_ResolvesRootLevelSkillMd(t *testing.T) {
 }
 
 func TestFetchFromSkillsSh_RootSkillMdFastPathSkipsFrontmatterMismatch(t *testing.T) {
-	// Multi-skill repo with an unrelated root SKILL.md (skill "other") plus a
-	// subdir skill "wanted". URL requests "wanted". The fast-path must reject
-	// the root SKILL.md on frontmatter mismatch and fall through to the tree
-	// fallback, which then resolves "wanted" correctly.
 	client, requests := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
 		case "api.github.com":
@@ -616,8 +608,6 @@ func TestFetchFromSkillsSh_AnthropicPptxIntegration(t *testing.T) {
 		}
 	}
 }
-
-// --- GitHub source tests ---
 
 func TestParseGitHubURL(t *testing.T) {
 	cases := []struct {
@@ -775,8 +765,6 @@ func TestFetchFromGitHub_TreeURLImportsSkillDirectory(t *testing.T) {
 	if !equalStrings(gotPaths, wantPaths) {
 		t.Fatalf("files = %v (must be relative to skill dir), want %v", gotPaths, wantPaths)
 	}
-	// Verify the skill-relative path scheme: we never want supporting files
-	// to keep the in-repo prefix (document-skills/pptx/...).
 	for _, f := range result.files {
 		if strings.HasPrefix(f.path, "document-skills/") {
 			t.Fatalf("supporting file %q still carries skillDir prefix", f.path)
@@ -906,8 +894,6 @@ func TestFetchFromGitHub_BlobURLImportsSpecificSkill(t *testing.T) {
 	}
 }
 
-// --- Bundle / file size cap tests ---
-
 func TestFetchRawFile_ReturnsErrorOnOversizedFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(bytes.Repeat([]byte("a"), maxImportFileSize+1024))
@@ -958,10 +944,6 @@ func TestImportedSkill_AddFileEnforcesBundleLimits(t *testing.T) {
 	})
 }
 
-// fetchFromGitHub must FAIL the import (not just log+continue) when a
-// supporting file exceeds the per-file cap — silently dropping the file
-// would leave a skill bundle that looks valid to the user but is missing
-// content.
 func TestFetchFromGitHub_OversizedSupportingFileFailsImport(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
@@ -1003,8 +985,6 @@ func TestFetchFromGitHub_OversizedSupportingFileFailsImport(t *testing.T) {
 	}
 }
 
-// fetchFromSkillsSh has the same supporting-file loop and must also fail
-// (not just warn) when one of those files exceeds the cap.
 func TestFetchFromSkillsSh_OversizedSupportingFileFailsImport(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
@@ -1046,10 +1026,6 @@ func TestFetchFromSkillsSh_OversizedSupportingFileFailsImport(t *testing.T) {
 	}
 }
 
-// Slash-bearing refs (e.g. release/v2) are now resolved against the API
-// instead of being silently parsed as ref="release", path="v2/...". The
-// resolver must walk longest→shortest and pick the prefix the API
-// confirms exists.
 func TestFetchFromGitHub_ResolvesSlashRefAgainstAPI(t *testing.T) {
 	client, requests := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
@@ -1089,16 +1065,11 @@ func TestFetchFromGitHub_ResolvesSlashRefAgainstAPI(t *testing.T) {
 	if result.origin["path"] != "skills/foo" {
 		t.Fatalf("origin path = %v, want skills/foo", result.origin["path"])
 	}
-	// Sanity-check that the resolver actually probed in the expected order.
 	if !containsString(*requests, "api.github.com /repos/acme/skills/commits/release/v2/skills/foo") {
 		t.Fatalf("resolver should probe longest prefix first, requests=%v", *requests)
 	}
 }
 
-// When none of the candidate refs resolve, fail with a clear error that
-// names what was tried — do not silently fall back to using the first
-// segment as the ref (the previous behavior, which would import the wrong
-// branch / wrong path).
 func TestFetchFromGitHub_UnresolvableRefFailsLoudly(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
@@ -1119,14 +1090,10 @@ func TestFetchFromGitHub_UnresolvableRefFailsLoudly(t *testing.T) {
 	}
 }
 
-// Ref disambiguation may use the explicit URL split when GitHub's API is
-// blocked, but the import must still fail if the supporting-file inventory
-// cannot be proven complete.
 func TestFetchFromGitHub_RejectsPartialImportOnAPIBlocked(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
 		case "api.github.com":
-			// Simulate rate-limit on every commits probe and on contents.
 			if strings.HasPrefix(r.URL.Path, "/repos/anthropics/skills/commits/") {
 				http.Error(w, "rate limit", http.StatusForbidden)
 				return
@@ -1156,9 +1123,6 @@ func TestFetchFromGitHub_RejectsPartialImportOnAPIBlocked(t *testing.T) {
 	}
 }
 
-// GITHUB_TOKEN, when set, must be forwarded as a bearer token on every
-// api.github.com request so self-hosted servers can avoid the 60-req/hour
-// unauthenticated rate limit.
 func TestFetchFromGitHub_SendsAuthHeaderWhenTokenSet(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_test_token_123")
 	var (

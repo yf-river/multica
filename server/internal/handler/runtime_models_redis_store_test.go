@@ -9,16 +9,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Reuses the newRedisTestClient helper from
-// runtime_local_skills_redis_store_test.go: same Redis instance, same gating
-// on REDIS_TEST_URL, same FlushDB-per-test isolation.
-
-// TestRedisModelListStore_EnvelopePersistsRunStartedAt is a pure marshal/
-// unmarshal round-trip — no Redis required. Pins the regression that the
-// `json:"-"` tag on ModelListRequest.RunStartedAt was silently dropping the
-// field on persistence, which broke the running-timeout escape hatch
-// across nodes (CI failure for TestRedisModelListStore_RunningTimeout
-// before this fix).
 func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 	store := NewRedisModelListStore(nil)
 	now := time.Now().UTC().Truncate(time.Microsecond) // JSON loses sub-µs precision
@@ -74,10 +64,6 @@ func TestRedisModelListStore_SharedLifecycle(t *testing.T) {
 	})
 }
 
-// TestRedisModelListStore_RunningTimeout pins the second escape hatch — a
-// claimed request whose RunStartedAt has aged past the 60s threshold MUST
-// flip to Timeout so the UI's polling loop terminates instead of waiting
-// for the retention sweep.
 func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	ctx := context.Background()
@@ -95,7 +81,6 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 		t.Fatalf("expected running, got %+v", popped)
 	}
 
-	// Rewind RunStartedAt past the running threshold.
 	aged := time.Now().Add(-runtimeAsyncRunningTimeout - time.Second)
 	popped.RunStartedAt = &aged
 	if err := store.persist(ctx, popped); err != nil {
@@ -111,8 +96,6 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	}
 }
 
-// TestRedisModelListStore_HasPending pins the cheap probe used by the
-// heartbeat hot path so a slow Redis can't stall every connected daemon.
 func TestRedisModelListStore_HasPending(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	ctx := context.Background()

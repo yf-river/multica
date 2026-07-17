@@ -33,32 +33,14 @@ func enableQuickCreateRuntime(t *testing.T, ctx context.Context) string {
 	return agentID
 }
 
-// TestQuickCreateIssueParentTrustBoundary locks the server-side trust boundary
-// for the optional parent_issue_id field on POST /api/issues/quick-create.
-//
-// The frontend seeds parent_issue_id from the "Add sub issue" entry point and
-// otherwise leaves it empty. The handler is the trust boundary: a forged
-// request must not be able to smuggle a foreign parent UUID through to the
-// quick-create task context, and the same-workspace happy path must thread
-// the resolved UUID into QuickCreateContext.ParentIssueID so the daemon claim
-// step can resolve the identifier and emit `--parent <uuid>` in the prompt.
-//
-// Three branches are covered:
-//
-//  1. Same-workspace parent → 202 Accepted, task enqueued with
-//     QuickCreateContext.ParentIssueID populated.
-//  2. Foreign-workspace parent → 400 Bad Request, no task enqueued.
-//  3. Bogus UUID parent → 400 Bad Request, no task enqueued.
 func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	// Resolve the seeded online runtime and agent for this workspace.
 	agentID := enableQuickCreateRuntime(t, ctx)
 
-	// Same-workspace parent — must be accepted and threaded through.
 	var localParentID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
@@ -72,7 +54,6 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, localParentID)
 	})
 
-	// Foreign-workspace parent — must be rejected.
 	var foreignWorkspaceID, foreignUserID, foreignParentID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
@@ -99,16 +80,10 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	`, foreignWorkspaceID, foreignUserID).Scan(&foreignParentID); err != nil {
 		t.Fatalf("create foreign parent issue: %v", err)
 	}
-	// The foreign workspace cleanup above cascades, but the issue row also
-	// needs a direct cleanup in case workspace deletion ordering changes.
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, foreignParentID)
 	})
 
-	// Helper for the "must not enqueue" assertions. Each rejection subtest
-	// snapshots the count immediately before the request and re-checks after
-	// so sibling subtests (and their t.Cleanup deletions) can't false-positive
-	// or false-negative this assertion.
 	countQuickCreateTasks := func(t *testing.T) int {
 		t.Helper()
 		var count int
@@ -142,9 +117,6 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 			mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
 		})
 
-		// QuickCreateContext.ParentIssueID must contain the resolved UUID —
-		// the daemon claim step reads this field to attach the parent
-		// identifier and to inject `--parent <uuid>` into the prompt.
 		var contextJSON []byte
 		if err := testPool.QueryRow(context.Background(),
 			`SELECT context FROM agent_task_queue WHERE id = $1`, resp.TaskID,
@@ -179,8 +151,6 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 			t.Fatalf("expected 400 for foreign parent, got %d: %s", w.Code, w.Body.String())
 		}
 		if got := countQuickCreateTasks(t); got != before {
-			// Any increase means the foreign-parent request enqueued a
-			// task despite the 400 — the trust boundary leaked.
 			t.Fatalf("foreign parent must not enqueue a task: expected %d quick-create tasks, got %d", before, got)
 		}
 	})
