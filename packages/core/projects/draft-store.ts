@@ -1,5 +1,9 @@
 import type { CreateProjectRequest, ProjectStatus, ProjectPriority } from "../types";
-import { createWorkspacePendingCreateStore } from "../platform/recoverable-operation-store";
+import {
+  createWorkspacePendingCreateStore,
+  type PendingCreateOperation,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import { createWorkspaceDraftStore } from "../platform/workspace-storage";
 
 interface ProjectDraft {
@@ -27,7 +31,8 @@ export const useProjectDraftStore = createWorkspaceDraftStore(
   EMPTY_DRAFT,
 );
 
-export const useProjectCreateOperationStore =
-  createWorkspacePendingCreateStore<CreateProjectRequest>(
-    "multica_project_create_operation",
-  );
+export const useProjectCreateOperationStore: RecoverableOperationStore<
+  PendingCreateOperation<CreateProjectRequest>
+> = createWorkspacePendingCreateStore<CreateProjectRequest>(
+  "multica_project_create_operation",
+);

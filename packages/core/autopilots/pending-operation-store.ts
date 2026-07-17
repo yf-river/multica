@@ -5,7 +5,11 @@ import {
   registerWorkspacePersistStore,
 } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
-import { createWorkspacePendingCreateStore } from "../platform/recoverable-operation-store";
+import {
+  createWorkspacePendingCreateStore,
+  type PendingCreateOperation,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type { CreateAutopilotRequest } from "../types";
 
 interface AutopilotManualTriggerState {
@@ -15,10 +19,11 @@ interface AutopilotManualTriggerState {
   clear: () => void;
 }
 
-export const useAutopilotCreateOperationStore =
-  createWorkspacePendingCreateStore<CreateAutopilotRequest>(
-    "multica_autopilot_create_operation",
-  );
+export const useAutopilotCreateOperationStore: RecoverableOperationStore<
+  PendingCreateOperation<CreateAutopilotRequest>
+> = createWorkspacePendingCreateStore<CreateAutopilotRequest>(
+  "multica_autopilot_create_operation",
+);
 
 export const useAutopilotManualTriggerStore =
   create<AutopilotManualTriggerState>()(

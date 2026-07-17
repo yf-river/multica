@@ -18,7 +18,7 @@ export interface PendingCreateOperation<Request> extends RecoverableOperation {
   request: Request;
 }
 
-export interface RecoverableOperationState<Operation> {
+interface RecoverableOperationState<Operation> {
   pending?: Operation;
   setPending: (pending?: Operation) => void;
 }
