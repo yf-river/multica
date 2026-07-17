@@ -19,6 +19,15 @@ type runningSquadLeaderTaskFixture struct {
 	TriggerCommentID string
 }
 
+func (fx runningSquadLeaderTaskFixture) postTaskComment(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodPost, "/api/issues/"+fx.IssueID+"/comments", body), "id", fx.IssueID)
+	setTaskTokenActor(request, fx.LeaderID, fx.TaskID)
+	testHandler.CreateComment(response, request)
+	return response
+}
+
 func newRunningSquadLeaderTaskFixture(t *testing.T) runningSquadLeaderTaskFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -284,15 +293,10 @@ func TestCreateComment_SquadLeaderNoActionRejectsComment(t *testing.T) {
 	fx := newRunningSquadLeaderTaskFixture(t)
 	recordSquadLeaderEvaluationForTask(t, fx, "no_action")
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content":   "No action needed.",
 		"parent_id": fx.TriggerCommentID,
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("CreateComment: expected 409, got %d: %s", w.Code, w.Body.String())
 	}
@@ -317,15 +321,10 @@ func TestCreateComment_SquadLeaderNoActionAllowsMentionDispatch(t *testing.T) {
 	fx := newRunningSquadLeaderTaskFixture(t)
 	recordSquadLeaderEvaluationForTask(t, fx, "no_action")
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content":   "继续调度 [@PM-项目经理](mention://agent/" + fx.LeaderID + ") 处理。",
 		"parent_id": fx.TriggerCommentID,
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -341,14 +340,9 @@ func TestCreateComment_CommentTriggeredAgentAllowsTopLevelFallback(t *testing.T)
 
 	fx := newRunningSquadLeaderTaskFixture(t)
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content": "Recovered with a top-level result comment after the thread reply failed.",
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -372,15 +366,10 @@ func TestCreateComment_CommentTriggeredAgentRejectsWrongParent(t *testing.T) {
 		t.Fatalf("create other comment: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content":   "This should not be allowed on a different thread.",
 		"parent_id": otherCommentID,
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("CreateComment: expected 409, got %d: %s", w.Code, w.Body.String())
 	}

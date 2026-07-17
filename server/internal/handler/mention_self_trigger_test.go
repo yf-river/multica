@@ -8,10 +8,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// enqueueMentionedAgentTasksForTest mirrors the production comment path for
-// @mention triggers: compute the mention trigger set, then enqueue it. Kept as
-// a test helper so these integration tests keep asserting enqueue side effects
-// without preserving a production wrapper that nothing else calls.
 func enqueueMentionedAgentTasksForTest(t *testing.T, ctx context.Context, issue db.Issue, comment db.Comment, authorType, authorID string) {
 	t.Helper()
 	triggers, err := testHandler.computeMentionedAgentCommentTriggers(ctx, issue, comment.Content, nil, authorType, authorID, commentTriggerComputeOptions{})
@@ -33,28 +29,16 @@ func enqueueMentionedAgentTasksForTest(t *testing.T, ctx context.Context, issue 
 	testHandler.publishCommentTaskProjection(ctx, projection)
 }
 
-// selfMentionFixture wires the seeded "Handler Test Agent" as J plus two
-// fresh issues so we can exercise the agent-self-mention path on the @mention
-// branch of computeMentionedAgentCommentTriggers. The three tests below cover
-// the behavior we want post-MUL-2338:
-//
-//   - cross-issue self-mention enqueues (child→parent handoff between issues
-//     assigned to the same agent must not be swallowed)
-//   - same-issue self-mention with an in-flight running task enqueues a
-//     follow-up (queue coalescing already allows this — the comment handler
-//     must not pre-empt it with an extra in-thread guard)
-//   - same-issue self-mention with a queued/dispatched task is deduped
-//     (HasPendingTaskForIssueAndAgent still does its job)
 type selfMentionFixture struct {
 	JID        string
 	RuntimeID  string
-	IssueAID   string // primary issue (used for same-issue scenarios)
+	IssueAID   string
 	IssueA     db.Issue
-	IssueBID   string // a second issue (used for the cross-issue scenario)
+	IssueBID   string
 	IssueB     db.Issue
-	CommentAID string // a comment on IssueA authored by J — used as the trigger
+	CommentAID string
 	CommentA   db.Comment
-	CommentBID string // a comment on IssueB authored by J — used as the trigger
+	CommentBID string
 	CommentB   db.Comment
 }
 
@@ -81,36 +65,17 @@ func newSelfMentionFixture(t *testing.T) selfMentionFixture {
 	t.Helper()
 	ctx := context.Background()
 
-	// Reuse the seeded workspace-visible agent — it already has a runtime.
-	var jID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&jID); err != nil {
-		t.Fatalf("load seeded agent: %v", err)
-	}
-	var runtimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, jID).Scan(&runtimeID); err != nil {
-		t.Fatalf("load runtime: %v", err)
-	}
+	jID := oldestHandlerTestAgentID(t)
+	runtimeID := squadAgentRuntimeID(t, jID)
 
 	insertIssue := func(title string) string {
 		t.Helper()
-		// Pick the next per-workspace issue number; without it both inserts
-		// land on the default number=0 and trip uq_issue_workspace_number.
-		var number int
-		if err := testPool.QueryRow(ctx, `
-			UPDATE workspace
-			SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)) + 1
-			WHERE id = $1 RETURNING issue_counter
-		`, testWorkspaceID).Scan(&number); err != nil {
-			t.Fatalf("next issue number: %v", err)
-		}
 		var id string
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
 			VALUES ($1, 'member', $2, $3, 'agent', $4, $5)
 			RETURNING id
-		`, testWorkspaceID, testUserID, title, jID, number).Scan(&id); err != nil {
+		`, testWorkspaceID, testUserID, title, jID, nextHandlerTestIssueNumber(t)).Scan(&id); err != nil {
 			t.Fatalf("create issue %q: %v", title, err)
 		}
 		t.Cleanup(func() {
@@ -171,8 +136,6 @@ func newSelfMentionFixture(t *testing.T) selfMentionFixture {
 	}
 }
 
-// countQueuedOrDispatched returns the number of queued|dispatched tasks for
-// (agent, issue). Mirrors the predicate used by HasPendingTaskForIssueAndAgent.
 func countQueuedOrDispatched(t *testing.T, agentID, issueID string) int {
 	t.Helper()
 	var n int
@@ -185,12 +148,6 @@ func countQueuedOrDispatched(t *testing.T, agentID, issueID string) int {
 	return n
 }
 
-// TestEnqueueMentionedAgentTasks_SelfMentionCrossIssueEnqueues is the
-// regression test for the MUL-2338 child→parent handoff. The same agent runs
-// in a child issue, then posts a top-level comment on the parent issue (whose
-// assignee is the same agent) that @mentions itself. The comment handler MUST
-// enqueue a task on the parent issue — silently dropping the trigger was the
-// bug Bohan reported.
 func TestEnqueueMentionedAgentTasks_SelfMentionCrossIssueEnqueues(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -209,11 +166,6 @@ func TestEnqueueMentionedAgentTasks_SelfMentionCrossIssueEnqueues(t *testing.T) 
 	}
 }
 
-// TestEnqueueMentionedAgentTasks_SelfMentionWhileRunningQueuesFollowup proves
-// that a self-mention posted in the same issue an agent is currently running
-// in does NOT pre-empt the natural queue-coalescing behavior: a `running`
-// task is not "pending" for dedup purposes, so a new queued follow-up is
-// added and the agent picks it up on its next cycle.
 func TestEnqueueMentionedAgentTasks_SelfMentionWhileRunningQueuesFollowup(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -221,7 +173,6 @@ func TestEnqueueMentionedAgentTasks_SelfMentionWhileRunningQueuesFollowup(t *tes
 	ctx := context.Background()
 	fx := newSelfMentionFixture(t)
 
-	// Seed a running task for J on issue A — this is the agent's current run.
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status)
 		VALUES ($1, $2, $3, 'running')
@@ -240,11 +191,6 @@ func TestEnqueueMentionedAgentTasks_SelfMentionWhileRunningQueuesFollowup(t *tes
 	}
 }
 
-// TestEnqueueMentionedAgentTasks_SelfMentionDedupesAgainstPendingTask locks in
-// that removing the self-trigger `continue` did NOT remove the standard
-// HasPendingTaskForIssueAndAgent dedupe. If a queued or dispatched task
-// already exists for the same agent on the same issue, a fresh self-mention
-// must NOT pile on another duplicate.
 func TestEnqueueMentionedAgentTasks_SelfMentionDedupesAgainstPendingTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

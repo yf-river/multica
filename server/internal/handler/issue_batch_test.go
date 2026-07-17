@@ -10,19 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestBatchUpdateNoMutationReturnsZero — regression for #1660.
-//
-// When the request payload has valid issue_ids but the "updates" field
-// is empty, missing, or doesn't decode any known mutation field, the
-// handler used to walk every issue, run a no-op UPDATE, and increment
-// `updated` for each one — returning {"updated": N} despite changing
-// nothing. Reporters saw 200 + a positive count and assumed the call
-// worked, then chased a phantom persistence bug.
-//
-// The fix is "tell the truth": when no mutation field is present, return
-// {"updated": 0} immediately so the count matches reality.
 func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
-	// Two fresh issues so we can also assert no fields actually changed.
 	a := createTestIssue(t, "BU-no-mut A", "low")
 	b := createTestIssue(t, "BU-no-mut B", "low")
 	t.Cleanup(func() { deleteTestIssue(t, a) })
@@ -34,7 +22,6 @@ func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 	}{
 		{
 			desc: "updates_missing",
-			// Most common reporter pattern: status at top level.
 			body: map[string]any{"issue_ids": []string{a, b}, "status": "in_progress"},
 		},
 		{
@@ -43,15 +30,10 @@ func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 		},
 		{
 			desc: "updates_misnamed",
-			// Singular "update" instead of plural "updates".
 			body: map[string]any{"issue_ids": []string{a, b}, "update": map[string]any{"status": "done"}},
 		},
 		{
 			desc: "updates_unknown_field_only",
-			// Payload IS nested correctly, but every key inside `updates` is
-			// unknown to the handler — same class of caller mistake as the
-			// shapes above. hasMutation must stay false; behavior is already
-			// correct, this case locks it in against future regressions.
 			body: map[string]any{"issue_ids": []string{a, b}, "updates": map[string]any{"foo": "bar"}},
 		},
 	}
@@ -73,26 +55,15 @@ func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 				t.Errorf("expected updated=0 when no mutation field present, got %d", resp.Updated)
 			}
 
-			// Belt and braces: confirm the issues weren't touched.
 			for _, id := range []string{a, b} {
-				gw := httptest.NewRecorder()
-				gr := newRequest("GET", "/api/issues/"+id, nil)
-				gr = withURLParam(gr, "id", id)
-				testHandler.GetIssue(gw, gr)
-				var got IssueResponse
-				if err := json.NewDecoder(gw.Body).Decode(&got); err != nil {
-					t.Fatalf("decode issue response: %v", err)
-				}
-				if got.Status != "todo" {
-					t.Errorf("issue %s: status changed to %q despite no-mutation request", id, got.Status)
+				if got := getIssueStatus(t, id); got != "todo" {
+					t.Errorf("issue %s: status changed to %q despite no-mutation request", id, got)
 				}
 			}
 		})
 	}
 }
 
-// TestBatchUpdateValidUpdatesPersistAndCount — positive case to lock in
-// happy-path behavior alongside the regression test above.
 func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 	a := createTestIssue(t, "BU-ok A", "low")
 	b := createTestIssue(t, "BU-ok B", "low")
@@ -118,16 +89,8 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 		t.Errorf("expected updated=2, got %d", resp.Updated)
 	}
 	for _, id := range []string{a, b} {
-		gw := httptest.NewRecorder()
-		gr := newRequest("GET", "/api/issues/"+id, nil)
-		gr = withURLParam(gr, "id", id)
-		testHandler.GetIssue(gw, gr)
-		var got IssueResponse
-		if err := json.NewDecoder(gw.Body).Decode(&got); err != nil {
-			t.Fatalf("decode issue response: %v", err)
-		}
-		if got.Status != "in_progress" {
-			t.Errorf("issue %s: expected status=in_progress, got %q", id, got.Status)
+		if got := getIssueStatus(t, id); got != "in_progress" {
+			t.Errorf("issue %s: expected status=in_progress, got %q", id, got)
 		}
 		var eventCount int
 		if err := testPool.QueryRow(context.Background(), `
@@ -204,28 +167,11 @@ func TestBatchUpdateReportsInvalidFieldCodes(t *testing.T) {
 				"updates":   tc.updates,
 			})
 			testHandler.BatchUpdateIssues(w, req)
-			if w.Code != http.StatusOK {
-				t.Fatalf("expected 200 batch envelope, got %d: %s", w.Code, w.Body.String())
-			}
-			var response struct {
-				Updated int `json:"updated"`
-				Failed  []struct {
-					IssueID string `json:"issue_id"`
-					Code    string `json:"code"`
-				} `json:"failed"`
-			}
-			if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-				t.Fatalf("decode batch response: %v", err)
-			}
-			if response.Updated != 0 || len(response.Failed) != 1 || response.Failed[0].IssueID != issueID || response.Failed[0].Code != tc.code {
-				t.Fatalf("response = %#v, want one %s failure", response, tc.code)
-			}
+			assertBatchIssueFailure(t, w, issueID, tc.code)
 		})
 	}
 }
 
-// createTestIssue is a small helper to keep the table-driven cases clean.
-// Returns the new issue's id; caller is responsible for cleanup.
 func createTestIssue(t *testing.T, title, priority string) string {
 	t.Helper()
 	w := httptest.NewRecorder()

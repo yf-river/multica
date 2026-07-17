@@ -503,6 +503,13 @@ func countInboxItems(t *testing.T, recipientUserID, issueID string) int {
 	return n
 }
 
+func cleanupChildDoneTasks(t *testing.T, fx childDoneFixture) {
+	t.Helper()
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, fx.parent.ID, fx.child.ID)
+	})
+}
+
 // TestChildDoneMentionsParentAssignee_Agent verifies the MUL-2538 Option C
 // happy path for an agent parent assignee: the system comment carries a
 // `mention://agent/<id>` link AND a real mention-style task is enqueued on
@@ -599,22 +606,13 @@ func TestChildDoneMentionsParentAssignee_Squad(t *testing.T) {
 	}
 }
 
-// TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild proves the canonical
-// SOP shape: a squad-owned parent may create squad-owned child issues, and
-// once all child work is done the parent leader must be woken to summarize and
-// close the parent. The guard for shared-leader loops must not suppress this
-// same-squad cross-issue handoff.
 func TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild(t *testing.T) {
 	fx := newChildDoneFixture(t, "in_progress")
 	sq := newSquadCommentTriggerFixture(t)
 
 	setIssueAssigneeDirect(t, fx.parent.ID, "squad", sq.SquadID)
 	setIssueAssigneeDirect(t, fx.child.ID, "squad", sq.SquadID)
-	t.Cleanup(func() {
-		mustExec(t, context.Background(),
-			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
-			fx.parent.ID, fx.child.ID)
-	})
+	cleanupChildDoneTasks(t, fx)
 
 	updateChildStatus(t, fx.child.ID, "done")
 
@@ -627,11 +625,6 @@ func TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild(t *testing.T) {
 	}
 }
 
-// TestCrossProjectChildrenWakeUserCenterParentSquad proves the microservice
-// orchestration shape users expect from the user-center SOP: a parent issue
-// stays in the usercenter project and is owned by a squad, while gateway and
-// config child issues live in their own projects. Completing the children
-// must write parent comments and wake the parent squad leader.
 func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
 	sq := newSquadCommentTriggerFixture(t)
 	ctx := context.Background()
@@ -799,26 +792,13 @@ func TestChildDoneTriggersParentAgentWhenSameAgentOwnsChild(t *testing.T) {
 	}
 }
 
-// TestChildDoneTriggersParentAgentWhenChildSquadSharesLeader — parent is
-// assigned to agent A directly; the finished child is assigned to a squad
-// whose leader is also agent A. Because the parent is an AGENT, dispatch
-// routes through the agent path, which (post-MUL-2808) has no self-trigger
-// guard: A coordinates the parent and must be woken to advance it when the
-// child completes, regardless of who executed the child. The genuinely
-// loop-prone case — BOTH sides squads sharing a leader — is still guarded on
-// the squad path (see TestChildDoneSelfTriggerGuard_SquadParentDifferentSquadSameLeader).
 func TestChildDoneTriggersParentAgentWhenChildSquadSharesLeader(t *testing.T) {
 	fx := newChildDoneFixture(t, "in_progress")
 	sq := newSquadCommentTriggerFixture(t)
 
-	// Parent agent == squad leader, child assigned to the squad.
 	setIssueAssigneeDirect(t, fx.parent.ID, "agent", sq.LeaderID)
 	setIssueAssigneeDirect(t, fx.child.ID, "squad", sq.SquadID)
-	t.Cleanup(func() {
-		mustExec(t, context.Background(),
-			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
-			fx.parent.ID, fx.child.ID)
-	})
+	cleanupChildDoneTasks(t, fx)
 
 	updateChildStatus(t, fx.child.ID, "done")
 
@@ -831,17 +811,10 @@ func TestChildDoneTriggersParentAgentWhenChildSquadSharesLeader(t *testing.T) {
 	}
 }
 
-// TestChildDoneSelfTriggerGuard_SquadParentDifferentSquadSameLeader — the
-// cross-squad shared-leader loop. Parent is squad A, child is squad B,
-// both squads have the same leader agent. The previous guard only blocked
-// `parent.squad == child.squad`, so two distinct squads sharing a leader
-// would still wake the same agent. effectiveChildAgentOwner reduces both
-// sides to "leader agent" and blocks the enqueue.
 func TestChildDoneSelfTriggerGuard_SquadParentDifferentSquadSameLeader(t *testing.T) {
 	fx := newChildDoneFixture(t, "in_progress")
 	parentSquad := newSquadCommentTriggerFixture(t)
 
-	// Spin up a SECOND squad that reuses the same leader as parentSquad.
 	ctx := context.Background()
 	var childSquadID string
 	if err := testPool.QueryRow(ctx, `

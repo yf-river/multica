@@ -223,12 +223,8 @@ func insertIssueTo(t *testing.T, ctx context.Context, workspaceID, title, assign
 	return id
 }
 
-// listIssuesInvolves runs ListIssues with `involves_user_id` set to userID
-// (against testWorkspaceID) and returns the resulting issue IDs.
-func listIssuesInvolves(t *testing.T, userID string) []string {
+func listIssueIDsAtPath(t *testing.T, path string) []string {
 	t.Helper()
-	path := fmt.Sprintf("/api/issues?workspace_id=%s&involves_user_id=%s&limit=500",
-		testWorkspaceID, userID)
 	w := httptest.NewRecorder()
 	testHandler.ListIssues(w, newRequest("GET", path, nil))
 	if w.Code != http.StatusOK {
@@ -247,8 +243,11 @@ func listIssuesInvolves(t *testing.T, userID string) []string {
 	return ids
 }
 
-// listGroupedIssuesInvolves runs ListGroupedIssues with `involves_user_id`
-// set to userID and returns the flattened set of issue IDs across all groups.
+func listIssuesInvolves(t *testing.T, userID string) []string {
+	t.Helper()
+	return listIssueIDsAtPath(t, fmt.Sprintf("/api/issues?workspace_id=%s&involves_user_id=%s&limit=500", testWorkspaceID, userID))
+}
+
 func listGroupedIssuesInvolves(t *testing.T, userID string) []string {
 	t.Helper()
 	path := fmt.Sprintf(
@@ -280,8 +279,6 @@ func containsIssueID(ids []string, target string) bool {
 	}
 	return false
 }
-
-// ---- positive branches ----
 
 func TestListIssues_InvolvesUserID_MatchesOwnedAgentAssignee(t *testing.T) {
 	ctx := context.Background()
@@ -406,39 +403,18 @@ func TestListIssues_InvolvesUserID_ExcludesOtherWorkspaceSquadAgentMember(t *tes
 	}
 }
 
-// ---- combo + boundary ----
-
-// involves_user_id and creator_id must AND together — combining narrowing
-// filters should never widen the result.
 func TestListIssues_InvolvesUserID_CombinesWithCreatorID(t *testing.T) {
 	ctx := context.Background()
 	fx := setupInvolvesFixture(t)
-	// Issue with creator = otherID: involves matches (branch 1) but creator
-	// filter must exclude it.
 	exclude := insertIssueTo(t, ctx, testWorkspaceID,
 		"involves matches but creator does not", "agent", fx.ownedAgentID)
-	// Patch the creator to otherID directly.
 	if _, err := testPool.Exec(ctx, `UPDATE issue SET creator_id = $1 WHERE id = $2`, fx.otherID, exclude); err != nil {
 		t.Fatalf("patch creator: %v", err)
 	}
 
 	path := fmt.Sprintf("/api/issues?workspace_id=%s&involves_user_id=%s&creator_id=%s&limit=500",
 		testWorkspaceID, fx.userID, fx.userID)
-	w := httptest.NewRecorder()
-	testHandler.ListIssues(w, newRequest("GET", path, nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListIssues: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Issues []IssueResponse `json:"issues"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	got := make([]string, 0, len(resp.Issues))
-	for _, iss := range resp.Issues {
-		got = append(got, iss.ID)
-	}
+	got := listIssueIDsAtPath(t, path)
 	if containsIssueID(got, exclude) {
 		t.Fatalf("combined filter widened result: issue %s with non-matching creator surfaced; full result: %v",
 			exclude, got)
