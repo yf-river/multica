@@ -725,8 +725,7 @@ CREATE TABLE public.comment_reaction (
 );
 CREATE TABLE public.domain_event_delivery (
     event_id uuid NOT NULL,
-    consumer text NOT NULL,
-    delivered_at timestamp with time zone DEFAULT now() NOT NULL
+    consumer text NOT NULL
 );
 CREATE TABLE public.domain_event_outbox (
     id uuid DEFAULT gen_random_uuid() NOT NULL,

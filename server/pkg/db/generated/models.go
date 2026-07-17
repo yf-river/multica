@@ -320,9 +320,8 @@ type CommentReaction struct {
 }
 
 type DomainEventDelivery struct {
-	EventID     pgtype.UUID        `json:"event_id"`
-	Consumer    string             `json:"consumer"`
-	DeliveredAt pgtype.Timestamptz `json:"delivered_at"`
+	EventID  pgtype.UUID `json:"event_id"`
+	Consumer string      `json:"consumer"`
 }
 
 type DomainEventOutbox struct {
