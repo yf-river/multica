@@ -16,9 +16,13 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// ── Setup helpers ───────────────────────────────────────────────────────────
-
 const testSigningSecret = "this-is-a-test-secret-32-chars-x"
+
+func newWebhookDeliveryFixture(t *testing.T) (string, AutopilotTriggerResponse) {
+	t.Helper()
+	autopilotID := createWebhookTestAutopilot(t, "active")
+	return autopilotID, createWebhookTrigger(t, autopilotID)
+}
 
 func setSigningSecretViaHandler(t *testing.T, apID, triggerID string) {
 	t.Helper()
@@ -47,7 +51,6 @@ func signBody(secret string, body []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-// listDeliveries calls ListAutopilotDeliveries and decodes the body.
 func listDeliveries(t *testing.T, apID string) []map[string]any {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -66,44 +69,43 @@ func listDeliveries(t *testing.T, apID string) []map[string]any {
 	return resp.Deliveries
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────────
+func requireSingleAcceptedDelivery(t *testing.T, apID string, response *httptest.ResponseRecorder) (map[string]any, map[string]any) {
+	t.Helper()
+	body := decodeWebhookResponse(t, response)
+	if body["status"] != "accepted" {
+		t.Fatalf("status: %v", body["status"])
+	}
+	deliveries := listDeliveries(t, apID)
+	if len(deliveries) != 1 {
+		t.Fatalf("expected 1 delivery, got %d", len(deliveries))
+	}
+	return body, deliveries[0]
+}
 
 func TestWebhookHandler_PersistsDeliveryOnAccept(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	resp, delivery := requireSingleAcceptedDelivery(t, apID, w)
 	if resp["delivery_id"] == nil {
 		t.Fatal("response should include delivery_id")
 	}
-	if resp["status"] != "accepted" {
-		t.Fatalf("status: %v", resp["status"])
+	if delivery["status"] != "dispatched" {
+		t.Fatalf("delivery status: %v", delivery["status"])
 	}
-
-	deliveries := listDeliveries(t, apID)
-	if len(deliveries) != 1 {
-		t.Fatalf("expected 1 delivery, got %d", len(deliveries))
-	}
-	d := deliveries[0]
-	if d["status"] != "dispatched" {
-		t.Fatalf("delivery status: %v", d["status"])
-	}
-	if d["autopilot_run_id"] == nil {
+	if delivery["autopilot_run_id"] == nil {
 		t.Fatal("delivery should link to run")
 	}
-	if d["signature_status"] != "not_required" {
-		t.Fatalf("expected signature_status=not_required, got %v", d["signature_status"])
+	if delivery["signature_status"] != "not_required" {
+		t.Fatalf("expected signature_status=not_required, got %v", delivery["signature_status"])
 	}
 }
 
 func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 
 	body := map[string]any{"event": "demo.x", "eventPayload": map[string]any{"k": "v"}}
 	headers := map[string]string{"Idempotency-Key": "demo-key-1"}
@@ -112,8 +114,7 @@ func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
 	if w1.Code != http.StatusOK {
 		t.Fatalf("first: %d body=%s", w1.Code, w1.Body.String())
 	}
-	var r1 map[string]any
-	_ = json.Unmarshal(w1.Body.Bytes(), &r1)
+	r1 := decodeWebhookResponse(t, w1)
 	if r1["status"] != "accepted" {
 		t.Fatalf("first status: %v", r1["status"])
 	}
@@ -125,8 +126,7 @@ func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
 	if w2.Code != http.StatusOK {
 		t.Fatalf("second: %d body=%s", w2.Code, w2.Body.String())
 	}
-	var r2 map[string]any
-	_ = json.Unmarshal(w2.Body.Bytes(), &r2)
+	r2 := decodeWebhookResponse(t, w2)
 	if r2["status"] != "duplicate" {
 		t.Fatalf("expected duplicate, got %v body=%s", r2["status"], w2.Body.String())
 	}
@@ -148,8 +148,7 @@ func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
 }
 
 func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setTriggerProvider(t, trig.ID, "github")
 
 	body := map[string]any{"action": "opened"}
@@ -162,17 +161,13 @@ func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
 	if w1.Code != http.StatusOK {
 		t.Fatalf("first: %d", w1.Code)
 	}
-	var r1 map[string]any
-	_ = json.Unmarshal(w1.Body.Bytes(), &r1)
+	r1 := decodeWebhookResponse(t, w1)
 	if r1["status"] != "accepted" {
 		t.Fatalf("first status: %v", r1["status"])
 	}
 
 	w2 := postWebhook(t, *trig.WebhookToken, body, headers)
-	var r2 map[string]any
-	if err := json.Unmarshal(w2.Body.Bytes(), &r2); err != nil {
-		t.Fatalf("decode second delivery response: %v", err)
-	}
+	r2 := decodeWebhookResponse(t, w2)
 	if r2["status"] != "duplicate" {
 		t.Fatalf("expected duplicate, got %v", r2["status"])
 	}
@@ -187,8 +182,7 @@ func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
 }
 
 func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	body := map[string]any{"hello": "world"}
@@ -198,10 +192,7 @@ func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode delivery response: %v", err)
-	}
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "rejected" {
 		t.Fatalf("status: %v", resp["status"])
 	}
@@ -225,18 +216,14 @@ func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing
 }
 
 func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, nil)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode delivery response: %v", err)
-	}
+	resp := decodeWebhookResponse(t, w)
 	if resp["reason"] != "missing_signature" {
 		t.Fatalf("reason: %v", resp["reason"])
 	}
@@ -247,8 +234,7 @@ func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
 }
 
 func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	bodyBytes := []byte(`{"hello":"world"}`)
@@ -260,25 +246,14 @@ func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode delivery response: %v", err)
-	}
-	if resp["status"] != "accepted" {
-		t.Fatalf("status: %v", resp["status"])
-	}
-	deliveries := listDeliveries(t, apID)
-	if len(deliveries) != 1 {
-		t.Fatalf("expected 1 delivery, got %d", len(deliveries))
-	}
-	if deliveries[0]["signature_status"] != "valid" {
-		t.Fatalf("signature_status: %v", deliveries[0]["signature_status"])
+	_, delivery := requireSingleAcceptedDelivery(t, apID, w)
+	if delivery["signature_status"] != "valid" {
+		t.Fatalf("signature_status: %v", delivery["signature_status"])
 	}
 }
 
 func TestSigningSecretNotEchoedInTriggerResponse(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	// GET the autopilot — trigger response embedded.
@@ -301,8 +276,7 @@ func TestSigningSecretNotEchoedInTriggerResponse(t *testing.T) {
 }
 
 func TestSigningSecret_MinLengthEnforced(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/autopilots/"+apID+"/triggers/"+trig.ID+"/signing-secret", map[string]any{
@@ -316,8 +290,7 @@ func TestSigningSecret_MinLengthEnforced(t *testing.T) {
 }
 
 func TestSigningSecret_EmptyClearsSecret(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	// Now clear with empty string.
@@ -338,8 +311,7 @@ func TestSigningSecret_EmptyClearsSecret(t *testing.T) {
 }
 
 func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 
 	// Original delivery (with dedupe key) → accepted + dispatched.
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, map[string]string{
@@ -348,10 +320,7 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("original: %d body=%s", w.Code, w.Body.String())
 	}
-	var orig map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &orig); err != nil {
-		t.Fatalf("decode original delivery response: %v", err)
-	}
+	orig := decodeWebhookResponse(t, w)
 	originalID := orig["delivery_id"].(string)
 	originalRunID := orig["run_id"].(string)
 
@@ -364,10 +333,7 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 	if wr.Code != http.StatusCreated {
 		t.Fatalf("replay: %d body=%s", wr.Code, wr.Body.String())
 	}
-	var replay map[string]any
-	if err := json.Unmarshal(wr.Body.Bytes(), &replay); err != nil {
-		t.Fatalf("decode replayed delivery response: %v", err)
-	}
+	replay := decodeWebhookResponse(t, wr)
 	if replay["id"] == originalID {
 		t.Fatal("replay should create a NEW delivery, not return the original")
 	}
@@ -391,10 +357,7 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 	if retryRecorder.Code != http.StatusCreated {
 		t.Fatalf("replay retry: %d body=%s", retryRecorder.Code, retryRecorder.Body.String())
 	}
-	var recovered map[string]any
-	if err := json.Unmarshal(retryRecorder.Body.Bytes(), &recovered); err != nil {
-		t.Fatalf("decode recovered replay: %v", err)
-	}
+	recovered := decodeWebhookResponse(t, retryRecorder)
 	if recovered["id"] != replay["id"] || recovered["autopilot_run_id"] != replay["autopilot_run_id"] {
 		t.Fatalf("recovered replay = id %v run %v, want id %v run %v", recovered["id"], recovered["autopilot_run_id"], replay["id"], replay["autopilot_run_id"])
 	}
@@ -406,8 +369,7 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 }
 
 func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	// Send an invalid-signature request → rejected delivery created.
@@ -417,10 +379,7 @@ func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("setup: expected 401, got %d", w.Code)
 	}
-	var rej map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &rej); err != nil {
-		t.Fatalf("decode rejected delivery response: %v", err)
-	}
+	rej := decodeWebhookResponse(t, w)
 	rejectedID := rej["delivery_id"].(string)
 
 	// Replay the rejected delivery → 400.
@@ -435,17 +394,13 @@ func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
 }
 
 func TestGetDelivery_ReturnsFullPayload(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"event": "demo", "eventPayload": map[string]any{"answer": 42}}, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("seed: %d", w.Code)
 	}
-	var seed map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &seed); err != nil {
-		t.Fatalf("decode seeded delivery response: %v", err)
-	}
+	seed := decodeWebhookResponse(t, w)
 	deliveryID := seed["delivery_id"].(string)
 
 	// List response should NOT include raw_body / selected_headers.
@@ -498,10 +453,7 @@ func TestGetDelivery_CrossAutopilotReturns404(t *testing.T) {
 	trig := createWebhookTrigger(t, apA)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"x": 1}, nil)
-	var seed map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &seed); err != nil {
-		t.Fatalf("decode seeded delivery response: %v", err)
-	}
+	seed := decodeWebhookResponse(t, w)
 	deliveryID := seed["delivery_id"].(string)
 
 	// Try reading via the OTHER autopilot's URL.
@@ -516,14 +468,10 @@ func TestGetDelivery_CrossAutopilotReturns404(t *testing.T) {
 
 func TestCreateAutopilotTrigger_RejectsUnknownProvider(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind":     "webhook",
 		"provider": "stripe",
-	})
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	}, "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown provider, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -531,14 +479,10 @@ func TestCreateAutopilotTrigger_RejectsUnknownProvider(t *testing.T) {
 
 func TestCreateAutopilotTrigger_AcceptsGitHubProvider(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind":     "webhook",
 		"provider": "github",
-	})
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	}, "")
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -556,8 +500,7 @@ func TestCreateAutopilotTrigger_AcceptsGitHubProvider(t *testing.T) {
 // from re-running the agent. This regression test pins that path
 // explicitly — it's the largest concrete win over the v1 ingress flow.
 func TestWebhookHandler_RunOnlyDedupeOnGitHubDelivery(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setTriggerProvider(t, trig.ID, "github")
 
 	headers := map[string]string{
@@ -594,8 +537,7 @@ func TestWebhookHandler_InvalidSignatureCountsAgainstRateLimit(t *testing.T) {
 	// A stream of bad-signature attempts must not let an attacker bypass
 	// per-token rate limiting; the limiter increment happens before
 	// signature check.
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	apID, trig := newWebhookDeliveryFixture(t)
 	setSigningSecretViaHandler(t, apID, trig.ID)
 
 	prev := testHandler.WebhookRateLimiter
@@ -634,54 +576,31 @@ func TestWebhookHandler_IgnoredPathStillPersistsDelivery(t *testing.T) {
 	}
 }
 
-// A `failed` delivery (e.g. transient dispatch error) must NOT permanently
-// dedupe-block the provider's retry of the same event. GitHub keeps
-// `X-GitHub-Delivery` stable across retries; if the unique index trapped
-// the `failed` row, the second attempt would come back as `duplicate` and
-// the event would be lost.
-//
-// The handler-level failure path is hard to force in tests (most reasons
-// route through the admission check and produce a skipped run instead),
-// so we exercise the partial unique index directly: insert a `failed`
-// row, then a fresh `dispatched` row with the same dedupe_key — the
-// index excludes both `rejected` and `failed`, so both INSERTs must
-// succeed.
-func TestWebhookDelivery_FailedRowDoesNotBlockDedupe(t *testing.T) {
-	ctx := context.Background()
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
-
-	first, err := testHandler.Queries.CreateWebhookDelivery(ctx, db.CreateWebhookDeliveryParams{
+func webhookDeliveryParams(apID string, trigger AutopilotTriggerResponse, status string) db.CreateWebhookDeliveryParams {
+	return db.CreateWebhookDeliveryParams{
 		WorkspaceID:     parseUUID(testWorkspaceID),
 		AutopilotID:     parseUUID(apID),
-		TriggerID:       parseUUID(trig.ID),
+		TriggerID:       parseUUID(trigger.ID),
 		Provider:        "github",
 		Event:           "github.pull_request",
 		SignatureStatus: "not_required",
-		Status:          "failed",
+		Status:          status,
 		SelectedHeaders: []byte("{}"),
 		DedupeKey:       pgtype.Text{String: "retry-key", Valid: true},
 		DedupeSource:    pgtype.Text{String: "x-github-delivery", Valid: true},
-	})
+	}
+}
+
+func TestWebhookDelivery_FailedRowDoesNotBlockDedupe(t *testing.T) {
+	ctx := context.Background()
+	apID, trig := newWebhookDeliveryFixture(t)
+
+	first, err := testHandler.Queries.CreateWebhookDelivery(ctx, webhookDeliveryParams(apID, trig, "failed"))
 	if err != nil {
 		t.Fatalf("insert failed row: %v", err)
 	}
 
-	// Same dedupe_key, status=dispatched. Must succeed: the partial unique
-	// index excludes both `rejected` and `failed`, so the prior `failed`
-	// row does not consume the slot.
-	second, err := testHandler.Queries.CreateWebhookDelivery(ctx, db.CreateWebhookDeliveryParams{
-		WorkspaceID:     parseUUID(testWorkspaceID),
-		AutopilotID:     parseUUID(apID),
-		TriggerID:       parseUUID(trig.ID),
-		Provider:        "github",
-		Event:           "github.pull_request",
-		SignatureStatus: "not_required",
-		Status:          "dispatched",
-		SelectedHeaders: []byte("{}"),
-		DedupeKey:       pgtype.Text{String: "retry-key", Valid: true},
-		DedupeSource:    pgtype.Text{String: "x-github-delivery", Valid: true},
-	})
+	second, err := testHandler.Queries.CreateWebhookDelivery(ctx, webhookDeliveryParams(apID, trig, "dispatched"))
 	if err != nil {
 		t.Fatalf("retry insert blocked by stale failed row: %v", err)
 	}
@@ -689,9 +608,6 @@ func TestWebhookDelivery_FailedRowDoesNotBlockDedupe(t *testing.T) {
 		t.Fatal("retry should produce a fresh row, not reuse the failed one")
 	}
 
-	// And the dedupe lookup MUST prefer the non-terminal (dispatched) row,
-	// not the stale `failed` one, so a third attempt collapses onto the
-	// successful delivery rather than the failure.
 	got, err := testHandler.Queries.GetWebhookDeliveryByTriggerAndDedupe(ctx,
 		db.GetWebhookDeliveryByTriggerAndDedupeParams{
 			TriggerID: parseUUID(trig.ID),
@@ -709,8 +625,7 @@ func TestWebhookDelivery_FailedRowDoesNotBlockDedupe(t *testing.T) {
 // Confirm a column-level write — sqlc params for narg('signing_secret')
 // must allow nullable NULL to clear the column, not just non-NULL strings.
 func TestSetSigningSecretParams_NullableWrite(t *testing.T) {
-	apID := createWebhookTestAutopilot(t, "active")
-	trig := createWebhookTrigger(t, apID)
+	_, trig := newWebhookDeliveryFixture(t)
 
 	if _, err := testHandler.Queries.SetAutopilotTriggerSigningSecret(context.Background(),
 		db.SetAutopilotTriggerSigningSecretParams{
