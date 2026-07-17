@@ -3,121 +3,30 @@ package agent
 import (
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestBuildCursorArgs(t *testing.T) {
 	t.Parallel()
-
-	args := buildCursorArgs("do something", ExecOptions{
-		Cwd:   "/tmp/work",
-		Model: "composer-1.5",
-	}, slog.Default())
-
-	expected := []string{
-		"-p", "do something",
-		"--output-format", "stream-json",
-		"--force",
-		"--model", "composer-1.5",
-	}
-
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-	}
-	for i, want := range expected {
-		if args[i] != want {
-			t.Errorf("args[%d] = %q, want %q", i, args[i], want)
-		}
-	}
-}
-
-func TestBuildCursorArgsWithResume(t *testing.T) {
-	t.Parallel()
-
-	args := buildCursorArgs("continue", ExecOptions{
-		ResumeSessionID: "sess-123",
-	}, slog.Default())
-
-	hasResume := false
-	for i, a := range args {
-		if a == "--resume" && i+1 < len(args) && args[i+1] == "sess-123" {
-			hasResume = true
-		}
-	}
-	if !hasResume {
-		t.Fatalf("expected --resume sess-123, got %v", args)
-	}
-}
-
-func TestBuildCursorArgsMinimal(t *testing.T) {
-	t.Parallel()
-
-	args := buildCursorArgs("hello", ExecOptions{}, slog.Default())
-	expected := []string{"-p", "hello", "--output-format", "stream-json", "--force"}
-
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-	}
-}
-
-func TestBuildCursorArgsIgnoresSystemPromptAndMaxTurns(t *testing.T) {
-	t.Parallel()
-
-	// cursor-agent CLI does not support --system-prompt or --max-turns;
-	// verify they are NOT emitted even when set in ExecOptions.
-	args := buildCursorArgs("task", ExecOptions{
-		SystemPrompt: "You are helpful",
-		MaxTurns:     5,
-	}, slog.Default())
-
-	for _, a := range args {
-		if a == "--system-prompt" {
-			t.Fatalf("unexpected --system-prompt in args: %v", args)
-		}
-		if a == "--max-turns" {
-			t.Fatalf("unexpected --max-turns in args: %v", args)
-		}
-	}
-}
-
-func TestBuildCursorArgsCustomArgs(t *testing.T) {
-	t.Parallel()
-
-	args := buildCursorArgs("task", ExecOptions{
-		CustomArgs: []string{"--extra", "val", "--force", "--output-format", "text"},
-	}, slog.Default())
-
-	// --extra val should be present; --force and --output-format should be filtered out.
-	hasExtra := false
-	hasBlockedForce := false
-	hasBlockedFormat := false
-	for i, a := range args {
-		if a == "--extra" && i+1 < len(args) && args[i+1] == "val" {
-			hasExtra = true
-		}
-	}
-	// Count occurrences of --force (should be exactly 1 — the hardcoded one).
-	forceCount := 0
-	for _, a := range args {
-		if a == "--force" {
-			forceCount++
-		}
-		if a == "text" {
-			hasBlockedFormat = true
-		}
-	}
-	if forceCount > 1 {
-		hasBlockedForce = true
-	}
-	if !hasExtra {
-		t.Fatalf("expected --extra val in args, got %v", args)
-	}
-	if hasBlockedForce {
-		t.Fatalf("--force from custom args should be filtered, got %v", args)
-	}
-	if hasBlockedFormat {
-		t.Fatalf("--output-format from custom args should be filtered, got %v", args)
+	for _, tc := range []struct {
+		name   string
+		prompt string
+		opts   ExecOptions
+		want   []string
+	}{
+		{name: "minimal", prompt: "hello", want: []string{"-p", "hello", "--output-format", "stream-json", "--force"}},
+		{name: "model", prompt: "do something", opts: ExecOptions{Cwd: "/tmp/work", Model: "composer-1.5"}, want: []string{"-p", "do something", "--output-format", "stream-json", "--force", "--model", "composer-1.5"}},
+		{name: "resume", prompt: "continue", opts: ExecOptions{ResumeSessionID: "sess-123"}, want: []string{"-p", "continue", "--output-format", "stream-json", "--force", "--resume", "sess-123"}},
+		{name: "unsupported options", prompt: "task", opts: ExecOptions{SystemPrompt: "You are helpful", MaxTurns: 5}, want: []string{"-p", "task", "--output-format", "stream-json", "--force"}},
+		{name: "filtered custom args", prompt: "task", opts: ExecOptions{CustomArgs: []string{"--extra", "val", "--force", "--output-format", "text"}}, want: []string{"-p", "task", "--output-format", "stream-json", "--force", "--extra", "val"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildCursorArgs(tc.prompt, tc.opts, slog.Default()); !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
