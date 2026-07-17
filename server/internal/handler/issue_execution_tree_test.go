@@ -726,7 +726,7 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 		t.Fatalf("GetIssueExecutionTree: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp IssueExecutionTreeResponse
+	var resp issueExecutionTreeResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode execution tree: %v", err)
 	}
