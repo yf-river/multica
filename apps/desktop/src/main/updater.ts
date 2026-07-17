@@ -14,7 +14,7 @@ autoUpdater.autoInstallOnAppQuit = true;
 // Windows arm64 ships its own update metadata channel because
 // electron-builder's `latest.yml` is not arch-suffixed on Windows — both
 // arches would otherwise collide on the same file in the GitHub Release.
-// See scripts/package.mjs (builderArgsForTarget) for the publish-side half
+// See scripts/package-runner.mjs for the publish-side half
 // of this pact. Pin the channel here so arm64 clients fetch
 // `latest-arm64.yml` instead of the x64 metadata.
 if (process.platform === "win32" && process.arch === "arm64") {

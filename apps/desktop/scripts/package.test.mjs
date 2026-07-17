@@ -1,282 +1,143 @@
-import { delimiter, resolve } from "node:path";
-import { describe, it, expect } from "vitest";
-import {
-  builderArgsForTarget,
-  envWithLocalBins,
-  normalizeGitVersion,
-  parsePackageArgs,
-  resolveBuildMatrix,
-  stripLeadingSeparator,
-} from "./package.mjs";
+import { delimiter, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("normalizeGitVersion", () => {
-  it("returns null for empty / nullish input", () => {
-    expect(normalizeGitVersion("")).toBe(null);
-    expect(normalizeGitVersion(null)).toBe(null);
-    expect(normalizeGitVersion(undefined)).toBe(null);
-  });
+const childProcess = vi.hoisted(() => ({
+  execFileSync: vi.fn(),
+  execSync: vi.fn(),
+  spawnSync: vi.fn(),
+}));
 
-  it("strips the leading v on a clean tag", () => {
-    expect(normalizeGitVersion("v0.1.36")).toBe("0.1.36");
-    expect(normalizeGitVersion("v1.0.0")).toBe("1.0.0");
-  });
+vi.mock("node:child_process", () => ({ ...childProcess, default: childProcess }));
 
-  it("preserves the prerelease suffix between tags", () => {
-    expect(normalizeGitVersion("v0.1.35-14-gf1415e96")).toBe(
-      "0.1.35-14-gf1415e96",
+import { main } from "./package-runner.mjs";
+
+const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+function runtime(overrides = {}) {
+  return {
+    argv: [],
+    platform: "darwin",
+    arch: "arm64",
+    env: {
+      PATH: ["/usr/local/bin", "/usr/bin"].join(delimiter),
+      APPLE_TEAM_ID: "team-id",
+    },
+    ...overrides,
+  };
+}
+
+function builderCalls() {
+  return childProcess.spawnSync.mock.calls
+    .filter(([command]) => command === "electron-builder")
+    .map(([, args]) => args);
+}
+
+beforeEach(() => {
+  childProcess.execFileSync.mockReset();
+  childProcess.execSync.mockReset().mockReturnValue("v1.2.3\n");
+  childProcess.spawnSync.mockReset().mockReturnValue({ status: 0 });
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("Desktop package runner", () => {
+  it("builds one explicit target with canonical version and forwarded arguments", () => {
+    const result = main(runtime({
+      argv: ["--", "--win", "nsis", "--arm64", "--publish", "always"],
+    }));
+
+    expect(result).toBe(0);
+    expect(childProcess.spawnSync).toHaveBeenNthCalledWith(
+      1,
+      "electron-vite",
+      ["build"],
+      expect.objectContaining({ cwd: desktopRoot, shell: true }),
     );
-  });
-
-  it("preserves the dirty suffix on a modified worktree", () => {
-    expect(normalizeGitVersion("v0.1.35-14-gf1415e96-dirty")).toBe(
-      "0.1.35-14-gf1415e96-dirty",
+    expect(childProcess.execFileSync).toHaveBeenCalledWith(
+      "node",
+      [
+        resolve(desktopRoot, "scripts/bundle-cli.mjs"),
+        "--target-platform",
+        "win32",
+        "--target-arch",
+        "arm64",
+      ],
+      { cwd: desktopRoot, stdio: "inherit" },
     );
-  });
-
-  it("handles v-prefixed prerelease tags", () => {
-    expect(normalizeGitVersion("v1.0.0-alpha")).toBe("1.0.0-alpha");
-    expect(normalizeGitVersion("v1.0.0-rc.2")).toBe("1.0.0-rc.2");
-  });
-
-  it("falls back to 0.0.0-g<hash> when no tags are reachable", () => {
-    // `git describe --tags --always` returns just the short commit hash
-    // when there are no tags in the history at all. A hash that begins with
-    // a digit (e.g. "2f24057b") is still not valid semver and must fall
-    // through — otherwise electron-updater rejects it on launch. The `g`
-    // prefix mirrors git describe's own `g<hash>` shorthand and keeps the
-    // pre-release identifier a single alphanumeric token.
-    expect(normalizeGitVersion("f1415e96")).toBe("0.0.0-gf1415e96");
-    expect(normalizeGitVersion("abc1234")).toBe("0.0.0-gabc1234");
-    expect(normalizeGitVersion("2f24057b")).toBe("0.0.0-g2f24057b");
-  });
-
-  it("prefixes an all-digit hash so the pre-release is valid semver", () => {
-    // A short hash that is all decimal digits with a leading zero would
-    // produce `0.0.0-0123456` — a numeric pre-release identifier must not
-    // have a leading zero, so that value is invalid semver and
-    // electron-updater would throw on the no-tag builds this fallback
-    // exists to protect. The `g` prefix makes it a single alphanumeric
-    // identifier, which is always valid.
-    expect(normalizeGitVersion("0123456")).toBe("0.0.0-g0123456");
-    expect(normalizeGitVersion("04567")).toBe("0.0.0-g04567");
-  });
-});
-
-describe("stripLeadingSeparator", () => {
-  it("removes the leading -- inserted by npm/pnpm", () => {
-    expect(stripLeadingSeparator(["--", "--mac", "--arm64", "--publish", "always"])).toEqual([
-      "--mac", "--arm64", "--publish", "always",
-    ]);
-  });
-
-  it("leaves args untouched when there is no leading --", () => {
-    expect(stripLeadingSeparator(["--mac", "--arm64"])).toEqual(["--mac", "--arm64"]);
-  });
-
-  it("does not strip a -- that appears mid-argv", () => {
-    expect(stripLeadingSeparator(["--mac", "--", "--arm64"])).toEqual([
-      "--mac", "--", "--arm64",
-    ]);
-  });
-
-  it("handles an empty array", () => {
-    expect(stripLeadingSeparator([])).toEqual([]);
-  });
-});
-
-describe("parsePackageArgs", () => {
-  it("collects per-platform targets and shared args", () => {
-    expect(
-      parsePackageArgs([
-        "--win", "nsis",
-        "--mac", "dmg", "zip",
-        "--arm64",
-        "--publish", "never",
-      ]),
-    ).toEqual({
-      allPlatforms: false,
-      sharedArgs: ["--publish", "never"],
-      platformTargets: {
-        mac: ["dmg", "zip"],
-        win: ["nsis"],
-        linux: [],
-      },
-      requestedPlatforms: ["win", "mac"],
-      requestedArchs: ["arm64"],
-    });
-  });
-
-  it("tracks the all-platforms shortcut", () => {
-    expect(parsePackageArgs(["--all-platforms", "--publish", "never"]).allPlatforms).toBe(true);
-  });
-});
-
-describe("resolveBuildMatrix", () => {
-  it("defaults to the current host platform and arch", () => {
-    expect(
-      resolveBuildMatrix(
-        {
-          allPlatforms: false,
-          sharedArgs: [],
-          platformTargets: { mac: [], win: [], linux: [] },
-          requestedPlatforms: [],
-          requestedArchs: [],
-        },
-        "darwin",
-        "arm64",
-      ),
-    ).toEqual([{ platform: "mac", arch: "arm64" }]);
-  });
-
-  it("expands all-platforms on macOS", () => {
-    expect(
-      resolveBuildMatrix(
-        {
-          allPlatforms: true,
-          sharedArgs: [],
-          platformTargets: { mac: [], win: [], linux: [] },
-          requestedPlatforms: [],
-          requestedArchs: [],
-        },
-        "darwin",
-        "arm64",
-      ),
-    ).toEqual([
-      { platform: "mac", arch: "arm64" },
-      { platform: "win", arch: "x64" },
-      { platform: "win", arch: "arm64" },
-      { platform: "linux", arch: "x64" },
-      { platform: "linux", arch: "arm64" },
-    ]);
-  });
-
-  it("rejects unsupported architectures", () => {
-    expect(() =>
-      resolveBuildMatrix(
-        {
-          allPlatforms: false,
-          sharedArgs: [],
-          platformTargets: { mac: [], win: [], linux: [] },
-          requestedPlatforms: ["win"],
-          requestedArchs: ["universal"],
-        },
-        "darwin",
-        "arm64",
-      ),
-    ).toThrow(/unsupported Desktop CLI architecture/);
-  });
-});
-
-describe("builderArgsForTarget", () => {
-  it("adds scoped output directories for multi-target builds", () => {
-    expect(
-      builderArgsForTarget(
-        { platform: "win", arch: "arm64" },
-        {
-          allPlatforms: false,
-          sharedArgs: ["--publish", "never"],
-          platformTargets: { mac: [], win: ["nsis"], linux: [] },
-          requestedPlatforms: ["win"],
-          requestedArchs: ["arm64"],
-        },
-        "1.2.3",
-        {
-          disableMacNotarize: true,
-          hostPlatform: "darwin",
-          useScopedOutputDir: true,
-        },
-      ),
-    ).toEqual([
+    expect(builderCalls()).toEqual([[
       "-c.extraMetadata.version=1.2.3",
-      "-c.mac.notarize=false",
       "--win",
       "nsis",
       "--arm64",
       "--publish",
-      "never",
-      "-c.directories.output=dist/win-arm64",
-      "-c.publish.channel=latest-arm64",
-    ]);
-  });
-
-  it("does not override the publish channel for Windows x64 (default latest.yml)", () => {
-    expect(
-      builderArgsForTarget(
-        { platform: "win", arch: "x64" },
-        {
-          allPlatforms: false,
-          sharedArgs: ["--publish", "always"],
-          platformTargets: { mac: [], win: ["nsis"], linux: [] },
-          requestedPlatforms: ["win"],
-          requestedArchs: ["x64"],
-        },
-        "1.2.3",
-        { hostPlatform: "win32", useScopedOutputDir: true },
-      ),
-    ).toEqual([
-      "-c.extraMetadata.version=1.2.3",
-      "--win",
-      "nsis",
-      "--x64",
-      "--publish",
       "always",
-      "-c.directories.output=dist/win-x64",
+      "-c.publish.channel=latest-arm64",
+    ]]);
+  });
+
+  it("builds the complete release matrix with isolated output and portable Linux targets", () => {
+    expect(main(runtime({ argv: ["--all-platforms", "--publish", "never"] }))).toBe(0);
+
+    expect(builderCalls()).toEqual([
+      ["-c.extraMetadata.version=1.2.3", "--mac", "--arm64", "--publish", "never", "-c.directories.output=dist/mac-arm64"],
+      ["-c.extraMetadata.version=1.2.3", "--win", "--x64", "--publish", "never", "-c.directories.output=dist/win-x64"],
+      ["-c.extraMetadata.version=1.2.3", "--win", "--arm64", "--publish", "never", "-c.directories.output=dist/win-arm64", "-c.publish.channel=latest-arm64"],
+      ["-c.extraMetadata.version=1.2.3", "--linux", "AppImage", "--x64", "--publish", "never", "-c.directories.output=dist/linux-x64"],
+      ["-c.extraMetadata.version=1.2.3", "--linux", "AppImage", "--arm64", "--publish", "never", "-c.directories.output=dist/linux-arm64"],
     ]);
   });
 
-  it("defaults linux cross-builds to AppImage on non-Linux hosts", () => {
-    expect(
-      builderArgsForTarget(
-        { platform: "linux", arch: "x64" },
-        {
-          allPlatforms: false,
-          sharedArgs: ["--publish", "never"],
-          platformTargets: { mac: [], win: [], linux: [] },
-          requestedPlatforms: ["linux"],
-          requestedArchs: ["x64"],
-        },
-        "1.2.3",
-        { hostPlatform: "darwin" },
-      ),
-    ).toEqual([
-      "-c.extraMetadata.version=1.2.3",
-      "--linux",
-      "AppImage",
-      "--x64",
-      "--publish",
-      "never",
-    ]);
-  });
-});
+  it("normalizes an untagged numeric commit and supplies local binaries", () => {
+    childProcess.execSync.mockReturnValue("0123456\n");
+    const env = { Path: ["runner-bin", resolve(desktopRoot, "node_modules/.bin")].join(delimiter) };
 
-describe("envWithLocalBins", () => {
-  it("prepends desktop-local binary directories to PATH", () => {
-    const desktopRoot = "/repo/apps/desktop";
-    const result = envWithLocalBins(
-      { PATH: ["/usr/local/bin", "/usr/bin"].join(delimiter) },
-      desktopRoot,
-    );
-    expect(result.PATH.split(delimiter)).toEqual([
-      resolve(desktopRoot, "node_modules", ".bin"),
-      resolve(desktopRoot, "..", "..", "node_modules", ".bin"),
-      "/usr/local/bin",
-      "/usr/bin",
-    ]);
-  });
+    expect(main(runtime({ platform: "linux", arch: "x64", env }))).toBe(0);
 
-  it("preserves an existing Path key and avoids duplicate entries", () => {
-    const desktopRoot = "/repo/apps/desktop";
-    const desktopBin = resolve(desktopRoot, "node_modules", ".bin");
-    const workspaceBin = resolve(desktopRoot, "..", "..", "node_modules", ".bin");
-    const result = envWithLocalBins(
-      { Path: [desktopBin, "runner-bin", workspaceBin].join(delimiter) },
-      desktopRoot,
-    );
-    expect(result).not.toHaveProperty("PATH");
-    expect(result.Path.split(delimiter)).toEqual([
-      desktopBin,
-      workspaceBin,
+    const viteEnv = childProcess.spawnSync.mock.calls[0][2].env;
+    expect(viteEnv).not.toHaveProperty("PATH");
+    expect(viteEnv.Path.split(delimiter)).toEqual([
+      resolve(desktopRoot, "node_modules/.bin"),
+      resolve(desktopRoot, "../../node_modules/.bin"),
       "runner-bin",
     ]);
+    expect(builderCalls()).toEqual([[
+      "-c.extraMetadata.version=0.0.0-g0123456",
+      "-c.mac.notarize=false",
+      "--linux",
+      "--x64",
+    ]]);
+  });
+
+  it("rejects conflicting or unsupported target requests before spawning tools", () => {
+    expect(() => main(runtime({ argv: ["--all-platforms", "--win"] }))).toThrow(
+      /cannot be combined/,
+    );
+    expect(() => main(runtime({ argv: ["--win", "--universal"] }))).toThrow(
+      /unsupported Desktop CLI architecture/,
+    );
+    expect(childProcess.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ error: new Error("missing vite") }, 1],
+    [{ status: 7 }, 7],
+  ])("returns the electron-vite failure status %#", (viteResult, expected) => {
+    childProcess.spawnSync.mockReturnValueOnce(viteResult);
+    expect(main(runtime())).toBe(expected);
+    expect(childProcess.execFileSync).not.toHaveBeenCalled();
+  });
+
+  it("returns the electron-builder failure status", () => {
+    childProcess.spawnSync
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 9 });
+
+    expect(main(runtime())).toBe(9);
   });
 });
