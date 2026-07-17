@@ -42,8 +42,6 @@ func testSigner(t *testing.T) *auth.CloudFrontSigner {
 }
 
 func TestRefreshCloudFrontCookies_UsesAuthTokenTTL(t *testing.T) {
-	// Set a short TTL (1 hour) so we can verify the middleware does NOT use
-	// the old hardcoded 30-day value.
 	t.Setenv("AUTH_TOKEN_TTL", "1h")
 
 	signer := testSigner(t)
@@ -62,10 +60,9 @@ func TestRefreshCloudFrontCookies_UsesAuthTokenTTL(t *testing.T) {
 	}
 
 	for _, c := range cookies {
-		// Cookie expiry should be ~1 hour from now, not ~30 days.
 		untilExpiry := time.Until(c.Expires)
 		if untilExpiry > 2*time.Hour {
-			t.Errorf("cookie %q expires in %v; expected ~1h (AUTH_TOKEN_TTL), got what looks like 30-day hardcode", c.Name, untilExpiry)
+			t.Errorf("cookie %q expires in %v; expected AUTH_TOKEN_TTL", c.Name, untilExpiry)
 		}
 	}
 }

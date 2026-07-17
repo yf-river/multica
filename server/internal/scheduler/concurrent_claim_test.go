@@ -6,19 +6,7 @@ import (
 	"testing"
 )
 
-// TestConcurrentClaimsSingleWinner verifies that scheduler replicas
-// competing for the same plan produce exactly one winner. The
-// `sys_cron_executions` uniqueness key admits one row per
-// (job, scope, plan_time); every other runner follows the conflict path.
-//
-// We simulate this by firing N concurrent claims at the same plan_time
-// from distinct runner ids and asserting the table contract:
-//
-//   - Exactly ONE caller observes Won=true.
-//   - Every other caller observes Conflicted=true (no Won, no Stole).
-//   - sys_cron_executions has exactly one row for the plan.
-//   - The row's runner_id matches the winner.
-//
+// Concurrent replicas must resolve one plan through the database uniqueness key.
 func TestConcurrentClaimsSingleWinner(t *testing.T) {
 	pool := integrationPool(t)
 	job := newTestJobSpec(uniqueJobName(t, "concurrent_claim"))
@@ -83,7 +71,6 @@ func TestConcurrentClaimsSingleWinner(t *testing.T) {
 		t.Fatalf("expected %d conflicts, got %d", contenders-1, conflicts)
 	}
 
-	// Database-side proof: exactly one row, runner_id matches.
 	var rowCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM sys_cron_executions WHERE job_name = $1 AND plan_time = $2
