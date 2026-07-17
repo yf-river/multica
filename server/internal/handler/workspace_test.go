@@ -17,6 +17,51 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+type workspaceHandlerFixture struct {
+	ID string
+}
+
+func newWorkspaceHandlerFixture(t *testing.T, name, slug, prefix, role string) workspaceHandlerFixture {
+	t.Helper()
+	ctx := context.Background()
+	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	var workspaceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, name, slug, name+" test", prefix).Scan(&workspaceID); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
+	`, workspaceID, testUserID, role); err != nil {
+		t.Fatalf("create %s member: %v", role, err)
+	}
+	return workspaceHandlerFixture{ID: workspaceID}
+}
+
+func (fx workspaceHandlerFixture) update(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := newRequest(http.MethodPatch, "/api/workspaces/"+fx.ID, body)
+	request = withTestWorkspaceMember(request, fx.ID, testUserID)
+	request = withURLParam(request, "id", fx.ID)
+	testHandler.UpdateWorkspace(response, request)
+	return response
+}
+
+func (fx workspaceHandlerFixture) delete(t *testing.T) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodDelete, "/api/workspaces/"+fx.ID, nil), "id", fx.ID)
+	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner")(
+		http.HandlerFunc(testHandler.DeleteWorkspace),
+	).ServeHTTP(response, request)
+	return response
+}
+
 func TestCreateWorkspaceRecoversTheExactCommittedResult(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -433,45 +478,17 @@ func TestCreateWorkspace_DisabledByConfig(t *testing.T) {
 	}
 }
 
-// TestDeleteWorkspace_RequiresOwner exercises the owner-only route boundary.
 func TestDeleteWorkspace_RequiresOwner(t *testing.T) {
 	ctx := context.Background()
-
-	const slug = "handler-tests-delete-403"
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
-
-	var wsID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description, issue_prefix)
-VALUES ($1, $2, $3, 'HD4')
-RETURNING id
-`, "Handler Test Delete 403", slug, "DeleteWorkspace handler permission test").Scan(&wsID); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
-	})
-
-	if _, err := testPool.Exec(ctx, `
-INSERT INTO member (workspace_id, user_id, role)
-VALUES ($1, $2, 'admin')
-`, wsID, testUserID); err != nil {
-		t.Fatalf("create admin member: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/workspaces/"+wsID, nil)
-	req = withURLParam(req, "id", wsID)
-	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner")(
-		http.HandlerFunc(testHandler.DeleteWorkspace),
-	).ServeHTTP(w, req)
+	workspace := newWorkspaceHandlerFixture(t, "Handler Test Delete 403", "handler-tests-delete-403", "HD4", "admin")
+	w := workspace.delete(t)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 from DeleteWorkspace handler for admin (non-owner), got %d: %s", w.Code, w.Body.String())
 	}
 
 	var exists bool
-	if err := testPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workspace WHERE id = $1)`, wsID).Scan(&exists); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workspace WHERE id = $1)`, workspace.ID).Scan(&exists); err != nil {
 		t.Fatalf("verify workspace: %v", err)
 	}
 	if !exists {
@@ -479,54 +496,27 @@ VALUES ($1, $2, 'admin')
 	}
 }
 
-// TestDeleteWorkspace_OwnerSucceeds is the positive route-boundary counterpart.
 func TestDeleteWorkspace_OwnerSucceeds(t *testing.T) {
 	ctx := context.Background()
-
-	const slug = "handler-tests-delete-ok"
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
-
-	var wsID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description, issue_prefix)
-VALUES ($1, $2, $3, 'HDO')
-RETURNING id
-`, "Handler Test Delete OK", slug, "DeleteWorkspace handler owner test").Scan(&wsID); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
-	})
-
-	if _, err := testPool.Exec(ctx, `
-INSERT INTO member (workspace_id, user_id, role)
-VALUES ($1, $2, 'owner')
-`, wsID, testUserID); err != nil {
-		t.Fatalf("create owner member: %v", err)
-	}
+	workspace := newWorkspaceHandlerFixture(t, "Handler Test Delete OK", "handler-tests-delete-ok", "HDO", "owner")
 	if _, err := testPool.Exec(ctx, `
 INSERT INTO github_pending_check_suite (
 	workspace_id, installation_id, repo_owner, repo_name, pr_number,
 	suite_id, head_sha, app_id, status, suite_updated_at
 )
 VALUES ($1, 123456789, 'multica-ai', 'multica', 3366, 987654321, 'abc123', 15368, 'completed', now())
-`, wsID); err != nil {
+`, workspace.ID); err != nil {
 		t.Fatalf("create pending check suite: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/workspaces/"+wsID, nil)
-	req = withURLParam(req, "id", wsID)
-	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner")(
-		http.HandlerFunc(testHandler.DeleteWorkspace),
-	).ServeHTTP(w, req)
+	w := workspace.delete(t)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 from DeleteWorkspace handler for owner, got %d: %s", w.Code, w.Body.String())
 	}
 
 	var exists bool
-	if err := testPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workspace WHERE id = $1)`, wsID).Scan(&exists); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM workspace WHERE id = $1)`, workspace.ID).Scan(&exists); err != nil {
 		t.Fatalf("verify workspace: %v", err)
 	}
 	if exists {
@@ -534,7 +524,7 @@ VALUES ($1, 123456789, 'multica-ai', 'multica', 3366, 987654321, 'abc123', 15368
 	}
 
 	var pendingCount int
-	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM github_pending_check_suite WHERE workspace_id = $1`, wsID).Scan(&pendingCount); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM github_pending_check_suite WHERE workspace_id = $1`, workspace.ID).Scan(&pendingCount); err != nil {
 		t.Fatalf("verify pending check suites: %v", err)
 	}
 	if pendingCount != 0 {
@@ -542,46 +532,15 @@ VALUES ($1, 123456789, 'multica-ai', 'multica', 3366, 987654321, 'abc123', 15368
 	}
 }
 
-// TestUpdateWorkspace_AvatarURL covers the avatar_url field added to
-// UpdateWorkspaceRequest: a PATCH with avatar_url is persisted and surfaced
-// back on the response, and partial updates leave other fields untouched.
-// Route-level authorization (owner/admin) is enforced by middleware in
-// router.go; the handler test calls UpdateWorkspace directly to verify the
-// payload wiring.
 func TestUpdateWorkspace_AvatarURL(t *testing.T) {
 	ctx := context.Background()
-
-	const slug = "handler-tests-avatar-url"
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
-
-	var wsID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description, issue_prefix)
-VALUES ($1, $2, $3, 'HAV')
-RETURNING id
-`, "Handler Test Avatar URL", slug, "UpdateWorkspace avatar_url test").Scan(&wsID); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
-	})
-
-	if _, err := testPool.Exec(ctx, `
-INSERT INTO member (workspace_id, user_id, role)
-VALUES ($1, $2, 'owner')
-`, wsID, testUserID); err != nil {
-		t.Fatalf("create owner member: %v", err)
-	}
+	workspace := newWorkspaceHandlerFixture(t, "Handler Test Avatar URL", "handler-tests-avatar-url", "HAV", "owner")
 
 	const avatarURL = "https://cdn.example.com/workspaces/abc/logo.png"
 
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+	w := workspace.update(t, map[string]any{
 		"avatar_url": avatarURL,
 	})
-	req = withTestWorkspaceMember(req, wsID, testUserID)
-	req = withURLParam(req, "id", wsID)
-	testHandler.UpdateWorkspace(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 from UpdateWorkspace, got %d: %s", w.Code, w.Body.String())
@@ -599,21 +558,16 @@ VALUES ($1, $2, 'owner')
 	}
 
 	var dbAvatar *string
-	if err := testPool.QueryRow(ctx, `SELECT avatar_url FROM workspace WHERE id = $1`, wsID).Scan(&dbAvatar); err != nil {
+	if err := testPool.QueryRow(ctx, `SELECT avatar_url FROM workspace WHERE id = $1`, workspace.ID).Scan(&dbAvatar); err != nil {
 		t.Fatalf("read avatar_url back: %v", err)
 	}
 	if dbAvatar == nil || *dbAvatar != avatarURL {
 		t.Fatalf("expected avatar_url %q persisted, got %v", avatarURL, dbAvatar)
 	}
 
-	// A follow-up update that doesn't include avatar_url must leave it alone.
-	w2 := httptest.NewRecorder()
-	req2 := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+	w2 := workspace.update(t, map[string]any{
 		"description": "new description",
 	})
-	req2 = withTestWorkspaceMember(req2, wsID, testUserID)
-	req2 = withURLParam(req2, "id", wsID)
-	testHandler.UpdateWorkspace(w2, req2)
 
 	if w2.Code != http.StatusOK {
 		t.Fatalf("expected 200 from second UpdateWorkspace, got %d: %s", w2.Code, w2.Body.String())
@@ -630,37 +584,13 @@ VALUES ($1, $2, 'owner')
 
 func TestUpdateWorkspace_ReposValidation(t *testing.T) {
 	ctx := context.Background()
-
-	const slug = "handler-tests-repos-validation"
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
-
-	var wsID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description, issue_prefix)
-VALUES ($1, $2, $3, 'HRV')
-RETURNING id
-`, "Handler Test Repos Validation", slug, "UpdateWorkspace repos validation test").Scan(&wsID); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
-	})
-
-	if _, err := testPool.Exec(ctx, `
-INSERT INTO member (workspace_id, user_id, role)
-VALUES ($1, $2, 'owner')
-`, wsID, testUserID); err != nil {
-		t.Fatalf("create owner member: %v", err)
-	}
+	workspace := newWorkspaceHandlerFixture(t, "Handler Test Repos Validation", "handler-tests-repos-validation", "HRV", "owner")
+	wsID := workspace.ID
 
 	t.Run("rejects non-object settings without persisting", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+		w := workspace.update(t, map[string]any{
 			"settings": []any{"not", "an", "object"},
 		})
-		req = withTestWorkspaceMember(req, wsID, testUserID)
-		req = withURLParam(req, "id", wsID)
-		testHandler.UpdateWorkspace(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 from non-object settings update, got %d: %s", w.Code, w.Body.String())
@@ -682,15 +612,11 @@ VALUES ($1, $2, 'owner')
 	})
 
 	t.Run("rejects invalid repo URLs without persisting", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+		w := workspace.update(t, map[string]any{
 			"repos": []map[string]any{
 				{"url": "not-a-url"},
 			},
 		})
-		req = withTestWorkspaceMember(req, wsID, testUserID)
-		req = withURLParam(req, "id", wsID)
-		testHandler.UpdateWorkspace(w, req)
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 from invalid repos update, got %d: %s", w.Code, w.Body.String())
@@ -706,8 +632,7 @@ VALUES ($1, $2, 'owner')
 	})
 
 	t.Run("normalizes valid repos", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+		w := workspace.update(t, map[string]any{
 			"repos": []map[string]any{
 				{
 					"url":         "  https://github.com/multica-ai/multica.git  ",
@@ -721,9 +646,6 @@ VALUES ($1, $2, 'owner')
 				},
 			},
 		})
-		req = withTestWorkspaceMember(req, wsID, testUserID)
-		req = withURLParam(req, "id", wsID)
-		testHandler.UpdateWorkspace(w, req)
 
 		if w.Code != http.StatusOK {
 			t.Fatalf("expected 200 from valid repos update, got %d: %s", w.Code, w.Body.String())
@@ -760,13 +682,9 @@ VALUES ($1, $2, 'owner')
 			},
 		}
 		for _, repo := range cases {
-			w := httptest.NewRecorder()
-			req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			w := workspace.update(t, map[string]any{
 				"repos": []map[string]any{repo},
 			})
-			req = withTestWorkspaceMember(req, wsID, testUserID)
-			req = withURLParam(req, "id", wsID)
-			testHandler.UpdateWorkspace(w, req)
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("incomplete Gongfeng repo should return 400, got %d: %s", w.Code, w.Body.String())
 			}
@@ -774,8 +692,7 @@ VALUES ($1, $2, 'owner')
 	})
 
 	t.Run("keeps gongfeng project resources backed by project_path", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+		w := workspace.update(t, map[string]any{
 			"repos": []map[string]any{
 				{
 					"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
@@ -791,15 +708,12 @@ VALUES ($1, $2, 'owner')
 				},
 			},
 		})
-		req = withTestWorkspaceMember(req, wsID, testUserID)
-		req = withURLParam(req, "id", wsID)
-		testHandler.UpdateWorkspace(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("seed repos: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		w = httptest.NewRecorder()
-		req = newRequest("POST", "/api/projects?workspace_id="+wsID, map[string]any{
+		req := newRequest("POST", "/api/projects?workspace_id="+wsID, map[string]any{
 			"title": "Workspace repo removal guard",
 		})
 		req = withTestWorkspaceMember(req, wsID, testUserID)
@@ -832,8 +746,7 @@ VALUES ($1, $2, 'owner')
 			t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 
-		w = httptest.NewRecorder()
-		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+		w = workspace.update(t, map[string]any{
 			"repos": []map[string]any{
 				{
 					"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
@@ -843,28 +756,19 @@ VALUES ($1, $2, 'owner')
 				},
 			},
 		})
-		req = withTestWorkspaceMember(req, wsID, testUserID)
-		req = withURLParam(req, "id", wsID)
-		testHandler.UpdateWorkspace(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("remove one duplicate project_path repo: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		w = httptest.NewRecorder()
-		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+		w = workspace.update(t, map[string]any{
 			"repos": []map[string]any{},
 		})
-		req = withTestWorkspaceMember(req, wsID, testUserID)
-		req = withURLParam(req, "id", wsID)
-		testHandler.UpdateWorkspace(w, req)
 		if w.Code != http.StatusConflict {
 			t.Fatalf("remove last project_path repo: expected 409, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 }
 
-// revocationFixture is a minimal workspace/member/runtime/agent/queued-task
-// bundle used to drive the revocation tests.
 type revocationFixture struct {
 	WorkspaceID  string
 	TargetUserID string
@@ -874,52 +778,43 @@ type revocationFixture struct {
 	TaskID       string
 }
 
+func deleteWorkspaceMember(t *testing.T, workspaceID, memberID, actorID string) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := newRequest(http.MethodDelete, "/api/workspaces/"+workspaceID+"/members/"+memberID, nil)
+	request = withTestWorkspaceMember(request, workspaceID, actorID)
+	request = withURLParams(request, "id", workspaceID, "memberId", memberID)
+	testHandler.DeleteMember(response, request)
+	return response
+}
+
+func createRevocationTarget(t *testing.T, workspaceID, name, account, role string) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+	`, name, account).Scan(&userID); err != nil {
+		t.Fatalf("create target user: %v", err)
+	}
+	var memberID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) RETURNING id
+	`, workspaceID, userID, role).Scan(&memberID); err != nil {
+		t.Fatalf("create target member: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+	return userID, memberID
+}
+
 func setupRevocationFixture(t *testing.T, slug, daemonID string) revocationFixture {
 	t.Helper()
 	ctx := context.Background()
-
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
-
-	var wsID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description, issue_prefix)
-VALUES ($1, $2, $3, $4)
-RETURNING id
-`, "Revocation "+slug, slug, "revocation test", "REV").Scan(&wsID); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-
-	// Requester (= testUserID) is always an owner so DeleteMember authorization
-	// passes. Two owners total so LeaveWorkspace doesn't trip the "must keep
-	// at least one owner" guard.
-	if _, err := testPool.Exec(ctx, `
-INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
-`, wsID, testUserID); err != nil {
-		t.Fatalf("create requester member: %v", err)
-	}
-
-	targetAccount := fmt.Sprintf("revocation-%s@multica", slug)
-	var targetUserID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
-`, "Revocation Target "+slug, targetAccount).Scan(&targetUserID); err != nil {
-		t.Fatalf("create target user: %v", err)
-	}
-
-	// Cleanup ordering: workspace first (cascade clears agent_runtime,
-	// agent and member), then user (whose deletion would
-	// otherwise be blocked by agent.owner_id / agent_runtime.owner_id FKs).
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, targetUserID)
-	})
-
-	var memberID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner') RETURNING id
-`, wsID, targetUserID).Scan(&memberID); err != nil {
-		t.Fatalf("create target member: %v", err)
-	}
+	workspace := newWorkspaceHandlerFixture(t, "Revocation "+slug, slug, "REV", "owner")
+	targetUserID, memberID := createRevocationTarget(t, workspace.ID, "Revocation Target "+slug, fmt.Sprintf("revocation-%s@multica", slug), "owner")
 
 	var runtimeID string
 	if err := testPool.QueryRow(ctx, `
@@ -929,7 +824,7 @@ INSERT INTO agent_runtime (
 )
 VALUES ($1, $2, 'Target Runtime', 'local', 'multica_daemon', 'online', '', '{}'::jsonb, $3, now())
 RETURNING id
-`, wsID, daemonID, targetUserID).Scan(&runtimeID); err != nil {
+`, workspace.ID, daemonID, targetUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("insert runtime: %v", err)
 	}
 
@@ -941,7 +836,7 @@ INSERT INTO agent (
 )
 VALUES ($1, 'Target Agent', '', 'local', '{}'::jsonb, $2, 'workspace', 1, $3)
 RETURNING id
-`, wsID, runtimeID, targetUserID).Scan(&agentID); err != nil {
+`, workspace.ID, runtimeID, targetUserID).Scan(&agentID); err != nil {
 		t.Fatalf("insert agent: %v", err)
 	}
 
@@ -955,7 +850,7 @@ RETURNING id
 	}
 
 	return revocationFixture{
-		WorkspaceID:  wsID,
+		WorkspaceID:  workspace.ID,
 		TargetUserID: targetUserID,
 		MemberID:     memberID,
 		RuntimeID:    runtimeID,
@@ -1001,18 +896,9 @@ func assertRevoked(t *testing.T, fx revocationFixture) {
 	}
 }
 
-// TestDeleteMember_RevokesTargetRuntimes verifies that when an admin removes
-// another member from a workspace, every runtime owned by the removed member
-// has its agents archived, its in-flight tasks cancelled, its row flipped
-// offline — all atomically with the member row deletion.
 func TestDeleteMember_RevokesTargetRuntimes(t *testing.T) {
 	fx := setupRevocationFixture(t, "handler-tests-revoke-kick", "daemon-revoke-kick")
-
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/workspaces/"+fx.WorkspaceID+"/members/"+fx.MemberID, nil)
-	req = withTestWorkspaceMember(req, fx.WorkspaceID, testUserID)
-	req = withURLParams(req, "id", fx.WorkspaceID, "memberId", fx.MemberID)
-	testHandler.DeleteMember(w, req)
+	w := deleteWorkspaceMember(t, fx.WorkspaceID, fx.MemberID, testUserID)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("DeleteMember: expected 204, got %d: %s", w.Code, w.Body.String())
@@ -1021,14 +907,9 @@ func TestDeleteMember_RevokesTargetRuntimes(t *testing.T) {
 	assertRevoked(t, fx)
 }
 
-// TestLeaveWorkspace_RevokesOwnRuntimes is the self-removal counterpart: when
-// a member leaves a workspace voluntarily, their own runtimes are revoked
-// with the same atomic write set as DeleteMember.
 func TestLeaveWorkspace_RevokesOwnRuntimes(t *testing.T) {
 	fx := setupRevocationFixture(t, "handler-tests-revoke-leave", "daemon-revoke-leave")
 
-	// Re-target the request from the leaving member's perspective: the
-	// leaver is the request actor, not the workspace owner.
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+fx.WorkspaceID+"/leave", nil)
 	req = withTestWorkspaceMember(req, fx.WorkspaceID, fx.TargetUserID)
@@ -1042,21 +923,10 @@ func TestLeaveWorkspace_RevokesOwnRuntimes(t *testing.T) {
 	assertRevoked(t, fx)
 }
 
-// TestDeleteMember_CancelsTasksFromAgentReassignment covers a subtle
-// case: an agent's runtime_id can be changed via UpdateAgent, but
-// agent_task_queue.runtime_id keeps the value from when the task was
-// queued. So after a leaving member is removed, an agent currently bound
-// to their runtime gets archived — but tasks that agent queued under a
-// PRIOR runtime (still owned by another active member) keep their old
-// runtime_id and would not be caught by a runtime-only sweep. Because
-// ClaimAgentTask does not gate on agent.archived_at, those orphaned
-// queued tasks would remain claimable.
 func TestDeleteMember_CancelsTasksFromAgentReassignment(t *testing.T) {
 	fx := setupRevocationFixture(t, "handler-tests-revoke-reassign", "daemon-revoke-reassign")
 	ctx := context.Background()
 
-	// Create a SECOND runtime in the workspace owned by the requester
-	// (not the leaving member). The agent originally lived here.
 	var otherRuntimeID string
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO agent_runtime (
@@ -1069,9 +939,6 @@ RETURNING id
 		t.Fatalf("insert other runtime: %v", err)
 	}
 
-	// Queue a task on the agent while it was still pinned to the OTHER
-	// runtime (simulating a task created before the agent was reassigned
-	// to the leaving member's runtime).
 	var orphanTaskID string
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority)
@@ -1081,11 +948,7 @@ RETURNING id
 		t.Fatalf("insert orphan task: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/workspaces/"+fx.WorkspaceID+"/members/"+fx.MemberID, nil)
-	req = withTestWorkspaceMember(req, fx.WorkspaceID, testUserID)
-	req = withURLParams(req, "id", fx.WorkspaceID, "memberId", fx.MemberID)
-	testHandler.DeleteMember(w, req)
+	w := deleteWorkspaceMember(t, fx.WorkspaceID, fx.MemberID, testUserID)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("DeleteMember: expected 204, got %d: %s", w.Code, w.Body.String())
@@ -1093,9 +956,6 @@ RETURNING id
 
 	assertRevoked(t, fx)
 
-	// The orphan task — same agent, different runtime — must also be
-	// cancelled. Without the by-agent leg in CancelAgentTasksByRuntimeOrAgent
-	// this stays 'queued' and would be picked up by the other runtime.
 	var orphanStatus string
 	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, orphanTaskID).Scan(&orphanStatus); err != nil {
 		t.Fatalf("query orphan task: %v", err)
@@ -1104,8 +964,6 @@ RETURNING id
 		t.Fatalf("expected orphan task cancelled (archived agent leftover on other runtime), got %q", orphanStatus)
 	}
 
-	// And the OTHER runtime — owned by an active member — must still be
-	// online: revocation is scoped to the leaving member's owned runtimes.
 	var otherStatus string
 	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_runtime WHERE id = $1`, otherRuntimeID).Scan(&otherStatus); err != nil {
 		t.Fatalf("query other runtime: %v", err)
@@ -1115,53 +973,12 @@ RETURNING id
 	}
 }
 
-// TestDeleteMember_NoRuntimes_DeletesMember covers the empty-revocation
-// path: a member with no owned runtimes should still have their member row
-// deleted by the same atomic transaction, with no spurious archive/cancel
-// writes.
 func TestDeleteMember_NoRuntimes_DeletesMember(t *testing.T) {
 	ctx := context.Background()
-	const slug = "handler-tests-revoke-no-runtimes"
-	_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	workspace := newWorkspaceHandlerFixture(t, "Revocation no runtimes", "handler-tests-revoke-no-runtimes", "REV", "owner")
+	_, memberID := createRevocationTarget(t, workspace.ID, "Revocation No Runtimes Target", "revocation-no-runtimes@multica", "admin")
 
-	var wsID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description, issue_prefix)
-VALUES ($1, $2, $3, $4)
-RETURNING id
-`, "Revocation no runtimes", slug, "revocation no-runtimes test", "REV").Scan(&wsID); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-
-	if _, err := testPool.Exec(ctx, `
-INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
-`, wsID, testUserID); err != nil {
-		t.Fatalf("create requester member: %v", err)
-	}
-
-	var targetUserID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
-`, "Revocation No Runtimes Target", "revocation-no-runtimes@multica").Scan(&targetUserID); err != nil {
-		t.Fatalf("create target user: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, targetUserID)
-	})
-
-	var memberID string
-	if err := testPool.QueryRow(ctx, `
-INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'admin') RETURNING id
-`, wsID, targetUserID).Scan(&memberID); err != nil {
-		t.Fatalf("create target member: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/workspaces/"+wsID+"/members/"+memberID, nil)
-	req = withTestWorkspaceMember(req, wsID, testUserID)
-	req = withURLParams(req, "id", wsID, "memberId", memberID)
-	testHandler.DeleteMember(w, req)
+	w := deleteWorkspaceMember(t, workspace.ID, memberID, testUserID)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("DeleteMember: expected 204, got %d: %s", w.Code, w.Body.String())
