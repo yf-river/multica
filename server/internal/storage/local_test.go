@@ -14,7 +14,6 @@ func TestLocalStorage_Upload(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 	_ = os.Unsetenv("LOCAL_UPLOAD_BASE_URL")
-	// No LOCAL_UPLOAD_BASE_URL set - should return relative path
 
 	store := NewLocalStorageFromEnv()
 	if store == nil {
@@ -66,7 +65,6 @@ func TestLocalStorage_Upload_WithBaseURL(t *testing.T) {
 		t.Fatalf("Upload failed: %v", err)
 	}
 
-	// When LOCAL_UPLOAD_BASE_URL is set, should return full URL
 	expectedLink := "http://localhost:8080/uploads/test-key.txt"
 	if link != expectedLink {
 		t.Errorf("link = %q, want %q", link, expectedLink)
@@ -297,11 +295,6 @@ func TestLocalStorage_KeyFromURL_Empty(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_ContentDispositionFromSidecar verifies the fix
-// for issue #2442: downloads served from /uploads/* must carry the original
-// uploaded filename in Content-Disposition, mirroring the S3 Upload path's
-// existing ContentDisposition behavior. Without this, browsers fall back to
-// the storage-key basename (UUID + ext) for the download filename.
 func TestLocalStorage_ServeFile_ContentDispositionFromSidecar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -391,11 +384,6 @@ func TestLocalStorage_ServeFile_RequiresSidecar(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_RejectsSidecarSuffix verifies that the sidecar
-// JSON itself is not addressable via /uploads/*. The sidecar is an
-// implementation detail; exposing it would turn the filename + content-type
-// pair into a stable read API and make any future ACL change leakier than
-// the data file it sits next to.
 func TestLocalStorage_ServeFile_RejectsSidecarSuffix(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -423,10 +411,6 @@ func TestLocalStorage_ServeFile_RejectsSidecarSuffix(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_RejectsPathTraversal documents that a key
-// pointing outside uploadDir is rejected before any sidecar read. Without
-// this guard, ServeFile would attempt a disk read at <some-path>.meta.json
-// before http.ServeFile's own ".." check fires on r.URL.Path.
 func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -436,9 +420,6 @@ func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 		t.Fatal("NewLocalStorageFromEnv returned nil")
 	}
 
-	// Seed a sidecar OUTSIDE uploadDir so we'd notice if it were read: the
-	// header would carry "leaked.xlsx". Locating the sibling inside the
-	// per-test TempDir keeps the test self-contained — no real /etc reads.
 	parentDir := filepath.Dir(tmpDir)
 	leakedBase := filepath.Join(parentDir, "leaked-target")
 	if err := os.WriteFile(leakedBase+metaSuffix, []byte(`{"filename":"leaked.xlsx","content_type":"text/plain"}`), 0644); err != nil {
@@ -480,9 +461,6 @@ func TestLocalStorage_Upload_RejectsEmptyFilename(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_Delete_RemovesSidecar verifies the cleanup half of the
-// fix: when the upload is deleted, its sidecar metadata file disappears too.
-// Otherwise the upload directory grows orphan .meta.json files forever.
 func TestLocalStorage_Delete_RemovesSidecar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -509,7 +487,6 @@ func TestLocalStorage_Delete_RemovesSidecar(t *testing.T) {
 	}
 }
 
-// GetReader returns the uploaded bytes verbatim — used by the preview proxy.
 func TestLocalStorage_GetReader_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -540,7 +517,6 @@ func TestLocalStorage_GetReader_RoundTrip(t *testing.T) {
 	}
 }
 
-// Refuses path traversal at storage layer so callers don't need to defend it.
 func TestLocalStorage_GetReader_RejectsTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -556,9 +532,6 @@ func TestLocalStorage_GetReader_RejectsTraversal(t *testing.T) {
 	}
 }
 
-// The sidecar JSON is an internal detail. Allowing /content to read it via a
-// crafted key would expose the original filename + content-type stored next
-// to every upload.
 func TestLocalStorage_GetReader_RejectsSidecarSuffix(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -574,7 +547,6 @@ func TestLocalStorage_GetReader_RejectsSidecarSuffix(t *testing.T) {
 	}
 }
 
-// Missing key surfaces as a plain error — the handler maps it to 404.
 func TestLocalStorage_GetReader_MissingKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)

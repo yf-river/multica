@@ -12,19 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-func TestS3StorageKeyFromURL_CustomEndpointPreservesNestedKey(t *testing.T) {
-	s := &S3Storage{
-		bucket:      "test-bucket",
-		endpointURL: "http://localhost:9000",
-	}
-
-	rawURL := "http://localhost:9000/test-bucket/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
 func TestS3StoragePresignGetWithContentDisposition(t *testing.T) {
 	store := &S3Storage{
 		client: s3.New(s3.Options{
@@ -61,42 +48,21 @@ func TestS3StoragePresignGetWithContentDisposition(t *testing.T) {
 	}
 }
 
-func TestS3StorageKeyFromURL_CustomEndpointWithTrailingSlash(t *testing.T) {
-	s := &S3Storage{
-		bucket:      "test-bucket",
-		endpointURL: "http://localhost:9000/",
-	}
-
-	rawURL := "http://localhost:9000/test-bucket/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
-func TestS3StorageKeyFromURL_VirtualHostedStylePreservesNestedKey(t *testing.T) {
-	s := &S3Storage{
-		bucket: "test-bucket",
-		region: "us-east-1",
-	}
-
-	rawURL := "https://test-bucket.s3.us-east-1.amazonaws.com/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
-func TestS3StorageKeyFromURL_PathStylePreservesNestedKey(t *testing.T) {
-	s := &S3Storage{
-		bucket: "bucket.with.dots",
-		region: "us-east-1",
-	}
-
-	rawURL := "https://s3.us-east-1.amazonaws.com/bucket.with.dots/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
+func TestS3StorageKeyFromURLPreservesNestedKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, bucket, region, endpointURL, rawURL string
+	}{
+		{"custom endpoint", "test-bucket", "", "http://localhost:9000", "http://localhost:9000/test-bucket/uploads/abc/file.png"},
+		{"custom endpoint trailing slash", "test-bucket", "", "http://localhost:9000/", "http://localhost:9000/test-bucket/uploads/abc/file.png"},
+		{"virtual hosted", "test-bucket", "us-east-1", "", "https://test-bucket.s3.us-east-1.amazonaws.com/uploads/abc/file.png"},
+		{"path style", "bucket.with.dots", "us-east-1", "", "https://s3.us-east-1.amazonaws.com/bucket.with.dots/uploads/abc/file.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &S3Storage{bucket: tc.bucket, region: tc.region, endpointURL: tc.endpointURL}
+			if got := store.KeyFromURL(tc.rawURL); got != "uploads/abc/file.png" {
+				t.Fatalf("KeyFromURL(%q) = %q", tc.rawURL, got)
+			}
+		})
 	}
 }
 

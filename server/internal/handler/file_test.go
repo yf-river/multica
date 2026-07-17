@@ -28,9 +28,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// createHandlerTestChatSession seeds a chat_session row owned by testUserID
-// targeting the given agent and returns the session UUID. Cleanup runs after
-// the test. Used by attachment / chat tests that need an existing session.
 func createHandlerTestChatSession(t *testing.T, agentID string) string {
 	t.Helper()
 
@@ -48,10 +45,6 @@ func createHandlerTestChatSession(t *testing.T, agentID string) string {
 	return sessionID
 }
 
-// mockStorage is a tiny in-memory Storage stand-in. Upload records the bytes
-// keyed by the storage key so GetReader can round-trip them in tests; KeyFromURL
-// strips the synthetic CDN host so consumers can pass either the URL or the
-// raw key.
 type mockStorage struct {
 	mu                  sync.Mutex
 	files               map[string][]byte
@@ -93,11 +86,6 @@ func (m *mockStorage) KeyFromURL(rawURL string) string {
 }
 func (m *mockStorage) CdnDomain() string { return "cdn.example.com" }
 
-// mockStorageNoCdn is a mockStorage variant that returns an empty CdnDomain
-// to simulate a private S3 / R2 / MinIO deployment where the operator has
-// NOT configured a public-facing CDN domain. buildMarkdownURL must not
-// persist `a.Url` for this shape — it would write a private bucket URL
-// into markdown that no client can load.
 type mockStorageNoCdn struct{ mockStorage }
 
 func (m *mockStorageNoCdn) CdnDomain() string { return "" }
@@ -384,8 +372,6 @@ func TestUploadFileConcurrentSameKeyConverges(t *testing.T) {
 	}
 }
 
-// Upload sits outside workspace middleware and therefore resolves the current
-// Web workspace slug directly.
 func TestUploadFileResolvesWorkspaceViaSlugHeader(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -434,8 +420,6 @@ func TestUploadFileResolvesWorkspaceViaSlugHeader(t *testing.T) {
 	}
 }
 
-// TestUploadFileResolvesWorkspaceViaIDHeader confirms that current CLI and
-// daemon clients can address the workspace by UUID.
 func TestUploadFileResolvesWorkspaceViaIDHeader(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -460,9 +444,6 @@ func TestUploadFileResolvesWorkspaceViaIDHeader(t *testing.T) {
 	}
 }
 
-// TestUploadFile_AttachesToChatSession verifies that a multipart upload with
-// a chat_session_id form field creates an attachment row linked to that chat
-// session (chat_message_id remains NULL — it is back-filled on send).
 func TestUploadFile_AttachesToChatSession(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -519,9 +500,6 @@ func TestUploadFile_AttachesToChatSession(t *testing.T) {
 	})
 }
 
-// TestUploadFile_RejectsForeignChatSession verifies a chat_session in another
-// workspace (or owned by another user) is rejected with 403/404, preventing
-// cross-tenant attachment binding.
 func TestUploadFile_RejectsForeignChatSession(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -538,13 +516,6 @@ func TestUploadFile_RejectsForeignChatSession(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// GetAttachmentContent tests (preview proxy)
-// ---------------------------------------------------------------------------
-
-// seedPreviewAttachment inserts an attachment row + writes the bytes into the
-// active mockStorage. Returns the new attachment id. Caller is responsible for
-// installing the mockStorage on testHandler before calling.
 func seedPreviewAttachment(t *testing.T, store *mockStorage, key, filename, contentType string, body []byte) string {
 	t.Helper()
 	// Register the body so GetReader can find it via KeyFromURL → key.
@@ -641,12 +612,6 @@ func newDownloadRequest(t *testing.T, attachmentID, workspaceID string) (*http.R
 }
 
 func newDownloadRouter() http.Handler {
-	// Mirrors the production router after MUL-3130: the download
-	// route is registered under Auth-only with no
-	// RequireWorkspaceMember wrapper. The handler self-resolves the
-	// workspace from the attachment row and enforces membership
-	// internally, so a native browser <img>/<video> resource load
-	// with no X-Workspace-* headers is the supported call shape.
 	r := chi.NewRouter()
 	r.Get("/api/attachments/{id}/download", testHandler.DownloadAttachment)
 	return r
@@ -721,9 +686,6 @@ func TestDownloadAttachment_CloudFrontRedirectSignsAttachmentDisposition(t *test
 	}
 }
 
-// A browser navigation cannot attach X-Workspace-* headers. The handler must
-// resolve membership from the attachment both with and without the optional
-// workspace slug query used by application links.
 func TestDownloadAttachment_BareNavigationServesMember(t *testing.T) {
 	store := &mockStorage{}
 	useAttachmentDownloadConfig(t, store, "proxy", nil)
@@ -751,11 +713,6 @@ func TestDownloadAttachment_BareNavigationServesMember(t *testing.T) {
 	}
 }
 
-// TestDownloadAttachment_BareNavigationDeniesNonMemberWith404 covers the
-// IDOR boundary: a stray attachment ID belonging to a workspace the
-// requester is NOT a member of must return 404, not 200 (would leak
-// bytes) and not 403 (would confirm the ID exists). Mirrors
-// ServeLocalUpload's deny shape.
 func TestDownloadAttachment_BareNavigationDeniesNonMemberWith404(t *testing.T) {
 	if testPool == nil {
 		t.Skip("test database not available")
@@ -968,8 +925,6 @@ func TestGetAttachmentContent_HappyPath_Markdown(t *testing.T) {
 	}
 }
 
-// Even when http.DetectContentType returned "text/plain" instead of "text/markdown"
-// (a known sniffer quirk), the extension whitelist still grants access.
 func TestGetAttachmentContent_AcceptsByExtensionWhenContentTypeIsGeneric(t *testing.T) {
 	store := &mockStorage{}
 	origStorage := testHandler.Storage
@@ -1048,9 +1003,6 @@ func TestGetAttachmentContent_NotFound(t *testing.T) {
 	}
 }
 
-// isTextPreviewable is the whitelist linkpin between the proxy and the
-// client-side dispatcher. Regress against the most common content types so
-// drifting one of the lists alone fails loud.
 func TestIsTextPreviewable(t *testing.T) {
 	t.Helper()
 	cases := []struct {
@@ -1087,30 +1039,7 @@ func TestIsTextPreviewable(t *testing.T) {
 	}
 }
 
-// MUL-3192 — buildMarkdownURL must emit a durable, absolute-when-possible
-// URL that loads natively in any client (web, desktop, mobile webview).
-// `download_url` may be a short-lived signed URL and is unsafe to persist;
-// `markdown_url` is the contract for "ok to embed in markdown body".
-//
-// Matrix:
-//
-//   - public CDN durable URL ............... reuse a.Url verbatim
-//   - LocalStorage with PublicURL set ....... reuse a.Url (already absolute)
-//   - CloudFront-signed mode ................ never reuse a.Url (raw S3),
-//                                              prefer absolute API endpoint
-//   - LocalStorage relative + PublicURL set . prefix to absolute API endpoint
-//   - PublicURL unset ....................... fall back to site-relative
-//                                              (web's Next rewrite handles it)
-//   - signed URL (CloudFront-signed leaked
-//     into a.Url somehow) ................... reject as durable, fall through
-//                                              to API endpoint to avoid
-//                                              re-opening MUL-3130
-
 func TestBuildMarkdownURL_PublicCdnAbsoluteURLReusedVerbatim(t *testing.T) {
-	// mockStorage.CdnDomain() returns "cdn.example.com" — that's the
-	// operator-set signal that the URL host serves content publicly
-	// without per-request auth. Without this, the new gate routes
-	// through the API endpoint to be safe.
 	useAttachmentResponseConfig(t, &mockStorage{}, "https://api.multica.test", nil)
 	_, resp := attachmentResponseForURL(t, "https://cdn.multica.test/uploads/abc.png", "abc.png")
 	if resp.MarkdownURL != "https://cdn.multica.test/uploads/abc.png" {
@@ -1118,12 +1047,6 @@ func TestBuildMarkdownURL_PublicCdnAbsoluteURLReusedVerbatim(t *testing.T) {
 	}
 }
 
-// MUL-3192 review must-fix 1 — `att.url` for a private S3 / R2 / MinIO
-// bucket is absolute https + unsigned but is NOT publicly readable. The
-// generic "absolute http(s) without signature" check would have wrongly
-// persisted it; the gate now also requires `Storage.CdnDomain()` to be
-// set so the operator has explicitly opted into "URLs from this storage
-// load directly".
 func TestBuildMarkdownURL_PrivateBucketWithoutCdnDomainRoutesThroughAPIEndpoint(t *testing.T) {
 	useAttachmentResponseConfig(t, &mockStorageNoCdn{}, "https://api.multica.test", nil)
 	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png")
@@ -1136,15 +1059,11 @@ func TestBuildMarkdownURL_PrivateBucketWithoutCdnDomainRoutesThroughAPIEndpoint(
 func TestBuildMarkdownURL_CloudFrontSignedModeNeverPersistsRawStorageURL(t *testing.T) {
 	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test", testCloudFrontSigner(t))
 
-	// Raw S3 URL — private bucket, not loadable directly by clients.
 	id, resp := attachmentResponseForURL(t, "https://prod.s3.amazonaws.com/key.png", "key.png")
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
 		t.Fatalf("markdown_url = %q, want absolute API endpoint %q", resp.MarkdownURL, want)
 	}
-	// download_url is allowed to carry a TTL (CloudFront-signed); it's NOT
-	// what the client persists, but it IS what the renderer uses for this
-	// response. The two are intentionally distinct.
 	if resp.DownloadURL == resp.MarkdownURL {
 		t.Fatalf("download_url and markdown_url must differ in CloudFront-signed mode (got identical %q)", resp.DownloadURL)
 	}
@@ -1153,7 +1072,6 @@ func TestBuildMarkdownURL_CloudFrontSignedModeNeverPersistsRawStorageURL(t *test
 func TestBuildMarkdownURL_RelativeStorageURLPrefixedWithPublicURL(t *testing.T) {
 	useAttachmentResponseConfig(t, testHandler.Storage, "https://api.multica.test", nil)
 
-	// LocalStorage without LOCAL_UPLOAD_BASE_URL stores a site-relative URL.
 	id, resp := attachmentResponseForURL(t, "/uploads/abc.png", "abc.png")
 	want := "https://api.multica.test/api/attachments/" + id + "/download"
 	if resp.MarkdownURL != want {
