@@ -21,9 +21,7 @@ func createPromptEvaluationCaseWithKey(t *testing.T, key string, body map[string
 }
 
 func TestCreatePromptEvaluationCase_ConcurrentAutomaticIndexesAreUnique(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	assetKey := uuid.NewString()
 	assetName := "concurrent case asset " + uuid.NewString()
 	assetRecorder := createPromptEvaluationAssetWithKey(t, assetKey, map[string]any{
@@ -76,9 +74,7 @@ func TestCreatePromptEvaluationCase_ConcurrentAutomaticIndexesAreUnique(t *testi
 }
 
 func TestCreatePromptEvaluationCase_IdempotentReplayAndConflict(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	assetKey := uuid.NewString()
 	caseKey := uuid.NewString()
 	assetName := "case replay asset " + uuid.NewString()

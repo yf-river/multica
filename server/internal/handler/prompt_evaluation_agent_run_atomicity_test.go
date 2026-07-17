@@ -14,9 +14,7 @@ import (
 )
 
 func TestRunPromptEvaluationAssetAgentRecoversExactCompoundResult(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	assetName := "recoverable agent evaluation " + uuid.NewString()
 	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "response loss")
@@ -85,9 +83,7 @@ func TestRunPromptEvaluationAssetAgentRecoversExactCompoundResult(t *testing.T) 
 }
 
 func TestRunPromptEvaluationAssetAgentRollsBackEveryWrite(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -178,9 +174,7 @@ func TestRunPromptEvaluationAssetAgentRollsBackEveryWrite(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetAgentCompletionFailureRollsBackEveryWrite(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	assetName := "agent run completion rollback " + uuid.NewString()
 	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "completion failure")

@@ -33,6 +33,13 @@ func randomID() string {
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
+func requireHandlerDatabase(t *testing.T) {
+	t.Helper()
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+}
+
 type listSkillFilesFailingTxStarter struct {
 	pool *pgxpool.Pool
 }

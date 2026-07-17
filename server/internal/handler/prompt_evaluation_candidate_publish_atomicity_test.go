@@ -13,9 +13,7 @@ import (
 )
 
 func TestPublishPromptEvaluationOptimizationCandidateRecoversExactResult(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	promptID := createPromptEvaluationTestPromptWithContent(
 		t, testWorkspaceID, "publish recovery prompt "+uuid.NewString(), "Current prompt", `[]`,

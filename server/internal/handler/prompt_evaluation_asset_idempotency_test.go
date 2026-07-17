@@ -21,9 +21,7 @@ func createPromptEvaluationAssetWithKey(t *testing.T, key string, body map[strin
 }
 
 func TestCreatePromptEvaluationAsset_ConcurrentReplayCreatesOneAsset(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	key := uuid.NewString()
 	name := "concurrent evaluation asset " + uuid.NewString()
 	t.Cleanup(func() {
@@ -72,9 +70,7 @@ func TestCreatePromptEvaluationAsset_ConcurrentReplayCreatesOneAsset(t *testing.
 }
 
 func TestCreatePromptEvaluationAsset_IdempotentReplayAndConflict(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	key := uuid.NewString()
 	name := "idempotent evaluation asset " + uuid.NewString()
 	t.Cleanup(func() {

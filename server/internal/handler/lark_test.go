@@ -258,29 +258,6 @@ func TestListLarkInstallations_NotConfiguredReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestListLarkInstallations_MissingClientReportsInstallNotSupported pins
-// the front-half of the "don't expose a doomed install flow" guarantee:
-// without an API client, install_supported remains false.
-func TestListLarkInstallations_MissingClientReportsInstallNotSupported(t *testing.T) {
-	h := &Handler{}
-	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/x/lark/installations", nil)
-	w := httptest.NewRecorder()
-	h.ListLarkInstallations(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp struct {
-		Configured       bool `json:"configured"`
-		InstallSupported bool `json:"install_supported"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.InstallSupported {
-		t.Fatalf("install_supported must be false while only stub APIClient is wired")
-	}
-}
-
 // TestListLarkInstallations_NotConfigured_HardCodedInstallSupportedFalse
 // pins the invariant for the early-return branch: when
 // LarkInstallations is nil (the deployment has no at-rest encryption

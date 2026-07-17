@@ -13,9 +13,7 @@ import (
 )
 
 func TestRunPromptEvaluationAssetRecoversExactLocalRun(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	assetName := "recoverable local evaluation " + uuid.NewString()
 	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "local response loss")
@@ -48,9 +46,7 @@ func TestRunPromptEvaluationAssetRecoversExactLocalRun(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetRollsBackPartialRun(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	promptID := createPromptEvaluationTestPromptWithContent(

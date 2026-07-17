@@ -15,9 +15,7 @@ import (
 )
 
 func TestApplyPromptEvaluationSkillCandidateRecoversFilesAfterDatabaseRollback(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	repoPath := t.TempDir()
 	skillPath := ".codebuddy/skills/verify/SKILL.md"

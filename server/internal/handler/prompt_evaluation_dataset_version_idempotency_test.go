@@ -51,9 +51,7 @@ func setupDatasetForVersionCreate(t *testing.T) PromptEvaluationAssetResponse {
 }
 
 func TestCreatePromptEvaluationDatasetVersion_IdempotentReplayAndConflict(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	asset := setupDatasetForVersionCreate(t)
 	key := uuid.NewString()
 	body := map[string]any{"version_label": "current", "metadata": map[string]any{"source": "test"}}
@@ -80,9 +78,7 @@ func TestCreatePromptEvaluationDatasetVersion_IdempotentReplayAndConflict(t *tes
 }
 
 func TestCreatePromptEvaluationDatasetVersion_ConcurrentRequestsGetUniqueVersions(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	asset := setupDatasetForVersionCreate(t)
 	const callers = 8
 	responses := make(chan *httptest.ResponseRecorder, callers)
@@ -114,9 +110,7 @@ func TestCreatePromptEvaluationDatasetVersion_ConcurrentRequestsGetUniqueVersion
 }
 
 func TestRestorePromptEvaluationDatasetVersion_IdempotentReplay(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	asset := setupDatasetForVersionCreate(t)
 	versionRecorder := createPromptEvaluationDatasetVersionWithKey(t, asset.ID, uuid.NewString(), map[string]any{
 		"version_label": "source snapshot",
