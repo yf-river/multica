@@ -24,9 +24,6 @@ func newIssueRerunKey(t *testing.T) string {
 }
 
 func TestRerunIssueRequiresExplicitTarget(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
 	issueID := createTestIssue(t, "rerun requires explicit target", "medium")
 	w := httptest.NewRecorder()
 	req := withURLParam(newRequest(http.MethodPost, "/api/issues/"+issueID+"/rerun", nil), "id", issueID)
@@ -39,9 +36,6 @@ func TestRerunIssueRequiresExplicitTarget(t *testing.T) {
 }
 
 func TestRerunIssueReplaysCommittedTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
 	agentID := createWebhookTestAgent(t, "Issue Rerun Replay Agent")
 	issueID := createTestIssue(t, "rerun committed task replay", "medium")
 	if _, err := testPool.Exec(context.Background(), `
@@ -85,9 +79,6 @@ func TestRerunIssueReplaysCommittedTask(t *testing.T) {
 }
 
 func TestRerunIssueConcurrentReplayCreatesOneTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
 	agentID := createWebhookTestAgent(t, "Issue Rerun Concurrent Agent")
 	issueID := createTestIssue(t, "rerun concurrent replay", "medium")
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, issueID, agentID); err != nil {
@@ -148,9 +139,6 @@ func TestRerunIssueConcurrentReplayCreatesOneTask(t *testing.T) {
 }
 
 func TestRerunIssueCompletionFailureRollsBackCancellationAndTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
 	agentID := createWebhookTestAgent(t, "Issue Rerun Rollback Agent")
 	issueID := createTestIssue(t, "rerun completion rollback", "medium")
 	if _, err := testPool.Exec(context.Background(), `UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1`, issueID, agentID); err != nil {

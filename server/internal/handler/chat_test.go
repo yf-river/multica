@@ -16,11 +16,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// withChatTestWorkspaceCtx injects the workspace+member context that the
-// real chi middleware chain would normally set. SendChatMessage (and most
-// other chat handlers) read workspace ID from ctxWorkspaceID; without this
-// the test harness, which calls handlers directly, gets "invalid workspace
-// id" on the parseUUIDOrBadRequest call inside SendChatMessage.
 func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 	t.Helper()
 	memberRow, err := testHandler.Queries.GetMemberByUserAndWorkspace(context.Background(), db.GetMemberByUserAndWorkspaceParams{
@@ -86,9 +81,6 @@ func sendChatMessageForTest(t *testing.T, sessionID string, body map[string]any)
 	return resp
 }
 
-// TestSendChatMessage_LinksAttachments verifies that attachments uploaded
-// against a chat_session (chat_message_id NULL) are back-filled with the
-// message_id when SendChatMessage receives the matching attachment_ids.
 func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -123,7 +115,6 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 		t.Fatalf("chat message task_id mismatch: want %s, got %s", sendResp.TaskID, messageTaskID)
 	}
 
-	// 3. Verify the attachment row now points at the new message.
 	var dbMessageID *string
 	if err := testPool.QueryRow(
 		context.Background(),
@@ -140,9 +131,6 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	}
 }
 
-// TestSendChatMessage_LinksUnattachedAttachments verifies the new compose
-// path: upload creates a workspace-scoped unattached attachment, and chat send
-// binds it to both the session and the user message.
 func TestSendChatMessage_LinksUnattachedAttachments(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -181,8 +169,6 @@ func TestSendChatMessage_LinksUnattachedAttachments(t *testing.T) {
 	}
 }
 
-// TestUpdateChatSession_RenamesTitle confirms PATCH writes the new title,
-// returns the updated row, and the server-side row reflects it.
 func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatRenameAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
@@ -289,8 +275,6 @@ func TestGetPendingChatTaskWithoutTaskReturnsEmptyObject(t *testing.T) {
 	}
 }
 
-// TestUpdateChatSession_RejectsBlank refuses an empty/whitespace title with 400.
-// (Untitled is a render-side fallback, not a stored value.)
 func TestUpdateChatSession_RejectsBlank(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatRenameBlankAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
@@ -307,8 +291,6 @@ func TestUpdateChatSession_RejectsBlank(t *testing.T) {
 	}
 }
 
-// TestSendChatMessage_InvalidAttachmentIDs rejects malformed UUIDs in
-// attachment_ids with 400 before any side effects (no message row created).
 func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatBadAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
@@ -326,7 +308,6 @@ func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 		t.Fatalf("SendChatMessage with bad attachment id: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Confirm no message row was created.
 	var count int
 	if err := testPool.QueryRow(
 		context.Background(),
@@ -450,9 +431,6 @@ func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *
 	if len(ordered) != len(contents) {
 		t.Fatalf("expected %d messages across pages, got %d: %v", len(contents), len(ordered), ordered)
 	}
-	// Pages are newest-window first and chronological within each page. With all
-	// timestamps equal, the id tie-break must still produce a deterministic,
-	// gap-free traversal.
 	for _, content := range contents {
 		found := false
 		for _, got := range ordered {
@@ -482,11 +460,6 @@ func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
 	}
 }
 
-// TestDeleteChatSession_RecordsCancelTraceWithSessionFK proves that hard
-// deleting a chat session with an in-flight task still writes task.cancelled
-// evidence. The former post-commit trace ran after the session row was gone,
-// so CreateTaskTraceEvent failed on task_trace_event_chat_session_id_fkey and
-// silently dropped cancel evidence while the API still returned 204.
 func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatDeleteCancelTraceAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
@@ -550,8 +523,6 @@ func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
 	if eventType != "task.cancelled" {
 		t.Fatalf("event_type: want task.cancelled, got %q", eventType)
 	}
-	// FK column is ON DELETE SET NULL after session hard-delete; durable
-	// linkage lives in metadata written before the session row vanished.
 	if !bytes.Contains(metadata, []byte(sessionID)) {
 		t.Fatalf("cancel trace metadata missing session id %s: %s", sessionID, string(metadata))
 	}
