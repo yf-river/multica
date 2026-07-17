@@ -394,14 +394,6 @@ export class TestApiClient {
     return res.json();
   }
 
-  async getWorkspace(id: string): Promise<TestWorkspace> {
-    const res = await this.authedFetch(`/api/workspaces/${id}`);
-    if (!res.ok) {
-      throw new Error(`get workspace failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
   async deleteWorkspace(id: string): Promise<void> {
     const res = await this.authedFetch(`/api/workspaces/${id}`, { method: "DELETE" });
     if (!res.ok) {
@@ -761,41 +753,6 @@ export class TestApiClient {
     const project = await res.json();
     this.createdProjectIds.push(project.id);
     return project;
-  }
-
-  async createProjectResource(projectId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/projects/${projectId}/resources`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create project resource failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async ensureGongfengRepositoryInventory(repo: Record<string, unknown>) {
-    if (!this.workspaceId) {
-      throw new Error("workspace id is not initialized");
-    }
-    const projectPath = String(repo.project_path || "").replace(/^\/+|\/+$/g, "");
-    if (!projectPath) {
-      throw new Error("project_path is required for Gongfeng repository inventory");
-    }
-    const workspace = await this.getWorkspace(this.workspaceId);
-    const repos = Array.isArray(workspace.repos) ? workspace.repos as Array<Record<string, unknown>> : [];
-    const existing = repos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
-    if (existing) {
-      return existing;
-    }
-    const nextRepo = { provider: "gongfeng", ...repo, project_path: projectPath };
-    const updated = await this.updateWorkspace(this.workspaceId, { repos: [...repos, nextRepo] });
-    const updatedRepos = Array.isArray(updated.repos) ? updated.repos as Array<Record<string, unknown>> : [];
-    const registered = updatedRepos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
-    if (!registered) {
-      throw new Error(`workspace repo inventory did not register ${projectPath}`);
-    }
-    return registered;
   }
 
   async updateWorkspace(id: string, data: Record<string, unknown>): Promise<TestWorkspace> {
@@ -1200,17 +1157,6 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
-  async updatePromptLibraryItem(id: string, data: Record<string, unknown>): Promise<PromptLibraryItem> {
-    const res = await this.authedFetch(`/api/prompt-library/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`update prompt library item failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
   async deletePromptLibraryItem(id: string) {
     await this.authedFetch(`/api/prompt-library/${id}`, { method: "DELETE" });
   }
@@ -1238,42 +1184,6 @@ export class TestApiClient {
     });
     if (!res.ok) {
       throw new Error(`create prompt evaluation asset failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationSkillInventory(assetId: string, data: Record<string, unknown>, requestId = crypto.randomUUID()) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-inventory`, {
-      method: "POST",
-      headers: { "Idempotency-Key": requestId },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create skill inventory failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationSkillSnapshot(assetId: string, data: Record<string, unknown>, requestId = crypto.randomUUID()) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-snapshot`, {
-      method: "POST",
-      headers: { "Idempotency-Key": requestId },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create skill snapshot failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationSkillCaseDrafts(assetId: string, data: Record<string, unknown>, requestId = crypto.randomUUID()) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-case-drafts`, {
-      method: "POST",
-      headers: { "Idempotency-Key": requestId },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create skill case drafts failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }
@@ -1564,78 +1474,6 @@ export class TestApiClient {
       return res.json();
     };
     return this.retryOnConnectionLoss(attempt);
-  }
-
-  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: Record<string, unknown>): Promise<PromptEvaluationOptimizationCandidate> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`update prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async checkPromptEvaluationSkillCandidateFreshness(candidateId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-freshness`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`check skill freshness failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async applyPromptEvaluationSkillCandidate(candidateId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`apply skill candidate failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async preparePromptEvaluationSkillReEvalAsset(
-    candidateId: string,
-    data: Record<string, unknown>,
-    requestId = crypto.randomUUID(),
-  ) {
-    const attempt = async () => {
-      const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
-        method: "POST",
-        body: JSON.stringify(data),
-        headers: { "Idempotency-Key": requestId },
-      });
-      if (!res.ok) throw new Error(`prepare skill re-eval asset failed: ${res.status} ${await res.text()}`);
-      return res.json();
-    };
-    return this.retryOnConnectionLoss(attempt);
-  }
-
-  async runPromptEvaluationSkillReEval(
-    candidateId: string,
-    data: Record<string, unknown> = {},
-    requestId = crypto.randomUUID(),
-  ) {
-    const attempt = async () => {
-      const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
-        method: "POST",
-        body: JSON.stringify(data),
-        headers: { "Idempotency-Key": requestId },
-      });
-      if (!res.ok) throw new Error(`run skill re-eval failed: ${res.status} ${await res.text()}`);
-      return res.json();
-    };
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      return attempt();
-    }
   }
 
   async listPromptEvaluationCasesPage(params?: {
