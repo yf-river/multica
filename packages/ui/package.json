@@ -58,7 +58,6 @@
     "@multica/tsconfig": "workspace:*",
     "@types/linkify-it": "^5.0.0",
     "@types/react": "catalog:",
-    "@types/react-dom": "catalog:",
     "typescript": "catalog:"
   }
 }
