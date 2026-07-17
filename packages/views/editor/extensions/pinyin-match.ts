@@ -11,7 +11,7 @@ export function matchesTextQuery(text: string, query: string): boolean {
  * - Initial letter abbreviation: "lyl" matches "李云龙"
  * - Partial prefix match: "liyu" matches "李云龙"
  */
-export function matchesPinyin(name: string, query: string): boolean {
+function matchesPinyin(name: string, query: string): boolean {
   if (!query) return true;
 
   // Only attempt pinyin matching if the name contains Chinese characters

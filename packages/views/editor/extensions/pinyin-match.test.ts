@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchesPinyin, matchesTextQuery } from "./pinyin-match";
+import { matchesTextQuery } from "./pinyin-match";
 
 describe("matchesTextQuery", () => {
   it.each([
@@ -7,15 +7,7 @@ describe("matchesTextQuery", () => {
     ["Alice", "ALI"],
     ["李云龙", "lyl"],
     ["李云龙", "云龙"],
-  ])("matches %s with %s", (text, query) => {
-    expect(matchesTextQuery(text, query)).toBe(true);
-  });
-});
-
-describe("matchesPinyin", () => {
-  it.each([
     ["李云龙", "liyunlong"],
-    ["李云龙", "lyl"],
     ["李云龙", "liyu"],
     ["李云龙", "liyunl"],
     ["李云龙", ""],
@@ -27,14 +19,11 @@ describe("matchesPinyin", () => {
     ["吕布", "lvbu"],
     ["吕布", "lb"],
     ["吕布", "lv"],
-  ])("matches %s with %s", (name, query) => {
-    expect(matchesPinyin(name, query)).toBe(true);
+  ])("matches %s with %s", (text, query) => {
+    expect(matchesTextQuery(text, query)).toBe(true);
   });
 
-  it.each([
-    ["李云龙", "zhangsan"],
-    ["Alice", "ali"],
-  ])("does not match %s with %s", (name, query) => {
-    expect(matchesPinyin(name, query)).toBe(false);
+  it("rejects an unrelated pinyin query", () => {
+    expect(matchesTextQuery("李云龙", "zhangsan")).toBe(false);
   });
 });

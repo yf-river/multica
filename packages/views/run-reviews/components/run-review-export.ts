@@ -45,7 +45,7 @@ export function artifactDownloadHref(artifact: AgentTaskArtifact, baseUrl?: stri
   return resolvePublicFileUrlWithBase(endpoint, resolvedBaseUrl) ?? endpoint;
 }
 
-export function artifactXlsxHyperlinkHref(artifact: AgentTaskArtifact, baseUrl?: string) {
+function artifactXlsxHyperlinkHref(artifact: AgentTaskArtifact, baseUrl?: string) {
   const resolvedBaseUrl = baseUrl ?? defaultXlsxHyperlinkBaseUrl();
   return toAbsoluteHyperlink(artifactDownloadHref(artifact, resolvedBaseUrl), resolvedBaseUrl);
 }

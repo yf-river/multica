@@ -11,7 +11,6 @@ import {
 } from "./run-review-events";
 import {
   artifactDownloadHref,
-  artifactXlsxHyperlinkHref,
   buildRunReviewNodeXlsxSheets,
   buildRunReviewRawEventsXlsxSheets,
 } from "./run-review-export";
@@ -28,10 +27,8 @@ import {
   buildAgentNodeRows,
   buildTimelineAgentRows,
   buildTimelineBarRows,
-  timelineTiming,
   timelineSegmentStyle,
   timelineSegmentTooltipRows,
-  timelineSegmentWidthPercent,
 } from "./run-review-timeline";
 import { issueRunRowActivity, issueRunRowMeta } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
@@ -1093,19 +1090,6 @@ describe("buildRunReviewEventRows", () => {
     }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
   });
 
-  it("builds absolute Excel artifact hyperlinks so desktop spreadsheet apps can open them", () => {
-    expect(artifactXlsxHyperlinkHref(artifact({
-      download_url: "/uploads/workspaces/ws-1/stale.md",
-      markdown_url: "/uploads/workspaces/ws-1/stale.md",
-    }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
-
-    expect(artifactXlsxHyperlinkHref(artifact({
-      id: "",
-      download_url: "/uploads/workspaces/ws-1/01-clarify.md",
-      markdown_url: "/uploads/workspaces/ws-1/01-clarify.md",
-    }), "https://api.example.test")).toBe("https://api.example.test/uploads/workspaces/ws-1/01-clarify.md");
-  });
-
   it("exports node XLSX sheet with Chinese summary, compact rows, and artifact links", () => {
     const issue = {
       id: "issue-1",
@@ -1155,11 +1139,11 @@ describe("buildRunReviewEventRows", () => {
           markdown_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
         }),
         artifact({
-          id: "att-2",
+          id: "",
           filename: "02-design.md",
           title: "02-design",
-          download_url: "/api/attachments/att-2/download",
-          markdown_url: "/api/attachments/att-2/download",
+          download_url: "/uploads/workspaces/ws-1/02-design.md",
+          markdown_url: "/uploads/workspaces/ws-1/02-design.md",
         }),
       ],
     } as IssueTimelineNode;
@@ -1255,11 +1239,11 @@ describe("buildRunReviewEventRows", () => {
     expect(artifactSheet?.rows).toEqual([
       ["节点", "Agent", "产物", "链接"],
       ["01-需求澄清", "01-clarify", "01-需求澄清", "http://localhost:3000/api/attachments/att-1/download"],
-      ["01-需求澄清", "01-clarify", "02-design", "http://localhost:3000/api/attachments/att-2/download"],
+      ["01-需求澄清", "01-clarify", "02-design", "http://localhost:3000/uploads/workspaces/ws-1/02-design.md"],
     ]);
     expect(artifactSheet?.hyperlinks).toEqual([
       { row: 1, col: 2, target: "http://localhost:3000/api/attachments/att-1/download", tooltip: "01-需求澄清" },
-      { row: 2, col: 2, target: "http://localhost:3000/api/attachments/att-2/download", tooltip: "02-design" },
+      { row: 2, col: 2, target: "http://localhost:3000/uploads/workspaces/ws-1/02-design.md", tooltip: "02-design" },
     ]);
     expect(sheet?.rows.flat()).not.toContain("row_type");
     expect(sheet?.rows.flat()).not.toContain("issue_id");
@@ -1487,17 +1471,16 @@ describe("buildRunReviewEventRows", () => {
     const shortRunStart = 0;
     const shortRunEnd = 20_108;
 
-    const width = timelineSegmentWidthPercent(shortRunStart, shortRunEnd, spanMs);
+    const style = timelineSegmentStyle(shortRunStart, shortRunEnd, 0, spanMs);
 
-    expect(width).toBeCloseTo(2.67, 2);
-    expect(timelineSegmentStyle(shortRunStart, shortRunEnd, 0, spanMs)).toMatchObject({
+    expect(Number.parseFloat(style.width)).toBeCloseTo(2.67, 2);
+    expect(style).toMatchObject({
       left: "0%",
-      width: `${width}%`,
     });
   });
 
   it("does not inflate short timeline runs to one minute", () => {
-    const timing = timelineTiming(timelineNode({
+    const node = timelineNode({
       node_id: "task:short-run",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
@@ -1506,10 +1489,12 @@ describe("buildRunReviewEventRows", () => {
       duration_ms: 20_000,
       summary: "",
       artifacts: [],
-    }));
+    });
+    const [row] = buildTimelineBarRows([{ key: "short", label: "Short", node }], [], [node]);
+    const timing = row?.segments[0];
 
-    expect(timing.durationMs).toBe(20_000);
-    expect((timing.endMs ?? 0) - (timing.startMs ?? 0)).toBe(20_000);
+    expect(timing?.durationMs).toBe(20_000);
+    expect((timing?.endMs ?? 0) - (timing?.startMs ?? 0)).toBe(20_000);
   });
 
   it("exports raw event XLSX rows with detail, metadata, and raw evidence", () => {

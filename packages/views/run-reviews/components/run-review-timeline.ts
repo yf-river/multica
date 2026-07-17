@@ -156,7 +156,7 @@ function timelineSegmentLeftPercent(startMs: number, minMs: number, spanMs: numb
   return Math.max(0, ((startMs - minMs) / Math.max(spanMs, 1)) * 100);
 }
 
-export function timelineSegmentWidthPercent(startMs: number, endMs: number, spanMs: number) {
+function timelineSegmentWidthPercent(startMs: number, endMs: number, spanMs: number) {
   return Math.max(0, ((endMs - startMs) / Math.max(spanMs, 1)) * 100);
 }
 
@@ -165,7 +165,7 @@ function timelineRowSubtitle(status: string, runCount: number) {
   return runCount > 1 ? `${formatNumber(runCount)} 次 · ${statusLabel(status)}` : statusLabel(status);
 }
 
-export function timelineTiming(node: IssueTimelineNode | undefined) {
+function timelineTiming(node: IssueTimelineNode | undefined) {
   if (!node) return { startMs: null, endMs: null, durationMs: 0 };
   const start = parseTimeMs(node.started_at);
   const completed = parseTimeMs(node.completed_at);
