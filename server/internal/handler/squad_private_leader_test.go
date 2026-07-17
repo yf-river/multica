@@ -2,22 +2,52 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-// TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked verifies that a
-// plain member cannot create an issue assigned to a squad whose leader is
-// a personal agent.
-func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
+func createPrivateLeaderIssue(t *testing.T, title, squadID string) string {
+	t.Helper()
+	var issueID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'squad', $4, $5)
+		RETURNING id
+	`, testWorkspaceID, testUserID, title, squadID, nextHandlerTestIssueNumber(t)).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
 	}
-	agentID, _, memberID := personalAgentTestFixture(t)
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	return issueID
+}
 
-	squadID := createHandlerTestSquad(t, "Private Leader Create Test", agentID)
+func queuedLeaderTaskCount(t *testing.T, issueID, leaderID string) int {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
+		issueID, leaderID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	return count
+}
+
+func submitPrivateLeaderComment(t *testing.T, issueID string, request *http.Request) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	testHandler.CreateComment(response, withURLParam(request, "id", issueID))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("CreateComment: expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
+	_, memberID, squadID := newPrivateLeaderSquadFixture(t, "Private Leader Create Test")
 
 	w := httptest.NewRecorder()
 	r := newRequestAs(memberID, "POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -31,17 +61,10 @@ func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	}
 }
 
-// TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked verifies that a
-// plain member cannot update an issue's assignee to a personal-leader squad.
 func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
-
-	agentID, _, memberID := personalAgentTestFixture(t)
-
-	squadID := createHandlerTestSquad(t, "Private Leader Update Test", agentID)
+	_, memberID, squadID := newPrivateLeaderSquadFixture(t, "Private Leader Update Test")
 
 	// Create an unassigned issue as workspace owner.
 	var issueID string
@@ -68,118 +91,42 @@ func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	}
 }
 
-// TestCreateIssue_SquadPrivateLeader_OwnerAllowed verifies that a workspace
-// owner CAN assign an issue to a squad with a personal leader.
 func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	agentID, _, _ := personalAgentTestFixture(t)
-
-	squadID := createHandlerTestSquad(t, "Private Leader Owner Test", agentID)
-
-	// testUserID is workspace owner — should succeed.
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	_, _, squadID := newPrivateLeaderSquadFixture(t, "Private Leader Owner Test")
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Owner assigns personal-leader squad",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, r)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 }
 
-// TestComment_SquadPrivateLeader_PlainMemberNoEnqueue verifies that a plain
-// member posting a comment on an issue assigned to a personal-leader squad
-// does NOT trigger the leader.
 func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
+	agentID, memberID, squadID := newPrivateLeaderSquadFixture(t, "Private Leader Comment Test")
+	issueID := createPrivateLeaderIssue(t, "personal leader comment test", squadID)
 
-	agentID, _, memberID := personalAgentTestFixture(t)
-
-	squadID := createHandlerTestSquad(t, "Private Leader Comment Test", agentID)
-
-	// Create issue assigned to the squad as workspace owner.
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, 'personal leader comment test', 'squad', $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, squadID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	// Plain member posts a plain comment (not a @mention).
-	w := httptest.NewRecorder()
-	r := newRequestAs(memberID, "POST", "/api/issues/"+issueID+"/comments", map[string]any{
+	submitPrivateLeaderComment(t, issueID, newRequestAs(memberID, "POST", "/api/issues/"+issueID+"/comments", map[string]any{
 		"content": "any update on this?",
-	})
-	r = withURLParam(r, "id", issueID)
-	testHandler.CreateComment(w, r)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
+	}))
 
-	// The personal leader must NOT have a queued task.
-	var count int
-	if err := testPool.QueryRow(ctx,
-		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-		issueID, agentID,
-	).Scan(&count); err != nil {
-		t.Fatalf("count tasks: %v", err)
-	}
+	count := queuedLeaderTaskCount(t, issueID, agentID)
 	if count != 0 {
 		t.Fatalf("personal leader got %d queued tasks from plain member comment; want 0", count)
 	}
 }
 
-// TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue verifies that when
-// a plain member completes a child issue whose parent is assigned to a
-// personal-leader squad, the leader is NOT enqueued.
 func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
 	ctx := context.Background()
+	agentID, memberID, squadID := newPrivateLeaderSquadFixture(t, "Private Leader ChildDone Test")
 
-	agentID, _, memberID := personalAgentTestFixture(t)
-
-	squadID := createHandlerTestSquad(t, "Private Leader ChildDone Test", agentID)
-
-	// Create parent issue assigned to the squad (as workspace owner).
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	parent := createIssueThroughHandler(t, map[string]any{
 		"title":         "parent with personal-leader squad",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, r)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create parent: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var parent IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&parent); err != nil {
-		t.Fatalf("decode parent: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, parent.ID)
 		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, parent.ID)
@@ -190,30 +137,20 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	// Clear any tasks enqueued by the create.
 	mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, parent.ID)
 
-	// Create a child issue via API (as workspace owner, with member assignee).
-	w = httptest.NewRecorder()
-	r = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	child := createIssueThroughHandler(t, map[string]any{
 		"title":           "child task",
 		"parent_issue_id": parent.ID,
 		"assignee_type":   "member",
 		"assignee_id":     memberID,
 		"status":          "in_progress",
 	})
-	testHandler.CreateIssue(w, r)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create child: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var child IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&child); err != nil {
-		t.Fatalf("decode child: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, child.ID)
 	})
 
 	// Plain member moves child to done.
-	w = httptest.NewRecorder()
-	r = newRequestAs(memberID, "PATCH", "/api/issues/"+child.ID, map[string]any{
+	w := httptest.NewRecorder()
+	r := newRequestAs(memberID, "PATCH", "/api/issues/"+child.ID, map[string]any{
 		"status": "done",
 	})
 	r = withURLParam(r, "id", child.ID)
@@ -222,14 +159,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("UpdateIssue (child done): expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The personal leader must NOT have a queued task on the parent.
-	var count int
-	if err := testPool.QueryRow(ctx,
-		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-		parent.ID, agentID,
-	).Scan(&count); err != nil {
-		t.Fatalf("count tasks: %v", err)
-	}
+	count := queuedLeaderTaskCount(t, parent.ID, agentID)
 	if count != 0 {
 		t.Fatalf("personal leader got %d queued tasks from plain member child-done; want 0", count)
 	}
@@ -239,9 +169,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 // agent in a personal squad can trigger its leader via an issue comment.
 // Unrelated agents cannot use a personal squad merely because they are agents.
 func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	agentID, leaderOwnerID, _ := personalAgentTestFixture(t)
@@ -265,21 +193,7 @@ func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
 		t.Fatalf("add agent actor to personal squad: %v", err)
 	}
 
-	// Create issue assigned to the squad.
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, 'personal leader agent actor test', 'squad', $3, $4)
-		RETURNING id
-	`, testWorkspaceID, testUserID, squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	issueID := createPrivateLeaderIssue(t, "personal leader agent actor test", squadID)
 
 	// Use a completed task to authenticate the agent without classifying this
 	// comment as an active worker-stage update. Active worker comments are
@@ -296,26 +210,13 @@ func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
-	// Agent posts a comment.
-	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
 		"content": "agent reporting in",
 	})
 	setTaskTokenActor(r, otherAgentID, taskID)
-	r = withURLParam(r, "id", issueID)
-	testHandler.CreateComment(w, r)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
+	submitPrivateLeaderComment(t, issueID, r)
 
-	// The personal leader should receive a task from a fellow squad agent.
-	var count int
-	if err := testPool.QueryRow(ctx,
-		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-		issueID, agentID,
-	).Scan(&count); err != nil {
-		t.Fatalf("count tasks: %v", err)
-	}
+	count := queuedLeaderTaskCount(t, issueID, agentID)
 	if count == 0 {
 		t.Fatalf("personal leader got 0 queued tasks from squad member agent comment; want at least 1")
 	}

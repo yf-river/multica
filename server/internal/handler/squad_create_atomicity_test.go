@@ -11,7 +11,51 @@ import (
 	"github.com/google/uuid"
 )
 
+func requestCreateSquad(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodPost, "/api/squads", body), "workspaceId", testWorkspaceID)
+	testHandler.CreateSquad(response, request)
+	return response
+}
+
+func installSquadMemberInsertFailure(t *testing.T, squadName, condition string) {
+	t.Helper()
+	suffix := uuid.NewString()
+	functionName := quoteIdentifier("fail_squad_member_" + suffix)
+	triggerName := quoteIdentifier("fail_squad_member_trigger_" + suffix)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF %s THEN RAISE EXCEPTION 'forced squad membership failure'; END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE INSERT ON squad_member
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, condition, triggerName, functionName)); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON squad_member`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, squadName)
+	})
+}
+
+func assertSquadCreateRolledBack(t *testing.T, squadName string) {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, squadName).Scan(&count); err != nil {
+		t.Fatalf("count squads: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("failed membership left %d squad rows", count)
+	}
+}
+
 func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
+	requireHandlerDatabase(t)
 	leaderID := createHandlerTestAgent(t, "squad initial leader "+uuid.NewString(), nil)
 	memberID := createHandlerTestAgent(t, "squad initial member "+uuid.NewString(), nil)
 	title := "squad initial members " + uuid.NewString()
@@ -19,8 +63,7 @@ func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title)
 	})
 
-	w := httptest.NewRecorder()
-	req := withURLParam(newRequest(http.MethodPost, "/api/squads", map[string]any{
+	w := requestCreateSquad(t, map[string]any{
 		"name":      title,
 		"leader_id": leaderID,
 		"scope":     "personal",
@@ -29,8 +72,7 @@ func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
 			"member_id":   memberID,
 			"role":        "reviewer",
 		}},
-	}), "workspaceId", testWorkspaceID)
-	testHandler.CreateSquad(w, req)
+	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s, want 201", w.Code, w.Body.String())
 	}
@@ -58,83 +100,32 @@ func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
 }
 
 func TestCreateSquad_LeaderMembershipFailureRollsBackSquad(t *testing.T) {
+	requireHandlerDatabase(t)
 	leaderID := createHandlerTestAgent(
 		t,
 		"squad atomic leader "+uuid.NewString(),
 		nil,
 	)
 	title := "squad atomic failure " + uuid.NewString()
-	suffix := uuid.NewString()
-	functionName := quoteIdentifier("fail_squad_leader_" + suffix)
-	triggerName := quoteIdentifier("fail_squad_leader_trigger_" + suffix)
-	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF EXISTS (SELECT 1 FROM squad WHERE id = NEW.squad_id AND name = %s) THEN
-				RAISE EXCEPTION 'forced squad leader membership failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE INSERT ON squad_member
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, quoteSQLLiteral(title), triggerName, functionName)); err != nil {
-		t.Fatalf("install failure trigger: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON squad_member`, triggerName))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title)
-	})
-
-	w := httptest.NewRecorder()
-	req := withURLParam(newRequest(http.MethodPost, "/api/squads", map[string]any{
+	installSquadMemberInsertFailure(t, title, fmt.Sprintf("EXISTS (SELECT 1 FROM squad WHERE id = NEW.squad_id AND name = %s)", quoteSQLLiteral(title)))
+	w := requestCreateSquad(t, map[string]any{
 		"name":      title,
 		"leader_id": leaderID,
 		"scope":     "personal",
-	}), "workspaceId", testWorkspaceID)
-	testHandler.CreateSquad(w, req)
+	})
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("create = %d %s, want 500", w.Code, w.Body.String())
 	}
-	var squads int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title).Scan(&squads); err != nil {
-		t.Fatalf("count squads: %v", err)
-	}
-	if squads != 0 {
-		t.Fatalf("failed leader membership left %d squad rows", squads)
-	}
+	assertSquadCreateRolledBack(t, title)
 }
 
 func TestCreateSquad_InitialMemberFailureRollsBackSquadAndLeader(t *testing.T) {
+	requireHandlerDatabase(t)
 	leaderID := createHandlerTestAgent(t, "squad rollback leader "+uuid.NewString(), nil)
 	memberID := createHandlerTestAgent(t, "squad rollback member "+uuid.NewString(), nil)
 	title := "squad initial member failure " + uuid.NewString()
-	suffix := uuid.NewString()
-	functionName := quoteIdentifier("fail_squad_initial_member_" + suffix)
-	triggerName := quoteIdentifier("fail_squad_initial_member_trigger_" + suffix)
-	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.member_id = %s::uuid THEN
-				RAISE EXCEPTION 'forced initial squad member failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE INSERT ON squad_member
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, quoteSQLLiteral(memberID), triggerName, functionName)); err != nil {
-		t.Fatalf("install failure trigger: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON squad_member`, triggerName))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title)
-	})
-
-	w := httptest.NewRecorder()
-	req := withURLParam(newRequest(http.MethodPost, "/api/squads", map[string]any{
+	installSquadMemberInsertFailure(t, title, fmt.Sprintf("NEW.member_id = %s::uuid", quoteSQLLiteral(memberID)))
+	w := requestCreateSquad(t, map[string]any{
 		"name":      title,
 		"leader_id": leaderID,
 		"scope":     "personal",
@@ -142,16 +133,9 @@ func TestCreateSquad_InitialMemberFailureRollsBackSquadAndLeader(t *testing.T) {
 			"member_type": "agent",
 			"member_id":   memberID,
 		}},
-	}), "workspaceId", testWorkspaceID)
-	testHandler.CreateSquad(w, req)
+	})
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("create = %d %s, want 500", w.Code, w.Body.String())
 	}
-	var squads int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title).Scan(&squads); err != nil {
-		t.Fatalf("count squads: %v", err)
-	}
-	if squads != 0 {
-		t.Fatalf("failed initial membership left %d squad rows", squads)
-	}
+	assertSquadCreateRolledBack(t, title)
 }
