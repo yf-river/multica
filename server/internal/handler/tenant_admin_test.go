@@ -3,310 +3,116 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/middleware"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestGetTenantInitialAdminStatus(t *testing.T) {
-	validWS := "11111111-1111-1111-1111-111111111111"
-	noAdminWS := "22222222-2222-2222-2222-222222222222"
-	badUUID := "not-a-uuid"
-	tooLong := strings.Repeat("a", 51)
+func getTenantAdminStatus(t *testing.T, h *Handler, workspaceID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+workspaceID+"/initial-admin-status", nil)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("workspaceId", workspaceID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, route))
+	recorder := httptest.NewRecorder()
+	h.GetTenantInitialAdminStatus(recorder, req)
+	return recorder
+}
 
-	validUUID := util.MustParseUUID(validWS)
-	noAdminUUID := util.MustParseUUID(noAdminWS)
-
-	tests := []struct {
-		name         string
-		workspaceID  string
-		setupQueries func(q *fakeQueries)
-		wantStatus   int
-		wantExists   *bool
-		wantUserName *string
-		wantNickName *string
-		wantError    string
-	}{
-		{
-			name:        "T1: workspace exists with initial admin (normal)",
-			workspaceID: validWS,
-			setupQueries: func(q *fakeQueries) {
-				q.getWorkspaceFn = func(ctx context.Context, id interface{}) (db.Workspace, error) {
-					return db.Workspace{ID: validUUID}, nil
-				}
-				q.getInitialOwnerFn = func(ctx context.Context, wsID interface{}) (db.GetInitialOwnerByWorkspaceRow, error) {
-					return db.GetInitialOwnerByWorkspaceRow{
-						WorkspaceID: validUUID,
-						UserName:    "Test User",
-						UserAccount: "testuser",
-					}, nil
-				}
-			},
-			wantStatus:   http.StatusOK,
-			wantExists:   boolPtr(true),
-			wantUserName: strPtr("testuser"),
-			wantNickName: strPtr("Test User"),
-		},
-		{
-			name:        "T2: workspace exists with initial admin (disabled - role owner still found)",
-			workspaceID: validWS,
-			setupQueries: func(q *fakeQueries) {
-				q.getWorkspaceFn = func(ctx context.Context, id interface{}) (db.Workspace, error) {
-					return db.Workspace{ID: validUUID}, nil
-				}
-				q.getInitialOwnerFn = func(ctx context.Context, wsID interface{}) (db.GetInitialOwnerByWorkspaceRow, error) {
-					return db.GetInitialOwnerByWorkspaceRow{
-						WorkspaceID: validUUID,
-						UserName:    "Disabled User",
-						UserAccount: "disableduser",
-					}, nil
-				}
-			},
-			wantStatus:   http.StatusOK,
-			wantExists:   boolPtr(true),
-			wantUserName: strPtr("disableduser"),
-			wantNickName: strPtr("Disabled User"),
-		},
-		{
-			name:        "T3: workspace exists but no initial admin",
-			workspaceID: noAdminWS,
-			setupQueries: func(q *fakeQueries) {
-				q.getWorkspaceFn = func(ctx context.Context, id interface{}) (db.Workspace, error) {
-					return db.Workspace{ID: noAdminUUID}, nil
-				}
-				q.getInitialOwnerFn = func(ctx context.Context, wsID interface{}) (db.GetInitialOwnerByWorkspaceRow, error) {
-					return db.GetInitialOwnerByWorkspaceRow{}, pgx.ErrNoRows
-				}
-			},
-			wantStatus: http.StatusOK,
-			wantExists: boolPtr(false),
-		},
-		{
-			name:        "T4: invalid workspaceId (not a UUID)",
-			workspaceID: badUUID,
-			wantStatus:  http.StatusBadRequest,
-			wantError:   "invalid workspace id",
-		},
-		{
-			name:        "T5: database query failure",
-			workspaceID: validWS,
-			setupQueries: func(q *fakeQueries) {
-				q.getWorkspaceFn = func(ctx context.Context, id interface{}) (db.Workspace, error) {
-					return db.Workspace{}, errors.New("database connection error")
-				}
-			},
-			wantStatus: http.StatusInternalServerError,
-			wantError:  "failed to get workspace",
-		},
-		{
-			name:        "T6: workspaceId too long (>50 chars)",
-			workspaceID: tooLong,
-			wantStatus:  http.StatusBadRequest,
-			wantError:   "invalid workspace id",
-		},
-		{
-			name:        "V1-3: workspace not found",
-			workspaceID: validWS,
-			setupQueries: func(q *fakeQueries) {
-				q.getWorkspaceFn = func(ctx context.Context, id interface{}) (db.Workspace, error) {
-					return db.Workspace{}, pgx.ErrNoRows
-				}
-			},
-			wantStatus: http.StatusNotFound,
-			wantError:  "workspace not found",
-		},
+func decodeTenantAdminStatus(t *testing.T, recorder *httptest.ResponseRecorder) getTenantInitialAdminStatusResponse {
+	t.Helper()
+	var response getTenantInitialAdminStatusResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
 	}
+	return response
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fq := &fakeQueries{}
-			if tt.setupQueries != nil {
-				tt.setupQueries(fq)
-			}
+func TestGetTenantInitialAdminStatus(t *testing.T) {
+	t.Run("initial owner", func(t *testing.T) {
+		var account, name string
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT u.account, u.name
+			FROM member m JOIN "user" u ON u.id = m.user_id
+			WHERE m.workspace_id = $1 AND m.role = 'owner'
+			ORDER BY m.created_at, m.id LIMIT 1
+		`, testWorkspaceID).Scan(&account, &name); err != nil {
+			t.Fatalf("load expected initial owner: %v", err)
+		}
+		recorder := getTenantAdminStatus(t, testHandler, testWorkspaceID)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+		}
+		response := decodeTenantAdminStatus(t, recorder)
+		if !response.Exists || response.WorkspaceID != testWorkspaceID || response.UserName == nil || *response.UserName != account || response.NickName == nil || *response.NickName != name {
+			t.Fatalf("response = %+v, want owner %s/%s", response, account, name)
+		}
+	})
 
-			h := &Handler{
-				Queries: (*db.Queries)(nil), // We use fake queries directly below
-			}
+	t.Run("workspace without owner", func(t *testing.T) {
+		var workspaceID string
+		if err := testPool.QueryRow(context.Background(), `
+			INSERT INTO workspace (name, slug, description, issue_prefix)
+			VALUES ('No Owner', $1, '', 'NOA') RETURNING id
+		`, "no-owner-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+			t.Fatalf("create workspace: %v", err)
+		}
+		t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
+		recorder := getTenantAdminStatus(t, testHandler, workspaceID)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+		}
+		response := decodeTenantAdminStatus(t, recorder)
+		if response.Exists || response.WorkspaceID != workspaceID || response.UserName != nil || response.NickName != nil {
+			t.Fatalf("response = %+v, want no owner", response)
+		}
+	})
 
-			// We need to inject the fake queries into the handler.
-			// Since Queries is a concrete struct pointer, we use a
-			// testing helper that calls the handler with the fake queries.
-			handler := &testTenantAdminHandler{
-				Handler: h,
-				queries: fq,
-			}
-
-			url := "/api/workspaces/" + tt.workspaceID + "/initial-admin-status"
-			req := httptest.NewRequest(http.MethodGet, url, nil)
-			rec := httptest.NewRecorder()
-
-			handler.ServeHTTP(rec, req, tt.workspaceID)
-
-			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d; want %d", rec.Code, tt.wantStatus)
-			}
-
-			if tt.wantError != "" {
-				var body map[string]string
-				if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-					t.Fatalf("decode error response: %v", err)
-				}
-				if body["error"] != tt.wantError {
-					t.Errorf("error = %q; want %q", body["error"], tt.wantError)
-				}
-				return
-			}
-
-			if tt.wantExists != nil {
-				var resp getTenantInitialAdminStatusResponse
-				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-					t.Fatalf("decode tenant response: %v", err)
-				}
-				if resp.Exists != *tt.wantExists {
-					t.Errorf("exists = %v; want %v", resp.Exists, *tt.wantExists)
-				}
-				if tt.wantUserName != nil && (resp.UserName == nil || *resp.UserName != *tt.wantUserName) {
-					var got string
-					if resp.UserName != nil {
-						got = *resp.UserName
-					}
-					t.Errorf("userName = %q; want %q", got, *tt.wantUserName)
-				}
-				if tt.wantNickName != nil && (resp.NickName == nil || *resp.NickName != *tt.wantNickName) {
-					var got string
-					if resp.NickName != nil {
-						got = *resp.NickName
-					}
-					t.Errorf("nickName = %q; want %q", got, *tt.wantNickName)
-				}
+	for _, testCase := range []struct {
+		name, workspaceID string
+		want              int
+	}{
+		{name: "malformed id", workspaceID: "not-a-uuid", want: http.StatusBadRequest},
+		{name: "oversized id", workspaceID: strings.Repeat("a", 51), want: http.StatusBadRequest},
+		{name: "missing workspace", workspaceID: uuid.NewString(), want: http.StatusNotFound},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := getTenantAdminStatus(t, testHandler, testCase.workspaceID)
+			if recorder.Code != testCase.want {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, testCase.want, recorder.Body.String())
 			}
 		})
 	}
 }
 
-// fakeQueries is a test double that provides the query methods needed by
-// GetTenantInitialAdminStatus without requiring a real database.
-type fakeQueries struct {
-	getWorkspaceFn    func(ctx context.Context, id interface{}) (db.Workspace, error)
-	getInitialOwnerFn func(ctx context.Context, wsID interface{}) (db.GetInitialOwnerByWorkspaceRow, error)
-}
-
-// testTenantAdminHandler is a thin wrapper that calls the real
-// GetTenantInitialAdminStatus handler with fake queries injected.
-type testTenantAdminHandler struct {
-	*Handler
-	queries *fakeQueries
-}
-
-func (h *testTenantAdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, workspaceID string) {
-	// Build a handler that uses fake queries.
-	// We inline the logic here to avoid modifying the production handler.
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	// Verify workspace exists.
-	_, err := h.queries.getWorkspaceFn(r.Context(), wsUUID)
+func TestGetTenantInitialAdminStatusDatabaseFailure(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_URL"))
 	if err != nil {
-		if isNotFound(err) {
-			writeError(w, http.StatusNotFound, "workspace not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to get workspace")
-		return
+		t.Fatalf("open pool: %v", err)
 	}
-
-	// Query initial owner.
-	owner, err := h.queries.getInitialOwnerFn(r.Context(), wsUUID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, getTenantInitialAdminStatusResponse{
-				Exists:      false,
-				WorkspaceID: uuidToString(wsUUID),
-			})
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to query initial admin")
-		return
+	queries := db.New(pool)
+	pool.Close()
+	recorder := getTenantAdminStatus(t, &Handler{Queries: queries}, testWorkspaceID)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", recorder.Code, recorder.Body.String())
 	}
-
-	name := owner.UserAccount
-	nickName := owner.UserName
-	writeJSON(w, http.StatusOK, getTenantInitialAdminStatusResponse{
-		Exists:      true,
-		WorkspaceID: uuidToString(owner.WorkspaceID),
-		UserName:    &name,
-		NickName:    &nickName,
-	})
 }
 
-func boolPtr(b bool) *bool { return &b }
-
-// TestGetTenantInitialAdminStatus_Unauthenticated verifies V1-5: an
-// unauthenticated request (no Authorization header, no auth cookie) to the
-// GetTenantInitialAdminStatus endpoint returns 401. The handler is registered
-// under middleware.Auth in the real router; this test constructs a minimal
-// chi router with the same middleware wrapping to exercise the full
-// middleware → handler pipeline.
-func TestGetTenantInitialAdminStatus_Unauthenticated(t *testing.T) {
-	validWS := "11111111-1111-1111-1111-111111111111"
-	validUUID := util.MustParseUUID(validWS)
-
-	// Build a fake handler that would succeed if auth passed.
-	fq := &fakeQueries{
-		getWorkspaceFn: func(ctx context.Context, id interface{}) (db.Workspace, error) {
-			return db.Workspace{ID: validUUID}, nil
-		},
-		getInitialOwnerFn: func(ctx context.Context, wsID interface{}) (db.GetInitialOwnerByWorkspaceRow, error) {
-			return db.GetInitialOwnerByWorkspaceRow{
-				WorkspaceID: validUUID,
-				UserName:    "Test User",
-				UserAccount: "testuser",
-			}, nil
-		},
-	}
-
-	h := &Handler{
-		Queries: (*db.Queries)(nil),
-	}
-
-	th := &testTenantAdminHandler{
-		Handler: h,
-		queries: fq,
-	}
-
-	// Construct a chi router with middleware.Auth wrapping the handler.
-	r := chi.NewRouter()
-	r.Use(middleware.Auth(nil, nil, nil))
-	r.Get("/api/workspaces/{workspaceId}/initial-admin-status", func(w http.ResponseWriter, req *http.Request) {
-		wsID := chi.URLParam(req, "workspaceId")
-		th.ServeHTTP(w, req, wsID)
-	})
-
-	// Send request with no Authorization header and no auth cookie.
-	url := "/api/workspaces/" + validWS + "/initial-admin-status"
-	req := httptest.NewRequest(http.MethodGet, url, nil)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d; want %d (Unauthorized)", rec.Code, http.StatusUnauthorized)
-	}
-
-	var body map[string]string
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if body["error"] != "missing authorization" {
-		t.Errorf("error = %q; want %q", body["error"], "missing authorization")
+func TestGetTenantInitialAdminStatusRequiresAuthentication(t *testing.T) {
+	router := chi.NewRouter()
+	router.Use(middleware.Auth(nil, nil, nil))
+	router.Get("/api/workspaces/{workspaceId}/initial-admin-status", testHandler.GetTenantInitialAdminStatus)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/initial-admin-status", nil))
+	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "missing authorization") {
+		t.Fatalf("response = %d %s, want missing-authorization 401", recorder.Code, recorder.Body.String())
 	}
 }

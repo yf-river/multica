@@ -69,7 +69,7 @@ func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 		"mode": "gateway",
 		"gateway": map[string]any{
 			"host":  "gw.internal",
-			"port":  float64(18789), // json.Unmarshal yields float64 for numbers
+			"port":  float64(18789),
 			"token": "real-secret",
 			"tls":   true,
 		},
@@ -87,8 +87,6 @@ func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 func TestMaskGatewayTokenSkipsEmptyToken(t *testing.T) {
 	t.Parallel()
 
-	// host+port-only configs (token still inherited from the user's local
-	// openclaw.json) must not surface a misleading "***" placeholder.
 	rc := map[string]any{
 		"gateway": map[string]any{
 			"host": "gw.internal",
@@ -105,8 +103,6 @@ func TestMaskGatewayTokenSkipsEmptyToken(t *testing.T) {
 func TestMaskGatewayTokenNoOpOnNonOpenclawShape(t *testing.T) {
 	t.Parallel()
 
-	// rc with no `gateway` key (e.g. other providers' runtime_config) must
-	// pass through untouched.
 	rc := map[string]any{"some_other_key": "value"}
 	maskGatewayToken(rc)
 	if _, present := rc["gateway"]; present {
@@ -136,7 +132,6 @@ func TestPreserveMaskedGatewayTokenRestoresFromPersisted(t *testing.T) {
 func TestPreserveMaskedGatewayTokenPassesThroughRealValue(t *testing.T) {
 	t.Parallel()
 
-	// A genuine new token in the PATCH body must overwrite the persisted one.
 	persisted := []byte(`{"gateway":{"token":"old-secret"}}`)
 	incoming := map[string]any{
 		"gateway": map[string]any{"token": "rotated-secret"},
@@ -151,10 +146,6 @@ func TestPreserveMaskedGatewayTokenPassesThroughRealValue(t *testing.T) {
 func TestPreserveMaskedGatewayTokenDropsMaskWhenNoPersistedToken(t *testing.T) {
 	t.Parallel()
 
-	// A first-time gateway config that only contained host/port has no
-	// stored token. If a later PATCH sends the mask back (e.g. a UI that
-	// always includes the field), we must drop the placeholder rather than
-	// landing the literal "***" string in the database as a fake bearer.
 	persisted := []byte(`{"gateway":{"host":"gw.internal"}}`)
 	incoming := map[string]any{
 		"gateway": map[string]any{"token": runtimeConfigGatewayTokenMask},
@@ -166,8 +157,6 @@ func TestPreserveMaskedGatewayTokenDropsMaskWhenNoPersistedToken(t *testing.T) {
 	}
 }
 
-// Round-trip: marshal a runtime_config, mask it, ensure it stays a valid
-// shape that can survive json.Marshal again (no NaNs, no funny types).
 func TestMaskGatewayTokenRoundTripsAsJSON(t *testing.T) {
 	t.Parallel()
 

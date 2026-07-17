@@ -141,10 +141,6 @@ func TestCreatePersonalAccessTokenConcurrentReplayConverges(t *testing.T) {
 	}
 }
 
-// insertTestPAT creates a PAT row for the shared test user with the given
-// expiry and returns (rawToken, patID). Each call generates a fresh raw token
-// so a test can hold many independent rows without colliding on token_hash.
-// The row is auto-cleaned at test end.
 func insertTestPAT(t *testing.T, expiresAt time.Time) (string, string) {
 	t.Helper()
 	raw := auth.DerivePATToken(testUserID, "renew-test:"+uuid.NewString())
@@ -169,9 +165,6 @@ func insertTestPAT(t *testing.T, expiresAt time.Time) (string, string) {
 	return raw, patID
 }
 
-// newRenewRequest builds a POST /api/tokens/current/renew request with both
-// the X-User-ID and Authorization headers set, so the handler can resolve
-// the PAT row in addition to the caller's user.
 func newRenewRequest(rawToken string) *http.Request {
 	req := newRequest("POST", "/api/tokens/current/renew", nil)
 	if rawToken != "" {
@@ -364,19 +357,6 @@ func TestRenewPAT_ConcurrentRenewIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestRenewPAT_ParallelRenewExtendsExactlyOnce locks in the SQL-level
-// idempotency that the MUL-2744 review flagged: when N callers race to
-// renew the same in-window PAT, the WHERE clause must ensure only one
-// UPDATE actually bumps the row. The previous condition (`expires_at < $2`)
-// silently let every caller win — each computed a slightly larger
-// `$2 = now + 90d`, so the second writer's $2 always exceeded the first
-// writer's row value and the UPDATE re-matched. Pinning the CAS to the
-// renewal threshold instead (`expires_at <= $3`) means after the first
-// writer pushes expires_at to now + 90d, all subsequent writers see a
-// row already past the threshold and the UPDATE matches zero rows.
-//
-// We verify the database side by counting how many times the row's
-// expires_at column was actually moved across N parallel calls.
 func TestRenewPAT_ParallelRenewExtendsExactlyOnce(t *testing.T) {
 	const concurrency = 8
 
