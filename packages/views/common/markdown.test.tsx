@@ -51,21 +51,12 @@ const ligatureClasses = [
 ];
 
 describe("Markdown", () => {
-  it("disables ligatures inside raw code tags", () => {
-    render(<Markdown>{"<code>uv run --extra dev pytest -q</code>"}</Markdown>);
-
-    expect(screen.getByText("uv run --extra dev pytest -q")).toHaveClass(...ligatureClasses);
-  });
-
-  it("disables ligatures inside fenced code blocks", () => {
-    render(<Markdown>{"```sh\nuv run --extra dev pytest -q\n```"}</Markdown>);
-
-    expect(screen.getByText("uv run --extra dev pytest -q")).toHaveClass(...ligatureClasses);
-  });
-
-  it("disables ligatures in terminal-mode code", () => {
-    render(<Markdown mode="terminal">{"<code>uv run --extra dev pytest -q</code>"}</Markdown>);
-
+  it.each([
+    { source: "<code>uv run --extra dev pytest -q</code>" },
+    { source: "```sh\nuv run --extra dev pytest -q\n```" },
+    { source: "<code>uv run --extra dev pytest -q</code>", mode: "terminal" as const },
+  ])("disables ligatures in code rendering", ({ source, mode }) => {
+    render(<Markdown mode={mode}>{source}</Markdown>);
     expect(screen.getByText("uv run --extra dev pytest -q")).toHaveClass(...ligatureClasses);
   });
 

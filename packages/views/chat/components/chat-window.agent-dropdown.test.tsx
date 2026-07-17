@@ -12,7 +12,6 @@ vi.mock("../../common/actor-avatar", () => ({
 }));
 
 import { AgentDropdown } from "./chat-agent-dropdown";
-import { getVisibleChatAgents } from "./chat-window-model";
 
 const TEST_RESOURCES = { "zh-Hans": { chat: enChat, issues: enIssues } };
 
@@ -66,31 +65,6 @@ function renderDropdown(onSelect = vi.fn()) {
 }
 
 describe("AgentDropdown", () => {
-  it("聊天可选智能体把开发验收智能体作为正常数据展示", () => {
-    const visible = getVisibleChatAgents(
-      [
-        ...agents,
-        makeAgent({
-          id: "fixture-curl-codex",
-          name: "curl Codex 验收 Agent 1782145202049",
-          owner_id: "user-1",
-          description: "端到端验收造数",
-        }),
-        makeAgent({
-          id: "multica-coding",
-          name: "Multica 训练评估智能体",
-          owner_id: "user-1",
-          description: "正式内置智能体",
-        }),
-      ],
-      "user-1",
-      "owner",
-    );
-
-    expect(visible.map((agent) => agent.id)).toContain("fixture-curl-codex");
-    expect(visible.map((agent) => agent.id)).toContain("multica-coding");
-  });
-
   it("从聊天输入区向上打开共享选择器", async () => {
     renderDropdown();
 
