@@ -344,12 +344,6 @@ describe("PromptEvaluationAssetSchema", () => {
   });
 });
 
-// The workspace dashboard and runtime-detail pages were re-pointed at the
-// unified `task_usage_hourly` rollup. Each projected numeric field drives
-// chart / KPI math, and each projected string key buckets the series.
-// The contract these schemas must hold: a row missing a field degrades
-// that field to a sane default rather than dropping the WHOLE array to
-// the `[]` fallback — one drifted row must not blank the entire chart.
 describe("dashboard + runtime usage schema drift", () => {
   it("coerces a missing numeric field to 0 instead of dropping the array", () => {
     const parsed = DashboardUsageDailyListSchema.parse([

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ZodType } from "zod";
 import { parseWithFallback } from "./schema";
 import { AppConfigSchema, EMPTY_APP_CONFIG } from "./schemas-app-config";
 import {
@@ -91,6 +92,15 @@ import {
   IssueExecutionTreeResponseSchema,
 } from "./schemas-tasks";
 
+function expectFallback(
+  data: unknown,
+  schema: ZodType,
+  fallback: unknown,
+  endpoint: string,
+) {
+  expect(parseWithFallback(data, schema, fallback, { endpoint })).toBe(fallback);
+}
+
 describe("domain response schema fallbacks", () => {
   it("rejects incomplete issue-label mutation responses", () => {
     expect(IssueLabelListSchema.safeParse({}).success).toBe(false);
@@ -128,13 +138,20 @@ describe("domain response schema fallbacks", () => {
     })).toBe(EMPTY_APP_CONFIG);
   });
 
-  it("rejects a malformed issue collection", () => {
-    expect(parseWithFallback(
-      { issues: "not-an-array", total: 1 },
-      ListIssuesResponseSchema,
-      EMPTY_LIST_ISSUES_RESPONSE,
-      { endpoint: "GET /api/issues" },
-    )).toBe(EMPTY_LIST_ISSUES_RESPONSE);
+  it.each([
+    ["issues", { issues: "not-an-array", total: 1 }, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, "GET /api/issues"],
+    ["Prompt Library", { items: 1 }, PromptLibraryItemListResponseSchema, [], "GET /api/prompt-library"],
+    ["evaluation assets", { items: {} }, PromptEvaluationAssetListResponseSchema, [], "GET /api/prompt-evaluation-assets"],
+    ["evaluation runs", { items: "not-an-array" }, PromptEvaluationRunListResponseSchema, [], "GET /api/prompt-evaluation-runs"],
+    ["usage", { rows: [] }, RuntimeUsageListSchema, [], "GET /api/runtimes/runtime-1/usage"],
+    ["runtime profiles", { runtime_profiles: [{ id: 42 }] }, RuntimeProfileListResponseSchema, [], "GET /api/workspaces/:workspaceId/runtime-profiles"],
+    ["webhook deliveries", { deliveries: {}, total: 1 }, WebhookDeliveryListSchema, EMPTY_WEBHOOK_DELIVERIES, "GET /api/webhook-deliveries"],
+    ["current user", { id: 42 }, UserSchema, EMPTY_USER, "GET /api/me"],
+    ["workspaces", [{ id: 42, name: "broken" }], WorkspaceListSchema, [], "GET /api/workspaces"],
+    ["inbox", [{ id: 42 }], InboxListSchema, [], "GET /api/inbox"],
+    ["chat page", { messages: "invalid" }, ChatMessagesPageSchema, EMPTY_CHAT_MESSAGES_PAGE, "GET /api/chat/sessions/:id/messages/page"],
+  ] as const)("rejects malformed %s responses", (_name, data, schema, fallback, endpoint) => {
+    expectFallback(data, schema, fallback, endpoint);
   });
 
   it("rejects malformed search results and empty Quick Create success", () => {
@@ -148,35 +165,6 @@ describe("domain response schema fallbacks", () => {
     expect(QuickCreateIssueResponseSchema.safeParse({ task_id: "task-1" }).success).toBe(true);
   });
 
-  it("rejects malformed Prompt Library items", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { items: 1 },
-      PromptLibraryItemListResponseSchema,
-      fallback,
-      { endpoint: "GET /api/prompt-library" },
-    )).toBe(fallback);
-  });
-
-  it("rejects malformed evaluation assets", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { items: {} },
-      PromptEvaluationAssetListResponseSchema,
-      fallback,
-      { endpoint: "GET /api/prompt-evaluation-assets" },
-    )).toBe(fallback);
-  });
-
-  it("rejects malformed evaluation runs", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { items: "not-an-array" },
-      PromptEvaluationRunListResponseSchema,
-      fallback,
-      { endpoint: "GET /api/prompt-evaluation-runs" },
-    )).toBe(fallback);
-  });
 
   it("preserves opaque trial and usage evidence without projecting unused fields", () => {
     const trial = { id: "trial-1", future_field: { score: 1 } };
@@ -282,34 +270,6 @@ describe("domain response schema fallbacks", () => {
     })).toBe("已入队");
   });
 
-  it("rejects a malformed usage collection", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { rows: [] },
-      RuntimeUsageListSchema,
-      fallback,
-      { endpoint: "GET /api/runtimes/runtime-1/usage" },
-    )).toBe(fallback);
-  });
-
-  it("rejects malformed runtime profiles", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { runtime_profiles: [{ id: 42 }] },
-      RuntimeProfileListResponseSchema,
-      fallback,
-      { endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles" },
-    )).toBe(fallback);
-  });
-
-  it("rejects malformed webhook deliveries", () => {
-    expect(parseWithFallback(
-      { deliveries: {}, total: 1 },
-      WebhookDeliveryListSchema,
-      EMPTY_WEBHOOK_DELIVERIES,
-      { endpoint: "GET /api/webhook-deliveries" },
-    )).toBe(EMPTY_WEBHOOK_DELIVERIES);
-  });
 
   it("rejects malformed Autopilot identity and run linkage", () => {
     expect(parseWithFallback(
@@ -344,24 +304,6 @@ describe("domain response schema fallbacks", () => {
     expect(parsed).not.toHaveProperty("signing_secret_ciphertext");
   });
 
-  it("rejects a malformed current user", () => {
-    expect(parseWithFallback(
-      { id: 42 },
-      UserSchema,
-      EMPTY_USER,
-      { endpoint: "GET /api/me" },
-    )).toBe(EMPTY_USER);
-  });
-
-  it("rejects a malformed workspace identity", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      [{ id: 42, name: "broken" }],
-      WorkspaceListSchema,
-      fallback,
-      { endpoint: "GET /api/workspaces" },
-    )).toBe(fallback);
-  });
 
   it("normalizes GitHub settings drift at the workspace response boundary", () => {
     const workspace = WorkspaceSchema.parse({
@@ -378,24 +320,6 @@ describe("domain response schema fallbacks", () => {
     });
   });
 
-  it("rejects a malformed inbox identity", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      [{ id: 42 }],
-      InboxListSchema,
-      fallback,
-      { endpoint: "GET /api/inbox" },
-    )).toBe(fallback);
-  });
-
-  it("rejects a malformed current chat page", () => {
-    expect(parseWithFallback(
-      { messages: "invalid" },
-      ChatMessagesPageSchema,
-      EMPTY_CHAT_MESSAGES_PAGE,
-      { endpoint: "GET /api/chat/sessions/:id/messages/page" },
-    )).toBe(EMPTY_CHAT_MESSAGES_PAGE);
-  });
 
   it("rejects malformed task identity and execution-tree roots", () => {
     const emptyTasks: never[] = [];
