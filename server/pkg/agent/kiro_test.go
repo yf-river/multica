@@ -152,15 +152,7 @@ func TestKiroBackendClearsSessionIDWhenSetModelSessionNotFound(t *testing.T) {
 		Model:           "auto",
 	})
 
-	if result.Status != "failed" {
-		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-	}
-	if !strings.Contains(result.Error, `could not switch to model "auto"`) {
-		t.Errorf("expected error to name the requested model, got %q", result.Error)
-	}
-	if result.SessionID != "" {
-		t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
-	}
+	assertStaleSessionModelFailure(t, result, "auto")
 }
 
 func TestKiroBackendInvokesACPWithTrustAllTools(t *testing.T) {
@@ -177,11 +169,7 @@ func TestKiroBackendInvokesACPWithTrustAllTools(t *testing.T) {
 		cfg.Env = map[string]string{"KIRO_ARGS_FILE": argsFile}
 	})
 
-	raw, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatalf("read args file: %v", err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	lines := readTestLines(t, argsFile)
 	wantPrefix := []string{"acp", "--trust-all-tools"}
 	if len(lines) < len(wantPrefix) {
 		t.Fatalf("expected at least %d args, got %d: %q", len(wantPrefix), len(lines), lines)

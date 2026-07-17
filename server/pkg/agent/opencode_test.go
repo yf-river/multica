@@ -943,14 +943,14 @@ func TestOpencodeBackendInjectsThinkingVariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read args file: %v", err)
 	}
-	args := splitNonEmptyLines(string(raw))
-	if !containsAdjacent(args, "--model", "opencode/deepseek-v4") {
+	args := splitTestLines(string(raw))
+	if argValue(args, "--model") != "opencode/deepseek-v4" {
 		t.Fatalf("expected --model opencode/deepseek-v4 in args: %v", args)
 	}
-	if !containsAdjacent(args, "--variant", "max") {
+	if argValue(args, "--variant") != "max" {
 		t.Fatalf("expected daemon-injected --variant max in args: %v", args)
 	}
-	if argIndexOf(args, "--model") > argIndexOf(args, "--variant") {
+	if argIndex(args, "--model") > argIndex(args, "--variant") {
 		t.Errorf("expected --variant after --model for readability: %v", args)
 	}
 	count := 0
@@ -962,10 +962,10 @@ func TestOpencodeBackendInjectsThinkingVariant(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected exactly one --variant, got %d: %v", count, args)
 	}
-	if argIndexOf(args, "low") >= 0 {
+	if argIndex(args, "low") >= 0 {
 		t.Errorf("filtered user --variant value still appears: %v", args)
 	}
-	if argIndexOf(args, "--keep-me") < 0 {
+	if argIndex(args, "--keep-me") < 0 {
 		t.Errorf("non-blocked custom arg was dropped: %v", args)
 	}
 }

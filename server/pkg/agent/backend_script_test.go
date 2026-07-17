@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -84,5 +85,64 @@ func assertACPModelFailure(t *testing.T, result Result, sessionID string) {
 	}
 	if result.SessionID != sessionID {
 		t.Errorf("expected session id %q to be preserved on failure, got %q", sessionID, result.SessionID)
+	}
+}
+
+func readTestLines(t *testing.T, path string) []string {
+	t.Helper()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return splitTestLines(string(raw))
+}
+
+func splitTestLines(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, "\n")
+}
+
+func argIndex(args []string, target string) int {
+	for i, arg := range args {
+		if arg == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func argValue(args []string, flag string) string {
+	i := argIndex(args, flag)
+	if i < 0 || i+1 >= len(args) {
+		return ""
+	}
+	return args[i+1]
+}
+
+func argCount(args []string, target string) int {
+	count := 0
+	for _, arg := range args {
+		if arg == target {
+			count++
+		}
+	}
+	return count
+}
+
+func assertStaleSessionModelFailure(t *testing.T, result Result, model string) {
+	t.Helper()
+
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, `could not switch to model "`+model+`"`) {
+		t.Errorf("expected error to name model %q, got %q", model, result.Error)
+	}
+	if result.SessionID != "" {
+		t.Errorf("expected empty session id so the fresh-session retry can run, got %q", result.SessionID)
 	}
 }

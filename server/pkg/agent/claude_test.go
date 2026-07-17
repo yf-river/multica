@@ -333,16 +333,16 @@ func TestBuildClaudeArgs_AppliesToolEnvelope(t *testing.T) {
 		CustomArgs:          []string{"--tools", "default", "--allowed-tools", "Read,Edit"},
 	}, slog.Default())
 
-	if got := valueAfterArg(args, "--tools"); got != "Bash" {
+	if got := argValue(args, "--tools"); got != "Bash" {
 		t.Fatalf("expected --tools Bash, got %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--permission-mode"); got != "bypassPermissions" {
+	if got := argValue(args, "--permission-mode"); got != "bypassPermissions" {
 		t.Fatalf("expected default --permission-mode bypassPermissions, got %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--disallowedTools"); got != "AskUserQuestion,Task,Read,Grep" {
+	if got := argValue(args, "--disallowedTools"); got != "AskUserQuestion,Task,Read,Grep" {
 		t.Fatalf("unexpected --disallowedTools %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--allowedTools"); got != "Bash(multica:*)" {
+	if got := argValue(args, "--allowedTools"); got != "Bash(multica:*)" {
 		t.Fatalf("unexpected --allowedTools %q in %v", got, args)
 	}
 	joined := strings.Join(args, " ")
@@ -356,7 +356,7 @@ func TestBuildClaudeArgs_AppliesPermissionMode(t *testing.T) {
 
 	args := buildClaudeArgs(ExecOptions{PermissionMode: "default"}, slog.Default())
 
-	if got := valueAfterArg(args, "--permission-mode"); got != "default" {
+	if got := argValue(args, "--permission-mode"); got != "default" {
 		t.Fatalf("expected --permission-mode default, got %q in %v", got, args)
 	}
 }

@@ -11,15 +11,6 @@ import (
 	"time"
 )
 
-func valueAfterArg(args []string, name string) string {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == name {
-			return args[i+1]
-		}
-	}
-	return ""
-}
-
 func TestBuildCodebuddyArgs_Basic(t *testing.T) {
 	t.Parallel()
 
@@ -59,14 +50,7 @@ func TestBuildCodebuddyArgs_InjectsEffort(t *testing.T) {
 		ThinkingLevel: "high",
 	}, slog.Default())
 
-	found := false
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--effort" && args[i+1] == "high" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if argValue(args, "--effort") != "high" {
 		t.Fatalf("expected --effort high in args: %v", args)
 	}
 }
@@ -76,10 +60,8 @@ func TestBuildCodebuddyArgs_OmitsEffortWhenEmpty(t *testing.T) {
 
 	args := buildCodebuddyArgs(ExecOptions{}, slog.Default())
 
-	for _, a := range args {
-		if a == "--effort" {
-			t.Fatalf("--effort should not appear when ThinkingLevel is empty: %v", args)
-		}
+	if argIndex(args, "--effort") >= 0 {
+		t.Fatalf("--effort should not appear when ThinkingLevel is empty: %v", args)
 	}
 }
 
@@ -91,17 +73,10 @@ func TestBuildCodebuddyArgs_BlocksUserEffortOverride(t *testing.T) {
 		CustomArgs:    []string{"--effort", "max"},
 	}, slog.Default())
 
-	// Should have exactly one --effort (the daemon-injected one).
-	count := 0
-	for i, a := range args {
-		if a == "--effort" {
-			count++
-			if i+1 < len(args) && args[i+1] != "medium" {
-				t.Fatalf("expected --effort medium, got --effort %s", args[i+1])
-			}
-		}
+	if got := argValue(args, "--effort"); got != "medium" {
+		t.Fatalf("expected --effort medium, got %q", got)
 	}
-	if count != 1 {
+	if count := argCount(args, "--effort"); count != 1 {
 		t.Fatalf("expected exactly 1 --effort, got %d in: %v", count, args)
 	}
 }
@@ -123,14 +98,7 @@ func TestBuildCodebuddyArgs_Resume(t *testing.T) {
 		ResumeSessionID: "sess-abc123",
 	}, slog.Default())
 
-	found := false
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--resume" && args[i+1] == "sess-abc123" {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if argValue(args, "--resume") != "sess-abc123" {
 		t.Fatalf("expected --resume sess-abc123 in args: %v", args)
 	}
 }
@@ -145,16 +113,16 @@ func TestBuildCodebuddyArgs_AppliesToolEnvelope(t *testing.T) {
 		CustomArgs:          []string{"--tools", "default", "--allowedTools", "Read,Edit"},
 	}, slog.Default())
 
-	if got := valueAfterArg(args, "--tools"); got != "Bash" {
+	if got := argValue(args, "--tools"); got != "Bash" {
 		t.Fatalf("expected --tools Bash, got %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--permission-mode"); got != "bypassPermissions" {
+	if got := argValue(args, "--permission-mode"); got != "bypassPermissions" {
 		t.Fatalf("expected default --permission-mode bypassPermissions, got %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--disallowedTools"); got != "AskUserQuestion,TaskCreate,Agent,Read" {
+	if got := argValue(args, "--disallowedTools"); got != "AskUserQuestion,TaskCreate,Agent,Read" {
 		t.Fatalf("unexpected --disallowedTools %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--allowedTools"); got != "Bash(multica:*)" {
+	if got := argValue(args, "--allowedTools"); got != "Bash(multica:*)" {
 		t.Fatalf("unexpected --allowedTools %q in %v", got, args)
 	}
 	if strings.Contains(strings.Join(args, " "), "--tools default") || strings.Contains(strings.Join(args, " "), "--allowedTools Read,Edit") {
@@ -167,7 +135,7 @@ func TestBuildCodebuddyArgs_AppliesPermissionMode(t *testing.T) {
 
 	args := buildCodebuddyArgs(ExecOptions{PermissionMode: "default"}, slog.Default())
 
-	if got := valueAfterArg(args, "--permission-mode"); got != "default" {
+	if got := argValue(args, "--permission-mode"); got != "default" {
 		t.Fatalf("expected --permission-mode default, got %q in %v", got, args)
 	}
 }

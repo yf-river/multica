@@ -128,13 +128,13 @@ func TestBuildOpenclawArgs(t *testing.T) {
 			Model:        "research-agent",
 			SystemPrompt: "Be precise.",
 		}, slog.Default())
-		if indexOf(args, "--model") >= 0 || indexOf(args, "--system-prompt") >= 0 {
+		if argIndex(args, "--model") >= 0 || argIndex(args, "--system-prompt") >= 0 {
 			t.Fatalf("unsupported flag leaked into %v", args)
 		}
-		if valueAfter(args, "--agent") != "research-agent" {
+		if argValue(args, "--agent") != "research-agent" {
 			t.Fatalf("agent selection missing: %v", args)
 		}
-		if valueAfter(args, "--message") != "Be precise.\n\ntask" {
+		if argValue(args, "--message") != "Be precise.\n\ntask" {
 			t.Fatalf("message mismatch: %v", args)
 		}
 	})
@@ -143,13 +143,13 @@ func TestBuildOpenclawArgs(t *testing.T) {
 		args := buildOpenclawArgs("task", "ses-4", ExecOptions{Model: "selected-agent", CustomArgs: []string{
 			"--agent", "wrong", "--model", "wrong", "--system-prompt", "wrong", "--session-id", "wrong", "--message", "wrong",
 		}}, slog.Default())
-		if valueAfter(args, "--agent") != "selected-agent" || countOccurrences(args, "--agent") != 1 {
+		if argValue(args, "--agent") != "selected-agent" || argCount(args, "--agent") != 1 {
 			t.Fatalf("agent selection was overridden: %v", args)
 		}
-		if indexOf(args, "--model") >= 0 || indexOf(args, "--system-prompt") >= 0 {
+		if argIndex(args, "--model") >= 0 || argIndex(args, "--system-prompt") >= 0 {
 			t.Fatalf("blocked args survived: %v", args)
 		}
-		if countOccurrences(args, "--session-id") != 1 || countOccurrences(args, "--message") != 1 {
+		if argCount(args, "--session-id") != 1 || argCount(args, "--message") != 1 {
 			t.Fatalf("managed args duplicated: %v", args)
 		}
 	})
@@ -160,40 +160,13 @@ func TestBuildOpenclawArgs(t *testing.T) {
 			CustomArgs:   []string{"--local"},
 			Timeout:      90 * time.Second,
 		}, slog.Default())
-		if indexOf(args, "--local") >= 0 {
+		if argIndex(args, "--local") >= 0 {
 			t.Fatalf("gateway mode retained --local: %v", args)
 		}
-		if valueAfter(args, "--timeout") != "90" {
+		if argValue(args, "--timeout") != "90" {
 			t.Fatalf("timeout missing: %v", args)
 		}
 	})
-}
-
-func indexOf(args []string, value string) int {
-	for i, arg := range args {
-		if arg == value {
-			return i
-		}
-	}
-	return -1
-}
-
-func valueAfter(args []string, flag string) string {
-	index := indexOf(args, flag)
-	if index < 0 || index+1 >= len(args) {
-		return ""
-	}
-	return args[index+1]
-}
-
-func countOccurrences(args []string, value string) int {
-	count := 0
-	for _, arg := range args {
-		if arg == value {
-			count++
-		}
-	}
-	return count
 }
 
 func TestParseOpenclawVersion(t *testing.T) {

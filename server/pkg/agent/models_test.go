@@ -9,6 +9,14 @@ import (
 	"testing"
 )
 
+func modelsByID(models []Model) map[string]Model {
+	indexed := make(map[string]Model, len(models))
+	for _, model := range models {
+		indexed[model.ID] = model
+	}
+	return indexed
+}
+
 func TestListModelsStaticProviders(t *testing.T) {
 	ctx := context.Background()
 	for _, provider := range []string{"claude", "codex", "gemini", "cursor"} {
@@ -48,21 +56,19 @@ func TestListModelsCopilotFallsBackToStatic(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("expected static fallback models, got empty list")
 	}
-	ids := map[string]bool{}
-	for _, m := range got {
-		ids[m.ID] = true
-	}
-	if !ids["gpt-5.4"] || !ids["claude-sonnet-4.6"] {
+	ids := modelsByID(got)
+	_, hasGPT := ids["gpt-5.4"]
+	_, hasClaude := ids["claude-sonnet-4.6"]
+	if !hasGPT || !hasClaude {
 		t.Errorf("static fallback missing expected models: %+v", got)
 	}
 }
 
 func TestClaudeStaticModelsExposesFable5(t *testing.T) {
 	models := claudeStaticModels()
-	ids := map[string]Model{}
+	ids := modelsByID(models)
 	defaults := 0
 	for _, m := range models {
-		ids[m.ID] = m
 		if m.Default {
 			defaults++
 		}
@@ -81,15 +87,8 @@ func TestClaudeStaticModelsExposesFable5(t *testing.T) {
 }
 
 func TestGeminiStaticModelsExposesAliasesAndGemini3(t *testing.T) {
-	// Gemini CLI has no `models list` subcommand, so we expose the
-	// CLI's own aliases (auto / pro / flash / flash-lite) plus
-	// explicit version pins including Gemini 3. Regression guard
-	// for multica-ai/multica#1503 — Gemini 3 must be selectable.
 	models := geminiStaticModels()
-	ids := map[string]Model{}
-	for _, m := range models {
-		ids[m.ID] = m
-	}
+	ids := modelsByID(models)
 	for _, want := range []string{
 		"auto", "auto-gemini-2.5",
 		"pro", "flash", "flash-lite",
@@ -112,15 +111,8 @@ func TestGeminiStaticModelsExposesAliasesAndGemini3(t *testing.T) {
 }
 
 func TestCodexStaticModelsExposesGPT55(t *testing.T) {
-	// Codex CLI has no `models list` subcommand so the catalog is
-	// hand-maintained. Regression guard for multica-ai/multica#2009 —
-	// GPT-5.5 must be selectable, and the badge default must point at
-	// the latest release rather than lagging a version behind.
 	models := codexStaticModels()
-	ids := map[string]Model{}
-	for _, m := range models {
-		ids[m.ID] = m
-	}
+	ids := modelsByID(models)
 	for _, want := range []string{
 		"gpt-5.5", "gpt-5.5-mini",
 		"gpt-5.4", "gpt-5.4-mini",
@@ -255,13 +247,8 @@ func TestInferCopilotProvider(t *testing.T) {
 }
 
 func TestCopilotStaticModelsExposesFullCatalog(t *testing.T) {
-	// GitHub Copilot CLI has no `models list` subcommand, so the catalog is
-	// hand-maintained from the official supported-models documentation.
 	models := copilotStaticModels()
-	ids := map[string]Model{}
-	for _, m := range models {
-		ids[m.ID] = m
-	}
+	ids := modelsByID(models)
 	for _, want := range []string{
 		"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
 		"gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2",
@@ -285,38 +272,21 @@ func TestCopilotStaticModelsExposesFullCatalog(t *testing.T) {
 	}
 }
 
-func TestListModelsHermesWithoutBinary(t *testing.T) {
-	// With no `hermes` binary on PATH the discovery fast-paths to
-	// an empty list (the UI then falls back to creatable manual
-	// entry). This test only verifies the fast-path; an actual
-	// ACP session is exercised in integration.
-	ctx := context.Background()
-	// Prime the cache miss so we hit the live discovery function.
-	modelCacheMu.Lock()
-	delete(modelCache, "hermes")
-	modelCacheMu.Unlock()
+func TestListModelsDynamicProviderWithoutBinary(t *testing.T) {
+	for _, provider := range []string{"hermes", "kiro"} {
+		t.Run(provider, func(t *testing.T) {
+			modelCacheMu.Lock()
+			delete(modelCache, provider)
+			modelCacheMu.Unlock()
 
-	got, err := ListModels(ctx, "hermes", "/nonexistent/hermes")
-	if err != nil {
-		t.Fatalf("ListModels(hermes) error: %v", err)
-	}
-	if got == nil {
-		t.Error("expected non-nil slice even when binary is missing")
-	}
-}
-
-func TestListModelsKiroWithoutBinary(t *testing.T) {
-	ctx := context.Background()
-	modelCacheMu.Lock()
-	delete(modelCache, "kiro")
-	modelCacheMu.Unlock()
-
-	got, err := ListModels(ctx, "kiro", "/nonexistent/kiro-cli")
-	if err != nil {
-		t.Fatalf("ListModels(kiro) error: %v", err)
-	}
-	if got == nil {
-		t.Error("expected non-nil slice even when binary is missing")
+			got, err := ListModels(context.Background(), provider, "/nonexistent/"+provider)
+			if err != nil {
+				t.Fatalf("ListModels(%s) error: %v", provider, err)
+			}
+			if got == nil {
+				t.Error("expected non-nil slice when binary is missing")
+			}
+		})
 	}
 }
 
@@ -473,10 +443,6 @@ func TestDiscoverOpenCodeModelsReturnsCommandFailure(t *testing.T) {
 	}
 }
 
-// TestCachedDiscoveryDoesNotCacheEmpty verifies that an empty discovery result
-// is not cached, so a transient failure (e.g. a `pi --list-models` timeout)
-// doesn't keep the model picker blank for the full TTL. A non-empty result is
-// still cached. See #3729.
 func TestCachedDiscoveryDoesNotCacheEmpty(t *testing.T) {
 	const emptyKey, nonEmptyKey = "test-cache-empty", "test-cache-nonempty"
 	// modelCache is a package-level global; clear our keys up front and on
@@ -552,13 +518,6 @@ bareword-only-line
 	}
 }
 
-// TestDiscoverPiModelsNonZeroExit verifies that discoverPiModels still returns
-// the resolvable catalog when `pi --list-models` exits non-zero. Pi exits
-// non-zero (and warns) when an agent config references stale provider/model
-// patterns that no longer match the local catalog. Before the fix the daemon
-// discarded the populated output on any non-zero exit and returned an empty
-// list, so the UI model picker was blank even though the runtime was online and
-// agents ran fine. See GitHub #3729.
 func TestDiscoverPiModelsNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake pi binary is a /bin/sh script")
@@ -645,10 +604,7 @@ gemini-3.1-pro - Gemini 3.1 Pro
 	if len(models) != 6 {
 		t.Fatalf("expected 6 models, got %d: %+v", len(models), models)
 	}
-	ids := map[string]Model{}
-	for _, m := range models {
-		ids[m.ID] = m
-	}
+	ids := modelsByID(models)
 	for _, want := range []string{"auto", "composer-2-fast", "composer-2", "claude-4.6-sonnet-medium", "claude-opus-4-7-high", "gemini-3.1-pro"} {
 		if _, ok := ids[want]; !ok {
 			t.Errorf("missing expected model %q in: %+v", want, models)
