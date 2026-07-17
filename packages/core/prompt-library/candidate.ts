@@ -1,6 +1,6 @@
 "use client";
 
-import { api, type ApiClient } from "../api";
+import { api } from "../api";
 import { executeRecoverableIntent } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -22,14 +22,13 @@ const candidateCreateStore: RecoverableOperationStore<PendingCandidateCreate> =
 
 export function createPromptEvaluationOptimizationCandidateWithRecovery(
   runId: string,
-  client: Pick<ApiClient, "createPromptEvaluationOptimizationCandidate"> = api,
 ): Promise<{ id: string }> {
   return executeRecoverableIntent(
     candidateCreateStore.getState().pending,
     (operation) => operation.runId === runId,
     () => ({ runId, requestKey: generateUUID(), createdAt: Date.now() }),
     (operation) => candidateCreateStore.getState().setPending(operation),
-    (operation) => client.createPromptEvaluationOptimizationCandidate(
+    (operation) => api.createPromptEvaluationOptimizationCandidate(
       operation.runId,
       operation.requestKey,
     ),
@@ -45,17 +44,10 @@ const candidateDecisionStore: RecoverableOperationStore<CandidateDecision> =
     "multica_prompt_candidate_decision",
   );
 
-type CandidateDecisionClient = Pick<
-  ApiClient,
-  | "publishPromptEvaluationOptimizationCandidate"
-  | "rejectPromptEvaluationOptimizationCandidate"
->;
-
 function decide(
   kind: CandidateDecision["kind"],
   candidateId: string,
   reason: string,
-  client: CandidateDecisionClient,
 ) {
   return executeRecoverableIntent(
     candidateDecisionStore.getState().pending,
@@ -67,8 +59,8 @@ function decide(
       : { kind, candidateId, reason, requestKey: generateUUID(), createdAt: Date.now() },
     (operation) => candidateDecisionStore.getState().setPending(operation),
     (operation) => operation.kind === "publish"
-      ? client.publishPromptEvaluationOptimizationCandidate(operation.candidateId, operation.requestKey)
-      : client.rejectPromptEvaluationOptimizationCandidate(
+      ? api.publishPromptEvaluationOptimizationCandidate(operation.candidateId, operation.requestKey)
+      : api.rejectPromptEvaluationOptimizationCandidate(
           operation.candidateId, { reason: operation.reason || undefined }, operation.requestKey,
         ),
   );
@@ -76,15 +68,13 @@ function decide(
 
 export function publishPromptEvaluationOptimizationCandidateWithRecovery(
   candidateId: string,
-  client: CandidateDecisionClient = api,
 ): Promise<string> {
-  return decide("publish", candidateId, "", client);
+  return decide("publish", candidateId, "");
 }
 
 export function rejectPromptEvaluationOptimizationCandidateWithRecovery(
   candidateId: string,
   reason: string,
-  client: CandidateDecisionClient = api,
 ): Promise<PromptEvaluationOptimizationCandidateStatus> {
-  return decide("reject", candidateId, reason, client) as Promise<PromptEvaluationOptimizationCandidateStatus>;
+  return decide("reject", candidateId, reason) as Promise<PromptEvaluationOptimizationCandidateStatus>;
 }

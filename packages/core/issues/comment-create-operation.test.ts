@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiTransportError } from "../api";
+import { ApiClient, ApiTransportError, getApi, setApiInstance } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Comment } from "../types";
 import {
@@ -13,16 +13,18 @@ const comment = (id: string, content: string) => ({ id, content }) as Comment;
 
 describe("createCommentWithRecovery", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    setApiInstance(new ApiClient("http://core.test"));
     setCurrentWorkspace("test-account", "workspace-1");
     localStorage.clear();
     useCommentDraftStore.setState({ pendingCreates: {} });
   });
 
   it("keeps the exact request and key after an unknown outcome", async () => {
-    const createComment = vi.fn().mockRejectedValue(
+    vi.spyOn(getApi(), "createComment").mockRejectedValue(
       new ApiTransportError("POST /api/issues/:id/comments", true, new Error("lost")),
     );
-    await expect(createCommentWithRecovery("issue-1", { content: "hello" }, { createComment }))
+    await expect(createCommentWithRecovery("issue-1", { content: "hello" }))
       .rejects.toBeInstanceOf(ApiTransportError);
     const pending = useCommentDraftStore.getState().pendingCreates["issue-1:root"];
     expect(pending?.request).toEqual({ content: "hello" });
@@ -37,11 +39,10 @@ describe("createCommentWithRecovery", () => {
       request: { content: "earlier" },
       createdAt: Date.now(),
     });
-    const createComment = vi.fn()
+    const createComment = vi.spyOn(getApi(), "createComment")
       .mockResolvedValueOnce(comment("comment-1", "earlier"))
       .mockResolvedValueOnce(comment("comment-2", "current"));
-    const client = { createComment };
-    await expect(createCommentWithRecovery("issue-1", { content: "current" }, client))
+    await expect(createCommentWithRecovery("issue-1", { content: "current" }))
       .resolves.toMatchObject({ id: "comment-2" });
     expect(createComment).toHaveBeenCalledTimes(2);
     expect(createComment.mock.calls[0]).toEqual([

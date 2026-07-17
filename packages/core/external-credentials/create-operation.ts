@@ -1,6 +1,6 @@
 "use client";
 
-import { api, ApiError, type ApiClient } from "../api";
+import { api, ApiError } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createAccountRecoverableOperationStore,
@@ -20,11 +20,6 @@ const useCredentialProfileCreateStore: RecoverableOperationStore<PendingCredenti
     "multica_credential_profile_create",
   );
 
-type CredentialProfileCreateClient = Pick<
-  ApiClient,
-  "createExternalCredentialProfile" | "getExternalCredentialProfile"
->;
-
 async function fingerprintCredentialRequest(request: CreateExternalCredentialProfileRequest) {
   const bytes = new TextEncoder().encode(JSON.stringify(request));
   const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
@@ -32,11 +27,10 @@ async function fingerprintCredentialRequest(request: CreateExternalCredentialPro
 }
 
 async function recoverPending(
-  client: CredentialProfileCreateClient,
   pending: PendingCredentialProfileCreate,
 ) {
   try {
-    const profile = await client.getExternalCredentialProfile(pending.requestKey);
+    const profile = await api.getExternalCredentialProfile(pending.requestKey);
     useCredentialProfileCreateStore.getState().setPending();
     return profile;
   } catch (error) {
@@ -50,12 +44,11 @@ async function recoverPending(
 
 export async function createExternalCredentialProfileWithRecovery(
   request: CreateExternalCredentialProfileRequest,
-  client: CredentialProfileCreateClient = api,
 ): Promise<ExternalCredentialProfile> {
   const requestFingerprint = await fingerprintCredentialRequest(request);
   const pending = useCredentialProfileCreateStore.getState().pending;
   if (pending) {
-    const recovered = await recoverPending(client, pending);
+    const recovered = await recoverPending(pending);
     if (recovered && pending.requestFingerprint === requestFingerprint) return recovered;
   }
   const requestKey = generateUUID();
@@ -65,7 +58,7 @@ export async function createExternalCredentialProfileWithRecovery(
     createdAt: Date.now(),
   });
   return executeRecoverableMutation(
-    () => client.createExternalCredentialProfile(request, requestKey),
+    () => api.createExternalCredentialProfile(request, requestKey),
     () => useCredentialProfileCreateStore.getState().setPending(),
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { api, type ApiClient } from "../api";
+import { api } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -20,8 +20,6 @@ const useMemberCreateOperationStore: RecoverableOperationStore<PendingMemberCrea
     "multica_member_create_operation",
   );
 
-type MemberCreateClient = Pick<ApiClient, "createMember" | "listMembers">;
-
 async function fingerprintMemberRequest(request: CreateMemberRequest) {
   const normalized = JSON.stringify({
     account: request.account.trim().toLowerCase(),
@@ -34,11 +32,10 @@ async function fingerprintMemberRequest(request: CreateMemberRequest) {
 }
 
 async function recoverPending(
-  client: MemberCreateClient,
   workspaceId: string,
   pending: PendingMemberCreate,
 ) {
-  const members = await client.listMembers(workspaceId);
+  const members = await api.listMembers(workspaceId);
   const recovered = members.find((member) => member.id === pending.requestKey) ?? null;
   useMemberCreateOperationStore.getState().setPending();
   return recovered;
@@ -47,12 +44,11 @@ async function recoverPending(
 export async function createMemberWithRecovery(
   workspaceId: string,
   request: CreateMemberRequest,
-  client: MemberCreateClient = api,
 ): Promise<MemberWithUser> {
   const requestFingerprint = await fingerprintMemberRequest(request);
   const pending = useMemberCreateOperationStore.getState().pending;
   if (pending) {
-    const recovered = await recoverPending(client, workspaceId, pending);
+    const recovered = await recoverPending(workspaceId, pending);
     if (recovered && pending.requestFingerprint === requestFingerprint) return recovered;
   }
   const requestKey = generateUUID();
@@ -62,7 +58,7 @@ export async function createMemberWithRecovery(
     createdAt: Date.now(),
   });
   return executeRecoverableMutation(
-    () => client.createMember(workspaceId, request, requestKey),
+    () => api.createMember(workspaceId, request, requestKey),
     () => useMemberCreateOperationStore.getState().setPending(),
   );
 }

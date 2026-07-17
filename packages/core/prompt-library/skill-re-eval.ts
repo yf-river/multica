@@ -1,6 +1,6 @@
 "use client";
 
-import { api, type ApiClient } from "../api";
+import { api } from "../api";
 import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -43,30 +43,24 @@ function executeSkillReEval<Request, Response>(
   );
 }
 
-type SkillReEvalAssetClient = Pick<ApiClient, "preparePromptEvaluationSkillReEvalAsset">;
-
 export function preparePromptEvaluationSkillReEvalAssetWithRecovery(
   candidateId: string,
   request: PreparePromptEvaluationSkillReEvalRequest,
-  client: SkillReEvalAssetClient = api,
 ): Promise<{ assetId: string; caseCount: number }> {
   return executeSkillReEval(candidateId, request, assetStore, (operation) =>
-    client.preparePromptEvaluationSkillReEvalAsset(
+    api.preparePromptEvaluationSkillReEvalAsset(
       operation.candidateId,
       operation.request,
       operation.requestKey,
     ));
 }
 
-type SkillReEvalRunClient = Pick<ApiClient, "runPromptEvaluationSkillReEval">;
-
 export function runPromptEvaluationSkillReEvalWithRecovery(
   candidateId: string,
   request: RunPromptEvaluationSkillReEvalRequest,
-  client: SkillReEvalRunClient = api,
 ): Promise<PromptEvaluationRun["status"]> {
   return executeSkillReEval(candidateId, request, runStore, (operation) =>
-    client.runPromptEvaluationSkillReEval(
+    api.runPromptEvaluationSkillReEval(
       operation.candidateId,
       operation.request,
       operation.requestKey,

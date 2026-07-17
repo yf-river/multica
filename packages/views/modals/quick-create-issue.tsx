@@ -334,7 +334,7 @@ export function AgentCreatePanel({
     setSubmitting(true);
     setError(null);
     try {
-      await quickCreateIssueWithRecovery(api, {
+      await quickCreateIssueWithRecovery({
         ...(actor.type === "agent"
           ? { agent_id: actor.id }
           : { squad_id: actor.id }),

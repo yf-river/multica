@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiTransportError } from "../api";
+import { ApiClient, ApiTransportError, getApi, setApiInstance } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest } from "../types";
 import { createAgentPlaygroundExperimentWithRecovery } from "./create-operation";
@@ -18,6 +18,8 @@ let workspaceSequence = 0;
 
 describe("createAgentPlaygroundExperimentWithRecovery", () => {
   beforeEach(async () => {
+    vi.restoreAllMocks();
+    setApiInstance(new ApiClient("http://core.test"));
     localStorage.clear();
     workspaceSequence += 1;
     setCurrentWorkspace(`agent-playground-${workspaceSequence}`, `workspace-${workspaceSequence}`);
@@ -26,14 +28,12 @@ describe("createAgentPlaygroundExperimentWithRecovery", () => {
   });
 
   it("replays the persisted current request after an unknown outcome", async () => {
-    const createAgentPlaygroundExperiment = vi.fn()
+    const createAgentPlaygroundExperiment = vi.spyOn(getApi(), "createAgentPlaygroundExperiment")
       .mockRejectedValueOnce(new ApiTransportError("POST playground", true, new Error("lost")))
       .mockResolvedValueOnce(detail("experiment-1"));
-    const client = { createAgentPlaygroundExperiment };
-
-    await expect(createAgentPlaygroundExperimentWithRecovery(request, client))
+    await expect(createAgentPlaygroundExperimentWithRecovery(request))
       .rejects.toBeInstanceOf(ApiTransportError);
-    await expect(createAgentPlaygroundExperimentWithRecovery(request, client))
+    await expect(createAgentPlaygroundExperimentWithRecovery(request))
       .resolves.toMatchObject({ experiment: { id: "experiment-1" } });
 
     const firstKey = createAgentPlaygroundExperiment.mock.calls[0]?.[1];
@@ -42,16 +42,15 @@ describe("createAgentPlaygroundExperimentWithRecovery", () => {
   });
 
   it("recovers an older request before starting a changed experiment", async () => {
-    const createAgentPlaygroundExperiment = vi.fn()
+    const createAgentPlaygroundExperiment = vi.spyOn(getApi(), "createAgentPlaygroundExperiment")
       .mockRejectedValueOnce(new ApiTransportError("POST old playground", true, new Error("lost")))
       .mockResolvedValueOnce(detail("experiment-old"))
       .mockResolvedValueOnce(detail("experiment-new"));
-    const client = { createAgentPlaygroundExperiment };
     const changed = { ...request, name: "Changed experiment" };
 
-    await expect(createAgentPlaygroundExperimentWithRecovery(request, client))
+    await expect(createAgentPlaygroundExperimentWithRecovery(request))
       .rejects.toBeInstanceOf(ApiTransportError);
-    await expect(createAgentPlaygroundExperimentWithRecovery(changed, client))
+    await expect(createAgentPlaygroundExperimentWithRecovery(changed))
       .resolves.toMatchObject({ experiment: { id: "experiment-new" } });
     expect(createAgentPlaygroundExperiment.mock.calls[1]).toEqual([
       request, createAgentPlaygroundExperiment.mock.calls[0]?.[1],

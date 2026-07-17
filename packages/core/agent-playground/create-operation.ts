@@ -1,6 +1,6 @@
 "use client";
 
-import { api, type ApiClient } from "../api";
+import { api } from "../api";
 import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -20,11 +20,8 @@ const useAgentPlaygroundCreateStore: RecoverableOperationStore<PendingAgentPlayg
     "multica_agent_playground_create",
   );
 
-type AgentPlaygroundCreateClient = Pick<ApiClient, "createAgentPlaygroundExperiment">;
-
 export async function createAgentPlaygroundExperimentWithRecovery(
   request: CreateAgentPlaygroundExperimentRequest,
-  client: AgentPlaygroundCreateClient = api,
 ): Promise<AgentPlaygroundDetail> {
   const pending = useAgentPlaygroundCreateStore.getState().pending;
   return executeRecoverableIntent(
@@ -32,6 +29,6 @@ export async function createAgentPlaygroundExperimentWithRecovery(
     (operation) => sameMutationRequest(operation.request, request),
     () => ({ request, requestKey: generateUUID(), createdAt: Date.now() }),
     (operation) => useAgentPlaygroundCreateStore.getState().setPending(operation),
-    (operation) => client.createAgentPlaygroundExperiment(operation.request, operation.requestKey),
+    (operation) => api.createAgentPlaygroundExperiment(operation.request, operation.requestKey),
   );
 }

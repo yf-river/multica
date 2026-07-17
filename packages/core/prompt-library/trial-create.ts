@@ -1,4 +1,4 @@
-import { api, type ApiClient } from "../api";
+import { api } from "../api";
 import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import {
   createWorkspaceAwareStorage,
@@ -84,8 +84,6 @@ const usePromptLibraryCreateStore = create<PromptLibraryCreateState>()(
 
 registerWorkspacePersistStore(usePromptLibraryCreateStore);
 
-type PromptLibraryTrialCreateClient = Pick<ApiClient, "createPromptLibraryTrial">;
-
 const scopeFor = (promptId: string, versionId: string, request: CreatePromptLibraryTrialRequest) =>
   `${promptId}:${versionId}:${request.agent_id}`;
 
@@ -93,7 +91,6 @@ export async function createPromptLibraryTrialWithRecovery(
   promptId: string,
   versionId: string,
   request: CreatePromptLibraryTrialRequest,
-  client: PromptLibraryTrialCreateClient = api,
 ): Promise<PromptLibraryTrial> {
   const scope = scopeFor(promptId, versionId, request);
   const pending = usePromptLibraryCreateStore.getState().pending[scope];
@@ -108,7 +105,7 @@ export async function createPromptLibraryTrialWithRecovery(
       createdAt: Date.now(),
     }),
     (operation) => usePromptLibraryCreateStore.getState().setPending(scope, operation),
-    (operation) => client.createPromptLibraryTrial(
+    (operation) => api.createPromptLibraryTrial(
       operation.promptId,
       operation.versionId,
       operation.request,
@@ -119,7 +116,6 @@ export async function createPromptLibraryTrialWithRecovery(
 
 export async function createPromptLibraryItemWithRecovery(
   request: CreatePromptLibraryItemRequest,
-  client: Pick<ApiClient, "createPromptLibraryItem"> = api,
 ): Promise<PromptLibraryItem> {
   const pending = usePromptLibraryCreateStore.getState().item;
   return executeRecoverableIntent(
@@ -127,14 +123,13 @@ export async function createPromptLibraryItemWithRecovery(
     (operation) => sameMutationRequest(operation.request, request),
     () => ({ request, requestKey: generateUUID(), createdAt: Date.now() }),
     (operation) => usePromptLibraryCreateStore.getState().setItem(operation),
-    (operation) => client.createPromptLibraryItem(operation.request, operation.requestKey),
+    (operation) => api.createPromptLibraryItem(operation.request, operation.requestKey),
   );
 }
 
 export async function createPromptLibraryVersionWithRecovery(
   promptId: string,
   request: CreatePromptLibraryVersionRequest,
-  client: Pick<ApiClient, "createPromptLibraryVersion"> = api,
 ): Promise<CreatePromptLibraryVersionResponse> {
   const pending = usePromptLibraryCreateStore.getState().versions[promptId];
   return executeRecoverableIntent(
@@ -142,7 +137,7 @@ export async function createPromptLibraryVersionWithRecovery(
     (operation) => sameMutationRequest(operation.request, request),
     () => ({ promptId, request, requestKey: generateUUID(), createdAt: Date.now() }),
     (operation) => usePromptLibraryCreateStore.getState().setVersion(promptId, operation),
-    (operation) => client.createPromptLibraryVersion(
+    (operation) => api.createPromptLibraryVersion(
       operation.promptId,
       operation.request,
       operation.requestKey,

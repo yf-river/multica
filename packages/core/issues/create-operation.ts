@@ -1,4 +1,4 @@
-import { api, type ApiClient } from "../api";
+import { api } from "../api";
 import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import { createWorkspacePendingCreateStore } from "../platform/recoverable-operation-store";
 import type { CreateIssueRequest, Issue } from "../types";
@@ -9,11 +9,8 @@ const useIssueCreatePendingStore =
     "multica_issue_create_pending",
   );
 
-type IssueCreateClient = Pick<ApiClient, "createIssue">;
-
 export async function createIssueWithRecovery(
   request: CreateIssueRequest,
-  client: IssueCreateClient = api,
 ): Promise<Issue> {
   const pending = useIssueCreatePendingStore.getState().pending;
   return executeRecoverableIntent(
@@ -21,6 +18,6 @@ export async function createIssueWithRecovery(
     (operation) => sameMutationRequest(operation.request, request),
     () => ({ request, requestKey: generateUUID(), createdAt: Date.now() }),
     (operation) => useIssueCreatePendingStore.getState().setPending(operation),
-    (operation) => client.createIssue(operation.request, operation.requestKey),
+    (operation) => api.createIssue(operation.request, operation.requestKey),
   );
 }
