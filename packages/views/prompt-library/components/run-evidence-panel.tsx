@@ -32,7 +32,7 @@ import { useSkillCandidateWorkflowActions } from "./use-skill-candidate-workflow
 import { useCandidateDecisionActions } from "./use-candidate-decision-actions";
 import { formatNumber } from "./training-workbench-support";
 
-export type RunOptimizationActions = {
+type RunOptimizationActions = {
   canGenerate: boolean;
   hasPendingCandidate: boolean;
   generatingCandidate: boolean;

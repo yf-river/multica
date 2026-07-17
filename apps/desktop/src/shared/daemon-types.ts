@@ -1,4 +1,4 @@
-export type DaemonState =
+type DaemonState =
   | "running"
   | "stopped"
   | "starting"

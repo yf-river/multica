@@ -127,7 +127,7 @@ const SegmentInput = React.forwardRef<HTMLInputElement, SegmentInputProps>(
   },
 );
 
-export interface TimeInputProps {
+interface TimeInputProps {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;

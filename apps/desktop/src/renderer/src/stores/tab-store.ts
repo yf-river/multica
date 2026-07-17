@@ -30,7 +30,7 @@ export interface Tab {
   pinned: boolean;
 }
 
-export interface WorkspaceTabGroup {
+interface WorkspaceTabGroup {
   tabs: Tab[];
   /** Must be a valid tab.id in `tabs`; the empty-tabs state is transient only. */
   activeTabId: string;

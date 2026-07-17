@@ -49,7 +49,6 @@ export function Mermaid({ chart }: { chart: string }) {
       };
 
       const brand = v("--brand", "#3b82f6");
-      const brandFg = v("--brand-foreground", "#ffffff");
       const background = v("--background", "#ffffff");
       const foreground = v("--foreground", "#111111");
       const muted = v("--muted", "#f5f5f5");

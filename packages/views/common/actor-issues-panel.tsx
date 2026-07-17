@@ -29,7 +29,7 @@ import { filterIssues } from "../issues/utils/filter";
 import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
-export type TaskActorType = "member" | "agent";
+type TaskActorType = "member" | "agent";
 
 const SCOPE_VALUES: ActorIssuesScope[] = ["assigned", "created"];
 

@@ -11,8 +11,8 @@ export const ORPHAN_LANE_ID = "__orphans__";
 
 const LANE_ID_PREFIX = "lane:";
 
-export type SwimLaneCells = Record<string, Record<string, string[]>>;
-export type SwimLaneCellRef = { laneKey: string; status: string };
+type SwimLaneCells = Record<string, Record<string, string[]>>;
+type SwimLaneCellRef = { laneKey: string; status: string };
 
 export function makeSwimLaneCollision(cellIds: Set<string>): CollisionDetection {
   return (args) => {

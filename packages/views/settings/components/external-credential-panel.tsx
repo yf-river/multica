@@ -21,7 +21,7 @@ import type {
 } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-export interface ExternalCredentialPanelConfig {
+interface ExternalCredentialPanelConfig {
   provider: ExternalCredentialProvider;
   testId: string;
   title: string;
