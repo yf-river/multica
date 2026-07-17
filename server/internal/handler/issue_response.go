@@ -144,6 +144,17 @@ func issueListRowWithSummaryToResponse(row issueListRow, issuePrefix string) Iss
 	attachIssueListSummary(&resp, row.Summary)
 	return resp
 }
+
+func issueListRowWithLabels(row issueListRow, issuePrefix string, labelsByIssue map[string][]LabelResponse) IssueResponse {
+	resp := issueListRowWithSummaryToResponse(row, issuePrefix)
+	labels := labelsByIssue[resp.ID]
+	if labels == nil {
+		labels = []LabelResponse{}
+	}
+	resp.Labels = &labels
+	return resp
+}
+
 func attachIssueListSummary(resp *IssueResponse, summary issueListSummary) {
 	if resp.AssigneeType != nil && resp.AssigneeID != nil {
 		name := unknownIssueAssigneeName(*resp.AssigneeType)

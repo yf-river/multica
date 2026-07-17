@@ -129,79 +129,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional filter params. Malformed UUIDs in filters return 400 —
-	// silently coercing them to a zero UUID would mask a client bug and let
-	// the query return an empty result set (or worse, match a NULL row).
-	var priorityFilter pgtype.Text
-	if p := r.URL.Query().Get("priority"); p != "" {
-		priorityFilter = pgtype.Text{String: p, Valid: true}
-	}
-	var assigneeFilter pgtype.UUID
-	if a := r.URL.Query().Get("assignee_id"); a != "" {
-		id, ok := parseUUIDOrBadRequest(w, a, "assignee_id")
-		if !ok {
-			return
-		}
-		assigneeFilter = id
-	}
-	var creatorFilter pgtype.UUID
-	if c := r.URL.Query().Get("creator_id"); c != "" {
-		id, ok := parseUUIDOrBadRequest(w, c, "creator_id")
-		if !ok {
-			return
-		}
-		creatorFilter = id
-	}
-	var projectFilter pgtype.UUID
-	if p := r.URL.Query().Get("project_id"); p != "" {
-		id, ok := parseUUIDOrBadRequest(w, p, "project_id")
-		if !ok {
-			return
-		}
-		projectFilter = id
-	}
-	// involves_user_id widens the assignee filter to surface issues where the
-	// user is the indirect assignee (their owned agent, or a squad they belong
-	// to / lead / have an agent inside). Direct member-assignment is excluded
-	// by design — that is the meaning of `assignee_id` (tab 1), and tab 3 must
-	// be disjoint from tab 1.
-	var involvesUserFilter pgtype.UUID
-	if u := r.URL.Query().Get("involves_user_id"); u != "" {
-		id, ok := parseUUIDOrBadRequest(w, u, "involves_user_id")
-		if !ok {
-			return
-		}
-		involvesUserFilter = id
-	}
-
-	metadataFilter, ok := parseMetadataFilterParam(w, r.URL.Query().Get("metadata"))
-	if !ok {
-		return
-	}
-	dateFilter, ok := parseIssueDateFilter(w, r.URL.Query())
-	if !ok {
-		return
-	}
-
 	limit, offset := parseIssueListPagination(r.URL.Query(), 100)
-
-	var statusFilter pgtype.Text
-	if s := r.URL.Query().Get("status"); s != "" {
-		statusFilter = pgtype.Text{String: s, Valid: true}
-	}
-
-	// scheduled=true restricts the result to issues that have at least one of
-	// start_date / due_date set. Used by the Project Gantt view, which only
-	// renders schedulable rows and shouldn't pay for the full project list.
-	var scheduledFilter pgtype.Bool
-	if r.URL.Query().Get("scheduled") == "true" {
-		scheduledFilter = pgtype.Bool{Bool: true, Valid: true}
-	}
-
-	orderBy, ok := parseIssueOrder(w, r.URL.Query())
-	if !ok {
-		return
-	}
 
 	// Build dynamic SQL — same approach as ListGroupedIssues.
 	where := []string{"i.workspace_id = $1"}
@@ -211,30 +139,27 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		return "$" + strconv.Itoa(len(args))
 	}
 
-	if statusFilter.Valid {
-		where = append(where, fmt.Sprintf("i.status = %s", addArg(statusFilter.String)))
+	if status := r.URL.Query().Get("status"); status != "" {
+		where = append(where, fmt.Sprintf("i.status = %s", addArg(status)))
 	}
-	if priorityFilter.Valid {
-		where = append(where, fmt.Sprintf("i.priority = %s", addArg(priorityFilter.String)))
+	if priority := r.URL.Query().Get("priority"); priority != "" {
+		where = append(where, fmt.Sprintf("i.priority = %s", addArg(priority)))
 	}
-	if assigneeFilter.Valid {
-		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(assigneeFilter)))
+	where, ok = appendCommonIssueListFilters(w, r.URL.Query(), where, addArg)
+	if !ok {
+		return
 	}
-	if creatorFilter.Valid {
-		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(creatorFilter)))
-	}
-	if projectFilter.Valid {
-		where = append(where, fmt.Sprintf("i.project_id = %s::uuid", addArg(projectFilter)))
-	}
-	if scheduledFilter.Valid {
+	if r.URL.Query().Get("scheduled") == "true" {
 		where = append(where, "(i.start_date IS NOT NULL OR i.due_date IS NOT NULL)")
 	}
-	if metadataFilter != nil {
-		where = append(where, fmt.Sprintf("i.metadata @> %s::jsonb", addArg(string(metadataFilter))))
+	dateFilter, ok := parseIssueDateFilter(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	where = appendIssueDateFilter(where, addArg, dateFilter)
-	if involvesUserFilter.Valid {
-		where = appendIssueInvolvesUserFilter(where, addArg, involvesUserFilter)
+	orderBy, ok := parseIssueOrder(w, r.URL.Query())
+	if !ok {
+		return
 	}
 
 	whereSql := strings.Join(where, " AND ")
@@ -300,12 +225,7 @@ LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), w
 	}
 	resp := make([]IssueResponse, len(issues))
 	for i, issue := range issues {
-		resp[i] = issueListRowWithSummaryToResponse(issue, prefix)
-		labels := labelsMap[resp[i].ID]
-		if labels == nil {
-			labels = []LabelResponse{}
-		}
-		resp[i].Labels = &labels
+		resp[i] = issueListRowWithLabels(issue, prefix, labelsMap)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -435,15 +355,10 @@ SELECT id, workspace_id, title, description, status, priority,
 	}
 	for _, row := range bucketRows {
 		status := row.Status
-		issue := issueListRowWithSummaryToResponse(issueListRow{
+		issue := issueListRowWithLabels(issueListRow{
 			Issue:   row.Issue,
 			Summary: row.Summary,
-		}, prefix)
-		labels := labelsMap[issue.ID]
-		if labels == nil {
-			labels = []LabelResponse{}
-		}
-		issue.Labels = &labels
+		}, prefix, labelsMap)
 		bucket := byStatus[status]
 		bucket.Issues = append(bucket.Issues, issue)
 		bucket.Total = row.StatusTotal
@@ -950,15 +865,10 @@ ORDER BY
 			})
 		}
 
-		issue := issueListRowWithSummaryToResponse(issueListRow{
+		issue := issueListRowWithLabels(issueListRow{
 			Issue:   row.Issue,
 			Summary: row.Summary,
-		}, prefix)
-		labels := labelsMap[issue.ID]
-		if labels == nil {
-			labels = []LabelResponse{}
-		}
-		issue.Labels = &labels
+		}, prefix, labelsMap)
 		groups[idx].Issues = append(groups[idx].Issues, issue)
 	}
 
