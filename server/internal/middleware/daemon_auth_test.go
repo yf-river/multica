@@ -10,7 +10,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestDaemonAuth_PATCacheHit pins the current daemon PAT short-circuit.
 func TestDaemonAuth_PATCacheHit(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	cache := auth.NewPATCache(rdb)
@@ -59,16 +58,6 @@ func TestDaemonAuth_MissingAuth(t *testing.T) {
 	}
 }
 
-// TestDaemonAuth_StripsClientSuppliedActorSource mirrors the
-// TestAuth_StripsClientSuppliedActorSource invariant for the daemon
-// auth path: a client supplying X-Actor-Source must NOT leak that
-// header through to the handler. Required for parity between the
-// two middlewares — the regular Auth path strips at the top, and we
-// added the same strip in DaemonAuth so account-level guards (e.g.
-// handler.RequireHumanActor) can trust the header regardless of
-// which auth chain a request arrived on.
-//
-// We exercise the current PAT path with an attempted forged X-Actor-Source.
 func TestDaemonAuth_StripsClientSuppliedActorSource(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	cache := auth.NewPATCache(rdb)
@@ -86,7 +75,6 @@ func TestDaemonAuth_StripsClientSuppliedActorSource(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/daemon/heartbeat", nil)
 	req.Header.Set("Authorization", "Bearer "+rawToken)
-	// Forged value the client tries to smuggle in.
 	req.Header.Set("X-Actor-Source", "cloud_pat")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -113,11 +101,6 @@ func TestDaemonAuth_RejectsUnsupportedTokenPrefix(t *testing.T) {
 	}
 }
 
-// TestDaemonAuth_MCN_NoVerifierConfigured pins the fail-closed
-// behaviour when MULTICA_CLOUD_FLEET_URL is empty: an mcn_ token MUST
-// be rejected at the prefix branch with 401, not silently fall
-// through to the mul_/JWT paths (an mcn_ string would never match a
-// valid PAT or JWT, but failing closed makes the contract explicit).
 func TestDaemonAuth_MCN_NoVerifierConfigured(t *testing.T) {
 	mw := DaemonAuth(nil, nil, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,10 +115,6 @@ func TestDaemonAuth_MCN_NoVerifierConfigured(t *testing.T) {
 	}
 }
 
-// TestDaemonAuth_MCN_ValidTokenSetsUserID confirms that on a successful
-// Fleet verify, DaemonAuth surfaces owner_id as X-User-ID and tags the
-// auth path as cloud_pat for telemetry. We use a stub Fleet here
-// (no Redis) so the test runs without external services.
 func TestDaemonAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -172,19 +151,11 @@ func TestDaemonAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	if gotPath != DaemonAuthPathCloudPAT {
 		t.Errorf("expected auth path %q, got %q", DaemonAuthPathCloudPAT, gotPath)
 	}
-	// Mirror the regular Auth middleware's stamp. Daemon routes don't
-	// currently sit behind RequireHumanActor, but we want the two
-	// auth paths to behave identically on this header so an endpoint
-	// that ever moves between them, or shares both, can't be tricked
-	// into thinking an mcn_ caller is human.
 	if gotActorSource != "cloud_pat" {
 		t.Errorf("expected X-Actor-Source=cloud_pat, got %q", gotActorSource)
 	}
 }
 
-// TestDaemonAuth_MCN_FleetSaysInvalid confirms that a valid:false
-// Fleet response maps to 401 (not 503) — the token IS known to be bad,
-// retrying won't help.
 func TestDaemonAuth_MCN_FleetSaysInvalid(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -208,10 +179,6 @@ func TestDaemonAuth_MCN_FleetSaysInvalid(t *testing.T) {
 	}
 }
 
-// TestDaemonAuth_MCN_FleetUnreachable confirms the Unavailable branch
-// emits 503 — the daemon must distinguish "your token is bad" (401, drop
-// it) from "cloud is down" (503, retry later) so a brief outage doesn't
-// invalidate everyone's PAT.
 func TestDaemonAuth_MCN_FleetUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -234,11 +201,6 @@ func TestDaemonAuth_MCN_FleetUnreachable(t *testing.T) {
 	}
 }
 
-// TestDaemonAuth_MCN_OwnerNotInLocalDB pins the new owner-existence
-// guard end-to-end through the middleware. Cloud verifies the token
-// successfully and returns an owner_id that does not exist in our
-// local user table — DaemonAuth must reject with 401 (not 503) and
-// MUST NOT call the next handler with a phantom X-User-ID.
 func TestDaemonAuth_MCN_OwnerNotInLocalDB(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
@@ -246,7 +208,6 @@ func TestDaemonAuth_MCN_OwnerNotInLocalDB(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// Owner_id is syntactically valid but not seeded in the DB.
 		_, _ = w.Write([]byte(`{
 			"valid": true,
 			"owner_id": "00000000-0000-0000-0000-0000000feed1",

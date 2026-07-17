@@ -32,114 +32,55 @@ func validClaims() jwt.MapClaims {
 	}
 }
 
-// authMiddleware returns the Auth middleware with nil queries (JWT-only tests).
 func authMiddleware(next http.Handler) http.Handler {
 	return Auth(nil, nil, nil)(next)
 }
 
-func TestAuth_MissingHeader(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-	if body := w.Body.String(); body != `{"error":"missing authorization"}`+"\n" {
-		t.Fatalf("unexpected body: %s", body)
-	}
-}
-
-func TestAuth_NoBearerPrefix(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Token some-token")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-	// Non-Bearer Authorization header with no cookie falls through to "missing authorization".
-	if body := w.Body.String(); body != `{"error":"missing authorization"}`+"\n" {
-		t.Fatalf("unexpected body: %s", body)
-	}
-}
-
-func TestAuth_InvalidToken(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Bearer not-a-valid-jwt")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-}
-
-func TestAuth_ExpiredToken(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	claims := validClaims()
-	claims["exp"] = time.Now().Add(-time.Hour).Unix()
-	token := generateToken(claims, auth.JWTSecret())
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-}
-
-func TestAuth_WrongSecret(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	token := generateToken(validClaims(), []byte("wrong-secret"))
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-}
-
-func TestAuth_WrongSigningMethod(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	// Use "none" signing method
-	token := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims())
-	s, _ := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Bearer "+s)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
+func TestAuthRejectsInvalidCredentials(t *testing.T) {
+	missingBody := `{"error":"missing authorization"}` + "\n"
+	for _, testCase := range []struct {
+		name          string
+		authorization func() string
+		wantBody      string
+	}{
+		{name: "missing", authorization: func() string { return "" }, wantBody: missingBody},
+		{name: "non bearer", authorization: func() string { return "Token some-token" }, wantBody: missingBody},
+		{name: "malformed JWT", authorization: func() string { return "Bearer not-a-valid-jwt" }},
+		{name: "expired JWT", authorization: func() string {
+			claims := validClaims()
+			claims["exp"] = time.Now().Add(-time.Hour).Unix()
+			return "Bearer " + generateToken(claims, auth.JWTSecret())
+		}},
+		{name: "wrong JWT secret", authorization: func() string {
+			return "Bearer " + generateToken(validClaims(), []byte("wrong-secret"))
+		}},
+		{name: "unsupported JWT signing method", authorization: func() string {
+			token := jwt.NewWithClaims(jwt.SigningMethodNone, validClaims())
+			signed, _ := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
+			return "Bearer " + signed
+		}},
+		{name: "missing JWT claims", authorization: func() string {
+			return "Bearer " + generateToken(jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix()}, auth.JWTSecret())
+		}},
+		{name: "invalid PAT", authorization: func() string { return "Bearer mul_invalid_token_here" }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := authMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("next handler should not be called")
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+			if authorization := testCase.authorization(); authorization != "" {
+				req.Header.Set("Authorization", authorization)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", w.Code)
+			}
+			if testCase.wantBody != "" && w.Body.String() != testCase.wantBody {
+				t.Fatalf("body = %q, want %q", w.Body.String(), testCase.wantBody)
+			}
+		})
 	}
 }
 
@@ -169,49 +110,6 @@ func TestAuth_ValidToken(t *testing.T) {
 	}
 }
 
-func TestAuth_MissingClaims(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	// Token with no sub or account claims, only exp
-	claims := jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-	token := generateToken(claims, auth.JWTSecret())
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-}
-
-func TestAuth_InvalidPAT(t *testing.T) {
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("next handler should not be called")
-	}))
-
-	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.Header.Set("Authorization", "Bearer mul_invalid_token_here")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", w.Code)
-	}
-}
-
-// TestAuth_StripsClientSuppliedActorSource enforces the invariant that
-// X-Actor-Source is a server-only header: any value the client sends
-// must be discarded before downstream code sees it. Without this
-// guarantee a client carrying a normal mul_ PAT could supply a forged
-// `X-Actor-Source: task_token` (or any other value) to fool a handler
-// into treating the request differently — exactly the kind of trust
-// boundary MUL-2600 introduces.
 func TestAuth_StripsClientSuppliedActorSource(t *testing.T) {
 	var gotActorSource string
 	mw := Auth(nil, nil, nil)
@@ -238,13 +136,6 @@ func TestAuth_StripsClientSuppliedActorSource(t *testing.T) {
 	}
 }
 
-// TestAuth_PATCacheHit pins the optimization: when the PAT cache already
-// holds an entry for this token, the middleware MUST NOT call into queries
-// — it short-circuits before the DB lookup and the last_used_at update.
-//
-// We exploit that by passing nil queries: a cache miss would dereference
-// the nil and panic; a cache hit must not. Reaching the next handler with
-// the cached user_id therefore proves the short-circuit fired.
 func TestAuth_PATCacheHit(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	cache := auth.NewPATCache(rdb)
@@ -276,11 +167,6 @@ func TestAuth_PATCacheHit(t *testing.T) {
 	}
 }
 
-// TestAuth_MCN_NoVerifierConfigured pins the same fail-closed branch
-// as the daemon side: with no MULTICA_CLOUD_FLEET_URL configured, an
-// mcn_ bearer token must be rejected with 401 at the prefix branch.
-// We don't fall through — an mcn_ string can't be a valid mul_ PAT or
-// JWT, so any fall-through would be wasted work.
 func TestAuth_MCN_NoVerifierConfigured(t *testing.T) {
 	mw := Auth(nil, nil, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -295,9 +181,6 @@ func TestAuth_MCN_NoVerifierConfigured(t *testing.T) {
 	}
 }
 
-// TestAuth_MCN_ValidTokenSetsUserID is the happy-path mirror of the
-// daemon test: a successful Fleet verify must surface owner_id as
-// X-User-ID for downstream user-scoped handlers.
 func TestAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -336,8 +219,6 @@ func TestAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	}
 }
 
-// TestAuth_MCN_InvalidReturns401 confirms that a Fleet valid:false maps
-// to 401 — the token is genuinely bad, retrying won't help.
 func TestAuth_MCN_InvalidReturns401(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -361,8 +242,6 @@ func TestAuth_MCN_InvalidReturns401(t *testing.T) {
 	}
 }
 
-// TestAuth_MCN_FleetUnreachableReturns503 — the Unavailable branch must
-// emit 503 (transient), distinguishing it from a 401 (token is bad).
 func TestAuth_MCN_FleetUnreachableReturns503(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

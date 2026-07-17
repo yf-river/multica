@@ -11,13 +11,6 @@ import (
 	"testing"
 )
 
-// withCapturedLogs swaps the default slog logger for one that writes to buf,
-// then restores it on cleanup. Returns the buffer so tests can inspect what
-// RequestLogger emitted.
-//
-// Uses a shared mutex because t.Parallel tests would otherwise race on the
-// global slog.Default — tests in this file intentionally do NOT run in
-// parallel for that reason.
 var defaultLoggerMu sync.Mutex
 
 func withCapturedLogs(t *testing.T) *bytes.Buffer {
@@ -46,55 +39,36 @@ func runRequestLogger(t *testing.T, status int, body string) *bytes.Buffer {
 	return logs
 }
 
-// requireLogLevel asserts that the captured output contains exactly the
-// expected slog level prefix and not any of the disallowed ones.
-func requireLogLevel(t *testing.T, logs *bytes.Buffer, want string, disallowed ...string) {
+func requireLogLevel(t *testing.T, logs *bytes.Buffer, want string) {
 	t.Helper()
 	out := logs.String()
 	if !strings.Contains(out, "level="+want) {
 		t.Fatalf("expected level=%s in logs, got:\n%s", want, out)
 	}
-	for _, dis := range disallowed {
-		if strings.Contains(out, "level="+dis) {
-			t.Fatalf("did not expect level=%s in logs, got:\n%s", dis, out)
+	for _, level := range []string{"INFO", "WARN", "ERROR"} {
+		if level != want && strings.Contains(out, "level="+level) {
+			t.Fatalf("did not expect level=%s in logs, got:\n%s", level, out)
 		}
 	}
 }
 
-func TestRequestLogger_RuntimeNotFound404DowngradesToInfo(t *testing.T) {
-	// The whole reason this middleware change exists: a flood of WRN lines
-	// after a runtime is deleted (issue #2391). The daemon catches the same
-	// body and self-heals, so the line is signal-not-noise.
-	logs := runRequestLogger(t, http.StatusNotFound, `{"error":"runtime not found"}`)
-	requireLogLevel(t, logs, "INFO", "WARN", "ERROR")
-}
-
-func TestRequestLogger_TaskNotFound404DowngradesToInfo(t *testing.T) {
-	logs := runRequestLogger(t, http.StatusNotFound, `{"error":"task not found"}`)
-	requireLogLevel(t, logs, "INFO", "WARN", "ERROR")
-}
-
-func TestRequestLogger_GenericNotFound404KeepsWarn(t *testing.T) {
-	// A 404 with an unfamiliar body is still a real 404 — most likely a
-	// daemon hitting a wrong path, which is what Warn is for. We do NOT
-	// want to downgrade these blindly.
-	logs := runRequestLogger(t, http.StatusNotFound, `{"error":"not found"}`)
-	requireLogLevel(t, logs, "WARN", "INFO", "ERROR")
-}
-
-func TestRequestLogger_400StaysWarn(t *testing.T) {
-	logs := runRequestLogger(t, http.StatusBadRequest, `{"error":"bad input"}`)
-	requireLogLevel(t, logs, "WARN", "INFO", "ERROR")
-}
-
-func TestRequestLogger_500StaysError(t *testing.T) {
-	logs := runRequestLogger(t, http.StatusInternalServerError, `{"error":"boom"}`)
-	requireLogLevel(t, logs, "ERROR", "WARN", "INFO")
-}
-
-func TestRequestLogger_200StaysInfo(t *testing.T) {
-	logs := runRequestLogger(t, http.StatusOK, `{"ok":true}`)
-	requireLogLevel(t, logs, "INFO", "WARN", "ERROR")
+func TestRequestLoggerLevels(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		status      int
+		body, level string
+	}{
+		{name: "runtime not found", status: http.StatusNotFound, body: `{"error":"runtime not found"}`, level: "INFO"},
+		{name: "task not found", status: http.StatusNotFound, body: `{"error":"task not found"}`, level: "INFO"},
+		{name: "generic not found", status: http.StatusNotFound, body: `{"error":"not found"}`, level: "WARN"},
+		{name: "bad request", status: http.StatusBadRequest, body: `{"error":"bad input"}`, level: "WARN"},
+		{name: "server error", status: http.StatusInternalServerError, body: `{"error":"boom"}`, level: "ERROR"},
+		{name: "success", status: http.StatusOK, body: `{"ok":true}`, level: "INFO"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			requireLogLevel(t, runRequestLogger(t, testCase.status, testCase.body), testCase.level)
+		})
+	}
 }
 
 func TestRequestLogger_HealthEndpointIsSkipped(t *testing.T) {
@@ -110,9 +84,6 @@ func TestRequestLogger_HealthEndpointIsSkipped(t *testing.T) {
 }
 
 func TestRequestLogger_BodyStillReachesClient(t *testing.T) {
-	// The body capture is implemented via Tee, which must mirror writes
-	// rather than swallow them. Regress-protect: assert the response writer
-	// still gets the full body.
 	rec := httptest.NewRecorder()
 	handler := RequestLogger(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -129,13 +100,9 @@ func TestRequestLogger_BodyStillReachesClient(t *testing.T) {
 }
 
 func TestRequestLogger_LargeBodyBeyondCaptureLimit(t *testing.T) {
-	// If the soft-404 marker only appears beyond the capture limit we
-	// intentionally keep Warn — capturing arbitrary-size bodies is the
-	// memory blowup we are guarding against. This test pins that
-	// trade-off.
 	prefix := strings.Repeat("x", softNotFoundBodyCaptureLimit+8)
 	logs := runRequestLogger(t, http.StatusNotFound, prefix+`{"error":"runtime not found"}`)
-	requireLogLevel(t, logs, "WARN", "INFO", "ERROR")
+	requireLogLevel(t, logs, "WARN")
 }
 
 func TestRedactWebhookPath(t *testing.T) {
@@ -174,13 +141,6 @@ func TestRequestLogger_RedactsWebhookTokenInPath(t *testing.T) {
 }
 
 func TestRequestLogger_IncludesWebhookTriggerIDFromContext(t *testing.T) {
-	// Exercise the real production flow: the webhook handler resolves the
-	// trigger, then calls SetWebhookTriggerID(r, ...) which mutates *r in
-	// place. After the handler returns, the wrapping RequestLogger
-	// middleware reads the stashed ID off the (now-updated) request
-	// context. If SetWebhookTriggerID didn't mutate in place, the
-	// middleware would see the old context and the trigger ID would
-	// silently drop from the audit line.
 	logs := withCapturedLogs(t)
 	handler := RequestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		SetWebhookTriggerID(r, "trigger-abc")
