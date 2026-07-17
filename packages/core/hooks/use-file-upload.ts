@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { ApiClient } from "../api/client";
+import { api } from "../api";
 import type { Attachment } from "../types";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -12,10 +12,7 @@ interface UploadContext {
   chatSessionId?: string;
 }
 
-export function useFileUpload(
-  api: ApiClient,
-  onError?: (error: Error) => void,
-) {
+export function useFileUpload() {
   const [uploading, setUploading] = useState(false);
 
   const upload = useCallback(
@@ -36,19 +33,18 @@ export function useFileUpload(
         setUploading(false);
       }
     },
-    [api],
+    [],
   );
 
   const uploadWithToast = useCallback(
     async (file: File, ctx?: UploadContext): Promise<Attachment | null> => {
       try {
         return await upload(file, ctx);
-      } catch (err) {
-        onError?.(err instanceof Error ? err : new Error("Upload failed"));
+      } catch {
         return null;
       }
     },
-    [upload, onError],
+    [upload],
   );
 
   return { upload, uploadWithToast, uploading };

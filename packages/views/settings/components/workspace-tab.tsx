@@ -179,7 +179,7 @@ export function WorkspaceTab() {
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
+  const { upload, uploading } = useFileUpload();
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!workspace) return;

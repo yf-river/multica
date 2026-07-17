@@ -12,7 +12,6 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
-import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { useTimeAgo } from "../../i18n";
@@ -271,7 +270,7 @@ function AvatarEditor({
 }) {
   const { t } = useT("agents");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
+  const { upload, uploading } = useFileUpload();
 
   if (!canEdit) {
     return (

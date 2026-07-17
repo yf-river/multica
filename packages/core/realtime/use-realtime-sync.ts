@@ -188,8 +188,7 @@ async function resolveInboxSourceSlug(
 
 /**
  * Handles an `inbox:new` event end-to-end: inbox cache invalidation, the
- * focus / mute checks, and the native OS banner. Exported so the handler
- * behavior (not just slug resolution) is testable.
+ * focus / mute checks, and the native OS banner.
  *
  * Every workspace-scoped read here keys on the ITEM's workspace
  * (`item.workspace_id`), never the currently active one (#3766): the cache
@@ -197,7 +196,7 @@ async function resolveInboxSourceSlug(
  * count / dock badge, the mute check must honor the source workspace's
  * preference, and the deep link must carry the source workspace's slug.
  */
-export async function handleInboxNew(
+async function handleInboxNew(
   qc: QueryClient,
   item: InboxItem,
 ): Promise<void> {

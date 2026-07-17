@@ -1,13 +1,11 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import type { ApiClient } from "../api/client";
+import { ApiClient, getApi, setApiInstance } from "../api";
 import type { Attachment } from "../types";
 import { useFileUpload } from "./use-file-upload";
-
-// MUL-3192 — verifies that markdown persistence uses the server's durable URL.
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
@@ -22,14 +20,12 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   };
 }
 
-function makeApi(att: Attachment): ApiClient {
-  return {
-    uploadFile: vi.fn().mockResolvedValue(att),
-  } as unknown as ApiClient;
+function mockUpload(att: Attachment) {
+  return vi.spyOn(getApi(), "uploadFile").mockResolvedValue(att);
 }
 
-async function runUpload(api: ApiClient): Promise<Attachment | null> {
-  const { result } = renderHook(() => useFileUpload(api));
+async function runUpload(): Promise<Attachment | null> {
+  const { result } = renderHook(() => useFileUpload());
   let upload: Attachment | null = null;
   await act(async () => {
     upload = await result.current.upload(
@@ -40,28 +36,34 @@ async function runUpload(api: ApiClient): Promise<Attachment | null> {
 }
 
 describe("useFileUpload", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setApiInstance(new ApiClient("http://core.test"));
+  });
+
   it("returns the canonical attachment response without URL aliases", async () => {
     const att = makeAttachment({
       markdown_url: "https://cdn.multica.test/uploads/abc.png",
     });
-    const upload = await runUpload(makeApi(att));
+    mockUpload(att);
+    const upload = await runUpload();
     expect(upload).toEqual(att);
   });
 
   it("rejects oversize files before hitting the network", async () => {
     const att = makeAttachment();
-    const api = makeApi(att);
+    const uploadFile = mockUpload(att);
     const huge = new File([new ArrayBuffer(1)], "big.bin", {
       type: "application/octet-stream",
     });
     Object.defineProperty(huge, "size", { value: 200 * 1024 * 1024 });
 
-    const { result } = renderHook(() => useFileUpload(api));
+    const { result } = renderHook(() => useFileUpload());
     await expect(
       act(async () => {
         await result.current.upload(huge);
       }),
     ).rejects.toThrow(/100 MB/);
-    expect(api.uploadFile as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(uploadFile).not.toHaveBeenCalled();
   });
 });

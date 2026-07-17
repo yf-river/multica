@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiClient, getApi, setApiInstance } from "../api";
+import type { ChatSession } from "../types";
 import {
   replayPendingChatOperation,
   usePendingChatOperationStore,
@@ -27,8 +29,18 @@ function operation(overrides: Partial<PendingChatOperation> = {}): PendingChatOp
   };
 }
 
+const session: ChatSession = {
+  id: "session-1",
+  agent_id: "agent-1",
+  title: "hello",
+  has_unread: false,
+  updated_at: "2026-07-11T00:00:00Z",
+};
+
 describe("pending chat operation store", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    setApiInstance(new ApiClient("http://core.test"));
     localStorage.clear();
     usePendingChatOperationStore.setState({ operations: {} });
   });
@@ -73,29 +85,34 @@ describe("pending chat operation store", () => {
 });
 
 describe("replayPendingChatOperation", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setApiInstance(new ApiClient("http://core.test"));
+  });
+
   it("reuses one logical operation id across create and send recovery", async () => {
     const pending = operation({ attachmentIds: ["att-1"] });
-    const client = {
-      createChatSession: vi.fn().mockResolvedValue({ id: "session-1" }),
-      sendChatMessage: vi.fn().mockResolvedValue({
+    const createChatSession = vi.spyOn(getApi(), "createChatSession")
+      .mockResolvedValue(session);
+    const sendChatMessage = vi.spyOn(getApi(), "sendChatMessage")
+      .mockResolvedValue({
         message_id: "message-1",
         task_id: "task-1",
         created_at: "2026-07-11T00:00:00Z",
         attachment_ids: ["att-1"],
-      }),
-    };
+      });
     const onSessionCreated = vi.fn();
 
     await expect(
-      replayPendingChatOperation(pending, client, onSessionCreated),
+      replayPendingChatOperation(pending, onSessionCreated),
     ).resolves.toMatchObject({ sessionId: "session-1" });
 
-    expect(client.createChatSession).toHaveBeenCalledWith(
+    expect(createChatSession).toHaveBeenCalledWith(
       { agent_id: "agent-1", title: "hello" },
       pending.id,
     );
     expect(onSessionCreated).toHaveBeenCalledWith("session-1");
-    expect(client.sendChatMessage).toHaveBeenCalledWith(
+    expect(sendChatMessage).toHaveBeenCalledWith(
       "session-1",
       "hello",
       pending.id,
@@ -104,17 +121,15 @@ describe("replayPendingChatOperation", () => {
   });
 
   it("does not send when account cleanup rejects the post-create continuation", async () => {
-    const client = {
-      createChatSession: vi.fn().mockResolvedValue({ id: "session-1" }),
-      sendChatMessage: vi.fn(),
-    };
+    vi.spyOn(getApi(), "createChatSession").mockResolvedValue(session);
+    const sendChatMessage = vi.spyOn(getApi(), "sendChatMessage");
 
     await expect(
-      replayPendingChatOperation(operation(), client, () => {
+      replayPendingChatOperation(operation(), () => {
         throw new Error("operation cleared on logout");
       }),
     ).rejects.toThrow("operation cleared on logout");
 
-    expect(client.sendChatMessage).not.toHaveBeenCalled();
+    expect(sendChatMessage).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import {
   useCommentDraftStore,
@@ -50,7 +49,7 @@ export function useCommentComposer({
   });
   const setDraft = useCommentDraftStore((s) => s.setDraft);
   const clearDraft = useCommentDraftStore((s) => s.clearDraft);
-  const { uploadWithToast } = useFileUpload(api);
+  const { uploadWithToast } = useFileUpload();
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((file) => editorRef.current?.uploadFile(file)),
   });

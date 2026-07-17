@@ -31,7 +31,7 @@ export function AccountTab() {
     user?.profile_description ?? "",
   );
   const [profileSaving, setProfileSaving] = useState(false);
-  const { upload, uploading } = useFileUpload(api);
+  const { upload, uploading } = useFileUpload();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {

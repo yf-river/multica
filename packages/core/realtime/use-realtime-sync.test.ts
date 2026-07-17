@@ -1,7 +1,12 @@
-import { QueryClient } from "@tanstack/react-query";
+// @vitest-environment jsdom
+
+import { createElement, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
+import type { WSClient } from "../api/ws-client";
 import { inboxKeys } from "../inbox/queries";
 import { notificationPreferenceKeys } from "../notification-preferences/queries";
 import { workspaceKeys } from "../workspace/queries";
@@ -10,7 +15,10 @@ import {
   type InboxItem,
   type Workspace,
 } from "../types";
-import { handleInboxNew } from "./use-realtime-sync";
+import {
+  useRealtimeSync,
+  type RealtimeSyncStores,
+} from "./use-realtime-sync";
 
 function createQueryClient() {
   return new QueryClient({
@@ -18,6 +26,48 @@ function createQueryClient() {
       queries: { retry: false },
     },
   });
+}
+
+type TestEventHandler = (payload: unknown) => void | Promise<void>;
+
+class TestWSClient {
+  private handlers = new Map<string, Set<TestEventHandler>>();
+
+  on(event: string, handler: TestEventHandler) {
+    const handlers = this.handlers.get(event) ?? new Set<TestEventHandler>();
+    handlers.add(handler);
+    this.handlers.set(event, handlers);
+    return () => handlers.delete(handler);
+  }
+
+  onAny() {
+    return () => {};
+  }
+
+  onReconnect() {
+    return () => {};
+  }
+
+  async emit(event: string, payload: unknown) {
+    await Promise.all(
+      [...(this.handlers.get(event) ?? [])].map((handler) => handler(payload)),
+    );
+  }
+}
+
+async function dispatchInboxNew(qc: QueryClient, item: InboxItem) {
+  const ws = new TestWSClient();
+  const authStore = {
+    getState: () => ({ user: { id: "user-1" } }),
+  } as unknown as RealtimeSyncStores["authStore"];
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: qc }, children);
+  const rendered = renderHook(
+    () => useRealtimeSync(ws as unknown as WSClient, { authStore }),
+    { wrapper },
+  );
+  await act(() => ws.emit("inbox:new", { item }));
+  rendered.unmount();
 }
 
 describe("handleInboxNew", () => {
@@ -78,7 +128,7 @@ describe("handleInboxNew", () => {
     });
     const showNotification = stubDesktopAPI();
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(showNotification).toHaveBeenCalledWith({
       slug: "",
@@ -101,7 +151,7 @@ describe("handleInboxNew", () => {
     const invalidate = vi.spyOn(qc, "invalidateQueries");
     const showNotification = stubDesktopAPI();
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: inboxKeys.list("ws-a"),
@@ -119,7 +169,7 @@ describe("handleInboxNew", () => {
     });
     const showNotification = stubDesktopAPI();
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(showNotification).not.toHaveBeenCalled();
   });
@@ -146,7 +196,7 @@ describe("handleInboxNew", () => {
     setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
     const showNotification = stubDesktopAPI();
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(getNotificationPreferences).toHaveBeenCalledWith("workspace-a");
     expect(showNotification).toHaveBeenCalledWith(
@@ -163,7 +213,7 @@ describe("handleInboxNew", () => {
     setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
     const showNotification = stubDesktopAPI();
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(getNotificationPreferences).toHaveBeenCalledWith("workspace-a");
     expect(showNotification).not.toHaveBeenCalled();
@@ -181,7 +231,7 @@ describe("handleInboxNew", () => {
     setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
     const showNotification = stubDesktopAPI();
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     // Must NOT fall back to the active workspace's preference — that both
     // mis-mutes and pollutes the source workspace's cache key (#3766).
@@ -211,14 +261,14 @@ describe("handleInboxNew", () => {
   ) {
     webBanners = [];
     FakeNotification.permission = permission;
-    (globalThis as Record<string, unknown>).window = {
-      Notification: FakeNotification,
-      focus: vi.fn(),
-    };
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: FakeNotification,
+    });
   }
 
   afterEach(() => {
-    delete (globalThis as Record<string, unknown>).window;
+    delete (window as unknown as Record<string, unknown>).Notification;
   });
 
   it("shows a browser banner on web (no desktopAPI) when granted and not muted", async () => {
@@ -229,7 +279,7 @@ describe("handleInboxNew", () => {
     });
     installBrowserNotification("granted");
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(webBanners).toHaveLength(1);
     expect(webBanners[0]?.title).toBe("Mentioned you");
@@ -243,7 +293,7 @@ describe("handleInboxNew", () => {
     });
     installBrowserNotification("granted");
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(webBanners).toHaveLength(0);
   });
@@ -256,7 +306,7 @@ describe("handleInboxNew", () => {
     });
     installBrowserNotification("default");
 
-    await handleInboxNew(qc, inboxItem());
+    await dispatchInboxNew(qc, inboxItem());
 
     expect(webBanners).toHaveLength(0);
   });

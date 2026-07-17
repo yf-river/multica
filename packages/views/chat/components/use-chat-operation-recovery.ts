@@ -42,7 +42,6 @@ export function useChatOperationRecovery(workspaceId: string | null) {
         try {
           const { sessionId, response: result } = await replayPendingChatOperation(
             operation,
-            api,
             (createdSessionId) => {
               if (!usePendingChatOperationStore.getState().operations[operation.id]) {
                 throw new Error("pending chat operation was cleared during recovery");

@@ -23,7 +23,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
-import { api, ApiError } from "@multica/core/api";
+import { ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
@@ -303,7 +303,7 @@ export function AgentCreatePanel({
   // Image paste/drop support: route uploads through the same helper Advanced
   // uses, so users can paste screenshots straight into the prompt and the
   // agent receives them as embedded markdown image URLs in the prompt.
-  const { uploadWithToast, uploading } = useFileUpload(api);
+  const { uploadWithToast, uploading } = useFileUpload();
   const handleUploadFile = useCallback(async (file: File) => {
     const result = await uploadWithToast(file);
     if (result) {

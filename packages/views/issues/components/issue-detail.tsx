@@ -64,7 +64,6 @@ import { useIssueReactions } from "../hooks/use-issue-reactions";
 import { useIssueSubscribers } from "../hooks/use-issue-subscribers";
 import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
-import { api } from "@multica/core/api";
 import { useTimeAgo } from "../../i18n";
 import { cn } from "@multica/ui/lib/utils";
 
@@ -151,7 +150,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [queryClient, wsId],
   );
   const { getActorName } = useActorName();
-  const { uploadWithToast } = useFileUpload(api);
+  const { uploadWithToast } = useFileUpload();
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: layoutId,
   });

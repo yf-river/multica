@@ -4,7 +4,8 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../platform/storage";
 import { registerAccountPersistStore } from "../platform/workspace-storage";
-import type { ChatSession, SendChatMessageResponse } from "../types";
+import { api } from "../api";
+import type { SendChatMessageResponse } from "../types";
 
 /**
  * Durable client intent for one logical send. The operation id is also the
@@ -102,28 +103,14 @@ export function releasePendingChatOperation(id: string): void {
   inFlightOperationIds.delete(id);
 }
 
-interface PendingChatOperationClient {
-  createChatSession: (
-    data: { agent_id: string; title?: string },
-    idempotencyKey: string,
-  ) => Promise<ChatSession>;
-  sendChatMessage: (
-    sessionId: string,
-    content: string,
-    idempotencyKey: string,
-    attachmentIds?: string[],
-  ) => Promise<SendChatMessageResponse>;
-}
-
 /** Execute the exact persisted intent; both requests reuse its stable UUID. */
 export async function replayPendingChatOperation(
   operation: PendingChatOperation,
-  client: PendingChatOperationClient,
   onSessionCreated: (sessionId: string) => void,
 ): Promise<{ sessionId: string; response: SendChatMessageResponse }> {
   let sessionId = operation.sessionId;
   if (operation.stage === "creating-session") {
-    const session = await client.createChatSession(
+    const session = await api.createChatSession(
       { agent_id: operation.agentId, title: operation.title },
       operation.id,
     );
@@ -133,7 +120,7 @@ export async function replayPendingChatOperation(
   if (!sessionId) {
     throw new Error("pending chat send has no session id");
   }
-  const response = await client.sendChatMessage(
+  const response = await api.sendChatMessage(
     sessionId,
     operation.content,
     operation.id,

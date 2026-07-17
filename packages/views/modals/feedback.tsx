@@ -19,7 +19,6 @@ import {
 import { useCreateFeedback, useFeedbackDraftStore } from "@multica/core/feedback";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
-import { api } from "@multica/core/api";
 import { captureFeedbackOpened } from "@multica/core/analytics";
 import { useT } from "../i18n";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
@@ -62,7 +61,7 @@ export function FeedbackModal({
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
   });
-  const { uploadWithToast } = useFileUpload(api);
+  const { uploadWithToast } = useFileUpload();
   const mutation = useCreateFeedback();
 
   // Fire the "modal opened" analytics event once per mount. Pairs with

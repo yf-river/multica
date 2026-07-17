@@ -407,7 +407,7 @@ function SquadAvatarEditor({
   onUpload: (url: string) => Promise<unknown>;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading: fileUploading } = useFileUpload(api);
+  const { upload, uploading: fileUploading } = useFileUpload();
   const busy = uploading || fileUploading;
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
