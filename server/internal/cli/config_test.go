@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+func readSavedConfigJSON(t *testing.T, home string) ([]byte, map[string]any) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".multica", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	return data, raw
+}
+
 func TestCLIConfigWithoutOverridesLoads(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -41,8 +54,6 @@ func TestCLIConfigWithoutOverridesLoads(t *testing.T) {
 	}
 }
 
-// TestCLIConfig_OpenClawOverride_RoundTrip verifies that setting BinaryPath
-// and StateDir survives a save/load cycle.
 func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -79,11 +90,6 @@ func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestCLIConfig_OpenClawOverride_PartialFieldsOmitted verifies that an
-// override with only one field set does not emit empty strings for the
-// unset field. Users can intentionally set only BinaryPath
-// (or only StateDir) and have the other follow the tool default,
-// without an empty string overriding env-var precedence.
 func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -94,7 +100,6 @@ func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 		Backends: &BackendOverrides{
 			OpenClaw: &OpenClawOverride{
 				StateDir: "/var/lib/openclaw-prod",
-				// BinaryPath intentionally left empty
 			},
 		},
 	}
@@ -102,15 +107,7 @@ func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmp, ".multica", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatal(err)
-	}
+	data, raw := readSavedConfigJSON(t, tmp)
 
 	openclaw, ok := raw["backends"].(map[string]any)["openclaw"].(map[string]any)
 	if !ok {
@@ -124,11 +121,6 @@ func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 	}
 }
 
-// TestCLIConfig_ProfileCommandOverrides_RoundTrip verifies that pinning a
-// per-machine profile command path survives a save/load cycle AND that
-// unrelated fields (server_url, token, backends) are preserved across the
-// round-trip — the set-path / unset-path CLI commands rely on a
-// load->modify->save cycle never dropping config the user already had.
 func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -155,7 +147,6 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The override map must round-trip intact.
 	if len(loaded.ProfileCommandOverrides) != 2 {
 		t.Fatalf("ProfileCommandOverrides len = %d, want 2: %+v", len(loaded.ProfileCommandOverrides), loaded.ProfileCommandOverrides)
 	}
@@ -166,7 +157,6 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 		t.Errorf("prof-2 override = %q, want /usr/local/bin/special-claude", got)
 	}
 
-	// Every other field must be preserved (no clobbering on round-trip).
 	if loaded.ServerURL != original.ServerURL {
 		t.Errorf("ServerURL = %q, want %q", loaded.ServerURL, original.ServerURL)
 	}
@@ -185,8 +175,6 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty verifies the
-// omitempty tags keep unused override keys out of the on-disk JSON.
 func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -196,14 +184,7 @@ func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmp, ".multica", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatal(err)
-	}
+	data, raw := readSavedConfigJSON(t, tmp)
 	if _, ok := raw["profile_command_overrides"]; ok {
 		t.Errorf("profile_command_overrides should be omitted when empty, got: %s", string(data))
 	}

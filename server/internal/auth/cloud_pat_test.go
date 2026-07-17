@@ -255,10 +255,6 @@ func TestCloudPATVerifier_ContextCanceled(t *testing.T) {
 	}
 }
 
-// TestCloudPATVerifier_TrimsTrailingSlash is a tiny sanity test —
-// configurations sometimes carry trailing slashes; the verifier must
-// normalize so it doesn't double-slash the verify path. (httptest's
-// router would still accept it, but the actual Fleet won't.)
 func TestCloudPATVerifier_TrimsTrailingSlash(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{})
 	defer srv.Close()
@@ -272,11 +268,6 @@ func TestCloudPATVerifier_TrimsTrailingSlash(t *testing.T) {
 	}
 }
 
-// TestCloudPATVerifier_CacheHitSkipsHTTP confirms the Redis cache
-// short-circuits the Fleet round-trip. After one successful Verify the
-// next call must not increment the request counter — that's the entire
-// point of the cache layer (one Fleet hit per cloudPATCacheTTL window
-// per token, regardless of request rate).
 func TestCloudPATVerifier_CacheHitSkipsHTTP(t *testing.T) {
 	rdb := newRedisTestClient(t)
 
@@ -306,11 +297,6 @@ func TestCloudPATVerifier_CacheHitSkipsHTTP(t *testing.T) {
 	}
 }
 
-// TestCloudPATVerifier_NegativesNotCached pins the explicit choice from
-// the Cloud doc: "revoke / expired / mismatch results MUST NOT be
-// cached". A token that flips back to valid (lazy-revoke
-// reconciliation, owner_id updated, etc.) needs to start working again
-// without waiting for a TTL window.
 func TestCloudPATVerifier_NegativesNotCached(t *testing.T) {
 	rdb := newRedisTestClient(t)
 
@@ -336,12 +322,6 @@ func TestCloudPATVerifier_NegativesNotCached(t *testing.T) {
 	}
 }
 
-// TestCloudPATVerifier_LookupRejectsUnknownOwner pins the new
-// owner-existence guard. Cloud says the token is valid, but the
-// caller's lookup says the owner_id does not exist locally — the
-// verifier must reject with reason="owner_unknown" and MUST NOT
-// cache the result, so a freshly-created user can authenticate
-// immediately on the next call without waiting for a TTL.
 func TestCloudPATVerifier_LookupRejectsUnknownOwner(t *testing.T) {
 	rdb := newRedisTestClient(t)
 
@@ -352,9 +332,6 @@ func TestCloudPATVerifier_LookupRejectsUnknownOwner(t *testing.T) {
 	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL, Redis: rdb})
 
 	lookup := func(_ context.Context, ownerID string) (bool, error) {
-		// Cloud's stub returns this fixed owner_id; assert we receive
-		// it before reporting "not found" so a future regression that
-		// passes the wrong field would surface here.
 		if ownerID != "01972f7e-7e8d-77ef-a13d-1b0ce3e9c001" {
 			t.Errorf("lookup called with unexpected owner_id: %q", ownerID)
 		}
@@ -373,10 +350,6 @@ func TestCloudPATVerifier_LookupRejectsUnknownOwner(t *testing.T) {
 		t.Errorf("expected reason=%q, got %q", cloudPATInvalidReasonOwnerUnknown, typed.Reason)
 	}
 
-	// Second call: lookup now says the user exists. If the previous
-	// rejection was cached, we'd still be rejected without the lookup
-	// being consulted again. We must re-hit Fleet AND the lookup, and
-	// succeed.
 	gotLookup := false
 	lookupExists := func(_ context.Context, _ string) (bool, error) {
 		gotLookup = true
@@ -397,11 +370,6 @@ func TestCloudPATVerifier_LookupRejectsUnknownOwner(t *testing.T) {
 	}
 }
 
-// TestCloudPATVerifier_LookupErrorMapsToUnavailable confirms that an
-// infrastructure error from the lookup (DB down, query timeout, ...)
-// surfaces as ErrCloudPATUnavailable so the middleware emits 503,
-// not 401. Without this, a transient DB blip would tell every CLI
-// and daemon to throw out a still-valid token.
 func TestCloudPATVerifier_LookupErrorMapsToUnavailable(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{})
 	defer srv.Close()
@@ -417,10 +385,6 @@ func TestCloudPATVerifier_LookupErrorMapsToUnavailable(t *testing.T) {
 	}
 }
 
-// TestCloudPATVerifier_LookupSuccessIsCached confirms that a verified
-// + locally-existing owner_id IS cached: the second Verify must not
-// hit Fleet OR the lookup. This is the happy-path symmetry to the
-// previous two tests.
 func TestCloudPATVerifier_LookupSuccessIsCached(t *testing.T) {
 	rdb := newRedisTestClient(t)
 

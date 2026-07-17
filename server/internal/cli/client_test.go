@@ -414,20 +414,24 @@ func TestUploadFileWithURL(t *testing.T) {
 		}
 	})
 
-	t.Run("missing id in response", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://example.com"})
-		}))
-		defer srv.Close()
-
-		client := NewAPIClient(srv.URL, "", "")
-		_, _, err := client.UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "missing attachment id") {
-			t.Errorf("unexpected error message: %s", err.Error())
+	t.Run("missing required response fields", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, response, want string
+		}{
+			{"id", `{"url":"https://example.com"}`, "missing attachment id"},
+			{"url", `{"id":"att-123"}`, "missing attachment url"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, tc.response)
+				}))
+				t.Cleanup(srv.Close)
+				_, _, err := NewAPIClient(srv.URL, "", "").UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("error = %v, want %q", err, tc.want)
+				}
+			})
 		}
 	})
 
@@ -450,20 +454,4 @@ func TestUploadFileWithURL(t *testing.T) {
 		}
 	})
 
-	t.Run("missing url in response", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(uploadResponse{ID: "att-123"})
-		}))
-		defer srv.Close()
-
-		client := NewAPIClient(srv.URL, "", "")
-		_, _, err := client.UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "missing attachment url") {
-			t.Errorf("unexpected error message: %s", err.Error())
-		}
-	})
 }
