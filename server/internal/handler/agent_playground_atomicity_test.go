@@ -19,6 +19,26 @@ type agentPlaygroundRunFixture struct {
 	titlePrefix  string
 }
 
+func concurrentAgentPlaygroundRequests(callers int, request func(int) *httptest.ResponseRecorder) []*httptest.ResponseRecorder {
+	responses := make(chan *httptest.ResponseRecorder, callers)
+	var wait sync.WaitGroup
+	for i := range callers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- request(i)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+
+	result := make([]*httptest.ResponseRecorder, 0, callers)
+	for response := range responses {
+		result = append(result, response)
+	}
+	return result
+}
+
 func createAgentPlaygroundRestrictedMember(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
@@ -262,18 +282,9 @@ func TestRunAgentPlaygroundCommitsCompleteMatrix(t *testing.T) {
 
 func TestConcurrentRunCreatesOneTaskPerMatrixCell(t *testing.T) {
 	fixture := newAgentPlaygroundRunFixture(t, 1)
-	responses := make(chan *httptest.ResponseRecorder, 2)
-	var wait sync.WaitGroup
-	for range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			responses <- runAgentPlaygroundFixture(t, fixture)
-		}()
-	}
-	wait.Wait()
-	close(responses)
-	for response := range responses {
+	for _, response := range concurrentAgentPlaygroundRequests(2, func(int) *httptest.ResponseRecorder {
+		return runAgentPlaygroundFixture(t, fixture)
+	}) {
 		if response.Code != http.StatusAccepted {
 			t.Fatalf("concurrent run = %d %s, want 202", response.Code, response.Body.String())
 		}
@@ -299,18 +310,9 @@ func TestConcurrentSameJudgeCreatesOneTaskPerInput(t *testing.T) {
 	fixture := newAgentPlaygroundRunFixture(t, 1)
 	completeAgentPlaygroundRun(t, fixture)
 	judgeID := createHandlerTestAgent(t, "playground-concurrent-judge-"+uuid.NewString(), nil)
-	responses := make(chan *httptest.ResponseRecorder, 2)
-	var wait sync.WaitGroup
-	for range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			responses <- judgeAgentPlaygroundFixture(t, fixture, judgeID)
-		}()
-	}
-	wait.Wait()
-	close(responses)
-	for response := range responses {
+	for _, response := range concurrentAgentPlaygroundRequests(2, func(int) *httptest.ResponseRecorder {
+		return judgeAgentPlaygroundFixture(t, fixture, judgeID)
+	}) {
 		if response.Code != http.StatusAccepted {
 			t.Fatalf("concurrent same judge = %d %s, want 202", response.Code, response.Body.String())
 		}
@@ -340,20 +342,10 @@ func TestConcurrentJudgeChangeDoesNotOrphanPlaygroundTask(t *testing.T) {
 		createHandlerTestAgent(t, "playground-judge-b-"+uuid.NewString(), nil),
 	}
 
-	responses := make(chan *httptest.ResponseRecorder, len(judgeIDs))
-	var wait sync.WaitGroup
-	for _, judgeID := range judgeIDs {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			responses <- judgeAgentPlaygroundFixture(t, fixture, judgeID)
-		}()
-	}
-	wait.Wait()
-	close(responses)
-
 	statusCounts := map[int]int{}
-	for response := range responses {
+	for _, response := range concurrentAgentPlaygroundRequests(len(judgeIDs), func(i int) *httptest.ResponseRecorder {
+		return judgeAgentPlaygroundFixture(t, fixture, judgeIDs[i])
+	}) {
 		statusCounts[response.Code]++
 	}
 	if statusCounts[http.StatusAccepted] != 1 || statusCounts[http.StatusConflict] != 1 {

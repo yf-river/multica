@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -55,22 +54,15 @@ func TestCreateAgentPlaygroundExperimentRecoversExactCompoundResult(t *testing.T
 	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
 		t.Fatalf("playground replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
 	}
-	responses := make(chan *httptest.ResponseRecorder, 8)
-	var wait sync.WaitGroup
-	for range 8 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			responses <- create(body)
-		}()
-	}
-	wait.Wait()
-	close(responses)
-	for response := range responses {
-		if response.Code != http.StatusCreated || response.Body.String() != first.Body.String() {
-			t.Fatalf("concurrent playground replay = %d %s, want exact", response.Code, response.Body.String())
+	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+		return create(body)
+	}, func(response *httptest.ResponseRecorder) string {
+		var detail AgentPlaygroundDetailResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
 		}
-	}
+		return detail.Experiment.ID
+	})
 	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET archived_at=now() WHERE id=$1`, agentID); err != nil {
 		t.Fatal(err)
 	}

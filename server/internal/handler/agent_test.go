@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,27 +11,12 @@ import (
 	"testing"
 )
 
-// TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
-// every active task (queued/dispatched/running) PLUS each agent's most recent
-// OUTCOME task (completed/failed only). Cancelled tasks are excluded by design
-// from the outcome half — they're a procedural signal, not an outcome, and
-// must NOT mask a prior failure.
-//
-// The fixtures cover every branch the SQL must classify:
-//   - actives are always returned, no dedup
-//   - outcomes are deduped to "latest per agent" by completed_at
-//   - the OLD 2-minute window must be irrelevant (a 5-minute-old failure is
-//     still returned if it's the latest outcome)
-//   - cancelled rows are NEVER returned, even when they are temporally newer
-//     than a failure — this is what keeps the failed signal sticky after the
-//     user cancels their queued retry
 func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
 	ctx := context.Background()
-	// Three agents so we can verify per-agent semantics independently.
 	agentA := createHandlerTestAgent(t, "snapshot-agent-a", []byte(`{}`))
 	agentB := createHandlerTestAgent(t, "snapshot-agent-b", []byte(`{}`))
 	agentC := createHandlerTestAgent(t, "snapshot-agent-c", []byte(`{}`))
@@ -44,21 +28,13 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		label       string
 	}
 	fixtures := []taskFixture{
-		// Agent A — actives + a newer completed supersedes an older failed.
 		{agentA, "queued", "", "A.queued"},
 		{agentA, "dispatched", "", "A.dispatched"},
 		{agentA, "running", "", "A.running"},
 		{agentA, "failed", "now() - interval '10 minutes'", "A.old_failed"},
 		{agentA, "completed", "now() - interval '30 seconds'", "A.latest_completed"},
 
-		// Agent B — old failure with no later outcome stays visible (no
-		// time window).
 		{agentB, "failed", "now() - interval '5 minutes'", "B.stale_failed_kept"},
-
-		// Agent C — failure followed by a NEWER cancelled. The cancelled
-		// must be skipped by the SQL filter so the failure remains visible.
-		// This is the scenario where a user fails, then cancels their
-		// queued retry to debug.
 		{agentC, "failed", "now() - interval '5 minutes'", "C.failure"},
 		{agentC, "cancelled", "now() - interval '30 seconds'", "C.newer_cancelled_must_be_ignored"},
 	}
@@ -97,8 +73,6 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	// Per-agent breakdown so leftover tasks from other tests in this package
-	// don't pollute the assertions.
 	type key struct{ agent, status string }
 	counts := map[key]int{}
 	for _, task := range tasks {
@@ -109,18 +83,12 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	}
 
 	wantCounts := map[key]int{
-		// Agent A: 3 actives + the latest outcome (completed). The older
-		// failed must be excluded by DISTINCT ON.
 		{agentA, "queued"}:     1,
 		{agentA, "dispatched"}: 1,
 		{agentA, "running"}:    1,
 		{agentA, "completed"}:  1,
-		// Agent B: just the failed outcome.
-		{agentB, "failed"}: 1,
-		// Agent C: the failed outcome must survive the temporally newer
-		// cancellation — that's the whole point of excluding cancelled
-		// from the outcome half.
-		{agentC, "failed"}: 1,
+		{agentB, "failed"}:     1,
+		{agentC, "failed"}:     1,
 	}
 	for k, expected := range wantCounts {
 		if got := counts[k]; got != expected {
@@ -128,14 +96,10 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		}
 	}
 
-	// The OLD failed terminal on agent A must be excluded.
 	if counts[key{agentA, "failed"}] != 0 {
 		t.Errorf("agent A old failed must be superseded by newer completed; got %d", counts[key{agentA, "failed"}])
 	}
 
-	// No cancelled row may ever appear in the snapshot — they're filtered at
-	// SQL level so the front-end's "cancel doesn't mask failure" rule lands
-	// without any front-end logic.
 	for _, agentID := range []string{agentA, agentB, agentC} {
 		if counts[key{agentID, "cancelled"}] != 0 {
 			t.Errorf("agent %s: cancelled rows must be excluded from snapshot; got %d",
@@ -149,7 +113,6 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	// Clean up any agents created by this test.
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
@@ -165,7 +128,6 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		"max_concurrent_tasks": 1,
 	}
 
-	// First call — creates the agent.
 	w1 := httptest.NewRecorder()
 	testHandler.CreateAgent(w1, newRequest(http.MethodPost, "/api/agents", body))
 	if w1.Code != http.StatusCreated {
@@ -180,8 +142,6 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		t.Fatalf("first CreateAgent: no id in response: %v", resp1)
 	}
 
-	// Second call — same name must be rejected with 409 Conflict.
-	// The unique constraint prevents silent duplicates; the UI shows a clear error.
 	body["description"] = "updated description"
 	w2 := httptest.NewRecorder()
 	testHandler.CreateAgent(w2, newRequest(http.MethodPost, "/api/agents", body))
@@ -190,102 +150,50 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 	}
 }
 
-func TestCreateAgent_RejectsNonObjectRuntimeConfig(t *testing.T) {
-	const agentName = "invalid-runtime-config-test-agent"
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(),
-			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
-			testWorkspaceID, agentName,
-		)
-	})
+func TestAgentConfigFieldsRequireJSONObject(t *testing.T) {
+	for _, field := range []string{"runtime_config", "mcp_config"} {
+		t.Run(field+" create", func(t *testing.T) {
+			name := "invalid-" + field + "-create"
+			t.Cleanup(func() {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+			})
 
-	w := httptest.NewRecorder()
-	testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", map[string]any{
-		"name":           agentName,
-		"runtime_id":     testRuntimeID,
-		"scope":          "personal",
-		"runtime_config": []any{"not", "an", "object"},
-	}))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CreateAgent non-object runtime_config: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
+			body := map[string]any{"name": name, "runtime_id": testRuntimeID, "scope": "personal", field: []any{"not", "an", "object"}}
+			w := httptest.NewRecorder()
+			testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("CreateAgent non-object %s = %d %s, want 400", field, w.Code, w.Body.String())
+			}
+			var count int
+			if err := testPool.QueryRow(context.Background(), `SELECT count(*)::int FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatalf("CreateAgent persisted %d invalid rows", count)
+			}
+		})
 
-	var count int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT count(*)::int FROM agent WHERE workspace_id = $1 AND name = $2
-	`, testWorkspaceID, agentName).Scan(&count); err != nil {
-		t.Fatalf("count invalid-runtime-config agents: %v", err)
+		t.Run(field+" update", func(t *testing.T) {
+			agentID := createHandlerTestAgent(t, "invalid-"+field+"-update", []byte(`{}`))
+			w := httptest.NewRecorder()
+			req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{field: []any{"not", "an", "object"}}), "id", agentID)
+			testHandler.UpdateAgent(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("UpdateAgent non-object %s = %d %s, want 400", field, w.Code, w.Body.String())
+			}
+			var stored []byte
+			if field == "runtime_config" {
+				var raw string
+				if err := testPool.QueryRow(context.Background(), `SELECT runtime_config::text FROM agent WHERE id = $1`, agentID).Scan(&raw); err != nil {
+					t.Fatal(err)
+				}
+				stored = []byte(raw)
+			} else {
+				stored = fetchAgentMcpConfig(t, agentID)
+			}
+			assertJSONEqual(t, stored, `{}`)
+		})
 	}
-	if count != 0 {
-		t.Fatalf("CreateAgent persisted %d invalid-runtime-config rows", count)
-	}
-}
-
-func TestUpdateAgent_RejectsNonObjectRuntimeConfig(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "invalid-runtime-config-update", []byte(`{}`))
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{
-		"runtime_config": []any{"not", "an", "object"},
-	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateAgent non-object runtime_config: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var config string
-	if err := testPool.QueryRow(context.Background(), `SELECT runtime_config::text FROM agent WHERE id = $1`, agentID).Scan(&config); err != nil {
-		t.Fatalf("read agent runtime_config: %v", err)
-	}
-	if config != "{}" {
-		t.Fatalf("UpdateAgent changed runtime_config to %s", config)
-	}
-}
-
-func TestCreateAgent_RejectsNonObjectMCPConfig(t *testing.T) {
-	const agentName = "invalid-mcp-config-test-agent"
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(),
-			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
-			testWorkspaceID, agentName,
-		)
-	})
-
-	w := httptest.NewRecorder()
-	testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", map[string]any{
-		"name":       agentName,
-		"runtime_id": testRuntimeID,
-		"scope":      "personal",
-		"mcp_config": []any{"not", "an", "object"},
-	}))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CreateAgent non-object mcp_config: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var count int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT count(*)::int FROM agent WHERE workspace_id = $1 AND name = $2
-	`, testWorkspaceID, agentName).Scan(&count); err != nil {
-		t.Fatalf("count invalid-mcp-config agents: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("CreateAgent persisted %d invalid-mcp-config rows", count)
-	}
-}
-
-func TestUpdateAgent_RejectsNonObjectMCPConfig(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "invalid-mcp-config-update", []byte(`{}`))
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{
-		"mcp_config": []any{"not", "an", "object"},
-	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateAgent non-object mcp_config: expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-
-	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{}`)
 }
 
 func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
@@ -1032,7 +940,3 @@ func insertHandlerTestTask(t *testing.T, agentID string) string {
 	})
 	return taskID
 }
-
-// Defence-in-depth: spot-check that the package compiles a small
-// fmt.Sprintf so accidental imports stay tidy.
-var _ = fmt.Sprintf
