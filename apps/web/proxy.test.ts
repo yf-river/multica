@@ -25,23 +25,16 @@ describe("web proxy", () => {
     ).toBe("http://localhost/team-a/issues");
   });
 
-  it("does not redirect canonical workspace-scoped debug and evaluation URLs", () => {
-    const res = proxy(
-      makeRequest("/team-a/debug/prompts", {
-        multica_logged_in: "1",
-        last_workspace_slug: "team-a",
-      }),
-    );
-
-    expect(res.headers.get("location")).toBeNull();
-
-    const evaluationRes = proxy(
-      makeRequest("/team-a/evaluation/datasets", {
-        multica_logged_in: "1",
-        last_workspace_slug: "team-a",
-      }),
-    );
-
-    expect(evaluationRes.headers.get("location")).toBeNull();
-  });
+  it.each(["/team-a/debug/prompts", "/team-a/evaluation/datasets"])(
+    "does not redirect canonical workspace URL %s",
+    (path) => {
+      const res = proxy(
+        makeRequest(path, {
+          multica_logged_in: "1",
+          last_workspace_slug: "team-a",
+        }),
+      );
+      expect(res.headers.get("location")).toBeNull();
+    },
+  );
 });
