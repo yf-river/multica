@@ -477,6 +477,31 @@ func taskMessagesToPayloads(messages []db.TaskMessage, taskID, issueID string) [
 	return responses
 }
 
+func (h *Handler) listTaskMessagesForRequest(w http.ResponseWriter, r *http.Request, taskID pgtype.UUID) ([]db.TaskMessage, bool) {
+	var (
+		messages []db.TaskMessage
+		err      error
+	)
+	if since := r.URL.Query().Get("since"); since != "" {
+		seq, parseErr := strconv.Atoi(since)
+		if parseErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid since parameter")
+			return nil, false
+		}
+		messages, err = h.Queries.ListTaskMessagesSince(r.Context(), db.ListTaskMessagesSinceParams{TaskID: taskID, Seq: int32(seq)})
+	} else {
+		messages, err = h.Queries.ListTaskMessages(r.Context(), taskID)
+	}
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return nil, false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to list task messages")
+		return nil, false
+	}
+	return messages, true
+}
+
 // ListTaskMessages returns the persisted messages for a task (for catch-up after reconnect).
 func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
@@ -487,25 +512,8 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		messages []db.TaskMessage
-		err      error
-	)
-	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
-		sinceSeq, parseErr := strconv.Atoi(sinceStr)
-		if parseErr != nil {
-			writeError(w, http.StatusBadRequest, "invalid since parameter")
-			return
-		}
-		messages, err = h.Queries.ListTaskMessagesSince(r.Context(), db.ListTaskMessagesSinceParams{
-			TaskID: parseUUID(taskID),
-			Seq:    int32(sinceSeq),
-		})
-	} else {
-		messages, err = h.Queries.ListTaskMessages(r.Context(), parseUUID(taskID))
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list task messages")
+	messages, ok := h.listTaskMessagesForRequest(w, r, task.ID)
+	if !ok {
 		return
 	}
 
@@ -614,28 +622,8 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var (
-		messages []db.TaskMessage
-		queryErr error
-	)
-	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
-		sinceSeq, parseErr := strconv.Atoi(sinceStr)
-		if parseErr != nil {
-			writeError(w, http.StatusBadRequest, "invalid since parameter")
-			return
-		}
-		messages, queryErr = h.Queries.ListTaskMessagesSince(r.Context(), db.ListTaskMessagesSinceParams{
-			TaskID: taskUUID,
-			Seq:    int32(sinceSeq),
-		})
-	} else {
-		messages, queryErr = h.Queries.ListTaskMessages(r.Context(), taskUUID)
-	}
-	if queryErr != nil {
-		if writeClientClosedIfCanceled(w, queryErr) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to list task messages")
+	messages, ok := h.listTaskMessagesForRequest(w, r, taskUUID)
+	if !ok {
 		return
 	}
 
