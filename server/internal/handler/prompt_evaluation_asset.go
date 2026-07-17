@@ -23,7 +23,6 @@ const (
 	promptEvaluationAgentName            = "Multica 训练评估智能体"
 	defaultPromptEvaluationAgentProvider = "codebuddy"
 	defaultPromptEvaluationAgentModel    = "deepseek-v4-pro-ioa"
-	fallbackPromptEvaluationAgentModel   = "deepseek-v4-pro-ioa"
 	promptEvaluationRuntimeFreshTTL      = 2 * time.Minute
 	promptEvaluationRuntimeLimitTTL      = 10 * time.Minute
 )
@@ -985,6 +984,21 @@ func (h *Handler) DeletePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) loadPromptEvaluationRunInputs(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, missingPromptMessage string) (db.PromptLibraryItem, map[string]any, bool) {
+	if !asset.PromptID.Valid {
+		writeError(w, http.StatusBadRequest, missingPromptMessage)
+		return db.PromptLibraryItem{}, nil, false
+	}
+	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
+		ID: asset.PromptID, WorkspaceID: asset.WorkspaceID,
+	})
+	if err != nil {
+		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
+		return db.PromptLibraryItem{}, nil, false
+	}
+	return prompt, decodePayloadObject(asset.Payload), true
+}
+
 func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -1024,19 +1038,10 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if !asset.PromptID.Valid {
-		writeError(w, http.StatusBadRequest, "prompt_id is required to run an evaluation asset")
+	prompt, payload, ok := h.loadPromptEvaluationRunInputs(w, r, asset, "prompt_id is required to run an evaluation asset")
+	if !ok {
 		return
 	}
-	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
-		ID:          asset.PromptID,
-		WorkspaceID: asset.WorkspaceID,
-	})
-	if err != nil {
-		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
-		return
-	}
-	payload := decodePayloadObject(asset.Payload)
 	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
 	if !ok {
 		return
@@ -1138,28 +1143,18 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if !asset.PromptID.Valid {
-		writeError(w, http.StatusBadRequest, "prompt_id is required to run an evaluation asset with an agent")
-		return
-	}
-	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
-		ID:          asset.PromptID,
-		WorkspaceID: asset.WorkspaceID,
-	})
-	if err != nil {
-		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
+	prompt, payload, ok := h.loadPromptEvaluationRunInputs(w, r, asset, "prompt_id is required to run an evaluation asset with an agent")
+	if !ok {
 		return
 	}
 	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
 	agentRow, runtimeRow, ok := h.selectPromptEvaluationExecutionAgent(w, r, asset.WorkspaceID, parseUUID(userID), member, payload)
 	if !ok {
 		return
 	}
-
 	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
 	if !ok {
 		return

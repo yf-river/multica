@@ -294,7 +294,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		if recentCapacityFailure.Error.Valid && strings.TrimSpace(recentCapacityFailure.Error.String) != "" {
 			detail += " 最近错误：" + prompteval.TruncateEvidence(recentCapacityFailure.Error.String, 180)
 		}
-		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "如果持续出现 429/529，请申请 "+fallbackPromptEvaluationAgentModel+" 模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
+		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "如果持续出现 429/529，请申请 "+promptEvaluationAgentModel()+" 模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
 		resp.LastSeenAgeSeconds = ageSeconds
 		return resp, nil
 	}
