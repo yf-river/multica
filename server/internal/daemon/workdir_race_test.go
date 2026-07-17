@@ -17,18 +17,32 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// TestHandleTask_DoesNotCallStartTaskItself is the regression guard for
-// issue #3999 race A. handleTask must not call /tasks/{id}/start before
-// runner — the runner is now responsible for calling StartTask only
-// after execenv.Prepare/Reuse has put env.WorkDir on disk, so consumers
-// that read status==running can resolve the workdir path without racing
-// the daemon's os.MkdirAll.
-//
-// Before the fix: handleTask called StartTask before invoking the runner,
-// flipping the server-side state to "running" while the per-task workdir
-// still didn't exist on disk. Hermes/OpenClaw agents that resolved
-// /multica_workspaces/{ws}/{short-id}/workdir from the running signal
-// would then hit FileNotFoundError.
+func newWorkdirTestDaemon(serverURL, workspacesRoot, runtimeID string) *Daemon {
+	d := &Daemon{
+		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		workspaces:         make(map[string]*workspaceState),
+		runtimeIndex:       map[string]Runtime{runtimeID: {ID: runtimeID, Provider: "claude"}},
+		activeEnvRoots:     make(map[string]int),
+		cancelPollInterval: time.Hour,
+		cfg:                Config{WorkspacesRoot: workspacesRoot},
+	}
+	if serverURL != "" {
+		d.client = NewClient(serverURL)
+	}
+	return d
+}
+
+func workdirTestTask(id, workspaceID, runtimeID string) Task {
+	return Task{
+		ID:          id,
+		WorkspaceID: workspaceID,
+		RuntimeID:   runtimeID,
+		IssueID:     "issue-" + id,
+		Agent:       &protocol.TaskAgent{Name: "test-agent"},
+	}
+}
+
+// handleTask must leave StartTask to runTask, after the workdir is prepared.
 func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 	t.Parallel()
 
@@ -46,14 +60,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	d := &Daemon{
-		client:             NewClient(srv.URL),
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:         make(map[string]*workspaceState),
-		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
-		activeEnvRoots:     make(map[string]int),
-		cancelPollInterval: time.Hour, // disable poll-cancel path; we only care about the entry-side ordering
-	}
+	d := newWorkdirTestDaemon(srv.URL, "", "rt-1")
 
 	// Fake runner that does NOT call StartTask — production runTask does
 	// the call itself, after Prepare/Reuse confirms env.WorkDir on disk.
@@ -62,15 +69,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 		return TaskResult{Status: "completed"}, nil
 	}
 
-	task := Task{
-		ID:          "task-no-start",
-		WorkspaceID: "ws-no-start",
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-no-start",
-		Agent:       &protocol.TaskAgent{Name: "test-agent"},
-	}
-
-	d.handleTask(context.Background(), task, 0)
+	d.handleTask(context.Background(), workdirTestTask("task-no-start", "ws-no-start", "rt-1"), 0)
 
 	if !runnerCalled.Load() {
 		t.Fatal("fake runner was never invoked — handleTask aborted before runner, can't assert ordering")
@@ -80,12 +79,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 	}
 }
 
-// TestRunTask_StartTaskCalledAfterWorkdirOnDisk is the behavioral regression
-// guard for issue #3999 race A. Calls runTask directly with a missing agent
-// binary so the run aborts at exec time — but only AFTER reaching the
-// post-Prepare StartTask call. The fake server records whether the per-task
-// workdir already exists on disk at the moment /start is hit; before the
-// fix it did not.
+// The server must not observe a running task before its workdir exists.
 func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 	t.Parallel()
 
@@ -115,36 +109,12 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	// Provider entry intentionally points at a non-existent binary: runTask
-	// reaches Prepare → StartTask → ReportProgress before agent.Backend.Run
-	// fails at exec time. We don't care about the eventual error; the
-	// regression guard is the order of /start vs. os.MkdirAll(envRoot).
 	missingBin := filepath.Join(t.TempDir(), "definitely-not-claude")
-	d := &Daemon{
-		client:         NewClient(srv.URL),
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
-		activeEnvRoots: make(map[string]int),
-		cfg: Config{
-			WorkspacesRoot: workspacesRoot,
-			Agents: map[string]AgentEntry{
-				"claude": {Path: missingBin, Model: ""},
-			},
-		},
-	}
-
-	task := Task{
-		ID:          taskID,
-		WorkspaceID: workspaceID,
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-runtask",
-		Agent:       &protocol.TaskAgent{Name: "test-agent"},
-	}
+	d := newWorkdirTestDaemon(srv.URL, workspacesRoot, "rt-1")
+	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: missingBin}}
 
 	taskLog := slog.New(slog.NewTextHandler(io.Discard, nil))
-	// The Run() failure is expected; we only assert the pre-Run ordering.
-	_, _ = d.runTask(context.Background(), task, "claude", 0, taskLog)
+	_, _ = d.runTask(context.Background(), workdirTestTask(taskID, workspaceID, "rt-1"), "claude", 0, taskLog)
 
 	if !startCalled.Load() {
 		t.Fatal("runTask did not call /start — Fix A's StartTask placement is missing")
@@ -157,111 +127,71 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 	}
 }
 
-func TestRunTaskDoesNotStartWithPartiallyRefreshedReusedContext(t *testing.T) {
+func TestRunTaskStartPolicyOnPreparationFailure(t *testing.T) {
 	t.Parallel()
 
-	priorWorkDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(priorWorkDir, ".agent_context"), []byte("blocks managed context directory"), 0o644); err != nil {
-		t.Fatalf("seed context path conflict: %v", err)
-	}
-
-	var startCalled atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/start") {
-			startCalled.Store(true)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	d := &Daemon{
-		client:         NewClient(srv.URL),
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-reuse": {ID: "rt-reuse", Provider: "claude"}},
-		activeEnvRoots: make(map[string]int),
-		cfg: Config{
-			WorkspacesRoot: t.TempDir(),
-			Agents:         map[string]AgentEntry{"claude": {Path: filepath.Join(t.TempDir(), "claude")}},
+	tests := []struct {
+		name          string
+		seedConflict  func(*testing.T, string)
+		wantError     string
+		wantStartCall bool
+	}{
+		{
+			name: "context refresh fails before start",
+			seedConflict: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, ".agent_context"), []byte("blocks managed context directory"), 0o644); err != nil {
+					t.Fatalf("seed context path conflict: %v", err)
+				}
+			},
+			wantError: "refresh context files",
+		},
+		{
+			name: "runtime config injection fails after start",
+			seedConflict: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(dir, "CLAUDE.md"), 0o755); err != nil {
+					t.Fatalf("seed runtime config path conflict: %v", err)
+				}
+			},
+			wantError:     "inject runtime config",
+			wantStartCall: true,
 		},
 	}
-	task := Task{
-		ID:           "task-reuse-context",
-		WorkspaceID:  "ws-reuse-context",
-		RuntimeID:    "rt-reuse",
-		IssueID:      "issue-reuse-context",
-		PriorWorkDir: priorWorkDir,
-		Agent:        &protocol.TaskAgent{Name: "test-agent"},
-	}
 
-	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err == nil || !strings.Contains(err.Error(), "refresh context files") {
-		t.Fatalf("runTask error = %v, want explicit context refresh failure", err)
-	}
-	if startCalled.Load() {
-		t.Fatal("runTask started the server-side task after reuse context refresh failed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			priorWorkDir := t.TempDir()
+			tt.seedConflict(t, priorWorkDir)
+
+			var startCalled atomic.Bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/start") {
+					startCalled.Store(true)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(srv.Close)
+
+			d := newWorkdirTestDaemon(srv.URL, t.TempDir(), "rt-1")
+			d.cfg.Agents = map[string]AgentEntry{"claude": {Path: filepath.Join(t.TempDir(), "claude")}}
+			task := workdirTestTask("task-prepare", "ws-prepare", "rt-1")
+			task.PriorWorkDir = priorWorkDir
+
+			_, err := d.runTask(context.Background(), task, "claude", 0, d.logger)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("runTask error = %v, want %q", err, tt.wantError)
+			}
+			if got := startCalled.Load(); got != tt.wantStartCall {
+				t.Fatalf("start called = %v, want %v", got, tt.wantStartCall)
+			}
+		})
 	}
 }
 
-func TestRunTaskFailsWhenRuntimeConfigCannotBeInjected(t *testing.T) {
-	t.Parallel()
-
-	priorWorkDir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(priorWorkDir, "CLAUDE.md"), 0o755); err != nil {
-		t.Fatalf("seed runtime config path conflict: %v", err)
-	}
-
-	var startCalled atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/start") {
-			startCalled.Store(true)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
-	d := &Daemon{
-		client:         NewClient(srv.URL),
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:     make(map[string]*workspaceState),
-		runtimeIndex:   map[string]Runtime{"rt-config": {ID: "rt-config", Provider: "claude"}},
-		activeEnvRoots: make(map[string]int),
-		cfg: Config{
-			WorkspacesRoot: t.TempDir(),
-			Agents:         map[string]AgentEntry{"claude": {Path: filepath.Join(t.TempDir(), "claude")}},
-		},
-	}
-	task := Task{
-		ID:           "task-runtime-config",
-		WorkspaceID:  "ws-runtime-config",
-		RuntimeID:    "rt-config",
-		IssueID:      "issue-runtime-config",
-		PriorWorkDir: priorWorkDir,
-		Agent:        &protocol.TaskAgent{Name: "test-agent"},
-	}
-
-	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err == nil || !strings.Contains(err.Error(), "inject runtime config") {
-		t.Fatalf("runTask error = %v, want explicit runtime config injection failure", err)
-	}
-	if !startCalled.Load() {
-		t.Fatal("runTask did not reach runtime config injection after starting the prepared task")
-	}
-}
-
-// TestHandleTask_KeepsEnvRootActiveAcrossCompletion is the regression guard
-// for issue #3999 race B. After runner returns, the in-process active
-// guard installed inside runTask (defer unmarkActiveEnvRoot at the
-// goroutine's exit) has already fired by the time handleTask calls
-// reportTaskResult and execenv.WriteGCMeta. Without an outer guard at the
-// handleTask level, the GC loop sees a window where the directory has
-// neither isActiveEnvRoot nor a .gc_meta.json file — falling through to
-// orphanByMTime, gated only by the 72h GCOrphanTTL.
-//
-// This test fakes the inner guard's lifecycle (mark + deferred unmark),
-// then asserts that at the moment /complete is hit (i.e. between runner
-// returning and WriteGCMeta running), isActiveEnvRoot(envRoot) is still
-// true thanks to the outer guard handleTask installs.
+// The environment remains GC-protected until completion reporting finishes.
 func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	t.Parallel()
 
@@ -275,22 +205,11 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 		activeAtComplete atomic.Bool
 	)
 
-	d := &Daemon{
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:         make(map[string]*workspaceState),
-		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
-		activeEnvRoots:     make(map[string]int),
-		cancelPollInterval: time.Hour,
-		cfg:                Config{WorkspacesRoot: workspacesRoot},
-	}
+	d := newWorkdirTestDaemon("", workspacesRoot, "rt-1")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/complete") {
 			completeCalled.Store(true)
-			// This is the exact window race B exposed: the inner deferred
-			// unmark has already fired (see fake runner below); only the
-			// outer guard installed by handleTask keeps the env root in the
-			// active set at this moment.
 			if d.isActiveEnvRoot(expectedEnvRoot) {
 				activeAtComplete.Store(true)
 			}
@@ -300,9 +219,6 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	t.Cleanup(srv.Close)
 	d.client = NewClient(srv.URL)
 
-	// Fake runner mimics the real runTask's mark/defer-unmark pair. Without
-	// the outer guard added in handleTask, the deferred unmark would bring
-	// isActiveEnvRoot back to false before reportTaskResult fires.
 	d.runner = func(_ context.Context, tk Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		predicted := execenv.PredictRootDir(d.cfg.WorkspacesRoot, tk.WorkspaceID, tk.ID)
 		d.markActiveEnvRoot(predicted)
@@ -313,15 +229,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 		}, nil
 	}
 
-	task := Task{
-		ID:          taskID,
-		WorkspaceID: workspaceID,
-		RuntimeID:   "rt-1",
-		IssueID:     "issue-active-during-complete",
-		Agent:       &protocol.TaskAgent{Name: "test-agent"},
-	}
-
-	d.handleTask(context.Background(), task, 0)
+	d.handleTask(context.Background(), workdirTestTask(taskID, workspaceID, "rt-1"), 0)
 
 	if !completeCalled.Load() {
 		t.Fatal("/complete was never hit — handleTask did not reach reportTaskResult")
@@ -329,8 +237,6 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	if !activeAtComplete.Load() {
 		t.Fatal("env root was NOT in the active set at /complete time — issue #3999 race B regression: GC could reclaim the directory between runner returning and WriteGCMeta landing on disk")
 	}
-	// And the outer guard must have been released by the time handleTask
-	// returned, otherwise we'd be leaking active marks across tasks.
 	if d.isActiveEnvRoot(expectedEnvRoot) {
 		t.Fatal("env root remained active after handleTask returned — outer guard's deferred unmark did not fire")
 	}
