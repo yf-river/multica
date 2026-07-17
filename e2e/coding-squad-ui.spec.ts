@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createTestApi, loginAsDefault } from "./helpers";
+import { createTestApi, loginAsDefault, waitForIssueSOPRun, waitForSquadLeaderTask } from "./helpers";
 
 test.describe("Multica 编码小队页面证据", () => {
   test("公开模板 API 创建的编码小队可在页面绑定 issue 并回看观测证据", async ({ page }) => {
@@ -43,31 +43,16 @@ test.describe("Multica 编码小队页面证据", () => {
         assignee_id: squad.id,
       });
 
-      await expect
-        .poll(async () => (await api.findLeaderTask(issue.id, leader!.id))?.id ?? "", {
-          timeout: 15_000,
-          message: "等待 Multica 编码小队队长任务入队",
-        })
-        .not.toBe("");
-      const leaderTask = await api.findLeaderTask(issue.id, leader!.id);
-      expect(leaderTask).toBeTruthy();
-      expect(leaderTask!.is_leader_task).toBe(true);
-
-      await expect
-        .poll(async () => {
-          const data = await api.listIssueSOPRuns(issue.id);
-          return data.items.find((item) => item.profile_key === "multica-coding")?.id ?? "";
-        }, {
-          timeout: 15_000,
-          message: "等待 Multica 编码小队 SOP Run 自动生成",
-        })
-        .not.toBe("");
-      const runs = await api.listIssueSOPRuns(issue.id);
-      const run = runs.items.find((item) => item.profile_key === "multica-coding");
-      expect(run).toBeTruthy();
+      const leaderTask = await waitForSquadLeaderTask(api, issue.id, leader!.id, {
+        message: "等待 Multica 编码小队队长任务入队",
+      });
+      expect(leaderTask.is_leader_task).toBe(true);
+      const run = await waitForIssueSOPRun(api, issue.id, "multica-coding", {
+        message: "等待 Multica 编码小队 SOP Run 自动生成",
+      });
 
       await api.completeSquadLeaderTaskViaDaemon(
-        leaderTask!,
+        leaderTask,
         "队长输出：已接收需求，并分派方案设计者先输出技术方案、影响面和测试方案，等待人工确认后再进入开发。",
       );
       await api.reportDaemonTaskMessages(leaderTask!.id, [
@@ -85,7 +70,7 @@ test.describe("Multica 编码小队页面证据", () => {
         },
       ]);
       const runsAfterLeader = await api.listIssueSOPRuns(issue.id);
-      const runAfterLeader = runsAfterLeader.items.find((item) => item.id === run!.id);
+      const runAfterLeader = runsAfterLeader.items.find((item) => item.id === run.id);
       expect(runAfterLeader?.current_step_key).toBe("design_review");
       expect(
         runAfterLeader?.events.some(

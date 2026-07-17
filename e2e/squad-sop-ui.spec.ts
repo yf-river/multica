@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createTestApi, loginAsDefault } from "./helpers";
+import { createTestApi, loginAsDefault, waitForSquadLeaderTask } from "./helpers";
 
 test.describe("user-center 小队 SOP 页面证据", () => {
   test("可以在页面回看父子任务、SOP 执行、观测事件和评论唤醒", async ({ page }) => {
@@ -29,16 +29,11 @@ test.describe("user-center 小队 SOP 页面证据", () => {
         assignee_id: squad.id,
       });
 
-      await expect
-        .poll(async () => (await api.findLeaderTask(parent.id, leader!.id))?.id ?? "", {
-          timeout: 15000,
-          message: "等待 user-center 小队队长任务入队",
-        })
-        .not.toBe("");
-      const leaderTask = await api.findLeaderTask(parent.id, leader!.id);
-      expect(leaderTask).toBeTruthy();
+      const leaderTask = await waitForSquadLeaderTask(api, parent.id, leader!.id, {
+        message: "等待 user-center 小队队长任务入队",
+      });
       await api.completeSquadLeaderTaskViaDaemon(
-        leaderTask!,
+        leaderTask,
         "队长输出：已完成页面验收所需的 user-center SOP 执行证据、trace 和用量回写。",
       );
 

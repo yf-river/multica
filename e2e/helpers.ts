@@ -93,6 +93,37 @@ export function expectCommittedResponseRecovery(probe: CommittedResponseLossProb
   expect(probe.requestKeys[1]).toBe(probe.requestKeys[0]);
 }
 
+export async function waitForSquadLeaderTask(
+  api: TestApiClient,
+  issueId: string,
+  leaderAgentId: string,
+  options: { timeout?: number; message: string; excludeTaskId?: string },
+) {
+  await expect.poll(async () => {
+    const task = await api.findLeaderTask(issueId, leaderAgentId);
+    return task?.id && task.id !== options.excludeTaskId ? task.id : "";
+  }, { timeout: options.timeout ?? 15_000, message: options.message }).not.toBe("");
+  const task = await api.findLeaderTask(issueId, leaderAgentId);
+  if (!task || task.id === options.excludeTaskId) throw new Error(options.message);
+  return task;
+}
+
+export async function waitForIssueSOPRun(
+  api: TestApiClient,
+  issueId: string,
+  profileKey: string,
+  options: { timeout?: number; message: string },
+) {
+  await expect.poll(async () => {
+    const runs = await api.listIssueSOPRuns(issueId);
+    return runs.items.find((item) => item.profile_key === profileKey)?.id ?? "";
+  }, { timeout: options.timeout ?? 15_000, message: options.message }).not.toBe("");
+  const runs = await api.listIssueSOPRuns(issueId);
+  const run = runs.items.find((item) => item.profile_key === profileKey);
+  if (!run) throw new Error(options.message);
+  return run;
+}
+
 export async function authenticateBrowserSession(
   page: Page,
   token: string,

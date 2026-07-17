@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { loginAsDefault, createTestApi } from "./helpers";
+import { createTestApi, loginAsDefault, waitForIssueSOPRun, waitForSquadLeaderTask } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
 test.describe("小队 SOP 端到端", () => {
@@ -81,43 +81,26 @@ test.describe("小队 SOP 端到端", () => {
       assignee_id: squad.id,
     });
 
-    await expect.poll(
-      async () => (await api.findLeaderTask(issue.id, leader!.id))?.id ?? "",
-      {
-        timeout: 15_000,
-        message: "等待小队队长任务自动入队",
-      },
-    ).not.toBe("");
-    const leaderTask = await api.findLeaderTask(issue.id, leader!.id);
-    expect(leaderTask).toBeTruthy();
-    expect(leaderTask!.is_leader_task).toBe(true);
-    expect(leaderTask!.status).toBe("queued");
-
-    await expect.poll(
-      async () => {
-        const data = await api.listIssueSOPRuns(issue.id);
-        return data.items.find((item) => item.profile_key === "multica-coding")?.id ?? "";
-      },
-      {
-        timeout: 15_000,
-        message: "等待小队 SOP Run 自动生成",
-      },
-    ).not.toBe("");
-    const initialRuns = await api.listIssueSOPRuns(issue.id);
-    const initialRun = initialRuns.items.find((item) => item.profile_key === "multica-coding");
-    expect(initialRun).toBeTruthy();
-    expect(initialRun!.leader_task_id).toBe(leaderTask!.id);
-    expect(initialRun!.current_step_key).toBe("receive");
-    expect(initialRun!.events.some((event) => event.event_type === "步骤开始")).toBe(true);
-    expect((initialRun!.profile.steps as unknown[]).length).toBe(7);
+    const leaderTask = await waitForSquadLeaderTask(api, issue.id, leader!.id, {
+      message: "等待小队队长任务自动入队",
+    });
+    expect(leaderTask.is_leader_task).toBe(true);
+    expect(leaderTask.status).toBe("queued");
+    const initialRun = await waitForIssueSOPRun(api, issue.id, "multica-coding", {
+      message: "等待小队 SOP Run 自动生成",
+    });
+    expect(initialRun.leader_task_id).toBe(leaderTask.id);
+    expect(initialRun.current_step_key).toBe("receive");
+    expect(initialRun.events.some((event) => event.event_type === "步骤开始")).toBe(true);
+    expect((initialRun.profile.steps as unknown[]).length).toBe(7);
 
     await api.completeSquadLeaderTaskViaDaemon(
-      leaderTask!,
+      leaderTask,
       "队长输出：已完成 Multica 编码小队需求接收、方案分派、独立验收和可观测证据登记。",
     );
 
     const runsAfterEvidence = await api.listIssueSOPRuns(issue.id);
-    const runAfterEvidence = runsAfterEvidence.items.find((item) => item.id === initialRun!.id);
+    const runAfterEvidence = runsAfterEvidence.items.find((item) => item.id === initialRun.id);
     expect(runAfterEvidence).toBeTruthy();
     expect(runAfterEvidence!.status).toBe("进行中");
 
@@ -144,7 +127,7 @@ test.describe("小队 SOP 端到端", () => {
       "价格已知": true,
     });
     expect(summary.runtime_breakdown[0]).toMatchObject({
-      runtime: leaderTask!.runtime_id,
+      runtime: leaderTask.runtime_id,
       "价格已知": true,
     });
 
@@ -174,22 +157,13 @@ test.describe("小队 SOP 端到端", () => {
     expect(parentComment!.content).toContain(child.identifier);
     expect(parentComment!.content).toContain(`mention://squad/${squad.id}`);
 
-    await expect.poll(
-      async () => {
-        const task = await api.findLeaderTask(issue.id, leader!.id);
-        return task?.id && task.id !== leaderTask!.id ? task.id : "";
-      },
-      {
-        timeout: 20_000,
-        message: "等待 child-done system comment 再次唤醒父 issue",
-      },
-    ).not.toBe("");
-
-    const requeuedTask = await api.findLeaderTask(issue.id, leader!.id);
-    expect(requeuedTask).toBeTruthy();
-    expect(requeuedTask!.id).not.toBe(leaderTask!.id);
-    expect(requeuedTask!.is_leader_task).toBe(true);
-    expect(["queued", "dispatched", "running", "completed"]).toContain(requeuedTask!.status);
+    const requeuedTask = await waitForSquadLeaderTask(api, issue.id, leader!.id, {
+      timeout: 20_000,
+      message: "等待 child-done system comment 再次唤醒父 issue",
+      excludeTaskId: leaderTask.id,
+    });
+    expect(requeuedTask.is_leader_task).toBe(true);
+    expect(["queued", "dispatched", "running", "completed"]).toContain(requeuedTask.status);
   });
 
   test("user-center 小队接收 issue 后生成真实队长任务，并由 daemon 回写 trace/messages/usage", async () => {
@@ -209,40 +183,23 @@ test.describe("小队 SOP 端到端", () => {
       assignee_id: squad.id,
     });
 
-    await expect.poll(
-      async () => (await api.findLeaderTask(issue.id, leader!.id))?.id ?? "",
-      {
-        timeout: 15_000,
-        message: "等待 user-center 小队队长任务自动入队",
-      },
-    ).not.toBe("");
-    const leaderTask = await api.findLeaderTask(issue.id, leader!.id);
-    expect(leaderTask).toBeTruthy();
-    expect(leaderTask!.status).toBe("queued");
-
-    await expect.poll(
-      async () => {
-        const data = await api.listIssueSOPRuns(issue.id);
-        return data.items.find((item) => item.profile_key === "generic-project-sop-flow-v2")?.id ?? "";
-      },
-      {
-        timeout: 15_000,
-        message: "等待 user-center SOP Run 自动生成",
-      },
-    ).not.toBe("");
-    const runs = await api.listIssueSOPRuns(issue.id);
-    const run = runs.items.find((item) => item.profile_key === "generic-project-sop-flow-v2");
-    expect(run).toBeTruthy();
-    expect(run!.current_step_key).toBe("pm");
-    expect((run!.profile.steps as unknown[]).length).toBe(6);
+    const leaderTask = await waitForSquadLeaderTask(api, issue.id, leader!.id, {
+      message: "等待 user-center 小队队长任务自动入队",
+    });
+    expect(leaderTask.status).toBe("queued");
+    const run = await waitForIssueSOPRun(api, issue.id, "generic-project-sop-flow-v2", {
+      message: "等待 user-center SOP Run 自动生成",
+    });
+    expect(run.current_step_key).toBe("pm");
+    expect((run.profile.steps as unknown[]).length).toBe(6);
 
     await api.completeSquadLeaderTaskViaDaemon(
-      leaderTask!,
+      leaderTask,
       "队长输出：user-center 小队已完成澄清、方案拆解、skill 执行和验收证据登记。",
     );
 
     const runsAfterEvidence = await api.listIssueSOPRuns(issue.id);
-    const runAfterEvidence = runsAfterEvidence.items.find((item) => item.id === run!.id);
+    const runAfterEvidence = runsAfterEvidence.items.find((item) => item.id === run.id);
     expect(runAfterEvidence).toBeTruthy();
     expect(runAfterEvidence!.status).toBe("进行中");
 
