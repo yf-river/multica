@@ -12,8 +12,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// listActivitiesForIssue is a test helper that fetches up to 100 activity_log
-// records for an issue. Uses the same query that backs the timeline endpoint.
 func listActivitiesForIssue(t *testing.T, queries *db.Queries, issueID string) []db.ActivityLog {
 	t.Helper()
 	activities, err := queries.ListActivitiesForIssue(context.Background(), db.ListActivitiesForIssueParams{
@@ -24,6 +22,13 @@ func listActivitiesForIssue(t *testing.T, queries *db.Queries, issueID string) [
 		t.Fatalf("ListActivitiesForIssue: %v", err)
 	}
 	return activities
+}
+
+func activityIssueResponse(issueID, title, status string) handler.IssueResponse {
+	return handler.IssueResponse{
+		ID: issueID, WorkspaceID: testWorkspaceID, Title: title, Status: status,
+		Priority: "medium", CreatorType: "member", CreatorID: testUserID,
+	}
 }
 
 func cleanupActivities(t *testing.T, issueID string) {
@@ -91,17 +96,7 @@ func TestActivityIssueCreated(t *testing.T) {
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: replayedPayload(t, map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          fixture.issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "activity test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-		}),
+		Payload:     replayedPayload(t, map[string]any{"issue": activityIssueResponse(fixture.issueID, "activity test issue", "todo")}),
 	})
 
 	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
@@ -125,15 +120,7 @@ func TestActivityIssueUpdated_StatusChanged(t *testing.T) {
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          fixture.issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "activity test issue",
-				Status:      "in_progress",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
+			"issue":          activityIssueResponse(fixture.issueID, "activity test issue", "in_progress"),
 			"status_changed": true,
 			"prev_status":    "todo",
 		},
@@ -213,22 +200,13 @@ func TestActivityIssueUpdated_AssigneeChanged(t *testing.T) {
 func TestActivityIssueUpdated_NoChangeFlags(t *testing.T) {
 	fixture := setupActivityIssueTest(t)
 
-	// Publish issue:updated with no change flags set
 	fixture.publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          fixture.issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "activity test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
+			"issue":               activityIssueResponse(fixture.issueID, "activity test issue", "todo"),
 			"assignee_changed":    false,
 			"status_changed":      false,
 			"description_changed": false,
@@ -250,15 +228,7 @@ func TestActivityIssueUpdated_TitleChanged(t *testing.T) {
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          fixture.issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "renamed issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
+			"issue":         activityIssueResponse(fixture.issueID, "renamed issue", "todo"),
 			"title_changed": true,
 			"prev_title":    "activity test issue",
 		},

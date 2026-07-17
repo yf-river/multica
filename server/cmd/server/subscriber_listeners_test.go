@@ -12,13 +12,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// subscriberTest helpers — reuse the integration test fixtures from TestMain
-// (testPool, testUserID, testWorkspaceID are set in integration_test.go).
-
-// createTestIssue inserts a minimal issue and returns its UUID string.
-// Picks the next per-workspace number to avoid colliding with the
-// uq_issue_workspace_number unique constraint when a single test creates
-// multiple issues.
 func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -35,6 +28,14 @@ func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	return issueID
 }
 
+func subscriberIssueResponse(issueID, status string, assigneeType, assigneeID *string) handler.IssueResponse {
+	return handler.IssueResponse{
+		ID: issueID, WorkspaceID: testWorkspaceID, Title: "test issue", Status: status,
+		Priority: "medium", CreatorType: "member", CreatorID: testUserID,
+		AssigneeType: assigneeType, AssigneeID: assigneeID,
+	}
+}
+
 func createTestComment(t *testing.T, issueID, authorType, authorID, content, commentType string) string {
 	t.Helper()
 	var commentID string
@@ -48,7 +49,6 @@ func createTestComment(t *testing.T, issueID, authorType, authorID, content, com
 	return commentID
 }
 
-// createTestUser inserts a user with the given account and returns the UUID string.
 func createTestUser(t *testing.T, account string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -138,23 +138,12 @@ func TestSubscriberIssueCreated_CreatorProjection(t *testing.T) {
 		subscriberEvents = append(subscriberEvents, event)
 	})
 
-	// Publish issue:created event with no assignee
 	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-		},
+		Payload:     map[string]any{"issue": subscriberIssueResponse(issueID, "todo", nil, nil)},
 	})
 
 	if !isSubscribed(t, queries, issueID, "member", testUserID) {
@@ -217,19 +206,7 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
+		Payload:     map[string]any{"issue": subscriberIssueResponse(issueID, "todo", &assigneeType, &assigneeID)},
 	})
 
 	if !isSubscribed(t, queries, issueID, "member", testUserID) {
@@ -289,7 +266,6 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	// Creator is also the assignee (self-assign)
 	assigneeType := "member"
 	assigneeID := testUserID
 	publishSubscriberProjection(t, queries, bus, events.Event{
@@ -297,19 +273,7 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
+		Payload:     map[string]any{"issue": subscriberIssueResponse(issueID, "todo", &assigneeType, &assigneeID)},
 	})
 
 	// Should only have 1 subscriber record (ON CONFLICT DO NOTHING handles idempotency)
@@ -339,17 +303,7 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
+			"issue":            subscriberIssueResponse(issueID, "todo", &assigneeType, &assigneeID),
 			"assignee_changed": true,
 		},
 	})
@@ -366,28 +320,18 @@ func TestSubscriberIssueUpdated_NoAssigneeChange(t *testing.T) {
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	// Publish issue:updated without assignee_changed flag
 	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "test issue",
-				Status:      "in_progress",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
+			"issue":            subscriberIssueResponse(issueID, "in_progress", nil, nil),
 			"assignee_changed": false,
 			"status_changed":   true,
 		},
 	})
 
-	// No subscriber should have been added
 	if count := subscriberCount(t, queries, issueID); count != 0 {
 		t.Fatalf("expected 0 subscribers when assignee not changed, got %d", count)
 	}
