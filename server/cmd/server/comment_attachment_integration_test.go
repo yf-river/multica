@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// createTestAttachment inserts a test attachment row directly into the DB,
-// linked to the given issue with no comment_id. Returns the attachment UUID.
 func createTestAttachment(t *testing.T, issueID string) string {
 	t.Helper()
 	var id string
@@ -25,7 +23,6 @@ func createTestAttachment(t *testing.T, issueID string) string {
 	return id
 }
 
-// listCommentAttachmentIDs returns the attachment IDs linked to a comment.
 func listCommentAttachmentIDs(t *testing.T, commentID string) []string {
 	t.Helper()
 	rows, err := testPool.Query(context.Background(),
@@ -86,16 +83,13 @@ func TestUpdateCommentAttachments(t *testing.T) {
 		att2 := createTestAttachment(t, issueID)
 		att3 := createTestAttachment(t, issueID)
 
-		// Create comment with all three attachments.
 		commentID := createCommentWithAttachments(t, issueID, "comment with three attachments", []string{att1, att2, att3})
 
-		// Verify all three are linked.
 		ids := listCommentAttachmentIDs(t, commentID)
 		if len(ids) != 3 {
 			t.Fatalf("expected 3 attachments, got %d", len(ids))
 		}
 
-		// Edit: keep only att1 and att3, remove att2.
 		updateComment(t, commentID, map[string]any{
 			"content":        "updated — removed att2",
 			"attachment_ids": []string{att1, att3},
@@ -120,7 +114,6 @@ func TestUpdateCommentAttachments(t *testing.T) {
 			t.Fatalf("expected 1 attachment, got %d", len(ids))
 		}
 
-		// Edit with empty attachment_ids to remove all.
 		updateComment(t, commentID, map[string]any{
 			"content":        "no more attachments",
 			"attachment_ids": []string{},

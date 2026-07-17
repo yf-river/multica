@@ -10,16 +10,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func TestFailTaskRollsBackWhenRetryCreationFails(t *testing.T) {
+func setupRetryableTask(t *testing.T, stale bool) (context.Context, *chatCompletionFixture) {
+	t.Helper()
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := testPool.Exec(ctx, `
-		UPDATE agent_task_queue SET max_attempts = 2 WHERE id = $1
-	`, fixture.task.ID); err != nil {
-		t.Fatalf("increase retry budget: %v", err)
+	query := `UPDATE agent_task_queue SET max_attempts = 2 WHERE id = $1`
+	if stale {
+		query = `
+			UPDATE agent_task_queue
+			SET max_attempts = 2, started_at = now() - interval '2 hours'
+			WHERE id = $1
+		`
 	}
+	if _, err := testPool.Exec(ctx, query, fixture.task.ID); err != nil {
+		t.Fatalf("make task retryable: %v", err)
+	}
+	return ctx, fixture
+}
+
+func TestFailTaskRollsBackWhenRetryCreationFails(t *testing.T) {
+	ctx, fixture := setupRetryableTask(t, false)
 	installRetryInsertFailure(t, fixture.task.ID)
 
 	if _, err := fixture.taskService.FailTask(ctx, fixture.task.ID, "task timed out", "", "", "timeout"); err == nil {
@@ -32,24 +45,11 @@ func TestFailTaskRollsBackWhenRetryCreationFails(t *testing.T) {
 	if persisted.Status != "running" {
 		t.Fatalf("retry insert failure left parent status %q, want running", persisted.Status)
 	}
-	var eventCount int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*) FROM domain_event_outbox
-		WHERE event_type = 'task:failed' AND payload->>'task_id' = $1
-	`, util.UUIDToString(fixture.task.ID)).Scan(&eventCount); err != nil {
-		t.Fatalf("count failed task events: %v", err)
-	}
-	if eventCount != 0 {
-		t.Fatalf("retry insert failure left %d terminal events", eventCount)
-	}
+	assertTaskTerminalEventCount(t, ctx, fixture.task.ID, protocol.EventTaskFailed, 0)
 }
 
 func TestFailTaskMaterializesOneRetryWithTerminalEvent(t *testing.T) {
-	ctx := context.Background()
-	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET max_attempts = 2 WHERE id = $1`, fixture.task.ID); err != nil {
-		t.Fatalf("increase retry budget: %v", err)
-	}
+	ctx, fixture := setupRetryableTask(t, false)
 	if _, err := fixture.taskService.FailTask(ctx, fixture.task.ID, "task timed out", "", "", "timeout"); err != nil {
 		t.Fatalf("FailTask: %v", err)
 	}
@@ -57,31 +57,18 @@ func TestFailTaskMaterializesOneRetryWithTerminalEvent(t *testing.T) {
 	if _, err := fixture.queries.GetRetryTaskForParent(ctx, fixture.task.ID); err != nil {
 		t.Fatalf("GetRetryTaskForParent: %v", err)
 	}
-	var retryCount, eventCount int
+	var retryCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1`, fixture.task.ID).Scan(&retryCount); err != nil {
 		t.Fatalf("count retry tasks: %v", err)
 	}
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*) FROM domain_event_outbox
-		WHERE event_type = 'task:failed' AND payload->>'task_id' = $1
-	`, util.UUIDToString(fixture.task.ID)).Scan(&eventCount); err != nil {
-		t.Fatalf("count terminal events: %v", err)
+	if retryCount != 1 {
+		t.Fatalf("retry tasks = %d, want 1", retryCount)
 	}
-	if retryCount != 1 || eventCount != 1 {
-		t.Fatalf("atomic failure state = retries %d events %d, want 1/1", retryCount, eventCount)
-	}
+	assertTaskTerminalEventCount(t, ctx, fixture.task.ID, protocol.EventTaskFailed, 1)
 }
 
 func TestFailStaleTasksSerializesConcurrentSweepers(t *testing.T) {
-	ctx := context.Background()
-	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := testPool.Exec(ctx, `
-		UPDATE agent_task_queue
-		SET max_attempts = 2, started_at = now() - interval '2 hours'
-		WHERE id = $1
-	`, fixture.task.ID); err != nil {
-		t.Fatalf("age retryable task: %v", err)
-	}
+	ctx, fixture := setupRetryableTask(t, true)
 
 	type sweepResult struct {
 		tasks   int
@@ -118,15 +105,7 @@ func TestFailStaleTasksSerializesConcurrentSweepers(t *testing.T) {
 }
 
 func TestFailStaleTasksReportsDurableRetryCount(t *testing.T) {
-	ctx := context.Background()
-	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := testPool.Exec(ctx, `
-		UPDATE agent_task_queue
-		SET max_attempts = 2, started_at = now() - interval '2 hours'
-		WHERE id = $1
-	`, fixture.task.ID); err != nil {
-		t.Fatalf("age retryable task: %v", err)
-	}
+	ctx, fixture := setupRetryableTask(t, true)
 
 	batch, err := fixture.taskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 24 * 60 * 60,
@@ -147,15 +126,7 @@ func TestFailStaleTasksReportsDurableRetryCount(t *testing.T) {
 }
 
 func TestFailStaleTasksRollsBackBatchWhenRetryCreationFails(t *testing.T) {
-	ctx := context.Background()
-	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := testPool.Exec(ctx, `
-		UPDATE agent_task_queue
-		SET max_attempts = 2, started_at = now() - interval '2 hours'
-		WHERE id = $1
-	`, fixture.task.ID); err != nil {
-		t.Fatalf("age retryable task: %v", err)
-	}
+	ctx, fixture := setupRetryableTask(t, true)
 	installRetryInsertFailure(t, fixture.task.ID)
 
 	if _, err := fixture.taskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
@@ -171,16 +142,7 @@ func TestFailStaleTasksRollsBackBatchWhenRetryCreationFails(t *testing.T) {
 	if persisted.Status != "running" {
 		t.Fatalf("batch retry failure left task status %q, want running", persisted.Status)
 	}
-	var eventCount int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*) FROM domain_event_outbox
-		WHERE event_type = 'task:failed' AND payload->>'task_id' = $1
-	`, util.UUIDToString(fixture.task.ID)).Scan(&eventCount); err != nil {
-		t.Fatalf("count batch terminal events: %v", err)
-	}
-	if eventCount != 0 {
-		t.Fatalf("batch retry failure left %d terminal events", eventCount)
-	}
+	assertTaskTerminalEventCount(t, ctx, fixture.task.ID, protocol.EventTaskFailed, 0)
 }
 
 func installRetryInsertFailure(t *testing.T, parentTaskID pgtype.UUID) func() {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -208,6 +209,9 @@ func authRequestWithHeaders(t *testing.T, method, path string, body any, extraHe
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
 	for name, value := range extraHeaders {
 		req.Header.Set(name, value)
+	}
+	if method == http.MethodPost && req.Header.Get("Idempotency-Key") == "" {
+		req.Header.Set("Idempotency-Key", uuid.NewString())
 	}
 
 	resp, err := http.DefaultClient.Do(req)

@@ -25,9 +25,7 @@ func TestEditCommentTriggers(t *testing.T) {
 			"attachment_ids": []string{},
 		})
 
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task after adding agent mention via edit, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("edit removes agent mention cancels task", func(t *testing.T) {
@@ -35,18 +33,14 @@ func TestEditCommentTriggers(t *testing.T) {
 		content := fmt.Sprintf("[@Agent](mention://agent/%s) fix this", agentID)
 		commentID := postComment(t, issueID, content, nil)
 
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Fatalf("expected 1 pending task from initial mention, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 
 		updateComment(t, commentID, map[string]any{
 			"content":        "removed the mention, nevermind",
 			"attachment_ids": []string{},
 		})
 
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks after removing mention via edit, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 
 	t.Run("edit changes content but keeps same mention re-triggers", func(t *testing.T) {
@@ -54,9 +48,7 @@ func TestEditCommentTriggers(t *testing.T) {
 		content := fmt.Sprintf("[@Agent](mention://agent/%s) fix bug A", agentID)
 		commentID := postComment(t, issueID, content, nil)
 
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Fatalf("expected 1 pending task from initial mention, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 
 		clearTasks(t, issueID)
 
@@ -66,9 +58,7 @@ func TestEditCommentTriggers(t *testing.T) {
 			"attachment_ids": []string{},
 		})
 
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task after content change re-trigger, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("edit on agent-assigned issue cancels and re-triggers assignee task", func(t *testing.T) {
@@ -81,9 +71,7 @@ func TestEditCommentTriggers(t *testing.T) {
 		clearTasks(t, assignedIssue)
 
 		commentID := postComment(t, assignedIssue, "fix the login page", nil)
-		if n := countPendingTasks(t, assignedIssue); n != 1 {
-			t.Fatalf("expected 1 pending task from on_comment trigger, got %d", n)
-		}
+		assertPendingTasks(t, assignedIssue, 1)
 
 		clearTasks(t, assignedIssue)
 
@@ -92,8 +80,6 @@ func TestEditCommentTriggers(t *testing.T) {
 			"attachment_ids": []string{},
 		})
 
-		if n := countPendingTasks(t, assignedIssue); n != 1 {
-			t.Errorf("expected 1 pending task after edit re-triggered assignee, got %d", n)
-		}
+		assertPendingTasks(t, assignedIssue, 1)
 	})
 }

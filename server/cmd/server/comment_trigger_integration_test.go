@@ -34,10 +34,6 @@ func authRequestWithAgent(t *testing.T, method, path string, body any, agentID s
 	})
 }
 
-// ensureAgentTask returns a queued task UUID belonging to the given agent,
-// inserting one if none exists. Used by authRequestWithAgent so callers
-// can keep treating "set X-Agent-ID" as the single knob for posing as an
-// agent while the helper supplies the current task-token request state.
 func ensureAgentTask(t *testing.T, agentID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -65,7 +61,6 @@ func ensureAgentTask(t *testing.T, agentID string) string {
 	return taskID
 }
 
-// countPendingTasks returns the number of queued/dispatched tasks for an issue.
 func countPendingTasks(t *testing.T, issueID string) int {
 	t.Helper()
 	var count int
@@ -78,7 +73,13 @@ func countPendingTasks(t *testing.T, issueID string) int {
 	return count
 }
 
-// clearTasks deletes all tasks for an issue (cleanup between subtests).
+func assertPendingTasks(t *testing.T, issueID string, want int) {
+	t.Helper()
+	if got := countPendingTasks(t, issueID); got != want {
+		t.Fatalf("pending tasks = %d, want %d", got, want)
+	}
+}
+
 func clearTasks(t *testing.T, issueID string) {
 	t.Helper()
 	_, err := testPool.Exec(context.Background(),
@@ -88,8 +89,6 @@ func clearTasks(t *testing.T, issueID string) {
 	}
 }
 
-// latestTriggerCommentID returns the trigger_comment_id of the most recently
-// created queued/dispatched task for the given issue, or empty string if none.
 func latestTriggerCommentID(t *testing.T, issueID string) string {
 	t.Helper()
 	var triggerID *string
@@ -109,7 +108,6 @@ func latestTriggerCommentID(t *testing.T, issueID string) string {
 	return *triggerID
 }
 
-// getAgentID returns the ID of the first agent in the test workspace.
 func getAgentID(t *testing.T) string {
 	t.Helper()
 	resp := authRequest(t, "GET", "/api/agents?workspace_id="+testWorkspaceID, nil)
@@ -121,11 +119,8 @@ func getAgentID(t *testing.T) string {
 	return agents[0]["id"].(string)
 }
 
-// createSecondAgent creates a second agent in the test workspace and returns its ID.
-// It reuses the same runtime as the first agent.
 func createSecondAgent(t *testing.T) string {
 	t.Helper()
-	// Fetch the first agent to get its runtime_id.
 	resp := authRequest(t, "GET", "/api/agents?workspace_id="+testWorkspaceID, nil)
 	var agents []map[string]any
 	readJSON(t, resp, &agents)
@@ -153,7 +148,6 @@ func createSecondAgent(t *testing.T) string {
 	return id
 }
 
-// createIssueAssignedToAgent creates a todo issue assigned to the given agent.
 func createIssueAssignedToAgent(t *testing.T, title, agentID string) string {
 	t.Helper()
 	resp := authRequest(t, "PUT", fmt.Sprintf("/api/issues/%s", createIssue(t, title)), map[string]any{
@@ -165,7 +159,6 @@ func createIssueAssignedToAgent(t *testing.T, title, agentID string) string {
 	return issue["id"].(string)
 }
 
-// createIssue creates a basic todo issue and returns its ID.
 func createIssue(t *testing.T, title string) string {
 	t.Helper()
 	resp := authRequest(t, "POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -182,7 +175,6 @@ func createIssue(t *testing.T, title string) string {
 	return issue["id"].(string)
 }
 
-// postComment posts a comment as the test member.
 func postComment(t *testing.T, issueID, content string, parentID *string) string {
 	t.Helper()
 	body := map[string]any{
@@ -203,7 +195,6 @@ func postComment(t *testing.T, issueID, content string, parentID *string) string
 	return comment["id"].(string)
 }
 
-// postCommentAsAgent posts a comment with the X-Agent-ID header.
 func postCommentAsAgent(t *testing.T, issueID, content, agentID string, parentID *string) string {
 	t.Helper()
 	body := map[string]any{
@@ -224,14 +215,8 @@ func postCommentAsAgent(t *testing.T, issueID, content, agentID string, parentID
 	return comment["id"].(string)
 }
 
-// strPtr returns a pointer to a string.
 func strPtr(s string) *string { return &s }
 
-// TestCommentTriggerOnComment tests on_comment trigger scenarios end-to-end.
-// Verifies that the agent task queue is populated correctly based on:
-// - top-level vs threaded comments
-// - member vs agent thread starters
-// - presence/absence of @mentions
 func TestCommentTriggerOnComment(t *testing.T) {
 	agentID := getAgentID(t)
 	issueID := createIssueAssignedToAgent(t, "Comment trigger integration test", agentID)
@@ -244,9 +229,7 @@ func TestCommentTriggerOnComment(t *testing.T) {
 	t.Run("top-level comment without mentions triggers agent", func(t *testing.T) {
 		clearTasks(t, issueID)
 		postComment(t, issueID, "Please fix this bug", nil)
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("top-level comment mentioning only others suppresses trigger", func(t *testing.T) {
@@ -254,18 +237,14 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		// Mention a fake agent UUID that is not the assignee.
 		content := "[@SomeoneElse](mention://agent/00000000-0000-0000-0000-000000000001) what do you think?"
 		postComment(t, issueID, content, nil)
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 
 	t.Run("top-level comment mentioning assignee triggers agent", func(t *testing.T) {
 		clearTasks(t, issueID)
 		content := fmt.Sprintf("[@Agent](mention://agent/%s) fix this", agentID)
 		postComment(t, issueID, content, nil)
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("reply to agent thread without mentions triggers agent", func(t *testing.T) {
@@ -274,24 +253,14 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		threadID := postCommentAsAgent(t, issueID, "I analyzed the issue.", agentID, nil)
 		// Member replies in the agent's thread.
 		postComment(t, issueID, "Looks good, please proceed", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
-	// Regression guard for #1301: the assignee on_comment path must record
-	// the NEW reply as trigger_comment_id, not the thread root. Otherwise
-	// the daemon feeds stale content to the agent prompt, which with
-	// `--resume` sessions surfaces as "already replied, no further action".
-	// Reply placement (flat-thread grouping) is handled downstream in
-	// TaskService.createAgentComment, not here.
 	t.Run("reply records new comment id (not thread root) as trigger_comment_id", func(t *testing.T) {
 		clearTasks(t, issueID)
 		threadID := postCommentAsAgent(t, issueID, "First pass analysis.", agentID, nil)
 		replyID := postComment(t, issueID, "Please also check the edge case", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Fatalf("expected 1 pending task, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 		if got := latestTriggerCommentID(t, issueID); got != replyID {
 			t.Errorf("trigger_comment_id = %q, want reply id %q (thread root was %q)",
 				got, replyID, threadID)
@@ -306,9 +275,7 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		clearTasks(t, issueID)
 		// Another member reply (same user in this test, but the key is parent is by member).
 		postComment(t, issueID, "I agree with you", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks (member-to-member reply), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 
 	t.Run("reply to member thread after agent replied triggers agent", func(t *testing.T) {
@@ -320,9 +287,7 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		postCommentAsAgent(t, issueID, "Working on it, found the root cause.", agentID, strPtr(threadID))
 		// Member follows up in the same thread without @mentioning the agent.
 		postComment(t, issueID, "Great, please also check the edge case", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task (agent participated in thread), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("reply to member thread mentioning assignee triggers agent", func(t *testing.T) {
@@ -333,9 +298,7 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		// Reply mentioning the assignee agent.
 		content := fmt.Sprintf("[@Agent](mention://agent/%s) can you help with this?", agentID)
 		postComment(t, issueID, content, strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task (assignee mentioned in member thread), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("reply to member thread that @mentioned assignee triggers without re-mention", func(t *testing.T) {
@@ -347,14 +310,10 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		clearTasks(t, issueID)
 		// Reply in the thread WITHOUT re-mentioning the assignee.
 		postComment(t, issueID, "Here is more context for you", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task (assignee mentioned in thread root), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 }
 
-// TestCommentTriggerAtAllSuppression verifies that @all mentions do not
-// trigger agent execution — @all is a broadcast, not a direct request.
 func TestCommentTriggerAtAllSuppression(t *testing.T) {
 	agentID := getAgentID(t)
 	issueID := createIssueAssignedToAgent(t, "@all suppression test", agentID)
@@ -367,27 +326,20 @@ func TestCommentTriggerAtAllSuppression(t *testing.T) {
 	t.Run("top-level @all comment suppresses on_comment", func(t *testing.T) {
 		clearTasks(t, issueID)
 		postComment(t, issueID, "[@All](mention://all/all) heads up everyone", nil)
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks (@all should not trigger agent), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 
 	t.Run("@all in agent thread suppresses on_comment", func(t *testing.T) {
 		clearTasks(t, issueID)
 		threadID := postCommentAsAgent(t, issueID, "Here is my analysis.", agentID, nil)
 		postComment(t, issueID, "[@All](mention://all/all) FYI for the team", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks (@all in agent thread), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 }
 
-// TestCommentTriggerOnAssignNoStatusGate verifies that assigning an agent to
-// a non-todo issue still triggers the agent (status gate was removed).
 func TestCommentTriggerOnAssignNoStatusGate(t *testing.T) {
 	agentID := getAgentID(t)
 
-	// Create an in_progress issue.
 	issueID := createIssue(t, "On-assign status gate test")
 	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"status": "in_progress",
@@ -400,7 +352,6 @@ func TestCommentTriggerOnAssignNoStatusGate(t *testing.T) {
 		_ = resp.Body.Close()
 	})
 
-	// Assign the agent — should trigger despite non-todo status.
 	resp = authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
@@ -412,17 +363,12 @@ func TestCommentTriggerOnAssignNoStatusGate(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	if n := countPendingTasks(t, issueID); n != 1 {
-		t.Errorf("expected 1 pending task after assigning to in_progress issue, got %d", n)
-	}
+	assertPendingTasks(t, issueID, 1)
 }
 
-// TestCommentTriggerOnMentionNoStatusGate verifies that @mentioning an agent
-// on a done issue still triggers the agent (no status gate on on_mention).
 func TestCommentTriggerOnMentionNoStatusGate(t *testing.T) {
 	agentID := getAgentID(t)
 
-	// Create a done issue (not assigned to agent).
 	issueID := createIssue(t, "On-mention done issue test")
 	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"status": "done",
@@ -435,22 +381,15 @@ func TestCommentTriggerOnMentionNoStatusGate(t *testing.T) {
 		_ = resp.Body.Close()
 	})
 
-	// @mention the agent on a done issue — should still trigger.
 	content := fmt.Sprintf("[@Agent](mention://agent/%s) found a problem here", agentID)
 	postComment(t, issueID, content, nil)
 
-	if n := countPendingTasks(t, issueID); n != 1 {
-		t.Errorf("expected 1 pending task after @mention on done issue, got %d", n)
-	}
+	assertPendingTasks(t, issueID, 1)
 }
 
-// TestCommentTriggerThreadInheritedMention verifies that when a top-level
-// comment @mentions an agent (not the assignee), replies in that thread
-// also trigger the mentioned agent — even without explicitly re-mentioning it.
 func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 	agentID := getAgentID(t)
 
-	// Create an issue NOT assigned to the agent, so on_comment won't fire.
 	issueID := createIssue(t, "Thread-inherited mention test")
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
@@ -463,16 +402,12 @@ func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 		// Top-level comment @mentions the agent.
 		content := fmt.Sprintf("[@Agent](mention://agent/%s) can you review this?", agentID)
 		threadID := postComment(t, issueID, content, nil)
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Fatalf("expected 1 pending task after initial mention, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 		// Clear the task so we can test the reply independently.
 		clearTasks(t, issueID)
 		// Reply in the thread WITHOUT mentioning the agent.
 		postComment(t, issueID, "Here is more context for you", strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task from thread-inherited mention, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("reply does not double-trigger when re-mentioning same agent", func(t *testing.T) {
@@ -484,9 +419,7 @@ func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 		// Reply also @mentions the same agent — should still be just 1 task.
 		reply := fmt.Sprintf("[@Agent](mention://agent/%s) any update?", agentID)
 		postComment(t, issueID, reply, strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task (no duplicate), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("reply mentioning only a member does not inherit agent mention", func(t *testing.T) {
@@ -498,9 +431,7 @@ func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 		// Reply mentions only a member — should NOT inherit parent's agent mention.
 		reply := fmt.Sprintf("cc [@Someone](mention://member/%s)", testUserID)
 		postComment(t, issueID, reply, strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks (member-only reply should not inherit agent mention), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 
 	t.Run("reply mentioning a different agent does not inherit parent agent", func(t *testing.T) {
@@ -513,9 +444,7 @@ func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 		// Reply @mentions agent B — should trigger ONLY agent B, not agent A.
 		reply := fmt.Sprintf("[@AgentB](mention://agent/%s) can you also look?", agentB)
 		postComment(t, issueID, reply, strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task (only agent B), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 
 	t.Run("reply mentioning same agent and member triggers via explicit mention", func(t *testing.T) {
@@ -527,19 +456,10 @@ func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 		// Reply re-mentions the same agent along with a member — triggers via the reply's own mention.
 		reply := fmt.Sprintf("[@Agent](mention://agent/%s) and cc [@Someone](mention://member/%s)", agentID, testUserID)
 		postComment(t, issueID, reply, strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Errorf("expected 1 pending task (reply mentions agent explicitly), got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 	})
 }
 
-// TestDeleteCommentCancelsTriggeredTasks verifies that deleting a comment
-// also cancels any active tasks that were triggered by it. Without this,
-// the daemon would still claim the queued task after the FK SET NULL
-// nullified its trigger_comment_id, and the agent would either run with a
-// stale prompt (race during claim) or with a generic "you are assigned"
-// prompt that has no record of the now-deleted user request — both of
-// which manifest as "the agent still sees the deleted comment".
 func TestDeleteCommentCancelsTriggeredTasks(t *testing.T) {
 	agentID := getAgentID(t)
 	issueID := createIssueAssignedToAgent(t, "Delete-comment cancels task test", agentID)
@@ -552,9 +472,7 @@ func TestDeleteCommentCancelsTriggeredTasks(t *testing.T) {
 	t.Run("deleting trigger comment cancels its queued task", func(t *testing.T) {
 		clearTasks(t, issueID)
 		commentID := postComment(t, issueID, "Please fix this bug", nil)
-		if n := countPendingTasks(t, issueID); n != 1 {
-			t.Fatalf("expected 1 pending task before delete, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 1)
 
 		resp := authRequest(t, "DELETE", "/api/comments/"+commentID, nil)
 		_ = resp.Body.Close()
@@ -562,14 +480,10 @@ func TestDeleteCommentCancelsTriggeredTasks(t *testing.T) {
 			t.Fatalf("DeleteComment: expected 204, got %d", resp.StatusCode)
 		}
 
-		if n := countPendingTasks(t, issueID); n != 0 {
-			t.Errorf("expected 0 pending tasks after deleting trigger comment, got %d", n)
-		}
+		assertPendingTasks(t, issueID, 0)
 	})
 }
 
-// TestCommentTriggerCoalescing verifies that rapid-fire comments don't create
-// duplicate tasks (coalescing dedup).
 func TestCommentTriggerCoalescing(t *testing.T) {
 	agentID := getAgentID(t)
 	issueID := createIssueAssignedToAgent(t, "Coalescing test", agentID)
@@ -579,23 +493,15 @@ func TestCommentTriggerCoalescing(t *testing.T) {
 		_ = resp.Body.Close()
 	})
 
-	// Post two comments rapidly — only 1 task should be created (coalescing).
 	postComment(t, issueID, "First comment", nil)
 	postComment(t, issueID, "Second comment", nil)
 
-	if n := countPendingTasks(t, issueID); n != 1 {
-		t.Errorf("expected 1 pending task (coalescing), got %d", n)
-	}
+	assertPendingTasks(t, issueID, 1)
 }
 
-// TestCommentTriggerMentionAssigneeDoneIssue verifies that @mentioning the
-// assigned agent on a done issue still triggers execution. Previously the
-// assignee was unconditionally skipped in the mention path (assuming
-// on_comment handled it), but on_comment is suppressed for terminal statuses.
 func TestCommentTriggerMentionAssigneeDoneIssue(t *testing.T) {
 	agentID := getAgentID(t)
 
-	// Create an issue assigned to the agent, then mark it done.
 	issueID := createIssueAssignedToAgent(t, "Mention-assignee-done test", agentID)
 	clearTasks(t, issueID) // clear any tasks from assignment
 	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
@@ -609,11 +515,8 @@ func TestCommentTriggerMentionAssigneeDoneIssue(t *testing.T) {
 		_ = resp.Body.Close()
 	})
 
-	// @mention the assigned agent on the done issue — should trigger.
 	content := fmt.Sprintf("[@Agent](mention://agent/%s) reopen this please", agentID)
 	postComment(t, issueID, content, nil)
 
-	if n := countPendingTasks(t, issueID); n != 1 {
-		t.Errorf("expected 1 pending task after @mention of assignee on done issue, got %d", n)
-	}
+	assertPendingTasks(t, issueID, 1)
 }
