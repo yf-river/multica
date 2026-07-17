@@ -71,8 +71,8 @@ const issue = {
   title: "登录失败复盘",
   status: "in_progress",
   project: { id: "project-1", title: "账号平台" },
-  child_progress: { done: 0, total: 0 },
-  agent_activity: { running_count: 0, queued_count: 0 },
+  child_progress: { done: 1, total: 3 },
+  agent_activity: { running_count: 2, queued_count: 1 },
 } as Issue;
 
 const executionTree = {
@@ -121,6 +121,10 @@ describe("RunReviewsPage", () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "登录失败复盘" })).toBeInTheDocument();
+    expect(screen.getByText("账号平台", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("状态 进行中")).toBeInTheDocument();
+    expect(screen.getByText("子任务 1/3")).toBeInTheDocument();
+    expect(screen.getByText("运行 2")).toBeInTheDocument();
     expect(screen.getByText("项目：账号平台")).toBeInTheDocument();
     expect(screen.getByText("任务：无运行任务")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "生成评测用例" })).toBeEnabled();

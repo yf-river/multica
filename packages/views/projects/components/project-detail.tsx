@@ -7,7 +7,7 @@ import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
-import type { Issue, IssueAssigneeGroup, Project } from "@multica/core/types";
+import type { Issue, IssueAssigneeGroup } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
@@ -374,19 +374,6 @@ function ProjectIssuesSurface({
 // ProjectDetail
 // ---------------------------------------------------------------------------
 
-export function buildProjectRecentContext(
-  project: Pick<Project, "id" | "title" | "description" | "icon" | "status">,
-) {
-  return {
-    type: "project" as const,
-    id: project.id,
-    label: project.title,
-    subtitle: project.description ?? undefined,
-    icon: project.icon,
-    projectStatus: project.status,
-  };
-}
-
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
@@ -408,13 +395,14 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       recentProjectIcon === undefined ||
       !recentProjectStatus
     ) return;
-    recordRecentContext(wsId, buildProjectRecentContext({
+    recordRecentContext(wsId, {
+      type: "project",
       id: recentProjectId,
-      title: recentProjectTitle,
-      description: recentProjectDescription,
+      label: recentProjectTitle,
+      subtitle: recentProjectDescription ?? undefined,
       icon: recentProjectIcon,
-      status: recentProjectStatus,
-    }));
+      projectStatus: recentProjectStatus,
+    });
   }, [
     recentProjectDescription,
     recentProjectIcon,

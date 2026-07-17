@@ -204,7 +204,7 @@ function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; h
   );
 }
 
-export function issueRunRowMeta(issue: Pick<Issue, "project" | "status" | "child_progress">) {
+function issueRunRowMeta(issue: Pick<Issue, "project" | "status" | "child_progress">) {
   const childTotal = issue.child_progress?.total ?? 0;
   return {
     projectTitle: issue.project?.title ?? null,
@@ -215,7 +215,7 @@ export function issueRunRowMeta(issue: Pick<Issue, "project" | "status" | "child
   };
 }
 
-export function issueRunRowActivity(
+function issueRunRowActivity(
   issue: Pick<Issue, "agent_activity">,
 ): { count: number; tone: "running" | "queued" } | null {
   const running = issue.agent_activity?.running_count ?? 0;

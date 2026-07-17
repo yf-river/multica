@@ -56,7 +56,7 @@ const TOOL_KEY_BY_SLUG: Record<string, Exclude<ToolKey, "fallback">> = {
 // Pure stage decision returning translation keys. The hook below maps these
 // keys into localized labels — keeping the decision pure makes it easy to
 // follow the priority rules without translation noise.
-export function pickStageKeys(
+function pickStageKeys(
   status: string | undefined,
   taskMessages: readonly TaskMessagePayload[],
   availability: AgentAvailability | undefined,

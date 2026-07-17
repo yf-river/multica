@@ -52,7 +52,7 @@ export async function createIssueReviewDraftCase(
   }));
 }
 
-export function buildIssueReviewDraftCaseRequest({
+function buildIssueReviewDraftCaseRequest({
   issue,
   tree,
   stageRows,

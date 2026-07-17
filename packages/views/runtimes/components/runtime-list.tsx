@@ -130,7 +130,7 @@ const EMPTY_WORKLOAD: RuntimeWorkload = {
   queuedCount: 0,
 };
 
-export interface RuntimeRow {
+interface RuntimeRow {
   runtime: AgentRuntime;
   ownerMember: MemberWithUser | null;
   workload: RuntimeWorkload;
@@ -344,7 +344,7 @@ function CostCell({ runtimeId }: { runtimeId: string }) {
   );
 }
 
-export function CliCell({ runtime }: { runtime: AgentRuntime }) {
+function CliCell({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   if (isPendingCustomRuntime(runtime)) {
     const command = pendingRuntimeCommandName(runtime);
@@ -426,7 +426,7 @@ function AgentStack({ agentIds }: { agentIds: string[] }) {
   );
 }
 
-export function RuntimeRowMenu({
+function RuntimeRowMenu({
   runtime,
   wsId,
   canDelete,

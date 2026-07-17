@@ -12,6 +12,8 @@ const mockApi = vi.hoisted(() => ({
   listPromptEvaluationAssets: vi.fn(),
   listPromptEvaluationCases: vi.fn(),
   getIssueExecutionTree: vi.fn(),
+  listPromptLibraryVersions: vi.fn(),
+  listPromptLibraryTrials: vi.fn(),
 }));
 
 const navigationState = vi.hoisted(() => ({
@@ -26,6 +28,8 @@ vi.mock("@multica/core/api", () => ({
     listPromptEvaluationAssets: mockApi.listPromptEvaluationAssets,
     listPromptEvaluationCases: mockApi.listPromptEvaluationCases,
     getIssueExecutionTree: mockApi.getIssueExecutionTree,
+    listPromptLibraryVersions: mockApi.listPromptLibraryVersions,
+    listPromptLibraryTrials: mockApi.listPromptLibraryTrials,
   },
 }));
 
@@ -69,6 +73,8 @@ beforeEach(() => {
   mockApi.getIssueExecutionTree.mockResolvedValue({
     root: { id: "issue-1", tasks: [{ id: "task-1" }], children: [] },
   });
+  mockApi.listPromptLibraryVersions.mockResolvedValue([]);
+  mockApi.listPromptLibraryTrials.mockResolvedValue([]);
 });
 
 describe("PromptLibraryPage prompt editor orchestration", () => {
@@ -91,5 +97,30 @@ describe("PromptLibraryPage prompt editor orchestration", () => {
 
     expect(await screen.findByText("暂无数据集，可以先新建一个评估数据集。")).toBeInTheDocument();
     expect(mockApi.getIssueExecutionTree).toHaveBeenCalledWith("issue-1");
+  });
+
+  it("selects the prompt named by the current URL", async () => {
+    navigationState.search = "prompt_id=prompt-2";
+    mockApi.listPromptLibraryItems.mockResolvedValue([
+      {
+        id: "prompt-1",
+        name: "First prompt",
+        description: "",
+        content: "First",
+        version: 1,
+      },
+      {
+        id: "prompt-2",
+        name: "URL prompt",
+        description: "",
+        content: "Selected",
+        version: 2,
+      },
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "URL prompt" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("multica:training:selected-prompt:workspace-1")).toBe("prompt-2");
   });
 });

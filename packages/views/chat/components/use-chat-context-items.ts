@@ -58,7 +58,7 @@ function hydrateRecentEntry(entry: RecentContextEntry, data: Issue | Project | u
     : projectToMentionItem(data as Project, "recent");
 }
 
-export function parseCurrentContextRoute(pathname: string, searchParams: URLSearchParams): { type: "issue" | "project"; id: string } | null {
+function parseCurrentContextRoute(pathname: string, searchParams: URLSearchParams): { type: "issue" | "project"; id: string } | null {
   const issueMatch = pathname.match(/^\/[^/]+\/issues\/([^/]+)$/);
   if (issueMatch?.[1]) return { type: "issue", id: decodeURIComponent(issueMatch[1]) };
 
@@ -114,4 +114,3 @@ export function useChatContextItems(wsId: string): MentionItem[] {
     return [...currentItems, ...recentItems];
   }, [currentIssue, currentProject, recentQueries, visibleRecentEntries]);
 }
-

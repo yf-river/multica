@@ -629,7 +629,7 @@ function activeTaskTimeText(task: AgentTask, t: AgentsT, timeAgo: TimeAgoFn): st
  * lands in the last 30 days. Pure function so callers can pass a
  * deterministic `now` in tests.
  */
-export function deriveAvgDurationLast30d(
+function deriveAvgDurationLast30d(
   tasks: readonly AgentTask[],
   now: number,
 ): number {
@@ -655,7 +655,7 @@ export function deriveAvgDurationLast30d(
  * seconds inside the minute formatter so the column stays visually
  * aligned across rows.
  */
-export function formatDurationMs(ms: number): string {
+function formatDurationMs(ms: number): string {
   if (ms <= 0) return "—";
   if (ms < 60_000) {
     return `${Math.max(1, Math.round(ms / 1000))}s`;

@@ -111,7 +111,7 @@ function escapeCssIdentifier(value: string): string {
   return value.replace(/["\\]/g, "\\$&");
 }
 
-export function resolvePromptSelection(
+function resolvePromptSelection(
   items: Array<Pick<PromptLibraryItem, "id">>,
   currentId: string | null,
   promptIdParam: string | null,
@@ -124,7 +124,7 @@ export function resolvePromptSelection(
   return items[0]?.id ?? null;
 }
 
-export function promptDraftSyncKey(
+function promptDraftSyncKey(
   selected: Pick<PromptLibraryItem, "id" | "version"> | null,
   activeVersion: Pick<PromptLibraryVersion, "id"> | null,
 ): string | null {

@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
-import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, IssueTimelineSummary, TaskTraceEvent } from "@multica/core/types";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setApiInstance } from "@multica/core/api";
+import type { ApiClient } from "@multica/core/api";
+import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueExecutionTreeResponse, IssueTimelineNode, IssueTimelineSummary, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
-import { buildIssueReviewDraftCaseRequest } from "./run-review-draft-case";
+import { createIssueReviewDraftCase } from "./run-review-draft-case";
 import {
   buildEventTaskLabelById,
   buildRunReviewEventGroups,
@@ -30,8 +32,11 @@ import {
   timelineSegmentStyle,
   timelineSegmentTooltipRows,
 } from "./run-review-timeline";
-import { issueRunRowActivity, issueRunRowMeta } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
+
+afterEach(() => {
+  setApiInstance(undefined as unknown as ApiClient);
+});
 
 function trace(overrides: Partial<TaskTraceEvent> = {}): TaskTraceEvent {
   return {
@@ -274,52 +279,6 @@ describe("run review realtime helpers", () => {
     expect(buildRunReviewLiveTimelineNodes([pendingHumanNode], nowMs).map((node) => node.duration_ms)).toEqual([
       240_000,
     ]);
-  });
-});
-
-describe("issue run review list row metadata", () => {
-  it("keeps project and status while omitting empty child progress", () => {
-    const issue = {
-      project: { id: "project-1", title: "goal-test", icon: null },
-      status: "todo",
-      child_progress: { done: 0, total: 0 },
-    } as Issue;
-
-    expect(issueRunRowMeta(issue)).toEqual({
-      projectTitle: "goal-test",
-      status: "todo",
-      childProgress: null,
-    });
-  });
-
-  it("shows child progress only when an issue has children", () => {
-    const issue = {
-      project: null,
-      status: "in_progress",
-      child_progress: { done: 1, total: 3 },
-    } as Issue;
-
-    expect(issueRunRowMeta(issue)).toEqual({
-      projectTitle: null,
-      status: "in_progress",
-      childProgress: { done: 1, total: 3 },
-    });
-  });
-
-  it("only shows special activity labels and omits the default review label", () => {
-    const activity = (runningCount: number, queuedCount: number): Pick<Issue, "agent_activity"> => ({
-      agent_activity: { running_count: runningCount, queued_count: queuedCount, agent_ids: [] },
-    });
-
-    expect(issueRunRowActivity(activity(0, 0))).toBeNull();
-    expect(issueRunRowActivity(activity(2, 1))).toEqual({
-      count: 2,
-      tone: "running",
-    });
-    expect(issueRunRowActivity(activity(0, 3))).toEqual({
-      count: 3,
-      tone: "queued",
-    });
   });
 });
 
@@ -1534,7 +1493,7 @@ describe("buildRunReviewEventRows", () => {
     expect(String(sheet?.rows[1]?.at(-1))).toContain("关联 task_message #1 文本");
   });
 
-  it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", () => {
+  it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", async () => {
     const issue = {
       id: "issue-1",
       identifier: "ISS-1",
@@ -1625,14 +1584,24 @@ describe("buildRunReviewEventRows", () => {
       },
     ];
 
-    const request = buildIssueReviewDraftCaseRequest({
+    const createPromptEvaluationCase = vi.fn(async (request: CreatePromptEvaluationCaseRequest) => ({
+      id: "case-1",
+      ...request,
+    }));
+    setApiInstance({
+      listPromptEvaluationAssets: vi.fn().mockResolvedValue([
+        { id: "asset-1", name: "Issue 复盘评测 Draft", prompt_id: null },
+      ]),
+      createPromptEvaluationCase,
+    } as unknown as ApiClient);
+
+    await createIssueReviewDraftCase(
       issue,
       tree,
-      stageRows: stageRows as never,
-      childLanes: [],
-      assetId: "asset-1",
-      promptId: null,
-    });
+      stageRows as never,
+      [],
+    );
+    const request = createPromptEvaluationCase.mock.calls[0]![0];
     const input = request.input as Record<string, unknown>;
     const expected = request.expected as Record<string, unknown>;
     const runSnapshot = input.run_snapshot as Record<string, unknown>;
