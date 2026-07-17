@@ -10,14 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// CancelTaskByUser (POST /api/tasks/{taskId}/cancel) used to key cancellation
-// off issue_id / chat_session_id alone, which 404'd every task whose only
-// source link was autopilot_run_id or quick_create context (MUL-2827). These
-// tests pin the new behavior: tenancy flows through the task's owning agent,
-// with chat-creator privacy and the personal-agent visibility gate layered on.
-
-// taskStatus reads a task's current status straight from the DB so reject
-// paths can assert "no side effect before the access check".
 func taskStatus(t *testing.T, taskID string) string {
 	t.Helper()
 	var status string
@@ -29,11 +21,14 @@ func taskStatus(t *testing.T, taskID string) string {
 	return status
 }
 
-// createAutopilotRunOnlyTask seeds the autopilot -> autopilot_run -> task chain
-// that AutopilotService.dispatchRunOnly produces: a queued task with issue_id
-// and chat_session_id NULL, linked only by autopilot_run_id. The autopilot is
-// created in the agent's own workspace so the fixture works for foreign agents
-// too.
+func cleanupCancelTask(t *testing.T, taskID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+	})
+}
+
 func createAutopilotRunOnlyTask(t *testing.T, agentID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -72,15 +67,10 @@ func createAutopilotRunOnlyTask(t *testing.T, agentID string) string {
 	`, agentID, runtimeID, runID).Scan(&taskID); err != nil {
 		t.Fatalf("create run_only task: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
-	})
+	cleanupCancelTask(t, taskID)
 	return taskID
 }
 
-// createForeignWorkspaceAgent stands up an isolated workspace + runtime + agent
-// and returns the agent ID, for cross-tenant cancel tests.
 func createForeignWorkspaceAgent(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
@@ -115,9 +105,6 @@ func createForeignWorkspaceAgent(t *testing.T) string {
 	return agentID
 }
 
-// createWorkspaceMemberUser adds a plain (non-owner/admin) member to the test
-// workspace and returns the user ID. The member row cascades when the user is
-// deleted (member.user_id ON DELETE CASCADE).
 func createWorkspaceMemberUser(t *testing.T, name, account string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -155,6 +142,37 @@ func cancelTaskAs(t *testing.T, userID, taskID string, wantStatus int) *httptest
 	return w
 }
 
+func cancelTaskAndRequireStatus(t *testing.T, userID, taskID string, wantHTTPStatus int, wantTaskStatus string) *httptest.ResponseRecorder {
+	t.Helper()
+	response := cancelTaskAs(t, userID, taskID, wantHTTPStatus)
+	if got := taskStatus(t, taskID); got != wantTaskStatus {
+		t.Fatalf("task status = %q, want %q", got, wantTaskStatus)
+	}
+	return response
+}
+
+func decodeCancelTaskResponse(t *testing.T, response *httptest.ResponseRecorder) cancelTaskByUserResponse {
+	t.Helper()
+	var body cancelTaskByUserResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode cancel response: %v", err)
+	}
+	return body
+}
+
+func createLinkedChatUserMessage(t *testing.T, sessionID, taskID, content string) string {
+	t.Helper()
+	var messageID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id)
+		VALUES ($1, 'user', $2, $3)
+		RETURNING id
+	`, sessionID, content, taskID).Scan(&messageID); err != nil {
+		t.Fatalf("create linked user chat message: %v", err)
+	}
+	return messageID
+}
+
 func createRunningChatTask(t *testing.T, agentID, sessionID string) string {
 	t.Helper()
 	var taskID string
@@ -165,54 +183,30 @@ func createRunningChatTask(t *testing.T, agentID, sessionID string) string {
 	`, agentID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("create running chat task: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
-	})
+	cleanupCancelTask(t, taskID)
 	return taskID
 }
 
-// TestCancelTaskByUser_RunOnlyAutopilot_Succeeds is the core MUL-2827 fix: a
-// run_only autopilot task (issue_id + chat_session_id NULL, only
-// autopilot_run_id set) is cancellable by a member of its agent's workspace.
 func TestCancelTaskByUser_RunOnlyAutopilot_Succeeds(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelRunOnlyAgent", nil)
 	taskID := createAutopilotRunOnlyTask(t, agentID)
 
-	cancelTaskAs(t, testUserID, taskID, http.StatusOK)
-	if got := taskStatus(t, taskID); got != "cancelled" {
-		t.Fatalf("task not cancelled: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, testUserID, taskID, http.StatusOK, "cancelled")
 }
 
-// TestCancelTaskByUser_RunOnlyAutopilot_CrossWorkspace_Returns404 verifies the
-// tenant guard: a member of workspace A cannot cancel a run_only task whose
-// agent lives in workspace B, and the task is not mutated before the check.
 func TestCancelTaskByUser_RunOnlyAutopilot_CrossWorkspace_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	foreignAgentID := createForeignWorkspaceAgent(t)
 	taskID := createAutopilotRunOnlyTask(t, foreignAgentID)
 
-	cancelTaskAs(t, testUserID, taskID, http.StatusNotFound)
-	if got := taskStatus(t, taskID); got != "queued" {
-		t.Fatalf("foreign task was mutated: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, testUserID, taskID, http.StatusNotFound, "queued")
 }
 
-// TestCancelTaskByUser_QuickCreate_Succeeds verifies a quick_create task — no
-// issue yet, no chat session, only context JSONB — is cancellable during its
-// active window (the pre-issue-creation phase, i.e. whenever the user clicks X).
 func TestCancelTaskByUser_QuickCreate_Succeeds(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelQuickCreateAgent", nil)
 
@@ -225,24 +219,13 @@ func TestCancelTaskByUser_QuickCreate_Succeeds(t *testing.T) {
 	`, agentID, testWorkspaceID).Scan(&taskID); err != nil {
 		t.Fatalf("create quick_create task: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
-	})
+	cleanupCancelTask(t, taskID)
 
-	cancelTaskAs(t, testUserID, taskID, http.StatusOK)
-	if got := taskStatus(t, taskID); got != "cancelled" {
-		t.Fatalf("task not cancelled: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, testUserID, taskID, http.StatusOK, "cancelled")
 }
 
-// TestCancelTaskByUser_RetryClone_Autopilot_Succeeds verifies a retry clone of
-// an autopilot task — which copies parent_task_id + autopilot_run_id verbatim,
-// inheriting the NULL issue/chat links — is still cancellable.
 func TestCancelTaskByUser_RetryClone_Autopilot_Succeeds(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelRetryCloneAgent", nil)
 	parentID := createAutopilotRunOnlyTask(t, agentID)
@@ -260,18 +243,11 @@ func TestCancelTaskByUser_RetryClone_Autopilot_Succeeds(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, cloneID)
 	})
 
-	cancelTaskAs(t, testUserID, cloneID, http.StatusOK)
-	if got := taskStatus(t, cloneID); got != "cancelled" {
-		t.Fatalf("clone not cancelled: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, testUserID, cloneID, http.StatusOK, "cancelled")
 }
 
-// TestCancelTaskByUser_IssueTask_Succeeds is a regression guard: issue-bound
-// tasks (the original supported case) stay cancellable after the rewrite.
 func TestCancelTaskByUser_IssueTask_Succeeds(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelIssueTaskAgent", nil)
 
@@ -296,34 +272,22 @@ func TestCancelTaskByUser_IssueTask_Succeeds(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
-	cancelTaskAs(t, testUserID, taskID, http.StatusOK)
-	if got := taskStatus(t, taskID); got != "cancelled" {
-		t.Fatalf("task not cancelled: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, testUserID, taskID, http.StatusOK, "cancelled")
 }
 
-// TestCancelTaskByUser_ChatTask_NonCreator_Returns403 preserves chat privacy:
-// a workspace member who did not start the conversation cannot cancel its task.
 func TestCancelTaskByUser_ChatTask_NonCreator_Returns403(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelChatAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID) // creator = testUserID
 	otherUserID := createWorkspaceMemberUser(t, "Chat Bystander", "cancel-chat-bystander@multica.test")
 
 	taskID := createRunningChatTask(t, agentID, sessionID)
-	cancelTaskAs(t, otherUserID, taskID, http.StatusForbidden)
-	if got := taskStatus(t, taskID); got != "running" {
-		t.Fatalf("chat task was mutated: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, otherUserID, taskID, http.StatusForbidden, "running")
 }
 
 func TestCancelTaskByUser_ChatTaskWithTranscript_PersistsAssistantSnapshot(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelChatTranscriptAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
@@ -343,18 +307,10 @@ func TestCancelTaskByUser_ChatTaskWithTranscript_PersistsAssistantSnapshot(t *te
 		t.Fatalf("create task message: %v", err)
 	}
 
-	w := cancelTaskAs(t, testUserID, taskID, http.StatusOK)
-	var resp cancelTaskByUserResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode cancel response: %v", err)
-	}
+	resp := decodeCancelTaskResponse(t, cancelTaskAndRequireStatus(t, testUserID, taskID, http.StatusOK, "cancelled"))
 	if resp.CancelledChatMessage != nil {
 		t.Fatalf("expected no restore payload when transcript exists, got %#v", resp.CancelledChatMessage)
 	}
-	if got := taskStatus(t, taskID); got != "cancelled" {
-		t.Fatalf("task not cancelled: status = %q", got)
-	}
-
 	var role, content, messageTaskID string
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT role, content, COALESCE(task_id::text, '')
@@ -369,30 +325,16 @@ func TestCancelTaskByUser_ChatTaskWithTranscript_PersistsAssistantSnapshot(t *te
 }
 
 func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelChatNoTranscriptAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	taskID := createRunningChatTask(t, agentID, sessionID)
 
-	var userMessageID string
 	const userContent = "keep this prompt"
-	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO chat_message (chat_session_id, role, content, task_id)
-		VALUES ($1, 'user', $2, $3)
-		RETURNING id
-	`, sessionID, userContent, taskID).Scan(&userMessageID); err != nil {
-		t.Fatalf("create linked user chat message: %v", err)
-	}
-
-	w := cancelTaskAs(t, testUserID, taskID, http.StatusOK)
-	var resp cancelTaskByUserResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode cancel response: %v", err)
-	}
+	userMessageID := createLinkedChatUserMessage(t, sessionID, taskID, userContent)
+	resp := decodeCancelTaskResponse(t, cancelTaskAs(t, testUserID, taskID, http.StatusOK))
 	if resp.CancelledChatMessage == nil {
 		t.Fatal("expected restore payload for empty transcript cancel")
 	}
@@ -424,22 +366,13 @@ func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing
 }
 
 func TestCancelChatTaskRollsBackDraftRestoreWhenEventInsertFails(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelChatRollbackAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	taskID := createRunningChatTask(t, agentID, sessionID)
 
-	var userMessageID string
-	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO chat_message (chat_session_id, role, content, task_id)
-		VALUES ($1, 'user', 'draft must survive rollback', $2)
-		RETURNING id
-	`, sessionID, taskID).Scan(&userMessageID); err != nil {
-		t.Fatalf("create rollback chat message: %v", err)
-	}
+	userMessageID := createLinkedChatUserMessage(t, sessionID, taskID, "draft must survive rollback")
 	installOutboxStreamFailure(t, "task:"+taskID)
 
 	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(taskID)); err == nil {
@@ -474,24 +407,15 @@ func TestCancelChatTaskRollsBackDraftRestoreWhenEventInsertFails(t *testing.T) {
 //	(c) re-sending the restored draft re-binds the surviving attachment to the
 //	    new message in the same session.
 func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID := createHandlerTestAgent(t, "CancelChatAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	taskID := createRunningChatTask(t, agentID, sessionID)
 
-	var userMessageID string
 	const userContent = "look at this attachment"
-	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO chat_message (chat_session_id, role, content, task_id)
-		VALUES ($1, 'user', $2, $3)
-		RETURNING id
-	`, sessionID, userContent, taskID).Scan(&userMessageID); err != nil {
-		t.Fatalf("create linked user chat message: %v", err)
-	}
+	userMessageID := createLinkedChatUserMessage(t, sessionID, taskID, userContent)
 
 	// Bind an attachment to that user message, exactly as a real send does:
 	// workspace-scoped, uploaded by the session creator, pointing at both the
@@ -509,11 +433,7 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 	})
 
 	// Cancel the empty chat task (no transcript) — this deletes the user message.
-	w := cancelTaskAs(t, testUserID, taskID, http.StatusOK)
-	var resp cancelTaskByUserResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode cancel response: %v", err)
-	}
+	resp := decodeCancelTaskResponse(t, cancelTaskAs(t, testUserID, taskID, http.StatusOK))
 	if resp.CancelledChatMessage == nil {
 		t.Fatal("expected restore payload for empty transcript cancel")
 	}
@@ -606,19 +526,11 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 	}
 }
 
-// TestCancelTaskByUser_PrivateAgent_PlainMember_Returns403 verifies the cancel
-// endpoint mirrors the agent Activity / snapshot visibility gate: a plain
-// member who cannot see a personal agent's tasks cannot cancel them either.
 func TestCancelTaskByUser_PrivateAgent_PlainMember_Returns403(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentID, _, memberID := personalAgentTestFixture(t)
 	taskID := createAutopilotRunOnlyTask(t, agentID)
 
-	cancelTaskAs(t, memberID, taskID, http.StatusForbidden)
-	if got := taskStatus(t, taskID); got != "queued" {
-		t.Fatalf("task was mutated: status = %q", got)
-	}
+	cancelTaskAndRequireStatus(t, memberID, taskID, http.StatusForbidden, "queued")
 }
