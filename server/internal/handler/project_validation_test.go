@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestGetProjectClientCanceledReturns499(t *testing.T) {
@@ -29,16 +31,16 @@ func TestGetProjectClientCanceledReturns499(t *testing.T) {
 	}
 }
 
-func TestLoadProjectCountsPreservesCanceledQuery(t *testing.T) {
+func TestLoadProjectSummariesPreservesCanceledQuery(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, _, err := testHandler.loadProjectCounts(ctx, parseUUID("11111111-1111-4111-8111-111111111111"))
+	_, err := testHandler.loadProjectSummaries(ctx, []pgtype.UUID{parseUUID("11111111-1111-4111-8111-111111111111")})
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("loadProjectCounts error = %v, want context.Canceled", err)
+		t.Fatalf("loadProjectSummaries error = %v, want context.Canceled", err)
 	}
 }
 
