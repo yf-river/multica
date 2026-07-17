@@ -24,10 +24,6 @@ const builtinSkillsRoot = "builtin_skills"
 // collide with a workspace skill a user authored (see writeSkillFiles, which
 // derives the skill directory from protocol.TaskSkill.Name).
 func (s *TaskService) BuiltinSkills() []protocol.TaskSkill {
-	return loadBuiltinSkills()
-}
-
-func loadBuiltinSkills() []protocol.TaskSkill {
 	entries, err := fs.ReadDir(builtinSkillsFS, builtinSkillsRoot)
 	if err != nil {
 		return nil

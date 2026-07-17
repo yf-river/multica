@@ -22,7 +22,7 @@ const (
 )
 
 func TestBuiltinSkillsConformToTemplate(t *testing.T) {
-	skills := loadBuiltinSkills()
+	skills := (&TaskService{}).BuiltinSkills()
 	if len(skills) == 0 {
 		t.Fatal("no built-in skills loaded; embed or layout is broken")
 	}
@@ -64,7 +64,7 @@ func TestBuiltinSkillsConformToTemplate(t *testing.T) {
 
 // Strict runtimes reject malformed YAML that the lightweight scalar reader accepts.
 func TestBuiltinSkillsFrontmatterIsStrictYAML(t *testing.T) {
-	skills := loadBuiltinSkills()
+	skills := (&TaskService{}).BuiltinSkills()
 	if len(skills) == 0 {
 		t.Fatal("no built-in skills loaded; embed or layout is broken")
 	}
@@ -468,7 +468,7 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 
 func findSkill(t *testing.T, name string) (protocol.TaskSkill, bool) {
 	t.Helper()
-	for _, s := range loadBuiltinSkills() {
+	for _, s := range (&TaskService{}).BuiltinSkills() {
 		if s.Name == name {
 			return s, true
 		}

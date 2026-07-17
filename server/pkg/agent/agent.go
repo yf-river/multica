@@ -212,11 +212,6 @@ func New(agentType string, cfg Config) (Backend, error) {
 	}
 }
 
-// DetectVersion runs the agent CLI with --version and returns the output.
-func DetectVersion(ctx context.Context, executablePath string) (string, error) {
-	return detectCLIVersion(ctx, executablePath)
-}
-
 // launchHeaders maps each supported agent type to the user-visible skeleton
 // that the daemon spawns before any custom_args are appended. This is
 // intentionally minimal — only the command + subcommand (or a short mode

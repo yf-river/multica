@@ -349,7 +349,8 @@ func writeMcpConfigToTemp(raw json.RawMessage) (string, error) {
 	return f.Name(), nil
 }
 
-func detectCLIVersion(ctx context.Context, execPath string) (string, error) {
+// DetectVersion runs the agent CLI with --version and returns the output.
+func DetectVersion(ctx context.Context, execPath string) (string, error) {
 	cmd := exec.CommandContext(ctx, execPath, "--version")
 	hideAgentWindow(cmd)
 	data, err := cmd.Output()
