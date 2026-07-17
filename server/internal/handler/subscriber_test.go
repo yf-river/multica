@@ -23,44 +23,51 @@ func issueSubscriberExists(t *testing.T, ctx context.Context, issueID, userType,
 	return false
 }
 
+func newSubscriberTestIssue(t *testing.T) string {
+	t.Helper()
+	issueID := createTestIssue(t, "Subscriber test issue", "medium")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+	return issueID
+}
+
+func changeIssueSubscription(t *testing.T, issueID string, subscribe bool, body any, prepare func(*http.Request)) *httptest.ResponseRecorder {
+	t.Helper()
+	action := "unsubscribe"
+	handler := testHandler.UnsubscribeFromIssue
+	if subscribe {
+		action = "subscribe"
+		handler = testHandler.SubscribeToIssue
+	}
+	req := withURLParam(newRequest(http.MethodPost, "/api/issues/"+issueID+"/"+action, body), "id", issueID)
+	if prepare != nil {
+		prepare(req)
+	}
+	w := httptest.NewRecorder()
+	handler(w, req)
+	return w
+}
+
+func listIssueSubscribersForTest(t *testing.T, issueID string) []subscriberResponse {
+	t.Helper()
+	req := withURLParam(newRequest(http.MethodGet, "/api/issues/"+issueID+"/subscribers", nil), "id", issueID)
+	w := httptest.NewRecorder()
+	testHandler.ListIssueSubscribers(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListIssueSubscribers: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var subscribers []subscriberResponse
+	if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
+		t.Fatalf("decode subscribers response: %v", err)
+	}
+	return subscribers
+}
+
 func TestSubscriberAPI(t *testing.T) {
 	ctx := context.Background()
 
-	// Helper: create an issue for subscriber tests
-	createIssue := func(t *testing.T) string {
-		t.Helper()
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-			"title": "Subscriber test issue",
-		})
-		testHandler.CreateIssue(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-		var issue IssueResponse
-		if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-			t.Fatalf("decode issue response: %v", err)
-		}
-		return issue.ID
-	}
-
-	// Helper: delete an issue
-	deleteIssue := func(t *testing.T, issueID string) {
-		t.Helper()
-		w := httptest.NewRecorder()
-		req := newRequest("DELETE", "/api/issues/"+issueID, nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.DeleteIssue(w, req)
-	}
-
 	t.Run("Subscribe", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
-
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
+		issueID := newSubscriberTestIssue(t)
+		w := changeIssueSubscription(t, issueID, true, nil, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("SubscribeToIssue: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
@@ -80,45 +87,30 @@ func TestSubscriberAPI(t *testing.T) {
 	})
 
 	t.Run("SubscribeIdempotent", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
-
-		// Subscribe first time
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
+		issueID := newSubscriberTestIssue(t)
+		w := changeIssueSubscription(t, issueID, true, nil, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("SubscribeToIssue (1st): expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		// Subscribe second time — should also succeed
-		w = httptest.NewRecorder()
-		req = newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
+		w = changeIssueSubscription(t, issueID, true, nil, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("SubscribeToIssue (2nd): expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
 	t.Run("RejectMalformedRequestBodies", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
+		issueID := newSubscriberTestIssue(t)
 
 		for _, action := range []struct {
-			name   string
-			path   string
-			handle func(http.ResponseWriter, *http.Request)
+			name      string
+			subscribe bool
 		}{
-			{name: "subscribe", path: "/subscribe", handle: testHandler.SubscribeToIssue},
-			{name: "unsubscribe", path: "/unsubscribe", handle: testHandler.UnsubscribeFromIssue},
+			{name: "subscribe", subscribe: true},
+			{name: "unsubscribe"},
 		} {
 			t.Run(action.name, func(t *testing.T) {
-				w := httptest.NewRecorder()
-				req := newRequest("POST", "/api/issues/"+issueID+action.path, json.RawMessage(`{"user_id":`))
-				req = withURLParam(req, "id", issueID)
-				action.handle(w, req)
+				w := changeIssueSubscription(t, issueID, action.subscribe, json.RawMessage(`{"user_id":`), nil)
 				if w.Code != http.StatusBadRequest {
 					t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 				}
@@ -127,31 +119,13 @@ func TestSubscriberAPI(t *testing.T) {
 	})
 
 	t.Run("ListSubscribers", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
-
-		// Subscribe first
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
+		issueID := newSubscriberTestIssue(t)
+		w := changeIssueSubscription(t, issueID, true, nil, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("SubscribeToIssue: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		// List
-		w = httptest.NewRecorder()
-		req = newRequest("GET", "/api/issues/"+issueID+"/subscribers", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.ListIssueSubscribers(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("ListIssueSubscribers: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var subscribers []subscriberResponse
-		if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
-			t.Fatalf("decode subscribers response: %v", err)
-		}
+		subscribers := listIssueSubscribersForTest(t, issueID)
 		if len(subscribers) == 0 {
 			t.Fatal("ListIssueSubscribers: expected at least 1 subscriber")
 		}
@@ -168,23 +142,13 @@ func TestSubscriberAPI(t *testing.T) {
 	})
 
 	t.Run("Unsubscribe", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
-
-		// Subscribe first
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
+		issueID := newSubscriberTestIssue(t)
+		w := changeIssueSubscription(t, issueID, true, nil, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("SubscribeToIssue: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		// Unsubscribe
-		w = httptest.NewRecorder()
-		req = newRequest("POST", "/api/issues/"+issueID+"/unsubscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.UnsubscribeFromIssue(w, req)
+		w = changeIssueSubscription(t, issueID, false, nil, nil)
 		if w.Code != http.StatusOK {
 			t.Fatalf("UnsubscribeFromIssue: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
@@ -204,17 +168,13 @@ func TestSubscriberAPI(t *testing.T) {
 	})
 
 	t.Run("SubscribeCrossWorkspaceUser", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
+		issueID := newSubscriberTestIssue(t)
 
 		foreignUserID := "00000000-0000-0000-0000-000000000099"
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", map[string]any{
+		w := changeIssueSubscription(t, issueID, true, map[string]any{
 			"user_id":   foreignUserID,
 			"user_type": "member",
-		})
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
+		}, nil)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("SubscribeToIssue with cross-workspace user: expected 403, got %d: %s", w.Code, w.Body.String())
 		}
@@ -225,25 +185,20 @@ func TestSubscriberAPI(t *testing.T) {
 	})
 
 	t.Run("UnsubscribeCrossWorkspaceUser", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
+		issueID := newSubscriberTestIssue(t)
 
 		foreignUserID := "00000000-0000-0000-0000-000000000099"
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/unsubscribe", map[string]any{
+		w := changeIssueSubscription(t, issueID, false, map[string]any{
 			"user_id":   foreignUserID,
 			"user_type": "member",
-		})
-		req = withURLParam(req, "id", issueID)
-		testHandler.UnsubscribeFromIssue(w, req)
+		}, nil)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("UnsubscribeFromIssue with cross-workspace user: expected 403, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
 	t.Run("AgentCallerSubscribesItself", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
+		issueID := newSubscriberTestIssue(t)
 
 		// Look up the agent created by the handler test fixture.
 		var agentID string
@@ -258,11 +213,8 @@ func TestSubscriberAPI(t *testing.T) {
 		// Subscribe as the task-token agent — no body, so the handler defaults
 		// to the agent itself rather than the member behind X-User-ID.
 		agentTask := createHandlerTestTaskForAgent(t, agentID)
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		setTaskTokenActor(req, agentID, agentTask)
-		testHandler.SubscribeToIssue(w, req)
+		prepare := func(req *http.Request) { setTaskTokenActor(req, agentID, agentTask) }
+		w := changeIssueSubscription(t, issueID, true, nil, prepare)
 		if w.Code != http.StatusOK {
 			t.Fatalf("SubscribeToIssue (agent caller): expected 200, got %d: %s", w.Code, w.Body.String())
 		}
@@ -277,12 +229,7 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatal("member must not be auto-subscribed when caller is an agent")
 		}
 
-		// Unsubscribe through the same task-token actor.
-		w = httptest.NewRecorder()
-		req = newRequest("POST", "/api/issues/"+issueID+"/unsubscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		setTaskTokenActor(req, agentID, agentTask)
-		testHandler.UnsubscribeFromIssue(w, req)
+		w = changeIssueSubscription(t, issueID, false, nil, prepare)
 		if w.Code != http.StatusOK {
 			t.Fatalf("UnsubscribeFromIssue (agent caller): expected 200, got %d: %s", w.Code, w.Body.String())
 		}
@@ -294,34 +241,10 @@ func TestSubscriberAPI(t *testing.T) {
 	})
 
 	t.Run("ListAfterUnsubscribe", func(t *testing.T) {
-		issueID := createIssue(t)
-		defer deleteIssue(t, issueID)
-
-		// Subscribe
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/subscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.SubscribeToIssue(w, req)
-
-		// Unsubscribe
-		w = httptest.NewRecorder()
-		req = newRequest("POST", "/api/issues/"+issueID+"/unsubscribe", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.UnsubscribeFromIssue(w, req)
-
-		// List should be empty
-		w = httptest.NewRecorder()
-		req = newRequest("GET", "/api/issues/"+issueID+"/subscribers", nil)
-		req = withURLParam(req, "id", issueID)
-		testHandler.ListIssueSubscribers(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("ListIssueSubscribers: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var subscribers []subscriberResponse
-		if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
-			t.Fatalf("decode subscribers response: %v", err)
-		}
+		issueID := newSubscriberTestIssue(t)
+		changeIssueSubscription(t, issueID, true, nil, nil)
+		changeIssueSubscription(t, issueID, false, nil, nil)
+		subscribers := listIssueSubscribersForTest(t, issueID)
 		if len(subscribers) != 0 {
 			t.Fatalf("ListIssueSubscribers: expected 0 subscribers after unsubscribe, got %d", len(subscribers))
 		}
