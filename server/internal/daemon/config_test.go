@@ -190,9 +190,8 @@ func TestBuildLoginShellResolveScript_ShapeAndContent(t *testing.T) {
 	}
 }
 
-// A command available only through interactive shell setup must resolve to a
-// canonical executable path.
-func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
+func stageLoginShellCommand(t *testing.T, extraRC string) (string, string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell not available on Windows")
 	}
@@ -208,23 +207,23 @@ func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
 	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
-
-	// Prove the precondition: with binDir absent from PATH, the daemon
-	// would normally miss this binary.
 	t.Setenv("PATH", "/usr/bin:/bin")
 	if _, err := exec.LookPath("fakeclaude"); err == nil {
 		t.Skip("PATH leak — test environment already exposes fakeclaude without shell help")
 	}
-
-	// Wire the interactive shell to add binDir to PATH on startup. POSIX
-	// sh reads $ENV when invoked with -i, so we write a tiny rc file that
-	// prepends binDir.
 	rc := filepath.Join(t.TempDir(), "sh.rc")
-	if err := os.WriteFile(rc, []byte("export PATH=\""+binDir+":$PATH\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(rc, []byte("export PATH=\""+binDir+":$PATH\"\n"+extraRC), 0o644); err != nil {
 		t.Fatalf("write rc: %v", err)
 	}
 	t.Setenv("SHELL", sh)
 	t.Setenv("ENV", rc)
+	return sh, binPath
+}
+
+// A command available only through interactive shell setup must resolve to a
+// canonical executable path.
+func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
+	_, binPath := stageLoginShellCommand(t, "")
 
 	got := resolveAgentsViaLoginShell([]string{"fakeclaude", "kiro-cli"})
 	resolved, ok := got["fakeclaude"]
@@ -287,44 +286,11 @@ func stageFakeAgent(t *testing.T) string {
 
 // Alias shadows must not hide the real executable on PATH.
 func TestResolveAgentsViaLoginShell_StripsAliasShadowing(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX shell not available on Windows")
-	}
-	sh := "/bin/sh"
-	if _, err := os.Stat(sh); err != nil {
-		t.Skipf("no /bin/sh available: %v", err)
-	}
-
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "fakeclaude")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake binary: %v", err)
-	}
-
-	// rc adds binDir to PATH AND defines an alias that shadows the bare
-	// name with a non-existent path. The pre-fix script would see the
-	// alias, see that its target isn't absolute, and silently drop the
-	// agent. With unalias/unset -f in place, command -v falls through to
-	// the PATH search and finds binPath.
-	rc := filepath.Join(t.TempDir(), "sh.rc")
-	rcBody := "export PATH=\"" + binDir + ":$PATH\"\n" +
-		"alias fakeclaude=\"/nonexistent/wrapper-from-rc\"\n"
-	if err := os.WriteFile(rc, []byte(rcBody), 0o644); err != nil {
-		t.Fatalf("write rc: %v", err)
-	}
-
-	// Strip PATH so exec.LookPath misses fakeclaude — same precondition as
-	// the happy-path test, so we know the shell did the resolution.
-	t.Setenv("PATH", "/usr/bin:/bin")
-	if _, err := exec.LookPath("fakeclaude"); err == nil {
-		t.Skip("PATH leak — fakeclaude already visible to the daemon without shell help")
-	}
+	sh, binPath := stageLoginShellCommand(t, "alias fakeclaude=\"/nonexistent/wrapper-from-rc\"\n")
 	// Sanity-check that the simulated environment can actually load aliases.
 	// If the host /bin/sh doesn't honour $ENV in -i mode (rare but possible
 	// on minimal Linux images), skipping is more honest than asserting on a
 	// scenario the test couldn't actually set up.
-	t.Setenv("SHELL", sh)
-	t.Setenv("ENV", rc)
 	probe, err := exec.Command(sh, "-ilc", "alias fakeclaude 2>/dev/null").Output()
 	if err != nil || !strings.Contains(string(probe), "fakeclaude") {
 		t.Skipf("test host's /bin/sh did not load alias from $ENV; cannot simulate shadowing (probe=%q err=%v)", string(probe), err)

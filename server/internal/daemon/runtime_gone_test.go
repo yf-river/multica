@@ -407,43 +407,51 @@ func (fx *multiProviderRegisterFixture) markDeleted(provider string) {
 	fx.providerToID[provider] = ""
 }
 
+func newTwoProviderRuntimeGoneFixture(t *testing.T) *multiProviderRegisterFixture {
+	t.Helper()
+	fx := newMultiProviderRegisterFixture(t, map[string]string{
+		"claude": "rt-claude-1",
+		"codex":  "rt-codex-1",
+	})
+	fx.daemon.workspaces["ws-1"] = &workspaceState{
+		workspaceID: "ws-1",
+		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
+	}
+	fx.daemon.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
+	fx.daemon.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
+	return fx
+}
+
+func uniqueRuntimeIDs(t *testing.T, ids []string, want int) map[string]struct{} {
+	t.Helper()
+	if len(ids) != want {
+		t.Fatalf("runtime IDs = %v, want %d entries", ids, want)
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, duplicate := seen[id]; duplicate {
+			t.Fatalf("duplicate runtime id %q in %v", id, ids)
+		}
+		seen[id] = struct{}{}
+	}
+	return seen
+}
+
 func TestHandleRuntimeGone_PartialWorkspaceRecoveryKeepsSibling(t *testing.T) {
 	// Workspace has two providers, only one runtime is deleted. The siblings
 	// must NOT end up duplicated in workspaceState.runtimeIDs — that would
 	// leak through allRuntimeIDs(), deregister(), and re-recovery state.
 	// This is the regression test for Finding #3 (register response is
 	// authoritative for the workspace's runtime set, not an append).
-	fx := newMultiProviderRegisterFixture(t, map[string]string{
-		"claude": "rt-claude-1",
-		"codex":  "rt-codex-1",
-	})
+	fx := newTwoProviderRuntimeGoneFixture(t)
 	d := fx.daemon
-	d.workspaces["ws-1"] = &workspaceState{
-		workspaceID: "ws-1",
-		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
-	}
-	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
-	d.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
 
 	// Only the claude runtime gets deleted server-side.
 	fx.markDeleted("claude")
 	d.handleRuntimeGone("rt-claude-1")
 
 	got := append([]string(nil), d.workspaces["ws-1"].runtimeIDs...)
-	if len(got) != 2 {
-		t.Fatalf("workspace runtimeIDs has %d entries after partial recovery; want 2; got %v", len(got), got)
-	}
-	// Set comparison: must contain rt-codex-1 (surviving) and a freshly
-	// minted claude id, with NO duplicates.
-	seen := make(map[string]int, len(got))
-	for _, id := range got {
-		seen[id]++
-	}
-	for id, count := range seen {
-		if count != 1 {
-			t.Fatalf("duplicate runtime id %q (count=%d) after partial recovery: %v", id, count, got)
-		}
-	}
+	seen := uniqueRuntimeIDs(t, got, 2)
 	if _, ok := seen["rt-codex-1"]; !ok {
 		t.Fatalf("surviving codex runtime missing from workspace state after recovery: %v", got)
 	}
@@ -464,17 +472,8 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 	// within the 30s coalesce window. Each deletion must trigger its own
 	// re-register: success on call #1 must NOT suppress call #2. Regression
 	// for Finding #2 (success-case clear of reregisterNextAttempt).
-	fx := newMultiProviderRegisterFixture(t, map[string]string{
-		"claude": "rt-claude-1",
-		"codex":  "rt-codex-1",
-	})
+	fx := newTwoProviderRuntimeGoneFixture(t)
 	d := fx.daemon
-	d.workspaces["ws-1"] = &workspaceState{
-		workspaceID: "ws-1",
-		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
-	}
-	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
-	d.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
 
 	// Sequential, NOT concurrent: the first call fully completes before the
 	// second starts, so the in-flight set never collides.
@@ -500,18 +499,7 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 		t.Fatalf("after second distinct deletion: register called %d times, want 2 (coalesce window must clear on success)", got)
 	}
 	got := append([]string(nil), d.workspaces["ws-1"].runtimeIDs...)
-	if len(got) != 2 {
-		t.Fatalf("workspace runtimeIDs after both recoveries = %v, want 2 entries", got)
-	}
-	seen := make(map[string]int, len(got))
-	for _, id := range got {
-		seen[id]++
-	}
-	for id, count := range seen {
-		if count != 1 {
-			t.Fatalf("duplicate runtime id %q after sequential recoveries: %v", id, got)
-		}
-	}
+	seen := uniqueRuntimeIDs(t, got, 2)
 	if _, ok := seen[claudeIDAfterFirst]; !ok {
 		t.Fatalf("claude id from first recovery missing after second deletion of codex: have %v, expected to keep %q", got, claudeIDAfterFirst)
 	}

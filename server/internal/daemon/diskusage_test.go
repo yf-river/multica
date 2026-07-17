@@ -26,6 +26,20 @@ func writeFile(t *testing.T, path string, size int) {
 	}
 }
 
+func assertSingleCountedTask(t *testing.T, root string) {
+	t.Helper()
+	report, err := ScanDiskUsage(root, []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("ScanDiskUsage: %v", err)
+	}
+	if len(report.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(report.Tasks))
+	}
+	if got := report.Tasks[0]; got.SizeBytes != 100 || got.ArtifactSizeBytes != 0 {
+		t.Errorf("counted task = %+v, want size_bytes=100 and artifact_size_bytes=0", got)
+	}
+}
+
 // TestScanDiskUsage_AggregatesAndCategorizes verifies the happy-path: each
 // task directory is sized, categorized by GC meta kind, and aggregated into
 // per-workspace totals matching the per-task totals.
@@ -246,21 +260,7 @@ func TestScanDiskUsage_DoesNotEnterGit(t *testing.T) {
 	writeFile(t, filepath.Join(taskDir, "workdir/.git/node_modules/x"), 5555)
 	writeFile(t, filepath.Join(taskDir, "workdir/main.go"), 100)
 
-	report, err := ScanDiskUsage(root, []string{"node_modules"})
-	if err != nil {
-		t.Fatalf("ScanDiskUsage: %v", err)
-	}
-
-	if len(report.Tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(report.Tasks))
-	}
-	got := report.Tasks[0]
-	if got.SizeBytes != 100 {
-		t.Errorf("size_bytes = %d, want 100 (only main.go; .git tree skipped)", got.SizeBytes)
-	}
-	if got.ArtifactSizeBytes != 0 {
-		t.Errorf("artifact_size_bytes = %d, want 0 (node_modules under .git is invisible)", got.ArtifactSizeBytes)
-	}
+	assertSingleCountedTask(t, root)
 }
 
 // TestScanDiskUsage_DoesNotFollowSymlinks guards the second safety
@@ -289,21 +289,7 @@ func TestScanDiskUsage_DoesNotFollowSymlinks(t *testing.T) {
 		t.Skipf("symlink not supported: %v", err)
 	}
 
-	report, err := ScanDiskUsage(root, []string{"node_modules"})
-	if err != nil {
-		t.Fatalf("ScanDiskUsage: %v", err)
-	}
-
-	if len(report.Tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(report.Tasks))
-	}
-	got := report.Tasks[0]
-	if got.SizeBytes != 100 {
-		t.Errorf("size_bytes = %d, want 100 (only main.go; symlinks ignored)", got.SizeBytes)
-	}
-	if got.ArtifactSizeBytes != 0 {
-		t.Errorf("artifact_size_bytes = %d, want 0 (symlinked node_modules ignored)", got.ArtifactSizeBytes)
-	}
+	assertSingleCountedTask(t, root)
 }
 
 // TestScanDiskUsage_MissingRoot ensures a daemon that has never run yet
