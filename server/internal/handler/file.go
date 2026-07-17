@@ -68,31 +68,8 @@ type AttachmentResponse struct {
 	Filename      string  `json:"filename"`
 	URL           string  `json:"url"`
 	DownloadURL   string  `json:"download_url"`
-	// MarkdownURL is the durable, absolute-when-possible URL the client
-	// SHOULD persist into markdown bodies (issue descriptions, comments,
-	// chat messages). It is computed per deployment policy by
-	// buildMarkdownURL — preferring the storage URL when it is already a
-	// public, durable absolute URL (public CDN / LocalStorage with
-	// MULTICA_LOCAL_UPLOAD_BASE_URL), and otherwise prefixing
-	// MULTICA_PUBLIC_URL onto the stable per-attachment endpoint that the
-	// server self-resigns / proxies on every request.
-	//
-	// Why a separate field from URL / DownloadURL:
-	//   - URL is the raw storage object URL — fine for avatar/logo
-	//     surfaces but may be private (S3 + CloudFront-signed mode) or
-	//     site-relative (LocalStorage with no base URL configured).
-	//   - DownloadURL is the URL the renderer uses for THIS response — it
-	//     can be a short-lived signed URL (CloudFront, S3 presign) and
-	//     therefore must NOT be persisted. It expires.
-	//   - MarkdownURL is contracted to be persistable: it never carries a
-	//     TTL, and on every supported deployment shape it is loadable as
-	//     a native browser resource fetch (no Authorization header required
-	//     beyond the cookies/credentials the client already has on the
-	//     resolved host).
-	//
-	// MUL-3192 — fixes the Desktop / mobile-webview regression where the
-	// previous site-relative `/api/attachments/<id>/download` link only
-	// resolved when the document origin proxied /api to the API host.
+	// MarkdownURL is durable and safe to persist. DownloadURL may expire;
+	// URL is the raw storage location and may be private.
 	MarkdownURL string `json:"markdown_url"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
@@ -137,9 +114,6 @@ func (h *Handler) attachmentToResponse(a db.Attachment) AttachmentResponse {
 }
 
 func (h *Handler) attachmentsToResponses(attachments []db.Attachment) []AttachmentResponse {
-	if len(attachments) == 0 {
-		return nil
-	}
 	responses := make([]AttachmentResponse, len(attachments))
 	for i, attachment := range attachments {
 		responses[i] = h.attachmentToResponse(attachment)
@@ -151,38 +125,9 @@ func attachmentDownloadPath(id string) string {
 	return "/api/attachments/" + id + "/download"
 }
 
-// buildMarkdownURL chooses the durable URL the client persists into
-// markdown bodies. The contract is "absolute, no TTL, loadable as a native
-// browser resource fetch on every supported client" (MUL-3192).
-//
-// Decision:
-//
-//  1. Persist `a.Url` only when the deployment has signaled the storage
-//     backend serves URLs publicly without per-request auth:
-//     - `Storage.CdnDomain()` is non-empty (operator configured a
-//     public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
-//     `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
-//     - `h.CFSigner` is nil (no per-request CloudFront signing — when
-//     signing is on, the same CDN domain serves PRIVATE content via
-//     time-bounded signed URLs and the raw `a.Url` is unauth-deny),
-//     AND
-//     - `a.Url` is itself an absolute http(s) URL with no signature
-//     query, preventing a freshly-signed `download_url` from ever
-//     leaking into `a.Url` (the original MUL-3130 bug).
-//
-//  2. Every other shape — CloudFront-signed mode, S3 presign /proxy
-//     against a private bucket without a CDN domain, raw S3 / R2 /
-//     MinIO, LocalStorage with no `LOCAL_UPLOAD_BASE_URL` — uses the
-//     stable per-attachment endpoint that the server self-signs /
-//     proxies on every request, anchored on `MULTICA_PUBLIC_URL` so the
-//     persisted URL keeps working for clients that don't share the
-//     document origin (Desktop / mobile webview).
-//
-//  3. Last-resort fallback (no `MULTICA_PUBLIC_URL` configured): emit
-//     the site-relative path. Web's Next.js rewrite handles this; non-
-//     web clients on a deployment without `PublicURL` configured were
-//     already broken before MUL-3192 and stay broken here, but we
-//     don't make them worse.
+// buildMarkdownURL uses the raw URL only when storage declares it public and
+// the URL is durable. Private or signed storage uses the stable download
+// endpoint, anchored to PublicURL when configured.
 func (h *Handler) buildMarkdownURL(a db.Attachment, id string) string {
 	relPath := attachmentDownloadPath(id)
 	publicURL := strings.TrimRight(h.cfg.PublicURL, "/")
@@ -590,11 +535,7 @@ func (h *Handler) ListAttachments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	responses := h.attachmentsToResponses(attachments)
-	if responses == nil {
-		responses = []AttachmentResponse{}
-	}
-	writeJSON(w, http.StatusOK, responses)
+	writeJSON(w, http.StatusOK, h.attachmentsToResponses(attachments))
 }
 
 // ---------------------------------------------------------------------------
@@ -639,24 +580,9 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 	return att, true
 }
 
-// loadAttachmentForDownload is a workspace-self-resolving variant used by the
-// /api/attachments/{id}/download endpoint. It looks the attachment up by ID
-// alone, then enforces that the authenticated user is a member of the
-// attachment's workspace.
-//
-// Why a separate code path: a native browser <img>/<video> resource load on
-// /api/attachments/{id}/download cannot attach the X-Workspace-Slug /
-// X-Workspace-ID headers that loadAttachmentForRequest relies on. Putting
-// the workspace into the URL (?workspace_slug=...) would work mechanically
-// but bakes a non-essential identifier into every persisted comment markdown
-// link — unnecessary because the attachment row already records its
-// workspace. This helper keeps the URL clean (`/api/attachments/{id}/download`)
-// and treats the attachment id + cookie/Bearer auth as sufficient.
-//
-// Membership uses the same 404-on-deny shape as ServeLocalUpload so the
-// route does not act as an IDOR oracle for attachment IDs that happen to
-// belong to a different workspace. The membership cache fast path mirrors
-// canReadWorkspaceUpload exactly.
+// loadAttachmentForDownload derives workspace scope from the row because
+// native media requests cannot send workspace headers. Membership denial uses
+// the same 404 shape as not-found so attachment IDs are not an IDOR oracle.
 func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Request) (db.Attachment, bool) {
 	attachmentID := chi.URLParam(r, "id")
 	attUUID, ok := parseUUIDOrBadRequest(w, attachmentID, "attachment id")
@@ -690,22 +616,6 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	h.MembershipCache.Set(r.Context(), userID, workspaceID)
 	return att, true
 }
-
-// ---------------------------------------------------------------------------
-// DownloadAttachment — GET /api/attachments/{id}/download
-// ---------------------------------------------------------------------------
-//
-// Workspace context is derived from the attachment row itself, not from
-// X-Workspace-Slug / X-Workspace-ID headers. This is what lets a markdown
-// `<img src="/api/attachments/{id}/download">` work as a native browser
-// resource load: the browser cannot attach those headers to <img>/<video>
-// fetches, so resolving via the attachment row is the only way to keep
-// the URL stable across reloads (the previous design persisted a 30-min
-// signed /uploads URL into the markdown body — that URL stopped working
-// the moment the signature expired).
-//
-// Membership is enforced inside loadAttachmentForDownload with a 404 deny
-// shape so the route doesn't IDOR-leak attachment IDs to non-members.
 
 func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	att, ok := h.loadAttachmentForDownload(w, r)
@@ -940,12 +850,6 @@ func isTextPreviewable(contentType, filename string) bool {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	if workspaceID == "" {
-		writeError(w, http.StatusBadRequest, "workspace_id is required")
-		return
-	}
-
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
