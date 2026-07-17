@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,21 +19,12 @@ func createSquadWithKey(t *testing.T, key string, body map[string]any) *httptest
 	return w
 }
 
-func cleanupSquadCreateRequest(t *testing.T, key, name string) {
-	t.Helper()
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
-		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key)
-	})
-}
-
 func TestCreateSquad_IdempotentReplayConflictAndDurableRecord(t *testing.T) {
 	key := uuid.NewString()
 	leaderID := createHandlerTestAgent(t, "squad idempotent leader "+uuid.NewString(), nil)
 	memberID := createHandlerTestAgent(t, "squad idempotent member "+uuid.NewString(), nil)
 	name := "idempotent squad " + uuid.NewString()
-	cleanupSquadCreateRequest(t, key, name)
+	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
 	body := map[string]any{
 		"name": name, "leader_id": leaderID, "scope": "personal",
 		"members": []map[string]any{{"member_type": "agent", "member_id": memberID}},
@@ -86,36 +76,18 @@ func TestCreateSquad_ConcurrentReplayCreatesOneSquad(t *testing.T) {
 	key := uuid.NewString()
 	leaderID := createHandlerTestAgent(t, "squad concurrent leader "+uuid.NewString(), nil)
 	name := "concurrent squad " + uuid.NewString()
-	cleanupSquadCreateRequest(t, key, name)
+	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
 	body := map[string]any{"name": name, "leader_id": leaderID, "scope": "personal"}
 
-	const callers = 10
-	responses := make(chan *httptest.ResponseRecorder, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			responses <- createSquadWithKey(t, key, body)
-		}()
-	}
-	wg.Wait()
-	close(responses)
-
-	ids := map[string]struct{}{}
-	for response := range responses {
-		if response.Code != http.StatusCreated {
-			t.Fatalf("concurrent create = %d %s", response.Code, response.Body.String())
-		}
+	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+		return createSquadWithKey(t, key, body)
+	}, func(response *httptest.ResponseRecorder) string {
 		var squad squadResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &squad); err != nil {
 			t.Fatalf("decode concurrent response: %v", err)
 		}
-		ids[squad.ID] = struct{}{}
-	}
-	if len(ids) != 1 {
-		t.Fatalf("concurrent responses returned %d squad ids: %v", len(ids), ids)
-	}
+		return squad.ID
+	})
 	var squads int
 	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&squads)
 	if squads != 1 {
@@ -128,7 +100,7 @@ func TestCreateSquad_FailedResponseCompletionRollsBackEverything(t *testing.T) {
 	key := uuid.NewString()
 	leaderID := createHandlerTestAgent(t, "squad completion leader "+uuid.NewString(), nil)
 	name := "forced squad completion " + uuid.NewString()
-	cleanupSquadCreateRequest(t, key, name)
+	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
 	installResourceCreateCompletionFailure(t, resourceTypeSquad, key)
 
 	response := createSquadWithKey(t, key, map[string]any{

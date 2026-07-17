@@ -21,12 +21,12 @@ func createAgentWithKey(t *testing.T, key string, body map[string]any) *httptest
 	return w
 }
 
-func cleanupAgentCreateRequest(t *testing.T, key, name string) {
+func cleanupResourceCreateRequest(t *testing.T, resourceType, key, query string, args ...any) {
 	t.Helper()
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
-		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'agent' AND idempotency_key = $2`, testWorkspaceID, key)
+		_, _ = testPool.Exec(ctx, query, args...)
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = $2 AND idempotency_key = $3`, testWorkspaceID, resourceType, key)
 	})
 }
 
@@ -97,7 +97,7 @@ func installResourceCreateCompletionFailure(t *testing.T, resourceType, key stri
 func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 	key := uuid.NewString()
 	name := "idempotent agent " + uuid.NewString()
-	cleanupAgentCreateRequest(t, key, name)
+	cleanupResourceCreateRequest(t, "agent", key, `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
 	body := map[string]any{
 		"name": name, "runtime_id": testRuntimeID, "scope": "personal",
 		"instructions": "Use the current contract",
@@ -130,7 +130,7 @@ func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 func TestCreateAgent_ResponseCompletionFailureRollsBackAgent(t *testing.T) {
 	key := uuid.NewString()
 	name := "failed agent " + uuid.NewString()
-	cleanupAgentCreateRequest(t, key, name)
+	cleanupResourceCreateRequest(t, "agent", key, `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
 	installResourceCreateCompletionFailure(t, "agent", key)
 	ctx := context.Background()
 

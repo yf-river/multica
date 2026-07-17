@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,19 +19,10 @@ func createIssueWithKey(t *testing.T, key string, body map[string]any) *httptest
 	return w
 }
 
-func cleanupIssueCreateRequest(t *testing.T, key, title string) {
-	t.Helper()
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
-		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'issue' AND idempotency_key = $2`, testWorkspaceID, key)
-	})
-}
-
 func TestCreateIssue_IdempotentReplayAndConflict(t *testing.T) {
 	key := uuid.NewString()
 	title := "idempotent issue " + uuid.NewString()
-	cleanupIssueCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "issue", key, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{"title": title, "priority": "high"}
 
 	first := createIssueWithKey(t, key, body)
@@ -68,36 +58,18 @@ func TestCreateIssue_IdempotentReplayAndConflict(t *testing.T) {
 func TestCreateIssue_ConcurrentReplayCreatesOneIssue(t *testing.T) {
 	key := uuid.NewString()
 	title := "concurrent issue " + uuid.NewString()
-	cleanupIssueCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "issue", key, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{"title": title}
 
-	const callers = 8
-	responses := make(chan *httptest.ResponseRecorder, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			responses <- createIssueWithKey(t, key, body)
-		}()
-	}
-	wg.Wait()
-	close(responses)
-
-	ids := map[string]struct{}{}
-	for response := range responses {
-		if response.Code != http.StatusCreated {
-			t.Fatalf("concurrent create = %d %s", response.Code, response.Body.String())
-		}
+	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+		return createIssueWithKey(t, key, body)
+	}, func(response *httptest.ResponseRecorder) string {
 		var issue IssueResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &issue); err != nil {
 			t.Fatalf("decode concurrent response: %v", err)
 		}
-		ids[issue.ID] = struct{}{}
-	}
-	if len(ids) != 1 {
-		t.Fatalf("concurrent responses returned %d issue ids: %v", len(ids), ids)
-	}
+		return issue.ID
+	})
 	var issues int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title).Scan(&issues); err != nil {
 		t.Fatalf("count concurrent issues: %v", err)
@@ -111,7 +83,7 @@ func TestCreateIssue_RequestCompletionFailureRollsBackEverything(t *testing.T) {
 	ctx := context.Background()
 	key := uuid.NewString()
 	title := "issue completion rollback " + uuid.NewString()
-	cleanupIssueCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "issue", key, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	installResourceCreateCompletionFailure(t, resourceTypeIssue, key)
 
 	response := createIssueWithKey(t, key, map[string]any{"title": title})
@@ -133,7 +105,7 @@ func TestCreateIssue_RequestCompletionFailureRollsBackEverything(t *testing.T) {
 func TestCreateIssue_ReplayDoesNotRevalidateChangedRelationships(t *testing.T) {
 	key := uuid.NewString()
 	title := "stable issue replay " + uuid.NewString()
-	cleanupIssueCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "issue", key, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	ctx := context.Background()
 	var projectID string
 	if err := testPool.QueryRow(ctx, `

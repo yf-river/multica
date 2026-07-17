@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,19 +24,10 @@ func createProjectWithKey(
 	return w
 }
 
-func cleanupProjectCreateRequest(t *testing.T, key, title string) {
-	t.Helper()
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = testPool.Exec(ctx, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
-		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'project' AND idempotency_key = $2`, testWorkspaceID, key)
-	})
-}
-
 func TestCreateProject_IdempotentReplayAndConflict(t *testing.T) {
 	key := uuid.NewString()
 	title := "idempotent project " + uuid.NewString()
-	cleanupProjectCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "project", key, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{"title": title, "status": "planned"}
 
 	first := createProjectWithKey(t, key, body)
@@ -88,36 +78,18 @@ func TestCreateProject_IdempotentReplayAndConflict(t *testing.T) {
 func TestCreateProject_ConcurrentReplayCreatesOneProject(t *testing.T) {
 	key := uuid.NewString()
 	title := "concurrent project " + uuid.NewString()
-	cleanupProjectCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "project", key, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{"title": title, "priority": "high"}
 
-	const callers = 10
-	responses := make(chan *httptest.ResponseRecorder, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			responses <- createProjectWithKey(t, key, body)
-		}()
-	}
-	wg.Wait()
-	close(responses)
-
-	ids := map[string]struct{}{}
-	for response := range responses {
-		if response.Code != http.StatusCreated {
-			t.Fatalf("concurrent create = %d %s", response.Code, response.Body.String())
-		}
+	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+		return createProjectWithKey(t, key, body)
+	}, func(response *httptest.ResponseRecorder) string {
 		var project createProjectResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &project); err != nil {
 			t.Fatalf("decode concurrent response: %v", err)
 		}
-		ids[project.ID] = struct{}{}
-	}
-	if len(ids) != 1 {
-		t.Fatalf("concurrent responses returned %d project ids: %v", len(ids), ids)
-	}
+		return project.ID
+	})
 	var projects int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title).Scan(&projects); err != nil {
 		t.Fatalf("count projects: %v", err)
@@ -130,7 +102,7 @@ func TestCreateProject_ConcurrentReplayCreatesOneProject(t *testing.T) {
 func TestCreateProject_ReplaysBundledResourceResponse(t *testing.T) {
 	key := uuid.NewString()
 	title := "resource replay project " + uuid.NewString()
-	cleanupProjectCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "project", key, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{
 		"title": title,
 		"resources": []map[string]any{{
@@ -167,7 +139,7 @@ func TestCreateProject_FailedResponseCompletionRollsBackProject(t *testing.T) {
 	ctx := context.Background()
 	key := uuid.NewString()
 	title := "forced project failure " + uuid.NewString()
-	cleanupProjectCreateRequest(t, key, title)
+	cleanupResourceCreateRequest(t, "project", key, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	installResourceCreateCompletionFailure(t, resourceTypeProject, key)
 
 	response := createProjectWithKey(t, key, map[string]any{"title": title})
