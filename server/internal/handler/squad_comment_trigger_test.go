@@ -14,10 +14,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestCommentMentionsAnyone covers the pure helper that drives the
-// "skip leader on @<anyone>" behavior. Routing-style mentions
-// (agent/member/squad/all) count; issue cross-references do not. Kept as a
-// unit test so it runs without a database connection.
 func TestCommentMentionsAnyone(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -45,15 +41,30 @@ func TestCommentMentionsAnyone(t *testing.T) {
 	}
 }
 
-// shouldEnqueueSquadLeaderOnCommentForTest reports whether the shared comment
-// trigger computation would wake the issue's assigned squad leader — the
-// boolean view these integration tests assert on.
 func shouldEnqueueSquadLeaderOnCommentForTest(ctx context.Context, issue db.Issue, content, authorType, authorID string) bool {
 	_, ok, err := testHandler.computeAssignedSquadLeaderCommentTrigger(ctx, issue, content, authorType, authorID, commentTriggerComputeOptions{})
 	if err != nil {
 		return false
 	}
 	return ok
+}
+
+func squadAgentRuntimeID(t *testing.T, agentID string) string {
+	t.Helper()
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `SELECT runtime_id FROM agent WHERE id = $1`, agentID).Scan(&runtimeID); err != nil {
+		t.Fatalf("load Agent runtime: %v", err)
+	}
+	return runtimeID
+}
+
+func cleanupSquadCommentIssue(t *testing.T, issueID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
 }
 
 func TestAssignedSquadCommentTriggerPreservesSquadLookupFailure(t *testing.T) {
@@ -71,14 +82,11 @@ func TestAssignedSquadCommentTriggerPreservesSquadLookupFailure(t *testing.T) {
 	}
 }
 
-// squadCommentTriggerFixture wires a squad assigned to a fresh issue and
-// returns the loaded db.Issue plus the leader agent UUID for use in
-// computeAssignedSquadLeaderCommentTrigger integration tests.
 type squadCommentTriggerFixture struct {
 	Issue    db.Issue
 	SquadID  string
 	LeaderID string
-	OtherID  string // second agent in workspace (with runtime), used as a non-leader @mention target
+	OtherID  string
 }
 
 func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
@@ -126,9 +134,7 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 }
 
 func TestEnqueueTaskForSquadLeaderForcesFreshSession(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newSquadCommentTriggerFixture(t)
 
@@ -152,9 +158,7 @@ func TestEnqueueTaskForSquadLeaderForcesFreshSession(t *testing.T) {
 }
 
 func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
 	_, _ = testPool.Exec(ctx, `DELETE FROM squad_member WHERE member_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
@@ -205,89 +209,73 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 	}
 }
 
-// TestShouldEnqueueSquadLeaderOnComment_SkipsWhenMemberMentionsAnyone
-// encodes Bohan's rule (MUL-2170): a member comment that explicitly @mentions
-// anyone — agent, member, squad, or @all — must NOT wake the squad leader.
-// Issue cross-references are not routing and do not suppress the leader.
-// Agent-authored comments are exempt: the leader still coordinates threads.
 func TestShouldEnqueueSquadLeaderOnComment_SkipsWhenMemberMentionsAnyone(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newSquadCommentTriggerFixture(t)
 	ctx := context.Background()
 
 	cases := []struct {
-		name        string
-		content     string
-		authorType  string
-		authorID    string
-		want        bool
-		description string
+		name       string
+		content    string
+		authorType string
+		authorID   string
+		want       bool
 	}{
 		{
-			name:        "member plain comment triggers leader",
-			content:     "what is the latest on this?",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        true,
-			description: "no @ in body → leader must coordinate as today",
+			name:       "member plain comment triggers leader",
+			content:    "what is the latest on this?",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       true,
 		},
 		{
-			name:        "member issue cross-reference only triggers leader",
-			content:     "blocked by [MUL-1](mention://issue/" + testUserID + ")",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        true,
-			description: "issue mentions are not routing — leader still owns dispatch",
+			name:       "member issue cross-reference only triggers leader",
+			content:    "blocked by [MUL-1](mention://issue/" + testUserID + ")",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       true,
 		},
 		{
-			name:        "member mentions another member skips leader",
-			content:     "[@self](mention://member/" + testUserID + ") please weigh in",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        false,
-			description: "user routed at a human — leader stays out (extended rule)",
+			name:       "member mentions another member skips leader",
+			content:    "[@self](mention://member/" + testUserID + ") please weigh in",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       false,
 		},
 		{
-			name:        "member mentions non-leader agent skips leader",
-			content:     "[@Other](mention://agent/" + fx.OtherID + ") please take this",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        false,
-			description: "user routed at an agent — leader stays out",
+			name:       "member mentions non-leader agent skips leader",
+			content:    "[@Other](mention://agent/" + fx.OtherID + ") please take this",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       false,
 		},
 		{
-			name:        "member mentions leader skips leader on comment path",
-			content:     "[@Leader](mention://agent/" + fx.LeaderID + ") your call",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        false,
-			description: "even @leader is dispatched via the mention path; comment path must not double-enqueue",
+			name:       "member mentions leader skips leader on comment path",
+			content:    "[@Leader](mention://agent/" + fx.LeaderID + ") your call",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       false,
 		},
 		{
-			name:        "member mention all skips leader",
-			content:     "[@all](mention://all/all) heads up",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        false,
-			description: "@all is a broadcast — leader does not need to wake to evaluate routing",
+			name:       "member mention all skips leader",
+			content:    "[@all](mention://all/all) heads up",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       false,
 		},
 		{
-			name:        "member mentions a squad skips leader",
-			content:     "handing to [@Other Squad](mention://squad/" + fx.SquadID + ")",
-			authorType:  "member",
-			authorID:    testUserID,
-			want:        false,
-			description: "@squad routes the issue to that squad's leader — current leader stays out",
+			name:       "member mentions a squad skips leader",
+			content:    "handing to [@Other Squad](mention://squad/" + fx.SquadID + ")",
+			authorType: "member",
+			authorID:   testUserID,
+			want:       false,
 		},
 		{
-			name:        "agent comment with @agent still triggers leader",
-			content:     "delegating to [@Other](mention://agent/" + fx.OtherID + ")",
-			authorType:  "agent",
-			authorID:    fx.OtherID,
-			want:        true,
-			description: "agent-authored replies always reach leader so it can coordinate next step",
+			name:       "agent comment with @agent still triggers leader",
+			content:    "delegating to [@Other](mention://agent/" + fx.OtherID + ")",
+			authorType: "agent",
+			authorID:   fx.OtherID,
+			want:       true,
 		},
 	}
 
@@ -295,23 +283,14 @@ func TestShouldEnqueueSquadLeaderOnComment_SkipsWhenMemberMentionsAnyone(t *test
 		t.Run(tc.name, func(t *testing.T) {
 			got := shouldEnqueueSquadLeaderOnCommentForTest(ctx, fx.Issue, tc.content, tc.authorType, tc.authorID)
 			if got != tc.want {
-				t.Fatalf("%s\n  content=%q author=%s/%s\n  got=%v want=%v",
-					tc.description, tc.content, tc.authorType, tc.authorID, got, tc.want)
+				t.Fatalf("content=%q author=%s/%s: got=%v want=%v", tc.content, tc.authorType, tc.authorID, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestShouldEnqueueSquadLeaderOnComment_LeaderSelfTriggerByRole covers the
-// role-aware self-trigger guard added for MUL-2218. The leader agent itself
-// should be skipped only when its last activity on the issue was a leader
-// task — never just because the comment author equals the leader ID. This
-// matters for dual-role agents (leader + worker of the same squad): a
-// comment posted from the worker task must still wake the leader.
 func TestShouldEnqueueSquadLeaderOnComment_LeaderSelfTriggerByRole(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newSquadCommentTriggerFixture(t)
 	ctx := context.Background()
 	issueID := uuidToString(fx.Issue.ID)
@@ -325,68 +304,47 @@ func TestShouldEnqueueSquadLeaderOnComment_LeaderSelfTriggerByRole(t *testing.T)
 			t.Fatalf("clear tasks: %v", err)
 		}
 	}
-	insertTask := func(isLeader bool, status string) {
+	runtimeID := squadAgentRuntimeID(t, fx.LeaderID)
+	insertTask := func(isLeader bool) {
 		t.Helper()
-		var runtimeID string
-		if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, fx.LeaderID).Scan(&runtimeID); err != nil {
-			t.Fatalf("load runtime: %v", err)
-		}
 		if _, err := testPool.Exec(ctx, `
 			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task)
-			VALUES ($1, $2, $3, $4, $5)
-		`, fx.LeaderID, runtimeID, issueID, status, isLeader); err != nil {
+			VALUES ($1, $2, $3, 'completed', $4)
+		`, fx.LeaderID, runtimeID, issueID, isLeader); err != nil {
 			t.Fatalf("insert task: %v", err)
 		}
 	}
-
-	t.Run("no prior task wakes leader (fresh external trigger)", func(t *testing.T) {
-		clearTasks()
-		if got := shouldEnqueueSquadLeaderOnCommentForTest(ctx, fx.Issue, "noted", "agent", fx.LeaderID); !got {
-			t.Fatalf("no prior task: expected leader to be enqueued, got skip")
-		}
-	})
-
-	t.Run("prior leader task suppresses self-trigger", func(t *testing.T) {
-		clearTasks()
-		insertTask(true, "completed")
-		if got := shouldEnqueueSquadLeaderOnCommentForTest(ctx, fx.Issue, "noted", "agent", fx.LeaderID); got {
-			t.Fatalf("after leader task: expected skip (anti-loop), got enqueue")
-		}
-	})
-
-	t.Run("prior worker task still wakes leader (dual-role agent)", func(t *testing.T) {
-		clearTasks()
-		insertTask(false, "completed")
-		if got := shouldEnqueueSquadLeaderOnCommentForTest(ctx, fx.Issue, "result", "agent", fx.LeaderID); !got {
-			t.Fatalf("after worker task: expected leader to be enqueued (MUL-2218), got skip")
-		}
-	})
-
-	t.Run("most recent task is the one that matters", func(t *testing.T) {
-		clearTasks()
-		insertTask(true, "completed")  // older leader task
-		insertTask(false, "completed") // newer worker task
-		if got := shouldEnqueueSquadLeaderOnCommentForTest(ctx, fx.Issue, "result", "agent", fx.LeaderID); !got {
-			t.Fatalf("latest task is worker: expected leader to be enqueued, got skip")
-		}
-	})
+	tests := []struct {
+		name       string
+		priorRoles []bool
+		want       bool
+	}{
+		{name: "no prior task wakes leader", want: true},
+		{name: "prior leader task suppresses self-trigger", priorRoles: []bool{true}},
+		{name: "prior worker task wakes leader", priorRoles: []bool{false}, want: true},
+		{name: "most recent worker task wins", priorRoles: []bool{true, false}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearTasks()
+			for _, isLeader := range test.priorRoles {
+				insertTask(isLeader)
+			}
+			if got := shouldEnqueueSquadLeaderOnCommentForTest(ctx, fx.Issue, "result", "agent", fx.LeaderID); got != test.want {
+				t.Fatalf("enqueue = %t, want %t", got, test.want)
+			}
+		})
+	}
 }
 
 func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "SOP Auto Continue Leader", nil)
 	workerID := createHandlerTestSOPAgent(t, "SOP Worker Stage 01-clarify", "01-clarify")
 
-	var leaderRuntimeID, workerRuntimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
-		t.Fatalf("load leader runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, workerID).Scan(&workerRuntimeID); err != nil {
-		t.Fatalf("load worker runtime: %v", err)
-	}
+	leaderRuntimeID := squadAgentRuntimeID(t, leaderID)
+	workerRuntimeID := squadAgentRuntimeID(t, workerID)
 
 	profile := `{
 		"profile_key":"test-sop",
@@ -516,6 +474,30 @@ const finalSOPTestProfile = `{
 	]
 }`
 
+func createGongfengSOPProject(t *testing.T, title string) pgtype.UUID {
+	t.Helper()
+	ctx := context.Background()
+	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		Title:       title, Status: "in_progress", Priority: "medium", Scope: "workspace",
+		OwnerID: util.MustParseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID) })
+	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
+		ProjectID: project.ID, WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		ResourceType: "gongfeng_repo",
+		ResourceRef:  []byte(`{"project_path":"ChainWeaver/ida/gateway","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/gateway"}`),
+		Label:        pgtype.Text{String: "gateway", Valid: true},
+		CreatedBy:    util.MustParseUUID(testUserID),
+	}); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
+	return project.ID
+}
+
 type finalSOPTaskFixture struct {
 	Ctx             context.Context
 	LeaderID        string
@@ -528,20 +510,13 @@ type finalSOPTaskFixture struct {
 
 func newFinalSOPTaskFixture(t *testing.T, name, issueStatus string, projectID pgtype.UUID) finalSOPTaskFixture {
 	t.Helper()
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, name+" Leader", nil)
 	verifyID := createHandlerTestSOPAgent(t, name+" 05-verify", "05-verify")
 
-	var leaderRuntimeID, verifyRuntimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
-		t.Fatalf("load leader runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
-		t.Fatalf("load verify runtime: %v", err)
-	}
+	leaderRuntimeID := squadAgentRuntimeID(t, leaderID)
+	verifyRuntimeID := squadAgentRuntimeID(t, verifyID)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -607,28 +582,33 @@ func (fx finalSOPTaskFixture) completeFinalTask(t *testing.T, result []byte) {
 	}
 }
 
-func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T) {
-	fx := newFinalSOPTaskFixture(t, "SOP Final Auto Close", "in_progress", pgtype.UUID{})
-	fx.completeFinalTask(t, []byte(`{}`))
-
+func (fx finalSOPTaskFixture) requireIssueStatus(t *testing.T, want string) {
+	t.Helper()
 	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
 	if err != nil {
 		t.Fatalf("load issue: %v", err)
 	}
-	if issue.Status != "done" {
-		t.Fatalf("issue status = %q, want done", issue.Status)
+	if issue.Status != want {
+		t.Fatalf("issue status = %q, want %q", issue.Status, want)
 	}
-	var runStatus string
-	if err := testPool.QueryRow(fx.Ctx, `
-		SELECT status FROM squad_sop_run
-		WHERE issue_id = $1 AND workspace_id = $2
-		ORDER BY created_at DESC LIMIT 1
-	`, fx.IssueID, testWorkspaceID).Scan(&runStatus); err != nil {
+}
+
+func (fx finalSOPTaskFixture) requireRunStatus(t *testing.T, want string) {
+	t.Helper()
+	var got string
+	if err := testPool.QueryRow(fx.Ctx, `SELECT status FROM squad_sop_run WHERE id = $1 AND workspace_id = $2`, fx.RunID, testWorkspaceID).Scan(&got); err != nil {
 		t.Fatalf("load sop run: %v", err)
 	}
-	if runStatus != "已完成" {
-		t.Fatalf("sop run status = %q, want 已完成", runStatus)
+	if got != want {
+		t.Fatalf("sop run status = %q, want %q", got, want)
 	}
+}
+
+func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T) {
+	fx := newFinalSOPTaskFixture(t, "SOP Final Auto Close", "in_progress", pgtype.UUID{})
+	fx.completeFinalTask(t, []byte(`{}`))
+	fx.requireIssueStatus(t, "done")
+	fx.requireRunStatus(t, "已完成")
 }
 
 func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.T) {
@@ -640,23 +620,8 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 		t.Fatalf("marshal result: %v", err)
 	}
 	fx.completeFinalTask(t, result)
-
-	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
-	}
-	if issue.Status != "blocked" {
-		t.Fatalf("issue status = %q, want blocked", issue.Status)
-	}
-	var runStatus string
-	if err := testPool.QueryRow(fx.Ctx, `
-		SELECT status FROM squad_sop_run WHERE id = $1 AND workspace_id = $2
-	`, fx.RunID, testWorkspaceID).Scan(&runStatus); err != nil {
-		t.Fatalf("load sop run: %v", err)
-	}
-	if runStatus != "已阻塞" {
-		t.Fatalf("sop run status = %q, want 已阻塞", runStatus)
-	}
+	fx.requireIssueStatus(t, "blocked")
+	fx.requireRunStatus(t, "已阻塞")
 	var queuedLeaderCount int
 	if err := testPool.QueryRow(fx.Ctx, `
 		SELECT count(*)
@@ -671,45 +636,11 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 }
 
 func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndComments(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
-		WorkspaceID: util.MustParseUUID(testWorkspaceID),
-		Title:       "SOP Final MR Gate Gongfeng Project",
-		Status:      "in_progress",
-		Priority:    "medium",
-		Scope:       "workspace",
-		OwnerID:     util.MustParseUUID(testUserID),
-	})
-	if err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
-	})
-	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
-		ProjectID:    project.ID,
-		WorkspaceID:  util.MustParseUUID(testWorkspaceID),
-		ResourceType: "gongfeng_repo",
-		ResourceRef:  []byte(`{"project_path":"ChainWeaver/ida/gateway","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/gateway"}`),
-		Label:        pgtype.Text{String: "gateway", Valid: true},
-		CreatedBy:    util.MustParseUUID(testUserID),
-	}); err != nil {
-		t.Fatalf("create project resource: %v", err)
-	}
-
-	fx := newFinalSOPTaskFixture(t, "SOP Final MR Gate", "in_progress", project.ID)
+	requireHandlerDatabase(t)
+	projectID := createGongfengSOPProject(t, "SOP Final MR Gate Gongfeng Project")
+	fx := newFinalSOPTaskFixture(t, "SOP Final MR Gate", "in_progress", projectID)
 	fx.completeFinalTask(t, []byte(`{}`))
-
-	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
-	}
-	if issue.Status != "blocked" {
-		t.Fatalf("issue status = %q, want blocked", issue.Status)
-	}
+	fx.requireIssueStatus(t, "blocked")
 
 	var authorID, content string
 	if err := testPool.QueryRow(fx.Ctx, `
@@ -732,53 +663,18 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 func TestCompleteTask_FinalSOPStepClosesIssueAlreadyInReview(t *testing.T) {
 	fx := newFinalSOPTaskFixture(t, "SOP Final InReview", "in_review", pgtype.UUID{})
 	fx.completeFinalTask(t, []byte(`{}`))
-
-	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
-	}
-	if issue.Status != "done" {
-		t.Fatalf("issue status = %q, want done", issue.Status)
-	}
+	fx.requireIssueStatus(t, "done")
 }
 
 func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	sq := newSquadCommentTriggerFixture(t)
 	verifyID := createHandlerTestSOPAgent(t, "SOP Child Auto Close 05-verify", "05-verify")
 
-	var verifyRuntimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
-		t.Fatalf("load verify runtime: %v", err)
-	}
+	verifyRuntimeID := squadAgentRuntimeID(t, verifyID)
 
-	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
-		WorkspaceID: util.MustParseUUID(testWorkspaceID),
-		Title:       "SOP Child Auto Close Gongfeng Project",
-		Status:      "in_progress",
-		Priority:    "medium",
-		Scope:       "workspace",
-		OwnerID:     util.MustParseUUID(testUserID),
-	})
-	if err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
-	})
-	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
-		ProjectID:    project.ID,
-		WorkspaceID:  util.MustParseUUID(testWorkspaceID),
-		ResourceType: "gongfeng_repo",
-		ResourceRef:  []byte(`{"project_path":"ChainWeaver/ida/gateway","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/gateway"}`),
-		Label:        pgtype.Text{String: "gateway", Valid: true},
-		CreatedBy:    util.MustParseUUID(testUserID),
-	}); err != nil {
-		t.Fatalf("create project resource: %v", err)
-	}
+	projectID := createGongfengSOPProject(t, "SOP Child Auto Close Gongfeng Project")
 
 	var parentID, childID string
 	parentNumber := nextHandlerTestIssueNumber(t)
@@ -794,7 +690,7 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id, project_id, assignee_type, assignee_id, number)
 		VALUES ($1, 'member', $2, $3, 'in_progress', $4, $5, 'squad', $6, $7)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "sop child auto closes with MR", parentID, project.ID, sq.SquadID, childNumber).Scan(&childID); err != nil {
+	`, testWorkspaceID, testUserID, "sop child auto closes with MR", parentID, projectID, sq.SquadID, childNumber).Scan(&childID); err != nil {
 		t.Fatalf("create child issue: %v", err)
 	}
 	t.Cleanup(func() {
@@ -883,23 +779,8 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 	}
 }
 
-// TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention drives the
-// full CreateComment handler to lock the call-site wiring (comment.go) for
-// the squad-leader-skip rule. Specifically it proves that:
-//
-//   - A member top-level comment that @mentions another agent does NOT
-//     enqueue the squad leader (the mentioned agent owns the next step).
-//   - A subsequent member REPLY in the same thread, containing no mentions
-//     of its own, DOES enqueue the squad leader — i.e. the parent's
-//     @agent mention is not inherited into the leader-skip decision.
-//
-// The matching unit test above exercises the helper in isolation; this
-// test catches a class of regression where someone refactors comment.go
-// to pass the parent's content (or the merged thread content) by mistake.
 func TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newSquadCommentTriggerFixture(t)
 	issueID := uuidToString(fx.Issue.ID)
@@ -960,20 +841,8 @@ func TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention(t *testing.T) {
 	}
 }
 
-// TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader is the full-stack
-// regression test for comment-trigger concurrency. Scenario:
-//
-//   - Agent L is the leader of squad S and also a worker assigned tasks on
-//     issues belonging to S.
-//   - L is still running in its worker role (is_leader_task=false) and posts a
-//     progress/result comment.
-//   - The comment MUST NOT enqueue a concurrent leader task while the worker
-//     task is still active. The task completion or explicit handoff owns the
-//     next wakeup.
 func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newSquadCommentTriggerFixture(t)
 	issueID := uuidToString(fx.Issue.ID)
@@ -988,10 +857,7 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 	// in its worker role when it posts the comment. We make it running (not
 	// completed) so we can hand its ID back through X-Task-ID for the
 	// resolveActor agent-identity check.
-	var runtimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, fx.LeaderID).Scan(&runtimeID); err != nil {
-		t.Fatalf("load runtime: %v", err)
-	}
+	runtimeID := squadAgentRuntimeID(t, fx.LeaderID)
 	var workerTaskID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, is_leader_task)
@@ -1135,10 +1001,20 @@ func insertSOPPMMentionComment(t *testing.T, fx crossProjectGateSOPFixture) db.C
 	}
 }
 
-func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMissing(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
+func countCrossProjectGateComments(t *testing.T, issueID string) int {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM comment
+		WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%平台已阻止父任务阶段调度%'
+	`, issueID).Scan(&count); err != nil {
+		t.Fatalf("count gate comments: %v", err)
 	}
+	return count
+}
+
+func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMissing(t *testing.T) {
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newCrossProjectGateSOPFixture(t, false)
 	comment := insertSOPPMMentionComment(t, fx)
@@ -1148,22 +1024,13 @@ func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMis
 	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 0 {
 		t.Fatalf("parent 04 task count = %d, want 0 while required child is missing", got)
 	}
-	var gateComments int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*) FROM comment
-		WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%平台已阻止父任务阶段调度%'
-	`, fx.IssueID).Scan(&gateComments); err != nil {
-		t.Fatalf("count gate comments: %v", err)
-	}
-	if gateComments != 1 {
-		t.Fatalf("gate comment count = %d, want 1", gateComments)
+	if got := countCrossProjectGateComments(t, fx.IssueID); got != 1 {
+		t.Fatalf("gate comment count = %d, want 1", got)
 	}
 }
 
 func TestCreateCommentFailsClosedWhenCrossProjectGateProfileIsInvalid(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newCrossProjectGateSOPFixture(t, false)
 	if _, err := testPool.Exec(ctx, `
@@ -1193,9 +1060,7 @@ func TestCreateCommentFailsClosedWhenCrossProjectGateProfileIsInvalid(t *testing
 }
 
 func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDone(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newCrossProjectGateSOPFixture(t, true)
 	comment := insertSOPPMMentionComment(t, fx)
@@ -1208,9 +1073,7 @@ func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDon
 }
 
 func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenLatestTaskSplitHasNoCrossProjectDependency(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newCrossProjectGateSOPFixture(t, false)
 	if _, err := testPool.Exec(ctx, `
@@ -1235,9 +1098,7 @@ func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenLatestTaskSplitHasN
 }
 
 func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildren(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newCrossProjectGateSOPFixture(t, false)
 
@@ -1271,28 +1132,13 @@ func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildr
 	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
 		t.Fatalf("child 04 task count = %d, want 1 when no further child is required", got)
 	}
-	var gateComments int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*) FROM comment
-		WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%平台已阻止父任务阶段调度%'
-	`, fx.IssueID).Scan(&gateComments); err != nil {
-		t.Fatalf("count gate comments: %v", err)
-	}
-	if gateComments != 0 {
-		t.Fatalf("gate comment count = %d, want 0", gateComments)
+	if got := countCrossProjectGateComments(t, fx.IssueID); got != 0 {
+		t.Fatalf("gate comment count = %d, want 0", got)
 	}
 }
 
-// TestCreateRetryTask_InheritsIsLeaderTask locks the retry-clone contract for
-// MUL-2218: auto-retry of a leader-role task must produce a child task that is
-// also is_leader_task=true. Without this, the automatic retry silently
-// demotes a retried leader task to a worker task, and the self-trigger guard
-// in computeAssignedSquadLeaderCommentTrigger / comment.go stops recognising the
-// retried leader's own comments — re-opening the bug this issue fixes.
 func TestCreateRetryTask_InheritsIsLeaderTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	fx := newSquadCommentTriggerFixture(t)
 	issueID := uuidToString(fx.Issue.ID)
@@ -1301,10 +1147,7 @@ func TestCreateRetryTask_InheritsIsLeaderTask(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
 	})
 
-	var runtimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, fx.LeaderID).Scan(&runtimeID); err != nil {
-		t.Fatalf("load runtime: %v", err)
-	}
+	runtimeID := squadAgentRuntimeID(t, fx.LeaderID)
 
 	cases := []struct {
 		name     string
@@ -1338,16 +1181,8 @@ func TestCreateRetryTask_InheritsIsLeaderTask(t *testing.T) {
 	}
 }
 
-// TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember verifies that
-// a plain workspace member cannot trigger a private squad leader via @squad
-// mention. This is the regression test for the P1 finding: without the
-// canAccessPersonalAgent gate in the squad mention branch, a member could
-// bypass the personal-agent restriction by mentioning the squad instead of
-// the agent directly.
 func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	// Use personalAgentTestFixture to get a personal agent + plain member.
@@ -1365,11 +1200,7 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 	`, testWorkspaceID, memberID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	cleanupSquadCommentIssue(t, issueID)
 
 	// Plain member posts a comment mentioning the squad.
 	w := httptest.NewRecorder()
@@ -1395,13 +1226,8 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 	}
 }
 
-// TestCreateComment_SquadMentionTriggersLeader verifies that @mentioning a
-// squad in a comment triggers the squad's leader agent via the mention path,
-// even when the issue is NOT assigned to that squad.
 func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	// Create a squad with a leader agent.
@@ -1432,9 +1258,7 @@ func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
 }
 
 func TestCreateComment_MentionAssignedSquadLeaderCreatesLeaderRoleTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	leaderID := createHandlerTestAgent(t, "Assigned Squad Mention Leader", nil)
@@ -1448,11 +1272,7 @@ func TestCreateComment_MentionAssignedSquadLeaderCreatesLeaderRoleTask(t *testin
 	`, testWorkspaceID, "assigned squad leader mention dedupe "+randomID()[:8], testUserID, squadID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	cleanupSquadCommentIssue(t, issueID)
 
 	w, _ := (handlerCommentIssueFixture{ID: issueID}).postComment(t, map[string]any{
 		"content": "[@Leader](mention://agent/" + leaderID + ") please close this",
