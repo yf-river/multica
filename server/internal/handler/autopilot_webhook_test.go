@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// ── Token generation ────────────────────────────────────────────────────────
-
 func TestGenerateWebhookToken_PrefixAndLength(t *testing.T) {
 	token, err := generateWebhookToken()
 	if err != nil {
@@ -46,8 +44,6 @@ func TestGenerateWebhookToken_NoUnsafeURLChars(t *testing.T) {
 		t.Fatalf("token has unsafe characters: %q", token)
 	}
 }
-
-// ── Payload normalization ───────────────────────────────────────────────────
 
 func TestNormalizeWebhookPayload_PreservesCallerProvidedEnvelope(t *testing.T) {
 	body := []byte(`{"event":"caller.event","eventPayload":{"k":"v"}}`)
@@ -95,66 +91,34 @@ func TestNormalizeWebhookPayload_GitHubHeaderInferEvent(t *testing.T) {
 	}
 }
 
-func TestNormalizeWebhookPayload_GitLabHeader(t *testing.T) {
-	body := []byte(`{"object_kind":"push"}`)
-	headers := http.Header{}
-	headers.Set("X-Gitlab-Event", "Push Hook")
-
-	env, err := normalizeWebhookPayload(body, headers)
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "gitlab.Push Hook" {
-		t.Fatalf("gitlab event: got %q", env.Event)
-	}
-}
-
-func TestNormalizeWebhookPayload_BodyEventField(t *testing.T) {
-	body := []byte(`{"event":"demo.received","data":{"x":1}}`)
-	headers := http.Header{}
-
-	env, err := normalizeWebhookPayload(body, headers)
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "demo.received" {
-		t.Fatalf("event: %q", env.Event)
-	}
-}
-
-func TestNormalizeWebhookPayload_BodyTypeFallback(t *testing.T) {
-	body := []byte(`{"type":"foo.bar"}`)
-	env, err := normalizeWebhookPayload(body, http.Header{})
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "foo.bar" {
-		t.Fatalf("event: %q", env.Event)
-	}
-}
-
-func TestNormalizeWebhookPayload_BodyActionFallback(t *testing.T) {
-	body := []byte(`{"action":"opened"}`)
-	env, err := normalizeWebhookPayload(body, http.Header{})
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "opened" {
-		t.Fatalf("event: %q", env.Event)
-	}
-}
-
-func TestNormalizeWebhookPayload_DefaultEvent(t *testing.T) {
-	body := []byte(`{"foo":"bar"}`)
-	env, err := normalizeWebhookPayload(body, http.Header{})
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "webhook.received" {
-		t.Fatalf("event: %q", env.Event)
-	}
-	if !strings.Contains(string(env.EventPayload), `"foo"`) {
-		t.Fatalf("event payload not preserved: %s", env.EventPayload)
+func TestNormalizeWebhookPayloadEventPrecedence(t *testing.T) {
+	for _, testCase := range []struct {
+		name, body, header, headerValue, want string
+	}{
+		{name: "GitLab header", body: `{"object_kind":"push"}`, header: "X-Gitlab-Event", headerValue: "Push Hook", want: "gitlab.Push Hook"},
+		{name: "generic header", body: `{"a":1}`, header: "X-Event-Type", headerValue: "custom.thing", want: "custom.thing"},
+		{name: "GitHub header without action", body: `{"some":"thing"}`, header: "X-GitHub-Event", headerValue: "push", want: "github.push"},
+		{name: "event field", body: `{"event":"demo.received","data":{"x":1}}`, want: "demo.received"},
+		{name: "type field", body: `{"type":"foo.bar"}`, want: "foo.bar"},
+		{name: "action field", body: `{"action":"opened"}`, want: "opened"},
+		{name: "default", body: `{"foo":"bar"}`, want: "webhook.received"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			headers := http.Header{}
+			if testCase.header != "" {
+				headers.Set(testCase.header, testCase.headerValue)
+			}
+			envelope, err := normalizeWebhookPayload([]byte(testCase.body), headers)
+			if err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if envelope.Event != testCase.want {
+				t.Fatalf("event = %q, want %q", envelope.Event, testCase.want)
+			}
+			if string(envelope.EventPayload) != testCase.body {
+				t.Fatalf("event payload = %s, want %s", envelope.EventPayload, testCase.body)
+			}
+		})
 	}
 }
 
@@ -183,39 +147,10 @@ func TestNormalizeWebhookPayload_RejectsInvalidJSON(t *testing.T) {
 }
 
 func TestNormalizeWebhookPayload_RejectsScalarBody(t *testing.T) {
-	// Bare scalar JSON ("hello", 42) is not a useful webhook payload.
 	if _, err := normalizeWebhookPayload([]byte(`"hello"`), http.Header{}); err == nil {
 		t.Fatal("expected error on scalar JSON body")
 	}
 }
-
-func TestNormalizeWebhookPayload_GitHubHeaderWithoutAction(t *testing.T) {
-	body := []byte(`{"some":"thing"}`)
-	headers := http.Header{}
-	headers.Set("X-GitHub-Event", "push")
-	env, err := normalizeWebhookPayload(body, headers)
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "github.push" {
-		t.Fatalf("event: %q", env.Event)
-	}
-}
-
-func TestNormalizeWebhookPayload_XEventTypeHeader(t *testing.T) {
-	body := []byte(`{"a":1}`)
-	headers := http.Header{}
-	headers.Set("X-Event-Type", "custom.thing")
-	env, err := normalizeWebhookPayload(body, headers)
-	if err != nil {
-		t.Fatalf("normalize: %v", err)
-	}
-	if env.Event != "custom.thing" {
-		t.Fatalf("event: %q", env.Event)
-	}
-}
-
-// ── Event filter helpers ────────────────────────────────────────────────────
 
 func TestWebhookEventAllowedByTriggerScope_NoFiltersAllowsAll(t *testing.T) {
 	if !webhookEventAllowedByTriggerScope(nil, WebhookEnvelope{Event: "github.push"}) {
@@ -261,12 +196,6 @@ func TestWebhookEventAllowedByTriggerScope_AnyActionWhenEmpty(t *testing.T) {
 	}
 }
 
-// TestWebhookEventAllowedByTriggerScope_MultipleFiltersSameEvent pins the
-// fix for PR #3231 review: the matcher used to return false as soon as it
-// hit the first event-name match whose actions didn't line up, which made
-// later filters covering the same event but different actions unreachable
-// (order-dependent silent drops). The fix is to keep scanning and only
-// short-circuit on a positive match.
 func TestWebhookEventAllowedByTriggerScope_MultipleFiltersSameEvent(t *testing.T) {
 	filters := []byte(`[
 		{"event":"workflow_run","actions":["completed"]},
@@ -298,10 +227,6 @@ func TestWebhookEventAllowedByTriggerScope_MultipleFiltersSameEvent(t *testing.T
 	}
 }
 
-// TestWebhookEventAllowedByTriggerScope_MalformedDenies pins the
-// fail-closed behavior for corrupted rows. Strict write-time validation
-// (validateWebhookEventFilters) is the primary defense; this is the
-// defense-in-depth check for "what if a malformed row somehow exists".
 func TestWebhookEventAllowedByTriggerScope_MalformedDenies(t *testing.T) {
 	corrupt := []byte(`{not a json array}`)
 	env := WebhookEnvelope{
@@ -334,10 +259,10 @@ func TestWebhookEventAllowedByTriggerScope_MultipleFilters(t *testing.T) {
 
 func TestSplitWebhookEvent(t *testing.T) {
 	tests := []struct {
-		input           string
-		wantProvider    string
-		wantName        string
-		wantAction      string
+		input        string
+		wantProvider string
+		wantName     string
+		wantAction   string
 	}{
 		{"github.workflow_run.completed", "github", "workflow_run", "completed"},
 		{"github.push", "github", "push", ""},

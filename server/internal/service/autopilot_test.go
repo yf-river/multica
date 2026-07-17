@@ -213,11 +213,6 @@ func TestBuildIssueDescription_NonWebhookSourceWithPayloadIgnored(t *testing.T) 
 	}
 }
 
-// TestInterpolateTemplate covers the three behaviours that real autopilot
-// runs depend on: {{date}} substitution, falling back to Title when the
-// template is unset/empty, and leaving any non-{{date}} text alone (the
-// handler is the layer that prevents unknown tokens from being stored in
-// the first place — service-layer interpolation stays substitute-or-leave).
 func TestInterpolateTemplate(t *testing.T) {
 	s := &AutopilotService{}
 	run := db.AutopilotRun{TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
@@ -281,10 +276,6 @@ func TestInterpolateTemplate_UsesTriggerTimezoneForDate(t *testing.T) {
 	}
 }
 
-// TestValidateIssueTitleTemplate locks down what create/update accept.
-// Reject path: anything inside {{...}} that is not in the supported set.
-// Accept path: empty, plain text, and the canonical {{date}} placeholder
-// in both compact and whitespace-padded forms.
 func TestValidateIssueTitleTemplate(t *testing.T) {
 	t.Run("accepts empty template", func(t *testing.T) {
 		if err := ValidateIssueTitleTemplate(""); err != nil {

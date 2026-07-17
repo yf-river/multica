@@ -10,12 +10,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Helper to build a pgtype.UUID from a string.
 func testUUID(s string) pgtype.UUID {
 	return parseUUID(s)
 }
 
-// Helper to build a pgtype.Text.
 func testText(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: true}
 }
@@ -37,10 +35,6 @@ func issueWithAgentAssignee() db.Issue {
 func issueNoAssignee() db.Issue {
 	return db.Issue{}
 }
-
-// -------------------------------------------------------------------
-// commentMentionsOthersButNotAssignee
-// -------------------------------------------------------------------
 
 func TestCommentMentionsOthersButNotAssignee(t *testing.T) {
 	h := &Handler{} // nil handler — method doesn't use h
@@ -119,10 +113,6 @@ func TestCommentMentionsOthersButNotAssignee_NoAssignee(t *testing.T) {
 		t.Errorf("expected true for mentions on unassigned issue, got false")
 	}
 }
-
-// -------------------------------------------------------------------
-// isReplyToMemberThread
-// -------------------------------------------------------------------
 
 func TestIsReplyToMemberThread(t *testing.T) {
 	h := &Handler{}
@@ -234,10 +224,6 @@ func TestReplyToMemberThreadPreservesParticipationLookupFailure(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------
-// shouldInheritParentMentions
-// -------------------------------------------------------------------
-
 func TestShouldInheritParentMentions(t *testing.T) {
 	memberParent := &db.Comment{AuthorType: "member", AuthorID: testUUID(memberID), Content: "thread starter"}
 	agentParent := &db.Comment{AuthorType: "agent", AuthorID: testUUID(agentAssigneeID), Content: "agent thread starter"}
@@ -267,9 +253,6 @@ func TestShouldInheritParentMentions(t *testing.T) {
 	}
 }
 
-// Regression for the case from MUL-1535: J posts a PR completion comment
-// that @mentions GPT-Boy for review; later a member posts a plain follow-up
-// reply asking the assignee a question. GPT-Boy must NOT be re-triggered.
 func TestShouldInheritParentMentions_AgentReviewDelegationDoesNotLeak(t *testing.T) {
 	jPRCompletion := &db.Comment{
 		AuthorType: "agent",
@@ -280,10 +263,6 @@ func TestShouldInheritParentMentions_AgentReviewDelegationDoesNotLeak(t *testing
 		t.Fatal("member follow-up to an agent's PR-review delegation must not inherit the @reviewer mention")
 	}
 }
-
-// -------------------------------------------------------------------
-// Combined trigger decision (simulates the full on_comment check)
-// -------------------------------------------------------------------
 
 func TestOnCommentTriggerDecision(t *testing.T) {
 	h := &Handler{}
@@ -338,10 +317,6 @@ func TestOnCommentTriggerDecision(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------------------------
-// isNoteComment — the /note opt-out prefix
-// -------------------------------------------------------------------
-
 func TestIsNoteComment(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -373,13 +348,6 @@ func TestIsNoteComment(t *testing.T) {
 	}
 }
 
-// TestTriggerTasksForComment_NoteShortCircuits proves a /note comment returns
-// before any of the three trigger paths run. shouldEnqueueOnComment,
-// computeAssignedSquadLeaderCommentTrigger, and
-// computeMentionedAgentCommentTriggers all dereference h.Queries, so a
-// nil-Queries Handler would panic if the /note guard were missing or moved
-// below them. The comment also @mentions an agent to exercise the mention
-// path specifically.
 func TestTriggerTasksForComment_NoteShortCircuits(t *testing.T) {
 	h := &Handler{} // nil Queries / TaskService on purpose
 	issue := issueWithAgentAssignee()
