@@ -37,68 +37,63 @@ func newTerminalTaskFixture(t *testing.T, title string) terminalTaskFixture {
 	return terminalTaskFixture{IssueID: issue.ID, TaskID: taskID}
 }
 
-func TestCompleteTaskCommitsDurableTerminalEvent(t *testing.T) {
-	fixture := newTerminalTaskFixture(t, "Task complete durable event")
-	if _, err := testHandler.TaskService.CompleteTask(
-		context.Background(),
-		util.MustParseUUID(fixture.TaskID),
-		[]byte(`{}`),
-		"",
-		"",
-	); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
-	assertTerminalTaskEvent(t, fixture, protocol.EventTaskCompleted, "completed")
+type terminalTaskOperation struct {
+	name      string
+	eventType string
+	status    string
+	run       func(terminalTaskFixture) error
 }
 
-func TestCompleteTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
-	fixture := newTerminalTaskFixture(t, "Task complete outbox rollback")
-	installOutboxStreamFailure(t, "issue:"+fixture.IssueID)
-
-	if _, err := testHandler.TaskService.CompleteTask(
-		context.Background(),
-		util.MustParseUUID(fixture.TaskID),
-		[]byte(`{}`),
-		"",
-		"",
-	); err == nil {
-		t.Fatal("CompleteTask succeeded without a durable terminal event")
+func terminalTaskOperations() []terminalTaskOperation {
+	return []terminalTaskOperation{
+		{
+			name: "complete", eventType: protocol.EventTaskCompleted, status: "completed",
+			run: func(fixture terminalTaskFixture) error {
+				_, err := testHandler.TaskService.CompleteTask(context.Background(), util.MustParseUUID(fixture.TaskID), []byte(`{}`), "", "")
+				return err
+			},
+		},
+		{
+			name: "fail", eventType: protocol.EventTaskFailed, status: "failed",
+			run: func(fixture terminalTaskFixture) error {
+				_, err := testHandler.TaskService.FailTask(context.Background(), util.MustParseUUID(fixture.TaskID), "daemon reported a deterministic failure", "", "", "agent_error")
+				return err
+			},
+		},
+		{
+			name: "cancel", eventType: protocol.EventTaskCancelled, status: "cancelled",
+			run: func(fixture terminalTaskFixture) error {
+				_, err := testHandler.TaskService.CancelTask(context.Background(), util.MustParseUUID(fixture.TaskID))
+				return err
+			},
+		},
 	}
-	assertTaskRunning(t, fixture.TaskID)
-	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
-func TestFailTaskCommitsDurableTerminalEvent(t *testing.T) {
-	fixture := newTerminalTaskFixture(t, "Task failure durable event")
-	if _, err := testHandler.TaskService.FailTask(
-		context.Background(),
-		util.MustParseUUID(fixture.TaskID),
-		"daemon reported a deterministic failure",
-		"",
-		"",
-		"agent_error",
-	); err != nil {
-		t.Fatalf("FailTask: %v", err)
+func TestTaskTerminalOperationsCommitDurableEvent(t *testing.T) {
+	for _, operation := range terminalTaskOperations() {
+		t.Run(operation.name, func(t *testing.T) {
+			fixture := newTerminalTaskFixture(t, "Task "+operation.name+" durable event")
+			if err := operation.run(fixture); err != nil {
+				t.Fatalf("%s task: %v", operation.name, err)
+			}
+			assertTerminalTaskEvent(t, fixture, operation.eventType, operation.status)
+		})
 	}
-	assertTerminalTaskEvent(t, fixture, protocol.EventTaskFailed, "failed")
 }
 
-func TestFailTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
-	fixture := newTerminalTaskFixture(t, "Task failure outbox rollback")
-	installOutboxStreamFailure(t, "issue:"+fixture.IssueID)
-
-	if _, err := testHandler.TaskService.FailTask(
-		context.Background(),
-		util.MustParseUUID(fixture.TaskID),
-		"forced daemon failure",
-		"",
-		"",
-		"agent_error",
-	); err == nil {
-		t.Fatal("FailTask succeeded without a durable terminal event")
+func TestTaskTerminalOperationsRollBackWithoutDurableEvent(t *testing.T) {
+	for _, operation := range terminalTaskOperations() {
+		t.Run(operation.name, func(t *testing.T) {
+			fixture := newTerminalTaskFixture(t, "Task "+operation.name+" outbox rollback")
+			installOutboxStreamFailure(t, "issue:"+fixture.IssueID)
+			if err := operation.run(fixture); err == nil {
+				t.Fatalf("%s task succeeded without a durable terminal event", operation.name)
+			}
+			assertTaskRunning(t, fixture.TaskID)
+			assertNoTerminalTaskEvent(t, fixture.TaskID)
+		})
 	}
-	assertTaskRunning(t, fixture.TaskID)
-	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
 func TestFailStaleTasksRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
@@ -121,25 +116,6 @@ func TestFailStaleTasksRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) 
 	}
 	assertTaskRunning(t, fixture.TaskID)
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
-}
-
-func TestCancelTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
-	fixture := newTerminalTaskFixture(t, "Task cancellation outbox rollback")
-	installOutboxStreamFailure(t, "issue:"+fixture.IssueID)
-
-	if _, err := testHandler.TaskService.CancelTask(context.Background(), util.MustParseUUID(fixture.TaskID)); err == nil {
-		t.Fatal("CancelTask succeeded without a durable terminal event")
-	}
-	assertTaskRunning(t, fixture.TaskID)
-	assertNoTerminalTaskEvent(t, fixture.TaskID)
-}
-
-func TestCancelTaskCommitsDurableTerminalEvent(t *testing.T) {
-	fixture := newTerminalTaskFixture(t, "Task cancellation durable event")
-	if _, err := testHandler.TaskService.CancelTask(context.Background(), util.MustParseUUID(fixture.TaskID)); err != nil {
-		t.Fatalf("CancelTask: %v", err)
-	}
-	assertTerminalTaskEvent(t, fixture, protocol.EventTaskCancelled, "cancelled")
 }
 
 func assertTerminalTaskEvent(t *testing.T, fixture terminalTaskFixture, eventType, status string) {

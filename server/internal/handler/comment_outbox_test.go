@@ -67,13 +67,7 @@ func TestCreateCommentRollsBackWhenDurableEventCannotBeInserted(t *testing.T) {
 }
 
 func TestCreateCommentRollsBackWhenResolvedThreadCannotBeReopened(t *testing.T) {
-	issue := createHandlerCommentIssueFixture(t, "Comment unresolve rollback")
-	cleanupCommentOutboxForIssue(t, issue.ID)
-	rootResponse, root := issue.postComment(t, map[string]any{"content": "resolved root"}, nil)
-	if rootResponse.Code != http.StatusCreated {
-		t.Fatalf("CreateComment root: expected 201, got %d: %s", rootResponse.Code, rootResponse.Body.String())
-	}
-	resolveCommentHTTP(t, root.ID)
+	issue, root := newResolvedCommentThread(t, "Comment unresolve rollback", "resolved root")
 	installCommentUnresolveFailure(t, root.ID)
 
 	const replyContent = "reply and unresolve must commit together"
@@ -110,13 +104,7 @@ func TestCreateCommentRollsBackWhenResolvedThreadCannotBeReopened(t *testing.T) 
 }
 
 func TestCreateCommentReopensResolvedThreadInSameCommit(t *testing.T) {
-	issue := createHandlerCommentIssueFixture(t, "Comment unresolve success")
-	cleanupCommentOutboxForIssue(t, issue.ID)
-	rootResponse, root := issue.postComment(t, map[string]any{"content": "resolved root for reply"}, nil)
-	if rootResponse.Code != http.StatusCreated {
-		t.Fatalf("CreateComment root: expected 201, got %d: %s", rootResponse.Code, rootResponse.Body.String())
-	}
-	resolveCommentHTTP(t, root.ID)
+	issue, root := newResolvedCommentThread(t, "Comment unresolve success", "resolved root for reply")
 
 	const replyContent = "reply reopens resolved thread"
 	replyResponse, reply := issue.postComment(t, map[string]any{
@@ -142,6 +130,18 @@ func TestCreateCommentReopensResolvedThreadInSameCommit(t *testing.T) {
 	if eventCount != 1 {
 		t.Fatalf("committed reply durable events = %d, want 1", eventCount)
 	}
+}
+
+func newResolvedCommentThread(t *testing.T, issueTitle, rootContent string) (handlerCommentIssueFixture, CommentResponse) {
+	t.Helper()
+	issue := createHandlerCommentIssueFixture(t, issueTitle)
+	cleanupCommentOutboxForIssue(t, issue.ID)
+	response, root := issue.postComment(t, map[string]any{"content": rootContent}, nil)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("CreateComment root: expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	resolveCommentHTTP(t, root.ID)
+	return issue, root
 }
 
 func cleanupCommentOutboxForIssue(t *testing.T, issueID string) {

@@ -15,34 +15,13 @@ import (
 
 func TestIssueCreateAndUpdateCommitDurableEvents(t *testing.T) {
 	ctx := context.Background()
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueForUpdateEvent(t, map[string]any{
 		"title": "Durable issue event",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM domain_event_outbox WHERE payload #>> '{issue,id}' = $1`, created.ID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
-	})
-
 	assertDurableIssueEvent(t, ctx, protocol.EventIssueCreated, created.ID, "Durable issue event")
-
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+	updateIssueThroughHandler(t, created.ID, map[string]any{
 		"title": "Durable issue event updated",
 	})
-	req = withURLParam(req, "id", created.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
 	assertDurableIssueEvent(t, ctx, protocol.EventIssueUpdated, created.ID, "Durable issue event updated")
 }
 
@@ -53,16 +32,10 @@ func TestIssueUpdateEventMarksExplicitUnassignAsChange(t *testing.T) {
 		"assignee_id":   testUserID,
 	})
 
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+	updateIssueThroughHandler(t, created.ID, map[string]any{
 		"assignee_type": nil,
 		"assignee_id":   nil,
 	})
-	req = withURLParam(req, "id", created.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
 
 	flags := latestIssueUpdatedFlags(t, created.ID)
 	if !flags.AssigneeChanged {
@@ -76,15 +49,9 @@ func TestIssueUpdateEventDoesNotMarkUnchangedDescription(t *testing.T) {
 		"description": "same description",
 	})
 
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+	updateIssueThroughHandler(t, created.ID, map[string]any{
 		"description": "same description",
 	})
-	req = withURLParam(req, "id", created.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
 
 	flags := latestIssueUpdatedFlags(t, created.ID)
 	if flags.DescriptionChanged {

@@ -36,12 +36,7 @@ func TestAddIssueReactionRollsBackWhenEventInsertFails(t *testing.T) {
 }
 
 func TestAddCommentReactionCommitsDurableEvent(t *testing.T) {
-	issue := createHandlerCommentIssueFixture(t, "Comment reaction durable event")
-	cleanupCommentOutboxForIssue(t, issue.ID)
-	commentResponse, comment := issue.postComment(t, map[string]any{"content": "reaction target"}, nil)
-	if commentResponse.Code != http.StatusCreated {
-		t.Fatalf("CreateComment: expected 201, got %d: %s", commentResponse.Code, commentResponse.Body.String())
-	}
+	issue, comment := newCommentReactionTarget(t, "Comment reaction durable event", "reaction target")
 	w := addCommentReactionForTest(t, comment.ID, "eyes")
 	if w.Code != http.StatusCreated {
 		t.Fatalf("AddReaction: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -54,18 +49,24 @@ func TestAddCommentReactionCommitsDurableEvent(t *testing.T) {
 }
 
 func TestAddCommentReactionRollsBackWhenEventInsertFails(t *testing.T) {
-	issue := createHandlerCommentIssueFixture(t, "Comment reaction rollback")
-	cleanupCommentOutboxForIssue(t, issue.ID)
-	commentResponse, comment := issue.postComment(t, map[string]any{"content": "rollback reaction target"}, nil)
-	if commentResponse.Code != http.StatusCreated {
-		t.Fatalf("CreateComment: expected 201, got %d: %s", commentResponse.Code, commentResponse.Body.String())
-	}
+	issue, comment := newCommentReactionTarget(t, "Comment reaction rollback", "rollback reaction target")
 	installOutboxStreamFailure(t, "issue:"+issue.ID)
 	w := addCommentReactionForTest(t, comment.ID, "rollback_comment_reaction")
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("AddReaction: expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 	assertNoCommentReactionOrEvent(t, comment.ID, protocol.EventReactionAdded, "rollback_comment_reaction")
+}
+
+func newCommentReactionTarget(t *testing.T, issueTitle, commentContent string) (handlerCommentIssueFixture, CommentResponse) {
+	t.Helper()
+	issue := createHandlerCommentIssueFixture(t, issueTitle)
+	cleanupCommentOutboxForIssue(t, issue.ID)
+	response, comment := issue.postComment(t, map[string]any{"content": commentContent}, nil)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("CreateComment: expected 201, got %d: %s", response.Code, response.Body.String())
+	}
+	return issue, comment
 }
 
 func addIssueReactionForTest(t *testing.T, issueID, emoji string) *httptest.ResponseRecorder {

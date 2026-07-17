@@ -10,9 +10,7 @@ import (
 )
 
 func TestArchiveInboxItemRollsBackTargetWhenSiblingArchiveFails(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	suffix := time.Now().UnixNano()
 	var issueID string
