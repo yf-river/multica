@@ -22,15 +22,20 @@ type quickCreateTaskFixture struct {
 	agentID string
 }
 
+func (f quickCreateTaskFixture) complete(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if _, err := f.taskSvc.CompleteTask(ctx, f.task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+}
+
 func TestQuickCreateCompletionLeavesProjectionToOutbox(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupDispatchedQuickCreateTask(t, ctx, "atomic quick-create projection")
 	issue := createQuickCreateIssue(t, ctx, fixture, "agent-filed atomic issue")
 	installQuickCreateInboxFailure(t, "quick_create_done")
 
-	if _, err := fixture.taskSvc.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx)
 
 	persisted, err := fixture.queries.GetAgentTask(ctx, fixture.task.ID)
 	if err != nil {
@@ -59,9 +64,7 @@ func TestQuickCreateCompletionProjectionRollsBackAndRetries(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupDispatchedQuickCreateTask(t, ctx, "retry atomic quick-create projection")
 	issue := createQuickCreateIssue(t, ctx, fixture, "agent-filed retry issue")
-	if _, err := fixture.taskSvc.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx)
 	event := latestTaskTerminalEvent(t, fixture.task.ID)
 	removeFailure := installQuickCreateInboxFailure(t, "quick_create_done")
 
@@ -269,19 +272,12 @@ func setupDispatchedQuickCreateTask(t *testing.T, ctx context.Context, prompt st
 	}
 }
 
-// TestQuickCreateCompletion_SubscribesRequester locks in the fix for the
-// quick-create requester not being subscribed to the issue: the agent runs
-// the CLI and is recorded as the issue's creator, so the issue:created event
-// only auto-subscribes the agent. The completion path must explicitly
-// subscribe the human requester so they receive follow-up notifications.
 func TestQuickCreateCompletion_SubscribesRequester(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupDispatchedQuickCreateTask(t, ctx, "please file a bug")
 	issue := createQuickCreateIssue(t, ctx, fixture, "agent-filed bug")
 
-	if _, err := fixture.taskSvc.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx)
 	if _, err := runQuickCreateProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID)); err != nil {
 		t.Fatalf("project quick-create completion: %v", err)
 	}
@@ -291,18 +287,11 @@ func TestQuickCreateCompletion_SubscribesRequester(t *testing.T) {
 	}
 }
 
-// TestQuickCreateFailure_DoesNotSubscribeRequester confirms the failure path
-// (agent finished without producing an issue) does not invent a subscriber
-// row — there is nothing to subscribe to.
 func TestQuickCreateFailure_DoesNotSubscribeRequester(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupDispatchedQuickCreateTask(t, ctx, "another bug")
 
-	// No issue with origin_type=quick_create + this task id exists. Completion
-	// hits the failure branch and writes a failure inbox; no subscriber row.
-	if _, err := fixture.taskSvc.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx)
 	if _, err := runQuickCreateProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID)); err != nil {
 		t.Fatalf("project quick-create failure: %v", err)
 	}

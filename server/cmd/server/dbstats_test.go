@@ -22,69 +22,31 @@ func applyPoolSizing(t *testing.T, dbURL string, envMax, envMin string) (max, mi
 	return cfg.MaxConns, cfg.MinConns
 }
 
-func TestPoolSizing_DefaultsWhenNothingSet(t *testing.T) {
-	max, min := applyPoolSizing(t, "postgres://u:p@h/db?sslmode=disable", "", "")
-	if max != defaultMaxConns || min != defaultMinConns {
-		t.Fatalf("got max=%d min=%d, want %d/%d", max, min, defaultMaxConns, defaultMinConns)
+func TestPoolSizing(t *testing.T) {
+	baseURL := "postgres://u:p@h/db?sslmode=disable"
+	tests := []struct {
+		name    string
+		dbURL   string
+		envMax  string
+		envMin  string
+		wantMax int32
+		wantMin int32
+	}{
+		{name: "defaults", dbURL: baseURL, wantMax: defaultMaxConns, wantMin: defaultMinConns},
+		{name: "URL values", dbURL: baseURL + "&pool_max_conns=40&pool_min_conns=8", wantMax: 40, wantMin: 8},
+		{name: "environment overrides URL", dbURL: baseURL + "&pool_max_conns=40&pool_min_conns=8", envMax: "100", envMin: "20", wantMax: 100, wantMin: 20},
+		{name: "partial URL", dbURL: baseURL + "&pool_max_conns=40", wantMax: 40, wantMin: defaultMinConns},
+		{name: "invalid environment uses default", dbURL: baseURL, envMax: "not-a-number", wantMax: defaultMaxConns, wantMin: defaultMinConns},
+		{name: "invalid environment uses URL", dbURL: baseURL + "&pool_max_conns=40", envMax: "not-a-number", wantMax: 40, wantMin: defaultMinConns},
+		{name: "minimum clamps to maximum", dbURL: baseURL, envMax: "10", envMin: "50", wantMax: 10, wantMin: 10},
 	}
-}
 
-func TestPoolSizing_URLParamsHonoredWhenEnvUnset(t *testing.T) {
-	url := "postgres://u:p@h/db?sslmode=disable&pool_max_conns=40&pool_min_conns=8"
-	max, min := applyPoolSizing(t, url, "", "")
-	if max != 40 || min != 8 {
-		t.Fatalf("URL params should win when env unset; got max=%d min=%d", max, min)
-	}
-}
-
-func TestPoolSizing_EnvOverridesURL(t *testing.T) {
-	url := "postgres://u:p@h/db?sslmode=disable&pool_max_conns=40&pool_min_conns=8"
-	max, min := applyPoolSizing(t, url, "100", "20")
-	if max != 100 || min != 20 {
-		t.Fatalf("env should win over URL; got max=%d min=%d", max, min)
-	}
-}
-
-func TestPoolSizing_PartialURLParam(t *testing.T) {
-	// Only pool_max_conns is set in URL — pool_min_conns should fall back to
-	// the code default, not pgx's built-in default (which would be 0).
-	url := "postgres://u:p@h/db?sslmode=disable&pool_max_conns=40"
-	max, min := applyPoolSizing(t, url, "", "")
-	if max != 40 {
-		t.Fatalf("URL pool_max_conns should be honored; got max=%d", max)
-	}
-	if min != defaultMinConns {
-		t.Fatalf("min should default; got min=%d, want %d", min, defaultMinConns)
-	}
-}
-
-func TestPoolSizing_InvalidEnvFallsBackToCodeDefault(t *testing.T) {
-	// Invalid env value with no URL pool param → code default, NOT pgx's
-	// built-in 4. This is the regression that was fixed; pinning it here
-	// so we don't silently fall back to the bad value again.
-	max, min := applyPoolSizing(t, "postgres://u:p@h/db?sslmode=disable", "not-a-number", "")
-	if max != defaultMaxConns {
-		t.Fatalf("invalid env should fall back to code default; got max=%d, want %d", max, defaultMaxConns)
-	}
-	if min != defaultMinConns {
-		t.Fatalf("got min=%d, want %d", min, defaultMinConns)
-	}
-}
-
-func TestPoolSizing_InvalidEnvFallsBackToURLParam(t *testing.T) {
-	// Invalid env value with a URL pool param → URL param wins, NOT pgx
-	// default. This is what makes the precedence chain end at "URL or code
-	// default" rather than at "pgx default" on misconfiguration.
-	url := "postgres://u:p@h/db?sslmode=disable&pool_max_conns=40"
-	max, _ := applyPoolSizing(t, url, "not-a-number", "")
-	if max != 40 {
-		t.Fatalf("invalid env should fall back to URL param; got max=%d, want 40", max)
-	}
-}
-
-func TestPoolSizing_MinClampedToMax(t *testing.T) {
-	max, min := applyPoolSizing(t, "postgres://u:p@h/db?sslmode=disable", "10", "50")
-	if min > max {
-		t.Fatalf("min should be clamped to max; got max=%d min=%d", max, min)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			max, min := applyPoolSizing(t, tt.dbURL, tt.envMax, tt.envMin)
+			if max != tt.wantMax || min != tt.wantMin {
+				t.Fatalf("pool size = %d/%d, want %d/%d", max, min, tt.wantMax, tt.wantMin)
+			}
+		})
 	}
 }

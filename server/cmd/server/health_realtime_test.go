@@ -6,163 +6,55 @@ import (
 	"testing"
 )
 
-func TestRealtimeMetricsHandler_TokenRequired(t *testing.T) {
+func TestRealtimeMetricsHandlerAccess(t *testing.T) {
 	const token = "secret-test-token"
-	h := realtimeMetricsHandler(token)
-
-	t.Run("missing auth rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "203.0.113.10:54321"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", rec.Code)
-		}
-		if got := rec.Header().Get("WWW-Authenticate"); got == "" {
-			t.Fatalf("expected WWW-Authenticate header, got empty")
-		}
-	})
-
-	t.Run("loopback without token rejected when token configured", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "127.0.0.1:1234"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401 even from loopback when token required, got %d", rec.Code)
-		}
-	})
-
-	t.Run("wrong token rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.Header.Set("Authorization", "Bearer not-the-token")
-		req.RemoteAddr = "203.0.113.10:54321"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", rec.Code)
-		}
-	})
-
-	t.Run("non-bearer scheme rejected", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.Header.Set("Authorization", "Basic "+token)
-		req.RemoteAddr = "203.0.113.10:54321"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d", rec.Code)
-		}
-	})
-
-	t.Run("correct bearer token accepted", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.RemoteAddr = "203.0.113.10:54321"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
-		}
-		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-			t.Fatalf("expected JSON content-type, got %q", ct)
-		}
-	})
-}
-
-func TestRealtimeMetricsHandler_NoToken_LoopbackOnly(t *testing.T) {
-	h := realtimeMetricsHandler("")
-
-	t.Run("loopback ipv4 allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "127.0.0.1:9999"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 from loopback, got %d", rec.Code)
-		}
-	})
-
-	t.Run("loopback ipv6 allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "[::1]:9999"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 from ipv6 loopback, got %d", rec.Code)
-		}
-	})
-
-	t.Run("non-loopback returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "10.0.0.5:1234"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 to hide endpoint, got %d", rec.Code)
-		}
-	})
-
-	t.Run("public ipv6 returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "[2001:db8::1]:1234"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec.Code)
-		}
-	})
-
-	// MUL-1342 review: when the server is behind a reverse proxy on
-	// localhost (Caddy / Nginx -> 127.0.0.1:8080), public callers reach
-	// the handler with RemoteAddr=127.0.0.1. The presence of forwarding
-	// headers must disqualify the loopback shortcut, otherwise the
-	// metrics surface is fully exposed in self-hosted deployments.
-	proxyHeaders := []struct {
-		name   string
-		header string
-		value  string
+	tests := []struct {
+		name          string
+		configured    string
+		remote        string
+		header        string
+		value         string
+		wantStatus    int
+		wantChallenge bool
+		wantJSON      bool
 	}{
-		{"x-forwarded-for", "X-Forwarded-For", "203.0.113.10"},
-		{"x-forwarded-for chain", "X-Forwarded-For", "203.0.113.10, 10.0.0.1"},
-		{"x-real-ip", "X-Real-Ip", "203.0.113.10"},
-		{"x-forwarded-host", "X-Forwarded-Host", "metrics.example.com"},
-		{"x-forwarded-proto", "X-Forwarded-Proto", "https"},
-		{"forwarded rfc7239", "Forwarded", "for=203.0.113.10;proto=https"},
+		{name: "token missing", configured: token, remote: "203.0.113.10:54321", wantStatus: http.StatusUnauthorized, wantChallenge: true},
+		{name: "token required on loopback", configured: token, remote: "127.0.0.1:1234", wantStatus: http.StatusUnauthorized},
+		{name: "wrong token", configured: token, remote: "203.0.113.10:54321", header: "Authorization", value: "Bearer not-the-token", wantStatus: http.StatusUnauthorized},
+		{name: "wrong scheme", configured: token, remote: "203.0.113.10:54321", header: "Authorization", value: "Basic " + token, wantStatus: http.StatusUnauthorized},
+		{name: "valid token", configured: token, remote: "203.0.113.10:54321", header: "Authorization", value: "Bearer " + token, wantStatus: http.StatusOK, wantJSON: true},
+		{name: "loopback ipv4", remote: "127.0.0.1:9999", wantStatus: http.StatusOK},
+		{name: "loopback ipv6", remote: "[::1]:9999", wantStatus: http.StatusOK},
+		{name: "non-loopback ipv4", remote: "10.0.0.5:1234", wantStatus: http.StatusNotFound},
+		{name: "non-loopback ipv6", remote: "[2001:db8::1]:1234", wantStatus: http.StatusNotFound},
+		{name: "forwarded for", remote: "127.0.0.1:1234", header: "X-Forwarded-For", value: "203.0.113.10", wantStatus: http.StatusNotFound},
+		{name: "forwarded for chain", remote: "127.0.0.1:1234", header: "X-Forwarded-For", value: "203.0.113.10, 10.0.0.1", wantStatus: http.StatusNotFound},
+		{name: "real IP", remote: "127.0.0.1:1234", header: "X-Real-Ip", value: "203.0.113.10", wantStatus: http.StatusNotFound},
+		{name: "forwarded host", remote: "127.0.0.1:1234", header: "X-Forwarded-Host", value: "metrics.example.com", wantStatus: http.StatusNotFound},
+		{name: "forwarded proto", remote: "127.0.0.1:1234", header: "X-Forwarded-Proto", value: "https", wantStatus: http.StatusNotFound},
+		{name: "forwarded RFC7239", remote: "127.0.0.1:1234", header: "Forwarded", value: "for=203.0.113.10;proto=https", wantStatus: http.StatusNotFound},
+		{name: "forwarded ipv6 loopback", remote: "[::1]:9999", header: "X-Forwarded-For", value: "203.0.113.10", wantStatus: http.StatusNotFound},
+		{name: "blank forwarding header", remote: "127.0.0.1:9999", header: "X-Forwarded-For", value: "   ", wantStatus: http.StatusOK},
 	}
-	for _, tc := range proxyHeaders {
-		tc := tc
-		t.Run("proxied "+tc.name+" via loopback returns 404", func(t *testing.T) {
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-			req.RemoteAddr = "127.0.0.1:1234"
-			req.Header.Set(tc.header, tc.value)
+			req.RemoteAddr = tt.remote
+			if tt.header != "" {
+				req.Header.Set(tt.header, tt.value)
+			}
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusNotFound {
-				t.Fatalf("expected 404 for proxied loopback request (%s), got %d", tc.header, rec.Code)
+			realtimeMetricsHandler(tt.configured).ServeHTTP(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantChallenge && rec.Header().Get("WWW-Authenticate") == "" {
+				t.Fatal("missing WWW-Authenticate header")
+			}
+			if tt.wantJSON && rec.Header().Get("Content-Type") != "application/json" {
+				t.Fatalf("Content-Type = %q, want application/json", rec.Header().Get("Content-Type"))
 			}
 		})
 	}
-
-	t.Run("proxied loopback ipv6 returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "[::1]:9999"
-		req.Header.Set("X-Forwarded-For", "203.0.113.10")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 for proxied ::1 request, got %d", rec.Code)
-		}
-	})
-
-	t.Run("empty forwarding header still allows loopback", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/health/realtime", nil)
-		req.RemoteAddr = "127.0.0.1:9999"
-		req.Header.Set("X-Forwarded-For", "   ")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 when forwarding header is blank, got %d", rec.Code)
-		}
-	})
 }

@@ -14,15 +14,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestWorkspaceScopeGuard locks in the SQL-layer tenant guard added in PR #3027.
-// For each scoped query, it creates a resource in workspace A (the integration
-// fixture workspace), then invokes the query with a foreign workspace UUID and
-// asserts the row is untouched:
-//   - :exec queries return (0 rows affected, nil) — silent no-op.
-//   - :one queries return pgx.ErrNoRows.
-//
-// If a future refactor drops the workspace_id arg from any of these queries,
-// the cross-workspace call would mutate the row and this test will fail.
 func TestWorkspaceScopeGuard(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -108,9 +99,6 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 		}
 	})
 
-	// Sanity check: a buggy guard that returns no-op for every call would
-	// also satisfy the cross-workspace assertions above. This sub-test
-	// proves the in-workspace path still mutates.
 	t.Run("InWorkspaceCallsStillWork", func(t *testing.T) {
 		id := seedIssue(t, ctx)
 		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
@@ -127,8 +115,6 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 		}
 	})
 }
-
-// ---- seed helpers (resource lives in testWorkspaceID) ----
 
 func seedIssue(t *testing.T, ctx context.Context) pgtype.UUID {
 	t.Helper()
@@ -175,8 +161,6 @@ func seedProject(t *testing.T, ctx context.Context) pgtype.UUID {
 func seedSkill(t *testing.T, ctx context.Context) pgtype.UUID {
 	t.Helper()
 	var s string
-	// skill name is UNIQUE per workspace; add a random suffix to avoid colliding
-	// with previous runs on the same DB.
 	name := uniqueName("scope-guard skill")
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO skill (workspace_id, name, description, content, config, created_by)
@@ -218,7 +202,6 @@ func assertRowExists(t *testing.T, ctx context.Context, table string, id pgtype.
 	}
 }
 
-// randomUUID returns a never-existed workspace UUID for cross-tenant probes.
 func randomUUID(t *testing.T) pgtype.UUID {
 	t.Helper()
 	u, err := uuid.NewRandom()
@@ -228,8 +211,6 @@ func randomUUID(t *testing.T) pgtype.UUID {
 	return util.MustParseUUID(u.String())
 }
 
-// uniqueName returns prefix + a short random suffix to avoid UNIQUE collisions
-// across reruns on the same database.
 func uniqueName(prefix string) string {
 	u, err := uuid.NewRandom()
 	if err != nil {

@@ -23,14 +23,19 @@ type chatCompletionFixture struct {
 	chatDoneCount int
 }
 
+func (f *chatCompletionFixture) complete(t *testing.T, ctx context.Context, result string) {
+	t.Helper()
+	if _, err := f.taskService.CompleteTask(ctx, f.task.ID, []byte(result), "", ""); err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+}
+
 func TestChatCompletionLeavesMessageProjectionToOutbox(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
 	installAssistantMessageFailure(t, fixture.session.ID)
 
-	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"hello\\nworld"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx, `{"output":"hello\\nworld"}`)
 	if fixture.chatDoneCount != 0 {
 		t.Fatalf("CompleteTask emitted %d chat:done events before durable message projection", fixture.chatDoneCount)
 	}
@@ -47,9 +52,7 @@ func TestChatCompletionLeavesMessageProjectionToOutbox(t *testing.T) {
 func TestChatCompletionProjectionRollsBackAndRetries(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"hello\\nworld"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx, `{"output":"hello\\nworld"}`)
 	event := latestTaskTerminalEvent(t, fixture.task.ID)
 	removeFailure := installAssistantMessageFailure(t, fixture.session.ID)
 
@@ -104,9 +107,7 @@ func TestChatCompletionProjectionEnqueuesLarkBoundReply(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create Lark chat binding: %v", err)
 	}
-	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"durable Lark reply"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx, `{"output":"durable Lark reply"}`)
 	if _, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection); err != nil {
 		t.Fatalf("project Lark-bound completion: %v", err)
 	}
@@ -129,9 +130,7 @@ func TestChatCompletionProjectionEnqueuesLarkBoundReply(t *testing.T) {
 func TestChatCompletionProjectionRollsBackMessageWhenUnreadUpdateFails(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"transactional reply"}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx, `{"output":"transactional reply"}`)
 	removeFailure := installChatUnreadFailure(t, fixture.session.ID)
 
 	if _, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection); err == nil {
@@ -151,9 +150,7 @@ func TestChatCompletionProjectionRollsBackMessageWhenUnreadUpdateFails(t *testin
 func TestChatCompletionProjectionKeepsEmptyOutputContract(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{}`), "", ""); err != nil {
-		t.Fatalf("CompleteTask: %v", err)
-	}
+	fixture.complete(t, ctx, `{}`)
 	emitted, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection)
 	if err != nil {
 		t.Fatalf("project empty chat completion: %v", err)
@@ -336,16 +333,8 @@ func setupChatCompletionFixture(t *testing.T, ctx context.Context) *chatCompleti
 
 func installAssistantMessageFailure(t *testing.T, sessionID pgtype.UUID) func() {
 	t.Helper()
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	functionName := "assistant_message_fail_fn_" + suffix
-	triggerName := "assistant_message_fail_" + suffix
-	ctx := context.Background()
-	remove := func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON chat_message`, triggerName))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	}
-	t.Cleanup(remove)
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+	functionName, triggerName, remove := installFailureTriggerCleanup(t, "chat_message", "assistant_message_fail")
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			IF NEW.role = 'assistant' AND NEW.chat_session_id = '%s'::uuid THEN
@@ -365,16 +354,8 @@ func installAssistantMessageFailure(t *testing.T, sessionID pgtype.UUID) func() 
 
 func installChatUnreadFailure(t *testing.T, sessionID pgtype.UUID) func() {
 	t.Helper()
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	functionName := "chat_unread_fail_fn_" + suffix
-	triggerName := "chat_unread_fail_" + suffix
-	ctx := context.Background()
-	remove := func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON chat_session`, triggerName))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	}
-	t.Cleanup(remove)
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+	functionName, triggerName, remove := installFailureTriggerCleanup(t, "chat_session", "chat_unread_fail")
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			IF NEW.id = '%s' AND NEW.unread_since IS NOT NULL THEN
@@ -390,6 +371,20 @@ func installChatUnreadFailure(t *testing.T, sessionID pgtype.UUID) func() {
 		t.Fatalf("install chat unread failure: %v", err)
 	}
 	return remove
+}
+
+func installFailureTriggerCleanup(t *testing.T, table, prefix string) (string, string, func()) {
+	t.Helper()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := prefix + "_fn_" + suffix
+	triggerName := prefix + "_" + suffix
+	ctx := context.Background()
+	remove := func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON %s`, triggerName, table))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}
+	t.Cleanup(remove)
+	return functionName, triggerName, remove
 }
 
 func assertAssistantMessageCount(t *testing.T, ctx context.Context, taskID pgtype.UUID, want int) {

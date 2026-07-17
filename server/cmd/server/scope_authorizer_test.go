@@ -70,18 +70,12 @@ func mustUUID(t *testing.T) (string, pgtype.UUID) {
 	return u.String(), pgtype.UUID{Bytes: u, Valid: true}
 }
 
-// TestScopeAuthorizer_ChatRequiresCreator pins must-fix #2 from PR #1429:
-// ScopeChat MUST verify CreatorID == userID. A workspace peer that knows the
-// session_id must NOT be able to subscribe to chat:message / chat:done /
-// chat:session_read for that private session.
 func TestScopeAuthorizer_ChatRequiresCreator(t *testing.T) {
 	wsStr, wsUUID := mustUUID(t)
 	creatorStr, creatorUUID := mustUUID(t)
 	otherStr, _ := mustUUID(t)
 	sessStr, sessUUID := mustUUID(t)
 	otherWsStr, _ := mustUUID(t)
-	otherWsStrOnly, otherWsUUID := mustUUID(t)
-	_ = otherWsStrOnly
 
 	q := &fakeScopeQuerier{
 		sessions: map[[16]byte]db.ChatSession{
@@ -113,35 +107,25 @@ func TestScopeAuthorizer_ChatRequiresCreator(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("cross-workspace must be denied: ok=%v err=%v", ok, err)
 	}
-	_ = otherWsUUID
 
-	// Empty userID → must be denied (defensive).
 	ok, err = a.AuthorizeScope(ctx, "", wsStr, realtime.ScopeChat, sessStr)
 	if err != nil || ok {
 		t.Fatalf("empty userID must be denied: ok=%v err=%v", ok, err)
 	}
 
-	// Unknown session → denied.
-	_, missingStr := mustUUID(t)
-	_ = missingStr
-	missingUUID, _ := uuid.NewRandom()
-	ok, err = a.AuthorizeScope(ctx, creatorStr, wsStr, realtime.ScopeChat, missingUUID.String())
+	missingID, _ := mustUUID(t)
+	ok, err = a.AuthorizeScope(ctx, creatorStr, wsStr, realtime.ScopeChat, missingID)
 	if err != nil || ok {
 		t.Fatalf("unknown session must be denied: ok=%v err=%v", ok, err)
 	}
 }
 
-// TestScopeAuthorizer_ChatTaskRequiresCreator pins must-fix #2 for the
-// task-scope path of chat tasks (task.ChatSessionID set, no IssueID): only
-// the chat session creator may subscribe to that task's stream, since
-// task:message for chat tasks contains assistant chat content.
 func TestScopeAuthorizer_ChatTaskRequiresCreator(t *testing.T) {
 	wsStr, wsUUID := mustUUID(t)
 	creatorStr, creatorUUID := mustUUID(t)
 	otherStr, _ := mustUUID(t)
-	sessStr, sessUUID := mustUUID(t)
+	_, sessUUID := mustUUID(t)
 	taskStr, taskUUID := mustUUID(t)
-	_ = sessStr
 
 	q := &fakeScopeQuerier{
 		tasks: map[[16]byte]db.AgentTaskQueue{

@@ -27,23 +27,23 @@ func clearStartupConfig(t *testing.T) {
 	t.Setenv("LOCAL_UPLOAD_DIR", t.TempDir())
 }
 
-func TestNewRouterWithOptionsRejectsMalformedConfiguredSecret(t *testing.T) {
-	clearStartupConfig(t)
-	t.Setenv("MULTICA_EXTERNAL_CREDENTIAL_KEY", "not-valid-base64")
+func TestNewRouterWithOptionsRejectsMalformedSecrets(t *testing.T) {
+	for _, tt := range []struct {
+		envKey  string
+		wantErr string
+	}{
+		{envKey: "MULTICA_EXTERNAL_CREDENTIAL_KEY", wantErr: "external credential encryption"},
+		{envKey: "MULTICA_LARK_SECRET_KEY", wantErr: "Lark credential encryption"},
+	} {
+		t.Run(tt.envKey, func(t *testing.T) {
+			clearStartupConfig(t)
+			t.Setenv(tt.envKey, "not-valid-base64")
 
-	_, _, err := NewRouterWithOptions(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
-	if err == nil || !strings.Contains(err.Error(), "external credential encryption") {
-		t.Fatalf("NewRouterWithOptions error = %v, want external credential configuration error", err)
-	}
-}
-
-func TestNewRouterWithOptionsRejectsMalformedLarkSecret(t *testing.T) {
-	clearStartupConfig(t)
-	t.Setenv("MULTICA_LARK_SECRET_KEY", "not-valid-base64")
-
-	_, _, err := NewRouterWithOptions(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
-	if err == nil || !strings.Contains(err.Error(), "Lark credential encryption") {
-		t.Fatalf("NewRouterWithOptions error = %v, want Lark credential configuration error", err)
+			_, _, err := NewRouterWithOptions(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("NewRouterWithOptions error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -63,17 +63,21 @@ func TestValidateAttachmentDeliveryRejectsImpossibleModes(t *testing.T) {
 		t.Fatal("local storage setup failed")
 	}
 
-	if err := validateAttachmentDelivery(local, nil, "presign"); err == nil || !strings.Contains(err.Error(), "S3-compatible") {
-		t.Fatalf("presign validation error = %v", err)
-	}
-	if err := validateAttachmentDelivery(local, nil, "cloudfront"); err == nil || !strings.Contains(err.Error(), "requires complete") {
-		t.Fatalf("cloudfront validation error = %v", err)
-	}
-	if err := validateAttachmentDelivery(local, nil, "mystery"); err == nil || !strings.Contains(err.Error(), "must be") {
-		t.Fatalf("unknown mode validation error = %v", err)
-	}
-	if err := validateAttachmentDelivery(local, &auth.CloudFrontSigner{}, "auto"); err == nil || !strings.Contains(err.Error(), "requires S3_BUCKET") {
-		t.Fatalf("local CloudFront signer validation error = %v", err)
+	for _, tt := range []struct {
+		mode    string
+		signer  *auth.CloudFrontSigner
+		wantErr string
+	}{
+		{mode: "presign", wantErr: "S3-compatible"},
+		{mode: "cloudfront", wantErr: "requires complete"},
+		{mode: "mystery", wantErr: "must be"},
+		{mode: "auto", signer: &auth.CloudFrontSigner{}, wantErr: "requires S3_BUCKET"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			if err := validateAttachmentDelivery(local, tt.signer, tt.mode); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validation error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

@@ -62,60 +62,27 @@ func readReadyResponse(t *testing.T, h *serverHealth, wantStatus int) readinessR
 	return resp
 }
 
-func TestServerHealthReadyHandlerDBPingFailure(t *testing.T) {
-	db := &stubReadinessDB{pingErr: errors.New("db unavailable")}
-	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"056_example"},
+func TestServerHealthReadyHandlerFailures(t *testing.T) {
+	tests := []struct {
+		name               string
+		db                 *stubReadinessDB
+		requiredMigrations []string
+		wantDB             string
+		wantMigrations     string
+	}{
+		{name: "database unavailable", db: &stubReadinessDB{pingErr: errors.New("db unavailable")}, requiredMigrations: []string{"056_example"}, wantDB: "error", wantMigrations: "unknown"},
+		{name: "migration missing", db: &stubReadinessDB{}, requiredMigrations: []string{"056_example"}, wantDB: "ok", wantMigrations: "out_of_date"},
+		{name: "migration partially applied", db: &stubReadinessDB{appliedCount: 2}, requiredMigrations: []string{"120_a", "120_b", "121_c"}, wantDB: "ok", wantMigrations: "out_of_date"},
 	}
 
-	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
-	if resp.Status != "not_ready" {
-		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
-	}
-	if resp.Checks.DB != "error" {
-		t.Fatalf("db check = %q, want %q", resp.Checks.DB, "error")
-	}
-	if resp.Checks.Migrations != "unknown" {
-		t.Fatalf("migrations check = %q, want %q", resp.Checks.Migrations, "unknown")
-	}
-}
-
-func TestServerHealthReadyHandlerMigrationOutOfDate(t *testing.T) {
-	db := &stubReadinessDB{appliedCount: 0}
-	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"056_example"},
-	}
-
-	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
-	if resp.Status != "not_ready" {
-		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
-	}
-	if resp.Checks.DB != "ok" {
-		t.Fatalf("db check = %q, want %q", resp.Checks.DB, "ok")
-	}
-	if resp.Checks.Migrations != "out_of_date" {
-		t.Fatalf("migrations check = %q, want %q", resp.Checks.Migrations, "out_of_date")
-	}
-}
-
-func TestServerHealthReadyHandlerMigrationPartiallyApplied(t *testing.T) {
-	// Three migrations required but only two recorded — the out-of-order case
-	// the old "is the latest version applied?" check used to mask. Readiness
-	// must report not_ready, not ok.
-	db := &stubReadinessDB{appliedCount: 2}
-	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"120_a", "120_b", "121_c"},
-	}
-
-	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
-	if resp.Status != "not_ready" {
-		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
-	}
-	if resp.Checks.Migrations != "out_of_date" {
-		t.Fatalf("migrations check = %q, want %q", resp.Checks.Migrations, "out_of_date")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &serverHealth{db: tt.db, requiredMigrations: tt.requiredMigrations}
+			resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
+			if resp.Status != "not_ready" || resp.Checks.DB != tt.wantDB || resp.Checks.Migrations != tt.wantMigrations {
+				t.Fatalf("readiness = %+v, want status=not_ready db=%s migrations=%s", resp, tt.wantDB, tt.wantMigrations)
+			}
+		})
 	}
 }
 

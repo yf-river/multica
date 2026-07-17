@@ -43,12 +43,6 @@ func (f *fakeBroadcaster) Broadcast(message []byte) {
 	f.broadcastCalled++
 }
 
-// TestRegisterListeners_TaskChatGoToWorkspace pins the must-fix #1 contract
-// from the PR #1429 review: until the WS client supports scope-subscribe and
-// reconnect-replay, high-frequency task/chat events MUST keep going through
-// workspace scope. Routing them via BroadcastToScope("task"|"chat", ...)
-// with no client-side subscriber would silently drop every chat / task
-// message and break the live timeline + chat unread badges.
 func TestRegisterListeners_TaskChatGoToWorkspace(t *testing.T) {
 	cases := []struct {
 		name      string
