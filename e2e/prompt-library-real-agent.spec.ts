@@ -1,34 +1,27 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
-import { authenticateBrowserSession, waitForPageText } from "./helpers";
-
-const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
-const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "develop";
-const REAL_AGENT_PASSWORD = process.env.REAL_AGENT_E2E_PASSWORD || process.env.E2E_PASSWORD || "develop123";
-const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "ai-studio";
-const EXPECTED_AGENT_PROVIDER = process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codebuddy";
-const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa";
+import { authenticateBrowserSession, REAL_AGENT_E2E, waitForPageText } from "./helpers";
 
 test.describe("训练与评估真实 Agent 闭环", () => {
-  test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 验收");
+  test.skip(!REAL_AGENT_E2E.enabled, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 验收");
 
   test("CodeBuddy daemon 可以真实执行测试套件并写回运行证据", async ({ page }) => {
     test.setTimeout(240_000);
 
     const api = new TestApiClient();
     const prefix = `真实Agent验收 ${Date.now()}`;
-    await api.login(REAL_AGENT_ACCOUNT, "胡云飞", REAL_AGENT_PASSWORD);
-    const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
+    await api.login(REAL_AGENT_E2E.account, "胡云飞", REAL_AGENT_E2E.password);
+    const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_E2E.workspace);
     await api.cleanupPromptArtifactsByPrefix(prefix);
 
     try {
       const readiness = await api.getPromptEvaluationRuntimeReadiness();
       expect(readiness).toMatchObject({
         status: "就绪",
-        model: EXPECTED_AGENT_MODEL,
+        model: REAL_AGENT_E2E.model,
       });
       expect(readiness.runtime).toMatchObject({
-        provider: EXPECTED_AGENT_PROVIDER,
+        provider: REAL_AGENT_E2E.provider,
         status: "online",
       });
 
@@ -60,7 +53,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
 
       const queued = await api.runPromptEvaluationAssetAgent(asset.id);
       expect(queued).toMatchObject({
-        model: EXPECTED_AGENT_MODEL,
+        model: REAL_AGENT_E2E.model,
         status: "已入队",
       });
       expect(queued.task_id).toBeTruthy();
@@ -76,8 +69,8 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         }, { timeout: 180_000, intervals: [3_000, 5_000, 10_000] })
         .toMatchObject({
           run_kind: "Agent执行",
-          model: EXPECTED_AGENT_MODEL,
-          runtime_provider: EXPECTED_AGENT_PROVIDER,
+          model: REAL_AGENT_E2E.model,
+          runtime_provider: REAL_AGENT_E2E.provider,
           total_cases: 1,
         })
         .then(async () => {
@@ -93,8 +86,8 @@ test.describe("训练与评估真实 Agent 闭环", () => {
       expect(evidence.run).toMatchObject({
         id: queued.run.id,
         run_kind: "Agent执行",
-        model: EXPECTED_AGENT_MODEL,
-        runtime_provider: EXPECTED_AGENT_PROVIDER,
+        model: REAL_AGENT_E2E.model,
+        runtime_provider: REAL_AGENT_E2E.provider,
         task_id: queued.task_id,
       });
       expect(evidence.trials.length).toBeGreaterThan(0);
@@ -128,17 +121,17 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         const evidencePanel = runCard.getByTestId(`run-evidence-${queued.run.id}`);
         await expect(evidencePanel).toContainText(queued.task_id, { timeout: 15000 });
 
-        const usage = evidence.task_usage.find((item) => item.task_id === queued.task_id && item.model === EXPECTED_AGENT_MODEL);
+        const usage = evidence.task_usage.find((item) => item.task_id === queued.task_id && item.model === REAL_AGENT_E2E.model);
         if (usage) {
           expect(usage).toMatchObject({
-            provider: EXPECTED_AGENT_PROVIDER,
-            model: EXPECTED_AGENT_MODEL,
+            provider: REAL_AGENT_E2E.provider,
+            model: REAL_AGENT_E2E.model,
             priced: true,
           });
           expect(usage.input_tokens).toBeGreaterThan(0);
           expect(usage.output_tokens).toBeGreaterThan(0);
           expect(usage.estimated_cost).toBeGreaterThan(0);
-          await expect(evidencePanel).toContainText(EXPECTED_AGENT_MODEL);
+          await expect(evidencePanel).toContainText(REAL_AGENT_E2E.model);
         } else {
           expect(evidence.task_usage).toHaveLength(0);
           expect(JSON.stringify(evidence.trace_events)).toContain("模型用量未返回");

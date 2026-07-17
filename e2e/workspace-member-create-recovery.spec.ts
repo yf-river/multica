@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
-import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
+import {
+  createTestApi,
+  expectCommittedResponseRecovery,
+  interceptCommittedResponseLoss,
+  loginAsDefault,
+  waitForPageText,
+} from "./helpers";
 
 test("member creation is atomic and recovers after the committed response is lost", async ({ page }) => {
   const api = await createTestApi();
@@ -12,24 +18,7 @@ test("member creation is atomic and recovers after the committed response is los
   const name = `Recovered Member ${suffix}`;
   const password = `Recovered-${suffix}-Member1!`;
   let memberId: string | null = null;
-  let createCalls = 0;
-  const requestKeys: string[] = [];
-
-  await page.route("**/api/workspaces/*/members", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue();
-      return;
-    }
-    createCalls += 1;
-    requestKeys.push(route.request().headers()["idempotency-key"] ?? "");
-    if (createCalls === 1) {
-      const committed = await route.fetch();
-      expect(committed.status()).toBe(201);
-      await route.abort("connectionfailed");
-      return;
-    }
-    await route.continue();
-  });
+  const recovery = await interceptCommittedResponseLoss(page, "**/api/workspaces/*/members", 201);
 
   try {
     await page.goto(`/${workspaceSlug}/settings?tab=members`, { waitUntil: "domcontentloaded" });
@@ -41,14 +30,12 @@ test("member creation is atomic and recovers after the committed response is los
     await expect(page.getByText(account)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(name)).toBeVisible();
 
-    expect(createCalls).toBe(2);
-    expect(requestKeys[0]).toMatch(/^[0-9a-f-]{36}$/);
-    expect(requestKeys[1]).toBe(requestKeys[0]);
+    expectCommittedResponseRecovery(recovery);
     const created = (await api.listWorkspaceMembers(workspace.id))
       .filter((member) => member.account === account);
     expect(created).toHaveLength(1);
     memberId = created[0]!.id;
-    expect(memberId).toBe(requestKeys[0]);
+    expect(memberId).toBe(recovery.requestKeys[0]);
 
     const persistedBrowserState = await page.evaluate(() => JSON.stringify(localStorage));
     expect(persistedBrowserState).not.toContain(password);
@@ -67,7 +54,7 @@ test("member creation is atomic and recovers after the committed response is los
     if (memberId) {
       await api.deleteWorkspaceMember(workspace.id, memberId).catch(() => undefined);
     }
-    await api.cleanupWorkspaceMemberFixture(account, requestKeys[0]).catch(() => undefined);
+    await api.cleanupWorkspaceMemberFixture(account, recovery.requestKeys[0]).catch(() => undefined);
     await api.cleanup();
   }
 });

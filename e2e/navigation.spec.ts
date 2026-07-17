@@ -34,6 +34,16 @@ async function expectTrainingNavigationMarker(page: Page, item: (typeof TRAINING
   await expect(link).toHaveAttribute("href", new RegExp(`/${trainingRouteURLPath(item.path)}$`));
 }
 
+async function expectTrainingRoute(page: Page, item: (typeof TRAINING_ROUTES)[number]) {
+  await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+  await waitForPageText(page, item.text);
+  await expectTrainingPageShell(page, item);
+  await expectTrainingNavigationMarker(page, item);
+  await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+  await expect(page.getByTestId("case-library-editor")).toHaveCount(item.showCaseLibrary ? 1 : 0);
+  await expect(page.getByTestId("prompt-version-history")).toHaveCount(item.showPromptEditor ? 1 : 0);
+}
+
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsDefault(page);
@@ -74,15 +84,7 @@ test.describe("Navigation", () => {
         .locator("xpath=ancestor::*[@cmdk-item][1]")
         .click();
 
-      await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
-      await waitForPageText(page, item.text);
-      await expectTrainingPageShell(page, item);
-      await expectTrainingNavigationMarker(page, item);
-      await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
-      await expect(page.getByTestId("case-library-editor")).toHaveCount(item.showCaseLibrary ? 1 : 0);
-      if (!item.showPromptEditor) {
-        await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
-      }
+      await expectTrainingRoute(page, item);
     }
   });
 
@@ -90,15 +92,7 @@ test.describe("Navigation", () => {
     for (const item of TRAINING_ROUTES) {
       await page.getByRole("link", { name: item.section, exact: true }).click();
       await page.locator('[data-sidebar="menu-button"]').filter({ hasText: item.nav }).first().click();
-      await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
-      await waitForPageText(page, item.text);
-      await expectTrainingPageShell(page, item);
-      await expectTrainingNavigationMarker(page, item);
-      await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
-      await expect(page.getByTestId("case-library-editor")).toHaveCount(item.showCaseLibrary ? 1 : 0);
-      if (!item.showPromptEditor) {
-        await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
-      }
+      await expectTrainingRoute(page, item);
     }
   });
 

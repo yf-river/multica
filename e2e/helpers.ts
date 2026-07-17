@@ -15,6 +15,20 @@ interface DefaultE2ESession {
   userId: string | null;
 }
 
+export const REAL_AGENT_E2E = {
+  enabled: process.env.RUN_REAL_AGENT_E2E === "1",
+  account: process.env.REAL_AGENT_E2E_ACCOUNT || "develop",
+  password: process.env.REAL_AGENT_E2E_PASSWORD || process.env.E2E_PASSWORD || "develop123",
+  workspace: process.env.REAL_AGENT_E2E_WORKSPACE || "ai-studio",
+  provider: process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codebuddy",
+  model: process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa",
+} as const;
+
+export interface CommittedResponseLossProbe {
+  calls: number;
+  requestKeys: string[];
+}
+
 let defaultSessionPromise: Promise<DefaultE2ESession> | null = null;
 
 async function defaultE2ESession(): Promise<DefaultE2ESession> {
@@ -47,6 +61,36 @@ export async function waitForPageText(page: Page, text: string, timeout = 30000)
     text,
     { timeout },
   );
+}
+
+export async function interceptCommittedResponseLoss(
+  page: Page,
+  url: string,
+  committedStatus: number,
+): Promise<CommittedResponseLossProbe> {
+  const probe: CommittedResponseLossProbe = { calls: 0, requestKeys: [] };
+  await page.route(url, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    probe.calls += 1;
+    probe.requestKeys.push(route.request().headers()["idempotency-key"] ?? "");
+    if (probe.calls === 1) {
+      const committed = await route.fetch();
+      expect(committed.status()).toBe(committedStatus);
+      await route.abort("connectionfailed");
+      return;
+    }
+    await route.continue();
+  });
+  return probe;
+}
+
+export function expectCommittedResponseRecovery(probe: CommittedResponseLossProbe) {
+  expect(probe.calls).toBe(2);
+  expect(probe.requestKeys[0]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(probe.requestKeys[1]).toBe(probe.requestKeys[0]);
 }
 
 export async function authenticateBrowserSession(

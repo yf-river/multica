@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
+import {
+  createTestApi,
+  expectCommittedResponseRecovery,
+  interceptCommittedResponseLoss,
+  loginAsDefault,
+  waitForPageText,
+} from "./helpers";
 
 test("agent playground create and run recover exactly after response loss", async ({ page }) => {
   const api = await createTestApi();
@@ -34,25 +40,7 @@ test("agent playground create and run recover exactly after response loss", asyn
   const version = versions[0];
   if (!version) throw new Error("Agent Playground fixture has no dataset version");
   let experimentId: string | undefined;
-  let createCalls = 0;
-  let runCalls = 0;
-  const requestKeys: string[] = [];
-
-  await page.route("**/api/agent-playground-experiments", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue();
-      return;
-    }
-    createCalls += 1;
-    requestKeys.push(route.request().headers()["idempotency-key"] ?? "");
-    if (createCalls === 1) {
-      const committed = await route.fetch();
-      expect(committed.status()).toBe(201);
-      await route.abort("connectionfailed");
-      return;
-    }
-    await route.continue();
-  });
+  const createRecovery = await interceptCommittedResponseLoss(page, "**/api/agent-playground-experiments", 201);
 
   try {
     await page.goto(`/${workspaceSlug}/debug/agent-playground`, { waitUntil: "domcontentloaded" });
@@ -65,28 +53,17 @@ test("agent playground create and run recover exactly after response loss", asyn
     await page.getByRole("button", { name: "创建实验", exact: true }).click();
 
     await expect(page.getByText(experimentName).first()).toBeVisible({ timeout: 15_000 });
-    expect(createCalls).toBe(2);
-    expect(requestKeys[0]).toMatch(/^[0-9a-f-]{36}$/);
-    expect(requestKeys[1]).toBe(requestKeys[0]);
+    expectCommittedResponseRecovery(createRecovery);
     const experiments = (await api.listAgentPlaygroundExperiments())
       .filter((item) => item.name === experimentName);
     expect(experiments).toHaveLength(1);
     experimentId = experiments[0]!.id;
-    expect(experimentId).toBe(requestKeys[0]);
+    expect(experimentId).toBe(createRecovery.requestKeys[0]);
     expect(experiments[0]).toMatchObject({ input_count: 1, agent_count: 1 });
 
-    await page.route(`**/api/agent-playground-experiments/${experimentId}/run`, async (route) => {
-      runCalls += 1;
-      if (runCalls === 1) {
-        const committed = await route.fetch();
-        expect(committed.status()).toBe(202);
-        await route.abort("connectionfailed");
-        return;
-      }
-      await route.continue();
-    });
+    const runRecovery = await interceptCommittedResponseLoss(page, `**/api/agent-playground-experiments/${experimentId}/run`, 202);
     await page.getByRole("button", { name: "运行", exact: true }).click();
-    await expect.poll(() => runCalls, { timeout: 15_000 }).toBe(2);
+    await expect.poll(() => runRecovery.calls, { timeout: 15_000 }).toBe(2);
     await expect.poll(async () => {
       const detail = await api.getAgentPlaygroundExperiment(experimentId!);
       return detail.results.filter((result) => result.task_id && result.chat_session_id).length;
@@ -98,7 +75,7 @@ test("agent playground create and run recover exactly after response loss", asyn
     }
     await api.cleanupAgentPlaygroundFixture({
       experimentId,
-      requestKey: requestKeys[0],
+      requestKey: createRecovery.requestKeys[0],
       agentId: agent.id,
       assetId: asset.id,
     }).catch(() => undefined);

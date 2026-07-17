@@ -1484,12 +1484,7 @@ export class TestApiClient {
       if (!res.ok) throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
       return res.json();
     };
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      return attempt();
-    }
+    return this.retryOnConnectionLoss(attempt);
   }
 
   async runPromptEvaluationAssetAgent(id: string, requestId = crypto.randomUUID()): Promise<PromptEvaluationAgentRunResponse> {
@@ -1503,12 +1498,7 @@ export class TestApiClient {
       }
       return res.json();
     };
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      return attempt();
-    }
+    return this.retryOnConnectionLoss(attempt);
   }
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
@@ -1573,12 +1563,7 @@ export class TestApiClient {
       }
       return res.json();
     };
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      return attempt();
-    }
+    return this.retryOnConnectionLoss(attempt);
   }
 
   async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: Record<string, unknown>): Promise<PromptEvaluationOptimizationCandidate> {
@@ -1628,12 +1613,7 @@ export class TestApiClient {
       if (!res.ok) throw new Error(`prepare skill re-eval asset failed: ${res.status} ${await res.text()}`);
       return res.json();
     };
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      return attempt();
-    }
+    return this.retryOnConnectionLoss(attempt);
   }
 
   async runPromptEvaluationSkillReEval(
@@ -1828,6 +1808,15 @@ export class TestApiClient {
     if (this.workspaceSlug) headers["X-Workspace-Slug"] = this.workspaceSlug;
     else if (this.workspaceId) headers["X-Workspace-ID"] = this.workspaceId;
     return fetch(`${API_BASE}${path}`, { ...init, headers });
+  }
+
+  private async retryOnConnectionLoss<T>(attempt: () => Promise<T>): Promise<T> {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
+    }
   }
 
   private e2eName(prefix: string) {

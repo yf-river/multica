@@ -1,40 +1,33 @@
 import { test, expect } from "@playwright/test";
 
 import { TestApiClient } from "./fixtures";
-import { authenticateBrowserSession, waitForPageText } from "./helpers";
-
-const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
-const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "develop";
-const REAL_AGENT_PASSWORD = process.env.REAL_AGENT_E2E_PASSWORD || process.env.E2E_PASSWORD || "develop123";
-const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "ai-studio";
-const EXPECTED_AGENT_PROVIDER = process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codebuddy";
-const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa";
+import { authenticateBrowserSession, REAL_AGENT_E2E, waitForPageText } from "./helpers";
 
 test.describe("小队真实 Agent 闭环", () => {
-  test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 小队验收");
+  test.skip(!REAL_AGENT_E2E.enabled, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 小队验收");
 
   test("CodeBuddy daemon 可以真实执行 user-center 小队队长任务，并在 child done 后被系统评论再次唤醒", async ({ page }) => {
     test.setTimeout(240_000);
 
     const api = new TestApiClient();
     const suffix = Date.now();
-    await api.login(REAL_AGENT_ACCOUNT, "胡云飞", REAL_AGENT_PASSWORD);
-    const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
+    await api.login(REAL_AGENT_E2E.account, "胡云飞", REAL_AGENT_E2E.password);
+    const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_E2E.workspace);
 
     try {
       const readiness = await api.getPromptEvaluationRuntimeReadiness();
       expect(readiness).toMatchObject({
         status: "就绪",
       });
-      expect(readiness.model).toBe(EXPECTED_AGENT_MODEL);
+      expect(readiness.model).toBe(REAL_AGENT_E2E.model);
       expect(readiness.runtime).toMatchObject({
-        provider: EXPECTED_AGENT_PROVIDER,
+        provider: REAL_AGENT_E2E.provider,
         status: "online",
       });
 
       const template = await api.ensureInternalSquadTemplate("user-center", {
         name: `E2E 真实 PM 小队 ${suffix}`,
-        runtime_provider: EXPECTED_AGENT_PROVIDER,
+        runtime_provider: REAL_AGENT_E2E.provider,
       });
       const squad = template.squad;
       const leader = template.agents.find((agent) => agent.role_key === "pm");
@@ -95,8 +88,8 @@ test.describe("小队真实 Agent 闭环", () => {
       expect(evidence.messages.length).toBeGreaterThan(0);
       if (terminalTask.status === "completed") {
         expect(evidence.usage.length).toBeGreaterThan(0);
-        expect(JSON.stringify(evidence.usage)).toContain(EXPECTED_AGENT_PROVIDER);
-        expect(JSON.stringify(evidence.usage)).toContain(EXPECTED_AGENT_MODEL);
+        expect(JSON.stringify(evidence.usage)).toContain(REAL_AGENT_E2E.provider);
+        expect(JSON.stringify(evidence.usage)).toContain(REAL_AGENT_E2E.model);
       } else {
         expect(JSON.stringify(evidence.trace_events) + terminalTask.error).toMatch(/失败|取消|额度|error|failed/i);
       }

@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
-import { authenticateBrowserSession } from "./helpers";
+import {
+  authenticateBrowserSession,
+  expectCommittedResponseRecovery,
+  interceptCommittedResponseLoss,
+} from "./helpers";
 import {
   DEFAULT_E2E_ACCOUNT,
   DEFAULT_E2E_NAME,
@@ -14,23 +18,7 @@ test("workspace creation recovers after the committed response is lost", async (
   const token = api.getToken();
   expect(token).toBeTruthy();
 
-  let createCalls = 0;
-  const requestKeys: string[] = [];
-  await page.route("**/api/workspaces", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue();
-      return;
-    }
-    createCalls += 1;
-    requestKeys.push(route.request().headers()["idempotency-key"] ?? "");
-    if (createCalls === 1) {
-      const committed = await route.fetch();
-      expect(committed.status()).toBe(201);
-      await route.abort("connectionfailed");
-      return;
-    }
-    await route.continue();
-  });
+  const recovery = await interceptCommittedResponseLoss(page, "**/api/workspaces", 201);
 
   try {
     await authenticateBrowserSession(page, token!);
@@ -40,12 +28,10 @@ test("workspace creation recovers after the committed response is lost", async (
     await page.getByRole("button", { name: "创建工作区" }).click();
     await expect(page).toHaveURL(new RegExp(`/${slug}/issues`), { timeout: 30_000 });
 
-    expect(createCalls).toBe(2);
-    expect(requestKeys[0]).toMatch(/^[0-9a-f-]{36}$/);
-    expect(requestKeys[1]).toBe(requestKeys[0]);
+    expectCommittedResponseRecovery(recovery);
     const created = (await api.getWorkspaces()).filter((workspace) => workspace.slug === slug);
     expect(created).toHaveLength(1);
-    expect(created[0]?.id).toBe(requestKeys[0]);
+    expect(created[0]?.id).toBe(recovery.requestKeys[0]);
   } finally {
     const created = (await api.getWorkspaces()).find((workspace) => workspace.slug === slug);
     if (created) await api.deleteWorkspace(created.id);
