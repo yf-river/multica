@@ -61,10 +61,7 @@ func TestEmptyClaimCache_MarkAndIsEmptyVersionMatched(t *testing.T) {
 	}
 }
 
-// TestEmptyClaimCache_BumpInvalidatesPriorMark is the core race-fix
-// pin: an empty verdict written under v0 must be rejected once Bump
-// advances the version to v1, even though the empty key itself still
-// has TTL remaining.
+// Bump invalidates an empty verdict written under an earlier version.
 func TestEmptyClaimCache_BumpInvalidatesPriorMark(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	c := NewEmptyClaimCache(rdb)
@@ -82,22 +79,14 @@ func TestEmptyClaimCache_BumpInvalidatesPriorMark(t *testing.T) {
 	}
 }
 
-// TestEmptyClaimCache_StaleMarkRejected pins the GPT-Boy race: a slow
-// claim reads version v0, the SELECT sees no rows, an enqueue Bumps
-// to v1, then the slow claim writes MarkEmpty(v0). The next reader
-// must NOT trust this verdict.
+// A mark written after its sampled version becomes stale must not be trusted.
 func TestEmptyClaimCache_StaleMarkRejected(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	c := NewEmptyClaimCache(rdb)
 	ctx := context.Background()
 
-	// Slow claim samples version BEFORE select.
 	v0 := c.CurrentVersion(ctx, "rt-race")
-
-	// Concurrent enqueue happens.
 	c.Bump(ctx, "rt-race")
-
-	// Slow claim writes its empty verdict tagged with the stale v0.
 	c.MarkEmpty(ctx, "rt-race", v0)
 
 	if c.IsEmpty(ctx, "rt-race") {
