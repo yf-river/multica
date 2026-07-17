@@ -9,59 +9,39 @@ import (
 	"testing"
 )
 
-func TestCreateIssueInvalidStatusReturns400(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":  "invalid status issue",
-		"status": "active",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid status, got %d: %s", w.Code, w.Body.String())
-	}
-	if body := w.Body.String(); !strings.Contains(body, "backlog") {
-		t.Errorf("expected error to list valid statuses, got: %s", body)
-	}
-}
-
-func TestCreateIssueInvalidPriorityReturns400(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":    "invalid priority issue",
-		"priority": "P1",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid priority, got %d: %s", w.Code, w.Body.String())
-	}
-	if body := w.Body.String(); !strings.Contains(body, "urgent") {
-		t.Errorf("expected error to list valid priorities, got: %s", body)
-	}
-}
-
-func TestUpdateIssueInvalidStatusReturns400(t *testing.T) {
-	issueID := createTestIssue(t, "update invalid status issue", "none")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"status": "active"})
-	req = withURLParam(req, "id", issueID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid status, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateIssueInvalidPriorityReturns400(t *testing.T) {
-	issueID := createTestIssue(t, "update invalid priority issue", "none")
-	t.Cleanup(func() { deleteTestIssue(t, issueID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/issues/"+issueID, map[string]any{"priority": "P1"})
-	req = withURLParam(req, "id", issueID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid priority, got %d: %s", w.Code, w.Body.String())
+func TestIssueMutationsRejectInvalidStatusAndPriority(t *testing.T) {
+	for _, mutation := range []string{"create", "update", "batch"} {
+		for _, field := range []struct {
+			name, value, errorTerm string
+		}{
+			{name: "status", value: "active", errorTerm: "backlog"},
+			{name: "priority", value: "P1", errorTerm: "urgent"},
+		} {
+			t.Run(mutation+" "+field.name, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				update := map[string]any{field.name: field.value}
+				switch mutation {
+				case "create":
+					update["title"] = "invalid " + field.name + " issue"
+					testHandler.CreateIssue(w, newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, update))
+				case "update":
+					issueID := createTestIssue(t, "update invalid "+field.name+" issue", "none")
+					t.Cleanup(func() { deleteTestIssue(t, issueID) })
+					req := withURLParam(newRequest(http.MethodPut, "/api/issues/"+issueID, update), "id", issueID)
+					testHandler.UpdateIssue(w, req)
+				case "batch":
+					testHandler.BatchUpdateIssues(w, newRequest(http.MethodPost, "/api/issues/batch-update", map[string]any{
+						"issue_ids": []string{"not-needed"}, "updates": update,
+					}))
+				}
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+				}
+				if mutation == "create" && !strings.Contains(w.Body.String(), field.errorTerm) {
+					t.Fatalf("error does not list current %s values: %s", field.name, w.Body.String())
+				}
+			})
+		}
 	}
 }
 
@@ -106,34 +86,6 @@ func TestUpdateIssueRejectsDeepAncestorCycle(t *testing.T) {
 	got := getIssueForValidationTest(t, rootID)
 	if got.ParentIssueID != nil {
 		t.Fatalf("deep cycle update persisted parent_issue_id=%v", *got.ParentIssueID)
-	}
-}
-
-func TestBatchUpdateIssuesInvalidStatusReturns400(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
-		"issue_ids": []string{"not-needed"},
-		"updates": map[string]any{
-			"status": "active",
-		},
-	})
-	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid status, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestBatchUpdateIssuesInvalidPriorityReturns400(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
-		"issue_ids": []string{"not-needed"},
-		"updates": map[string]any{
-			"priority": "P1",
-		},
-	})
-	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid priority, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

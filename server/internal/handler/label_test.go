@@ -59,7 +59,6 @@ func TestCreateLabel_ReplaysCommittedResponse(t *testing.T) {
 	}
 }
 
-// TestLabelCRUD exercises label create/list/get/update/delete.
 func TestLabelCRUD(t *testing.T) {
 	created := createLabelThroughHandler(t, map[string]any{
 		"name":  "bug",
@@ -143,7 +142,6 @@ func TestLabelCRUD(t *testing.T) {
 	}
 }
 
-// TestIssueLabelAttachDetach exercises attach/detach + the issue-scoped endpoints.
 func TestIssueLabelAttachDetach(t *testing.T) {
 	issue := createIssueThroughHandler(t, map[string]any{
 		"title":    "Issue for label attach test",
@@ -227,8 +225,6 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 	}
 }
 
-// TestLabelNotFoundAcrossWorkspaces ensures GET with a foreign workspace
-// header returns 404 — the query's `WHERE workspace_id = $2` does the work.
 func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 	otherWorkspaceID := createOtherTestWorkspace(t)
 	label := createLabelThroughHandler(t, map[string]any{
@@ -241,7 +237,6 @@ func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 		deleteLabelThroughHandler(t, labelID)
 	})
 
-	// GET with a different workspace ID → 404
 	w := httptest.NewRecorder()
 	req := newRequest("GET", "/api/labels/"+labelID, nil)
 	req = withTestWorkspaceMember(req, otherWorkspaceID, testUserID)
@@ -252,9 +247,6 @@ func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 	}
 }
 
-// TestUpdateLabelCrossWorkspace — PUT with a foreign workspace header must not
-// allow updating a label in another workspace (404 via pgx.ErrNoRows from the
-// UPDATE ... WHERE id = $1 AND workspace_id = $2 clause).
 func TestUpdateLabelCrossWorkspace(t *testing.T) {
 	otherWorkspaceID := createOtherTestWorkspace(t)
 	label := createLabelThroughHandler(t, map[string]any{
@@ -267,7 +259,6 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 		deleteLabelThroughHandler(t, labelID)
 	})
 
-	// PUT with a foreign workspace ID → 404
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/labels/"+labelID, map[string]any{"name": "hacked"})
 	req = withTestWorkspaceMember(req, otherWorkspaceID, testUserID)
@@ -277,7 +268,6 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 		t.Fatalf("UpdateLabel cross-workspace: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Sanity: the label wasn't renamed.
 	w = httptest.NewRecorder()
 	req = newRequest("GET", "/api/labels/"+labelID, nil)
 	req = withURLParam(req, "id", labelID)
@@ -294,10 +284,6 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 	}
 }
 
-// TestAttachLabelCrossWorkspaceLabel — an attach request whose label_id
-// belongs to a different workspace must return 404, not silently no-op.
-// Directly exercises the GetLabel workspace precheck and the SQL-layer
-// defense-in-depth guard.
 func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 	issue := createIssueThroughHandler(t, map[string]any{
 		"title":    "cross-ws-attach-issue",
@@ -305,10 +291,6 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 		"priority": "medium",
 	})
 
-	// Label in a second workspace — insert directly via the pool to avoid
-	// the public API (which would require creating a full second workspace
-	// fixture). The defense-in-depth is exactly that the handler refuses
-	// even labels that exist *somewhere* but not in the current workspace.
 	otherWorkspaceID := createOtherTestWorkspace(t)
 	var otherLabelID string
 	err := testPool.QueryRow(context.Background(), `
@@ -320,7 +302,6 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 		t.Fatalf("insert foreign label: %v", err)
 	}
 
-	// Try to attach the foreign label to the test-workspace issue.
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues/"+issue.ID+"/labels", map[string]any{
 		"label_id": otherLabelID,
@@ -331,7 +312,6 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 		t.Fatalf("AttachLabel cross-workspace label: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Confirm nothing was attached.
 	w = httptest.NewRecorder()
 	req = newRequest("GET", "/api/issues/"+issue.ID+"/labels", nil)
 	req = withURLParam(req, "id", issue.ID)
@@ -347,7 +327,6 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 	}
 }
 
-// TestLabelNameTooLong — names longer than 32 characters must return 400.
 func TestLabelNameTooLong(t *testing.T) {
 	longName := strings.Repeat("a", 33)
 	w := httptest.NewRecorder()
@@ -360,7 +339,6 @@ func TestLabelNameTooLong(t *testing.T) {
 		t.Fatalf("CreateLabel too-long name: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Exactly 32 chars is fine.
 	okName := strings.Repeat("b", 32)
 	created := createLabelThroughHandler(t, map[string]any{
 		"name":  okName,
@@ -384,9 +362,6 @@ func TestValidateLabelNameRejectsControlCharactersAndCountsUnicodeCharacters(t *
 	}
 }
 
-// TestColorCaseNormalization — input `#ABCDEF` must be stored as `#abcdef`
-// so the case-insensitive uniqueness and downstream CSS rendering are
-// consistent. Also accepts a bare `ABCDEF` (no leading #).
 func TestColorCaseNormalization(t *testing.T) {
 	cases := []struct {
 		nameSuffix string
@@ -399,7 +374,7 @@ func TestColorCaseNormalization(t *testing.T) {
 		{"lower", "#123abc", "#123abc"},
 	}
 	for _, tc := range cases {
-		name := "color-norm-" + tc.nameSuffix // unique & case-independent
+		name := "color-norm-" + tc.nameSuffix
 		got := createLabelThroughHandler(t, map[string]any{
 			"name":  name,
 			"color": tc.input,
@@ -413,8 +388,6 @@ func TestColorCaseNormalization(t *testing.T) {
 	}
 }
 
-// createOtherTestWorkspace inserts a second workspace + owner membership for
-// cross-workspace tests. Returns the new workspace id; cleanup registered.
 func createOtherTestWorkspace(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()

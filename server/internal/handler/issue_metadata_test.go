@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// Round-trip: set primitives of each type, list, get them back, delete, confirm gone.
 func TestIssueMetadataSetGetDelete(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata round-trip")
 
@@ -91,8 +90,6 @@ func TestIssueMetadataSetGetDelete(t *testing.T) {
 	}
 }
 
-// Invalid keys / values / shapes are rejected with 400 — the regex, primitive,
-// and "no null" rules must all hold.
 func TestIssueMetadataValidation(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata validation")
 
@@ -111,9 +108,6 @@ func TestIssueMetadataValidation(t *testing.T) {
 	for _, c := range bad {
 		t.Run(c.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			// chi pulls the key from URL params (injected via withURLParams);
-			// the raw URL needs to be a valid request line, so PathEscape any
-			// chars (spaces, etc.) that would otherwise break httptest.NewRequest.
 			req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/"+url.PathEscape(c.key), json.RawMessage(c.rawBody))
 			req = withURLParams(req, "id", issueID, "key", c.key)
 			testHandler.SetIssueMetadataKey(w, req)
@@ -124,9 +118,6 @@ func TestIssueMetadataValidation(t *testing.T) {
 	}
 }
 
-// The 8KB DB CHECK kicks in past a few hundred KV pairs of large strings; we
-// blow it deliberately with one giant value to confirm the handler surfaces
-// a 400 (not a generic 500).
 func TestIssueMetadataSizeLimit(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata size limit")
 
@@ -141,7 +132,6 @@ func TestIssueMetadataSizeLimit(t *testing.T) {
 	}
 }
 
-// The 50-key cap is enforced in the handler with a clear 400.
 func TestIssueMetadataKeyCountCap(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata key count cap")
 
@@ -163,8 +153,6 @@ func TestIssueMetadataKeyCountCap(t *testing.T) {
 		t.Fatalf("overflow key: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Updating an existing key past the cap is still allowed — only new keys
-	// are blocked.
 	w = httptest.NewRecorder()
 	req = newRequest("PUT", "/api/issues/"+issueID+"/metadata/k_0", json.RawMessage(`{"value":"v2"}`))
 	req = withURLParams(req, "id", issueID, "key", "k_0")
@@ -174,8 +162,6 @@ func TestIssueMetadataKeyCountCap(t *testing.T) {
 	}
 }
 
-// ListIssues with `metadata` query param does JSONB containment filtering and
-// returns only matching issues — the killer use case for autopilot.
 func TestListIssuesMetadataFilter(t *testing.T) {
 	waitingID := createMetadataTestIssue(t, "Waiting issue")
 	doneID := createMetadataTestIssue(t, "Done issue")
@@ -229,8 +215,6 @@ func TestListIssuesMetadataFilter(t *testing.T) {
 	}
 }
 
-// New issues default to an empty metadata object — never null — so frontend
-// reads like `issue.metadata[key]` never NPE.
 func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Default empty metadata")
 
