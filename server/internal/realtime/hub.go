@@ -379,55 +379,11 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 		return
 	}
 	key := sk(scopeType, scopeID)
-
-	h.mu.RLock()
-	clients := h.rooms[key]
-	var slow []*Client
-	var sent int64
-	for client := range clients {
-		if !client.markSeen(eventID) {
-			continue
-		}
-		select {
-		case client.send <- message:
-			sent++
-		default:
-			slow = append(slow, client)
-		}
-	}
-	h.mu.RUnlock()
-
-	if sent > 0 {
-		M.MessagesSentTotal.Add(sent)
-	}
-	if len(slow) > 0 {
-		h.evictSlow(slow)
-	}
+	h.fanoutClients(&key, message, eventID, "")
 }
 
 func (h *Hub) fanoutAllDedup(message []byte, eventID string) {
-	h.mu.RLock()
-	var slow []*Client
-	var sent int64
-	for client := range h.clients {
-		if !client.markSeen(eventID) {
-			continue
-		}
-		select {
-		case client.send <- message:
-			sent++
-		default:
-			slow = append(slow, client)
-		}
-	}
-	h.mu.RUnlock()
-
-	if sent > 0 {
-		M.MessagesSentTotal.Add(sent)
-	}
-	if len(slow) > 0 {
-		h.evictSlow(slow)
-	}
+	h.fanoutClients(nil, message, eventID, "")
 }
 
 // BroadcastToUser delivers a message to every connection belonging to userID,
@@ -445,8 +401,17 @@ func (h *Hub) Broadcast(message []byte) {
 // excluding clients in excludeWorkspace and deduping against eventID.
 func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventID string) {
 	key := sk(ScopeUser, userID)
+	h.fanoutClients(&key, message, eventID, excludeWorkspace)
+}
+
+// fanoutClients owns delivery, deduplication, metrics and slow-client eviction
+// for global, scope and user broadcasts. A nil scope targets every client.
+func (h *Hub) fanoutClients(scope *scopeKey, message []byte, eventID, excludeWorkspace string) {
 	h.mu.RLock()
-	clients := h.rooms[key]
+	clients := h.clients
+	if scope != nil {
+		clients = h.rooms[*scope]
+	}
 	var slow []*Client
 	var sent int64
 	for client := range clients {
@@ -747,20 +712,14 @@ func (c *Client) handleFrame(raw []byte) {
 	case "subscribe", "unsubscribe":
 		var p subPayload
 		if err := json.Unmarshal(f.Payload, &p); err != nil || p.Scope == "" || p.ID == "" {
-			c.sendJSON(map[string]any{
-				"type": f.Type + "_error",
-				"payload": map[string]string{
-					"scope": p.Scope,
-					"id":    p.ID,
-					"error": "invalid payload",
-				},
-			})
+			c.sendSubscriptionResult(f.Type, p.Scope, p.ID, "invalid payload")
 			return
 		}
 		if f.Type == "subscribe" {
 			c.handleSubscribe(p.Scope, p.ID)
 		} else {
-			c.handleUnsubscribe(p.Scope, p.ID)
+			c.hub.unsubscribe(c, p.Scope, p.ID)
+			c.sendSubscriptionResult("unsubscribe", p.Scope, p.ID, "")
 		}
 	case "ping":
 		c.sendJSON(map[string]string{"type": "pong"})
@@ -776,14 +735,7 @@ func (c *Client) handleSubscribe(scope, id string) {
 		// Implicit scopes — only allowed if it matches the connection identity.
 		if (scope == ScopeWorkspace && id != c.workspaceID) || (scope == ScopeUser && id != c.userID) {
 			loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
-			c.sendJSON(map[string]any{
-				"type": "subscribe_error",
-				"payload": map[string]string{
-					"scope": scope,
-					"id":    id,
-					"error": "forbidden",
-				},
-			})
+			c.sendSubscriptionResult("subscribe", scope, id, "forbidden")
 			return
 		}
 		// Already auto-subscribed at connect time; reply ack idempotently.
@@ -798,42 +750,27 @@ func (c *Client) handleSubscribe(scope, id string) {
 				if err != nil {
 					reason = "lookup_failed"
 				}
-				c.sendJSON(map[string]any{
-					"type": "subscribe_error",
-					"payload": map[string]string{
-						"scope": scope,
-						"id":    id,
-						"error": reason,
-					},
-				})
+				c.sendSubscriptionResult("subscribe", scope, id, reason)
 				return
 			}
 		}
 		c.hub.subscribe(c, scope, id)
 	default:
 		loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
-		c.sendJSON(map[string]any{
-			"type": "subscribe_error",
-			"payload": map[string]string{
-				"scope": scope,
-				"id":    id,
-				"error": "unknown_scope",
-			},
-		})
+		c.sendSubscriptionResult("subscribe", scope, id, "unknown_scope")
 		return
 	}
-	c.sendJSON(map[string]any{
-		"type":    "subscribe_ack",
-		"payload": map[string]string{"scope": scope, "id": id},
-	})
+	c.sendSubscriptionResult("subscribe", scope, id, "")
 }
 
-func (c *Client) handleUnsubscribe(scope, id string) {
-	c.hub.unsubscribe(c, scope, id)
-	c.sendJSON(map[string]any{
-		"type":    "unsubscribe_ack",
-		"payload": map[string]string{"scope": scope, "id": id},
-	})
+func (c *Client) sendSubscriptionResult(action, scope, id, reason string) {
+	payload := map[string]string{"scope": scope, "id": id}
+	suffix := "_ack"
+	if reason != "" {
+		payload["error"] = reason
+		suffix = "_error"
+	}
+	c.sendJSON(map[string]any{"type": action + suffix, "payload": payload})
 }
 
 // sendJSON best-effort encodes v and pushes it to the client's send channel.
