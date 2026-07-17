@@ -455,9 +455,7 @@ func assertDaemonGCStatusOnlyResponse(t *testing.T, w *httptest.ResponseRecorder
 }
 
 func TestClaimTaskByRuntime_ReclaimsStaleDispatchedTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Stale dispatch reclaim runtime")
@@ -486,9 +484,7 @@ func TestClaimTaskByRuntime_ReclaimsStaleDispatchedTask(t *testing.T) {
 }
 
 func TestClaimTaskByRuntime_DoesNotReclaimFreshDispatchedTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Fresh dispatch reclaim runtime")
@@ -514,9 +510,7 @@ func TestClaimTaskByRuntime_DoesNotReclaimFreshDispatchedTask(t *testing.T) {
 }
 
 func TestClaimTaskByRuntime_DoesNotReclaimAlreadyStartedTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Started dispatch reclaim runtime")
@@ -542,9 +536,7 @@ func TestClaimTaskByRuntime_DoesNotReclaimAlreadyStartedTask(t *testing.T) {
 }
 
 func TestClaimTaskByRuntime_DoesNotReclaimDifferentRuntimeTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	claimingRuntimeID := createClaimReclaimRuntime(t, ctx, "Claiming dispatch reclaim runtime")
@@ -570,15 +562,9 @@ func TestClaimTaskByRuntime_DoesNotReclaimDifferentRuntimeTask(t *testing.T) {
 	}
 }
 
-// TestClaimTaskByRuntime_PopulatesWorkspaceContext verifies the claim
-// response carries workspace.context so the daemon can inject the
-// workspace-level system prompt into every agent brief. Regression coverage
-// for MUL-2542: before this fix the field was never plumbed through, so
-// even workspaces that had set a context got an empty brief.
+// Claims include workspace context for the Agent system prompt.
 func TestClaimTaskByRuntime_PopulatesWorkspaceContext(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	wsContext := "All comments must be in English. Prefer concise PR descriptions."
@@ -603,9 +589,7 @@ func TestClaimTaskByRuntime_PopulatesWorkspaceContext(t *testing.T) {
 // only on empty input — a stray "context: null" coming back as the string
 // "null" would render as a bogus paragraph.
 func TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	setHandlerTestWorkspaceContext(t, nil)
@@ -624,9 +608,7 @@ func TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset(t *testing.T) {
 }
 
 func TestClaimTaskByRuntime_MissingRuntimeOwnerCancelsAndRejects(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	var runtimeID string
@@ -667,9 +649,7 @@ func TestClaimTaskByRuntime_MissingRuntimeOwnerCancelsAndRejects(t *testing.T) {
 }
 
 func TestDaemonRegister_WithDaemonUserCredential(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	w := httptest.NewRecorder()
 	req := newDaemonUserRequest("POST", "/api/daemon/register", map[string]any{
@@ -703,9 +683,7 @@ func TestDaemonRegister_WithDaemonUserCredential(t *testing.T) {
 }
 
 func TestDaemonRegister_DefaultsRuntimeScopeToWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	daemonID := "test-daemon-runtime-default-" + randomID()[:8]
 	w := httptest.NewRecorder()
@@ -748,9 +726,7 @@ func TestDaemonRegister_DefaultsRuntimeScopeToWorkspace(t *testing.T) {
 }
 
 func TestDaemonRegister_WithDaemonUserCredential_WorkspaceMismatch(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	w := httptest.NewRecorder()
 	// The authenticated user is not a member of the requested workspace.
@@ -770,9 +746,7 @@ func TestDaemonRegister_WithDaemonUserCredential_WorkspaceMismatch(t *testing.T)
 }
 
 func TestDaemonHeartbeat_WithDaemonUserCredential_CrossWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	// First, register a runtime using PAT (existing flow).
 	w := httptest.NewRecorder()
@@ -806,15 +780,9 @@ func TestDaemonHeartbeat_WithDaemonUserCredential_CrossWorkspace(t *testing.T) {
 	}
 }
 
-// TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError pins the fix for
-// issue #2391: when GetAgentRuntime returns pgx.ErrNoRows (runtime row was
-// deleted server-side), the WS handler must return a successful ack with
-// RuntimeGone=true rather than an error. Returning an error makes the WS hub
-// log every beat at Warn — the flood the issue is about.
+// A deleted runtime is a successful terminal heartbeat acknowledgement.
 func TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	// A well-formed UUID that does NOT exist in agent_runtime. The handler
 	// must turn the resulting pgx.ErrNoRows into a RuntimeGone ack.
@@ -840,9 +808,7 @@ func TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError(t *testing.T) {
 }
 
 func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	slug := "handler-ws-heartbeat-" + uuid.New().String()
@@ -889,9 +855,7 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 // Anything else (transient pool issue, schema mismatch, ...) must surface
 // as 500 so the daemon does not mistake a hiccup for a deletion.
 func TestDaemonHeartbeat_HTTPRuntimeGoneReturns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	missingRuntime := uuid.New().String()
 	w := httptest.NewRecorder()
@@ -909,9 +873,7 @@ func TestDaemonHeartbeat_HTTPRuntimeGoneReturns404(t *testing.T) {
 }
 
 func TestDaemonHeartbeat_MergesRuntimeMetadata(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	if _, err := testPool.Exec(context.Background(),
@@ -962,9 +924,7 @@ func TestDaemonHeartbeat_MergesRuntimeMetadata(t *testing.T) {
 // critical and is intentionally left unbounded. Without the probe bound the
 // heartbeat would hang on a slow shared store.
 func TestDaemonHeartbeat_SlowProbeDoesNotWedge(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 
@@ -995,14 +955,9 @@ func TestDaemonHeartbeat_SlowProbeDoesNotWedge(t *testing.T) {
 	}
 }
 
-// TestDaemonHeartbeat_EmptyQueueSkipsPopPending pins the ack-safety property:
-// when HasPending reports no work, the heartbeat must NOT invoke PopPending,
-// because PopPending's Redis implementation has non-atomic side effects that
-// a client-side cancel cannot cleanly un-run (see GH #1637 review).
+// An empty queue never invokes the non-idempotent PopPending operation.
 func TestDaemonHeartbeat_EmptyQueueSkipsPopPending(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 
@@ -1035,9 +990,7 @@ func TestDaemonHeartbeat_EmptyQueueSkipsPopPending(t *testing.T) {
 }
 
 func TestGetTaskStatus_WithDaemonUserCredential_CrossWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	// Create a task in the test workspace.
 	var issueID, taskID string
@@ -1140,9 +1093,7 @@ func TestGetTaskStatus_ErrNoRows_Returns404(t *testing.T) {
 }
 
 func TestGetIssueGCCheck_WithDaemonUserCredential_CrossWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	// Create an issue in the test workspace. The daemon GC endpoint returns
 	// only status + updated_at, so a "done" issue exercises the typical path.
@@ -1225,9 +1176,7 @@ func TestSanitizeTaskMessageInputRedactsNestedSecrets(t *testing.T) {
 }
 
 func TestReportTaskMessagesSanitizesNullBytesBeforePersisting(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message nul runtime")
@@ -1295,9 +1244,7 @@ func TestReportTaskMessagesSanitizesNullBytesBeforePersisting(t *testing.T) {
 }
 
 func TestReportTaskMessagesRollsBackBatchWhenOneWriteFails(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message rollback runtime")
@@ -1329,9 +1276,7 @@ func TestReportTaskMessagesRollsBackBatchWhenOneWriteFails(t *testing.T) {
 }
 
 func TestReportTaskMessagesDeduplicatesRetriedSequence(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message retry runtime")
@@ -1425,9 +1370,7 @@ func setupForeignWorkspaceFixture(t *testing.T) (string, string) {
 // workspace A cannot discover tasks for an issue in workspace B by passing
 // B's issue UUID in the URL while keeping A in X-Workspace-ID.
 func TestGetActiveTaskForIssue_CrossWorkspace_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	foreignIssueID, _ := setupForeignWorkspaceFixture(t)
 
@@ -1445,9 +1388,7 @@ func TestGetActiveTaskForIssue_CrossWorkspace_Returns404(t *testing.T) {
 // A cannot cancel a task that lives in workspace B. Critically, the task must
 // remain in its original status — no side effect before the access check.
 func TestCancelTask_CrossWorkspace_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	foreignIssueID, foreignTaskID := setupForeignWorkspaceFixture(t)
 
@@ -1472,14 +1413,9 @@ func TestCancelTask_CrossWorkspace_Returns404(t *testing.T) {
 	}
 }
 
-// TestCancelTask_TaskBelongsToDifferentIssue_Returns404 verifies that a task
-// UUID belonging to a *different* issue in the *same* accessible workspace
-// cannot be cancelled by routing it through another issue's URL. This guards
-// against the weaker fix that only validates the issue→workspace binding.
+// Task cancellation verifies both workspace and Issue ownership.
 func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -1545,9 +1481,7 @@ func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
 // TestCancelTask_SameIssue_Succeeds is the happy-path companion to the two
 // negative tests above — same workspace, correct issue→task pairing → 200.
 func TestCancelTask_SameIssue_Succeeds(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -1591,9 +1525,7 @@ func TestCancelTask_SameIssue_Succeeds(t *testing.T) {
 // TestListTasksByIssue_CrossWorkspace_Returns404 verifies that task history
 // is not readable across workspaces via a bare issue UUID.
 func TestListTasksByIssue_CrossWorkspace_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	foreignIssueID, _ := setupForeignWorkspaceFixture(t)
 
@@ -1610,9 +1542,7 @@ func TestListTasksByIssue_CrossWorkspace_Returns404(t *testing.T) {
 // TestGetIssueUsage_CrossWorkspace_Returns404 verifies that per-issue token
 // usage is not readable across workspaces via a bare issue UUID.
 func TestGetIssueUsage_CrossWorkspace_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	foreignIssueID, _ := setupForeignWorkspaceFixture(t)
 
@@ -1627,9 +1557,7 @@ func TestGetIssueUsage_CrossWorkspace_Returns404(t *testing.T) {
 }
 
 func TestListIssueTaskTraceEvents_ReturnsDurableEvents(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Trace event runtime")
@@ -1693,9 +1621,7 @@ func TestListIssueTaskTraceEvents_ReturnsDurableEvents(t *testing.T) {
 }
 
 func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage report runtime")
@@ -1758,9 +1684,7 @@ func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
 }
 
 func TestReportTaskUsageRollsBackBatchWhenOneWriteFails(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage rollback runtime")
@@ -1797,9 +1721,7 @@ func TestReportTaskUsageRollsBackBatchWhenOneWriteFails(t *testing.T) {
 }
 
 func TestReportTaskUsageRejectsInvalidCounters(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage validation runtime")
@@ -1818,9 +1740,7 @@ func TestReportTaskUsageRejectsInvalidCounters(t *testing.T) {
 }
 
 func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "CodeBuddy usage runtime")
@@ -1913,9 +1833,7 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 }
 
 func TestCompleteTaskWithoutUsageCreatesUsageUnavailableTrace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage unavailable runtime")
@@ -1999,9 +1917,7 @@ func TestCompleteTaskWithoutUsageCreatesUsageUnavailableTrace(t *testing.T) {
 // TestListIssueTaskTraceEvents_CrossWorkspace_Returns404 verifies that durable
 // task trace events are not readable across workspaces via a bare issue UUID.
 func TestListIssueTaskTraceEvents_CrossWorkspace_Returns404(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	foreignIssueID, _ := setupForeignWorkspaceFixture(t)
 
@@ -2016,9 +1932,7 @@ func TestListIssueTaskTraceEvents_CrossWorkspace_Returns404(t *testing.T) {
 }
 
 func TestGetDaemonWorkspaceRepos_WithDaemonUserCredential(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	setHandlerTestWorkspaceRepos(t, []map[string]string{
 		{"url": "git@example.com:team/api.git", "description": "API"},
@@ -2058,9 +1972,7 @@ func TestGetDaemonWorkspaceRepos_WithDaemonUserCredential(t *testing.T) {
 }
 
 func TestDaemonWorkspaceRepos_RejectsCorruptPersistedShapeBeforeRegistration(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	if _, err := testPool.Exec(context.Background(), `UPDATE workspace SET repos = $1 WHERE id = $2`, []byte(`[{"url":42}]`), testWorkspaceID); err != nil {
 		t.Fatalf("seed corrupt workspace repos: %v", err)
 	}
@@ -2099,9 +2011,7 @@ func TestDaemonWorkspaceRepos_RejectsCorruptPersistedShapeBeforeRegistration(t *
 }
 
 func TestGetDaemonWorkspaceRepos_WithDaemonUserCredential_WorkspaceMismatch(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	w := httptest.NewRecorder()
 	req := newDaemonUserRequest("GET", "/api/daemon/workspaces/"+testWorkspaceID+"/repos", nil, "00000000-0000-0000-0000-000000000000", "test-daemon-user")
@@ -2114,9 +2024,7 @@ func TestGetDaemonWorkspaceRepos_WithDaemonUserCredential_WorkspaceMismatch(t *t
 }
 
 func TestGetDaemonWorkspaceRepos_VersionIgnoresOrderAndDescription(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	setHandlerTestWorkspaceRepos(t, []map[string]string{
 		{"url": "git@example.com:team/api.git", "description": "API"},
@@ -2160,13 +2068,9 @@ func TestGetDaemonWorkspaceRepos_VersionIgnoresOrderAndDescription(t *testing.T)
 	}
 }
 
-// Regression test for #1224: tasks linked only via AutopilotRunID (run_only
-// autopilots) must resolve to the autopilot's workspace. Before the fix,
-// resolveTaskWorkspaceID fell through and every StartTask call returned 404.
+// Run-only Autopilot tasks resolve workspace ownership through their run.
 func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	agentID, runtimeID, runID := createDaemonTestAutopilotRun(t, "run_only fixture", "running")
@@ -2222,9 +2126,7 @@ func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
 // would see two repo lists in the meta-skill and have no signal about which
 // belongs to the current issue.
 func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2336,9 +2238,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 }
 
 func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2404,9 +2304,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 }
 
 func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2455,9 +2353,7 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 // When the issue's project has no github_repo resources, the claim handler
 // must fall back to workspace repos (the pre-override behavior).
 func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2495,15 +2391,9 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 	}
 }
 
-// Regression test for #1276: ClaimTaskByRuntime must populate workspace_id in
-// the response for run_only autopilot tasks. Before the fix, resp.WorkspaceID
-// stayed empty because ClaimTaskByRuntime only handled IssueID and
-// ChatSessionID branches, causing the daemon's execenv to fail with
-// "workspace ID is required".
+// Run-only Autopilot claims carry their resolved workspace ID.
 func TestClaimTask_AutopilotRunOnly_PopulatesWorkspaceID(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	agentID, runtimeID, runID := createDaemonTestAutopilotRun(t, "claim workspace fixture", "running")
@@ -2556,17 +2446,9 @@ func TestClaimTask_AutopilotRunOnly_PopulatesWorkspaceID(t *testing.T) {
 	}
 }
 
-// TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects verifies
-// the defense-in-depth check in ClaimTaskByRuntime: if a task is somehow
-// dispatched to a runtime whose workspace doesn't match the task's
-// resolved workspace (upstream routing / data-integrity bug), the handler
-// must 500 AND cancel the dispatched task so it doesn't sit in
-// 'dispatched' until the 5-minute sweeper — which would also leave the
-// agent stuck reporting 'working' in the UI.
+// A runtime/workspace mismatch fails closed and cancels the dispatched task.
 func TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2785,17 +2667,9 @@ func installTaskIssueStatusUpdateFailure(t *testing.T, issueID string) func() {
 	return remove
 }
 
-// Regression test for MUL-1198: comment-triggered tasks that finish without
-// the agent posting any comment must still deliver a synthesized result
-// comment, threaded under the trigger. Before the fix, CompleteTask exempted
-// comment-triggered tasks from the auto-synthesis path, so a Claude Code /
-// Codex / etc. agent that ended its run with only terminal text (no
-// `multica issue comment add` call) left the user staring at a "Completed"
-// badge with no reply.
+// Silent comment-triggered tasks synthesize one result under the trigger.
 func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2862,9 +2736,7 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 }
 
 func TestCompleteTask_CommentTriggered_SynthesizedMentionDispatchesAgent(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2906,9 +2778,7 @@ func TestCompleteTask_CommentTriggered_SynthesizedMentionDispatchesAgent(t *test
 }
 
 func TestCompleteTask_AssignmentTriggered_SynthesizedMentionDispatchesAgent(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -2970,9 +2840,7 @@ func TestCompleteTask_AssignmentTriggered_SynthesizedMentionDispatchesAgent(t *t
 }
 
 func TestCompleteTask_AssignmentTriggered_UsesIntermediateDispatchMentionWhenFinalOutputSummarizes(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3025,13 +2893,9 @@ func TestCompleteTask_AssignmentTriggered_UsesIntermediateDispatchMentionWhenFin
 	}
 }
 
-// Companion to the above: when the agent DID post its own comment during the
-// run, CompleteTask must not synthesize a duplicate. Guards against the
-// common case where the fix is over-eager and creates two comments per task.
+// An Agent-authored result suppresses duplicate synthesis.
 func TestCompleteTask_CommentTriggered_SkipsSynthesisWhenAgentAlreadyCommented(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3060,9 +2924,7 @@ func TestCompleteTask_CommentTriggered_SkipsSynthesisWhenAgentAlreadyCommented(t
 }
 
 func TestCompleteTask_CommentTriggered_SuppressesTrivialDoneOutput(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3083,9 +2945,7 @@ func TestCompleteTask_CommentTriggered_SuppressesTrivialDoneOutput(t *testing.T)
 }
 
 func TestCompleteTask_AssignmentTriggered_DoesNotSuppressTrivialDoneOutput(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3212,9 +3072,7 @@ func createRuntimeGuardRuntime(t *testing.T, ctx context.Context, provider strin
 }
 
 func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3401,9 +3259,7 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 }
 
 func TestClaimTask_IssueSourceSummarySessionNotResumed(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3451,9 +3307,7 @@ func TestClaimTask_IssueSourceSummarySessionNotResumed(t *testing.T) {
 }
 
 func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3546,15 +3400,9 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 	}
 }
 
-// TestClaimTask_ChatDeliversAllUnansweredUserMessages pins the fix for the
-// regression the MUL-2968 debounce exposed: when several user messages are
-// debounced into a single run, the agent must receive ALL of them, not just
-// the most recent. Before the fix the daemon prompt was the single latest
-// user message, so "看上海天气" then "还有青岛" answered only Qingdao.
+// A debounced Chat claim includes every unanswered user message in order.
 func TestClaimTask_ChatDeliversAllUnansweredUserMessages(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -3627,9 +3475,7 @@ func TestClaimTask_ChatDeliversAllUnansweredUserMessages(t *testing.T) {
 }
 
 func TestClaimTask_ChatWithoutMessagesRemainsRecoverable(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -3671,17 +3517,9 @@ func TestClaimTask_ChatWithoutMessagesRemainsRecoverable(t *testing.T) {
 	}
 }
 
-// TestClaimTask_ChatPopulatesInitiator verifies MUL-2645 for chat tasks: the
-// claim response surfaces the STORED task initiator (initiator_user_id captured
-// at enqueue), NOT chat_session.creator_id. This is the MUL-2645 review fix: for
-// Lark group chats the session creator is the installer, not the sender, so the
-// claim must read the stored sender. The test pins this by making the creator a
-// DIFFERENT user (the "installer") from the stored initiator (the sender) and
-// asserting the claim resolves the sender.
+// Chat claims resolve the stored sender, not the session creator.
 func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
 
@@ -3748,9 +3586,7 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 }
 
 func TestClaimTask_QuickCreatePopulatesThreadName(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
@@ -3809,9 +3645,7 @@ func TestClaimTask_QuickCreatePopulatesThreadName(t *testing.T) {
 }
 
 func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3861,9 +3695,7 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 // matches the same anti-enumeration shape as GetIssueGCCheck: cross-workspace
 // users outside the workspace get 404, while same-workspace users get the live status.
 func TestGetChatSessionGCCheck(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3915,9 +3747,7 @@ func TestGetChatSessionGCCheck(t *testing.T) {
 // TestGetAutopilotRunGCCheck verifies the autopilot-run gc-check endpoint:
 // 200 with the decision-driving status on success, 404 on cross-workspace probe.
 func TestGetAutopilotRunGCCheck(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	_, _, runID := createDaemonTestAutopilotRun(t, "gc-check autopilot", "completed")
@@ -3938,9 +3768,7 @@ func TestGetAutopilotRunGCCheck(t *testing.T) {
 // TestGetTaskGCCheck verifies the task gc-check endpoint that quick-create
 // workdirs key on. Same anti-enumeration shape via requireDaemonTaskAccess.
 func TestGetTaskGCCheck(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 
@@ -3985,16 +3813,8 @@ func TestGetTaskGCCheck(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Membership Cache Integration Tests
 //
-// These tests don't just exercise the cache primitive (that's covered in
-// auth/membership_cache_test.go). They prove two things that the unit tests
-// can't:
-//
-//  1. requireDaemonWorkspaceAccess actually short-circuits the DB on a cache
-//     hit (the "ghost user" trick below).
-//  2. Each handler that mutates membership actually calls
-//     h.MembershipCache.Invalidate(...) — so a future refactor that drops
-//     one of those calls will fail CI instead of silently leaking a stale
-//     authorization grant for up to the membership cache TTL.
+// These integration cases prove cache-hit authorization and invalidation at
+// every membership mutation boundary.
 // ---------------------------------------------------------------------------
 
 // installFreshMembershipCache swaps in a Redis-backed MembershipCache against
@@ -4042,16 +3862,9 @@ func createEphemeralMember(t *testing.T, workspaceID, label string) (string, str
 	return userID, memberID
 }
 
-// TestRequireDaemonWorkspaceAccess_CacheHit proves the cache lookup actually
-// short-circuits the DB query. The trick: the request actor is a "ghost"
-// user with NO member row in the workspace. With an empty cache the access
-// check must fail; after priming the cache it must succeed. If a future
-// change ever bypasses the cache and falls through to the DB, the priming
-// step stops mattering and the second assertion catches it.
+// A cached grant authorizes an actor with no backing membership row.
 func TestRequireDaemonWorkspaceAccess_CacheHit(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
@@ -4076,9 +3889,7 @@ func TestRequireDaemonWorkspaceAccess_CacheHit(t *testing.T) {
 }
 
 func TestRequireDaemonWorkspaceAccess_CacheMissBackfills(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	installFreshMembershipCache(t)
 
 	ctx := context.Background()
@@ -4101,14 +3912,9 @@ func TestRequireDaemonWorkspaceAccess_CacheMissBackfills(t *testing.T) {
 	}
 }
 
-// TestMembershipCache_InvalidatedOnDeleteMember drives a real DeleteMember
-// HTTP handler call and asserts the cache entry for the removed member is
-// gone afterwards. Guards against future refactors that move or drop the
-// h.MembershipCache.Invalidate(...) line in workspace.go.
+// DeleteMember invalidates the removed member's cached grant.
 func TestMembershipCache_InvalidatedOnDeleteMember(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
@@ -4137,9 +3943,7 @@ func TestMembershipCache_InvalidatedOnDeleteMember(t *testing.T) {
 // the entry so any downstream caller that did add role-aware caching later
 // would not silently see a stale role.
 func TestMembershipCache_InvalidatedOnUpdateMember(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
@@ -4160,15 +3964,9 @@ func TestMembershipCache_InvalidatedOnUpdateMember(t *testing.T) {
 	}
 }
 
-// TestMembershipCache_InvalidatedOnLeaveWorkspace exercises the self-removal
-// path (LeaveWorkspace, not DeleteMember). Both handlers route through
-// revokeAndRemoveMember, but the Invalidate call lives in the handler — a
-// refactor that consolidates them could drop one invalidation without the
-// other test catching it.
+// LeaveWorkspace invalidates the departing member's cached grant.
 func TestMembershipCache_InvalidatedOnLeaveWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
@@ -4194,9 +3992,7 @@ func TestMembershipCache_InvalidatedOnLeaveWorkspace(t *testing.T) {
 // entry must be flushed. We create an isolated workspace with two members
 // (owner + extra) so the shared testWorkspace stays intact.
 func TestMembershipCache_InvalidatedOnDeleteWorkspace(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	installFreshMembershipCache(t)
 	ctx := context.Background()
 
@@ -4319,9 +4115,7 @@ func claimCommentTask(t *testing.T, runtimeID, daemonID string) claimCommentTask
 // comment, excludes the agent's own comments, and the since anchor is the prior
 // run's started_at.
 func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment newcount runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment newcount agent")
@@ -4377,15 +4171,9 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	}
 }
 
-// TestClaimTaskByRuntime_CommentTaskPopulatesInitiator verifies MUL-2645: the
-// claim response surfaces the triggering comment's member author as the task
-// initiator (type + id + name + account), so a workspace-visible agent learns who
-// actually asked rather than seeing the runtime owner. createCommentTriggeredClaimTask
-// authors the trigger comment as the fixture member (testUserID).
+// Comment-task claims identify the triggering member rather than runtime owner.
 func TestClaimTaskByRuntime_CommentTaskPopulatesInitiator(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment initiator runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment initiator agent")
@@ -4428,9 +4216,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesInitiator(t *testing.T) {
 }
 
 func TestClaimTaskByRuntime_CommentTaskOmitsDeltaWhenOnlyTriggerIsNew(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment trigger-only runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment trigger-only agent")
@@ -4455,9 +4241,7 @@ func TestClaimTaskByRuntime_CommentTaskOmitsDeltaWhenOnlyTriggerIsNew(t *testing
 // resume the prior session by default (no env flag), as long as the prior
 // session ran on the same runtime.
 func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment resume runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment resume agent")

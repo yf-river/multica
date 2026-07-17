@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -37,9 +36,7 @@ func TestMissingPromptLibraryTrialVariables(t *testing.T) {
 }
 
 func TestPromptLibraryCRUD(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
@@ -143,21 +140,9 @@ func TestPromptLibraryCRUD(t *testing.T) {
 	if versionW.Code != http.StatusCreated || versionReplayW.Code != http.StatusCreated || versionReplayW.Body.String() != versionW.Body.String() {
 		t.Fatalf("version replay differs: first=%d %s replay=%d %s", versionW.Code, versionW.Body.String(), versionReplayW.Code, versionReplayW.Body.String())
 	}
-	responses := make(chan *httptest.ResponseRecorder, 8)
-	var wait sync.WaitGroup
-	for range 8 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			responses <- createVersion()
-		}()
-	}
-	wait.Wait()
-	close(responses)
-	for response := range responses {
-		if response.Code != http.StatusCreated || response.Body.String() != versionW.Body.String() {
-			t.Fatalf("concurrent version replay = %d %s, want exact", response.Code, response.Body.String())
-		}
+	concurrentVersion := assertConcurrentReplay(t, http.StatusCreated, createVersion)
+	if concurrentVersion.Body.String() != versionW.Body.String() {
+		t.Fatalf("concurrent version replay = %s, want exact %s", concurrentVersion.Body.String(), versionW.Body.String())
 	}
 	changedVersionReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-library/"+created.ID+"/versions", map[string]any{
 		"content": "changed version content", "change_note": "different intent",
@@ -213,9 +198,7 @@ func TestPromptLibraryCRUD(t *testing.T) {
 }
 
 func TestPromptLibraryRejectsForeignProject(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	foreignWorkspaceID := createPromptLibraryTestWorkspace(t, "prompt-library-foreign")
 	foreignProjectID := createPromptLibraryTestProjectInWorkspace(t, foreignWorkspaceID, "外部项目")
 

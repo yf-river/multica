@@ -35,6 +35,18 @@ func assertConcurrentReplay(
 	create func() *httptest.ResponseRecorder,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return assertConcurrentReplayBy(t, wantStatus, create, func(first, next *httptest.ResponseRecorder) bool {
+		return next.Body.String() == first.Body.String()
+	})
+}
+
+func assertConcurrentReplayBy(
+	t *testing.T,
+	wantStatus int,
+	create func() *httptest.ResponseRecorder,
+	sameResponse func(first, next *httptest.ResponseRecorder) bool,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	const callers = 8
 	responses := make(chan *httptest.ResponseRecorder, callers)
 	var wg sync.WaitGroup
@@ -55,7 +67,7 @@ func assertConcurrentReplay(
 		}
 		if first == nil {
 			first = response
-		} else if response.Body.String() != first.Body.String() {
+		} else if !sameResponse(first, response) {
 			t.Fatalf("replay body differs\nfirst: %s\nnext: %s", first.Body.String(), response.Body.String())
 		}
 	}

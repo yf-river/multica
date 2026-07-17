@@ -10,9 +10,7 @@ import (
 )
 
 func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	var agentID string
@@ -98,9 +96,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 }
 
 func TestIssueTaskUserInputTraceCapturesOriginalIssue(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID := createClaimReclaimRuntime(t, ctx, "User input trace runtime")

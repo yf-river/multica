@@ -159,13 +159,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode issueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeType == "human_confirmation" {
-			waitNode = node
-			break
-		}
-	}
+	waitNode := timelineTestNodeByType(t, nodes, "human_confirmation")
 
 	if waitNode.NodeID != "human_confirmation:comment-1:task-2" {
 		t.Fatalf("human confirmation node = %+v, want comment-triggered wait", waitNode)
@@ -185,13 +179,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 			t.Fatalf("human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
 		}
 	}
-	var taskNode issueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeID == "task:task-2" {
-			taskNode = node
-			break
-		}
-	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-2")
 	if taskNode.StartedAt != "2026-06-09T10:10:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:12:00Z" {
 		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
 	}
@@ -237,13 +225,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode issueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeType == "human_confirmation" {
-			waitNode = node
-			break
-		}
-	}
+	waitNode := timelineTestNodeByType(t, nodes, "human_confirmation")
 
 	if waitNode.NodeID != "human_confirmation:pending:task-1" {
 		t.Fatalf("pending human confirmation node = %+v", waitNode)
@@ -260,13 +242,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	if waitNode.Metadata["pending"] != true || waitNode.Metadata["wait_kind"] != "human_confirmation" {
 		t.Fatalf("pending human confirmation metadata = %+v", waitNode.Metadata)
 	}
-	var taskNode issueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeID == "task:task-1" {
-			taskNode = node
-			break
-		}
-	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
 	if taskNode.Summary != "等待用户补充确认后，我将继续推进 02-方案设计。" {
 		t.Fatalf("PM task summary = %q, want task result intent", taskNode.Summary)
 	}
@@ -301,16 +277,8 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var taskNode issueTimelineNodeResponse
-	var waitNode issueTimelineNodeResponse
-	for _, node := range nodes {
-		switch node.NodeID {
-		case "task:task-1":
-			taskNode = node
-		case "human_confirmation:pending:task-1":
-			waitNode = node
-		}
-	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
+	waitNode := timelineTestNodeByID(t, nodes, "human_confirmation:pending:task-1")
 
 	if taskNode.Summary != "01-需求澄清已完成，需等待用户确认" {
 		t.Fatalf("PM task summary = %q, want markdown heading", taskNode.Summary)
@@ -360,15 +328,12 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var taskNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "dispatch_wait" {
 			t.Fatalf("dispatch wait should not be emitted after responsibility-window change: %+v", node)
 		}
-		if node.NodeID == "task:task-2" {
-			taskNode = node
-		}
 	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-2")
 
 	if taskNode.StartedAt != "2026-06-09T10:02:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:05:00Z" {
 		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
@@ -412,15 +377,12 @@ func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) 
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var childRef issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "human_confirmation" {
 			t.Fatalf("child issue runtime should be represented by child_issue_ref, not a generic inferred gap: %+v", node)
 		}
-		if node.NodeType == "child_issue_ref" {
-			childRef = node
-		}
 	}
+	childRef := timelineTestNodeByType(t, nodes, "child_issue_ref")
 	if childRef.ChildIssueID != "child-issue" {
 		t.Fatalf("child_issue_ref = %+v, want child issue evidence", childRef)
 	}
@@ -583,10 +545,30 @@ func timelineTestStringPtr(value string) *string {
 	return &value
 }
 
-func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
+func timelineTestNodeByID(t *testing.T, nodes []issueTimelineNodeResponse, id string) issueTimelineNodeResponse {
+	t.Helper()
+	for _, node := range nodes {
+		if node.NodeID == id {
+			return node
+		}
 	}
+	t.Fatalf("timeline node %q missing", id)
+	return issueTimelineNodeResponse{}
+}
+
+func timelineTestNodeByType(t *testing.T, nodes []issueTimelineNodeResponse, nodeType string) issueTimelineNodeResponse {
+	t.Helper()
+	for _, node := range nodes {
+		if node.NodeType == nodeType {
+			return node
+		}
+	}
+	t.Fatalf("timeline node type %q missing", nodeType)
+	return issueTimelineNodeResponse{}
+}
+
+func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	fx := newChildDoneFixture(t, "in_progress")
@@ -807,20 +789,8 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 			t.Fatalf("timeline node type %s missing: %+v", nodeType, nodeTypes)
 		}
 	}
-	var childRef issueTimelineNodeResponse
-	for _, node := range resp.TimelineNodes {
-		if node.NodeType == "child_issue_ref" {
-			childRef = node
-			break
-		}
-	}
-	var taskNode issueTimelineNodeResponse
-	for _, node := range resp.TimelineNodes {
-		if node.NodeID == "task:"+taskID {
-			taskNode = node
-			break
-		}
-	}
+	childRef := timelineTestNodeByType(t, resp.TimelineNodes, "child_issue_ref")
+	taskNode := timelineTestNodeByID(t, resp.TimelineNodes, "task:"+taskID)
 	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != rootArtifact.ID {
 		t.Fatalf("task node artifacts = %+v, want uploaded attachment", taskNode.Artifacts)
 	}

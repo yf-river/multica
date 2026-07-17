@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -85,36 +84,16 @@ func TestQuickCreateIssueConcurrentSameKeyConverges(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'quick_create' AND idempotency_key = $1`, key)
 	})
 
-	const callers = 8
-	type result struct {
-		code int
-		id   string
-		body string
-	}
-	results := make(chan result, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			w := httptest.NewRecorder()
-			req := newRequest(http.MethodPost, "/api/issues/quick-create", body)
-			req.Header.Set("Idempotency-Key", key)
-			testHandler.QuickCreateIssue(w, req)
-			var response QuickCreateIssueResponse
-			if w.Code == http.StatusAccepted {
-				_ = json.NewDecoder(w.Body).Decode(&response)
-			}
-			results <- result{code: w.Code, id: response.TaskID, body: w.Body.String()}
-		}()
-	}
-	wg.Wait()
-	close(results)
-
-	for got := range results {
-		if got.code != http.StatusAccepted || got.id != key {
-			t.Fatalf("concurrent quick-create diverged: code=%d id=%s body=%s", got.code, got.id, got.body)
-		}
+	response := assertConcurrentReplay(t, http.StatusAccepted, func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPost, "/api/issues/quick-create", body)
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.QuickCreateIssue(w, req)
+		return w
+	})
+	var replayed QuickCreateIssueResponse
+	if err := json.NewDecoder(response.Body).Decode(&replayed); err != nil || replayed.TaskID != key {
+		t.Fatalf("concurrent quick-create response = %s: %v", response.Body.String(), err)
 	}
 	var count int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE id = $1`, key).Scan(&count); err != nil {

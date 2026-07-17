@@ -319,9 +319,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestRequireWorkspaceMemberClientCanceledReturns499(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	req := newRequest(http.MethodGet, "/api/workspace-boundary", nil)
 	ctx, cancel := context.WithCancel(req.Context())
@@ -338,9 +336,7 @@ func TestRequireWorkspaceMemberClientCanceledReturns499(t *testing.T) {
 }
 
 func TestRequireWorkspaceMemberInvalidWorkspaceRemainsNotFound(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	w := httptest.NewRecorder()
 	if _, ok := testHandler.requireWorkspaceMember(w, newRequest(http.MethodGet, "/api/workspace-boundary", nil), "not-a-uuid", "workspace not found"); ok {
@@ -352,9 +348,7 @@ func TestRequireWorkspaceMemberInvalidWorkspaceRemainsNotFound(t *testing.T) {
 }
 
 func TestEntityLoadersClientCanceledReturn499(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	const entityID = "11111111-1111-4111-8111-111111111111"
 	tests := []struct {
@@ -1038,15 +1032,7 @@ func TestIssueCRUD(t *testing.T) {
 	}
 }
 
-// TestDeleteIssueByIdentifier guards against #1661 — DELETE /api/issues/{id}
-// must actually delete the row when the path segment is a human-readable
-// identifier ("HAN-42") rather than a UUID. Before the PR #1680 + MUL-1410
-// refactor, parseUUID(rawString) silently produced a zero UUID, the SQL
-// DELETE matched nothing, and the handler still returned 204.
-//
-// Also asserts the issue:deleted WS event payload carries the resolved UUID,
-// not the raw identifier — frontend caches key by UUID and would otherwise
-// leave stale entries on other clients after an identifier-path delete.
+// Identifier deletion removes the row and publishes the resolved UUID.
 func TestDeleteIssueByIdentifier(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -1124,9 +1110,7 @@ func TestDeleteIssueRejectsInvalidUUID(t *testing.T) {
 	}
 }
 
-// TestCreateIssueDefaultStatusIsTodo verifies that issues created without an
-// explicit status default to "todo" so the daemon picks them up immediately.
-// Before this fix the default was "backlog", which daemons ignore.
+// An omitted status defaults to the daemon-visible todo state.
 func TestCreateIssueDefaultStatusIsTodo(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -1174,13 +1158,7 @@ func TestCreateIssueExplicitBacklogPreserved(t *testing.T) {
 	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
 }
 
-// TestCreateIssueRejectsCrossWorkspaceParent guards the workspace
-// boundary check that lives in service.IssueService.Create. A request
-// that pins parent_issue_id to an issue in a foreign workspace must be
-// rejected before the row is created — this is the structural reason
-// IssueService owns the parent lookup (not the HTTP handler). The test
-// inserts a foreign workspace + issue directly via SQL, then drives the
-// request through the regular handler entry point.
+// Parent validation is tenant-scoped and atomic.
 func TestCreateIssueRejectsCrossWorkspaceParent(t *testing.T) {
 	ctx := context.Background()
 
@@ -1230,10 +1208,7 @@ func TestCreateIssueRejectsCrossWorkspaceParent(t *testing.T) {
 	}
 }
 
-// TestCreateIssueRejectsCrossWorkspaceProject mirrors the parent test for
-// the project workspace boundary. Same reasoning: future create entries
-// (Lark /issue, MCP, API keys) must inherit this guard from the service
-// without re-implementing it.
+// Project validation is tenant-scoped for every Issue creation entry.
 func TestCreateIssueRejectsCrossWorkspaceProject(t *testing.T) {
 	ctx := context.Background()
 
@@ -1516,9 +1491,7 @@ func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 }
 
 func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	leaderAgentID := createHandlerTestAgent(t, "Project Approval Squad Leader", nil)
 	squadID := createHandlerTestSquad(t, "Project Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID)
@@ -1572,9 +1545,7 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 }
 
 func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	leaderAgentID := createHandlerTestAgent(t, "Project Approval Update Squad Leader", nil)
 	squadID := createHandlerTestSquad(t, "Project Approval Update Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID)
@@ -1617,9 +1588,7 @@ func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
 }
 
 func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	projectLeadAgentID := createHandlerTestAgent(t, "Project Review Approval Lead", nil)
 	leaderAgentID := createHandlerTestAgent(t, "Project Review Approval Squad Leader", nil)
@@ -2230,9 +2199,7 @@ func TestUpdateAutopilotCanSetAndClearProject(t *testing.T) {
 	}
 }
 
-// TestCreateIssueRejectsNonexistentMemberAssignee covers the bug where any
-// well-formed UUID was accepted as assignee_id without checking workspace
-// membership.
+// Member assignees must belong to the workspace.
 func TestCreateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -2246,9 +2213,7 @@ func TestCreateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
 	}
 }
 
-// TestCreateIssueRejectsNonexistentAgentAssignee verifies the same check on
-// the agent branch — previously rejected with 403 "agent not found"; we want a
-// consistent 400 from the new validator.
+// Agent assignees must belong to the workspace and fail as invalid input.
 func TestCreateIssueRejectsNonexistentAgentAssignee(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -2262,9 +2227,7 @@ func TestCreateIssueRejectsNonexistentAgentAssignee(t *testing.T) {
 	}
 }
 
-// TestCreateIssueRejectsAssigneeTypeWithoutID rejects requests where only one
-// of the two fields was supplied — historically this would create an issue
-// with an inconsistent state.
+// Assignee type and ID form one invariant pair.
 func TestCreateIssueRejectsAssigneeTypeWithoutID(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -2290,8 +2253,7 @@ func TestCreateIssueRejectsAssigneeIDWithoutType(t *testing.T) {
 	}
 }
 
-// TestCreateIssueRejectsUnknownAssigneeType guards against typos like
-// "members" or "user" that previously sneaked through.
+// Assignee type is a closed current enum.
 func TestCreateIssueRejectsUnknownAssigneeType(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -2316,9 +2278,7 @@ func TestCreateIssueAcceptsValidMemberAssignee(t *testing.T) {
 	deleteIssueThroughHandler(t, created.ID)
 }
 
-// TestCreateIssueRejectsMalformedAssigneeID covers the case where parseUUID
-// silently produces an invalid pgtype.UUID and the validator would otherwise
-// treat (no type + unparseable id) as "no assignee" and accept the request.
+// Malformed assignee IDs are invalid rather than equivalent to no assignee.
 func TestCreateIssueRejectsMalformedAssigneeID(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -2457,9 +2417,7 @@ func TestCreateIssueCommitsAttachmentWithIssue(t *testing.T) {
 	}
 }
 
-// TestUpdateIssueRejectsMalformedAssigneeID is the equivalent for the update
-// path, where the same parseUUID-shaped gap existed on a previously-unassigned
-// issue.
+// Update rejects malformed assignee IDs before mutation.
 func TestUpdateIssueRejectsMalformedAssigneeID(t *testing.T) {
 	created := createIssueThroughHandler(t, map[string]any{
 		"title": "Update malformed assignee target",
@@ -2479,8 +2437,7 @@ func TestUpdateIssueRejectsMalformedAssigneeID(t *testing.T) {
 	}
 }
 
-// TestUpdateIssueRejectsNonexistentMemberAssignee verifies the same gap is
-// closed on the update path — UpdateIssue previously only validated agents.
+// Update applies the same workspace membership boundary as creation.
 func TestUpdateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
 	created := createIssueThroughHandler(t, map[string]any{
 		"title": "Update assignee target",
@@ -2501,9 +2458,7 @@ func TestUpdateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
 	}
 }
 
-// TestUpdateIssueAllowsExplicitUnassign verifies that sending null for both
-// fields still works after the new validator landed — clearing the assignee
-// must not be misclassified as a mismatched pair.
+// Explicit nulls clear both halves of the assignee pair.
 func TestUpdateIssueAllowsExplicitUnassign(t *testing.T) {
 	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Issue to unassign",
@@ -2575,9 +2530,7 @@ func TestCommentCRUD(t *testing.T) {
 }
 
 func TestCommentWritePathsPreserveIssueIdentifiers(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("requires DB")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	setWorkspaceIssuePrefixForTest(t, "MUL")
@@ -2678,209 +2631,79 @@ func TestCreateCommentRejectsMalformedParentID(t *testing.T) {
 	testHandler.DeleteIssue(w, req)
 }
 
-func TestGetChatSessionRejectsMalformedSessionID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("GET", "/api/chat/sessions/not-a-uuid", nil)
-	req = withURLParam(req, "sessionId", "not-a-uuid")
-	testHandler.GetChatSession(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("GetChatSession: expected 400 for malformed sessionId, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestCreateAutopilotRejectsMalformedAssigneeID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newAutopilotCreateRequest("/api/autopilots", map[string]any{
-		"title":          "Malformed assignee autopilot",
-		"assignee_id":    "not-a-uuid",
-		"execution_mode": "run_only",
-	})
-	testHandler.CreateAutopilot(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CreateAutopilot: expected 400 for malformed assignee_id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateAutopilotRejectsMalformedID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/autopilots/not-a-uuid", map[string]any{
-		"title": "Malformed autopilot id",
-	})
-	req = withURLParam(req, "id", "not-a-uuid")
-	testHandler.UpdateAutopilot(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateAutopilot: expected 400 for malformed id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateAgentRejectsMalformedAgentID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/agents/not-a-uuid", map[string]any{
-		"name": "Malformed agent id",
-	})
-	req = withURLParam(req, "id", "not-a-uuid")
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateAgent: expected 400 for malformed id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestCreateAgentRejectsMalformedRuntimeID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/agents", map[string]any{
-		"name":       "Malformed runtime agent",
-		"runtime_id": "not-a-uuid",
-	})
-	testHandler.CreateAgent(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CreateAgent: expected 400 for malformed runtime_id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateAgentRejectsMalformedRuntimeID(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "Handler Malformed Runtime Update", nil)
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
-		"runtime_id": "not-a-uuid",
-	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateAgent: expected 400 for malformed runtime_id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestCreatePinRejectsMalformedItemID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/pins", map[string]any{
-		"item_type": "issue",
-		"item_id":   "not-a-uuid",
-	})
-	testHandler.CreatePin(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("CreatePin: expected 400 for malformed item_id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateMemberRejectsMalformedMemberID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/workspaces/"+testWorkspaceID+"/members/not-a-uuid", map[string]any{
-		"role": "member",
-	})
-	req = withURLParams(req, "id", testWorkspaceID, "memberId", "not-a-uuid")
-	testHandler.UpdateMember(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateMember: expected 400 for malformed memberId, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAddReactionRejectsMalformedCommentID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/comments/not-a-uuid/reactions", map[string]any{
-		"emoji": "thumbs_up",
-	})
-	req = withURLParam(req, "commentId", "not-a-uuid")
-	testHandler.AddReaction(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("AddReaction: expected 400 for malformed commentId, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateCommentRejectsMalformedCommentID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/comments/not-a-uuid", map[string]any{
-		"content": "updated",
-	})
-	req = withURLParam(req, "commentId", "not-a-uuid")
-	testHandler.UpdateComment(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateComment: expected 400 for malformed commentId, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestMarkInboxReadRejectsMalformedItemID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/inbox/not-a-uuid/read", nil)
-	req = withURLParam(req, "id", "not-a-uuid")
-	testHandler.MarkInboxRead(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("MarkInboxRead: expected 400 for malformed id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestRevokePersonalAccessTokenRejectsMalformedID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/tokens/not-a-uuid", nil)
-	req = withURLParam(req, "id", "not-a-uuid")
-	testHandler.RevokePersonalAccessToken(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("RevokePersonalAccessToken: expected 400 for malformed id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestRequestBodyUUIDFieldsRejectMalformed(t *testing.T) {
+func TestRequestUUIDFieldsRejectMalformed(t *testing.T) {
 	tests := []struct {
-		name   string
-		req    *http.Request
-		handle func(http.ResponseWriter, *http.Request)
+		name    string
+		request func(*testing.T) *http.Request
+		handle  func(http.ResponseWriter, *http.Request)
 	}{
+		{"chat session path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodGet, "/api/chat/sessions/not-a-uuid", nil), "sessionId", "not-a-uuid")
+		}, testHandler.GetChatSession},
+		{"Autopilot assignee body", func(t *testing.T) *http.Request {
+			return newAutopilotCreateRequest("/api/autopilots", map[string]any{"title": "Malformed assignee autopilot", "assignee_id": "not-a-uuid", "execution_mode": "run_only"})
+		}, testHandler.CreateAutopilot},
+		{"Autopilot path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodPut, "/api/autopilots/not-a-uuid", map[string]any{"title": "Malformed autopilot id"}), "id", "not-a-uuid")
+		}, testHandler.UpdateAutopilot},
+		{"Agent path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodPut, "/api/agents/not-a-uuid", map[string]any{"name": "Malformed agent id"}), "id", "not-a-uuid")
+		}, testHandler.UpdateAgent},
+		{"Agent runtime create body", func(t *testing.T) *http.Request {
+			return newRequest(http.MethodPost, "/api/agents", map[string]any{"name": "Malformed runtime agent", "runtime_id": "not-a-uuid"})
+		}, testHandler.CreateAgent},
+		{"Agent runtime update body", func(t *testing.T) *http.Request {
+			agentID := createHandlerTestAgent(t, "Handler Malformed Runtime Update", nil)
+			return withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{"runtime_id": "not-a-uuid"}), "id", agentID)
+		}, testHandler.UpdateAgent},
+		{"Pin item body", func(t *testing.T) *http.Request {
+			return newRequest(http.MethodPost, "/api/pins", map[string]any{"item_type": "issue", "item_id": "not-a-uuid"})
+		}, testHandler.CreatePin},
+		{"Member path", func(t *testing.T) *http.Request {
+			return withURLParams(newRequest(http.MethodPatch, "/api/workspaces/"+testWorkspaceID+"/members/not-a-uuid", map[string]any{"role": "member"}), "id", testWorkspaceID, "memberId", "not-a-uuid")
+		}, testHandler.UpdateMember},
+		{"Reaction comment path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodPost, "/api/comments/not-a-uuid/reactions", map[string]any{"emoji": "thumbs_up"}), "commentId", "not-a-uuid")
+		}, testHandler.AddReaction},
+		{"Comment path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodPut, "/api/comments/not-a-uuid", map[string]any{"content": "updated"}), "commentId", "not-a-uuid")
+		}, testHandler.UpdateComment},
+		{"Inbox path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodPost, "/api/inbox/not-a-uuid/read", nil), "id", "not-a-uuid")
+		}, testHandler.MarkInboxRead},
+		{"personal access token path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodDelete, "/api/tokens/not-a-uuid", nil), "id", "not-a-uuid")
+		}, testHandler.RevokePersonalAccessToken},
 		{
 			name: "daemon register workspace_id",
-			req: newRequest("POST", "/api/daemon/register", map[string]any{
-				"workspace_id": "not-a-uuid",
-				"daemon_id":    "daemon-malformed-workspace",
-				"runtimes": []map[string]any{
-					{"name": "codex", "type": "codex", "status": "online"},
-				},
-			}),
+			request: func(t *testing.T) *http.Request {
+				return newRequest(http.MethodPost, "/api/daemon/register", map[string]any{
+					"workspace_id": "not-a-uuid", "daemon_id": "daemon-malformed-workspace",
+					"runtimes": []map[string]any{{"name": "codex", "type": "codex", "status": "online"}},
+				})
+			},
 			handle: testHandler.DaemonRegister,
 		},
+		{"daemon runtime_ids body", func(t *testing.T) *http.Request {
+			return newRequest(http.MethodPost, "/api/daemon/deregister", map[string]any{"runtime_ids": []string{"not-a-uuid"}})
+		}, testHandler.DaemonDeregister},
+		{"Issue GC path", func(t *testing.T) *http.Request {
+			return withURLParam(newRequest(http.MethodGet, "/api/daemon/issues/not-a-uuid/gc-check", nil), "issueId", "not-a-uuid")
+		}, testHandler.GetIssueGCCheck},
+		{"Agent Skill body", func(t *testing.T) *http.Request {
+			agentID := createHandlerTestAgent(t, "Handler Malformed Skill Assignment", nil)
+			return withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID+"/skills", map[string]any{"skill_ids": []string{"not-a-uuid"}}), "id", agentID)
+		}, testHandler.SetAgentSkills},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			tt.handle(w, tt.req)
+			tt.handle(w, tt.request(t))
 			if w.Code != http.StatusBadRequest {
-				t.Fatalf("%s: expected 400 for malformed body UUID, got %d: %s", tt.name, w.Code, w.Body.String())
+				t.Fatalf("expected 400 for malformed UUID, got %d: %s", w.Code, w.Body.String())
 			}
 		})
-	}
-}
-
-func TestDaemonDeregisterRejectsMalformedRuntimeID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/daemon/deregister", map[string]any{
-		"runtime_ids": []string{"not-a-uuid"},
-	})
-	testHandler.DaemonDeregister(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("DaemonDeregister: expected 400 for malformed runtime_ids, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestGetIssueGCCheckRejectsMalformedIssueID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("GET", "/api/daemon/issues/not-a-uuid/gc-check", nil)
-	req = withURLParam(req, "issueId", "not-a-uuid")
-	testHandler.GetIssueGCCheck(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("GetIssueGCCheck: expected 400 for malformed issueId, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestSetAgentSkillsRejectsMalformedSkillID(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "Handler Malformed Skill Assignment", nil)
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/agents/"+agentID+"/skills", map[string]any{
-		"skill_ids": []string{"not-a-uuid"},
-	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.SetAgentSkills(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("SetAgentSkills: expected 400 for malformed skill_ids, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -3481,9 +3304,7 @@ func TestBacklogToTodoTriggersAgent(t *testing.T) {
 // gated on `actorType == "member"`, which silently dropped agent-driven
 // promotions and broke the serial sub-task workflow.
 func TestBacklogToTodoByAgentTriggersDifferentAssignee(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	// Parent agent (the actor) + child agent (the assignee).
@@ -3537,9 +3358,7 @@ func TestBacklogToTodoByAgentTriggersDifferentAssignee(t *testing.T) {
 // issue — is the documented serial chain and is covered by
 // TestBacklogToTodoByAgentSameAgentDifferentIssue.
 func TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	selfAgent := createHandlerTestAgent(t, "Backlog Self Agent", nil)
@@ -3579,16 +3398,9 @@ func TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger(t *testing.T) {
 	}
 }
 
-// TestBacklogToTodoByAgentSameAgentDifferentIssue verifies the documented
-// same-agent serial chain still fires: when an agent is running a task on
-// issue I1 and promotes a DIFFERENT backlog issue I2 (also assigned to
-// itself), I2 must be enqueued. This was over-blocked by the previous
-// agent-id-based self-loop guard, which made the same-agent serial
-// workflow silently break.
+// A same-agent transition on a different Issue remains a valid serial chain.
 func TestBacklogToTodoByAgentSameAgentDifferentIssue(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	agentID := createHandlerTestAgent(t, "Backlog Same-Agent Chain", nil)
@@ -3645,9 +3457,7 @@ func TestBacklogToTodoByAgentSameAgentDifferentIssue(t *testing.T) {
 // task-issue self-loop guard must let cross-issue (same-agent) batch
 // promotions through.
 func TestBatchBacklogToTodoByAgentTriggersAssignee(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	parentAgent := createHandlerTestAgent(t, "Batch Parent Agent", nil)
@@ -3696,9 +3506,7 @@ func TestBatchBacklogToTodoByAgentTriggersAssignee(t *testing.T) {
 // on a different issue). The task-issue self-loop guard must allow this —
 // only a true same-issue self-loop should be suppressed.
 func TestBacklogToTodoByAgentTriggersSquadLeader(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	leaderAgent := createHandlerTestAgent(t, "Backlog Squad Leader", nil)
@@ -3765,9 +3573,7 @@ func TestDaemonRegisterMissingWorkspaceReturns404(t *testing.T) {
 // re-trigger loops (e.g. "No reply needed" chains). Member-authored replies
 // still inherit parent mentions as expected.
 func TestAgentReplyDoesNotInheritParentMentions(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	// Create two agents.
 	agentA := createHandlerTestAgent(t, "Loop Agent A", nil)
@@ -3824,16 +3630,9 @@ func TestAgentReplyDoesNotInheritParentMentions(t *testing.T) {
 	}
 }
 
-// TestMemberReplyToAgentRootDoesNotInheritParentMentions is the regression
-// for MUL-1535. When an agent posts a comment that @mentions another agent
-// (e.g. J posting a PR completion that @mentions a reviewer agent), a later
-// member reply in the same thread with no explicit mentions must NOT inherit
-// the @reviewer mention. The reviewer was a one-shot delegation; subsequent
-// member follow-ups are directed at the assignee, not the reviewer.
+// A member reply does not inherit one-shot Agent mentions from an Agent root.
 func TestMemberReplyToAgentRootDoesNotInheritParentMentions(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	jAgent := createHandlerTestAgent(t, "J", nil)
 	reviewerAgent := createHandlerTestAgent(t, "Reviewer", nil)
@@ -3873,14 +3672,9 @@ func TestMemberReplyToAgentRootDoesNotInheritParentMentions(t *testing.T) {
 	}
 }
 
-// TestNestedMemberReplyUsesDirectParentForMentionInheritance is the regression
-// for parent-root write normalization leaking root mentions into plain nested
-// replies. Stored parent_id keeps the direct parent, and trigger logic evaluates
-// that direct parent rather than the thread root.
+// Nested mention inheritance uses the stored direct parent, not the thread root.
 func TestNestedMemberReplyUsesDirectParentForMentionInheritance(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	assigneeAgent := createHandlerTestAgent(t, "Nested Mention Assignee", nil)
@@ -3924,13 +3718,9 @@ func TestNestedMemberReplyUsesDirectParentForMentionInheritance(t *testing.T) {
 	}
 }
 
-// TestNestedMemberReplyUsesDirectParentForAssigneeParticipation is the
-// regression for treating any prior agent reply in the root thread as direct
-// participation in a nested human sub-thread.
+// Assignee participation is scoped to the direct nested branch.
 func TestNestedMemberReplyUsesDirectParentForAssigneeParticipation(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	assigneeAgent := createHandlerTestAgent(t, "Nested Participation Assignee", nil)
@@ -3979,15 +3769,9 @@ func TestNestedMemberReplyUsesDirectParentForAssigneeParticipation(t *testing.T)
 	}
 }
 
-// TestAgentExplicitMentionStillTriggers documents the boundary the structural
-// fix preserves: suppressing implicit parent-mention inheritance for agent
-// authors does NOT block deliberate handoffs. An agent that explicitly
-// @mentions another agent in its own comment content still enqueues a task
-// for that mentioned agent.
+// Explicit Agent mentions remain deliberate handoffs.
 func TestAgentExplicitMentionStillTriggers(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	agentA := createHandlerTestAgent(t, "Handoff Agent A", nil)
 	agentB := createHandlerTestAgent(t, "Handoff Agent B", nil)

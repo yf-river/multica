@@ -67,19 +67,22 @@ func withMockClawHubImport(t *testing.T, skillName string) string {
 			t.Fatalf("unexpected ClawHub path: %s", r.URL.String())
 		}
 	}))
-	prev := clawHubAPIBase
-	clawHubAPIBase = srv.URL + "/api/v1"
+	setClawHubAPIBase(t, srv.URL+"/api/v1")
 	t.Cleanup(func() {
-		clawHubAPIBase = prev
 		srv.Close()
 	})
 	return "https://clawhub.ai/acme/" + slug
 }
 
+func setClawHubAPIBase(t *testing.T, base string) {
+	t.Helper()
+	previous := clawHubAPIBase
+	clawHubAPIBase = base
+	t.Cleanup(func() { clawHubAPIBase = previous })
+}
+
 func TestImportSkillOnConflictSkipReturnsStructuredResult(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	namePrefix := "url-import-skip"
 	skillName := namePrefix + "-" + t.Name()
 	existingID := insertHandlerTestSkill(t, namePrefix, "# Existing")
@@ -111,9 +114,7 @@ func TestImportSkillOnConflictSkipReturnsStructuredResult(t *testing.T) {
 }
 
 func TestImportSkillOnConflictRenameCreatesSuffixedSkill(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	namePrefix := "url-import-rename"
 	skillName := namePrefix + "-" + t.Name()
 	mustExec(t, context.Background(), `DELETE FROM skill WHERE workspace_id = $1 AND name LIKE $2`, testWorkspaceID, skillName+"-%")
@@ -149,9 +150,7 @@ func TestImportSkillOnConflictRenameCreatesSuffixedSkill(t *testing.T) {
 }
 
 func TestImportSkillOnConflictOverwriteReplaysUpdatedSkill(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	namePrefix := "url-import-overwrite"
 	skillName := namePrefix + "-" + t.Name()
 	skillID := insertHandlerTestSkill(t, namePrefix, "# Existing")
@@ -176,9 +175,7 @@ func TestImportSkillOnConflictOverwriteReplaysUpdatedSkill(t *testing.T) {
 }
 
 func TestImportSkillReplaysCommittedDefaultImport(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	skillName := "url-import-replay-" + t.Name()
 	importURL := withMockClawHubImport(t, skillName)
 	t.Cleanup(func() {
@@ -222,9 +219,7 @@ func TestImportSkillReplaysCommittedDefaultImport(t *testing.T) {
 }
 
 func TestImportSkillConcurrentReplayCreatesOneSkill(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	skillName := "url-import-concurrent-" + t.Name()
 	importURL := withMockClawHubImport(t, skillName)
 	key := newSkillImportKey(t)
@@ -232,43 +227,21 @@ func TestImportSkillConcurrentReplayCreatesOneSkill(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM skill WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, skillName)
 	})
 
-	const workers = 8
-	type result struct {
-		status int
-		body   SkillWithFilesResponse
-	}
-	results := make(chan result, workers)
-	var start sync.WaitGroup
-	start.Add(1)
-	var workersDone sync.WaitGroup
-	workersDone.Add(workers)
-	for range workers {
-		go func() {
-			defer workersDone.Done()
-			start.Wait()
-			w := httptest.NewRecorder()
-			req := newRequestAsUser(testUserID, http.MethodPost, "/api/skills/import", map[string]any{"url": importURL})
-			req.Header.Set("Idempotency-Key", key)
-			testHandler.ImportSkill(w, req)
-			var body SkillWithFilesResponse
-			_ = json.Unmarshal(w.Body.Bytes(), &body)
-			results <- result{status: w.Code, body: body}
-		}()
-	}
-	start.Done()
-	workersDone.Wait()
-	close(results)
-
-	var skillID string
-	for got := range results {
-		if got.status != http.StatusCreated || got.body.ID == "" {
-			t.Fatalf("concurrent import = %d %#v, want replayed 201 skill", got.status, got.body)
-		}
-		if skillID == "" {
-			skillID = got.body.ID
-		} else if got.body.ID != skillID {
-			t.Fatalf("concurrent import IDs differ: %s and %s", skillID, got.body.ID)
-		}
+	response := assertConcurrentReplayBy(t, http.StatusCreated, func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := newRequestAsUser(testUserID, http.MethodPost, "/api/skills/import", map[string]any{"url": importURL})
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.ImportSkill(w, req)
+		return w
+	}, func(first, next *httptest.ResponseRecorder) bool {
+		var firstBody, nextBody SkillWithFilesResponse
+		return json.Unmarshal(first.Body.Bytes(), &firstBody) == nil &&
+			json.Unmarshal(next.Body.Bytes(), &nextBody) == nil &&
+			reflect.DeepEqual(firstBody, nextBody)
+	})
+	var imported SkillWithFilesResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &imported); err != nil || imported.ID == "" {
+		t.Fatalf("concurrent import response = %s: %v", response.Body.String(), err)
 	}
 	var skills, requests int
 	if err := testPool.QueryRow(context.Background(), `
@@ -284,9 +257,7 @@ func TestImportSkillConcurrentReplayCreatesOneSkill(t *testing.T) {
 }
 
 func TestImportSkillConcurrentDifferentKeysPreserveConflictContract(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	skillName := "url-import-name-race-" + t.Name()
 	importURL := withMockClawHubImport(t, skillName)
 	keys := []string{newSkillImportKey(t), newSkillImportKey(t)}
@@ -295,9 +266,8 @@ func TestImportSkillConcurrentDifferentKeysPreserveConflictContract(t *testing.T
 	})
 
 	statuses := make(chan int, len(keys))
-	var start sync.WaitGroup
+	var start, done sync.WaitGroup
 	start.Add(1)
-	var done sync.WaitGroup
 	done.Add(len(keys))
 	for _, key := range keys {
 		go func() {
@@ -333,9 +303,7 @@ func TestImportSkillConcurrentDifferentKeysPreserveConflictContract(t *testing.T
 }
 
 func TestImportSkillCompletionFailureRollsBackSkill(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test DB not configured")
-	}
+	requireHandlerDatabase(t)
 	skillName := "url-import-rollback-" + t.Name()
 	importURL := withMockClawHubImport(t, skillName)
 	key := newSkillImportKey(t)
