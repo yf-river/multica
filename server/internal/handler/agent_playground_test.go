@@ -54,14 +54,8 @@ func TestCreateAgentPlaygroundExperimentRecoversExactCompoundResult(t *testing.T
 	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
 		t.Fatalf("playground replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
 	}
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		return create(body)
-	}, func(response *httptest.ResponseRecorder) string {
-		var detail AgentPlaygroundDetailResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
-			t.Fatal(err)
-		}
-		return detail.Experiment.ID
 	})
 	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET archived_at=now() WHERE id=$1`, agentID); err != nil {
 		t.Fatal(err)

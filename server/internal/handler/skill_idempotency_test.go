@@ -37,18 +37,16 @@ func TestCreateSkill_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 		"files": []map[string]any{{"path": "guide.md", "content": "current guide"}},
 	}
 
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	concurrent := assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		return createSkillWithKey(t, key, body)
-	}, func(response *httptest.ResponseRecorder) string {
-		var skill SkillWithFilesResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &skill); err != nil {
-			t.Fatal(err)
-		}
-		if len(skill.Files) != 1 || skill.Files[0].Path != "guide.md" {
-			t.Fatalf("replayed files=%v", skill.Files)
-		}
-		return skill.ID
 	})
+	var concurrentSkill SkillWithFilesResponse
+	if err := json.Unmarshal(concurrent.Body.Bytes(), &concurrentSkill); err != nil {
+		t.Fatal(err)
+	}
+	if len(concurrentSkill.Files) != 1 || concurrentSkill.Files[0].Path != "guide.md" {
+		t.Fatalf("replayed files=%v", concurrentSkill.Files)
+	}
 	replay := createSkillWithKey(t, key, body)
 	if replay.Header().Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("replay header = %q, want true", replay.Header().Get("Idempotency-Replayed"))

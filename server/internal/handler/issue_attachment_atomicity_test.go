@@ -59,18 +59,7 @@ func TestUpdateIssueRollsBackFieldsWhenAttachmentCannotBeLinked(t *testing.T) {
 		t.Fatalf("UpdateIssue: partial attachment link was not rolled back, issue_id=%s", *linkedIssueID)
 	}
 
-	var eventCount int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM domain_event_outbox
-		WHERE event_type = 'issue:updated'
-		  AND payload #>> '{issue,id}' = $1
-	`, issue.ID).Scan(&eventCount); err != nil {
-		t.Fatalf("count rolled-back issue event: %v", err)
-	}
-	if eventCount != 0 {
-		t.Fatalf("UpdateIssue: rollback left %d durable issue events", eventCount)
-	}
+	assertNoIssueUpdateEvent(t, issue.ID)
 }
 
 func TestUpdateIssueAcceptsAlreadyLinkedAttachment(t *testing.T) {
@@ -140,16 +129,5 @@ func TestUpdateIssueRollsBackFieldsWhenDerivedMetadataExceedsLimit(t *testing.T)
 		t.Fatalf("UpdateIssue: derived metadata partially persisted after rollback: %s", metadata)
 	}
 
-	var eventCount int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM domain_event_outbox
-		WHERE event_type = 'issue:updated'
-		  AND payload #>> '{issue,id}' = $1
-	`, issue.ID).Scan(&eventCount); err != nil {
-		t.Fatalf("count rolled-back issue event: %v", err)
-	}
-	if eventCount != 0 {
-		t.Fatalf("UpdateIssue: metadata rollback left %d durable issue events", eventCount)
-	}
+	assertNoIssueUpdateEvent(t, issue.ID)
 }

@@ -70,8 +70,7 @@ func TestCreateChatSessionReplaysOneConcurrentResult(t *testing.T) {
 	agentID := handlerTestChatAgentID(t)
 	key := uuid.NewString()
 	title := "concurrent create " + uuid.NewString()
-	var sessionID string
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	concurrent := assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		req := newChatIdempotentRequest("/api/chat/sessions", createChatSessionRequest{
 			AgentID: agentID,
 			Title:   title,
@@ -79,14 +78,12 @@ func TestCreateChatSessionReplaysOneConcurrentResult(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.CreateChatSession(w, req)
 		return w
-	}, func(w *httptest.ResponseRecorder) string {
-		var response chatSessionResponse
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("decode create response: %v", err)
-		}
-		sessionID = response.ID
-		return response.ID
 	})
+	var response chatSessionResponse
+	if err := json.Unmarshal(concurrent.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	sessionID := response.ID
 	cleanupChatIdempotencyTestRows(t, []string{sessionID}, []string{key})
 
 	var sessions, records int

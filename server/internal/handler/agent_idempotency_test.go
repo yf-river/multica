@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,11 +29,11 @@ func cleanupResourceCreateRequest(t *testing.T, resourceType, key, query string,
 	})
 }
 
-func assertConcurrentCreateReplay(
+func assertConcurrentReplay(
 	t *testing.T,
+	wantStatus int,
 	create func() *httptest.ResponseRecorder,
-	responseID func(*httptest.ResponseRecorder) string,
-) {
+) *httptest.ResponseRecorder {
 	t.Helper()
 	const callers = 8
 	responses := make(chan *httptest.ResponseRecorder, callers)
@@ -49,22 +48,18 @@ func assertConcurrentCreateReplay(
 	wg.Wait()
 	close(responses)
 
-	ids := map[string]struct{}{}
-	var firstBody string
+	var first *httptest.ResponseRecorder
 	for response := range responses {
-		if response.Code != http.StatusCreated {
+		if response.Code != wantStatus {
 			t.Fatalf("create = %d %s", response.Code, response.Body.String())
 		}
-		if firstBody == "" {
-			firstBody = response.Body.String()
-		} else if response.Body.String() != firstBody {
-			t.Fatalf("replay body differs\nfirst: %s\nnext: %s", firstBody, response.Body.String())
+		if first == nil {
+			first = response
+		} else if response.Body.String() != first.Body.String() {
+			t.Fatalf("replay body differs\nfirst: %s\nnext: %s", first.Body.String(), response.Body.String())
 		}
-		ids[responseID(response)] = struct{}{}
 	}
-	if len(ids) != 1 {
-		t.Fatalf("responses returned %d resource ids: %v", len(ids), ids)
-	}
+	return first
 }
 
 func installResourceCreateCompletionFailure(t *testing.T, resourceType, key string) func() {
@@ -103,14 +98,8 @@ func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 		"instructions": "Use the current contract",
 	}
 
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		return createAgentWithKey(t, key, body)
-	}, func(response *httptest.ResponseRecorder) string {
-		var agent AgentResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &agent); err != nil {
-			t.Fatal(err)
-		}
-		return agent.ID
 	})
 
 	conflict := createAgentWithKey(t, key, map[string]any{

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -94,16 +93,7 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 		t.Fatalf("forced trial failure: expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var sessions, messages, tasks, trials int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT
-			(SELECT count(*) FROM chat_session WHERE agent_id = $1 AND title LIKE $2),
-			(SELECT count(*) FROM chat_message WHERE chat_session_id IN (SELECT id FROM chat_session WHERE agent_id = $1 AND title LIKE $2)),
-			(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (SELECT id FROM chat_session WHERE agent_id = $1 AND title LIKE $2)),
-			(SELECT count(*) FROM prompt_library_trial WHERE prompt_id = $3)
-	`, agentID, titlePattern, item.ID).Scan(&sessions, &messages, &tasks, &trials); err != nil {
-		t.Fatalf("count prompt trial writes: %v", err)
-	}
+	sessions, messages, tasks, trials := promptLibraryTrialWriteCounts(t, agentID, titlePattern, item.ID)
 	if sessions != 0 || messages != 0 || tasks != 0 || trials != 0 {
 		t.Fatalf("failed trial left writes: sessions=%d messages=%d tasks=%d trials=%d", sessions, messages, tasks, trials)
 	}
@@ -153,26 +143,16 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 	if replayW.Code != http.StatusAccepted || replayW.Body.String() != successW.Body.String() {
 		t.Fatalf("trial replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), successW.Body.String())
 	}
-	responses := make(chan *httptest.ResponseRecorder, 8)
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			req := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{"agent_id": agentID})
-			req.Header.Set("Idempotency-Key", trialRequestKey)
-			req = withURLParams(req, "id", item.ID, "versionId", versionID)
-			w := httptest.NewRecorder()
-			testHandler.CreatePromptLibraryTrial(w, req)
-			responses <- w
-		}()
-	}
-	wg.Wait()
-	close(responses)
-	for response := range responses {
-		if response.Code != http.StatusAccepted || response.Body.String() != successW.Body.String() {
-			t.Fatalf("concurrent replay = %d %s, want exact", response.Code, response.Body.String())
-		}
+	concurrent := assertConcurrentReplay(t, http.StatusAccepted, func() *httptest.ResponseRecorder {
+		req := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{"agent_id": agentID})
+		req.Header.Set("Idempotency-Key", trialRequestKey)
+		req = withURLParams(req, "id", item.ID, "versionId", versionID)
+		w := httptest.NewRecorder()
+		testHandler.CreatePromptLibraryTrial(w, req)
+		return w
+	})
+	if concurrent.Body.String() != successW.Body.String() {
+		t.Fatalf("concurrent replay = %s, want exact %s", concurrent.Body.String(), successW.Body.String())
 	}
 	conflictReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
 		"agent_id":  agentID,
@@ -185,16 +165,22 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 	if conflictW.Code != http.StatusConflict {
 		t.Fatalf("changed replay = %d %s, want 409", conflictW.Code, conflictW.Body.String())
 	}
+	sessions, messages, tasks, trials = promptLibraryTrialWriteCounts(t, agentID, titlePattern, item.ID)
+	if sessions != 1 || messages != 1 || tasks != 1 || trials != 1 {
+		t.Fatalf("committed trial writes: sessions=%d messages=%d tasks=%d trials=%d", sessions, messages, tasks, trials)
+	}
+}
+
+func promptLibraryTrialWriteCounts(t *testing.T, agentID, titlePattern, itemID string) (sessions, messages, tasks, trials int) {
+	t.Helper()
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT
 			(SELECT count(*) FROM chat_session WHERE agent_id = $1 AND title LIKE $2),
 			(SELECT count(*) FROM chat_message WHERE chat_session_id IN (SELECT id FROM chat_session WHERE agent_id = $1 AND title LIKE $2)),
 			(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (SELECT id FROM chat_session WHERE agent_id = $1 AND title LIKE $2)),
 			(SELECT count(*) FROM prompt_library_trial WHERE prompt_id = $3)
-	`, agentID, titlePattern, item.ID).Scan(&sessions, &messages, &tasks, &trials); err != nil {
-		t.Fatalf("count committed prompt trial writes: %v", err)
+	`, agentID, titlePattern, itemID).Scan(&sessions, &messages, &tasks, &trials); err != nil {
+		t.Fatalf("count prompt trial writes: %v", err)
 	}
-	if sessions != 1 || messages != 1 || tasks != 1 || trials != 1 {
-		t.Fatalf("committed trial writes: sessions=%d messages=%d tasks=%d trials=%d", sessions, messages, tasks, trials)
-	}
+	return sessions, messages, tasks, trials
 }

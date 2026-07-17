@@ -81,14 +81,8 @@ func TestCreateProject_ConcurrentReplayCreatesOneProject(t *testing.T) {
 	cleanupResourceCreateRequest(t, "project", key, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{"title": title, "priority": "high"}
 
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		return createProjectWithKey(t, key, body)
-	}, func(response *httptest.ResponseRecorder) string {
-		var project createProjectResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &project); err != nil {
-			t.Fatalf("decode concurrent response: %v", err)
-		}
-		return project.ID
 	})
 	var projects int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title).Scan(&projects); err != nil {

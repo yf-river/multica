@@ -61,14 +61,8 @@ func TestCreateIssue_ConcurrentReplayCreatesOneIssue(t *testing.T) {
 	cleanupResourceCreateRequest(t, "issue", key, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	body := map[string]any{"title": title}
 
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		return createIssueWithKey(t, key, body)
-	}, func(response *httptest.ResponseRecorder) string {
-		var issue IssueResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &issue); err != nil {
-			t.Fatalf("decode concurrent response: %v", err)
-		}
-		return issue.ID
 	})
 	var issues int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title).Scan(&issues); err != nil {

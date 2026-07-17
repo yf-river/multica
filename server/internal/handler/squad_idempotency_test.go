@@ -79,14 +79,8 @@ func TestCreateSquad_ConcurrentReplayCreatesOneSquad(t *testing.T) {
 	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
 	body := map[string]any{"name": name, "leader_id": leaderID, "scope": "personal"}
 
-	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
 		return createSquadWithKey(t, key, body)
-	}, func(response *httptest.ResponseRecorder) string {
-		var squad squadResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &squad); err != nil {
-			t.Fatalf("decode concurrent response: %v", err)
-		}
-		return squad.ID
 	})
 	var squads int
 	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&squads)
