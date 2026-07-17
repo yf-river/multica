@@ -195,7 +195,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	defer pollTicker.Stop()
 	defer cleanupTicker.Stop()
 	for {
-		if _, err := d.ProcessBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if _, err := d.processBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			d.config.Logger.Error("domain event dispatch failed", "error", err)
 		}
 		select {
@@ -226,7 +226,7 @@ func (d *Dispatcher) pruneExpired(ctx context.Context) (int64, error) {
 	return deleted, nil
 }
 
-func (d *Dispatcher) ProcessBatch(ctx context.Context) (int, error) {
+func (d *Dispatcher) processBatch(ctx context.Context) (int, error) {
 	d.mu.RLock()
 	eventTypes := make([]string, 0, len(d.consumers))
 	for eventType := range d.consumers {

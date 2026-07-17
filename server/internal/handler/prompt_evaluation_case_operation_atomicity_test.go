@@ -269,11 +269,13 @@ func TestPromptEvaluationCaseOperationDeadLetterSetsTruthfulFailure(t *testing.T
 		events.New(),
 		"case-operation-dead-letter-"+uuid.NewString(),
 		eventoutbox.DispatcherConfig{
-			BatchSize:   10,
-			Lease:       time.Second,
-			RetryBase:   time.Millisecond,
-			MaxRetry:    time.Millisecond,
-			MaxAttempts: 1,
+			BatchSize:       10,
+			PollInterval:    time.Millisecond,
+			Lease:           time.Second,
+			RetryBase:       time.Millisecond,
+			MaxRetry:        time.Millisecond,
+			MaxAttempts:     1,
+			CleanupInterval: time.Hour,
 		},
 	)
 	if err != nil {
@@ -291,23 +293,26 @@ func TestPromptEvaluationCaseOperationDeadLetterSetsTruthfulFailure(t *testing.T
 	if err := testHandler.RegisterPromptEvaluationCaseOperationConsumer(dispatcher); err != nil {
 		t.Fatalf("register case operation consumer: %v", err)
 	}
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
-		t.Fatalf("dead-letter batch = (%d, %v), want one terminal consumer failure", count, err)
-	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go dispatcher.Run(runCtx)
 
 	var status, errorMessage string
 	var deadLettered bool
-	if err := testPool.QueryRow(ctx, `
-		SELECT status, error_message FROM prompt_evaluation_case_operation WHERE id = $1
-	`, operation.ID).Scan(&status, &errorMessage); err != nil {
-		t.Fatalf("load dead-lettered operation: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `
-		SELECT dead_lettered_at IS NOT NULL
-		FROM domain_event_outbox
-		WHERE event_type = $1 AND payload->>'operation_id' = $2
-	`, promptEvaluationCaseOperationRequestedEvent, operation.ID).Scan(&deadLettered); err != nil {
-		t.Fatalf("load dead-lettered operation event: %v", err)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		operationErr := testPool.QueryRow(ctx, `
+			SELECT status, error_message FROM prompt_evaluation_case_operation WHERE id = $1
+		`, operation.ID).Scan(&status, &errorMessage)
+		eventErr := testPool.QueryRow(ctx, `
+			SELECT dead_lettered_at IS NOT NULL
+			FROM domain_event_outbox
+			WHERE event_type = $1 AND payload->>'operation_id' = $2
+		`, promptEvaluationCaseOperationRequestedEvent, operation.ID).Scan(&deadLettered)
+		if operationErr == nil && eventErr == nil && status == "失败" && errorMessage != "" && deadLettered {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if status != "失败" || errorMessage == "" || !deadLettered {
 		t.Fatalf("dead-letter state drifted: status=%q error=%q event_dead=%v", status, errorMessage, deadLettered)

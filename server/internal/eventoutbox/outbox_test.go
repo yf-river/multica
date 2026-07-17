@@ -183,14 +183,14 @@ func TestDispatcherRetriesConsumerTransaction(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
-		t.Fatalf("first ProcessBatch = (%d, %v), want one failed delivery", count, err)
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err == nil {
+		t.Fatalf("first processBatch = (%d, %v), want one failed delivery", count, err)
 	}
 	assertActivityCount(t, fixture.issueID, "outbox_retry", 0)
 	assertDeliveryCount(t, event.ID, "activity", 0)
 	time.Sleep(3 * time.Millisecond)
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err != nil {
-		t.Fatalf("second ProcessBatch = (%d, %v), want one success", count, err)
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err != nil {
+		t.Fatalf("second processBatch = (%d, %v), want one success", count, err)
 	}
 	assertActivityCount(t, fixture.issueID, "outbox_retry", 1)
 	assertDeliveryCount(t, event.ID, "activity", 1)
@@ -220,14 +220,14 @@ func TestDispatcherDoesNotRepeatCompletedConsumer(t *testing.T) {
 		t.Fatalf("register second: %v", err)
 	}
 
-	if _, err := dispatcher.ProcessBatch(ctx); err == nil {
-		t.Fatal("first ProcessBatch unexpectedly succeeded")
+	if _, err := dispatcher.processBatch(ctx); err == nil {
+		t.Fatal("first processBatch unexpectedly succeeded")
 	}
 	assertActivityCount(t, fixture.issueID, "outbox_first", 1)
 	assertActivityCount(t, fixture.issueID, "outbox_second", 0)
 	time.Sleep(3 * time.Millisecond)
-	if _, err := dispatcher.ProcessBatch(ctx); err != nil {
-		t.Fatalf("second ProcessBatch: %v", err)
+	if _, err := dispatcher.processBatch(ctx); err != nil {
+		t.Fatalf("second processBatch: %v", err)
 	}
 	if firstCalls.Load() != 1 {
 		t.Fatalf("completed consumer ran %d times, want once", firstCalls.Load())
@@ -287,17 +287,17 @@ func TestStreamKeySerializesEventsAcrossDispatchers(t *testing.T) {
 	firstWorker := newDispatcher("stream-first-" + uuid.NewString())
 	secondWorker := newDispatcher("stream-second-" + uuid.NewString())
 
-	if count, err := firstWorker.ProcessBatch(ctx); count != 1 || err == nil {
+	if count, err := firstWorker.processBatch(ctx); count != 1 || err == nil {
 		t.Fatalf("first worker batch = (%d, %v), want one failed first event", count, err)
 	}
-	if count, err := secondWorker.ProcessBatch(ctx); count != 0 || err != nil {
+	if count, err := secondWorker.processBatch(ctx); count != 0 || err != nil {
 		t.Fatalf("second worker bypassed failed stream head: (%d, %v)", count, err)
 	}
 	time.Sleep(60 * time.Millisecond)
-	if count, err := secondWorker.ProcessBatch(ctx); count != 1 || err != nil {
+	if count, err := secondWorker.processBatch(ctx); count != 1 || err != nil {
 		t.Fatalf("retry first event = (%d, %v), want one success", count, err)
 	}
-	if count, err := firstWorker.ProcessBatch(ctx); count != 1 || err != nil {
+	if count, err := firstWorker.processBatch(ctx); count != 1 || err != nil {
 		t.Fatalf("process second event = (%d, %v), want one success", count, err)
 	}
 	mu.Lock()
@@ -350,16 +350,16 @@ func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err == nil {
 		t.Fatalf("first failure batch = (%d, %v), want one retry", count, err)
 	}
 	time.Sleep(3 * time.Millisecond)
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err == nil {
 		t.Fatalf("dead-letter batch = (%d, %v), want one terminal failure", count, err)
 	}
 	assertOutboxDeadLettered(t, first.ID, 2)
 
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err != nil {
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err != nil {
 		t.Fatalf("stream successor after dead-letter = (%d, %v)", count, err)
 	}
 	assertOutboxComplete(t, second.ID, 0)
@@ -381,7 +381,7 @@ func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
 	if err != nil || result.RowsAffected() != 1 {
 		t.Fatalf("requeue dead letter = (%d, %v), want one row", result.RowsAffected(), err)
 	}
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err != nil {
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err != nil {
 		t.Fatalf("requeued event batch = (%d, %v)", count, err)
 	}
 	assertOutboxComplete(t, first.ID, 0)
@@ -426,7 +426,7 @@ func TestDeadLetterProjectionCommitsWithTerminalEventState(t *testing.T) {
 	); err != nil {
 		t.Fatalf("RegisterWithDeadLetter: %v", err)
 	}
-	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
+	if count, err := dispatcher.processBatch(ctx); count != 1 || err == nil {
 		t.Fatalf("dead-letter projection batch = (%d, %v)", count, err)
 	}
 	assertOutboxDeadLettered(t, event.ID, 1)

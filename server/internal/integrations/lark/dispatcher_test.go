@@ -803,8 +803,8 @@ func TestDispatcher_EmptyTitleSurfacesError(t *testing.T) {
 		Body:         "/issue",
 		MessageID:    "msg-empty",
 	})
-	if !errors.Is(err, ErrEmptyIssueTitle) {
-		t.Fatalf("expected ErrEmptyIssueTitle wrapped, got %v", err)
+	if !errors.Is(err, errEmptyIssueTitle) {
+		t.Fatalf("expected errEmptyIssueTitle wrapped, got %v", err)
 	}
 	if f.issues.called != 0 {
 		t.Fatalf("IssueService.Create must not run when title is empty")

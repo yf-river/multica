@@ -618,10 +618,10 @@ func (d *Dispatcher) createIssueFromCommand(
 	// Empty title at this point means the /issue alone fallback found
 	// no previous user message either. The product copy ("请填标题")
 	// belongs in the WS adapter's reply card; we surface this to the
-	// caller as ErrEmptyIssueTitle so the dispatcher can short-circuit
+	// caller as errEmptyIssueTitle so the dispatcher can short-circuit
 	// without paying the IssueService cost.
 	if cmd.Title == "" {
-		return service.IssueCreateResult{}, ErrEmptyIssueTitle
+		return service.IssueCreateResult{}, errEmptyIssueTitle
 	}
 	params := service.IssueCreateParams{
 		WorkspaceID:  inst.WorkspaceID,
@@ -647,8 +647,8 @@ func (d *Dispatcher) createIssueFromCommand(
 // it.
 const originLarkChat = "lark_chat"
 
-// ErrEmptyIssueTitle is returned by createIssueFromCommand when the
+// errEmptyIssueTitle is returned by createIssueFromCommand when the
 // caller invoked /issue with no title AND the previous-user-message
 // fallback found nothing usable. The WS adapter translates this into
 // the "please supply a title" reply card per §2.3.
-var ErrEmptyIssueTitle = errors.New("issue title is empty")
+var errEmptyIssueTitle = errors.New("issue title is empty")
