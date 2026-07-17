@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// TestRuntimeSetWatcherFanOut pins the multi-subscriber contract: every
-// subscribed channel must receive a nudge on each notify, and unsubscribed
-// channels must not.
 func TestRuntimeSetWatcherFanOut(t *testing.T) {
 	t.Parallel()
 
@@ -33,8 +30,6 @@ func TestRuntimeSetWatcherFanOut(t *testing.T) {
 		}
 	}
 
-	// Coalescing: a second notify before the subscriber drains must not
-	// block, and the subscriber should still see exactly one pending nudge.
 	w.notify()
 	w.notify()
 	select {
@@ -48,8 +43,6 @@ func TestRuntimeSetWatcherFanOut(t *testing.T) {
 	default:
 	}
 
-	// Unsubscribed channels must not get nudges. Drain any in-flight nudge
-	// on chB first so we observe only post-unsubscribe behaviour.
 	select {
 	case <-chB:
 	default:
@@ -84,16 +77,17 @@ func newClaimCountingRuntimeDaemon(t *testing.T, pollInterval time.Duration) (*D
 	return d, &claimAttempts
 }
 
-// TestRunRuntimePollerIsolatesSlowRuntime is the regression test for
-// MUL-1744's main symptom: a slow ClaimTask on one runtime must not delay
-// claims on any other runtime. The pre-refactor pollLoop's serial round-
-// robin made every runtime wait behind the slow one's HTTP roundtrip.
-//
-// MaxConcurrentTasks=4 leaves headroom so each runtime gets its own slot.
-// The poller does acquire a slot before claiming (see runRuntimePoller for
-// why), so this test deliberately uses a capacity that fits both runtimes
-// concurrently — that's the case where slot-before-claim still gives full
-// isolation.
+func blockRuntimeRequest(r *http.Request, entered chan<- struct{}, release <-chan struct{}) {
+	select {
+	case entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-release:
+	case <-r.Context().Done():
+	}
+}
+
 func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -105,14 +99,7 @@ func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 		path := r.URL.Path
 		switch {
 		case strings.HasSuffix(path, "/runtimes/runtime-slow/tasks/claim"):
-			select {
-			case slowEntered <- struct{}{}:
-			default:
-			}
-			select {
-			case <-releaseSlow:
-			case <-r.Context().Done():
-			}
+			blockRuntimeRequest(r, slowEntered, releaseSlow)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"task":null}`))
 		case strings.HasSuffix(path, "/runtimes/runtime-fast/tasks/claim"):
@@ -128,7 +115,7 @@ func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 
 	d := New(Config{
 		ServerBaseURL:      srv.URL,
-		HeartbeatInterval:  time.Hour, // disable WS-suppression effects
+		HeartbeatInterval:  time.Hour,
 		PollInterval:       50 * time.Millisecond,
 		MaxConcurrentTasks: 4,
 	}, slog.New(slog.NewTextHandler(noopWriter{}, nil)))
@@ -147,16 +134,12 @@ func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 	defer fastCancel()
 	go d.runRuntimePoller(fastCtx, ctx, "runtime-fast", sem, make(chan struct{}, 1), &taskWG)
 
-	// Wait for the slow handler to actually enter (so we know its claim is
-	// in flight) before checking fast-runtime progress.
 	select {
 	case <-slowEntered:
 	case <-time.After(2 * time.Second):
 		t.Fatal("slow runtime claim never entered server handler")
 	}
 
-	// Within a short window, the fast runtime should issue several claims.
-	// Pre-isolation, it would be stuck behind the still-blocked slow claim.
 	deadline := time.After(2 * time.Second)
 	for fastClaims.Load() < 3 {
 		select {
@@ -167,12 +150,6 @@ func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 	}
 }
 
-// TestRunRuntimePollerSkipsClaimWhenAtCapacity pins the slot-before-claim
-// invariant: when no execution slots are available, the poller must NOT
-// call ClaimTask. Pre-claiming and then waiting for a slot would let the
-// task pile up in server-side `dispatched` state and race the 5-minute
-// `dispatchTimeoutSeconds` sweeper, recreating the exact failure mode this
-// issue is fixing.
 func TestRunRuntimePollerSkipsClaimWhenAtCapacity(t *testing.T) {
 	t.Parallel()
 
@@ -181,17 +158,12 @@ func TestRunRuntimePollerSkipsClaimWhenAtCapacity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Drain the only slot to simulate a long-running handleTask occupying
-	// capacity. The poller must observe an empty sem and skip ClaimTask.
 	sem := newTaskSlotSemaphore(d.cfg.MaxConcurrentTasks)
-	<-sem // hold it: never returned during this test
+	<-sem
 
 	var taskWG sync.WaitGroup
 	go d.runRuntimePoller(ctx, ctx, "runtime-busy", sem, make(chan struct{}, 1), &taskWG)
 
-	// Give the poller several PollInterval ticks to race against the empty
-	// sem. With slot-before-claim it must report zero claim attempts; the
-	// older "claim first" path would have hammered ClaimTask each tick.
 	time.Sleep(200 * time.Millisecond)
 
 	if got := claimAttempts.Load(); got != 0 {
@@ -232,12 +204,6 @@ func TestRunRuntimePollerClaimsWhenSlotBecomesAvailable(t *testing.T) {
 	}
 }
 
-// TestPollLoopShutdownWaitsForPollersBeforeTaskWG is a race-detector
-// regression for the WaitGroup misuse GPT-Boy flagged: pollLoop must not
-// call taskWG.Wait while a poller goroutine could still execute
-// taskWG.Add(1). The supervisor uses a separate pollerWG that this test
-// implicitly exercises by running shutdown concurrently with a task being
-// dispatched.
 func TestPollLoopShutdownWaitsForPollersBeforeTaskWG(t *testing.T) {
 	t.Parallel()
 
@@ -249,9 +215,6 @@ func TestPollLoopShutdownWaitsForPollersBeforeTaskWG(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(path, "/tasks/claim"):
-			// Block until the test releases. When released, return a real task
-			// so the poller proceeds into the slot/dispatch path — exactly the
-			// window where taskWG.Add(1) races with shutdown's taskWG.Wait.
 			select {
 			case <-releaseClaim:
 			case <-r.Context().Done():
@@ -382,9 +345,6 @@ func TestPollLoopTargetsRuntimeWakeup(t *testing.T) {
 	}
 }
 
-// TestRunRuntimeHeartbeatIsolatesSlowRuntime is the heartbeat-side mirror of
-// the poll-isolation test: a slow SendHeartbeat for one runtime must not
-// block other runtimes' heartbeats.
 func TestRunRuntimeHeartbeatIsolatesSlowRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -398,14 +358,7 @@ func TestRunRuntimeHeartbeatIsolatesSlowRuntime(t *testing.T) {
 		payload := string(body[:n])
 		switch {
 		case strings.Contains(payload, `"runtime-slow"`):
-			select {
-			case slowEntered <- struct{}{}:
-			default:
-			}
-			select {
-			case <-releaseSlow:
-			case <-r.Context().Done():
-			}
+			blockRuntimeRequest(r, slowEntered, releaseSlow)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{}`))
 		case strings.Contains(payload, `"runtime-fast"`):

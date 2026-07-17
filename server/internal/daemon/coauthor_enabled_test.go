@@ -12,8 +12,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// workspaceCoAuthoredByEnabled gates the prepare-commit-msg hook installed in
-// agent worktrees. Both current settings must be explicit and enabled.
 func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -57,13 +55,6 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 	}
 }
 
-// syncWorkspacesFromAPI must refresh the cached workspace settings on already-
-// tracked workspaces so that toggling `co_authored_by_enabled` (or the
-// `github_enabled` master switch) in the web UI takes effect on the next gated
-// operation without a daemon restart. Reviewed in PR #2847 by Emacs — the
-// original cut only wrote settings during registration, so a running daemon
-// would keep installing the Co-authored-by hook on the next `repo checkout`
-// even after the workspace flipped the switch off.
 func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -97,9 +88,6 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 		runtimeIndex: make(map[string]Runtime),
 		runtimeSet:   newRuntimeSetWatcher(),
 	}
-	// Pretend the workspace was already registered with co-author ON. A live
-	// runtime ID keeps workspaceNeedsRuntimeRecovery from short-circuiting the
-	// sync into a re-register.
 	d.workspaces[workspaceID] = newWorkspaceState(
 		workspaceID,
 		[]string{"rt-1"},
@@ -111,7 +99,6 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 		t.Fatalf("precondition: expected co-author hook to start enabled")
 	}
 
-	// The user opens Settings → GitHub and turns the master switch off.
 	settingsPayload.Store(json.RawMessage(`{"github_enabled":false,"co_authored_by_enabled":true}`))
 
 	if err := d.syncWorkspacesFromAPI(context.Background()); err != nil {
@@ -122,8 +109,6 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 		t.Fatalf("expected co-author hook disabled after toggle; daemon is still using stale cached settings")
 	}
 
-	// Flipping the master switch back on must take effect the next sync too —
-	// the refresh path is not one-way.
 	settingsPayload.Store(json.RawMessage(`{"github_enabled":true,"co_authored_by_enabled":true}`))
 	if err := d.syncWorkspacesFromAPI(context.Background()); err != nil {
 		t.Fatalf("syncWorkspacesFromAPI (re-enable): %v", err)

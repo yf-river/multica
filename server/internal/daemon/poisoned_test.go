@@ -49,10 +49,6 @@ func TestClassifyPoisonedOutput(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			// Regression guard for the GPT-Boy review on MUL-1630:
-			// a real review/analysis that quotes both markers must not
-			// be misclassified. Without the length cap, this entire
-			// PR's review thread would tank as a poisoned failure.
 			name: "long review quoting both markers is not poisoned",
 			output: `Review for the rerun fix.
 
@@ -96,11 +92,6 @@ func TestClassifyPoisonedError(t *testing.T) {
 		wantReason string
 	}{
 		{
-			// MUL-1921 reproducer: a markdown image in the issue
-			// description was downloaded as a 146-byte CDN auth-error
-			// XML, then surfaced to the LLM as a base64 PNG. The API
-			// rejected it and every follow-up task replayed the same
-			// poisoned conversation.
 			name:       "claude could not process image",
 			errMsg:     `API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Could not process image"},"request_id":"req_011CarVEtBLj95zD7i8xardY"}`,
 			wantOK:     true,
@@ -119,9 +110,6 @@ func TestClassifyPoisonedError(t *testing.T) {
 			wantReason: string(taskfailure.ReasonAPIInvalidRequest),
 		},
 		{
-			// Rate-limit must NOT be classified as poisoning — those
-			// recover on retry and we want session resume to keep the
-			// in-flight conversation memory.
 			name:   "429 rate limit is transient",
 			errMsg: `API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}`,
 			wantOK: false,
@@ -132,18 +120,11 @@ func TestClassifyPoisonedError(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			// 401/403 mean the daemon's credentials are bad; resuming
-			// the session won't fix it but the failure is environmental,
-			// not a poisoned conversation. Out of scope for this
-			// classifier.
 			name:   "401 auth error",
 			errMsg: `API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}`,
 			wantOK: false,
 		},
 		{
-			// A tool surfacing a 400 from somewhere unrelated must not
-			// trigger the classifier — only the combination of 400 +
-			// invalid_request_error indicates a corrupted body.
 			name:   "tool 400 without invalid_request_error",
 			errMsg: `agent tool returned status 400: not found`,
 			wantOK: false,

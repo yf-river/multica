@@ -105,8 +105,6 @@ func TestIsTaskStartConflictError(t *testing.T) {
 	}
 }
 
-// noSleepRetry replaces retrySleep with an immediate no-op so tests don't
-// actually wait the 4s/8s/16s/... backoffs. Returns a restore func.
 func noSleepRetry(t *testing.T) func() {
 	t.Helper()
 	prev := retrySleep
@@ -168,53 +166,42 @@ func TestPostJSONWithRetry_TransientThenSuccess(t *testing.T) {
 	}
 }
 
-func TestReportTaskMessagesRetriesTransientFailure(t *testing.T) {
+func TestTaskReportsRetryTransientFailure(t *testing.T) {
 	defer noSleepRetry(t)()
 
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/daemon/tasks/task-1/messages" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if calls.Add(1) == 1 {
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
+	for _, tc := range []struct {
+		name, path string
+		status     int
+		report     func(*Client) error
+	}{
+		{"messages", "/api/daemon/tasks/task-1/messages", http.StatusBadGateway, func(c *Client) error {
+			return c.ReportTaskMessages(context.Background(), "task-1", []protocol.TaskMessage{{Seq: 1, Type: "text", Content: "hello"}})
+		}},
+		{"usage", "/api/daemon/tasks/task-1/usage", http.StatusServiceUnavailable, func(c *Client) error {
+			return c.ReportTaskUsage(context.Background(), "task-1", []protocol.TaskUsage{{Provider: "test", Model: "model-a", InputTokens: 10}})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					t.Errorf("path = %q, want %q", r.URL.Path, tc.path)
+				}
+				if calls.Add(1) == 1 {
+					w.WriteHeader(tc.status)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(srv.Close)
 
-	c := NewClient(srv.URL)
-	if err := c.ReportTaskMessages(context.Background(), "task-1", []protocol.TaskMessage{{Seq: 1, Type: "text", Content: "hello"}}); err != nil {
-		t.Fatalf("ReportTaskMessages: %v", err)
-	}
-	if got := calls.Load(); got != 2 {
-		t.Fatalf("calls = %d, want 2", got)
-	}
-}
-
-func TestReportTaskUsageRetriesTransientFailure(t *testing.T) {
-	defer noSleepRetry(t)()
-
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/daemon/tasks/task-1/usage" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		if calls.Add(1) == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	c := NewClient(srv.URL)
-	if err := c.ReportTaskUsage(context.Background(), "task-1", []protocol.TaskUsage{{Provider: "test", Model: "model-a", InputTokens: 10}}); err != nil {
-		t.Fatalf("ReportTaskUsage: %v", err)
-	}
-	if got := calls.Load(); got != 2 {
-		t.Fatalf("calls = %d, want 2", got)
+			if err := tc.report(NewClient(srv.URL)); err != nil {
+				t.Fatalf("report: %v", err)
+			}
+			if got := calls.Load(); got != 2 {
+				t.Fatalf("calls = %d, want 2", got)
+			}
+		})
 	}
 }
 
@@ -296,9 +283,6 @@ func TestPostJSONWithRetry_CtxCancelStopsRetries(t *testing.T) {
 }
 
 func TestDefaultTerminalRetrySchedule_MatchesAgreedPlan(t *testing.T) {
-	// MUL-2780 settled on a 5-step exponential backoff (4s, 8s, 16s, 32s, 64s).
-	// Pin it so a future "tidy this up" refactor can't silently flatten or
-	// shorten the recovery window without explicit discussion.
 	want := []time.Duration{4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 64 * time.Second}
 	if len(defaultTerminalRetrySchedule) != len(want) {
 		t.Fatalf("schedule length: got %d, want %d", len(defaultTerminalRetrySchedule), len(want))
