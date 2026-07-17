@@ -7,10 +7,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// parseFrontmatter is a strict YAML parse of a SKILL.md frontmatter block, used
-// by the tests to assert the writer always emits something a strict runtime
-// (e.g. Codex) can load. It mirrors how those runtimes read the file: take the
-// text between the leading `---` and the next `---`, and yaml.Unmarshal it.
 func parseFrontmatter(t *testing.T, content string) map[string]any {
 	t.Helper()
 	if !strings.HasPrefix(content, "---\n") {
@@ -28,17 +24,10 @@ func parseFrontmatter(t *testing.T, content string) map[string]any {
 	return m
 }
 
-// TestEnsureSkillFrontmatterReSynthesizesInvalidYAML is the regression guard for
-// the bug this change set fixes: a SKILL.md whose frontmatter has a `name` but
-// is not valid YAML (an unquoted `: ` in the description is the canonical case)
-// must be rewritten into a parseable block instead of being shipped as-is, or a
-// strict runtime drops the whole skill on load.
 func TestEnsureSkillFrontmatterReSynthesizesInvalidYAML(t *testing.T) {
 	t.Parallel()
 
 	const body = "# Heading\n\nReal skill body.\n"
-	// `description: bad: value` is the exact failure mode from the issue: the
-	// second `: ` makes YAML treat the tail as a nested mapping.
 	broken := "---\nname: keep-me\ndescription: bad: value here\n---\n\n" + body
 
 	got := ensureSkillFrontmatter(broken, "my-slug", "DB description: with a colon")

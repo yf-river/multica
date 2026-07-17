@@ -18,58 +18,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// MUL-2956 — concurrent migration race test.
-//
-// PR multica-ai/multica#3658 (MUL-2923) added a Postgres advisory lock
-// around the migration loop to serialize concurrent runners. This file
-// is the live-Postgres test that proves the lock is actually doing its
-// job. We run N goroutines that all call runMigrations against the same
-// database with the same options, and assert:
-//
-//  1. Pending: when migrations have NOT been applied, every goroutine
-//     returns nil and exactly one application of each migration lands
-//     in the bookkeeping table — no duplicate-key blow-ups, no missing
-//     rows, and (since our test fixtures are deliberately non-idempotent
-//     bare CREATE TABLE / ALTER TABLE) no "relation already exists"
-//     failures from the SQL itself, which would prove the lock isn't
-//     serializing.
-//  2. Already applied: rerunning the same N-way race against the just-
-//     populated bookkeeping table sends every goroutine down the EXISTS
-//     no-op path; nobody re-applies anything and the underlying schema
-//     is unchanged.
-//  3. Lock serialization: while one connection holds the same advisory
-//     lock externally, every concurrent runMigrations is observed to
-//     wait, and only after the external holder releases does the lock
-//     get acquired. This catches the regression where the lock would
-//     get attached to a random pooled connection (the bug fixed in
-//     MUL-2923 / #3658) and effectively become a no-op.
-//
-// The test connects to whatever DATABASE_URL points at (default
-// postgres://multica:multica@localhost:5432/multica?sslmode=disable),
-// matching the harness pattern already used in
-// server/internal/handler/handler_test.go and
-// server/internal/metrics/business_sampler_pgsleep_test.go. If
-// Postgres is unreachable the suite skips cleanly, the same way every
-// other live-Postgres test in the repo skips, so CI without a database
-// sees SKIP rather than failure.
-//
-// Each test isolates itself by creating a unique throwaway schema
-// (migrate_test_<timestamp>_<rand>) and using a unique advisory-lock
-// key per run. That means the test never touches the real
-// schema_migrations table and never blocks behind a real production
-// migration runner sharing the same database. The schema is dropped
-// during cleanup.
-
 const (
-	// concurrentRunners is the goroutine count for the race tests. Set
-	// large enough that a missing lock would reliably trip on a multi-
-	// core box with -race, but small enough to keep the suite fast on a
-	// single shared Postgres.
 	concurrentRunners = 16
-	// raceTestTimeout bounds every individual concurrent step; if the
-	// lock implementation regresses into a deadlock we fail loudly
-	// instead of hanging the suite.
-	raceTestTimeout = 60 * time.Second
+	raceTestTimeout   = 60 * time.Second
 )
 
 func openTestPool(t *testing.T) *pgxpool.Pool {
@@ -318,36 +269,12 @@ func TestRunMigrationsConcurrentAlreadyApplied(t *testing.T) {
 	}
 }
 
-// TestRunMigrationsAdvisoryLockSerializes proves the lock genuinely
-// blocks contenders. We acquire the same advisory key on a side
-// connection BEFORE spawning any runMigrations goroutine, then start N
-// goroutines and watch how many of them have made it past the lock
-// acquire. The expectation:
-//
-//   - While the side connection holds the lock, zero goroutines have
-//     completed (we observe via a small delay + count-check).
-//   - The moment the side connection releases the lock, the goroutines
-//     start unblocking and finish in well under the test timeout.
-//
-// If the advisory lock had regressed back to attaching to a random
-// pooled connection (the original MUL-2923 bug), the side-held lock
-// would not actually block a fresh pool.Acquire from grabbing its own
-// connection without the lock, and the goroutines would all complete
-// while the lock was still "held" — which is exactly what this test
-// detects.
 func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
 	f := newFixture(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), raceTestTimeout)
 	defer cancel()
 
-	// Acquire the lock on a pinned side connection. We use a *pgx.Conn
-	// (not pool.Acquire) so the lock holder is not reachable through
-	// the pool the runMigrations goroutines draw from — the lock is
-	// session-scoped and we want the behaviour to be "the next pool
-	// connection that calls pg_advisory_lock blocks", not "the same
-	// connection re-enters". (pg_advisory_lock is reentrant on the same
-	// session, so re-acquiring on the same conn would not actually
 	// prove serialization.)
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -404,13 +331,6 @@ func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
 	}
 }
 
-// TestRunMigrationsConcurrentMixedPoolStress runs the pending case
-// against a deliberately under-sized pool to put pressure on the
-// "every runner needs its own pinned connection for the lock" code
-// path. If runMigrations ever regresses into using pool.Exec (which
-// could give the lock and the migration steps different connections),
-// this test will deadlock or produce SQL races. Pool size strictly
-// less than runners is the interesting configuration.
 func TestRunMigrationsConcurrentMixedPoolStress(t *testing.T) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -420,10 +340,6 @@ func TestRunMigrationsConcurrentMixedPoolStress(t *testing.T) {
 	if err != nil {
 		t.Skipf("parse DATABASE_URL: %v", err)
 	}
-	// Small pool: half the runner count, minimum 2. This forces
-	// runners to wait on pgxpool.Acquire AND on pg_advisory_lock,
-	// exercising the same connection lifecycle a real multi-replica
-	// startup would.
 	cfg.MaxConns = int32(concurrentRunners / 2)
 	if cfg.MaxConns < 2 {
 		cfg.MaxConns = 2

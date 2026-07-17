@@ -12,28 +12,30 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// setupSweeperTestFixture creates an issue and a task in the given status with
-// timestamps old enough to trigger the sweeper. Returns (issueID, agentID, taskID).
-func setupSweeperTestFixture(t *testing.T, taskStatus string) (string, string, string) {
+func sweeperTestAgent(t *testing.T) (string, string) {
 	t.Helper()
-	ctx := context.Background()
-
-	// Find the integration test agent
 	var agentID, runtimeID string
-	err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(context.Background(), `
 		SELECT a.id, a.runtime_id FROM agent a
 		JOIN member m ON m.workspace_id = a.workspace_id
 		JOIN "user" u ON u.id = m.user_id
 		WHERE u.account = $1
 		LIMIT 1
-	`, integrationTestAccount).Scan(&agentID, &runtimeID)
-	if err != nil {
-		t.Fatalf("failed to find test agent: %v", err)
+	`, integrationTestAccount).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("find test agent: %v", err)
 	}
+	return agentID, runtimeID
+}
+
+func setupSweeperTestFixture(t *testing.T, taskStatus string) (string, string, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	agentID, runtimeID := sweeperTestAgent(t)
 
 	// Create an issue assigned to the agent
 	var issueID string
-	err = testPool.QueryRow(ctx, `
+	err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
 		SELECT $1, 'Sweeper test issue', 'todo', 'none', 'member', m.user_id, 'agent', $2
 		FROM member m WHERE m.workspace_id = $1 LIMIT 1
@@ -43,7 +45,6 @@ func setupSweeperTestFixture(t *testing.T, taskStatus string) (string, string, s
 		t.Fatalf("failed to create test issue: %v", err)
 	}
 
-	// Create a task in the desired status with old timestamps
 	var taskID string
 	switch taskStatus {
 	case "running":
@@ -63,7 +64,6 @@ func setupSweeperTestFixture(t *testing.T, taskStatus string) (string, string, s
 		t.Fatalf("failed to create test task: %v", err)
 	}
 
-	// Set agent status to "working"
 	_, err = testPool.Exec(ctx, `UPDATE agent SET status = 'working' WHERE id = $1`, agentID)
 	if err != nil {
 		t.Fatalf("failed to set agent status: %v", err)
@@ -96,20 +96,10 @@ func setupStaleRunningIssueFixture(t *testing.T, issueStatus, title string) (str
 	t.Helper()
 	ctx := context.Background()
 
-	var agentID, runtimeID string
-	err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a
-		JOIN member m ON m.workspace_id = a.workspace_id
-		JOIN "user" u ON u.id = m.user_id
-		WHERE u.account = $1
-		LIMIT 1
-	`, integrationTestAccount).Scan(&agentID, &runtimeID)
-	if err != nil {
-		t.Fatalf("failed to find test agent: %v", err)
-	}
+	agentID, runtimeID := sweeperTestAgent(t)
 
 	var issueID string
-	err = testPool.QueryRow(ctx, `
+	err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
 		SELECT $1, $2, $3, 'none', 'member', m.user_id, 'agent', $4
 		FROM member m WHERE m.workspace_id = $1 LIMIT 1
@@ -557,10 +547,6 @@ func TestSweepDoesNotResetIssueAlreadyInReview(t *testing.T) {
 	}
 }
 
-// TestExpireStaleQueuedTasks verifies the MUL-1899 queued-TTL sweeper:
-// tasks that have been sitting in 'queued' beyond the TTL are transitioned
-// to 'failed' with failure_reason='queued_expired', while fresh queued tasks
-// are left alone and the per-tick batch limit is respected.
 func TestExpireStaleQueuedTasks(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -568,20 +554,8 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Find the integration test agent
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a
-		JOIN member m ON m.workspace_id = a.workspace_id
-		JOIN "user" u ON u.id = m.user_id
-		WHERE u.account = $1
-		LIMIT 1
-	`, integrationTestAccount).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("failed to find test agent: %v", err)
-	}
+	agentID, runtimeID := sweeperTestAgent(t)
 
-	// One ancient queued task (should expire) and one fresh queued task (should not).
-	// Constraint: idx_one_pending_task_per_issue_agent → use distinct issues.
 	mkIssue := func(label string) string {
 		var issueID string
 		if err := testPool.QueryRow(ctx, `
@@ -625,7 +599,7 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	queries := db.New(testPool)
 	taskService := service.NewTaskService(queries, testPool, nil, events.New(), nil)
 	batch, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
-		TtlSecs:    3600.0, // 1h TTL — old task is 5h, fresh task is 0s
+		TtlSecs:    3600.0,
 		MaxPerTick: 100,
 	})
 	if err != nil {
@@ -639,7 +613,6 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 		t.Fatalf("expired the wrong task: got %x", batch.Tasks[0].ID.Bytes)
 	}
 
-	// DB assertions: old → failed/queued_expired, fresh → still queued.
 	var oldStatus, oldReason, oldErr string
 	if err := testPool.QueryRow(ctx, `
 		SELECT status, COALESCE(failure_reason, ''), COALESCE(error, '')
@@ -668,8 +641,6 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	}
 }
 
-// TestExpireStaleQueuedTasksRespectsBatchLimit verifies the per-tick cap so
-// that a large historical backlog cannot monopolise a single sweep.
 func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -677,19 +648,8 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 
 	ctx := context.Background()
 
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a
-		JOIN member m ON m.workspace_id = a.workspace_id
-		JOIN "user" u ON u.id = m.user_id
-		WHERE u.account = $1
-		LIMIT 1
-	`, integrationTestAccount).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("failed to find test agent: %v", err)
-	}
+	agentID, runtimeID := sweeperTestAgent(t)
 
-	// Create 5 issues, each with one stale queued task — necessary because of the
-	// idx_one_pending_task_per_issue_agent unique constraint.
 	var issueIDs []string
 	t.Cleanup(func() {
 		for _, id := range issueIDs {
