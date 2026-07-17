@@ -203,14 +203,14 @@ func (d *Dispatcher) Run(ctx context.Context) {
 			return
 		case <-pollTicker.C:
 		case <-cleanupTicker.C:
-			if _, err := d.PruneExpired(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			if _, err := d.pruneExpired(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				d.config.Logger.Error("domain event retention cleanup failed", "error", err)
 			}
 		}
 	}
 }
 
-func (d *Dispatcher) PruneExpired(ctx context.Context) (int64, error) {
+func (d *Dispatcher) pruneExpired(ctx context.Context) (int64, error) {
 	now := time.Now()
 	deleted, err := d.queries.DeleteExpiredDomainEvents(ctx, db.DeleteExpiredDomainEventsParams{
 		ProcessedBefore:    pgtype.Timestamptz{Time: now.Add(-d.config.ProcessedRetention), Valid: true},

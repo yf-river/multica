@@ -30,7 +30,7 @@ func TestCreateFeedbackHappyPath(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var resp FeedbackResponse
+	var resp feedbackResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestCreateFeedbackRejectsWorkspaceOutsideCallerMembership(t *testing.T) {
 func TestCreateFeedbackReplaysCommittedResponse(t *testing.T) {
 	clearFeedbackForTestUser(t)
 	key := "d2b7cb04-1c8f-4e67-8587-e420e4141de2"
-	create := func() FeedbackResponse {
+	create := func() feedbackResponse {
 		req := newRequest("POST", "/api/feedback", createFeedbackRequest{
 			Message: "same submission after an unknown response",
 			Kind:    "general",
@@ -96,7 +96,7 @@ func TestCreateFeedbackReplaysCommittedResponse(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Fatalf("create feedback: got %d: %s", w.Code, w.Body.String())
 		}
-		var response FeedbackResponse
+		var response feedbackResponse
 		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 			t.Fatalf("decode feedback response: %v", err)
 		}

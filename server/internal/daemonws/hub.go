@@ -49,7 +49,7 @@ func (i ClientIdentity) AuthorizedWorkspaceIDs() []string {
 	return out
 }
 
-func (i ClientIdentity) PrimaryWorkspaceID() string {
+func (i ClientIdentity) primaryWorkspaceID() string {
 	ids := i.AuthorizedWorkspaceIDs()
 	if len(ids) == 0 {
 		return ""
@@ -410,7 +410,7 @@ func (h *Hub) register(c *client) {
 	M.ActiveConnections.Add(1)
 	slog.Info("daemon websocket connected",
 		"user_id", c.identity.UserID,
-		"workspace_id", c.identity.PrimaryWorkspaceID(),
+		"workspace_id", c.identity.primaryWorkspaceID(),
 		"workspace_ids", workspaceIDs,
 		"runtimes", len(c.runtimes),
 		"client_version", c.identity.ClientVersion,
@@ -450,7 +450,7 @@ func (h *Hub) unregister(c *client) {
 	M.ActiveConnections.Add(-1)
 	slog.Info("daemon websocket disconnected",
 		"user_id", c.identity.UserID,
-		"workspace_id", c.identity.PrimaryWorkspaceID(),
+		"workspace_id", c.identity.primaryWorkspaceID(),
 		"workspace_ids", workspaceIDs,
 		"runtimes", len(c.runtimes),
 		"total_clients", total,

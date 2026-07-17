@@ -41,7 +41,7 @@ type createFeedbackRequest struct {
 	WorkspaceID *string `json:"workspace_id,omitempty"`
 }
 
-type FeedbackResponse struct {
+type feedbackResponse struct {
 	ID        string `json:"id"`
 	CreatedAt string `json:"created_at"`
 }
@@ -175,7 +175,7 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 		version,
 	))
 
-	writeJSON(w, http.StatusCreated, FeedbackResponse{
+	writeJSON(w, http.StatusCreated, feedbackResponse{
 		ID:        uuidToString(fb.ID),
 		CreatedAt: timestampToString(fb.CreatedAt),
 	})
@@ -186,7 +186,7 @@ func (h *Handler) writeFeedbackReplay(w http.ResponseWriter, feedback db.Feedbac
 		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
 		return
 	}
-	writeIdempotencyReplayJSON(w, http.StatusCreated, FeedbackResponse{
+	writeIdempotencyReplayJSON(w, http.StatusCreated, feedbackResponse{
 		ID: uuidToString(feedback.ID), CreatedAt: timestampToString(feedback.CreatedAt),
 	})
 }

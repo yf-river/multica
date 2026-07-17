@@ -67,13 +67,7 @@ type OpenclawGatewayPin struct {
 	TLS   bool
 }
 
-// OpenclawConfigResult is what prepareOpenclawConfig returns to its callers
-// in execenv.go. ConfigPath is the wrapper file the daemon points
-// OPENCLAW_CONFIG_PATH at. IncludeRoot is the directory the daemon must add
-// to OPENCLAW_INCLUDE_ROOTS so OpenClaw will follow the $include link out
-// of envRoot into the user's active config; it is empty when no $include
-// is emitted (fresh install).
-type OpenclawConfigResult struct {
+type openclawConfigResult struct {
 	ConfigPath  string
 	IncludeRoot string
 }
@@ -134,7 +128,7 @@ type OpenclawConfigResult struct {
 // agent or failing to authenticate. The only "synthesize minimal" case
 // kept is a fresh install where the CLI reports a path but no file exists
 // — there is no user data to lose in that case.
-func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (OpenclawConfigResult, error) {
+func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (openclawConfigResult, error) {
 	bin := opts.OpenclawBin
 	if bin == "" {
 		bin = "openclaw"
@@ -143,14 +137,14 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 
 	activePath, exists, err := openclawActiveConfigPath(bin, timeout)
 	if err != nil {
-		return OpenclawConfigResult{}, fmt.Errorf("locate openclaw active config: %w", err)
+		return openclawConfigResult{}, fmt.Errorf("locate openclaw active config: %w", err)
 	}
 
 	var resolvedList []any
 	if exists {
 		resolvedList, err = openclawResolvedAgentsList(bin, timeout)
 		if err != nil {
-			return OpenclawConfigResult{}, fmt.Errorf("read openclaw agents.list: %w", err)
+			return openclawConfigResult{}, fmt.Errorf("read openclaw agents.list: %w", err)
 		}
 	}
 
@@ -162,7 +156,7 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 	// the surprise the MCP Tab is supposed to remove.
 	managedMcp, hasManagedMcp, err := openclawManagedMcpServers(opts.McpConfig)
 	if err != nil {
-		return OpenclawConfigResult{}, fmt.Errorf("render openclaw mcp_config: %w", err)
+		return openclawConfigResult{}, fmt.Errorf("render openclaw mcp_config: %w", err)
 	}
 
 	// **Strict replace for managed mcp_config.** When the agent has a managed
@@ -180,7 +174,7 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 	if hasManagedMcp && exists {
 		resolved, ferr := openclawResolvedFullConfig(bin, timeout)
 		if ferr != nil {
-			return OpenclawConfigResult{}, fmt.Errorf("read openclaw resolved config: %w", ferr)
+			return openclawConfigResult{}, fmt.Errorf("read openclaw resolved config: %w", ferr)
 		}
 		if resolved == nil {
 			// CLI reports the file exists but `config get --json` returned
@@ -192,7 +186,7 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 			stripUserMcpServers(resolved)
 			snapBytes, merr := json.MarshalIndent(resolved, "", "  ")
 			if merr != nil {
-				return OpenclawConfigResult{}, fmt.Errorf("marshal openclaw user snapshot: %w", merr)
+				return openclawConfigResult{}, fmt.Errorf("marshal openclaw user snapshot: %w", merr)
 			}
 			snapshotPath = filepath.Join(envRoot, openclawUserSnapshotFile)
 			// 0o600 — the snapshot is now a flat copy of the user's resolved
@@ -200,7 +194,7 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 			// $include used to keep on disk in the user's own file. Lock the
 			// snapshot to the daemon owner; only the openclaw child reads it.
 			if werr := os.WriteFile(snapshotPath, snapBytes, 0o600); werr != nil {
-				return OpenclawConfigResult{}, fmt.Errorf("write openclaw user snapshot: %w", werr)
+				return openclawConfigResult{}, fmt.Errorf("write openclaw user snapshot: %w", werr)
 			}
 		}
 	}
@@ -209,16 +203,16 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return OpenclawConfigResult{}, fmt.Errorf("marshal openclaw config: %w", err)
+		return openclawConfigResult{}, fmt.Errorf("marshal openclaw config: %w", err)
 	}
 	outPath := filepath.Join(envRoot, openclawConfigFile)
 	// 0o600 — defense in depth. The wrapper itself carries no secrets (the
 	// $include link is just a filesystem path), but the file lives next to
 	// task scratch and we keep the same posture as ~/.openclaw/openclaw.json.
 	if err := os.WriteFile(outPath, data, 0o600); err != nil {
-		return OpenclawConfigResult{}, fmt.Errorf("write openclaw config: %w", err)
+		return openclawConfigResult{}, fmt.Errorf("write openclaw config: %w", err)
 	}
-	result := OpenclawConfigResult{ConfigPath: outPath}
+	result := openclawConfigResult{ConfigPath: outPath}
 	if snapshotPath != "" {
 		// Sanitized snapshot lives in envRoot alongside the wrapper, so the
 		// $include never crosses directories — daemon does not need to grant

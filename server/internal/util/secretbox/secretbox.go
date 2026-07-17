@@ -15,12 +15,9 @@ import (
 
 const keySize = 32
 
-// ErrInvalidKey is returned by New when the key length is not keySize.
-var ErrInvalidKey = errors.New("secretbox: key must be 32 bytes")
+var errInvalidKey = errors.New("secretbox: key must be 32 bytes")
 
-// ErrCiphertextTooShort is returned when the input to Open is smaller
-// than the nonce + GCM tag overhead.
-var ErrCiphertextTooShort = errors.New("secretbox: ciphertext too short")
+var errCiphertextTooShort = errors.New("secretbox: ciphertext too short")
 
 // Box encrypts and decrypts byte slices with one fixed master key.
 type Box struct {
@@ -30,7 +27,7 @@ type Box struct {
 // New constructs a Box bound to a 32-byte master key.
 func New(key []byte) (*Box, error) {
 	if len(key) != keySize {
-		return nil, ErrInvalidKey
+		return nil, errInvalidKey
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -56,7 +53,7 @@ func (b *Box) Seal(plaintext []byte) ([]byte, error) {
 func (b *Box) Open(sealed []byte) ([]byte, error) {
 	ns := b.aead.NonceSize()
 	if len(sealed) < ns+b.aead.Overhead() {
-		return nil, ErrCiphertextTooShort
+		return nil, errCiphertextTooShort
 	}
 	nonce, ciphertext := sealed[:ns], sealed[ns:]
 	return b.aead.Open(nil, nonce, ciphertext, nil)

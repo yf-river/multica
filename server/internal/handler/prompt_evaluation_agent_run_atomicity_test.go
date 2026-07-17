@@ -34,7 +34,7 @@ func TestRunPromptEvaluationAssetAgentRecoversExactCompoundResult(t *testing.T) 
 	if replay.Code != http.StatusAccepted || replay.Body.String() != first.Body.String() {
 		t.Fatalf("agent run replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
 	}
-	var firstResponse PromptEvaluationAgentRunResponse
+	var firstResponse promptEvaluationAgentRunResponse
 	if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
 		t.Fatal(err)
 	}

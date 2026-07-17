@@ -61,7 +61,7 @@ func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
 	original := CLIConfig{
 		ServerURL: "https://api.multica.ai",
 		Token:     "mul_xyz",
-		Backends: &BackendOverrides{
+		Backends: &backendOverrides{
 			OpenClaw: &OpenClawOverride{
 				BinaryPath: "/opt/openclaw-prod/bin/openclaw",
 				StateDir:   "/var/lib/openclaw-prod",
@@ -97,7 +97,7 @@ func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 	cfg := CLIConfig{
 		ServerURL: "https://api.multica.ai",
 		Token:     "mul_xyz",
-		Backends: &BackendOverrides{
+		Backends: &backendOverrides{
 			OpenClaw: &OpenClawOverride{
 				StateDir: "/var/lib/openclaw-prod",
 			},
@@ -130,7 +130,7 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 		AppURL:      "https://app.multica.ai",
 		WorkspaceID: "ws-123",
 		Token:       "mul_xyz",
-		Backends: &BackendOverrides{
+		Backends: &backendOverrides{
 			OpenClaw: &OpenClawOverride{StateDir: "/var/lib/openclaw-prod"},
 		},
 		ProfileCommandOverrides: map[string]string{

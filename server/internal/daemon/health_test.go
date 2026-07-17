@@ -59,7 +59,7 @@ func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
 		t.Errorf("os key: got %v, want %q", got, want)
 	}
 
-	var resp HealthResponse
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode typed response: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestHealthHandlerReportsStartingUntilReady(t *testing.T) {
 	readStatus := func() string {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
-		var resp HealthResponse
+		var resp healthResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
@@ -263,7 +263,7 @@ func assertActiveTaskCount(t *testing.T, h http.HandlerFunc, want int64) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
-	var resp HealthResponse
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

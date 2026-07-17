@@ -58,14 +58,14 @@ func TestOpenRejectsTampered(t *testing.T) {
 
 func TestOpenRejectsShort(t *testing.T) {
 	box := mustNewBox(t)
-	if _, err := box.Open([]byte("short")); err != ErrCiphertextTooShort {
-		t.Fatalf("expected ErrCiphertextTooShort, got %v", err)
+	if _, err := box.Open([]byte("short")); err != errCiphertextTooShort {
+		t.Fatalf("expected errCiphertextTooShort, got %v", err)
 	}
 }
 
 func TestNewRejectsBadKey(t *testing.T) {
-	if _, err := New(make([]byte, 16)); err != ErrInvalidKey {
-		t.Fatalf("expected ErrInvalidKey for 16-byte key, got %v", err)
+	if _, err := New(make([]byte, 16)); err != errInvalidKey {
+		t.Fatalf("expected errInvalidKey for 16-byte key, got %v", err)
 	}
 }
 

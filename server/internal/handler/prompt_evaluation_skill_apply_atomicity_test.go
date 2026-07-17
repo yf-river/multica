@@ -107,7 +107,7 @@ func TestApplyPromptEvaluationSkillCandidateRecoversFilesAfterDatabaseRollback(t
 	if recovered.Code != http.StatusOK {
 		t.Fatalf("recovery = %d %s", recovered.Code, recovered.Body.String())
 	}
-	var response PromptEvaluationSkillApplyCandidateResponse
+	var response promptEvaluationSkillApplyCandidateResponse
 	if err := json.Unmarshal(recovered.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}

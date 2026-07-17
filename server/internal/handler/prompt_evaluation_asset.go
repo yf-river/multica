@@ -278,7 +278,7 @@ type normalizedPromptEvaluationExperimentDimension struct {
 	ComparisonPayload map[string]any
 }
 
-type PromptEvaluationAgentRunResponse struct {
+type promptEvaluationAgentRunResponse struct {
 	Asset         PromptEvaluationAssetResponse `json:"asset"`
 	Run           PromptEvaluationRunResponse   `json:"run"`
 	TaskID        string                        `json:"task_id"`
@@ -1126,11 +1126,11 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		"Idempotency-Key was already used with a different prompt evaluation agent run",
 		"failed to recover prompt evaluation agent run",
 	)
-	loadReplay := func() (PromptEvaluationAgentRunResponse, bool, error) {
+	loadReplay := func() (promptEvaluationAgentRunResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceID, requestActorID, resourceTypePromptEvaluationRun,
 			idempotencyKey, requestHash,
-			func(response PromptEvaluationAgentRunResponse) bool {
+			func(response promptEvaluationAgentRunResponse) bool {
 				return response.Run.ID != "" && response.TaskID != ""
 			},
 		)
@@ -1239,7 +1239,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to save training evaluation agent run")
 		return
 	}
-	response := PromptEvaluationAgentRunResponse{
+	response := promptEvaluationAgentRunResponse{
 		Asset:         promptEvaluationAssetToResponse(updated),
 		Run:           promptEvaluationRunToResponse(run),
 		TaskID:        uuidToString(task.ID),

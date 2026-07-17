@@ -374,8 +374,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	var calls atomic.Int32
 	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		calls.Add(1)
-		if identity.PrimaryWorkspaceID() != "ws-1" {
-			t.Errorf("identity workspace = %q, want ws-1", identity.PrimaryWorkspaceID())
+		if identity.primaryWorkspaceID() != "ws-1" {
+			t.Errorf("identity workspace = %q, want ws-1", identity.primaryWorkspaceID())
 		}
 		return &protocol.DaemonHeartbeatAckPayload{
 			RuntimeID: runtimeID,

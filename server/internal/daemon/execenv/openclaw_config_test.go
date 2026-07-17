@@ -101,7 +101,7 @@ func writeOpenclawUserConfig(t *testing.T, body string) string {
 	return path
 }
 
-func mustPrepareOpenclawConfig(t *testing.T, envRoot, workDir string, prep OpenclawConfigPrep) OpenclawConfigResult {
+func mustPrepareOpenclawConfig(t *testing.T, envRoot, workDir string, prep OpenclawConfigPrep) openclawConfigResult {
 	t.Helper()
 	result, err := prepareOpenclawConfig(envRoot, workDir, prep)
 	if err != nil {

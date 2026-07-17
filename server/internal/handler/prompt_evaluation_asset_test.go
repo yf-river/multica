@@ -1914,7 +1914,7 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 	if runW.Code != http.StatusAccepted {
 		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
 	}
-	var resp PromptEvaluationAgentRunResponse
+	var resp promptEvaluationAgentRunResponse
 	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode agent run response: %v", err)
 	}
@@ -2830,7 +2830,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	if runW.Code != http.StatusAccepted {
 		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
 	}
-	var resp PromptEvaluationAgentRunResponse
+	var resp promptEvaluationAgentRunResponse
 	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode agent run response: %v", err)
 	}
@@ -2844,7 +2844,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	}
 }
 
-func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, PromptEvaluationAgentRunResponse, string) {
+func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, promptEvaluationAgentRunResponse, string) {
 	t.Helper()
 	created, runtimeID := createPromptEvaluationAgentRunAssetFixture(t, assetName, caseName)
 
@@ -2853,7 +2853,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 	if runW.Code != http.StatusAccepted {
 		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
 	}
-	var resp PromptEvaluationAgentRunResponse
+	var resp promptEvaluationAgentRunResponse
 	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode agent run response: %v", err)
 	}

@@ -79,7 +79,7 @@ type AgentPlaygroundJudgementResponse struct {
 	UpdatedAt     string  `json:"updated_at"`
 }
 
-type AgentPlaygroundDetailResponse struct {
+type agentPlaygroundDetailResponse struct {
 	Experiment agentPlaygroundExperimentResponse  `json:"experiment"`
 	Inputs     []AgentPlaygroundInputResponse     `json:"inputs"`
 	Agents     []AgentPlaygroundAgentResponse     `json:"agents"`
@@ -250,11 +250,11 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		"Idempotency-Key was already used with a different agent playground request",
 		"failed to recover agent playground request",
 	)
-	loadReplay := func() (AgentPlaygroundDetailResponse, bool, error) {
+	loadReplay := func() (agentPlaygroundDetailResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypeAgentPlayground,
 			idempotencyKey, requestHash,
-			func(response AgentPlaygroundDetailResponse) bool { return response.Experiment.ID != "" },
+			func(response agentPlaygroundDetailResponse) bool { return response.Experiment.ID != "" },
 		)
 	}
 	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
@@ -760,18 +760,18 @@ func (h *Handler) loadAgentPlaygroundExperiment(w http.ResponseWriter, r *http.R
 	return experiment, true
 }
 
-func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) (AgentPlaygroundDetailResponse, bool) {
+func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) (agentPlaygroundDetailResponse, bool) {
 	experiment, ok := h.loadAgentPlaygroundExperiment(w, r)
 	if !ok {
-		return AgentPlaygroundDetailResponse{}, false
+		return agentPlaygroundDetailResponse{}, false
 	}
 	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
-		return AgentPlaygroundDetailResponse{}, false
+		return agentPlaygroundDetailResponse{}, false
 	}
 	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), h.Queries, experiment.ID, experiment.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent playground detail")
-		return AgentPlaygroundDetailResponse{}, false
+		return agentPlaygroundDetailResponse{}, false
 	}
 	return detail, true
 }
@@ -837,33 +837,33 @@ func (h *Handler) agentPlaygroundExperimentUsesOnlyAllowedAgents(
 	return true, nil
 }
 
-func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queries, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
+func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queries, experimentID, workspaceID pgtype.UUID) (agentPlaygroundDetailResponse, error) {
 	experiment, err := queries.GetAgentPlaygroundExperiment(ctx, db.GetAgentPlaygroundExperimentParams{ID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	inputs, err := queries.ListAgentPlaygroundInputs(ctx, db.ListAgentPlaygroundInputsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	agents, err := queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	results, err := queries.ListAgentPlaygroundResults(ctx, db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	judgements, err := queries.ListAgentPlaygroundJudgements(ctx, db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 
 	inputResp := make([]AgentPlaygroundInputResponse, 0, len(inputs))
 	for _, input := range inputs {
 		item, err := agentPlaygroundInputToResponse(input)
 		if err != nil {
-			return AgentPlaygroundDetailResponse{}, err
+			return agentPlaygroundDetailResponse{}, err
 		}
 		inputResp = append(inputResp, item)
 	}
@@ -879,7 +879,7 @@ func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queri
 	for _, judgement := range judgements {
 		judgementResp = append(judgementResp, agentPlaygroundJudgementToResponse(judgement))
 	}
-	return AgentPlaygroundDetailResponse{
+	return agentPlaygroundDetailResponse{
 		Experiment: agentPlaygroundExperimentToResponse(experiment, int32(len(inputs)), int32(len(agents))),
 		Inputs:     inputResp,
 		Agents:     agentResp,
@@ -888,17 +888,17 @@ func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queri
 	}, nil
 }
 
-func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
+func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, workspaceID pgtype.UUID) (agentPlaygroundDetailResponse, error) {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, fmt.Errorf("start playground sync: %w", err)
+		return agentPlaygroundDetailResponse{}, fmt.Errorf("start playground sync: %w", err)
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	queries := h.Queries.WithTx(tx)
 
 	results, err := queries.ListAgentPlaygroundResults(r.Context(), db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	completedResults := 0
 	totalResults := len(results)
@@ -911,7 +911,7 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 		}
 		task, err := queries.GetAgentTask(r.Context(), result.TaskID)
 		if err != nil {
-			return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground result task: %w", err)
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground result task: %w", err)
 		}
 		status := task.Status
 		output := pgtype.Text{}
@@ -926,7 +926,7 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 			if result.ChatSessionID.Valid {
 				assistant, err := latestAssistantMessage(r.Context(), queries, result.ChatSessionID)
 				if err != nil {
-					return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground result output: %w", err)
+					return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground result output: %w", err)
 				}
 				if assistant != "" {
 					output = pgtype.Text{String: assistant, Valid: true}
@@ -941,13 +941,13 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 			Error:       errText,
 			CompletedAt: completedAt,
 		}); err != nil {
-			return AgentPlaygroundDetailResponse{}, fmt.Errorf("sync playground result: %w", err)
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("sync playground result: %w", err)
 		}
 	}
 
 	judgements, err := queries.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	for _, judgement := range judgements {
 		if !judgement.TaskID.Valid {
@@ -955,13 +955,13 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 		}
 		task, err := queries.GetAgentTask(r.Context(), judgement.TaskID)
 		if err != nil {
-			return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement task: %w", err)
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement task: %w", err)
 		}
 		output := pgtype.Text{}
 		if isAgentPlaygroundTerminalStatus(task.Status) && judgement.ChatSessionID.Valid {
 			assistant, err := latestAssistantMessage(r.Context(), queries, judgement.ChatSessionID)
 			if err != nil {
-				return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement output: %w", err)
+				return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement output: %w", err)
 			}
 			if assistant != "" {
 				output = pgtype.Text{String: assistant, Valid: true}
@@ -973,21 +973,21 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 			Status:      task.Status,
 			Output:      output,
 		}); err != nil {
-			return AgentPlaygroundDetailResponse{}, fmt.Errorf("sync playground judgement: %w", err)
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("sync playground judgement: %w", err)
 		}
 	}
 
 	if totalResults > 0 && completedResults >= totalResults {
 		if _, err := queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{ID: experimentID, WorkspaceID: workspaceID, Status: "completed"}); err != nil {
-			return AgentPlaygroundDetailResponse{}, fmt.Errorf("complete playground experiment: %w", err)
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("complete playground experiment: %w", err)
 		}
 	}
 	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), queries, experimentID, workspaceID)
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		return AgentPlaygroundDetailResponse{}, fmt.Errorf("commit playground sync: %w", err)
+		return agentPlaygroundDetailResponse{}, fmt.Errorf("commit playground sync: %w", err)
 	}
 	return detail, nil
 }

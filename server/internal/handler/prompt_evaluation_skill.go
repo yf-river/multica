@@ -201,7 +201,7 @@ type PromptEvaluationSkillApplyResult struct {
 	Snapshot        PromptEvaluationSkillSnapshotResponse `json:"snapshot"`
 }
 
-type PromptEvaluationSkillApplyCandidateResponse struct {
+type promptEvaluationSkillApplyCandidateResponse struct {
 	Candidate PromptEvaluationOptimizationCandidateResponse `json:"candidate"`
 	Apply     PromptEvaluationSkillApplyResult              `json:"apply"`
 }
@@ -234,7 +234,7 @@ type PromptEvaluationSkillReEvalCase struct {
 	Status           string         `json:"status"`
 }
 
-type PromptEvaluationSkillReEvalAssetResponse struct {
+type promptEvaluationSkillReEvalAssetResponse struct {
 	Candidate      PromptEvaluationOptimizationCandidateResponse `json:"candidate"`
 	Asset          PromptEvaluationAssetResponse                 `json:"asset"`
 	SourceSnapshot PromptEvaluationSkillSnapshotResponse         `json:"source_snapshot"`
@@ -458,11 +458,11 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		"Idempotency-Key was already used with a different skill apply request",
 		"failed to recover skill apply request",
 	)
-	loadReplay := func() (PromptEvaluationSkillApplyCandidateResponse, bool, error) {
+	loadReplay := func() (promptEvaluationSkillApplyCandidateResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptSkillApply,
 			idempotencyKey, requestHash,
-			func(response PromptEvaluationSkillApplyCandidateResponse) bool { return response.Candidate.ID != "" },
+			func(response promptEvaluationSkillApplyCandidateResponse) bool { return response.Candidate.ID != "" },
 		)
 	}
 	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writeReplayError) {
@@ -519,7 +519,7 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		writeError(w, http.StatusInternalServerError, "failed to persist skill apply evidence")
 		return
 	}
-	response := PromptEvaluationSkillApplyCandidateResponse{
+	response := promptEvaluationSkillApplyCandidateResponse{
 		Candidate: promptEvaluationOptimizationCandidateToResponse(updated),
 		Apply:     result,
 	}
@@ -576,11 +576,11 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		"Idempotency-Key was already used with a different skill re-eval asset request",
 		"failed to recover skill re-eval asset request",
 	)
-	loadReplay := func() (PromptEvaluationSkillReEvalAssetResponse, bool, error) {
+	loadReplay := func() (promptEvaluationSkillReEvalAssetResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset,
 			idempotencyKey, requestHash,
-			func(response PromptEvaluationSkillReEvalAssetResponse) bool { return response.Asset.ID != "" },
+			func(response promptEvaluationSkillReEvalAssetResponse) bool { return response.Asset.ID != "" },
 		)
 	}
 	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
@@ -735,7 +735,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to persist skill re-eval evidence")
 		return
 	}
-	response := PromptEvaluationSkillReEvalAssetResponse{
+	response := promptEvaluationSkillReEvalAssetResponse{
 		Candidate:      promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
 		Asset:          promptEvaluationAssetToResponse(asset),
 		SourceSnapshot: *sourceSnapshot,

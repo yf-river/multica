@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -605,14 +606,21 @@ func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 
 	homeForCLIConfig := t.TempDir()
 	t.Setenv("HOME", homeForCLIConfig)
-	cfg := cli.CLIConfig{
-		ServerURL: "http://localhost:8080",
-		Backends: &cli.BackendOverrides{
-			OpenClaw: &cli.OpenClawOverride{
-				BinaryPath: customOpenclaw,
-				StateDir:   "/var/lib/openclaw-isolated",
+	var cfg cli.CLIConfig
+	configJSON, err := json.Marshal(map[string]any{
+		"server_url": "http://localhost:8080",
+		"backends": map[string]any{
+			"openclaw": map[string]string{
+				"binary_path": customOpenclaw,
+				"state_dir":   "/var/lib/openclaw-isolated",
 			},
 		},
+	})
+	if err != nil {
+		t.Fatalf("marshal cli config: %v", err)
+	}
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		t.Fatalf("unmarshal cli config: %v", err)
 	}
 	if err := cli.SaveCLIConfigForProfile(cfg, ""); err != nil {
 		t.Fatalf("save cli config: %v", err)

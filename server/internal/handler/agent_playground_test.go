@@ -142,7 +142,7 @@ func TestCreateAgentPlaygroundExperiment_AllowsMoreThanThreeAgents(t *testing.T)
 		t.Fatalf("CreateAgentPlaygroundExperiment status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-	var detail AgentPlaygroundDetailResponse
+	var detail agentPlaygroundDetailResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode playground detail: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestCreateAgentPlaygroundExperimentCanonicalizesDuplicateAgentIDs(t *testin
 		t.Fatalf("CreateAgentPlaygroundExperiment status = %d, body = %s", w.Code, w.Body.String())
 	}
 
-	var detail AgentPlaygroundDetailResponse
+	var detail agentPlaygroundDetailResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode playground detail: %v", err)
 	}

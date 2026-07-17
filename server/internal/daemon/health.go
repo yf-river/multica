@@ -14,8 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 )
 
-// HealthResponse is returned by the daemon's local health endpoint.
-type HealthResponse struct {
+type healthResponse struct {
 	Status string `json:"status"`
 	PID    int    `json:"pid"`
 	// OS is the daemon's runtime.GOOS. The desktop app compares it against its
@@ -91,7 +90,7 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 			status = "running"
 		}
 
-		resp := HealthResponse{
+		resp := healthResponse{
 			Status:          status,
 			PID:             os.Getpid(),
 			OS:              runtime.GOOS,

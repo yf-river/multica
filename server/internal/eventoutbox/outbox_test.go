@@ -479,12 +479,12 @@ func TestPruneExpiredKeepsFreshAndPendingEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDispatcher: %v", err)
 	}
-	deleted, err := dispatcher.PruneExpired(ctx)
+	deleted, err := dispatcher.pruneExpired(ctx)
 	if err != nil {
-		t.Fatalf("PruneExpired: %v", err)
+		t.Fatalf("pruneExpired: %v", err)
 	}
 	if deleted != 2 {
-		t.Fatalf("PruneExpired deleted %d rows, want 2", deleted)
+		t.Fatalf("pruneExpired deleted %d rows, want 2", deleted)
 	}
 	for _, eventID := range []string{freshProcessed.ID, freshDead.ID, pending.ID} {
 		var count int

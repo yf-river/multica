@@ -16,14 +16,13 @@ type CLIConfig struct {
 	Token       string `json:"token,omitempty"`
 
 	// Backends contains optional machine-local backend discovery overrides.
-	Backends *BackendOverrides `json:"backends,omitempty"`
+	Backends *backendOverrides `json:"backends,omitempty"`
 
 	// ProfileCommandOverrides maps runtime profile IDs to local executables.
 	ProfileCommandOverrides map[string]string `json:"profile_command_overrides,omitempty"`
 }
 
-// BackendOverrides holds optional machine-local backend configuration.
-type BackendOverrides struct {
+type backendOverrides struct {
 	OpenClaw *OpenClawOverride `json:"openclaw,omitempty"`
 }
 

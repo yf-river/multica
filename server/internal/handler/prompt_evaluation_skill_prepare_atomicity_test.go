@@ -84,7 +84,7 @@ func TestPreparePromptEvaluationSkillReEvalAssetRecoversExactCompoundResult(t *t
 	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
 		t.Fatalf("prepare replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
 	}
-	var response PromptEvaluationSkillReEvalAssetResponse
+	var response promptEvaluationSkillReEvalAssetResponse
 	if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
