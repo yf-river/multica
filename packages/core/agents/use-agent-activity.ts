@@ -74,7 +74,7 @@ export function useWorkspaceActivityMap(wsId: string | undefined): {
   return { byAgent, loading: agentsPending || bucketsPending };
 }
 
-export function buildActivityMap(
+function buildActivityMap(
   agents: readonly Agent[],
   buckets: readonly AgentActivityBucket[],
   now: number,
@@ -105,7 +105,7 @@ export function buildActivityMap(
  * Pure derivation: filter the workspace-wide buckets to one agent and
  * normalise to a fixed 30-element series ending at `now`.
  */
-export function deriveAgentActivity(
+function deriveAgentActivity(
   buckets: readonly AgentActivityBucket[],
   now: number,
 ): AgentActivity {

@@ -74,14 +74,14 @@ const chatWsLogger = createLogger("chat.ws");
 
 const logger = createLogger("realtime-sync");
 
-export function invalidateChatMessageQueries(
+function invalidateChatMessageQueries(
   qc: QueryClient,
   sessionId: string,
 ) {
   qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
 }
 
-export function applyChatDoneToCache(
+function applyChatDoneToCache(
   qc: QueryClient,
   payload: ChatDonePayload,
 ) {
@@ -142,7 +142,7 @@ function patchLatestChatMessagePage(
  * what's cached, so any issues already loaded under the old prefix would
  * be stale anyway.
  */
-export function applyWorkspaceUpdatedToCache(
+function applyWorkspaceUpdatedToCache(
   qc: QueryClient,
   payload: WorkspaceUpdatedPayload,
 ): void {
@@ -171,7 +171,7 @@ export function applyWorkspaceUpdatedToCache(
  * recreates the wrong-workspace routing this exists to prevent, #3766) and
  * should show the notification without a deep link instead.
  */
-export async function resolveInboxSourceSlug(
+async function resolveInboxSourceSlug(
   qc: QueryClient,
   workspaceId: string,
 ): Promise<string | null> {

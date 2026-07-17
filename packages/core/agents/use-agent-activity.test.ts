@@ -1,15 +1,20 @@
-import { describe, expect, it } from "vitest";
+/**
+ * @vitest-environment jsdom
+ */
+import { createElement, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Agent, AgentActivityBucket } from "../types";
+import { workspaceKeys } from "../workspace/queries";
+import { agentActivityKeys } from "./queries";
 import {
-  buildActivityMap,
-  deriveAgentActivity,
+  type AgentActivity,
   summarizeActivityWindow,
+  useWorkspaceActivityMap,
 } from "./use-agent-activity";
 
 const DAY = 24 * 60 * 60 * 1000;
-
-// Fixed anchor — derivation uses local-time start of "today", a real
-// clock would drift. 12:00 also keeps "today" stable across odd timezones.
 const NOW = new Date("2026-04-28T12:00:00").getTime();
 
 function bucket(
@@ -28,7 +33,7 @@ function bucket(
   };
 }
 
-const fullHistoryAgent: Agent = {
+const agent: Agent = {
   id: "a1",
   runtime_id: "r1",
   name: "Old Agent",
@@ -52,116 +57,87 @@ const fullHistoryAgent: Agent = {
   archived_at: null,
 };
 
-describe("deriveAgentActivity", () => {
-  it("places buckets in oldest→newest slots across 30 days", () => {
-    const buckets = [
-      bucket("a1", 29, 1), // slot 0
-      bucket("a1", 0, 5), // slot 29
-    ];
-    const result = deriveAgentActivity(
-      buckets,
-      NOW,
-    );
-    expect(result.buckets).toHaveLength(30);
-    expect(result.buckets[0]).toEqual({ total: 1, failed: 0 });
-    expect(result.buckets[29]).toEqual({ total: 5, failed: 0 });
+function renderActivityMap(
+  agents: Agent[],
+  buckets: AgentActivityBucket[],
+) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
+  queryClient.setQueryData(workspaceKeys.agents("ws-1"), agents);
+  queryClient.setQueryData(agentActivityKeys.last30d("ws-1"), buckets);
+  function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  }
+  return renderHook(() => useWorkspaceActivityMap("ws-1"), {
+    wrapper: Wrapper,
+  }).result.current.byAgent;
+}
 
-  it("ignores buckets older than the 30-day window", () => {
-    const result = deriveAgentActivity(
-      [bucket("a1", 60, 99)],
-      NOW,
-    );
-    expect(
-      result.buckets.reduce((s, b) => s + b.total, 0),
-    ).toBe(0);
-  });
+function activityWith(...entries: Array<[daysAgo: number, total: number, failed?: number]>): AgentActivity {
+  const buckets = Array.from({ length: 30 }, () => ({ total: 0, failed: 0 }));
+  for (const [daysAgo, total, failed = 0] of entries) {
+    buckets[29 - daysAgo] = { total, failed };
+  }
+  return { buckets };
+}
 
-  it("zero-fills when the agent has no buckets", () => {
-    const result = deriveAgentActivity(
-      [],
-      NOW,
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("useWorkspaceActivityMap", () => {
+  it("groups current workspace buckets into zero-filled 30-day agent series", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const map = renderActivityMap(
+      [agent, { ...agent, id: "a2" }, { ...agent, id: "a3" }],
+      [
+        bucket("a1", 29, 1),
+        bucket("a1", 0, 5),
+        bucket("a2", 1, 2, 1),
+        bucket("a2", 60, 99),
+      ],
     );
-    expect(result.buckets).toHaveLength(30);
-    expect(result.buckets.every((b) => b.total === 0 && b.failed === 0)).toBe(
-      true,
-    );
+
+    expect(map.size).toBe(3);
+    expect(map.get("a1")?.buckets).toHaveLength(30);
+    expect(map.get("a1")?.buckets[0]).toEqual({ total: 1, failed: 0 });
+    expect(map.get("a1")?.buckets[29]).toEqual({ total: 5, failed: 0 });
+    expect(summarizeActivityWindow(map.get("a2"), 30)).toMatchObject({
+      totalRuns: 2,
+      totalFailed: 1,
+    });
+    expect(map.get("a3")?.buckets.every((value) => value.total === 0 && value.failed === 0)).toBe(true);
   });
 });
 
 describe("summarizeActivityWindow", () => {
-  it("rolls up totals across the trailing N buckets", () => {
-    // 5 runs total over the 30-day series.
-    const result = deriveAgentActivity(
-      [
-        bucket("a1", 25, 1), // outside 7d, inside 30d
-        bucket("a1", 6, 1), // inside 7d
-        bucket("a1", 0, 3, 1), // inside 7d
-      ],
-      NOW,
-    );
-    const last7 = summarizeActivityWindow(result, 7);
-    expect(last7.totalRuns).toBe(4);
-    expect(last7.totalFailed).toBe(1);
-    expect(last7.buckets).toHaveLength(7);
+  it("rolls up the requested trailing window and clamps it to the series", () => {
+    const activity = activityWith([25, 1], [6, 1], [0, 3, 1]);
 
-    const last30 = summarizeActivityWindow(result, 30);
-    expect(last30.totalRuns).toBe(5);
-    expect(last30.totalFailed).toBe(1);
-    expect(last30.buckets).toHaveLength(30);
+    expect(summarizeActivityWindow(activity, 7)).toMatchObject({
+      totalRuns: 4,
+      totalFailed: 1,
+    });
+    expect(summarizeActivityWindow(activity, 7).buckets).toHaveLength(7);
+    expect(summarizeActivityWindow(activity, 1000)).toMatchObject({
+      totalRuns: 5,
+      totalFailed: 1,
+    });
+    expect(summarizeActivityWindow(activity, 1000).buckets).toHaveLength(30);
   });
 
-  it("returns an empty summary for missing activity", () => {
-    const summary = summarizeActivityWindow(undefined, 7);
-    expect(summary.buckets).toEqual([]);
-    expect(summary.totalRuns).toBe(0);
-    expect(summary.totalFailed).toBe(0);
-  });
-
-  it("clamps an oversized window to the available bucket count", () => {
-    const result = deriveAgentActivity(
-      [bucket("a1", 0, 2)],
-      NOW,
-    );
-    const summary = summarizeActivityWindow(result, 1000);
-    expect(summary.buckets).toHaveLength(30);
-    expect(summary.totalRuns).toBe(2);
-  });
-
-  it("returns no buckets when window is 0", () => {
-    const result = deriveAgentActivity(
-      [bucket("a1", 0, 5)],
-      NOW,
-    );
-    const summary = summarizeActivityWindow(result, 0);
-    expect(summary.buckets).toEqual([]);
-    expect(summary.totalRuns).toBe(0);
-  });
-});
-
-describe("buildActivityMap", () => {
-  it("groups buckets by agent and yields a derivation per agent", () => {
-    const agents: Agent[] = [
-      fullHistoryAgent,
-      { ...fullHistoryAgent, id: "a2" },
-    ];
-    const buckets: AgentActivityBucket[] = [
-      bucket("a1", 0, 3),
-      bucket("a2", 1, 2, 1),
-      bucket("a1", 2, 4),
-    ];
-    const map = buildActivityMap(agents, buckets, NOW);
-    expect(map.size).toBe(2);
-    expect(summarizeActivityWindow(map.get("a1"), 30).totalRuns).toBe(7);
-    expect(summarizeActivityWindow(map.get("a2"), 30).totalRuns).toBe(2);
-    expect(summarizeActivityWindow(map.get("a2"), 30).totalFailed).toBe(1);
-  });
-
-  it("emits a zero-filled entry for an agent with no buckets", () => {
-    const agents: Agent[] = [fullHistoryAgent];
-    const map = buildActivityMap(agents, [], NOW);
-    const a = map.get("a1");
-    expect(a?.buckets).toHaveLength(30);
-    expect(summarizeActivityWindow(a, 30).totalRuns).toBe(0);
+  it("returns an empty summary for missing activity or a zero-day window", () => {
+    expect(summarizeActivityWindow(undefined, 7)).toEqual({
+      buckets: [],
+      totalRuns: 0,
+      totalFailed: 0,
+    });
+    expect(summarizeActivityWindow(activityWith([0, 5]), 0)).toEqual({
+      buckets: [],
+      totalRuns: 0,
+      totalFailed: 0,
+    });
   });
 });
