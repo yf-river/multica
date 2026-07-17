@@ -1086,43 +1086,43 @@ func TestShouldCleanTaskDir_ChatActiveResistsOldMtime(t *testing.T) {
 }
 
 // TestGCMetaForTask covers the discriminator priority used by the daemon
-// when selecting which GCMetaKind to write at task completion.
+// when selecting which metadata kind to write at task completion.
 func TestGCMetaForTask(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		task Task
-		want execenv.GCMetaKind
+		want string
 		idOK func(m execenv.GCMeta) bool
 	}{
 		{
 			name: "chat task",
 			task: Task{ID: "t1", WorkspaceID: "ws", ChatSessionID: "c1"},
-			want: execenv.GCKindChat,
+			want: string(execenv.GCKindChat),
 			idOK: func(m execenv.GCMeta) bool { return m.ChatSessionID == "c1" },
 		},
 		{
 			name: "autopilot run task",
 			task: Task{ID: "t2", WorkspaceID: "ws", AutopilotRunID: "r1"},
-			want: execenv.GCKindAutopilotRun,
+			want: string(execenv.GCKindAutopilotRun),
 			idOK: func(m execenv.GCMeta) bool { return m.AutopilotRunID == "r1" },
 		},
 		{
 			name: "issue task",
 			task: Task{ID: "t3", WorkspaceID: "ws", IssueID: "i1"},
-			want: execenv.GCKindIssue,
+			want: string(execenv.GCKindIssue),
 			idOK: func(m execenv.GCMeta) bool { return m.IssueID == "i1" },
 		},
 		{
 			name: "quick-create task — issue_id always empty at WriteGCMeta time",
 			task: Task{ID: "t4", WorkspaceID: "ws", QuickCreatePrompt: "do the thing"},
-			want: execenv.GCKindQuickCreate,
+			want: string(execenv.GCKindQuickCreate),
 			idOK: func(m execenv.GCMeta) bool { return m.TaskID == "t4" },
 		},
 		{
 			name: "chat wins over issue when both set (defensive ordering)",
 			task: Task{ID: "t5", WorkspaceID: "ws", IssueID: "i1", ChatSessionID: "c1"},
-			want: execenv.GCKindChat,
+			want: string(execenv.GCKindChat),
 			idOK: func(m execenv.GCMeta) bool { return m.ChatSessionID == "c1" && m.IssueID == "" },
 		},
 	}
@@ -1134,7 +1134,7 @@ func TestGCMetaForTask(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected gcMetaForTask to recognize task, got ok=false")
 			}
-			if meta.Kind != tc.want {
+			if string(meta.Kind) != tc.want {
 				t.Fatalf("kind: want %q, got %q", tc.want, meta.Kind)
 			}
 			if !tc.idOK(meta) {

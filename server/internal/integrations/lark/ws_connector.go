@@ -483,8 +483,7 @@ type WSEndpoint struct {
 	PingInterval time.Duration
 }
 
-// GorillaDialer is the production WSDialer.
-type GorillaDialer struct {
+type gorillaDialer struct {
 	Dialer *websocket.Dialer
 
 	// Proxy is the proxy function for WebSocket connections. When nil
@@ -496,15 +495,15 @@ type GorillaDialer struct {
 	Proxy func(*http.Request) (*url.URL, error)
 }
 
-func NewGorillaDialer() *GorillaDialer {
-	return &GorillaDialer{
+func NewGorillaDialer() WSDialer {
+	return &gorillaDialer{
 		Dialer: &websocket.Dialer{
 			HandshakeTimeout: 15 * time.Second,
 		},
 	}
 }
 
-func (g *GorillaDialer) DialContext(ctx context.Context, urlStr string, requestHeader http.Header) (WSConn, *http.Response, error) {
+func (g *gorillaDialer) DialContext(ctx context.Context, urlStr string, requestHeader http.Header) (WSConn, *http.Response, error) {
 	d := g.Dialer
 	if d == nil {
 		d = websocket.DefaultDialer

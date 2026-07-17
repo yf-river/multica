@@ -88,7 +88,7 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 		t.Fatalf("expected 3 tasks, got %d", len(report.Tasks))
 	}
 
-	byShort := map[string]TaskDiskUsage{}
+	byShort := map[string]taskDiskUsage{}
 	for _, task := range report.Tasks {
 		byShort[task.TaskShort] = task
 	}
@@ -125,8 +125,8 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 	}
 
 	b1 := byShort["cccccccc"]
-	if b1.Kind != DiskUsageKindUnknown {
-		t.Errorf("task b1 kind = %q, want %q", b1.Kind, DiskUsageKindUnknown)
+	if b1.Kind != diskUsageKindUnknown {
+		t.Errorf("task b1 kind = %q, want %q", b1.Kind, diskUsageKindUnknown)
 	}
 	if b1.SizeBytes != 2000 {
 		t.Errorf("task b1 size = %d, want 2000 (no meta file)", b1.SizeBytes)
@@ -143,7 +143,7 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 		t.Errorf("total artifact size = %d, want 4000", report.TotalArtifactSizeBytes)
 	}
 
-	wsByID := map[string]WorkspaceDiskUsage{}
+	wsByID := map[string]workspaceDiskUsage{}
 	for _, ws := range report.Workspaces {
 		wsByID[ws.WorkspaceID] = ws
 	}

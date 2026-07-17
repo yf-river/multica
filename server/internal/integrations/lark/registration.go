@@ -150,8 +150,7 @@ func NewRegistrationClient(cfg RegistrationConfig) *RegistrationClient {
 	return &RegistrationClient{cfg: cfg.withDefaults()}
 }
 
-// BeginResult is what Begin returns to RegistrationService.
-type BeginResult struct {
+type beginResult struct {
 	DeviceCode string
 	// QRCodeURL is the verification_uri_complete with Multica's `source`
 	// telemetry params appended; render this as a QR image client-side.
@@ -229,7 +228,7 @@ func (e *RegistrationError) Error() string {
 	return fmt.Sprintf("registration: %s: %s", e.Code, e.Description)
 }
 
-// Begin opens a new device-flow session against the open-platform host
+// begin opens a new device-flow session against the open-platform host
 // for the requested region. Region is normally chosen explicitly by the
 // caller (the user picked "Feishu" or "Lark" in the UI) so the QR
 // renders against the same cloud the user expects to scan from. Lark may still
@@ -246,7 +245,7 @@ func (e *RegistrationError) Error() string {
 // "{用户姓名}的智能助手". It is a user-editable default (the user can
 // still change it on the form), and it rides on the QR URL — not the
 // begin POST body, which has no name field. Empty omits the pre-fill.
-func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, region Region) (*BeginResult, error) {
+func (c *RegistrationClient) begin(ctx context.Context, namePreset string, region Region) (*beginResult, error) {
 	if !isSupportedRegion(region) {
 		return nil, errors.New("registration: region must be feishu or lark")
 	}
@@ -295,7 +294,7 @@ func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, regio
 	if resp.ExpireIn > 0 {
 		expireIn = resp.ExpireIn
 	}
-	return &BeginResult{
+	return &beginResult{
 		DeviceCode: resp.DeviceCode,
 		QRCodeURL:  qr,
 		Domain:     domain,
@@ -304,12 +303,12 @@ func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, regio
 	}, nil
 }
 
-// Poll runs a single poll round-trip against the supplied domain (which
+// poll runs a single poll round-trip against the supplied domain (which
 // the caller may have updated mid-session via SwitchedDomain from a
 // prior PollResult). Domain selection lives outside the client so the
 // session state machine in RegistrationService is the single source of
 // truth for which host the next call must hit.
-func (c *RegistrationClient) Poll(ctx context.Context, domain, deviceCode string) (*PollResult, error) {
+func (c *RegistrationClient) poll(ctx context.Context, domain, deviceCode string) (*PollResult, error) {
 	if deviceCode == "" {
 		return nil, &RegistrationError{Code: "invalid_argument", Description: "device_code is required"}
 	}

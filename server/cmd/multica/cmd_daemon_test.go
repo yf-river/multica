@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,23 +226,16 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 }
 
 func TestPrintAggregateDiskUsageShowsRootsAndGrandTotal(t *testing.T) {
-	agg := daemon.AggregateDiskUsageReport{
-		Roots: []daemon.RootDiskUsage{
-			{Profile: "", Report: daemon.DiskUsageReport{
-				WorkspacesRoot: "/home/u/multica_workspaces",
-				Tasks:          []daemon.TaskDiskUsage{{WorkspaceShort: "ws0", TaskShort: "t0", SizeBytes: 100}},
-				TotalTaskCount: 1,
-				TotalSizeBytes: 100,
-			}},
-			{Profile: "desktop-host", Report: daemon.DiskUsageReport{
-				WorkspacesRoot: "/home/u/multica_workspaces_desktop-host",
-				Tasks:          []daemon.TaskDiskUsage{{WorkspaceShort: "ws1", TaskShort: "t1", SizeBytes: 900}},
-				TotalTaskCount: 1,
-				TotalSizeBytes: 900,
-			}},
-		},
-		TotalTaskCount: 2,
-		TotalSizeBytes: 1000,
+	var agg daemon.AggregateDiskUsageReport
+	if err := json.Unmarshal([]byte(`{
+		"roots":[
+			{"profile":"","report":{"workspaces_root":"/home/u/multica_workspaces","tasks":[{"workspace_short":"ws0","task_short":"t0","size_bytes":100}],"total_task_count":1,"total_size_bytes":100}},
+			{"profile":"desktop-host","report":{"workspaces_root":"/home/u/multica_workspaces_desktop-host","tasks":[{"workspace_short":"ws1","task_short":"t1","size_bytes":900}],"total_task_count":1,"total_size_bytes":900}}
+		],
+		"total_task_count":2,
+		"total_size_bytes":1000
+	}`), &agg); err != nil {
+		t.Fatalf("decode aggregate disk usage fixture: %v", err)
 	}
 
 	var out bytes.Buffer

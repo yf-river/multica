@@ -355,7 +355,7 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 }
 
 func (s *RegistrationService) openRegistrationSession(ctx context.Context, p BeginInstallParams, agentName string) (BeginInstallResult, error) {
-	begin, err := s.client.Begin(ctx, botNamePreset(agentName), p.Region)
+	begin, err := s.client.begin(ctx, botNamePreset(agentName), p.Region)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: begin: %w", err)
 	}
@@ -500,7 +500,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 		case <-time.After(interval):
 		}
 
-		res, err := s.client.Poll(ctx, domain, deviceCode)
+		res, err := s.client.poll(ctx, domain, deviceCode)
 		if err != nil {
 			var re *RegistrationError
 			if errors.As(err, &re) {

@@ -19,7 +19,7 @@ func TestFrameRoundTripPreservesAllFields(t *testing.T) {
 		LogID:           99,
 		Service:         7,
 		Method:          FrameMethodData,
-		Headers:         []FrameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
+		Headers:         []frameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
 		PayloadEncoding: "json",
 		PayloadType:     "im.message.receive_v1",
 		Payload:         []byte(`{"schema":"2.0"}`),
@@ -101,7 +101,7 @@ func TestFrameMarshalIsSDKByteCompatible(t *testing.T) {
 			frame: NewAckFrame(&Frame{
 				Method:  FrameMethodData,
 				Service: 7,
-				Headers: []FrameHeader{
+				Headers: []frameHeader{
 					{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeEvent},
 					{Key: FrameHeaderMessageIDKey, Value: "om-42"},
 				},
@@ -117,7 +117,7 @@ func TestFrameMarshalIsSDKByteCompatible(t *testing.T) {
 				LogID:           99,
 				Service:         7,
 				Method:          FrameMethodData,
-				Headers:         []FrameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
+				Headers:         []frameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
 				PayloadEncoding: "json",
 				PayloadType:     "im.message.receive_v1",
 				Payload:         []byte(`{"schema":"2.0"}`),
@@ -194,7 +194,7 @@ func TestNewAckFrameReusesInboundHeaders(t *testing.T) {
 	inbound := &Frame{
 		Method:  FrameMethodData,
 		Service: 7,
-		Headers: []FrameHeader{
+		Headers: []frameHeader{
 			{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeEvent},
 			{Key: FrameHeaderMessageIDKey, Value: "om-42"},
 		},

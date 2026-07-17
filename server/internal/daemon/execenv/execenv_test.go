@@ -2887,7 +2887,7 @@ func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
 	cases := []struct {
 		name string
 		meta GCMeta
-		want GCMetaKind
+		want gcMetaKind
 	}{
 		{"chat", GCMeta{Kind: GCKindChat, ChatSessionID: "cs-1", WorkspaceID: "ws"}, GCKindChat},
 		{"autopilot_run", GCMeta{Kind: GCKindAutopilotRun, AutopilotRunID: "ar-1", WorkspaceID: "ws"}, GCKindAutopilotRun},

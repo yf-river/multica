@@ -180,24 +180,24 @@ func TestParseChunkHeaders(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
-		headers   []FrameHeader
+		headers   []frameHeader
 		wantSum   int
 		wantSeq   int
 		wantMsgID string
 	}{
 		{
 			name:    "all present",
-			headers: []FrameHeader{{Key: "sum", Value: "3"}, {Key: "seq", Value: "1"}, {Key: "message_id", Value: "om-7"}},
+			headers: []frameHeader{{Key: "sum", Value: "3"}, {Key: "seq", Value: "1"}, {Key: "message_id", Value: "om-7"}},
 			wantSum: 3, wantSeq: 1, wantMsgID: "om-7",
 		},
 		{
 			name:    "missing sum/seq",
-			headers: []FrameHeader{{Key: "message_id", Value: "om-8"}},
+			headers: []frameHeader{{Key: "message_id", Value: "om-8"}},
 			wantSum: 0, wantSeq: 0, wantMsgID: "om-8",
 		},
 		{
 			name:    "unparseable sum",
-			headers: []FrameHeader{{Key: "sum", Value: "abc"}, {Key: "seq", Value: "0"}, {Key: "message_id", Value: "om-9"}},
+			headers: []frameHeader{{Key: "sum", Value: "abc"}, {Key: "seq", Value: "0"}, {Key: "message_id", Value: "om-9"}},
 			wantSum: 0, wantSeq: 0, wantMsgID: "om-9",
 		},
 		{

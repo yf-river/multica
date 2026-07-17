@@ -482,23 +482,23 @@ func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, 
 	return writeSkillFiles(skillsDir, workspaceSkills, nil)
 }
 
-// GCMetaKind identifies which kind of parent record a task workdir belongs to.
+// gcMetaKind identifies which kind of parent record a task workdir belongs to.
 // The GC loop dispatches its decision tree on this value so chat / autopilot /
 // quick-create tasks are no longer forced through the issue-centric path.
-type GCMetaKind string
+type gcMetaKind string
 
 const (
-	GCKindIssue        GCMetaKind = "issue"
-	GCKindChat         GCMetaKind = "chat"
-	GCKindAutopilotRun GCMetaKind = "autopilot_run"
-	GCKindQuickCreate  GCMetaKind = "quick_create"
+	GCKindIssue        gcMetaKind = "issue"
+	GCKindChat         gcMetaKind = "chat"
+	GCKindAutopilotRun gcMetaKind = "autopilot_run"
+	GCKindQuickCreate  gcMetaKind = "quick_create"
 )
 
 // GCMeta is persisted to .gc_meta.json inside the env root so the GC loop
 // can decide whether the directory is reclaimable. It is a discriminated
 // union keyed on Kind: only the ID field matching Kind is meaningful.
 type GCMeta struct {
-	Kind           GCMetaKind `json:"kind"`
+	Kind           gcMetaKind `json:"kind"`
 	IssueID        string     `json:"issue_id,omitempty"`
 	ChatSessionID  string     `json:"chat_session_id,omitempty"`
 	AutopilotRunID string     `json:"autopilot_run_id,omitempty"`

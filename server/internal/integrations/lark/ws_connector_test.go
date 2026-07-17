@@ -177,7 +177,7 @@ func pushDataFrame(conn *fakeWSConn, payload []byte, messageID string) {
 	f := &Frame{
 		Method:  FrameMethodData,
 		Service: 7,
-		Headers: []FrameHeader{
+		Headers: []frameHeader{
 			{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeEvent},
 			{Key: FrameHeaderMessageIDKey, Value: messageID},
 		},
@@ -310,7 +310,7 @@ func TestWSConnectorRespondsToServerPingWithPong(t *testing.T) {
 	pingFrame := &Frame{
 		Method:  FrameMethodControl,
 		Service: 7,
-		Headers: []FrameHeader{{Key: FrameHeaderTypeKey, Value: FrameHeaderTypePing}},
+		Headers: []frameHeader{{Key: FrameHeaderTypeKey, Value: FrameHeaderTypePing}},
 	}
 	conn.Push(pingFrame.Marshal())
 
@@ -585,7 +585,7 @@ func pushChunkedDataFrame(conn *fakeWSConn, payload []byte, messageID string, su
 	f := &Frame{
 		Method:  FrameMethodData,
 		Service: 7,
-		Headers: []FrameHeader{
+		Headers: []frameHeader{
 			{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeEvent},
 			{Key: FrameHeaderMessageIDKey, Value: messageID},
 			{Key: FrameHeaderSumKey, Value: strconv.Itoa(sum)},
@@ -682,7 +682,7 @@ func TestGorillaDialerPreservesConfiguredDialerProxy(t *testing.T) {
 	t.Parallel()
 
 	proxyErr := errors.New("configured proxy refused")
-	d := &GorillaDialer{
+	d := &gorillaDialer{
 		Dialer: &websocket.Dialer{
 			Proxy: func(*http.Request) (*url.URL, error) {
 				return nil, proxyErr
@@ -703,7 +703,7 @@ func TestGorillaDialerProxyOverridesConfiguredDialerProxy(t *testing.T) {
 
 	configuredProxyErr := errors.New("configured proxy refused")
 	overrideProxyErr := errors.New("override proxy refused")
-	d := &GorillaDialer{
+	d := &gorillaDialer{
 		Dialer: &websocket.Dialer{
 			Proxy: func(*http.Request) (*url.URL, error) {
 				return nil, configuredProxyErr
@@ -728,7 +728,7 @@ func TestGorillaDialerProxyOverridesConfiguredDialerProxy(t *testing.T) {
 func TestGorillaDialerProxyForwardsError(t *testing.T) {
 	t.Parallel()
 
-	d := NewGorillaDialer()
+	d := NewGorillaDialer().(*gorillaDialer)
 	proxyErr := errors.New("proxy refused")
 	d.Proxy = func(r *http.Request) (*url.URL, error) {
 		return nil, proxyErr

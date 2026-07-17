@@ -18,14 +18,14 @@ const issueCommandPrefix = "/issue"
 //
 //   - `/issue <title>`            → Title = "<title>", Description = ""
 //   - `/issue <title>\n<rest...>` → Title = "<title>", Description = "<rest>"
-//                                   (multi-line: first line is title, the
-//                                   remainder, joined back with newlines,
-//                                   becomes description)
+//     (multi-line: first line is title, the
+//     remainder, joined back with newlines,
+//     becomes description)
 //   - `/issue` (alone, no title)  → Title = "", Description = ""
-//                                   (the caller is expected to fall back
-//                                   to the previous user message; the
-//                                   parser does not do that lookup
-//                                   itself because it has no DB access)
+//     (the caller is expected to fall back
+//     to the previous user message; the
+//     parser does not do that lookup
+//     itself because it has no DB access)
 //
 // Only the first non-empty line is considered: a message body that
 // begins with blank lines and then `/issue ...` still qualifies. A
