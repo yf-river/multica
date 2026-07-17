@@ -778,7 +778,7 @@ func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) executionpol
 	return executionpolicy.Policy{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
 }
 
-func filterAgentSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy executionpolicy.Policy) []protocol.TaskSkill {
+func filterSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy executionpolicy.Policy) []protocol.TaskSkill {
 	if policy.ProjectSkillMode == "" || policy.ProjectSkillMode == "all" {
 		return skills
 	}
@@ -798,20 +798,6 @@ func filterAgentSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy exe
 			continue
 		}
 		if _, ok := allowed[name]; ok {
-			out = append(out, skill)
-		}
-	}
-	return out
-}
-
-func filterBuiltinSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy executionpolicy.Policy) []protocol.TaskSkill {
-	if !policy.IsCoordinatorWithoutRepo() {
-		return skills
-	}
-	out := make([]protocol.TaskSkill, 0, len(skills))
-	for _, skill := range skills {
-		name := strings.ToLower(strings.TrimSpace(skill.Name))
-		if coordinatorBuiltinSkillAllowed(name) {
 			out = append(out, skill)
 		}
 	}

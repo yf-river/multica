@@ -147,8 +147,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		outcome = "error_build"
 		return
 	}
-	skills = filterAgentSkillsForExecutionPolicy(skills, executionPolicy)
-	skills = append(skills, filterBuiltinSkillsForExecutionPolicy(h.TaskService.BuiltinSkills(), executionPolicy)...)
+	skills = filterSkillsForExecutionPolicy(skills, executionPolicy)
+	skills = append(skills, filterSkillsForExecutionPolicy(h.TaskService.BuiltinSkills(), executionPolicy)...)
 	var customEnv map[string]string
 	if agent.CustomEnv != nil {
 		if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
@@ -273,7 +273,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 				leaderPolicy := taskExecutionPolicyForRole("", true)
 				resp.ExecutionPolicy = &leaderPolicy
-				resp.Agent.Skills = filterAgentSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
+				resp.Agent.Skills = filterSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
 				slog.Debug("injected squad leader briefing",
 					"squad_id", uuidToString(squad.ID),
 					"squad_name", squad.Name,

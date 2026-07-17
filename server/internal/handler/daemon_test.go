@@ -85,7 +85,7 @@ func TestCoordinatorExecutionPolicyFiltersExecutionBuiltinSkills(t *testing.T) {
 		ProjectSkillMode: "none",
 	}
 
-	got := filterAgentSkillsForExecutionPolicy(skills, policy)
+	got := filterSkillsForExecutionPolicy(skills, policy)
 	gotNames := make([]string, 0, len(got))
 	for _, skill := range got {
 		gotNames = append(gotNames, skill.Name)
@@ -93,15 +93,6 @@ func TestCoordinatorExecutionPolicyFiltersExecutionBuiltinSkills(t *testing.T) {
 	want := []string{"multica-mentioning", "multica-projects-and-resources", "multica-squads"}
 	if strings.Join(gotNames, ",") != strings.Join(want, ",") {
 		t.Fatalf("coordinator skills = %v, want %v", gotNames, want)
-	}
-
-	gotBuiltins := filterBuiltinSkillsForExecutionPolicy(skills, policy)
-	gotNames = gotNames[:0]
-	for _, skill := range gotBuiltins {
-		gotNames = append(gotNames, skill.Name)
-	}
-	if strings.Join(gotNames, ",") != strings.Join(want, ",") {
-		t.Fatalf("coordinator builtin skills = %v, want %v", gotNames, want)
 	}
 }
 
