@@ -33,7 +33,7 @@ func buildPromptEvaluationExecutionEvidence(
 	messages []protocol.TaskMessagePayload,
 	traceEvents []TaskTraceEventResponse,
 ) ([]PromptEvaluationExecutionSpanResponse, []PromptEvaluationToolCallChainResponse, []PromptEvaluationToolCallSummaryResponse, map[string]any) {
-	rootID := firstNonEmptyPromptEvaluationString(ptrString(run.TaskID), run.ID)
+	rootID := firstNonEmpty(ptrString(run.TaskID), run.ID)
 	rootSpanID := "task:" + rootID
 	toolCallChains := buildPromptEvaluationToolCallChains(messages)
 	toolCallSummary := buildPromptEvaluationToolCallSummary(toolCallChains)
@@ -49,7 +49,7 @@ func buildPromptEvaluationExecutionEvidence(
 		Model:      run.Model,
 		TokenTotal: int64(run.InputTokens + run.OutputTokens),
 		DurationMs: run.TotalDurationMs,
-		Summary:    firstNonEmptyPromptEvaluationString(run.Conclusion, run.FailureReason, "评估任务执行上下文"),
+		Summary:    firstNonEmpty(run.Conclusion, run.FailureReason, "评估任务执行上下文"),
 		Details: map[string]any{
 			"运行":   run.ID,
 			"运行类型": run.RunKind,
@@ -105,7 +105,7 @@ func buildPromptEvaluationExecutionEvidence(
 			ID:         fmt.Sprintf("trace:%s:%d", event.ID, seq),
 			ParentID:   rootSpanID,
 			SpanKind:   kind,
-			SpanName:   firstNonEmptyPromptEvaluationString(event.EventName, event.EventType),
+			SpanName:   firstNonEmpty(event.EventName, event.EventType),
 			Status:     event.Status,
 			Seq:        seq,
 			TaskID:     event.TaskID,
@@ -155,12 +155,12 @@ func buildPromptEvaluationExecutionEvidence(
 			ID:        fmt.Sprintf("message:%d", message.Seq),
 			ParentID:  rootSpanID,
 			SpanKind:  kind,
-			SpanName:  firstNonEmptyPromptEvaluationString(message.Tool, promptEvaluationMessageSpanName(message.Type)),
+			SpanName:  firstNonEmpty(message.Tool, promptEvaluationMessageSpanName(message.Type)),
 			Status:    "已记录",
 			Seq:       seq,
 			TaskID:    message.TaskID,
 			Tool:      message.Tool,
-			Summary:   prompteval.TruncateEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
+			Summary:   prompteval.TruncateEvidence(firstNonEmpty(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
 			Details:   details,
 			CreatedAt: message.CreatedAt,
 		})
@@ -219,7 +219,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				UseSpanID:      fmt.Sprintf("message:%d", message.Seq),
 				Input:          message.Input,
 				ResultCategory: "未返回",
-				Summary:        prompteval.TruncateEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
+				Summary:        prompteval.TruncateEvidence("工具调用："+firstNonEmpty(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
 				CreatedAt:      message.CreatedAt,
 			}
 			chains = append(chains, chain)
@@ -260,7 +260,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				ResultSpanID:   fmt.Sprintf("message:%d", message.Seq),
 				Output:         message.Output,
 				ResultCategory: "孤立返回",
-				Summary:        prompteval.TruncateEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
+				Summary:        prompteval.TruncateEvidence("工具结果没有找到对应调用："+firstNonEmpty(message.Output, tool), 240),
 				CompletedAt:    message.CreatedAt,
 			})
 		}
@@ -758,7 +758,7 @@ func buildPromptEvaluationIOContext(trials []PromptEvaluationTrialResponse, mess
 	}
 	if len(messages) > 0 {
 		message := messages[len(messages)-1]
-		context["消息摘要"] = prompteval.TruncateEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
+		context["消息摘要"] = prompteval.TruncateEvidence(firstNonEmpty(message.Content, message.Output, message.Type), 300)
 	}
 	return context
 }

@@ -423,9 +423,6 @@ func mustJSONBytes(value any) []byte {
 
 func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any, cases []map[string]any) promptEvaluationRunResult {
 	started := time.Now()
-	if len(cases) == 0 {
-		cases = promptEvaluationCases(payload)
-	}
 	results := make([]promptEvaluationCaseRunResult, 0, len(cases))
 	passed := 0
 	missingCount := 0
@@ -739,29 +736,6 @@ func appendPromptEvaluationRunHistory(raw any, result promptEvaluationRunResult)
 	return next
 }
 
-func floatFromAny(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case float32:
-		return float64(typed)
-	case int:
-		return float64(typed)
-	case int32:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	case json.Number:
-		parsed, _ := typed.Float64()
-		return parsed
-	case string:
-		parsed, _ := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-		return parsed
-	default:
-		return 0
-	}
-}
-
 func promptEvaluationDatasetRowsFingerprint(rows []db.PromptEvaluationDatasetRow) string {
 	snapshot := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
@@ -1034,15 +1008,6 @@ func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
 	return result
 }
 
-func firstNonEmptyPromptEvaluationString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
 func stringMapFromAny(value any) map[string]string {
 	result := map[string]string{}
 	if m, ok := value.(map[string]any); ok {
@@ -1055,11 +1020,6 @@ func stringMapFromAny(value any) map[string]string {
 
 func stringListFromAny(value any) []string {
 	switch v := value.(type) {
-	case string:
-		if strings.TrimSpace(v) == "" {
-			return nil
-		}
-		return []string{v}
 	case []any:
 		out := make([]string, 0, len(v))
 		for _, item := range v {

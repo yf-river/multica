@@ -20,6 +20,26 @@ func TestPromptEvaluationPayloadPreservesCustomFields(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationRunsUseCanonicalCaseRowsOnly(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	payload := map[string]any{"cases": []map[string]any{{"case_name": "payload-only"}}}
+	asset := db.PromptEvaluationAsset{
+		ID:          pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+		WorkspaceID: parseUUID(testWorkspaceID),
+		Payload:     mustJSONBytes(payload),
+	}
+	cases, ok := testHandler.promptEvaluationCasesForAsset(httptest.NewRecorder(), newRequest(http.MethodGet, "/", nil), asset)
+	if !ok || len(cases) != 0 {
+		t.Fatalf("runtime cases = %#v, ok = %v; payload must not bypass canonical rows", cases, ok)
+	}
+	result := buildPromptEvaluationRunResult(asset, db.PromptLibraryItem{}, payload, cases)
+	if result.TotalCases != 0 || len(result.CaseResults) != 0 {
+		t.Fatalf("payload-only cases re-entered runtime result: %#v", result)
+	}
+}
+
 func TestPromptEvaluationCaseProjectionsPopulateCurrentFields(t *testing.T) {
 	assertCanonical := func(t *testing.T, item map[string]any) {
 		t.Helper()

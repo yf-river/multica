@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -627,7 +628,7 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 	for _, item := range matched {
 		currentTags := stringListFromAny(mustDecodePersistedJSONArray(item.Tags, "prompt evaluation case tags"))
 		nextTags := bulkPromptEvaluationCaseTags(currentTags, job.TargetTags, job.Mode, job.SourceTag, job.TargetTag)
-		if samePromptEvaluationStringList(currentTags, nextTags) {
+		if slices.Equal(currentTags, nextTags) {
 			skippedCount += 1
 			continue
 		}
@@ -1045,18 +1046,6 @@ func compactStrings(values []string) []string {
 		result = append(result, item)
 	}
 	return result
-}
-
-func samePromptEvaluationStringList(a []string, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func bulkPromptEvaluationCaseTags(current []string, target []string, mode string, sourceTag string, targetTag string) []string {

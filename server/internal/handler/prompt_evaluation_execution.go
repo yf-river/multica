@@ -251,9 +251,6 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 			executableRows = append(executableRows, row)
 		}
 	}
-	if len(executableRows) == 0 {
-		return promptEvaluationCases(decodePayloadObject(asset.Payload)), true
-	}
 	cases := make([]map[string]any, 0, len(executableRows))
 	for _, row := range executableRows {
 		cases = append(cases, map[string]any{
@@ -328,8 +325,8 @@ func promptEvaluationWeakDimensionSummaries(rows []db.ListPromptEvaluationDimens
 		if leftPriority != rightPriority {
 			return leftPriority < rightPriority
 		}
-		leftScore := floatFromAny(result[i]["得分"])
-		rightScore := floatFromAny(result[j]["得分"])
+		leftScore := result[i]["得分"].(float64)
+		rightScore := result[j]["得分"].(float64)
 		if leftScore != rightScore {
 			return leftScore < rightScore
 		}
