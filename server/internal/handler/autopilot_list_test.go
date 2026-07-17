@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// insertListTestAutopilot creates a bare autopilot row and registers cleanup.
-// Triggers/runs cascade on delete.
 func insertListTestAutopilot(t *testing.T, agentID, title string) string {
 	t.Helper()
 	var id string
@@ -28,12 +26,6 @@ func insertListTestAutopilot(t *testing.T, agentID, title string) string {
 	return id
 }
 
-// TestListAutopilots_DerivedFields guards the three list-only derived
-// columns added for the list UI (trigger badges, next run, last-run
-// outcome): trigger_kinds/next_run_at must consider ENABLED triggers only,
-// last_run_status must be the most recent run's status, and all three must
-// be omitted entirely when there is nothing to derive (the optional-field
-// contract older clients rely on).
 func TestListAutopilots_DerivedFields(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -44,8 +36,6 @@ func TestListAutopilots_DerivedFields(t *testing.T) {
 	withData := insertListTestAutopilot(t, agentID, "list-derived-with-data")
 	bare := insertListTestAutopilot(t, agentID, "list-derived-bare")
 
-	// Enabled schedule (carries next_run_at), enabled webhook, and a second
-	// DISABLED schedule trigger that must not affect the derived fields.
 	for _, q := range []string{
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled, cron_expression, timezone, next_run_at)
 		 VALUES ($1, 'schedule', true, '0 9 * * *', 'UTC', now() + interval '1 hour')`,
@@ -59,8 +49,6 @@ func TestListAutopilots_DerivedFields(t *testing.T) {
 		}
 	}
 
-	// Older completed run, newer failed run — last_run_status must be the
-	// newest by triggered_at, not insertion order.
 	for _, q := range []string{
 		`INSERT INTO autopilot_run (autopilot_id, source, status, triggered_at)
 		 VALUES ($1, 'schedule', 'failed', now() - interval '1 hour')`,

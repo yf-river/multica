@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// fetchTimeline issues a GET /timeline request and returns the decoded entries
-// + HTTP status. The endpoint returns a flat array of TimelineEntry sorted by
-// (created_at, id) ascending (oldest first); see ListTimeline / #1929.
 func fetchTimeline(t *testing.T, issueID string) ([]TimelineEntry, int) {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -26,8 +23,6 @@ func fetchTimeline(t *testing.T, issueID string) ([]TimelineEntry, int) {
 	return entries, w.Code
 }
 
-// createIssueForTimeline returns a freshly-created issue id and registers a
-// cleanup so its timeline rows are deleted after the test.
 func createIssueForTimeline(t *testing.T, title string) string {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -50,9 +45,6 @@ func createIssueForTimeline(t *testing.T, title string) string {
 	return issue.ID
 }
 
-// seedTimelineEntries inserts <commentN> comments + <activityN> activities for
-// the given issue with ascending timestamps and returns the comment ids in
-// chronological order.
 func seedTimelineEntries(t *testing.T, issueID string, commentN, activityN int) (commentIDs []string) {
 	t.Helper()
 	ctx := context.Background()
@@ -90,9 +82,6 @@ func TestListTimeline_ReturnsAllEntriesAscending(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	// Handler tests don't register the activity listener (that lives in
-	// cmd/server), so issue creation does not seed an auto-activity here.
-	// We assert directly on the seeded comments.
 	commentEntries := []TimelineEntry{}
 	for _, e := range entries {
 		if e.Type == "comment" {
@@ -117,15 +106,12 @@ func TestListTimeline_MergesCommentsAndActivities(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	// Verify chronological non-decreasing order across types.
 	for i := 1; i < len(entries); i++ {
 		if entries[i-1].CreatedAt > entries[i].CreatedAt {
 			t.Errorf("not chronological at %d: %q then %q",
 				i, entries[i-1].CreatedAt, entries[i].CreatedAt)
 		}
 	}
-	// 3 seeded comments + 2 seeded activities = 5. Handler tests don't
-	// register the activity listener, so there is no auto issue-created row.
 	if got, want := len(entries), 5; got != want {
 		t.Fatalf("entries = %d, want %d", got, want)
 	}
@@ -137,8 +123,6 @@ func TestListTimeline_EmptyIssue(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	// Handler tests don't wire the activity listener, so a freshly-created
-	// issue with no comments has an empty timeline.
 	if got := len(entries); got != 0 {
 		t.Fatalf("entries = %d, want 0", got)
 	}
