@@ -13,12 +13,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
-// TestModelListStore_RunningRequestTimesOut pins the escape hatch for
-// requests that were claimed (PopPending → Running) but whose result was
-// never reported — usually because the heartbeat response carrying the
-// `pending_model_list` field was lost in transit. Before this, the only
-// way out of Running was the 2-minute memory GC, which exceeded the UI
-// polling window and surfaced as a silent "discovery failed" (MUL-1397).
 func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
@@ -40,9 +34,6 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 		t.Fatal("expected RunStartedAt to be set on PopPending")
 	}
 
-	// Age the running record past the threshold without the daemon ever
-	// reporting a result. Get() must flip it to Timeout so the UI can
-	// terminate polling instead of waiting for the retention sweep.
 	aged := time.Now().Add(-(runtimeAsyncRunningTimeout + time.Second))
 	claimed.RunStartedAt = &aged
 	got, err := store.Get(ctx, req.ID)
@@ -130,9 +121,6 @@ func TestGetModelListRequestRejectsCrossWorkspaceRequest(t *testing.T) {
 	}
 }
 
-// TestInMemoryModelListStore_HasPending pins the cheap probe used by the
-// heartbeat hot path. Empty queue → false; pending request → true; after
-// PopPending claims the record → false again.
 func TestInMemoryModelListStore_HasPending(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
@@ -147,7 +135,6 @@ func TestInMemoryModelListStore_HasPending(t *testing.T) {
 	if has, err := store.HasPending(ctx, "rt-1"); err != nil || !has {
 		t.Fatalf("expected pending=true after Create: has=%v err=%v", has, err)
 	}
-	// Other runtimes don't see this runtime's queue.
 	if has, err := store.HasPending(ctx, "rt-2"); err != nil || has {
 		t.Fatalf("expected pending=false for unrelated runtime: has=%v err=%v", has, err)
 	}
@@ -160,16 +147,11 @@ func TestInMemoryModelListStore_HasPending(t *testing.T) {
 	}
 }
 
-// TestInMemoryModelListStore_PopPendingPicksOldest documents the FIFO
-// ordering so a daemon that handles one request per heartbeat doesn't
-// starve early queue entries.
 func TestInMemoryModelListStore_PopPendingPicksOldest(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
 
 	first, _ := store.Create(ctx, "rt-1", randomID())
-	// Force a measurable gap so the FIFO comparison isn't on equal
-	// CreatedAt values (possible on platforms with coarse clocks).
 	time.Sleep(2 * time.Millisecond)
 	second, _ := store.Create(ctx, "rt-1", randomID())
 

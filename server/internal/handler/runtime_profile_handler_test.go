@@ -61,8 +61,6 @@ func TestCreateRuntimeProfile_ReplaysCommittedResponse(t *testing.T) {
 	}
 }
 
-// insertRuntimeProfileFixture creates a runtime_profile in testWorkspaceID and
-// returns its id, registering cleanup.
 func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName, commandName string) string {
 	t.Helper()
 	var profileID string
@@ -79,8 +77,6 @@ func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName,
 	return profileID
 }
 
-// insertProfileRuntimeFixture creates an agent_runtime instance bound to the
-// given profile (so profile_id is set), returning its id.
 func insertProfileRuntimeFixture(t *testing.T, ctx context.Context, profileID, name, provider string) string {
 	t.Helper()
 	var runtimeID string
@@ -109,12 +105,6 @@ func TestRuntimeProfileToResponseRejectsCorruptFixedArgs(t *testing.T) {
 	}
 }
 
-// TestDeleteRuntimeProfile_ArchivedAgentCascade is the regression guard for the
-// FK-RESTRICT 500: a profile whose only remaining agent is ARCHIVED must still
-// delete cleanly. agent.runtime_id is ON DELETE RESTRICT, so without the
-// per-runtime archived-agent teardown the DELETE on agent_runtime would raise a
-// raw FK error and the handler would 500. The cascade must hard-delete the
-// archived agent, the runtime row, and the profile.
 func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -125,8 +115,6 @@ func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Runtime", "codex")
 	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Archived Agent")
 
-	// Archive the agent — the active-agent guard passes, but the FK still pins
-	// the runtime row until the archived cascade clears it.
 	if _, err := testPool.Exec(ctx, `UPDATE agent SET archived_at = now() WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("archive agent: %v", err)
 	}
@@ -161,9 +149,6 @@ func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 	}
 }
 
-// TestDeleteRuntimeProfile_ActiveAgentBlocks confirms the guard still refuses
-// (409) while an ACTIVE agent is bound to one of the profile's runtimes, and
-// leaves the profile + runtime intact.
 func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

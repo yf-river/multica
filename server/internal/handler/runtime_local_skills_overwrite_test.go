@@ -12,9 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// createImportTargetSkill inserts a skill (owned by ownerID) plus the given
-// path->content files directly into the DB, returning its id. Used as the
-// pre-existing skill that conflict / overwrite imports collide with.
 func createImportTargetSkill(t *testing.T, name, ownerID string, files map[string]string) string {
 	t.Helper()
 
@@ -39,9 +36,6 @@ func createImportTargetSkill(t *testing.T, name, ownerID string, files map[strin
 	return skillID
 }
 
-// bindAgentToSkill creates a workspace agent and binds it to skillID via
-// agent_skill, returning the agent id. Lets overwrite tests assert the binding
-// survives the re-import.
 func bindAgentToSkill(t *testing.T, skillID string) string {
 	t.Helper()
 
@@ -92,7 +86,6 @@ func getSkillDescription(t *testing.T, skillID string) (description string) {
 	return
 }
 
-// reportBundleBody builds the daemon "completed" report body for an import.
 func reportBundleBody(name, description, content string, files map[string]string) map[string]any {
 	fileList := make([]map[string]any, 0, len(files))
 	for p, c := range files {
@@ -167,8 +160,6 @@ func pollLocalSkillImport(t *testing.T, runtimeID, requestID string) RuntimeLoca
 	return got
 }
 
-// runLocalSkillImport drives initiate -> report -> poll and returns the
-// terminal request.
 func runLocalSkillImport(t *testing.T, runtimeID string, initBody, reportBody map[string]any) RuntimeLocalSkillImportRequest {
 	t.Helper()
 	requestID := initiateLocalSkillImport(t, runtimeID, initBody)
@@ -205,7 +196,6 @@ func TestRuntimeLocalSkillImport_ConflictCreatorCanOverwrite(t *testing.T) {
 	if !got.Conflict.CanOverwrite {
 		t.Fatal("creator should be allowed to overwrite")
 	}
-	// A conflict must neither create a second skill nor mutate the original.
 	if n := countSkillsByName(t, name); n != 1 {
 		t.Fatalf("expected exactly 1 skill named %q, got %d", name, n)
 	}
@@ -270,7 +260,6 @@ func TestRuntimeLocalSkillImport_OverwritePreservesIdentityAndBindings(t *testin
 	if got.Skill == nil {
 		t.Fatal("expected overwritten skill in response")
 	}
-	// Same row: UUID and creator preserved.
 	if got.Skill.ID != existingID {
 		t.Fatalf("overwrite must preserve UUID: got %q, want %q", got.Skill.ID, existingID)
 	}
@@ -280,11 +269,9 @@ func TestRuntimeLocalSkillImport_OverwritePreservesIdentityAndBindings(t *testin
 	if got.Skill.Description != "overwritten description" {
 		t.Fatalf("description not replaced: %q", got.Skill.Description)
 	}
-	// Files fully replaced: prune.md (absent from the new bundle) is gone.
 	if n := countSkillFiles(t, existingID); n != 1 {
 		t.Fatalf("expected 1 file after overwrite, got %d", n)
 	}
-	// Agent binding preserved — the agent must NOT need to re-add the skill.
 	if n := countAgentSkillBindings(t, existingID); n != 1 {
 		t.Fatalf("expected agent binding to survive overwrite, got %d", n)
 	}
@@ -308,7 +295,6 @@ func TestRuntimeLocalSkillImport_OverwriteNonCreatorFails(t *testing.T) {
 	if got.Status != runtimeAsyncFailed {
 		t.Fatalf("status = %s, want failed", got.Status)
 	}
-	// Original skill (owned by someone else) must be untouched.
 	if desc := getSkillDescription(t, existingID); desc != "original description" {
 		t.Fatalf("forbidden overwrite must not mutate the skill, description = %q", desc)
 	}
@@ -322,8 +308,6 @@ func TestRuntimeLocalSkillImport_OverwriteTargetDeletedFails(t *testing.T) {
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	name := fmt.Sprintf("overwrite-deleted-%d", time.Now().UnixNano())
 	deletedID := createImportTargetSkill(t, name, testUserID, nil)
-	// Simulate the target being deleted between the user's confirm and the
-	// daemon report.
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM skill WHERE id = $1`, deletedID); err != nil {
 		t.Fatalf("delete target skill: %v", err)
 	}
@@ -336,7 +320,6 @@ func TestRuntimeLocalSkillImport_OverwriteTargetDeletedFails(t *testing.T) {
 	if got.Status != runtimeAsyncFailed {
 		t.Fatalf("status = %s, want failed", got.Status)
 	}
-	// Must NOT fall back to creating a new skill by name.
 	if n := countSkillsByName(t, name); n != 0 {
 		t.Fatalf("deleted-target overwrite must not create a skill, got %d", n)
 	}
@@ -357,12 +340,9 @@ func TestRuntimeLocalSkillImport_OverwriteRetryIsIdempotent(t *testing.T) {
 		"target_skill_id": existingID,
 	})
 
-	// First report wins and overwrites the skill.
 	reportLocalSkillImport(t, runtimeID, requestID,
 		reportBundleBody(name, "first overwrite", "# first", map[string]string{"first.md": "1"}))
 
-	// A retry of the SAME request id with a different bundle must be ignored
-	// (the request is already terminal) — no second write.
 	reportLocalSkillImport(t, runtimeID, requestID,
 		reportBundleBody(name, "second overwrite", "# second", map[string]string{"second.md": "2", "extra.md": "3"}))
 
@@ -398,10 +378,6 @@ func TestRuntimeLocalSkillImportRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-// TestRuntimeLocalSkillImport_OverwriteNameMismatchFails verifies the guard
-// against a stale / wrong target_skill_id: if the target's name no longer
-// matches the imported skill, the overwrite fails instead of writing one
-// skill's content onto another.
 func TestRuntimeLocalSkillImport_OverwriteNameMismatchFails(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -412,7 +388,6 @@ func TestRuntimeLocalSkillImport_OverwriteNameMismatchFails(t *testing.T) {
 	otherName := fmt.Sprintf("overwrite-other-%d", time.Now().UnixNano())
 	targetID := createImportTargetSkill(t, targetName, testUserID, nil)
 
-	// Overwrite targets targetID but the imported bundle is named otherName.
 	got := runLocalSkillImport(t, runtimeID,
 		map[string]any{"skill_key": "review-helper", "action": "overwrite", "target_skill_id": targetID},
 		reportBundleBody(otherName, "incoming description", "# incoming", map[string]string{"a.md": "A"}),

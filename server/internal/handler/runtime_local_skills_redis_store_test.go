@@ -255,9 +255,6 @@ func TestRedisLocalSkillImportStore_PreservesCreatorID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	// CreatorID is `json:"-"` on the public struct — verify the Redis envelope
-	// restores it, otherwise ReportLocalSkillImportResult can't attribute the
-	// created Skill to anyone.
 	if got.CreatorID != "user-42" {
 		t.Fatalf("creator id lost round trip: %q", got.CreatorID)
 	}
@@ -267,8 +264,6 @@ func TestRedisLocalSkillImportStore_PreservesCreatorID(t *testing.T) {
 	if got.Description == nil || *got.Description != desc {
 		t.Fatalf("description lost: %v", got.Description)
 	}
-	// The overwrite intent must survive the round trip — it is consumed at
-	// report time, not delivered to the daemon.
 	if got.Action != LocalSkillImportActionOverwrite {
 		t.Fatalf("action lost round trip: %q", got.Action)
 	}
@@ -376,8 +371,6 @@ func TestRedisLocalSkillImportStore_PopPendingAcrossInstances(t *testing.T) {
 	}
 }
 
-// Smoke test: make sure the runtime-local-skill store keys don't collide
-// across runtimes — PopPending for runtime A must not see B's pending.
 func TestRedisLocalSkillListStore_PerRuntimeIsolation(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	ctx := context.Background()
@@ -399,7 +392,6 @@ func TestRedisLocalSkillListStore_PerRuntimeIsolation(t *testing.T) {
 		t.Fatalf("pop returned wrong request: %+v", popped)
 	}
 
-	// A's request is still pending.
 	ids, err := rdb.ZRange(ctx, store.pendingKey("runtime-A"), 0, -1).Result()
 	if err != nil {
 		t.Fatalf("zrange A: %v", err)
@@ -409,15 +401,6 @@ func TestRedisLocalSkillListStore_PerRuntimeIsolation(t *testing.T) {
 	}
 }
 
-// TestRedisLocalSkillListStore_PopPendingAtomicClaim pins the PR-1557 review
-// fix: the claim (ZREM pending + persist running record) MUST land as one
-// atomic unit. If the old two-step ordering came back ("ZRem first, SET
-// second") a transient error between the two would strand the request — not
-// in pending, still serialised as "pending" on disk, never re-dispatched.
-//
-// We verify the happy-path invariant end-to-end: after one PopPending the
-// record is in "running" state AND a second PopPending on the same runtime
-// returns nothing (i.e. the pending zset no longer references the id).
 func TestRedisLocalSkillListStore_PopPendingAtomicClaim(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	ctx := context.Background()
@@ -444,8 +427,6 @@ func TestRedisLocalSkillListStore_PopPendingAtomicClaim(t *testing.T) {
 		t.Fatalf("record status = %s, want running", got.Status)
 	}
 
-	// The pending queue must no longer reference the claimed id — exposed
-	// via PopPending rather than poking the zset directly.
 	again, err := store.PopPending(ctx, "runtime-atomic")
 	if err != nil {
 		t.Fatalf("second pop: %v", err)
@@ -460,7 +441,6 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisLocalSkillImportStore(rdb)
 
-	// Create 5 pending imports.
 	ids := make([]string, 5)
 	for i := range ids {
 		req, err := store.Create(ctx, LocalSkillImportRequestInput{
@@ -475,7 +455,6 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 		ids[i] = req.ID
 	}
 
-	// Pop batch of 3 — should return 3 in creation order.
 	batch, err := store.PopPendingBatch(ctx, "runtime-batch", 3)
 	if err != nil {
 		t.Fatalf("pop batch: %v", err)
@@ -489,7 +468,6 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 		}
 	}
 
-	// Pop remaining — should get 2.
 	rest, err := store.PopPendingBatch(ctx, "runtime-batch", 10)
 	if err != nil {
 		t.Fatalf("pop rest: %v", err)
@@ -498,7 +476,6 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 		t.Fatalf("expected 2 remaining, got %d", len(rest))
 	}
 
-	// Pop again — nothing left.
 	empty, err := store.PopPendingBatch(ctx, "runtime-batch", 10)
 	if err != nil {
 		t.Fatalf("pop empty: %v", err)
@@ -508,8 +485,6 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 	}
 }
 
-// Compile-time assertions: the stores MUST satisfy the lifecycle contracts so
-// NewRouter's assignment stays type-safe.
 var (
 	_ runtimeListRequestStore[RuntimeLocalSkillListRequest, protocol.RuntimeLocalSkillSummary] = NewRedisLocalSkillListStore(nil)
 	_ LocalSkillImportStore                                                                    = (*redisLocalSkillImportStore)(nil)

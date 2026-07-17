@@ -375,7 +375,6 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 
-	// Create 5 import requests.
 	skillKeys := []string{"skill-a", "skill-b", "skill-c", "skill-d", "skill-e"}
 	importIDs := make([]string, 0, len(skillKeys))
 	for _, key := range skillKeys {
@@ -398,10 +397,7 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 		importIDs = append(importIDs, importReq.ID)
 	}
 
-	// Single heartbeat should return all 5 via the plural field.
 	heartbeatResp := claimRuntimeLocalSkillImports(t, runtimeID)
-
-	// The batch field contains all 5.
 	pluralRaw, ok := heartbeatResp["pending_local_skill_imports"].([]any)
 	if !ok {
 		t.Fatalf("expected pending_local_skill_imports array, got %T", heartbeatResp["pending_local_skill_imports"])
@@ -410,7 +406,6 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 		t.Fatalf("expected %d pending imports, got %d", len(skillKeys), len(pluralRaw))
 	}
 
-	// Verify IDs match.
 	gotIDs := make(map[string]bool)
 	for _, item := range pluralRaw {
 		m, ok := item.(map[string]any)
@@ -425,7 +420,6 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 		}
 	}
 
-	// Second heartbeat should return nothing (all were claimed).
 	heartbeatResp2 := claimRuntimeLocalSkillImports(t, runtimeID)
 	if _, ok := heartbeatResp2["pending_local_skill_imports"]; ok {
 		t.Fatalf("second heartbeat should have no pending imports plural, got %v", heartbeatResp2)
