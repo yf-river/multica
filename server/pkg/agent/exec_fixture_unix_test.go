@@ -8,12 +8,7 @@ import (
 	"testing"
 )
 
-// writeTestExecutable writes content to path with exec perms while holding
-// syscall.ForkLock.RLock, so no concurrent t.Parallel() sibling can fork
-// between our OpenFile and Close. Without this, Linux ETXTBSY fires when
-// the sibling's fork child inherits our still-open write fd and the
-// subsequent exec of the file sees "text file busy" (seen on CI as
-// TestKimiBackendInvokesACPSubcommand: fork/exec ... text file busy).
+// writeTestExecutable serializes executable writes with concurrent forks.
 func writeTestExecutable(tb testing.TB, path string, content []byte) {
 	tb.Helper()
 	syscall.ForkLock.RLock()
