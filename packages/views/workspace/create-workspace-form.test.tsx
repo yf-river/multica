@@ -1,37 +1,21 @@
-import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { I18nProvider } from "@multica/core/i18n/react";
 import { configStore } from "@multica/core/config";
-import enCommon from "../locales/zh-Hans/common.json";
-import enWorkspace from "../locales/zh-Hans/workspace.json";
+import { renderWithI18n } from "../test/i18n";
 import { CreateWorkspaceForm } from "./create-workspace-form";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { common: enCommon, workspace: enWorkspace },
-};
 
 const mockMutate = vi.fn();
 vi.mock("@multica/core/workspace/mutations", () => ({
   useCreateWorkspace: () => ({ mutate: mockMutate, isPending: false }),
 }));
 
-function I18nWrapper({ children }: { children: ReactNode }) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      {children}
-    </I18nProvider>
-  );
-}
-
 function renderForm(onSuccess = vi.fn()) {
   const qc = new QueryClient();
-  return render(
+  return renderWithI18n(
     <QueryClientProvider client={qc}>
       <CreateWorkspaceForm onSuccess={onSuccess} />
     </QueryClientProvider>,
-    { wrapper: I18nWrapper },
   );
 }
 

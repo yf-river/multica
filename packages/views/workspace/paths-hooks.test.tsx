@@ -9,11 +9,6 @@ import {
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "@multica/core/types";
 
-// Hook tests for @multica/core/paths live here because packages/core/ runs
-// Vitest in node environment (no jsdom). packages/views/ already has jsdom +
-// @testing-library/react configured, so it's the correct home per CLAUDE.md
-// testing rules ("shared UI components live in packages/views/*.test.tsx").
-
 function makeWorkspace(over: Partial<Workspace>): Workspace {
   return {
     id: "id-default",
@@ -27,6 +22,15 @@ function makeWorkspace(over: Partial<Workspace>): Workspace {
     avatar_url: null,
     ...over,
   };
+}
+
+function SlugProbe() {
+  return <div data-testid="slug">{useWorkspaceSlug() ?? "null"}</div>;
+}
+
+function WorkspaceProbe() {
+  const workspace = useCurrentWorkspace();
+  return <div data-testid="name">{workspace?.name ?? "none"}</div>;
 }
 
 function setup(slug: string | null, wsList: Workspace[] = []) {
@@ -43,18 +47,12 @@ function setup(slug: string | null, wsList: Workspace[] = []) {
 
 describe("useWorkspaceSlug", () => {
   it("returns the provided slug", () => {
-    function Probe() {
-      return <div data-testid="slug">{useWorkspaceSlug() ?? "null"}</div>;
-    }
-    render(<Probe />, { wrapper: setup("acme") });
+    render(<SlugProbe />, { wrapper: setup("acme") });
     expect(screen.getByTestId("slug").textContent).toBe("acme");
   });
 
   it("returns null when no slug is provided", () => {
-    function Probe() {
-      return <div data-testid="slug">{useWorkspaceSlug() ?? "null"}</div>;
-    }
-    render(<Probe />, { wrapper: setup(null) });
+    render(<SlugProbe />, { wrapper: setup(null) });
     expect(screen.getByTestId("slug").textContent).toBe("null");
   });
 });
@@ -63,29 +61,17 @@ describe("useCurrentWorkspace", () => {
   const acme = makeWorkspace({ id: "id-1", slug: "acme", name: "Acme" });
 
   it("resolves workspace from slug and list", () => {
-    function Probe() {
-      const ws = useCurrentWorkspace();
-      return <div data-testid="name">{ws?.name ?? "none"}</div>;
-    }
-    render(<Probe />, { wrapper: setup("acme", [acme]) });
+    render(<WorkspaceProbe />, { wrapper: setup("acme", [acme]) });
     expect(screen.getByTestId("name").textContent).toBe("Acme");
   });
 
   it("returns null when slug does not match any workspace", () => {
-    function Probe() {
-      const ws = useCurrentWorkspace();
-      return <div data-testid="name">{ws?.name ?? "none"}</div>;
-    }
-    render(<Probe />, { wrapper: setup("bogus", [acme]) });
+    render(<WorkspaceProbe />, { wrapper: setup("bogus", [acme]) });
     expect(screen.getByTestId("name").textContent).toBe("none");
   });
 
   it("returns null when no slug is provided", () => {
-    function Probe() {
-      const ws = useCurrentWorkspace();
-      return <div data-testid="name">{ws?.name ?? "none"}</div>;
-    }
-    render(<Probe />, { wrapper: setup(null, [acme]) });
+    render(<WorkspaceProbe />, { wrapper: setup(null, [acme]) });
     expect(screen.getByTestId("name").textContent).toBe("none");
   });
 });

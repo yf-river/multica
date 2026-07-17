@@ -1,26 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement, ReactNode } from "react";
-import { I18nProvider } from "@multica/core/i18n/react";
-import zhCommon from "../locales/zh-Hans/common.json";
-import zhAuth from "../locales/zh-Hans/auth.json";
-import zhSettings from "../locales/zh-Hans/settings.json";
+import { renderWithI18n } from "../test/i18n";
 
-const TEST_RESOURCES = {
-  "zh-Hans": { common: zhCommon, auth: zhAuth, settings: zhSettings },
-};
-
-function I18nWrapper({ children }: { children: ReactNode }) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      {children}
-    </I18nProvider>
-  );
-}
-
-function renderWithI18n(ui: ReactElement) {
-  return render(ui, { wrapper: I18nWrapper });
+async function submitCredentials(password: string) {
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("账号"), "alice");
+  await user.type(screen.getByLabelText("密码"), password);
+  await user.click(screen.getByRole("button", { name: "继续" }));
 }
 
 const mockLogin = vi.hoisted(() => vi.fn());
@@ -103,12 +90,8 @@ describe("LoginPage", () => {
 
   it("logs in with account and password", async () => {
     mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice", name: "Alice" });
-    const user = userEvent.setup();
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    await user.type(screen.getByLabelText("账号"), "alice");
-    await user.type(screen.getByLabelText("密码"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "继续" }));
+    await submitCredentials("correct-password");
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith("alice", "correct-password");
@@ -119,29 +102,21 @@ describe("LoginPage", () => {
 
   it("shows login errors", async () => {
     mockLogin.mockRejectedValueOnce(new Error("账号或密码错误"));
-    const user = userEvent.setup();
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    await user.type(screen.getByLabelText("账号"), "alice");
-    await user.type(screen.getByLabelText("密码"), "wrong-password");
-    await user.click(screen.getByRole("button", { name: "继续" }));
+    await submitCredentials("wrong-password");
 
     expect(await screen.findByText("账号或密码错误")).toBeInTheDocument();
   });
 
   it("uses direct API login for CLI callback", async () => {
     mockApiLogin.mockResolvedValueOnce({ token: "jwt-token", user: { id: "u1" } });
-    const user = userEvent.setup();
     renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         cliCallback={{ url: "http://localhost:39876/callback", state: "state-1" }}
       />,
     );
-
-    await user.type(screen.getByLabelText("账号"), "alice");
-    await user.type(screen.getByLabelText("密码"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "继续" }));
+    await submitCredentials("correct-password");
 
     await waitFor(() => {
       expect(mockApiLogin).toHaveBeenCalledWith("alice", "correct-password");
