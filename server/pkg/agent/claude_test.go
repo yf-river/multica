@@ -545,8 +545,7 @@ func TestMergeEnvFiltersClaudeCodeVars(t *testing.T) {
 	if !found["CLAUDECODEX=keep-me"] {
 		t.Fatalf("expected unrelated env vars to be preserved, got %v", env)
 	}
-	// User-facing CLAUDE_CODE_* config must reach the child — stripping
-	// CLAUDE_CODE_GIT_BASH_PATH is what broke Claude Code on Windows (#3671).
+	// User-configurable CLAUDE_CODE_* values must reach the child.
 	if !found["CLAUDE_CODE_GIT_BASH_PATH=C:\\Program Files\\Git\\bin\\bash.exe"] {
 		t.Fatalf("expected CLAUDE_CODE_GIT_BASH_PATH to be preserved, got %v", env)
 	}
@@ -716,12 +715,7 @@ func TestClaudeExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	// Fake claude binary: reads the initial stdin frame so writeClaudeInput
-	// succeeds, writes a canonical V8-abort line to stderr, then exits
-	// non-zero before emitting any stream-json to stdout. This is the exact
-	// failure mode that motivated PR #1674 — without sampling stderrBuf.Tail()
-	// after cmd.Wait() returns, Result.Error would be a useless
-	// "exit status 3".
+	// Exit before stream output and require the stderr tail in diagnostics.
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _\n" +
 		"echo \"FATAL ERROR: V8 abort: assertion failed\" >&2\n" +

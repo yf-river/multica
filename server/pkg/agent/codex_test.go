@@ -626,9 +626,7 @@ func TestCodexRawThreadStatusIdle(t *testing.T) {
 	}
 }
 
-// Regression for #1181: subagent threads (e.g. memory consolidation)
-// are multiplexed on the same stdio pipe. Their turn/completed must not
-// terminate the main turn.
+// Subagent events share the stdio pipe but must not terminate the main turn.
 func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -653,8 +651,7 @@ func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	}
 }
 
-// Regression for #1181: subagent agentMessage/final_answer must not
-// trigger turn completion or leak text into the main output stream.
+// Subagent final answers must not complete or leak into the main turn.
 func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -742,44 +739,31 @@ func TestCodexHandleInvalidJSON(t *testing.T) {
 
 func TestExtractThreadID(t *testing.T) {
 	t.Parallel()
-
-	data := json.RawMessage(`{"thread":{"id":"t-123"}}`)
-	got := extractThreadID(data)
-	if got != "t-123" {
-		t.Fatalf("expected t-123, got %q", got)
-	}
-}
-
-func TestExtractThreadIDMissing(t *testing.T) {
-	t.Parallel()
-
-	got := extractThreadID(json.RawMessage(`{}`))
-	if got != "" {
-		t.Fatalf("expected empty, got %q", got)
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: `{"thread":{"id":"t-123"}}`, want: "t-123"},
+		{raw: `{}`},
+	} {
+		if got := extractThreadID(json.RawMessage(tc.raw)); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
 	}
 }
 
 func TestExtractNestedString(t *testing.T) {
 	t.Parallel()
-
-	m := map[string]any{
-		"a": map[string]any{
-			"b": "value",
-		},
-	}
-	got := extractNestedString(m, "a", "b")
-	if got != "value" {
-		t.Fatalf("expected 'value', got %q", got)
-	}
-}
-
-func TestExtractNestedStringMissingKey(t *testing.T) {
-	t.Parallel()
-
-	m := map[string]any{"a": "flat"}
-	got := extractNestedString(m, "a", "b")
-	if got != "" {
-		t.Fatalf("expected empty, got %q", got)
+	for _, tc := range []struct {
+		value any
+		want  string
+	}{
+		{value: map[string]any{"b": "value"}, want: "value"},
+		{value: "flat"},
+	} {
+		if got := extractNestedString(map[string]any{"a": tc.value}, "a", "b"); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
 	}
 }
 
