@@ -65,16 +65,6 @@ type ghInstallationPayload struct {
 	} `json:"installation"`
 }
 
-func githubInstallationAccountFromPayload(p ghInstallationPayload) (login, accountType string, avatar *string, ok bool) {
-	login = strings.TrimSpace(p.Installation.Account.Login)
-	if login == "" {
-		return "", "", nil, false
-	}
-	accountType = coalesce(p.Installation.Account.Type, "User")
-	avatar = strPtrOrNil(p.Installation.Account.AvatarURL)
-	return login, accountType, avatar, true
-}
-
 func (h *Handler) handleInstallationEvent(ctx context.Context, body []byte) {
 	var p ghInstallationPayload
 	if err := json.Unmarshal(body, &p); err != nil {
@@ -110,11 +100,13 @@ func (h *Handler) handleInstallationEvent(ctx context.Context, body []byte) {
 			"id": uuidToString(deleted.ID),
 		})
 	case "created", "new_permissions_accepted", "unsuspend":
-		login, accountType, avatar, ok := githubInstallationAccountFromPayload(p)
-		if !ok {
+		login := strings.TrimSpace(p.Installation.Account.Login)
+		if login == "" {
 			slog.Warn("github: installation payload missing account login", "installation_id", p.Installation.ID)
 			return
 		}
+		accountType := coalesce(p.Installation.Account.Type, "User")
+		avatar := textToPtr(strToText(p.Installation.Account.AvatarURL))
 
 		// We don't know which workspace this maps to from the webhook alone.
 		// If the setup callback has not created the workspace binding yet,
@@ -232,9 +224,9 @@ func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {
 		Title:               p.PullRequest.Title,
 		State:               state,
 		HtmlUrl:             p.PullRequest.HTMLURL,
-		Branch:              ptrToText(strPtrOrNil(p.PullRequest.Head.Ref)),
-		AuthorLogin:         ptrToText(strPtrOrNil(p.PullRequest.User.Login)),
-		AuthorAvatarUrl:     ptrToText(strPtrOrNil(p.PullRequest.User.AvatarURL)),
+		Branch:              strToText(p.PullRequest.Head.Ref),
+		AuthorLogin:         strToText(p.PullRequest.User.Login),
+		AuthorAvatarUrl:     strToText(p.PullRequest.User.AvatarURL),
 		MergedAt:            parseGHTime(p.PullRequest.MergedAt),
 		ClosedAt:            parseGHTime(p.PullRequest.ClosedAt),
 		PrCreatedAt:         parseGHTimeRequired(p.PullRequest.CreatedAt),
@@ -261,18 +253,10 @@ func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {
 	workspaceID := uuidToString(inst.WorkspaceID)
 	resp := githubPullRequestToResponse(pr)
 
-	// Webhooks mirror provider MR/PR state, but issue association is now a
-	// synchronous platform action (`multica issue mr create` or explicit link).
-	// We intentionally do not infer links from branch/title/body identifiers:
-	// async webhooks are too delayed and deployment-dependent to be a task
-	// completion gate.
-	linkedIssueIDs := make([]string, 0)
-
-	// Broadcast PR change to the workspace so any open issue detail page
-	// re-queries its PR list.
+	// Issue association is explicit; webhook text never infers links.
 	h.publish(protocol.EventPullRequestUpdated, workspaceID, "system", "", map[string]any{
 		"pull_request":     resp,
-		"linked_issue_ids": linkedIssueIDs,
+		"linked_issue_ids": []string{},
 	})
 }
 
@@ -547,12 +531,4 @@ func coalesce(a, fallback string) string {
 		return fallback
 	}
 	return a
-}
-
-func strPtrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	v := s
-	return &v
 }
