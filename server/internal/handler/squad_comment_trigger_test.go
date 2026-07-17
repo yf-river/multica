@@ -67,6 +67,30 @@ func cleanupSquadCommentIssue(t *testing.T, issueID string) {
 	})
 }
 
+func createAssignedSquadCommentIssue(t *testing.T, title, status, squadID string, projectID pgtype.UUID) db.Issue {
+	t.Helper()
+	ctx := context.Background()
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, project_id, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, $4, $5, 'squad', $6, $7)
+		RETURNING id
+	`, testWorkspaceID, testUserID, title, status, projectID, squadID, nextHandlerTestIssueNumber(t)).Scan(&issueID); err != nil {
+		t.Fatalf("create assigned Squad issue: %v", err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load assigned Squad issue: %v", err)
+	}
+	return issue
+}
+
 func TestAssignedSquadCommentTriggerPreservesSquadLookupFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -91,39 +115,10 @@ type squadCommentTriggerFixture struct {
 
 func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 	t.Helper()
-	ctx := context.Background()
-
-	// Reuse the seeded "Handler Test Agent" as the leader — it has a runtime.
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load leader agent: %v", err)
-	}
-
-	// Spin up a second agent in the same workspace as a non-leader mention
-	// target. createHandlerTestAgent installs a t.Cleanup row deletion.
+	leaderID := oldestHandlerTestAgentID(t)
 	otherID := createHandlerTestAgent(t, "Squad Comment Other", nil)
-
 	squadID := createHandlerTestSquad(t, "Squad Comment Trigger", leaderID)
-
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'squad', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "squad comment trigger", squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
-	}
+	issue := createAssignedSquadCommentIssue(t, "squad comment trigger", "todo", squadID, pgtype.UUID{})
 
 	return squadCommentTriggerFixture{
 		Issue:    issue,
@@ -175,17 +170,7 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 		t.Fatalf("create squad members: %v", err)
 	}
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, 'sop role-key mention trigger', 'todo', 'squad', $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, squadID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	issueID := uuidToString(createAssignedSquadCommentIssue(t, "sop role-key mention trigger", "todo", squadID, pgtype.UUID{}).ID)
 
 	w, _ := (handlerCommentIssueFixture{ID: issueID}).postComment(t, map[string]any{
 		"content": "## PM 调度\n\n请 **01-需求澄清** (@01-clarify) 开始澄清。",
@@ -354,30 +339,8 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 			{"key":"02-design","name":"02-方案设计","role_key":"02-design"}
 		]
 	}`
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5)
-		RETURNING id
-	`, testWorkspaceID, "SOP Auto Continue Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
-
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "sop auto continue worker completion", squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	squadID := createSOPTestSquad(t, "SOP Auto Continue Squad", leaderID, json.RawMessage(profile))
+	issueID := uuidToString(createAssignedSquadCommentIssue(t, "sop auto continue worker completion", "in_progress", squadID, pgtype.UUID{}).ID)
 
 	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
@@ -518,30 +481,8 @@ func newFinalSOPTaskFixture(t *testing.T, name, issueStatus string, projectID pg
 	leaderRuntimeID := squadAgentRuntimeID(t, leaderID)
 	verifyRuntimeID := squadAgentRuntimeID(t, verifyID)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5)
-		RETURNING id
-	`, testWorkspaceID, name+" Squad", leaderID, testUserID, finalSOPTestProfile).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
-
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, project_id, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, $4, $5, 'squad', $6, $7)
-		RETURNING id
-	`, testWorkspaceID, testUserID, name, issueStatus, projectID, squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	squadID := createSOPTestSquad(t, name+" Squad", leaderID, json.RawMessage(finalSOPTestProfile))
+	issueID := uuidToString(createAssignedSquadCommentIssue(t, name, issueStatus, squadID, projectID).ID)
 
 	run, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
@@ -781,62 +722,25 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 
 func TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention(t *testing.T) {
 	requireHandlerDatabase(t)
-	ctx := context.Background()
 	fx := newSquadCommentTriggerFixture(t)
 	issueID := uuidToString(fx.Issue.ID)
+	issue := handlerCommentIssueFixture{ID: issueID}
 
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-	})
-
-	countQueued := func(agentID string) int {
-		var n int
-		if err := testPool.QueryRow(ctx,
-			`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-			issueID, agentID,
-		).Scan(&n); err != nil {
-			t.Fatalf("count tasks for %s: %v", agentID, err)
-		}
-		return n
-	}
-
-	postMemberComment := func(body map[string]any) CommentResponse {
-		t.Helper()
-		w := httptest.NewRecorder()
-		r := newRequest("POST", "/api/issues/"+issueID+"/comments", body)
-		r = withURLParam(r, "id", issueID)
-		testHandler.CreateComment(w, r)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp CommentResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatalf("decode comment: %v", err)
-		}
-		return resp
-	}
-
-	// 1. Member top-level comment mentions OtherAgent.
-	//    Leader must be skipped; OtherAgent must be enqueued via the mention path.
-	parent := postMemberComment(map[string]any{
+	_, parent := issue.postComment(t, map[string]any{
 		"content": "[@Other](mention://agent/" + fx.OtherID + ") please take this",
-	})
-	if got := countQueued(fx.LeaderID); got != 0 {
+	}, nil)
+	if got := issue.countQueuedTasks(t, fx.LeaderID); got != 0 {
 		t.Fatalf("after parent (@OtherAgent): expected 0 leader tasks (skipped), got %d", got)
 	}
-	if got := countQueued(fx.OtherID); got != 1 {
+	if got := issue.countQueuedTasks(t, fx.OtherID); got != 1 {
 		t.Fatalf("after parent (@OtherAgent): expected 1 OtherAgent task (mention path), got %d", got)
 	}
 
-	// 2. Member posts a reply in the same thread with NO mentions.
-	//    The leader-skip helper must inspect only the reply's body (empty),
-	//    NOT the parent's @OtherAgent mention. Leader must wake up.
-	postMemberComment(map[string]any{
+	issue.postComment(t, map[string]any{
 		"content":   "any update?",
 		"parent_id": parent.ID,
-	})
-	if got := countQueued(fx.LeaderID); got != 1 {
+	}, nil)
+	if got := issue.countQueuedTasks(t, fx.LeaderID); got != 1 {
 		t.Fatalf("after plain reply: expected 1 leader task (no parent inheritance), got %d", got)
 	}
 }
@@ -847,16 +751,6 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 	fx := newSquadCommentTriggerFixture(t)
 	issueID := uuidToString(fx.Issue.ID)
 
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-	})
-
-	// Seed a worker task for the leader agent on this issue so the guard
-	// infers "agent's last activity was a worker task" — i.e. L is running
-	// in its worker role when it posts the comment. We make it running (not
-	// completed) so we can hand its ID back through X-Task-ID for the
-	// resolveActor agent-identity check.
 	runtimeID := squadAgentRuntimeID(t, fx.LeaderID)
 	var workerTaskID string
 	if err := testPool.QueryRow(ctx, `
@@ -867,7 +761,6 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 		t.Fatalf("seed worker task: %v", err)
 	}
 
-	// L posts a comment through its current task-token identity.
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
 		"content": "done — pushed the change",
@@ -879,9 +772,6 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// No leader-role task should be enqueued while the worker task is still
-	// active. Otherwise a normal result comment can race the current task's
-	// completion and create two simultaneous executions on the same issue.
 	var leaderTasks int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*) FROM agent_task_queue
@@ -918,17 +808,7 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 			{"key":"05","role_key":"05-verify"}
 		]
 	}`
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5)
-		RETURNING id
-	`, testWorkspaceID, "Cross Project Gate Squad "+randomID()[:8], leaderID, testUserID, profile).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	squadID := createSOPTestSquad(t, "Cross Project Gate Squad "+randomID()[:8], leaderID, json.RawMessage(profile))
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO squad_member (squad_id, member_type, member_id, role)
 		VALUES ($1, 'agent', $2, '04')
@@ -936,21 +816,8 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 		t.Fatalf("create squad member: %v", err)
 	}
 
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "cross-project parent gate "+randomID()[:8], squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, issueID)
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	issue := createAssignedSquadCommentIssue(t, "cross-project parent gate "+randomID()[:8], "in_progress", squadID, pgtype.UUID{})
+	issueID := uuidToString(issue.ID)
 	if childDone {
 		childNumber := nextHandlerTestIssueNumber(t)
 		if _, err := testPool.Exec(ctx, `
@@ -959,10 +826,6 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 		`, testWorkspaceID, testUserID, issueID, childNumber); err != nil {
 			t.Fatalf("create done child: %v", err)
 		}
-	}
-	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
@@ -1013,15 +876,27 @@ func countCrossProjectGateComments(t *testing.T, issueID string) int {
 	return count
 }
 
+func insertCrossProjectContextComment(t *testing.T, fx crossProjectGateSOPFixture, authorType, content string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, $3, $4, $5)
+	`, testWorkspaceID, fx.IssueID, authorType, fx.LeaderID, content); err != nil {
+		t.Fatalf("insert cross-project context comment: %v", err)
+	}
+}
+
+func enqueueCrossProjectStage(t *testing.T, fx crossProjectGateSOPFixture) int {
+	t.Helper()
+	comment := insertSOPPMMentionComment(t, fx)
+	enqueueMentionedAgentTasksForTest(t, context.Background(), fx.Issue, comment, "agent", fx.LeaderID)
+	return countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID)
+}
+
 func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMissing(t *testing.T) {
 	requireHandlerDatabase(t)
-	ctx := context.Background()
 	fx := newCrossProjectGateSOPFixture(t, false)
-	comment := insertSOPPMMentionComment(t, fx)
-
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
-
-	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 0 {
+	if got := enqueueCrossProjectStage(t, fx); got != 0 {
 		t.Fatalf("parent 04 task count = %d, want 0 while required child is missing", got)
 	}
 	if got := countCrossProjectGateComments(t, fx.IssueID); got != 1 {
@@ -1059,81 +934,54 @@ func TestCreateCommentFailsClosedWhenCrossProjectGateProfileIsInvalid(t *testing
 	}
 }
 
-func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDone(t *testing.T) {
+func TestEnqueueCommentAgentTriggers_AllowsResolvedCrossProjectStages(t *testing.T) {
 	requireHandlerDatabase(t)
-	ctx := context.Background()
-	fx := newCrossProjectGateSOPFixture(t, true)
-	comment := insertSOPPMMentionComment(t, fx)
-
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
-
-	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
-		t.Fatalf("parent 04 task count = %d, want 1 after required child is done", got)
+	tests := []struct {
+		name             string
+		childDone        bool
+		wantGateComments int
+		prepare          func(*testing.T, crossProjectGateSOPFixture)
+	}{
+		{name: "required child is done", childDone: true},
+		{
+			name:             "latest task split has no dependency",
+			wantGateComments: 1,
+			prepare: func(t *testing.T, fx crossProjectGateSOPFixture) {
+				insertCrossProjectContextComment(t, fx, "system", "平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成。")
+				insertCrossProjectContextComment(t, fx, "agent", "## 03-task-split\n\nrequired cross-project dependencies: none\n\nnot required projects:\n- gateway: 不需要\n- ida-deployment: 不需要\n\n结论：无跨项目依赖，无 child issue。")
+			},
+		},
+		{
+			name: "cross-project child needs no further child",
+			prepare: func(t *testing.T, fx crossProjectGateSOPFixture) {
+				ctx := context.Background()
+				var parentID string
+				if err := testPool.QueryRow(ctx, `
+					INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, number)
+					VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress', $3)
+					RETURNING id
+				`, testWorkspaceID, testUserID, nextHandlerTestIssueNumber(t)).Scan(&parentID); err != nil {
+					t.Fatalf("create parent issue: %v", err)
+				}
+				t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, parentID) })
+				mustExec(t, ctx, `UPDATE issue SET parent_issue_id = $1 WHERE id = $2`, parentID, fx.IssueID)
+				insertCrossProjectContextComment(t, fx, "agent", "本 issue 是父 issue 的跨项目 child。\n\n03-任务拆分已闭环。无跨项目 child issue 需创建（仅目标项目自身变更）。")
+			},
+		},
 	}
-}
-
-func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenLatestTaskSplitHasNoCrossProjectDependency(t *testing.T) {
-	requireHandlerDatabase(t)
-	ctx := context.Background()
-	fx := newCrossProjectGateSOPFixture(t, false)
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
-		VALUES ($1, $2, 'system', $3, $4)
-	`, testWorkspaceID, fx.IssueID, fx.LeaderID, "平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成。"); err != nil {
-		t.Fatalf("insert stale gate comment: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
-		VALUES ($1, $2, 'agent', $3, $4)
-	`, testWorkspaceID, fx.IssueID, fx.LeaderID, "## 03-task-split\n\nrequired cross-project dependencies: none\n\nnot required projects:\n- gateway: 不需要\n- ida-deployment: 不需要\n\n结论：无跨项目依赖，无 child issue。"); err != nil {
-		t.Fatalf("insert no-dependency 03 comment: %v", err)
-	}
-	comment := insertSOPPMMentionComment(t, fx)
-
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
-
-	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
-		t.Fatalf("parent 04 task count = %d, want 1 when latest 03 has no cross-project dependency", got)
-	}
-}
-
-func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildren(t *testing.T) {
-	requireHandlerDatabase(t)
-	ctx := context.Background()
-	fx := newCrossProjectGateSOPFixture(t, false)
-
-	var parentID string
-	parentNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, number)
-		VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress', $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, parentNumber).Scan(&parentID); err != nil {
-		t.Fatalf("create parent issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, parentID)
-	})
-	if _, err := testPool.Exec(ctx, `
-		UPDATE issue SET parent_issue_id = $1 WHERE id = $2
-	`, parentID, fx.IssueID); err != nil {
-		t.Fatalf("mark issue as child: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
-		VALUES ($1, $2, 'agent', $3, $4)
-	`, testWorkspaceID, fx.IssueID, fx.LeaderID, "本 issue 是父 issue 的跨项目 child。\n\n03-任务拆分已闭环。无跨项目 child issue 需创建（仅目标项目自身变更）。"); err != nil {
-		t.Fatalf("insert child context comment: %v", err)
-	}
-	comment := insertSOPPMMentionComment(t, fx)
-
-	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, "agent", fx.LeaderID)
-
-	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
-		t.Fatalf("child 04 task count = %d, want 1 when no further child is required", got)
-	}
-	if got := countCrossProjectGateComments(t, fx.IssueID); got != 0 {
-		t.Fatalf("gate comment count = %d, want 0", got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fx := newCrossProjectGateSOPFixture(t, test.childDone)
+			if test.prepare != nil {
+				test.prepare(t, fx)
+			}
+			if got := enqueueCrossProjectStage(t, fx); got != 1 {
+				t.Fatalf("implementation task count = %d, want 1", got)
+			}
+			if got := countCrossProjectGateComments(t, fx.IssueID); got != test.wantGateComments {
+				t.Fatalf("gate comment count = %d, want %d", got, test.wantGateComments)
+			}
+		})
 	}
 }
 
@@ -1185,13 +1033,9 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 	requireHandlerDatabase(t)
 	ctx := context.Background()
 
-	// Use personalAgentTestFixture to get a personal agent + plain member.
 	agentID, _, memberID := personalAgentTestFixture(t)
-
-	// Create a squad with the personal agent as leader.
 	squadID := createHandlerTestSquad(t, "Private Leader Squad", agentID)
 
-	// Create an issue.
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
@@ -1202,7 +1046,6 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 	}
 	cleanupSquadCommentIssue(t, issueID)
 
-	// Plain member posts a comment mentioning the squad.
 	w := httptest.NewRecorder()
 	r := newRequestAs(memberID, "POST", "/api/issues/"+issueID+"/comments", map[string]any{
 		"content": "[@Squad](mention://squad/" + squadID + ") please handle",
@@ -1213,37 +1056,17 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The personal leader must NOT have a queued task — plain member lacks access.
-	var count int
-	if err := testPool.QueryRow(ctx,
-		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-		issueID, agentID,
-	).Scan(&count); err != nil {
-		t.Fatalf("count tasks: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("personal leader got %d queued tasks from plain member squad mention; want 0 (access denied)", count)
+	if got := (handlerCommentIssueFixture{ID: issueID}).countQueuedTasks(t, agentID); got != 0 {
+		t.Fatalf("personal leader got %d queued tasks from plain member squad mention; want 0 (access denied)", got)
 	}
 }
 
 func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
 	requireHandlerDatabase(t)
-	ctx := context.Background()
-
-	// Create a squad with a leader agent.
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load leader agent: %v", err)
-	}
-
+	leaderID := oldestHandlerTestAgentID(t)
 	squadID := createHandlerTestSquad(t, "Mention Trigger Squad", leaderID)
-
-	// Create an issue NOT assigned to the squad (assigned to nobody).
 	issue := createHandlerCommentIssueFixture(t, "squad mention trigger test")
 
-	// Post a comment that @mentions the squad.
 	w, _ := issue.postComment(t, map[string]any{
 		"content": "[@Squad](mention://squad/" + squadID + ") please handle this",
 	}, nil)
@@ -1251,7 +1074,6 @@ func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The squad's leader should have a queued task.
 	if got := issue.countQueuedTasks(t, leaderID); got != 1 {
 		t.Fatalf("after @squad mention: expected 1 leader task, got %d", got)
 	}
@@ -1264,15 +1086,7 @@ func TestCreateComment_MentionAssignedSquadLeaderCreatesLeaderRoleTask(t *testin
 	leaderID := createHandlerTestAgent(t, "Assigned Squad Mention Leader", nil)
 	squadID := createHandlerTestSquad(t, "Assigned Leader Mention Squad "+randomID()[:8], leaderID)
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, creator_type, creator_id, assignee_type, assignee_id)
-		VALUES ($1, $2, 'todo', 'member', $3, 'squad', $4)
-		RETURNING id
-	`, testWorkspaceID, "assigned squad leader mention dedupe "+randomID()[:8], testUserID, squadID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	cleanupSquadCommentIssue(t, issueID)
+	issueID := uuidToString(createAssignedSquadCommentIssue(t, "assigned squad leader mention dedupe "+randomID()[:8], "todo", squadID, pgtype.UUID{}).ID)
 
 	w, _ := (handlerCommentIssueFixture{ID: issueID}).postComment(t, map[string]any{
 		"content": "[@Leader](mention://agent/" + leaderID + ") please close this",
