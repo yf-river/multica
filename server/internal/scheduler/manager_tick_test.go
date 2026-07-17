@@ -8,28 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestManagerTickClosesAbandonedRunning exercises张大彪's blocker #1
-// directly through the Manager.runOnce tick path:
-//
-//	"Manager 在 plan 推进后必须能扫到旧的 stale RUNNING row 重入或
-//	 转 FAILED，不能只盯当前 latest——得加用例直接打 Manager 的 tick
-//	 路径，别再只测 tryClaim"
-//
-// We seed a stuck RUNNING row at an old plan_time (representing a
-// crashed pod's lease) and run Manager.runOnce. The tick must:
-//
-//   - close out the abandoned lease (status='FAILED',
-//     error_code='stale_timeout'), and
-//   - separately claim + complete the current latest plan_time.
-//
-// We verify both branches by registering a no-op handler that always
-// succeeds, so the current plan ends in SUCCESS while the old plan
-// ends in FAILED.
-//
-// The test runs the assertion for both AllowStaleReentry=true and
-// AllowStaleReentry=false, because before this fix the reentrant path
-// only swept stale rows during a same-plan_time replay, which never
-// happens in latest_only mode.
 func TestManagerTickClosesAbandonedRunning(t *testing.T) {
 	for _, allowStaleReentry := range []bool{true, false} {
 		t.Run(boolName("reentrant", allowStaleReentry), func(t *testing.T) {
@@ -115,15 +93,6 @@ func TestManagerTickClosesAbandonedRunning(t *testing.T) {
 	}
 }
 
-// TestManagerHandlerPanicWritesFailed exercises张大彪's blocker #2:
-//
-//	"handler 的 panic recover 必须把 panic 写进 handlerErr 走
-//	 finishFailure，绝对不能记成 SUCCESS，加测试钉死。"
-//
-// A panicking handler must NOT result in a SUCCESS audit row. This
-// test installs a handler that always panics, runs one tick, and
-// asserts the resulting row is FAILED with error_code=handler_panic
-// and a non-empty error_msg containing the panic value.
 func TestManagerHandlerPanicWritesFailed(t *testing.T) {
 	pool := integrationPool(t)
 	job := newTestJobSpec(uniqueJobName(t, "panic"))

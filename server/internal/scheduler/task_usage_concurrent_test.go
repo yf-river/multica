@@ -9,26 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The test seeds historical `task_usage` rows under a freshly created
-// agent / runtime / agent_task_queue fixture, advances the rollup
-// watermark backwards so a single tick has real work to do, then
-// invokes `rollup_task_usage_hourly()` directly from N concurrent
-// goroutines. This is the same SQL entrypoint the in-process
-// scheduler handler calls and the same one an operator can invoke for
-// recovery. Advisory lock 4246 inside the
-// SQL function must serialise them: exactly one caller advances the
-// watermark and recomputes the buckets, every other caller returns 0
-// rows immediately.
-//
-// The pass criteria are the operational invariants:
-//
-//   - Across all callers, exactly one returned a non-zero rows count
-//     (the one that won the advisory lock).
-//   - The watermark advanced exactly once — specifically, the resulting
-//     watermark equals what the winning caller computed, and not any
-//     multiple of it.
-//   - The post-rollup `task_usage_hourly` rows match what we expect
-//     from the seeded `task_usage` data (token sums + bucket count).
 func TestTaskUsageRollupConcurrentNoDoubleWrite(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
@@ -164,11 +144,6 @@ func TestTaskUsageRollupConcurrentNoDoubleWrite(t *testing.T) {
 	}
 }
 
-// seedRollupFixture creates the smallest viable
-// (workspace, runtime, agent, task) graph required for task_usage rows
-// to participate in the hourly rollup — the rollup window joins on
-// agent + runtime + (optional) issue, so all four parents must exist.
-// Returns the four IDs.
 func seedRollupFixture(t *testing.T, pool *pgxpool.Pool) (string, string, string, string) {
 	t.Helper()
 	ctx := context.Background()
