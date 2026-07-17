@@ -21,9 +21,12 @@ const mockQuickCreateStore = {
   setPrompt: mockSetPrompt,
   keepOpen: false,
   setKeepOpen: mockSetKeepOpen,
-  pendingOperation: null as { request: Record<string, unknown>; idempotencyKey: string } | null,
-  setPendingOperation: vi.fn((operation) => { mockQuickCreateStore.pendingOperation = operation; }),
-  clearPendingOperation: vi.fn(() => { mockQuickCreateStore.pendingOperation = null; }),
+  pending: undefined as
+    | { request: Record<string, unknown>; requestKey: string; createdAt: number }
+    | undefined,
+  setPending: vi.fn((pending) => {
+    mockQuickCreateStore.pending = pending;
+  }),
 };
 
 // Per-test override for the projects query, so tests can swap between
@@ -311,7 +314,7 @@ describe("AgentCreatePanel", () => {
     mockQuickCreateStore.lastProjectId = null;
     mockQuickCreateStore.prompt = "Persisted draft prompt";
     mockQuickCreateStore.keepOpen = false;
-    mockQuickCreateStore.pendingOperation = null;
+    mockQuickCreateStore.pending = undefined;
     mockProjectsQuery.data = [];
     mockProjectsQuery.isSuccess = true;
     mockSquadsData.list = [];

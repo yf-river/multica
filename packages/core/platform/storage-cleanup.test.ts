@@ -23,7 +23,7 @@ describe("clearWorkspaceStorage", () => {
       "multica_issues_view",
       "multica_my_issues_view",
       "multica_actor_issues_view",
-      "multica_quick_create",
+      "multica_quick_create_state",
       "multica_comment_collapse",
       "multica_comment_drafts",
       "multica_feedback_draft",

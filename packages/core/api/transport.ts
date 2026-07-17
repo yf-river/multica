@@ -93,7 +93,10 @@ export async function executePendingMutation<Operation, Result>(
 }
 
 export function executePendingCreateMutation<Request, Result>(
-  store: RecoverableOperationStore<PendingCreateOperation<Request>>,
+  store: Pick<
+    RecoverableOperationStore<PendingCreateOperation<Request>>,
+    "getState"
+  >,
   request: Request,
   mutate: (operation: PendingCreateOperation<Request>) => Promise<Result>,
 ): Promise<Result> {
@@ -103,6 +106,12 @@ export function executePendingCreateMutation<Request, Result>(
     () => ({ requestKey: generateUUID(), request, createdAt: Date.now() }),
     state.setPending,
     mutate,
+    (operation) => {
+      const current = store.getState();
+      if (current.pending?.requestKey === operation.requestKey) {
+        current.setPending();
+      }
+    },
   );
 }
 
