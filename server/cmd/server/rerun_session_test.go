@@ -86,6 +86,35 @@ func (f rerunTestFixture) getLastTaskSession() (db.GetLastTaskSessionRow, error)
 	})
 }
 
+func (f rerunTestFixture) insertFailedTask(t *testing.T, age, sessionID, workDir, failureReason string, errorText *string) {
+	t.Helper()
+	if _, err := testPool.Exec(f.ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, started_at, completed_at,
+			session_id, work_dir, failure_reason, error
+		)
+		VALUES ($1, $2, $3, 'failed', 0, now() - $4::interval, now() - $4::interval, $5, $6, $7, $8)
+	`, f.agentID, f.runtimeID, f.issueID, age, sessionID, workDir, failureReason, errorText); err != nil {
+		t.Fatalf("insert failed task: %v", err)
+	}
+}
+
+func (f rerunTestFixture) insertSourceTask(t *testing.T, agentID, issueID string, triggerCommentID *string) string {
+	t.Helper()
+	var taskID string
+	if err := testPool.QueryRow(f.ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, started_at, completed_at,
+			failure_reason, trigger_comment_id
+		)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '30 seconds', 'agent_error', $4)
+		RETURNING id
+	`, agentID, f.runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
+		t.Fatalf("insert source task: %v", err)
+	}
+	return taskID
+}
+
 func (f rerunTestFixture) insertRetryParentTask(t *testing.T, sessionID, workDir, failureReason string) string {
 	t.Helper()
 
@@ -137,114 +166,35 @@ func (f rerunTestFixture) rerunSourceTask(t *testing.T, sourceTaskID string) *db
 	return &result.Task
 }
 
-// TestGetLastTaskSessionExcludesPoisonedFailures asserts that the
-// (agent_id, issue_id) resume lookup skips failed tasks whose
-// failure_reason classifies them as poisoned terminal output. This is the
-// SQL-level half of the rerun-poisoned-session fix: without the filter, a
-// rerun would inherit the same session and replay the same bad output.
-func TestGetLastTaskSessionExcludesPoisonedFailures(t *testing.T) {
-	f := setupRerunSessionTest(t)
-
-	// Insert an older failed task with a poisoned classifier and a session_id.
-	// The poisoned task is the *most recent* one, so without the filter the
-	// resume lookup would return its session_id.
-	if _, err := testPool.Exec(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'HEALTHY-SESSION', '/tmp/healthy', 'timeout')
-	`, f.agentID, f.runtimeID, f.issueID); err != nil {
-		t.Fatalf("insert healthy failed task: %v", err)
+func TestGetLastTaskSessionFiltersPoisonedFailures(t *testing.T) {
+	tests := []struct {
+		failureReason string
+		errorText     *string
+		withFallback  bool
+	}{
+		{failureReason: "iteration_limit", withFallback: true},
+		{failureReason: "agent_fallback_message"},
+		{failureReason: "api_invalid_request"},
+		{failureReason: "codex_semantic_inactivity", errorText: stringPointer("codex semantic inactivity timeout after 10m0s without agent progress"), withFallback: true},
 	}
 
-	if _, err := testPool.Exec(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'POISONED-SESSION', '/tmp/poisoned', 'iteration_limit')
-	`, f.agentID, f.runtimeID, f.issueID); err != nil {
-		t.Fatalf("insert poisoned failed task: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.failureReason, func(t *testing.T) {
+			f := setupRerunSessionTest(t)
+			if tt.withFallback {
+				f.insertFailedTask(t, "2 minutes", "HEALTHY-SESSION", "/tmp/healthy", "timeout", nil)
+			}
+			f.insertFailedTask(t, "1 minute", "POISONED-SESSION", "/tmp/poisoned", tt.failureReason, tt.errorText)
 
-	prior, err := f.getLastTaskSession()
-	if err != nil {
-		t.Fatalf("GetLastTaskSession failed: %v", err)
-	}
-	if !prior.SessionID.Valid {
-		t.Fatal("expected to fall back to the healthy failed session, got no session")
-	}
-	if prior.SessionID.String == "POISONED-SESSION" {
-		t.Fatal("rerun would inherit poisoned session — filter is not active")
-	}
-	if prior.SessionID.String != "HEALTHY-SESSION" {
-		t.Fatalf("expected HEALTHY-SESSION, got %q", prior.SessionID.String)
-	}
-}
-
-// TestGetLastTaskSessionFallbackPoisonedClassifier covers the second
-// poisoned classifier so adding a third doesn't silently break this rule.
-func TestGetLastTaskSessionFallbackPoisonedClassifier(t *testing.T) {
-	f := setupRerunSessionTest(t)
-
-	if _, err := testPool.Exec(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 seconds', now() - interval '5 seconds', 'POISONED-FALLBACK', '/tmp/poisoned', 'agent_fallback_message')
-	`, f.agentID, f.runtimeID, f.issueID); err != nil {
-		t.Fatalf("insert poisoned failed task: %v", err)
-	}
-
-	prior, err := f.getLastTaskSession()
-	if err == nil && prior.SessionID.Valid {
-		t.Fatalf("expected no resumable session, got %q", prior.SessionID.String)
-	}
-}
-
-// TestGetLastTaskSessionExcludesAPIInvalidRequest covers the MUL-1921
-// case: an Anthropic 400 invalid_request_error (e.g. an oversized or
-// malformed image baked into the conversation) bakes the bad message
-// into the session history, so resuming would replay the same 400
-// forever. The daemon classifies these as 'api_invalid_request' and the
-// SQL filter must skip them on the resume lookup.
-func TestGetLastTaskSessionExcludesAPIInvalidRequest(t *testing.T) {
-	f := setupRerunSessionTest(t)
-
-	if _, err := testPool.Exec(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 seconds', now() - interval '5 seconds', 'POISONED-API400', '/tmp/poisoned', 'api_invalid_request')
-	`, f.agentID, f.runtimeID, f.issueID); err != nil {
-		t.Fatalf("insert poisoned failed task: %v", err)
-	}
-
-	prior, err := f.getLastTaskSession()
-	if err == nil && prior.SessionID.Valid {
-		t.Fatalf("expected no resumable session for api_invalid_request, got %q", prior.SessionID.String)
-	}
-}
-
-// TestGetLastTaskSessionExcludesCodexSemanticInactivity covers Codex
-// semantic inactivity timeouts: the failed task did establish a session, but
-// resuming it can replay the same stuck Codex state. The resume lookup must
-// skip that session.
-func TestGetLastTaskSessionExcludesCodexSemanticInactivity(t *testing.T) {
-	f := setupRerunSessionTest(t)
-
-	if _, err := testPool.Exec(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'HEALTHY-SESSION', '/tmp/healthy', 'timeout')
-	`, f.agentID, f.runtimeID, f.issueID); err != nil {
-		t.Fatalf("insert healthy failed task: %v", err)
-	}
-
-	if _, err := testPool.Exec(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'CODEX-STUCK-SESSION', '/tmp/codex-stuck', 'codex_semantic_inactivity',
-		        'codex semantic inactivity timeout after 10m0s without agent progress (last activity: tool-result:exec_command)')
-	`, f.agentID, f.runtimeID, f.issueID); err != nil {
-		t.Fatalf("insert codex semantic inactivity task: %v", err)
-	}
-
-	prior, err := f.getLastTaskSession()
-	if err != nil {
-		t.Fatalf("GetLastTaskSession failed: %v", err)
-	}
-	if prior.SessionID.String != "HEALTHY-SESSION" {
-		t.Fatalf("expected HEALTHY-SESSION, got %q", prior.SessionID.String)
+			prior, err := f.getLastTaskSession()
+			if tt.withFallback {
+				if err != nil || !prior.SessionID.Valid || prior.SessionID.String != "HEALTHY-SESSION" {
+					t.Fatalf("expected healthy fallback, got session=%+v err=%v", prior.SessionID, err)
+				}
+			} else if err == nil && prior.SessionID.Valid {
+				t.Fatalf("expected no resumable session, got %q", prior.SessionID.String)
+			}
+		})
 	}
 }
 
@@ -368,19 +318,7 @@ func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
 		_, _ = testPool.Exec(f.ctx, `DELETE FROM agent WHERE id = $1`, secondaryAgentID)
 	})
 
-	// Insert a failed past task on this issue under the secondary agent —
-	// the row the user is about to click retry on.
-	var sourceTaskID string
-	if err := testPool.QueryRow(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority,
-		                              started_at, completed_at, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0,
-		        now() - interval '1 minute', now() - interval '30 seconds', 'agent_error')
-		RETURNING id
-	`, secondaryAgentID, f.runtimeID, f.issueID).Scan(&sourceTaskID); err != nil {
-		t.Fatalf("insert source task: %v", err)
-	}
-
+	sourceTaskID := f.insertSourceTask(t, secondaryAgentID, f.issueID, nil)
 	task := f.rerunSourceTask(t, sourceTaskID)
 
 	gotAgent := util.UUIDToString(task.AgentID)
@@ -417,16 +355,7 @@ func TestRerunIssueRejectsCrossIssueTask(t *testing.T) {
 	}
 	t.Cleanup(func() { cleanupRerunFixture(t, issueBID) })
 
-	var crossTaskID string
-	if err := testPool.QueryRow(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority,
-		                              started_at, completed_at, failure_reason)
-		VALUES ($1, $2, $3, 'failed', 0,
-		        now() - interval '1 minute', now() - interval '30 seconds', 'agent_error')
-		RETURNING id
-	`, f.agentID, f.runtimeID, issueBID).Scan(&crossTaskID); err != nil {
-		t.Fatalf("insert cross task: %v", err)
-	}
+	crossTaskID := f.insertSourceTask(t, f.agentID, issueBID, nil)
 
 	_, err := f.taskService().RerunIssueInTx(
 		f.ctx,
@@ -464,21 +393,7 @@ func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
 		_, _ = testPool.Exec(f.ctx, `DELETE FROM comment WHERE id = $1`, triggerCommentID)
 	})
 
-	// Source task carries the trigger_comment_id — this is the row whose
-	// retry button the user clicks in the execution log.
-	var sourceTaskID string
-	if err := testPool.QueryRow(f.ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority,
-		                              started_at, completed_at, failure_reason,
-		                              trigger_comment_id)
-		VALUES ($1, $2, $3, 'failed', 0,
-		        now() - interval '1 minute', now() - interval '30 seconds', 'agent_error',
-		        $4)
-		RETURNING id
-	`, f.agentID, f.runtimeID, f.issueID, triggerCommentID).Scan(&sourceTaskID); err != nil {
-		t.Fatalf("insert source task: %v", err)
-	}
-
+	sourceTaskID := f.insertSourceTask(t, f.agentID, f.issueID, &triggerCommentID)
 	task := f.rerunSourceTask(t, sourceTaskID)
 	if !task.TriggerCommentID.Valid {
 		t.Fatal("expected per-row rerun to inherit trigger_comment_id from source task, got NULL")
