@@ -10,6 +10,7 @@ import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../.
 import { defaultStorage } from "../../platform/storage";
 
 export type ViewMode = "board" | "list" | "gantt" | "swimlane";
+export type IssuesScope = "all" | "members" | "agents";
 export type GanttZoom = "day" | "week" | "month";
 export type IssueGrouping = "status" | "assignee";
 export type SwimlaneGrouping = "parent" | "project" | "assignee";
@@ -126,6 +127,11 @@ export interface IssueViewState {
   /** Toggle a lane key in the currently active swimlane grouping. */
   toggleSwimlaneCollapsed: (key: string) => void;
 }
+
+type WorkspaceIssueViewState = IssueViewState & {
+  scope: IssuesScope;
+  setScope: (scope: IssuesScope) => void;
+};
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
   viewMode: "board",
@@ -325,8 +331,24 @@ export function createIssueViewStore(persistKey: string): StoreApi<IssueViewStat
 }
 
 /** Global singleton for the /issues page. */
-export const useIssueViewStore = create<IssueViewState>()(
-  persist(viewStoreSlice, viewStorePersistOptions("multica_issues_view"))
+const issueViewPersistOptions = viewStorePersistOptions("multica_issues_view");
+export const useIssueViewStore = create<WorkspaceIssueViewState>()(
+  persist(
+    (set) => ({
+      ...viewStoreSlice(
+        set as unknown as StoreApi<IssueViewState>["setState"],
+      ),
+      scope: "all",
+      setScope: (scope) => set({ scope }),
+    }),
+    {
+      ...issueViewPersistOptions,
+      partialize: (state) => ({
+        ...issueViewPersistOptions.partialize(state),
+        scope: state.scope,
+      }),
+    },
+  ),
 );
 
 registerWorkspacePersistStore(useIssueViewStore);

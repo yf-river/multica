@@ -10,7 +10,6 @@ import type { StorageAdapter } from "../types/storage";
 const WORKSPACE_LOCAL_KEYS = [
   "multica_issue_draft",
   "multica_issues_view",
-  "multica_issues_scope",
   "multica_my_issues_view",
   "multica_actor_issues_view",
   "multica_quick_create",

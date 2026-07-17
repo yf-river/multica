@@ -7,7 +7,6 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useIssueViewStore, useClearFiltersOnWorkspaceChange, type IssueDateFilter } from "@multica/core/issues/stores/view-store";
 import { dateOnlyToLocalDate } from "@multica/core/issues/date";
-import { useIssuesScopeStore } from "@multica/core/issues/stores/issues-scope-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import { projectIssueViews } from "../utils/filter";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
@@ -63,7 +62,7 @@ export function IssuesPage() {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
 
-  const scope = useIssuesScopeStore((s) => s.scope);
+  const scope = useIssueViewStore((s) => s.scope);
   const viewMode = useIssueViewStore((s) => s.viewMode);
   const dateFilter = useIssueViewStore((s) => s.dateFilter);
   const setDateFilter = useIssueViewStore((s) => s.setDateFilter);

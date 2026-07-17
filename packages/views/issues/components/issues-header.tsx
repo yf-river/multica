@@ -65,19 +65,17 @@ import {
   SWIMLANE_GROUPINGS,
   CARD_PROPERTY_OPTIONS,
   type ActorFilterValue,
+  type IssuesScope,
   type IssueDateField,
   type IssueDateFilter,
   type SortField,
   type IssueGrouping,
   type SwimlaneGrouping,
   type ViewMode,
+  useIssueViewStore,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { addDaysDateOnly, dateOnlyToLocalDate, formatDateOnly, toDateOnly, todayDateOnly } from "@multica/core/issues/date";
-import {
-  useIssuesScopeStore,
-  type IssuesScope,
-} from "@multica/core/issues/stores/issues-scope-store";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import type { Issue } from "@multica/core/types";
 import { useT } from "../../i18n";
@@ -726,8 +724,8 @@ export function IssuesHeader({
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
 }) {
   const { t } = useT("issues");
-  const scope = useIssuesScopeStore((s) => s.scope);
-  const setScope = useIssuesScopeStore((s) => s.setScope);
+  const scope = useIssueViewStore((s) => s.scope);
+  const setScope = useIssueViewStore((s) => s.setScope);
   // Bind the workspace agents-working chip to the active view store so
   // shared IssuesHeader consumers (/issues and project detail) toggle the
   // same filter state as the rest of the display controls. /my-issues keeps

@@ -110,6 +110,7 @@ vi.mock("@multica/core/api", () => {
 
 // Mock view store
 const mockViewState = {
+  scope: "all" as "all" | "members" | "agents",
   viewMode: "board" as "board" | "list",
   grouping: "status" as "status" | "assignee",
   statusFilters: [] as string[],
@@ -126,6 +127,7 @@ const mockViewState = {
   cardProperties: { priority: true, description: true, assignee: true, dueDate: true, project: true, childProgress: true, labels: true },
   listCollapsedStatuses: [] as string[],
   setViewMode: vi.fn(),
+  setScope: vi.fn(),
   setGrouping: vi.fn(),
   toggleStatusFilter: vi.fn(),
   togglePriorityFilter: vi.fn(),
@@ -183,18 +185,6 @@ vi.mock("@multica/core/issues/stores/view-store-context", () => ({
   ViewStoreProvider: ({ children }: { children: React.ReactNode }) => children,
   useViewStore: (selector?: any) => (selector ? selector(mockViewState) : mockViewState),
   useViewStoreApi: () => ({ getState: () => mockViewState, setState: vi.fn(), subscribe: vi.fn() }),
-}));
-
-let mockScope = "all";
-
-vi.mock("@multica/core/issues/stores/issues-scope-store", () => ({
-  useIssuesScopeStore: Object.assign(
-    (selector?: any) => {
-      const state = { scope: mockScope, setScope: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ scope: mockScope, setScope: vi.fn() }) },
-  ),
 }));
 
 vi.mock("@multica/core/modals", () => ({
@@ -434,7 +424,7 @@ describe("IssuesPage (shared)", () => {
     mockViewState.statusFilters = [];
     mockViewState.priorityFilters = [];
     mockViewState.agentRunningFilter = false;
-    mockScope = "all";
+    mockViewState.scope = "all";
   });
 
   it("shows loading skeletons initially", () => {
@@ -616,7 +606,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("agents scope includes squad-assigned issues", async () => {
-    mockScope = "agents";
+    mockViewState.scope = "agents";
     mockViewState.viewMode = "list";
     mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
@@ -629,7 +619,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("members scope excludes squad-assigned issues", async () => {
-    mockScope = "members";
+    mockViewState.scope = "members";
     mockViewState.viewMode = "list";
     mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
