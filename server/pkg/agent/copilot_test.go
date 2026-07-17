@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -677,134 +678,25 @@ func TestCopilotExecuteSurfacesStderrOnNonZeroResult(t *testing.T) {
 	}
 }
 
-// ── Arg builder tests ──
-
-func TestBuildCopilotArgsBaseline(t *testing.T) {
+func TestBuildCopilotArgs(t *testing.T) {
 	t.Parallel()
-
-	args := buildCopilotArgs("write a haiku", ExecOptions{}, slog.Default())
-	expected := []string{
-		"-p", "write a haiku",
-		"--output-format", "json",
-		"--allow-all",
-		"--no-ask-user",
-	}
-
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-	}
-	for i, want := range expected {
-		if args[i] != want {
-			t.Fatalf("expected args[%d] = %q, got %q", i, want, args[i])
-		}
-	}
-}
-
-func TestBuildCopilotArgsWithModel(t *testing.T) {
-	t.Parallel()
-
-	args := buildCopilotArgs("hi", ExecOptions{Model: "gpt-4o"}, slog.Default())
-
-	var foundModel bool
-	for i, a := range args {
-		if a == "--model" {
-			if i+1 >= len(args) || args[i+1] != "gpt-4o" {
-				t.Fatalf("expected --model followed by gpt-4o, got %v", args)
+	base := []string{"-p", "hi", "--output-format", "json", "--allow-all", "--no-ask-user"}
+	for _, tc := range []struct {
+		name string
+		opts ExecOptions
+		want []string
+	}{
+		{name: "baseline", want: base},
+		{name: "model", opts: ExecOptions{Model: "gpt-4o"}, want: append(slices.Clone(base), "--model", "gpt-4o")},
+		{name: "resume", opts: ExecOptions{ResumeSessionID: "sess-42"}, want: append(slices.Clone(base), "--resume", "sess-42")},
+		{name: "custom args", opts: ExecOptions{CustomArgs: []string{"--max-turns", "50"}}, want: append(slices.Clone(base), "--max-turns", "50")},
+		{name: "filters blocked value flag", opts: ExecOptions{CustomArgs: []string{"--output-format", "text", "--max-turns", "50"}}, want: append(slices.Clone(base), "--max-turns", "50")},
+		{name: "filters blocked flags", opts: ExecOptions{CustomArgs: []string{"--resume", "bad-session", "--acp", "--yolo"}}, want: base},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildCopilotArgs("hi", tc.opts, slog.Default()); !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
 			}
-			foundModel = true
-			break
-		}
-	}
-	if !foundModel {
-		t.Fatalf("expected --model flag when Model is set, got args=%v", args)
-	}
-}
-
-func TestBuildCopilotArgsWithResume(t *testing.T) {
-	t.Parallel()
-
-	args := buildCopilotArgs("hi", ExecOptions{ResumeSessionID: "sess-42"}, slog.Default())
-
-	var foundResume bool
-	for i, a := range args {
-		if a == "--resume" {
-			if i+1 >= len(args) || args[i+1] != "sess-42" {
-				t.Fatalf("expected --resume followed by session id, got %v", args)
-			}
-			foundResume = true
-			break
-		}
-	}
-	if !foundResume {
-		t.Fatalf("expected --resume flag when ResumeSessionID is set, got args=%v", args)
-	}
-}
-
-func TestBuildCopilotArgsOmitsOptionalWhenEmpty(t *testing.T) {
-	t.Parallel()
-
-	args := buildCopilotArgs("hi", ExecOptions{}, slog.Default())
-	for _, a := range args {
-		if a == "--model" {
-			t.Fatalf("expected no --model flag when Model is empty, got args=%v", args)
-		}
-		if a == "--resume" {
-			t.Fatalf("expected no --resume flag when ResumeSessionID is empty, got args=%v", args)
-		}
-	}
-}
-
-func TestBuildCopilotArgsPassesThroughCustomArgs(t *testing.T) {
-	t.Parallel()
-
-	args := buildCopilotArgs("hi", ExecOptions{
-		CustomArgs: []string{"--max-turns", "50"},
-	}, slog.Default())
-
-	if args[len(args)-2] != "--max-turns" || args[len(args)-1] != "50" {
-		t.Fatalf("expected --max-turns 50 at end of args, got %v", args)
-	}
-}
-
-func TestBuildCopilotArgsFiltersBlockedCustomArgs(t *testing.T) {
-	t.Parallel()
-
-	args := buildCopilotArgs("hi", ExecOptions{
-		CustomArgs: []string{"--output-format", "text", "--max-turns", "50"},
-	}, slog.Default())
-
-	for i, a := range args {
-		if a == "--output-format" && i+1 < len(args) && args[i+1] == "text" {
-			t.Fatalf("blocked --output-format text should have been filtered: %v", args)
-		}
-	}
-	found := false
-	for i, a := range args {
-		if a == "--max-turns" && i+1 < len(args) && args[i+1] == "50" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected --max-turns 50 to pass through, got %v", args)
-	}
-}
-
-func TestBuildCopilotArgsBlocksResumeAndACP(t *testing.T) {
-	t.Parallel()
-
-	args := buildCopilotArgs("hi", ExecOptions{
-		CustomArgs: []string{"--resume", "bad-session", "--acp", "--yolo"},
-	}, slog.Default())
-
-	for _, a := range args {
-		if a == "bad-session" {
-			t.Fatalf("blocked --resume value should have been filtered: %v", args)
-		}
-		if a == "--acp" {
-			t.Fatalf("blocked --acp should have been filtered: %v", args)
-		}
-		if a == "--yolo" {
-			t.Fatalf("blocked --yolo should have been filtered: %v", args)
-		}
+		})
 	}
 }

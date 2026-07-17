@@ -13,159 +13,95 @@ import (
 	"time"
 )
 
-// ── extractACPSessionID ──
-
 func TestExtractACPSessionID(t *testing.T) {
 	t.Parallel()
-	raw := json.RawMessage(`{"sessionId":"20260410_141145_47260c"}`)
-	got := extractACPSessionID(raw)
-	if got != "20260410_141145_47260c" {
-		t.Errorf("got %q, want %q", got, "20260410_141145_47260c")
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "present", raw: `{"sessionId":"20260410_141145_47260c"}`, want: "20260410_141145_47260c"},
+		{name: "missing", raw: `{}`},
+		{name: "invalid JSON", raw: `not json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractACPSessionID(json.RawMessage(tc.raw)); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
-
-func TestExtractACPSessionIDEmpty(t *testing.T) {
-	t.Parallel()
-	raw := json.RawMessage(`{}`)
-	got := extractACPSessionID(raw)
-	if got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-func TestExtractACPSessionIDInvalidJSON(t *testing.T) {
-	t.Parallel()
-	raw := json.RawMessage(`not json`)
-	got := extractACPSessionID(raw)
-	if got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-// ── extractACPCurrentModelID ──
 
 func TestExtractACPCurrentModelID(t *testing.T) {
 	t.Parallel()
-	raw := json.RawMessage(`{
-		"sessionId": "ses_123",
-		"models": {
-			"currentModelId": "nous:moonshotai/kimi-k2.6"
-		}
-	}`)
-	got := extractACPCurrentModelID(raw)
-	if got != "nous:moonshotai/kimi-k2.6" {
-		t.Errorf("got %q, want current model", got)
-	}
-}
-
-func TestExtractACPCurrentModelIDMissing(t *testing.T) {
-	t.Parallel()
-	if got := extractACPCurrentModelID(json.RawMessage(`{"sessionId":"ses_123"}`)); got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-// ── resolveResumedSessionID ──
-
-func TestResolveResumedSessionIDMatching(t *testing.T) {
-	t.Parallel()
-	// Server confirms our requested id — happy resume path. No change.
-	got, changed := resolveResumedSessionID(
-		"ses_alpha",
-		json.RawMessage(`{"sessionId":"ses_alpha"}`),
-	)
-	if got != "ses_alpha" {
-		t.Errorf("got %q, want ses_alpha", got)
-	}
-	if changed {
-		t.Errorf("changed: got true, want false")
-	}
-}
-
-func TestResolveResumedSessionIDDifferent(t *testing.T) {
-	t.Parallel()
-	// Server returned a different id — local state was lost and the
-	// server silently spun up a new session. We trust the server.
-	got, changed := resolveResumedSessionID(
-		"ses_alpha",
-		json.RawMessage(`{"sessionId":"ses_beta_new"}`),
-	)
-	if got != "ses_beta_new" {
-		t.Errorf("got %q, want ses_beta_new", got)
-	}
-	if !changed {
-		t.Errorf("changed: got false, want true")
-	}
-}
-
-func TestResolveResumedSessionIDMissingResponseInvalidatesRequestedID(t *testing.T) {
-	t.Parallel()
-	for _, body := range []string{
-		`{}`,
-		`{"sessionId":""}`,
-		`not json`,
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "present", raw: `{"sessionId":"ses_123","models":{"currentModelId":"nous:moonshotai/kimi-k2.6"}}`, want: "nous:moonshotai/kimi-k2.6"},
+		{name: "missing", raw: `{"sessionId":"ses_123"}`},
 	} {
-		got, changed := resolveResumedSessionID(
-			"ses_alpha",
-			json.RawMessage(body),
-		)
-		if got != "" {
-			t.Errorf("body=%q: got %q, want empty", body, got)
-		}
-		if !changed {
-			t.Errorf("body=%q: changed: got false, want true", body)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractACPCurrentModelID(json.RawMessage(tc.raw)); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-// ── buildHermesSessionParams ──
-
-func TestBuildHermesSessionParamsIncludesModel(t *testing.T) {
+func TestResolveResumedSessionID(t *testing.T) {
 	t.Parallel()
-	params := buildHermesSessionParams("/tmp/work", "gpt-4o", nil)
-	if params["cwd"] != "/tmp/work" {
-		t.Errorf("cwd: got %v, want /tmp/work", params["cwd"])
-	}
-	if _, ok := params["mcpServers"]; !ok {
-		t.Error("mcpServers missing")
-	}
-	if got, ok := params["model"].(string); !ok || got != "gpt-4o" {
-		t.Errorf("model: got %v, want gpt-4o", params["model"])
+	for _, tc := range []struct {
+		name        string
+		body        string
+		want        string
+		wantChanged bool
+	}{
+		{name: "matching", body: `{"sessionId":"ses_alpha"}`, want: "ses_alpha"},
+		{name: "server changed session", body: `{"sessionId":"ses_beta_new"}`, want: "ses_beta_new", wantChanged: true},
+		{name: "missing", body: `{}`, wantChanged: true},
+		{name: "empty", body: `{"sessionId":""}`, wantChanged: true},
+		{name: "invalid JSON", body: `not json`, wantChanged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, changed := resolveResumedSessionID("ses_alpha", json.RawMessage(tc.body))
+			if got != tc.want || changed != tc.wantChanged {
+				t.Errorf("got (%q, %v), want (%q, %v)", got, changed, tc.want, tc.wantChanged)
+			}
+		})
 	}
 }
 
-func TestBuildHermesSessionParamsOmitsEmptyModel(t *testing.T) {
-	t.Parallel()
-	params := buildHermesSessionParams("/tmp/work", "", nil)
-	if _, present := params["model"]; present {
-		t.Error("expected model key to be omitted when model is empty")
-	}
-}
-
-func TestBuildHermesSessionParamsPassesThroughMcpServers(t *testing.T) {
+func TestBuildHermesSessionParams(t *testing.T) {
 	t.Parallel()
 	servers := []any{map[string]any{"name": "fetch", "command": "uvx", "args": []string{}, "env": []map[string]any{}}}
-	params := buildHermesSessionParams("/tmp/work", "", servers)
-	got, ok := params["mcpServers"].([]any)
-	if !ok {
-		t.Fatalf("mcpServers: got %T, want []any", params["mcpServers"])
-	}
-	if len(got) != 1 {
-		t.Fatalf("len(mcpServers): got %d, want 1", len(got))
-	}
-}
-
-func TestBuildHermesSessionParamsNilMcpServersBecomesEmptyArray(t *testing.T) {
-	t.Parallel()
-	// ACP requires the field; nil must surface as `[]` so the wire request
-	// stays well-formed even when no MCP servers are configured.
-	params := buildHermesSessionParams("/tmp/work", "", nil)
-	got, ok := params["mcpServers"].([]any)
-	if !ok {
-		t.Fatalf("mcpServers: got %T, want []any", params["mcpServers"])
-	}
-	if len(got) != 0 {
-		t.Errorf("len(mcpServers): got %d, want 0", len(got))
+	for _, tc := range []struct {
+		name        string
+		model       string
+		servers     []any
+		wantServers int
+	}{
+		{name: "model and empty servers", model: "gpt-4o"},
+		{name: "servers", servers: servers, wantServers: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := buildHermesSessionParams("/tmp/work", tc.model, tc.servers)
+			if params["cwd"] != "/tmp/work" {
+				t.Errorf("cwd: got %v, want /tmp/work", params["cwd"])
+			}
+			got, ok := params["mcpServers"].([]any)
+			if !ok || len(got) != tc.wantServers {
+				t.Fatalf("mcpServers: got %#v, want []any length %d", params["mcpServers"], tc.wantServers)
+			}
+			gotModel, modelPresent := params["model"]
+			if tc.model == "" && modelPresent {
+				t.Errorf("model: got %v, want omitted", gotModel)
+			}
+			if tc.model != "" && gotModel != tc.model {
+				t.Errorf("model: got %v, want %q", gotModel, tc.model)
+			}
+		})
 	}
 }
 
@@ -442,89 +378,28 @@ func TestHermesClientHandleLineResponse(t *testing.T) {
 
 func TestHermesClientHandleLineError(t *testing.T) {
 	t.Parallel()
-
-	c := &hermesClient{
-		pending: make(map[int]*pendingRPC),
-	}
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: "initialize"}
-	c.pending[0] = pr
-
-	c.handleLine(`{"jsonrpc":"2.0","id":0,"error":{"code":-32600,"message":"bad request"}}`)
-
-	res := <-pr.ch
-	if res.err == nil {
-		t.Fatal("expected error")
-	}
-	if got := res.err.Error(); got != "initialize: bad request (code=-32600)" {
-		t.Errorf("error: got %q", got)
-	}
-}
-
-// TestHermesClientHandleLineErrorWithData guards #2192-class regressions: when
-// an ACP backend returns -32603 (Internal error), the meaningful reason lives
-// in the `data` field. Dropping it leaves operators with a bare "Internal
-// error" and no way to tell apart "session expired", "model unavailable",
-// "auth lost", etc. Kiro CLI 2.2.x emits `data` as a string; some backends use
-// objects/arrays — both must round-trip into the wrapped Go error.
-func TestHermesClientHandleLineErrorWithStringData(t *testing.T) {
-	t.Parallel()
-
-	c := &hermesClient{
-		pending: make(map[int]*pendingRPC),
-	}
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: "session/prompt"}
-	c.pending[3] = pr
-
-	c.handleLine(`{"jsonrpc":"2.0","id":3,"error":{"code":-32603,"message":"Internal error","data":"No session found with id"}}`)
-
-	res := <-pr.ch
-	if res.err == nil {
-		t.Fatal("expected error")
-	}
-	want := "session/prompt: Internal error (code=-32603, data=No session found with id)"
-	if got := res.err.Error(); got != want {
-		t.Errorf("error: got %q, want %q", got, want)
-	}
-}
-
-func TestHermesClientHandleLineErrorWithObjectData(t *testing.T) {
-	t.Parallel()
-
-	c := &hermesClient{
-		pending: make(map[int]*pendingRPC),
-	}
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: "session/prompt"}
-	c.pending[5] = pr
-
-	c.handleLine(`{"jsonrpc":"2.0","id":5,"error":{"code":-32000,"message":"quota","data":{"reason":"limit","remaining":0}}}`)
-
-	res := <-pr.ch
-	if res.err == nil {
-		t.Fatal("expected error")
-	}
-	want := `session/prompt: quota (code=-32000, data={"reason":"limit","remaining":0})`
-	if got := res.err.Error(); got != want {
-		t.Errorf("error: got %q, want %q", got, want)
-	}
-}
-
-func TestHermesClientHandleLineErrorWithNullData(t *testing.T) {
-	t.Parallel()
-
-	c := &hermesClient{
-		pending: make(map[int]*pendingRPC),
-	}
-	pr := &pendingRPC{ch: make(chan rpcResult, 1), method: "initialize"}
-	c.pending[7] = pr
-
-	c.handleLine(`{"jsonrpc":"2.0","id":7,"error":{"code":-32600,"message":"bad request","data":null}}`)
-
-	res := <-pr.ch
-	if res.err == nil {
-		t.Fatal("expected error")
-	}
-	if got := res.err.Error(); got != "initialize: bad request (code=-32600)" {
-		t.Errorf("error: got %q", got)
+	for _, tc := range []struct {
+		name   string
+		id     int
+		method string
+		line   string
+		want   string
+	}{
+		{name: "without data", id: 0, method: "initialize", line: `{"jsonrpc":"2.0","id":0,"error":{"code":-32600,"message":"bad request"}}`, want: "initialize: bad request (code=-32600)"},
+		{name: "string data", id: 3, method: "session/prompt", line: `{"jsonrpc":"2.0","id":3,"error":{"code":-32603,"message":"Internal error","data":"No session found with id"}}`, want: "session/prompt: Internal error (code=-32603, data=No session found with id)"},
+		{name: "object data", id: 5, method: "session/prompt", line: `{"jsonrpc":"2.0","id":5,"error":{"code":-32000,"message":"quota","data":{"reason":"limit","remaining":0}}}`, want: `session/prompt: quota (code=-32000, data={"reason":"limit","remaining":0})`},
+		{name: "null data", id: 7, method: "initialize", line: `{"jsonrpc":"2.0","id":7,"error":{"code":-32600,"message":"bad request","data":null}}`, want: "initialize: bad request (code=-32600)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &hermesClient{pending: make(map[int]*pendingRPC)}
+			pr := &pendingRPC{ch: make(chan rpcResult, 1), method: tc.method}
+			c.pending[tc.id] = pr
+			c.handleLine(tc.line)
+			res := <-pr.ch
+			if res.err == nil || res.err.Error() != tc.want {
+				t.Errorf("error: got %v, want %q", res.err, tc.want)
+			}
+		})
 	}
 }
 
@@ -1724,72 +1599,33 @@ func TestExtractACPMcpCapabilities(t *testing.T) {
 
 // ── filterACPMcpServersByCapability ──
 
-func TestFilterACPMcpServersByCapabilityStdioAlwaysPassesThrough(t *testing.T) {
+func TestFilterACPMcpServersByCapability(t *testing.T) {
 	t.Parallel()
-	// Stdio entries have no `type` field — the ACP spec doesn't gate stdio,
-	// so the filter must pass them through regardless of capabilities.
-	servers := []any{
-		map[string]any{"name": "fetch", "command": "uvx"},
-	}
-	got := filterACPMcpServersByCapability(servers, acpMcpTransportCapabilities{}, "hermes", slog.Default())
-	if len(got) != 1 {
-		t.Fatalf("len: got %d, want 1", len(got))
-	}
-}
-
-func TestFilterACPMcpServersByCapabilityDropsUnsupportedHttp(t *testing.T) {
-	t.Parallel()
-	servers := []any{
-		map[string]any{"name": "stdio-ok", "command": "uvx"},
-		map[string]any{"type": "http", "name": "http-drop", "url": "https://x/mcp"},
-		map[string]any{"type": "sse", "name": "sse-keep", "url": "https://x/sse"},
-	}
-	got := filterACPMcpServersByCapability(servers, acpMcpTransportCapabilities{SSE: true}, "hermes", slog.Default())
-	if len(got) != 2 {
-		t.Fatalf("len: got %d, want 2 (http should be dropped, sse kept)", len(got))
-	}
-	names := []string{got[0].(map[string]any)["name"].(string), got[1].(map[string]any)["name"].(string)}
-	wantNames := map[string]bool{"stdio-ok": true, "sse-keep": true}
-	for _, n := range names {
-		if !wantNames[n] {
-			t.Errorf("unexpected entry kept: %q", n)
-		}
-	}
-}
-
-func TestFilterACPMcpServersByCapabilityDropsUnsupportedSse(t *testing.T) {
-	t.Parallel()
-	servers := []any{
-		map[string]any{"type": "sse", "name": "sse-drop", "url": "https://x/sse"},
-		map[string]any{"type": "http", "name": "http-keep", "url": "https://x/mcp"},
-	}
-	got := filterACPMcpServersByCapability(servers, acpMcpTransportCapabilities{HTTP: true}, "kimi", slog.Default())
-	if len(got) != 1 {
-		t.Fatalf("len: got %d, want 1", len(got))
-	}
-	if got[0].(map[string]any)["name"] != "http-keep" {
-		t.Errorf("kept wrong entry: %v", got[0])
-	}
-}
-
-func TestFilterACPMcpServersByCapabilityKeepsAllWhenBothSupported(t *testing.T) {
-	t.Parallel()
-	servers := []any{
-		map[string]any{"name": "stdio", "command": "uvx"},
-		map[string]any{"type": "http", "name": "http", "url": "https://x/mcp"},
-		map[string]any{"type": "sse", "name": "sse", "url": "https://x/sse"},
-	}
-	got := filterACPMcpServersByCapability(servers, acpMcpTransportCapabilities{HTTP: true, SSE: true}, "kiro", slog.Default())
-	if len(got) != 3 {
-		t.Fatalf("len: got %d, want 3", len(got))
-	}
-}
-
-func TestFilterACPMcpServersByCapabilityEmptyInputReturnsEmpty(t *testing.T) {
-	t.Parallel()
-	got := filterACPMcpServersByCapability(nil, acpMcpTransportCapabilities{HTTP: true, SSE: true}, "hermes", slog.Default())
-	if len(got) != 0 {
-		t.Errorf("len: got %d, want 0", len(got))
+	stdio := map[string]any{"name": "stdio", "command": "uvx"}
+	http := map[string]any{"type": "http", "name": "http", "url": "https://x/mcp"}
+	sse := map[string]any{"type": "sse", "name": "sse", "url": "https://x/sse"}
+	for _, tc := range []struct {
+		name    string
+		servers []any
+		caps    acpMcpTransportCapabilities
+		want    string
+	}{
+		{name: "stdio is unconditional", servers: []any{stdio}, want: "stdio"},
+		{name: "drops unsupported HTTP", servers: []any{stdio, http, sse}, caps: acpMcpTransportCapabilities{SSE: true}, want: "stdio,sse"},
+		{name: "drops unsupported SSE", servers: []any{sse, http}, caps: acpMcpTransportCapabilities{HTTP: true}, want: "http"},
+		{name: "keeps supported transports", servers: []any{stdio, http, sse}, caps: acpMcpTransportCapabilities{HTTP: true, SSE: true}, want: "stdio,http,sse"},
+		{name: "empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterACPMcpServersByCapability(tc.servers, tc.caps, "hermes", slog.Default())
+			names := make([]string, 0, len(got))
+			for _, server := range got {
+				names = append(names, server.(map[string]any)["name"].(string))
+			}
+			if gotNames := strings.Join(names, ","); gotNames != tc.want {
+				t.Errorf("got %q, want %q", gotNames, tc.want)
+			}
+		})
 	}
 }
 

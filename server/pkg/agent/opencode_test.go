@@ -417,28 +417,22 @@ func TestOpencodeStepFinishParsing(t *testing.T) {
 	}
 }
 
-// ── extractToolOutput tests ──
-
-func TestExtractToolOutputString(t *testing.T) {
+func TestExtractToolOutput(t *testing.T) {
 	t.Parallel()
-	if got := extractToolOutput("hello\n"); got != "hello\n" {
-		t.Errorf("got %q, want %q", got, "hello\n")
-	}
-}
-
-func TestExtractToolOutputNil(t *testing.T) {
-	t.Parallel()
-	if got := extractToolOutput(nil); got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-}
-
-func TestExtractToolOutputStructured(t *testing.T) {
-	t.Parallel()
-	obj := map[string]any{"key": "value"}
-	got := extractToolOutput(obj)
-	if !strings.Contains(got, `"key"`) || !strings.Contains(got, `"value"`) {
-		t.Errorf("got %q, expected JSON containing key/value", got)
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{name: "string", value: "hello\n", want: "hello\n"},
+		{name: "nil"},
+		{name: "structured", value: map[string]any{"key": "value"}, want: `{"key":"value"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractToolOutput(tc.value); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -721,103 +715,46 @@ func fakeStat(present ...string) func(string) (os.FileInfo, error) {
 	}
 }
 
-func TestResolveOpenCodeNativeFromShimResolvesNpmShim(t *testing.T) {
+func TestResolveOpenCodeNativeFromShim(t *testing.T) {
 	t.Parallel()
-
-	// Reporter's exact layout from multica#1717.
 	shim := filepath.Join("C:\\nvm4w", "nodejs", "opencode.cmd")
+	uppercaseShim := filepath.Join("C:\\nvm4w", "nodejs", "opencode.CMD")
 	native := filepath.Join("C:\\nvm4w", "nodejs", "node_modules", "opencode-ai", "node_modules", "opencode-windows-x64", "bin", "opencode.exe")
-
-	got := resolveOpenCodeNativeFromShim(shim, fakeStat(native))
-	if got != native {
-		t.Errorf("got %q, want %q", got, native)
-	}
-}
-
-func TestResolveOpenCodeNativeFromShimReturnsEmptyWhenNativeMissing(t *testing.T) {
-	t.Parallel()
-
-	// Shim ends in .cmd but the bundled native binary isn't present (e.g.
-	// platform package didn't install or layout changed). Caller must keep
-	// the original shim path so PATH lookup still wins.
-	shim := filepath.Join("C:\\nvm4w", "nodejs", "opencode.cmd")
-
-	got := resolveOpenCodeNativeFromShim(shim, fakeStat())
-	if got != "" {
-		t.Errorf("got %q, want empty (missing native binary)", got)
-	}
-}
-
-func TestResolveOpenCodeNativeFromShimSkipsNonCmdPath(t *testing.T) {
-	t.Parallel()
-
-	// On macOS/Linux the path returned by exec.LookPath is the native
-	// binary itself, with no .cmd extension. Helper should signal "no
-	// rewrite needed" by returning empty.
-	cases := []string{
-		"/usr/local/bin/opencode",
-		"C:\\nvm4w\\nodejs\\opencode.exe",
-		"",
-	}
-	for _, p := range cases {
-		if got := resolveOpenCodeNativeFromShim(p, fakeStat("anything")); got != "" {
-			t.Errorf("path %q: got %q, want empty", p, got)
-		}
-	}
-}
-
-func TestResolveOpenCodeNativeFromShimAcceptsUppercaseExtension(t *testing.T) {
-	t.Parallel()
-
-	// Windows is case-insensitive on filesystem extensions. PATHEXT tokens
-	// are commonly uppercase, and exec.LookPath can return either case.
-	shim := filepath.Join("C:\\nvm4w", "nodejs", "opencode.CMD")
-	native := filepath.Join("C:\\nvm4w", "nodejs", "node_modules", "opencode-ai", "node_modules", "opencode-windows-x64", "bin", "opencode.exe")
-
-	got := resolveOpenCodeNativeFromShim(shim, fakeStat(native))
-	if got != native {
-		t.Errorf("got %q, want %q", got, native)
-	}
-}
-
-func TestResolveOpenCodeNativeFromShimFallsBackToBaseline(t *testing.T) {
-	t.Parallel()
-
-	// Older CPUs without AVX2 get `opencode-windows-x64-baseline` instead of
-	// the default x64 build. Resolver should fall through and find it when
-	// the primary x64 package isn't installed.
-	shim := filepath.Join("C:\\nvm4w", "nodejs", "opencode.cmd")
 	baseline := filepath.Join("C:\\nvm4w", "nodejs", "node_modules", "opencode-ai", "node_modules", "opencode-windows-x64-baseline", "bin", "opencode.exe")
-
-	got := resolveOpenCodeNativeFromShim(shim, fakeStat(baseline))
-	if got != baseline {
-		t.Errorf("got %q, want %q", got, baseline)
+	for _, tc := range []struct {
+		name    string
+		shim    string
+		present []string
+		want    string
+	}{
+		{name: "npm shim", shim: shim, present: []string{native}, want: native},
+		{name: "missing native", shim: shim},
+		{name: "native POSIX path", shim: "/usr/local/bin/opencode", present: []string{"anything"}},
+		{name: "native Windows path", shim: `C:\nvm4w\nodejs\opencode.exe`, present: []string{"anything"}},
+		{name: "empty path", present: []string{"anything"}},
+		{name: "uppercase extension", shim: uppercaseShim, present: []string{native}, want: native},
+		{name: "baseline package", shim: shim, present: []string{baseline}, want: baseline},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveOpenCodeNativeFromShim(tc.shim, fakeStat(tc.present...)); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestOpencodeWindowsPackageCandidatesArm64(t *testing.T) {
+func TestOpencodeWindowsPackageCandidates(t *testing.T) {
 	t.Parallel()
-
-	// ARM64 hosts (Surface, Copilot+ PC) should try arm64 first so the
-	// resolver doesn't accidentally pick up a leftover x64 install when
-	// the matching arm64 package is present.
-	got := opencodeWindowsPackageCandidates("arm64")
-	want := []string{"opencode-windows-arm64", "opencode-windows-x64", "opencode-windows-x64-baseline"}
-	if !equalStringSlice(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestOpencodeWindowsPackageCandidatesAmd64(t *testing.T) {
-	t.Parallel()
-
-	// amd64 (and any non-arm64) hosts try x64 → baseline → arm64. The arm64
-	// fallback at the end covers the unusual case where only the arm64
-	// package is installed; resolution still succeeds.
-	got := opencodeWindowsPackageCandidates("amd64")
-	want := []string{"opencode-windows-x64", "opencode-windows-x64-baseline", "opencode-windows-arm64"}
-	if !equalStringSlice(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+	for _, tc := range []struct {
+		arch string
+		want []string
+	}{
+		{arch: "arm64", want: []string{"opencode-windows-arm64", "opencode-windows-x64", "opencode-windows-x64-baseline"}},
+		{arch: "amd64", want: []string{"opencode-windows-x64", "opencode-windows-x64-baseline", "opencode-windows-arm64"}},
+	} {
+		if got := opencodeWindowsPackageCandidates(tc.arch); !equalStringSlice(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.arch, got, tc.want)
+		}
 	}
 }
 
