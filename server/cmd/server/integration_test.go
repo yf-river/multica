@@ -139,8 +139,8 @@ func setupIntegrationTestFixture(ctx context.Context, pool *pgxpool.Pool) (strin
 
 	var workspaceID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO workspace (name, slug, description)
-		VALUES ($1, $2, $3)
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ($1, $2, $3, 'INT')
 		RETURNING id
 	`, "Integration Tests", integrationTestWorkspaceSlug, "Temporary workspace for router integration tests").Scan(&workspaceID); err != nil {
 		return "", "", err
@@ -736,8 +736,8 @@ func TestDeleteWorkspaceRequiresOwner(t *testing.T) {
 
 	var wsID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workspace (name, slug, description)
-		VALUES ($1, $2, $3)
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ($1, $2, $3, 'IDF')
 		RETURNING id
 	`, "Integration Tests Delete 403", slug, "DeleteWorkspace permission test").Scan(&wsID); err != nil {
 		t.Fatalf("create workspace: %v", err)

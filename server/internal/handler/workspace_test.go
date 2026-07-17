@@ -442,8 +442,8 @@ func TestDeleteWorkspace_RequiresOwner(t *testing.T) {
 
 	var wsID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description)
-VALUES ($1, $2, $3)
+INSERT INTO workspace (name, slug, description, issue_prefix)
+VALUES ($1, $2, $3, 'HD4')
 RETURNING id
 `, "Handler Test Delete 403", slug, "DeleteWorkspace handler permission test").Scan(&wsID); err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -488,8 +488,8 @@ func TestDeleteWorkspace_OwnerSucceeds(t *testing.T) {
 
 	var wsID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description)
-VALUES ($1, $2, $3)
+INSERT INTO workspace (name, slug, description, issue_prefix)
+VALUES ($1, $2, $3, 'HDO')
 RETURNING id
 `, "Handler Test Delete OK", slug, "DeleteWorkspace handler owner test").Scan(&wsID); err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -556,8 +556,8 @@ func TestUpdateWorkspace_AvatarURL(t *testing.T) {
 
 	var wsID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description)
-VALUES ($1, $2, $3)
+INSERT INTO workspace (name, slug, description, issue_prefix)
+VALUES ($1, $2, $3, 'HAV')
 RETURNING id
 `, "Handler Test Avatar URL", slug, "UpdateWorkspace avatar_url test").Scan(&wsID); err != nil {
 		t.Fatalf("create workspace: %v", err)
@@ -636,8 +636,8 @@ func TestUpdateWorkspace_ReposValidation(t *testing.T) {
 
 	var wsID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO workspace (name, slug, description)
-VALUES ($1, $2, $3)
+INSERT INTO workspace (name, slug, description, issue_prefix)
+VALUES ($1, $2, $3, 'HRV')
 RETURNING id
 `, "Handler Test Repos Validation", slug, "UpdateWorkspace repos validation test").Scan(&wsID); err != nil {
 		t.Fatalf("create workspace: %v", err)

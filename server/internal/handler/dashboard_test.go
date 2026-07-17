@@ -732,8 +732,8 @@ func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
 
 	var foreignWorkspaceID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workspace (name, slug)
-		VALUES ('ws-mismatch-hourly', 'ws-mismatch-hourly-' || gen_random_uuid()::text)
+		INSERT INTO workspace (name, slug, issue_prefix)
+		VALUES ('ws-mismatch-hourly', 'ws-mismatch-hourly-' || gen_random_uuid()::text, 'WMH')
 		RETURNING id
 	`).Scan(&foreignWorkspaceID); err != nil {
 		t.Fatalf("create foreign workspace: %v", err)

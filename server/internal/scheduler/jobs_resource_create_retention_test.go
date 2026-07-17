@@ -18,7 +18,7 @@ func TestResourceCreateRequestRetentionDeletesOnlyExpiredCompletedRows(t *testin
 	ctx := context.Background()
 	var workspaceID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO workspace (name, slug) VALUES ('Request retention', $1) RETURNING id
+		INSERT INTO workspace (name, slug, issue_prefix) VALUES ('Request retention', $1, 'RET') RETURNING id
 	`, "request-retention-"+uuid.NewString()).Scan(&workspaceID); err != nil {
 		t.Fatal(err)
 	}

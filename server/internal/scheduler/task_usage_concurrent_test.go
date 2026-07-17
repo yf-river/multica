@@ -176,8 +176,8 @@ func seedRollupFixture(t *testing.T, pool *pgxpool.Pool) (string, string, string
 
 	var wsID, runtimeID, agentID, taskID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO workspace (name, slug)
-		VALUES ($1, $1)
+		INSERT INTO workspace (name, slug, issue_prefix)
+		VALUES ($1, $1, 'ROL')
 		RETURNING id
 	`, suffix).Scan(&wsID); err != nil {
 		t.Fatalf("seed workspace: %v", err)
