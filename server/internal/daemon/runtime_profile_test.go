@@ -201,69 +201,38 @@ func TestRegisterRuntimes_ProfilesFetchErrorIsBestEffort(t *testing.T) {
 	}
 }
 
-// TestRegisterRuntimes_PrefersCommandPathOverride verifies that a per-machine
-// command path override (MUL-3284) is used in preference to the PATH lookup:
-// the resolved/recorded path is the override, even when lookPath would resolve
-// command_name to a different binary.
-func TestRegisterRuntimes_PrefersCommandPathOverride(t *testing.T) {
-	t.Cleanup(stubAgentVersion(t))
-	// PATH would resolve to a *different* binary; the override must win.
-	stubLookPath(t, map[string]string{"company-codex": "/usr/bin/company-codex"})
-	stubProfilePathExecutable(t, map[string]bool{"/opt/custom/company-codex": true})
-
-	profiles := []protocol.RuntimeProfileResponse{{
-		ID:             "prof-1",
-		WorkspaceID:    "ws-1",
-		DisplayName:    "Company Codex",
-		ProtocolFamily: "codex",
-		CommandName:    "company-codex",
-		Enabled:        true,
-	}}
-	fx := newRuntimeProfileFixture(t, profiles)
-	d := fx.daemon
-	d.cfg.Agents = map[string]AgentEntry{}
-	d.cfg.ProfileCommandOverrides = map[string]string{"prof-1": "/opt/custom/company-codex"}
-
-	if _, _, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1"); err != nil {
-		t.Fatalf("registerRuntimesForWorkspace: %v", err)
-	}
-
-	if got := d.profileLaunches["prof-1"].CommandPath; got != "/opt/custom/company-codex" {
-		t.Errorf("profile launch path = %q, want the override /opt/custom/company-codex", got)
-	}
-	if len(fx.sentRuntimes) != 1 || fx.sentRuntimes[0]["profile_id"] != "prof-1" {
-		t.Fatalf("expected the profile runtime to register, got %+v", fx.sentRuntimes)
-	}
-}
-
-// TestRegisterRuntimes_OverrideNotExecutableFallsBackToPath verifies that an
-// override pointing at a non-executable / missing path is ignored and the
-// daemon falls back to resolving command_name on PATH.
-func TestRegisterRuntimes_OverrideNotExecutableFallsBackToPath(t *testing.T) {
+func TestRegisterRuntimes_CommandPathOverride(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/usr/bin/company-codex"})
-	// Override path reports NOT executable -> must fall back to PATH.
-	stubProfilePathExecutable(t, map[string]bool{})
 
-	profiles := []protocol.RuntimeProfileResponse{{
-		ID:             "prof-1",
-		WorkspaceID:    "ws-1",
-		DisplayName:    "Company Codex",
-		ProtocolFamily: "codex",
-		CommandName:    "company-codex",
-		Enabled:        true,
-	}}
-	fx := newRuntimeProfileFixture(t, profiles)
-	d := fx.daemon
-	d.cfg.Agents = map[string]AgentEntry{}
-	d.cfg.ProfileCommandOverrides = map[string]string{"prof-1": "/opt/stale/company-codex"}
+	for _, tc := range []struct {
+		name       string
+		override   string
+		executable bool
+		want       string
+	}{
+		{name: "executable override wins", override: "/opt/custom/company-codex", executable: true, want: "/opt/custom/company-codex"},
+		{name: "invalid override falls back to PATH", override: "/opt/stale/company-codex", want: "/usr/bin/company-codex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubProfilePathExecutable(t, map[string]bool{tc.override: tc.executable})
+			fx := newRuntimeProfileFixture(t, []protocol.RuntimeProfileResponse{{
+				ID: "prof-1", WorkspaceID: "ws-1", ProtocolFamily: "codex",
+				CommandName: "company-codex", Enabled: true,
+			}})
+			fx.daemon.cfg.Agents = map[string]AgentEntry{}
+			fx.daemon.cfg.ProfileCommandOverrides = map[string]string{"prof-1": tc.override}
 
-	if _, _, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1"); err != nil {
-		t.Fatalf("registerRuntimesForWorkspace: %v", err)
-	}
-
-	if got := d.profileLaunches["prof-1"].CommandPath; got != "/usr/bin/company-codex" {
-		t.Errorf("profile launch path = %q, want the PATH fallback /usr/bin/company-codex", got)
+			if _, _, err := fx.daemon.registerRuntimesForWorkspace(context.Background(), "ws-1"); err != nil {
+				t.Fatalf("registerRuntimesForWorkspace: %v", err)
+			}
+			if got := fx.daemon.profileLaunches["prof-1"].CommandPath; got != tc.want {
+				t.Errorf("profile launch path = %q, want %q", got, tc.want)
+			}
+			if len(fx.sentRuntimes) != 1 || fx.sentRuntimes[0]["profile_id"] != "prof-1" {
+				t.Fatalf("expected the profile runtime to register, got %+v", fx.sentRuntimes)
+			}
+		})
 	}
 }
 
