@@ -22,8 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -457,7 +457,7 @@ func newRequest(method, path string, body any) *http.Request {
 	if method == http.MethodPost {
 		req.Header.Set("Idempotency-Key", uuid.NewString())
 	}
-	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, testMember))
+	return req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, testMember))
 }
 
 func loadTestWorkspaceMember(workspaceID, userID string) db.Member {
@@ -483,7 +483,7 @@ func withTestWorkspaceMember(req *http.Request, workspaceID, userID string) *htt
 	member := loadTestWorkspaceMember(workspaceID, userID)
 	req.Header.Set("X-User-ID", userID)
 	req.Header.Set("X-Workspace-ID", workspaceID)
-	return req.WithContext(middleware.SetMemberContext(req.Context(), workspaceID, member))
+	return req.WithContext(requestctx.WithWorkspace(req.Context(), workspaceID, member))
 }
 
 // setTaskTokenActor models the request state after auth middleware resolves a

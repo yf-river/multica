@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -960,7 +961,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/github/installations", nil)
 		req = withURLParam(req, "id", testWorkspaceID)
-		req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, db.Member{Role: role}))
+		req = req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, db.Member{Role: role}))
 		w := httptest.NewRecorder()
 		testHandler.ListGitHubInstallations(w, req)
 		if w.Code != http.StatusOK {

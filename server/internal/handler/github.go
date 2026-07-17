@@ -24,7 +24,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -521,7 +521,7 @@ func (h *Handler) ListGitHubInstallations(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	member, _ := middleware.MemberFromContext(r.Context())
+	member, _ := requestctx.WorkspaceMember(r.Context())
 	canManage := roleAllowed(member.Role, "owner", "admin")
 
 	rows, err := h.Queries.ListGitHubInstallationsByWorkspace(r.Context(), wsUUID)

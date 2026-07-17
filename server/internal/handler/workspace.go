@@ -18,7 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -121,7 +121,7 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := middleware.WorkspaceIDFromContext(r.Context())
+	id := requestctx.WorkspaceID(r.Context())
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
 	if !ok {
 		return
@@ -438,7 +438,7 @@ func (h *Handler) prepareGongfengWorkspaceRepo(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
-	id := middleware.WorkspaceIDFromContext(r.Context())
+	id := requestctx.WorkspaceID(r.Context())
 	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
 		return
 	}
@@ -494,7 +494,7 @@ func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
-	id := middleware.WorkspaceIDFromContext(r.Context())
+	id := requestctx.WorkspaceID(r.Context())
 	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
 		return
 	}
@@ -571,7 +571,7 @@ func parsedGongfengWorkspaceRepoBranch(parsed parsedGongfengURL) string {
 }
 
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := middleware.WorkspaceIDFromContext(r.Context())
+	id := requestctx.WorkspaceID(r.Context())
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
 	if !ok {
 		return
@@ -666,7 +666,7 @@ type MemberWithUserResponse struct {
 }
 
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -730,7 +730,7 @@ func normalizeMemberRole(role string) (string, bool) {
 }
 
 func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
@@ -896,7 +896,7 @@ func (h *Handler) ensureWorkspaceHasAnotherOwner(w http.ResponseWriter, r *http.
 }
 
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
@@ -960,7 +960,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
@@ -1008,7 +1008,7 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
@@ -1044,7 +1044,7 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -25,7 +25,7 @@ func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 	if err != nil {
 		t.Fatalf("load test member row: %v", err)
 	}
-	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
+	return req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, memberRow))
 }
 
 func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) AttachmentResponse {

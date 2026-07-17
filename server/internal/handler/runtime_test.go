@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -64,7 +64,7 @@ func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace member: %v", err)
 	}
-	ctx, cancel := context.WithCancel(middleware.SetMemberContext(context.Background(), testWorkspaceID, member))
+	ctx, cancel := context.WithCancel(requestctx.WithWorkspace(context.Background(), testWorkspaceID, member))
 	cancel()
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodGet, "/api/runtimes?workspace_id="+testWorkspaceID, nil).WithContext(ctx)

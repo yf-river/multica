@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -329,7 +329,7 @@ func TestCreateChatSession_PrivateAgentForbidsPlainMember(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequestAs(memberID, "POST", "/api/chat/sessions", body)
 	req.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000001")
-	req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
+	req = req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, memberRow))
 	testHandler.CreateChatSession(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("CreateChatSession as plain member: expected 403, got %d: %s", w.Code, w.Body.String())
@@ -383,7 +383,7 @@ func TestListChatMessagesPage_PrivateAgentForbidsAfterAccessRevoked(t *testing.T
 
 	w := httptest.NewRecorder()
 	req := newRequestAs(memberID, "GET", "/api/chat/sessions/"+sessionID+"/messages/page", nil)
-	req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
+	req = req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, memberRow))
 	req = withURLParam(req, "sessionId", sessionID)
 	testHandler.ListChatMessagesPage(w, req)
 	if w.Code != http.StatusForbidden {

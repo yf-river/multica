@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -34,7 +34,7 @@ func TestGetNotificationPreferencesRejectsCorruptedStoredShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load member context: %v", err)
 	}
-	req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, member))
+	req = req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, member))
 	w := httptest.NewRecorder()
 	testHandler.GetNotificationPreferences(w, req)
 

@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -617,7 +617,7 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 
 	// Verify the task belongs to the caller's workspace.
 	wsID := h.TaskService.ResolveTaskWorkspaceID(r.Context(), task)
-	if wsID == "" || wsID != middleware.WorkspaceIDFromContext(r.Context()) {
+	if wsID == "" || wsID != requestctx.WorkspaceID(r.Context()) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}

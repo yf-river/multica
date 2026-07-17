@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -44,7 +45,7 @@ func requireChatRequestScope(w http.ResponseWriter, r *http.Request) (chatReques
 	if !ok {
 		return chatRequestScope{}, false
 	}
-	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	return chatRequestScope{
 		userID:      userID,
 		workspaceID: workspaceID,

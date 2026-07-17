@@ -1,43 +1,14 @@
 package middleware
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
-
-// Context keys for workspace-scoped request data.
-type contextKey int
-
-const (
-	ctxKeyWorkspaceID contextKey = iota
-	ctxKeyMember
-)
-
-// MemberFromContext returns the workspace member injected by the workspace middleware.
-func MemberFromContext(ctx context.Context) (db.Member, bool) {
-	m, ok := ctx.Value(ctxKeyMember).(db.Member)
-	return m, ok
-}
-
-// WorkspaceIDFromContext returns the workspace ID injected by the workspace middleware.
-func WorkspaceIDFromContext(ctx context.Context) string {
-	id, _ := ctx.Value(ctxKeyWorkspaceID).(string)
-	return id
-}
-
-// SetMemberContext injects workspace ID and member into the context.
-// This is useful for handlers that resolve the workspace from an entity lookup
-// and want to share the member with downstream code.
-func SetMemberContext(ctx context.Context, workspaceID string, member db.Member) context.Context {
-	ctx = context.WithValue(ctx, ctxKeyWorkspaceID, workspaceID)
-	ctx = context.WithValue(ctx, ctxKeyMember, member)
-	return ctx
-}
 
 // errWorkspaceNotFound is returned when a slug was provided but doesn't match
 // any workspace. This lets the middleware distinguish "no identifier provided"
@@ -99,7 +70,7 @@ func resolveWorkspaceTarget(r *http.Request, queries *db.Queries, useContext boo
 		return id, nil
 	}
 	if useContext {
-		if id := WorkspaceIDFromContext(r.Context()); id != "" {
+		if id := requestctx.WorkspaceID(r.Context()); id != "" {
 			return id, nil
 		}
 	}
@@ -216,7 +187,7 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				}
 			}
 
-			ctx := SetMemberContext(r.Context(), workspaceID, member)
+			ctx := requestctx.WithWorkspace(r.Context(), workspaceID, member)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

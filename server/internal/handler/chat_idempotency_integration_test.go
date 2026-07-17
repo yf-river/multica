@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -301,7 +301,7 @@ func handlerTestChatAgentID(t *testing.T) string {
 func newChatIdempotentRequest(path string, body any, key string) *http.Request {
 	req := newRequest(http.MethodPost, path, body)
 	req.Header.Set("Idempotency-Key", key)
-	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, db.Member{
+	return req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, db.Member{
 		WorkspaceID: util.MustParseUUID(testWorkspaceID),
 		UserID:      util.MustParseUUID(testUserID),
 		Role:        "owner",

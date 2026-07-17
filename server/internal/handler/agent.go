@@ -18,7 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -626,7 +626,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// Agent actors NEVER see mcp_config (see ListAgents for the rationale).
 	if actorType == "agent" || alwaysRedact {
 		redactMcpConfig(&resp)
-	} else if member, ok := middleware.MemberFromContext(r.Context()); ok {
+	} else if member, ok := requestctx.WorkspaceMember(r.Context()); ok {
 		if !canViewAgentSecrets(agent, userID, member.Role) {
 			redactMcpConfig(&resp)
 		}

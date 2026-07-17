@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -69,7 +70,7 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 		{
 			name: "context UUID wins over everything else",
 			setup: func(r *http.Request) {
-				ctx := context.WithValue(r.Context(), ctxKeyWorkspaceID, uuidA)
+				ctx := requestctx.WithWorkspace(r.Context(), uuidA, db.Member{})
 				*r = *r.WithContext(ctx)
 				r.Header.Set("X-Workspace-Slug", testResolverSlug)
 				r.Header.Set("X-Workspace-ID", uuidB)

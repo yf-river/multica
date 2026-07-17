@@ -21,6 +21,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -438,7 +439,7 @@ func (h *Handler) resolveWorkspaceID(r *http.Request) string {
 // workspace-scoped route. A missing member means the route was wired without
 // the required middleware; handlers must not silently recreate authorization.
 func requireWorkspaceMemberContext(w http.ResponseWriter, r *http.Request) (db.Member, bool) {
-	member, ok := middleware.MemberFromContext(r.Context())
+	member, ok := requestctx.WorkspaceMember(r.Context())
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "workspace member context missing")
 		return db.Member{}, false
