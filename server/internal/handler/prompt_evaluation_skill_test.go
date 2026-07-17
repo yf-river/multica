@@ -15,9 +15,7 @@ import (
 
 func TestPromptEvaluationSkillSnapshotCaseDraftsAndFreshness(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	v1 := "# Verify\n\n- Run focused checks.\n"
@@ -117,9 +115,7 @@ func TestPromptEvaluationSkillSnapshotCaseDraftsAndFreshness(t *testing.T) {
 
 func TestPromptEvaluationSkillInventoryDiscoversTrackedSkills(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	changelogPath := ".codebuddy/skills/05-verify/CHANGELOG.md"
@@ -221,9 +217,7 @@ func TestPromptEvaluationSkillSourceResourceDefaultsFromLocalDirectory(t *testin
 
 func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	v1 := "# Verify\n\n- Run focused checks.\n"
@@ -330,9 +324,7 @@ func TestPromptEvaluationSkillApplyRollsBackPatchWhenChangelogFails(t *testing.T
 	skillPath := ".codebuddy/skills/verify/SKILL.md"
 	v1 := "# Verify\n\nRun focused checks.\n"
 	v2 := "# Verify\n\nRun focused checks and retain evidence.\n"
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 	writeSkillTestFile(t, repoPath, skillPath, v1)
 	runSkillTestGit(t, repoPath, "add", ".")
 	runSkillTestGit(t, repoPath, "commit", "-m", "add verify skill")
@@ -364,9 +356,7 @@ func TestPromptEvaluationSkillApplyRollsBackPatchWhenChangelogFails(t *testing.T
 
 func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	writeSkillTestFile(t, repoPath, ".codebuddy/skills/05-verify/SKILL.md", "# Verify\n\n- Run focused checks.\n")
 	runSkillTestGit(t, repoPath, "add", ".codebuddy/skills/05-verify/SKILL.md")
@@ -558,9 +548,7 @@ func TestResolvePromptEvaluationSkillCandidateSnapshotPrecedence(t *testing.T) {
 
 func TestPromptEvaluationSkillApplyBlocksDirtyWorktreeByDefault(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	v1 := "# Verify\n\n- Run focused checks.\n"
@@ -739,6 +727,13 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	if !strings.Contains(proofBoundary, "Gongfeng/agent skill runtime") {
 		t.Fatalf("run evidence boundary = %+v", evidence)
 	}
+}
+
+func initSkillTestRepo(t *testing.T, repoPath string) {
+	t.Helper()
+	runSkillTestGit(t, repoPath, "init")
+	runSkillTestGit(t, repoPath, "config", "user.email", "test@multica.local")
+	runSkillTestGit(t, repoPath, "config", "user.name", "Multica Test")
 }
 
 func runSkillTestGit(t *testing.T, repoPath string, args ...string) string {

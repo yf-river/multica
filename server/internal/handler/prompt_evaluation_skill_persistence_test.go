@@ -15,9 +15,7 @@ import (
 
 func TestCheckPromptEvaluationSkillFreshnessFailsWhenEvidenceCannotPersist(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	writeSkillTestFile(t, repoPath, skillPath, "# Verify\n\n- Persist evidence.\n")
 	runSkillTestGit(t, repoPath, "add", skillPath)

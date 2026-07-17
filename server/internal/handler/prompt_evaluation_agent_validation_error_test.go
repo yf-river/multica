@@ -10,9 +10,7 @@ import (
 )
 
 func TestRunPromptEvaluationAssetAgentPreservesAgentReadFailures(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	var agentID string
 	if err := testPool.QueryRow(context.Background(), `

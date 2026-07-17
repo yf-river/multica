@@ -12,14 +12,10 @@ import (
 )
 
 func TestPromptEvaluationSkillAssetMutationsPreserveConcurrentWritesAndReplayExactly(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	repoPath := t.TempDir()
 	skillPath := ".codebuddy/skills/verify/SKILL.md"
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@multica.local")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Multica Test")
+	initSkillTestRepo(t, repoPath)
 	writeSkillTestFile(t, repoPath, skillPath, "# Verify\n\nRun focused checks.\n")
 	runSkillTestGit(t, repoPath, "add", ".")
 	runSkillTestGit(t, repoPath, "commit", "-m", "add verify skill")

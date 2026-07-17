@@ -11,9 +11,7 @@ import (
 )
 
 func TestPromptEvaluationCompletionWaitsForDurableProjection(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, run, _ := createPromptEvaluationAgentRunFixture(t, "持久化终态投影实验", "完成态投影")
 	markPromptEvaluationTaskRunning(t, run.TaskID)
@@ -78,9 +76,7 @@ func TestPromptEvaluationCompletionWaitsForDurableProjection(t *testing.T) {
 }
 
 func TestPromptEvaluationCancellationWaitsForDurableProjection(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, run, _ := createPromptEvaluationAgentRunFixture(t, "取消终态投影实验", "取消态投影")
 	markPromptEvaluationTaskRunning(t, run.TaskID)

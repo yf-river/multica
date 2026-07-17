@@ -13,9 +13,7 @@ import (
 )
 
 func TestRunPromptEvaluationSkillReEvalRollsBackWhenCandidateEvidenceFails(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")

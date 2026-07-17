@@ -13,9 +13,7 @@ import (
 )
 
 func TestSyncPromptEvaluationRunFromTaskRollsBackAllProjections(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, fixture, _ := createPromptEvaluationAgentRunFixture(t, "manual sync atomicity", "manual sync rollback")
 	ctx := context.Background()

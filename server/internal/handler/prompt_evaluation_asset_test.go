@@ -373,9 +373,7 @@ return biz_err.NewFromCodeWithErrMsgDetails(consts.ErrDatabaseUpdateFailed, err,
 }
 
 func TestPromptEvaluationAssetCRUD(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -517,9 +515,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 }
 
 func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -568,9 +564,7 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 }
 
 func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -664,9 +658,7 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -871,9 +863,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 }
 
 func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 	})
@@ -919,9 +909,7 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -968,9 +956,7 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 }
 
 func TestPromptEvaluationCaseCRUD(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -1534,9 +1520,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 }
 
 func TestPromptEvaluationEmptyCanonicalCasesStayEmpty(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 	})
@@ -1552,9 +1536,7 @@ func TestPromptEvaluationEmptyCanonicalCasesStayEmpty(t *testing.T) {
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -1641,9 +1623,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, runtimeID := createPromptEvaluationAgentRunFixture(t, "真实智能体运行实验", "登录失败")
 	if resp.TaskID == "" || resp.ChatSessionID == "" || resp.AgentID == "" || resp.RuntimeID != runtimeID || resp.Model != "deepseek-v4-pro-ioa" {
@@ -1892,9 +1872,7 @@ func assertPromptEvaluationAgentRunUnavailable(t *testing.T, assetID, detail str
 }
 
 func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -1964,9 +1942,7 @@ func TestPromptEvaluationAgentModelCanBeConfigured(t *testing.T) {
 }
 
 func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
 		t.Fatalf("cleanup codebuddy runtime: %v", err)
@@ -1988,9 +1964,7 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 }
 
 func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "容量受限 readiness 实验", "额度不足")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2018,9 +1992,7 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 }
 
 func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
 		t.Fatalf("cleanup codebuddy runtime: %v", err)
@@ -2093,9 +2065,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 }
 
 func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsReview(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体人工复核实验", "缺少结构化评估")
 
@@ -2171,9 +2141,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 }
 
 func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体失败实验", "部署失败")
 
@@ -2208,9 +2176,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 }
 
 func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "服务端证据快照实验", "需要归档")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2309,9 +2275,7 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 }
 
 func TestPromptEvaluationRunEvidenceFailsWhenRequiredProjectionCannotLoad(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "证据任务读取失败实验", "不得返回残缺证据")
 
@@ -2338,9 +2302,7 @@ func TestPromptEvaluationRunEvidenceFailsWhenRequiredProjectionCannotLoad(t *tes
 }
 
 func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产级证据快照实验", "需要批量归档")
 
@@ -2417,9 +2379,7 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 }
 
 func TestPromptEvaluationAssetEvidenceSnapshotsRollbackWholeBatch(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产证据批量回滚实验", "第一条不得残留")
 	var secondRunID string
@@ -2465,9 +2425,7 @@ func TestPromptEvaluationAssetEvidenceSnapshotsRollbackWholeBatch(t *testing.T) 
 }
 
 func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体证据优化实验", "缺少验收条件")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2558,9 +2516,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体取消实验", "取消任务")
 
@@ -2579,9 +2535,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 }
 
 func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "公开取消运行实验", "取消公开运行")
 
@@ -2619,9 +2573,7 @@ func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
 }
 
 func TestCancelPromptEvaluationRunRecoversAfterRunPersistenceFailure(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "取消事务恢复实验", "取消事务恢复")
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "_")
@@ -2680,9 +2632,7 @@ func TestCancelPromptEvaluationRunRecoversAfterRunPersistenceFailure(t *testing.
 }
 
 func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体批处理失败实验", "批处理失败")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2708,9 +2658,7 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体重试实验", "运行时离线")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2820,9 +2768,7 @@ func readPromptEvaluationRunEvidence(t *testing.T, runID string) PromptEvaluatio
 }
 
 func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -2929,9 +2875,7 @@ func createPromptEvaluationAgentRunAssetFixture(t *testing.T, assetName string, 
 }
 
 func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -3070,9 +3014,7 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 }
 
 func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -3164,9 +3106,7 @@ func createPromptEvaluationAssetFixture(t *testing.T, requestBody map[string]any
 }
 
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	foreignWorkspaceID := createPromptLibraryTestWorkspace(t, "prompt-eval-foreign-"+randomID()[:8])
 	foreignPromptID := createPromptEvaluationTestPrompt(t, foreignWorkspaceID, "外部提示词")
 

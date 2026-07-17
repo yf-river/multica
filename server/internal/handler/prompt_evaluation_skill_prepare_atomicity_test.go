@@ -12,15 +12,11 @@ import (
 )
 
 func TestPreparePromptEvaluationSkillReEvalAssetRecoversExactCompoundResult(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 	repoPath := t.TempDir()
 	skillPath := ".codebuddy/skills/verify/SKILL.md"
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@multica.local")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Multica Test")
+	initSkillTestRepo(t, repoPath)
 	writeSkillTestFile(t, repoPath, skillPath, "# Verify\n\nCurrent behavior.\n")
 	runSkillTestGit(t, repoPath, "add", ".")
 	runSkillTestGit(t, repoPath, "commit", "-m", "add current skill")
