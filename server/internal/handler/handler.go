@@ -636,9 +636,17 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 		return issue, true
 	}
 
-	// Try identifier format (e.g., "JIA-42"). Matched identifiers preserve
-	// lookup errors instead of falling through to a misleading not-found result.
-	if issue, matched, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); matched {
+	// Try identifier format (e.g., "JIA-42").
+	if issueNumber, matched := issueNumberFromIdentifier(issueID); matched {
+		wsUUID, err := util.ParseUUID(workspaceID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "issue not found")
+			return db.Issue{}, false
+		}
+		issue, err := h.Queries.GetIssueByNumber(r.Context(), db.GetIssueByNumberParams{
+			WorkspaceID: wsUUID,
+			Number:      issueNumber,
+		})
 		if err != nil {
 			writeEntityLoadError(w, err, "issue", "issue_id", issueID)
 			return db.Issue{}, false
@@ -650,35 +658,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	return db.Issue{}, false
 }
 
-// resolveIssueByIdentifier tries to look up an issue by "PREFIX-NUMBER" format.
-func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool, error) {
-	parts := splitIdentifier(id)
-	if parts == nil {
-		return db.Issue{}, false, nil
-	}
-	if workspaceID == "" {
-		return db.Issue{}, false, nil
-	}
-	wsUUID, err := util.ParseUUID(workspaceID)
-	if err != nil {
-		return db.Issue{}, false, nil
-	}
-	issue, err := h.Queries.GetIssueByNumber(ctx, db.GetIssueByNumberParams{
-		WorkspaceID: wsUUID,
-		Number:      parts.number,
-	})
-	if err != nil {
-		return db.Issue{}, true, err
-	}
-	return issue, true, nil
-}
-
-type identifierParts struct {
-	prefix string
-	number int32
-}
-
-func splitIdentifier(id string) *identifierParts {
+func issueNumberFromIdentifier(id string) (int32, bool) {
 	idx := -1
 	for i := len(id) - 1; i >= 0; i-- {
 		if id[i] == '-' {
@@ -687,20 +667,20 @@ func splitIdentifier(id string) *identifierParts {
 		}
 	}
 	if idx <= 0 || idx >= len(id)-1 {
-		return nil
+		return 0, false
 	}
 	numStr := id[idx+1:]
 	num := 0
 	for _, c := range numStr {
 		if c < '0' || c > '9' {
-			return nil
+			return 0, false
 		}
 		num = num*10 + int(c-'0')
 	}
 	if num <= 0 {
-		return nil
+		return 0, false
 	}
-	return &identifierParts{prefix: id[:idx], number: int32(num)}
+	return int32(num), true
 }
 
 func (h *Handler) getIssuePrefix(ctx context.Context, workspaceID pgtype.UUID) string {
