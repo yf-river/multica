@@ -279,7 +279,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 			return
 		}
 	}
-	metadata, ok := jsonObjectField(w, req.Metadata, "metadata")
+	metadata, ok := jsonObjectBytesOrDefault(w, req.Metadata, "metadata", nil)
 	if !ok {
 		return
 	}
@@ -538,7 +538,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 			return
 		}
 	}
-	requestMetadata, ok := jsonObjectField(w, req.Metadata, "metadata")
+	requestMetadata, ok := jsonObjectBytesOrDefault(w, req.Metadata, "metadata", nil)
 	if !ok {
 		return
 	}

@@ -247,21 +247,6 @@ func writePromptLibraryItemMutationError(w http.ResponseWriter, err error, actio
 	writeError(w, http.StatusInternalServerError, "failed to "+action+" prompt library item")
 }
 
-func jsonArrayField(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
-	if len(raw) == 0 {
-		return nil, true
-	}
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, true
-	}
-	var arr []any
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		writeError(w, http.StatusBadRequest, field+" must be a JSON array")
-		return nil, false
-	}
-	return raw, true
-}
-
 func textParam(value *string) pgtype.Text {
 	if value == nil {
 		return pgtype.Text{}
@@ -453,11 +438,11 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	variables, ok := jsonArrayField(w, req.Variables, "variables")
+	variables, ok := jsonArrayBytesOrDefault(w, req.Variables, "variables", nil)
 	if !ok {
 		return
 	}
-	tags, ok := jsonArrayField(w, req.Tags, "tags")
+	tags, ok := jsonArrayBytesOrDefault(w, req.Tags, "tags", nil)
 	if !ok {
 		return
 	}
@@ -540,11 +525,11 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	variables, ok := jsonArrayField(w, req.Variables, "variables")
+	variables, ok := jsonArrayBytesOrDefault(w, req.Variables, "variables", nil)
 	if !ok {
 		return
 	}
-	tags, ok := jsonArrayField(w, req.Tags, "tags")
+	tags, ok := jsonArrayBytesOrDefault(w, req.Tags, "tags", nil)
 	if !ok {
 		return
 	}

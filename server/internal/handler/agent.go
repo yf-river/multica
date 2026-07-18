@@ -779,7 +779,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	var mc []byte
 	if rawMcpConfig, ok := rawFields["mcp_config"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null")) {
 		var valid bool
-		mc, valid = jsonObjectField(w, rawMcpConfig, "mcp_config")
+		mc, valid = jsonObjectBytesOrDefault(w, rawMcpConfig, "mcp_config", nil)
 		if !valid {
 			return
 		}
@@ -1101,7 +1101,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	shouldClearMcpConfig := hasMcpConfig && bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null"))
 	if hasMcpConfig && !shouldClearMcpConfig {
 		var valid bool
-		params.McpConfig, valid = jsonObjectField(w, rawMcpConfig, "mcp_config")
+		params.McpConfig, valid = jsonObjectBytesOrDefault(w, rawMcpConfig, "mcp_config", nil)
 		if !valid {
 			return
 		}

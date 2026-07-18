@@ -563,21 +563,6 @@ func validPromptEvaluationAssetType(assetType string) bool {
 		assetType == promptEvaluationAssetTestSuite
 }
 
-func jsonObjectField(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
-	if len(raw) == 0 {
-		return nil, true
-	}
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, true
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		writeError(w, http.StatusBadRequest, field+" must be a JSON object")
-		return nil, false
-	}
-	return raw, true
-}
-
 func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, field string, preserveEmpty bool) ([]byte, bool) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		if preserveEmpty {
