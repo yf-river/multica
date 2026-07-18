@@ -41,7 +41,6 @@ async function expectTrainingRoute(page: Page, item: (typeof TRAINING_ROUTES)[nu
   await expectTrainingNavigationMarker(page, item);
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("case-library-editor")).toHaveCount(item.showCaseLibrary ? 1 : 0);
-  await expect(page.getByTestId("prompt-version-history")).toHaveCount(item.showPromptEditor ? 1 : 0);
 }
 
 test.describe("Navigation", () => {

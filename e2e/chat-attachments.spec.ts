@@ -106,7 +106,10 @@ test.describe("Chat attachments", () => {
     const uploadRes = await authedFetch(api, "/api/upload-file", {
       method: "POST",
       body: form,
-      headers: { "X-Workspace-Slug": ws.slug },
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+        "X-Workspace-Slug": ws.slug,
+      },
     });
     expect(uploadRes.status).toBe(200);
     const uploaded = (await uploadRes.json()) as UploadRow;
