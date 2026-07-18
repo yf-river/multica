@@ -155,41 +155,19 @@ type CloudPATVerifier struct {
 	rdb     *redis.Client // may be nil — disables caching
 }
 
-// CloudPATVerifierConfig assembles the current Fleet verification dependencies.
-type CloudPATVerifierConfig struct {
-	// FleetBaseURL is the Cloud Fleet base URL (e.g.
-	// https://fleet.multica.cloud). Trailing slashes are trimmed.
-	// Empty disables the verifier — NewCloudPATVerifier returns nil.
-	FleetBaseURL string
-
-	// HTTPClient is the client used for verify calls. Optional —
-	// when nil, a client with cloudPATDefaultTimeout is created.
-	// Pass a shared client when you want connection pooling /
-	// per-deployment transport tuning.
-	HTTPClient *http.Client
-
-	// Redis backs the positive-result cache. Nil disables caching —
-	// every Verify call hits Fleet. Same nil-safe contract as
-	// PATCache.
-	Redis *redis.Client
-}
-
-// NewCloudPATVerifier returns a verifier for cfg.FleetBaseURL. If the
+// NewCloudPATVerifier returns a verifier for fleetBaseURL. If the
 // URL is empty after trimming, returns nil — callers (router /
 // middleware) treat nil as "mcn_ not supported on this deployment".
-func NewCloudPATVerifier(cfg CloudPATVerifierConfig) *CloudPATVerifier {
-	base := strings.TrimRight(strings.TrimSpace(cfg.FleetBaseURL), "/")
+// Redis may be nil, which disables the positive-result cache.
+func NewCloudPATVerifier(fleetBaseURL string, rdb *redis.Client) *CloudPATVerifier {
+	base := strings.TrimRight(strings.TrimSpace(fleetBaseURL), "/")
 	if base == "" {
 		return nil
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: cloudPATDefaultTimeout}
-	}
 	return &CloudPATVerifier{
 		baseURL: base,
-		http:    client,
-		rdb:     cfg.Redis,
+		http:    &http.Client{Timeout: cloudPATDefaultTimeout},
+		rdb:     rdb,
 	}
 }
 

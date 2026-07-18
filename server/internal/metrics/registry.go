@@ -18,10 +18,10 @@ type RegistryOptions struct {
 	Version  string
 	Commit   string
 
-	// BusinessSampler uses a dedicated pool so metrics scrapes cannot
+	// BusinessSamplerPool is dedicated so metrics scrapes cannot
 	// exhaust the application's database connections.
-	BusinessSampler *BusinessSamplerOptions
-	OutboxPool      *pgxpool.Pool
+	BusinessSamplerPool *pgxpool.Pool
+	OutboxPool          *pgxpool.Pool
 }
 
 type Registry struct {
@@ -58,7 +58,7 @@ func NewRegistry(opts RegistryOptions) *Registry {
 		reg.MustRegister(NewDaemonWSCollector(opts.DaemonWS))
 	}
 
-	sampler := NewBusinessSamplerCollector(opts.BusinessSampler)
+	sampler := newBusinessSamplerCollector(opts.BusinessSamplerPool)
 	if sampler != nil {
 		reg.MustRegister(sampler.Collectors()...)
 	}

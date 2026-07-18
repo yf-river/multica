@@ -425,10 +425,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Fleet.
 	// Returns nil when no Fleet URL is configured; internal deployments
 	// can leave it unset and rely on local users/PATs.
-	cloudPATVerifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
-		FleetBaseURL: cloudFleetURL,
-		Redis:        rdb,
-	})
+	cloudPATVerifier := auth.NewCloudPATVerifier(cloudFleetURL, rdb)
 
 	// Empty-claim cache: lets the daemon poll path skip a Postgres
 	// scan when a recent check confirmed the runtime had no queued

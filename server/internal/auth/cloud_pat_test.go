@@ -86,7 +86,7 @@ func TestCloudPATVerifier_NilSafe(t *testing.T) {
 // first request). This is the explicit signal to the middleware that
 // mcn_ is unsupported on this deployment.
 func TestCloudPATVerifier_EmptyURLReturnsNil(t *testing.T) {
-	if v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: "  "}); v != nil {
+	if v := NewCloudPATVerifier("  ", nil); v != nil {
 		t.Fatalf("expected nil for empty URL, got %#v", v)
 	}
 }
@@ -99,7 +99,7 @@ func TestCloudPATVerifier_VerifySuccess(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{expectToken: "mcn_test_token"})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 	if v == nil {
 		t.Fatal("verifier should not be nil")
 	}
@@ -116,7 +116,7 @@ func TestCloudPATVerifier_VerifySuccess(t *testing.T) {
 // strips "Bearer " before calling Verify, so an empty plaintext is a
 // programming error here, not a Fleet round-trip.
 func TestCloudPATVerifier_VerifyEmptyToken(t *testing.T) {
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: "http://example.invalid"})
+	v := NewCloudPATVerifier("http://example.invalid", nil)
 	_, err := v.Verify(context.Background(), "", nil)
 	if !errors.Is(err, ErrCloudPATInvalid) {
 		t.Fatalf("expected ErrCloudPATInvalid, got %v", err)
@@ -143,7 +143,7 @@ func TestCloudPATVerifier_InvalidReasons(t *testing.T) {
 			srv := newFleetServer(t, fleetServerOpts{body: body})
 			defer srv.Close()
 
-			v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+			v := NewCloudPATVerifier(srv.URL, nil)
 			_, err := v.Verify(context.Background(), "mcn_x", nil)
 			if !errors.Is(err, ErrCloudPATInvalid) {
 				t.Fatalf("expected ErrCloudPATInvalid for reason %q, got %v", reason, err)
@@ -167,7 +167,7 @@ func TestCloudPATVerifier_FleetReturns500(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{statusCode: http.StatusInternalServerError, body: "boom"})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 	_, err := v.Verify(context.Background(), "mcn_x", nil)
 	if !errors.Is(err, ErrCloudPATUnavailable) {
 		t.Fatalf("expected ErrCloudPATUnavailable for 500, got %v", err)
@@ -182,7 +182,7 @@ func TestCloudPATVerifier_FleetReturns400(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{statusCode: http.StatusBadRequest, body: `{"error":"bad"}`})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 	_, err := v.Verify(context.Background(), "mcn_x", nil)
 	if !errors.Is(err, ErrCloudPATUnavailable) {
 		t.Fatalf("expected ErrCloudPATUnavailable for 400, got %v", err)
@@ -198,10 +198,8 @@ func TestCloudPATVerifier_NetworkError(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{
-		FleetBaseURL: url,
-		HTTPClient:   &http.Client{Timeout: 200 * time.Millisecond},
-	})
+	v := NewCloudPATVerifier(url, nil)
+	v.http = &http.Client{Timeout: 200 * time.Millisecond}
 	_, err := v.Verify(context.Background(), "mcn_x", nil)
 	if !errors.Is(err, ErrCloudPATUnavailable) {
 		t.Fatalf("expected ErrCloudPATUnavailable on network error, got %v", err)
@@ -217,7 +215,7 @@ func TestCloudPATVerifier_ValidTrueWithoutOwnerIDFailsClosed(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{body: `{"valid":true}`})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 	_, err := v.Verify(context.Background(), "mcn_x", nil)
 	if !errors.Is(err, ErrCloudPATUnavailable) {
 		t.Fatalf("expected ErrCloudPATUnavailable for valid:true without owner_id, got %v", err)
@@ -231,7 +229,7 @@ func TestCloudPATVerifier_DecodeError(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{body: "<not json>"})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 	_, err := v.Verify(context.Background(), "mcn_x", nil)
 	if !errors.Is(err, ErrCloudPATUnavailable) {
 		t.Fatalf("expected ErrCloudPATUnavailable for decode error, got %v", err)
@@ -245,7 +243,7 @@ func TestCloudPATVerifier_ContextCanceled(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{delay: 200 * time.Millisecond})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -259,7 +257,7 @@ func TestCloudPATVerifier_TrimsTrailingSlash(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL + "/"})
+	v := NewCloudPATVerifier(srv.URL+"/", nil)
 	if v == nil {
 		t.Fatal("verifier should not be nil")
 	}
@@ -275,7 +273,7 @@ func TestCloudPATVerifier_CacheHitSkipsHTTP(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{recordReqs: &calls})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL, Redis: rdb})
+	v := NewCloudPATVerifier(srv.URL, rdb)
 
 	first, err := v.Verify(context.Background(), "mcn_repeat", nil)
 	if err != nil {
@@ -307,7 +305,7 @@ func TestCloudPATVerifier_NegativesNotCached(t *testing.T) {
 	})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL, Redis: rdb})
+	v := NewCloudPATVerifier(srv.URL, rdb)
 
 	_, err := v.Verify(context.Background(), "mcn_revoked", nil)
 	if !errors.Is(err, ErrCloudPATInvalid) {
@@ -329,7 +327,7 @@ func TestCloudPATVerifier_LookupRejectsUnknownOwner(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{recordReqs: &calls})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL, Redis: rdb})
+	v := NewCloudPATVerifier(srv.URL, rdb)
 
 	lookup := func(_ context.Context, ownerID string) (bool, error) {
 		if ownerID != "01972f7e-7e8d-77ef-a13d-1b0ce3e9c001" {
@@ -374,7 +372,7 @@ func TestCloudPATVerifier_LookupErrorMapsToUnavailable(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	v := NewCloudPATVerifier(srv.URL, nil)
 
 	lookup := func(_ context.Context, _ string) (bool, error) {
 		return false, errors.New("db is down")
@@ -392,7 +390,7 @@ func TestCloudPATVerifier_LookupSuccessIsCached(t *testing.T) {
 	srv := newFleetServer(t, fleetServerOpts{recordReqs: &fleetCalls})
 	defer srv.Close()
 
-	v := NewCloudPATVerifier(CloudPATVerifierConfig{FleetBaseURL: srv.URL, Redis: rdb})
+	v := NewCloudPATVerifier(srv.URL, rdb)
 
 	var lookupCalls int32
 	lookup := func(_ context.Context, _ string) (bool, error) {

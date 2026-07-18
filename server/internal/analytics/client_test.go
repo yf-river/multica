@@ -40,10 +40,7 @@ func TestPostHogClient_Batching(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewPostHogClient(PostHogConfig{
-		APIKey: "test-key",
-		Host:   srv.URL,
-	})
+	c := newPostHogClient("test-key", srv.URL, "test")
 
 	c.Capture(Event{Name: "signup", DistinctID: "u1", WorkspaceID: "w1"})
 	c.Capture(Event{Name: "workspace_created", DistinctID: "u1", WorkspaceID: "w1"})
@@ -79,10 +76,7 @@ func TestPostHogClient_DropsWhenFull(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewPostHogClient(PostHogConfig{
-		APIKey: "test-key",
-		Host:   srv.URL,
-	})
+	c := newPostHogClient("test-key", srv.URL, "test")
 	defer func() {
 		close(block)
 		c.Close()

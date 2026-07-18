@@ -191,7 +191,7 @@ func TestAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 
 	var gotUser, gotActorSource string
 	mw := Auth(nil, nil, verifier)
@@ -226,7 +226,7 @@ func TestAuth_MCN_InvalidReturns401(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 	mw := Auth(nil, nil, verifier)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when token is invalid")
@@ -248,7 +248,7 @@ func TestAuth_MCN_FleetUnreachableReturns503(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 	mw := Auth(nil, nil, verifier)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when fleet is unavailable")

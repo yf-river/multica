@@ -189,10 +189,10 @@ func runDBStatsLogger(ctx context.Context, pool *pgxpool.Pool) {
 const samplerMaxConns int32 = 2
 
 // newSamplerDBPool builds a tiny pgxpool aimed exclusively at the
-// BusinessSamplerCollector. Keeping it isolated from the main pool means a
+// business sampler. Keeping it isolated from the main pool means a
 // stalled sampler scrape can never starve business traffic — the worst
 // case is the next /metrics returning stale numbers, which is exactly the
-// safety contract documented on BusinessSamplerOptions.
+// safety contract documented by the sampler.
 //
 // The pool is built from the same DATABASE_URL as the main pool so it
 // hits the same database; the sizing knobs (DATABASE_MAX_CONNS et al.) on

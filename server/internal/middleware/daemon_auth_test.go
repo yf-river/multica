@@ -126,7 +126,7 @@ func TestDaemonAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 
 	var gotUser, gotPath, gotActorSource string
 	mw := DaemonAuth(nil, nil, verifier)
@@ -163,7 +163,7 @@ func TestDaemonAuth_MCN_FleetSaysInvalid(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 	mw := DaemonAuth(nil, nil, verifier)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when fleet says invalid")
@@ -185,7 +185,7 @@ func TestDaemonAuth_MCN_FleetUnreachable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 	mw := DaemonAuth(nil, nil, verifier)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next must not be called when fleet is unavailable")
@@ -216,7 +216,7 @@ func TestDaemonAuth_MCN_OwnerNotInLocalDB(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	verifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{FleetBaseURL: srv.URL})
+	verifier := auth.NewCloudPATVerifier(srv.URL, nil)
 
 	mw := DaemonAuth(queries, nil, verifier)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

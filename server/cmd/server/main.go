@@ -229,7 +229,7 @@ func main() {
 	var businessMetrics *obsmetrics.BusinessMetrics
 	var samplerPool *pgxpool.Pool
 	if metricsConfig.Enabled() {
-		// Build a dedicated tiny pool for the BusinessSamplerCollector
+		// Build a dedicated tiny pool for the business sampler
 		// so a stalled scrape can never starve business traffic. If the
 		// pool fails to construct we log and continue without the
 		// sampler — the rest of /metrics is still useful.
@@ -241,18 +241,13 @@ func main() {
 		}
 
 		metricsRegistry := obsmetrics.NewRegistry(obsmetrics.RegistryOptions{
-			Pool:       pool,
-			OutboxPool: samplerPool,
-			Realtime:   realtime.M,
-			DaemonWS:   daemonws.M,
-			Version:    version,
-			Commit:     commit,
-			BusinessSampler: func() *obsmetrics.BusinessSamplerOptions {
-				if samplerPool == nil {
-					return nil
-				}
-				return &obsmetrics.BusinessSamplerOptions{Pool: samplerPool}
-			}(),
+			Pool:                pool,
+			OutboxPool:          samplerPool,
+			Realtime:            realtime.M,
+			DaemonWS:            daemonws.M,
+			Version:             version,
+			Commit:              commit,
+			BusinessSamplerPool: samplerPool,
 		})
 		httpMetrics = metricsRegistry.HTTP
 		businessMetrics = metricsRegistry.Business
