@@ -180,14 +180,6 @@ func dispatchCommentFromTaskMessages(messages []db.TaskMessage) string {
 	return ""
 }
 
-func fallbackDispatchCommentFromMessages(ctx context.Context, queries *db.Queries, taskID pgtype.UUID) (string, error) {
-	messages, err := queries.ListTaskMessages(ctx, taskID)
-	if err != nil {
-		return "", fmt.Errorf("list task messages for dispatch fallback: %w", err)
-	}
-	return dispatchCommentFromTaskMessages(messages), nil
-}
-
 // CancelTasksForIssueInTx lets a parent mutation commit task cancellation and
 // its durable terminal events with the parent row change. The caller owns the
 // transaction and must call PublishCancelledTasks only after commit.

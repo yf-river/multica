@@ -87,11 +87,11 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 	switch providerType {
 	case "claude":
 		models := claudeStaticModels()
-		annotateClaudeThinking(ctx, models, executablePath)
+		applyModelThinking(models, loadClaudeThinkingByModel(ctx, executablePath))
 		return models, nil
 	case "codex":
 		models := codexStaticModels()
-		annotateCodexThinking(ctx, models, executablePath)
+		applyModelThinking(models, loadCodexThinkingByModel(ctx, executablePath))
 		return models, nil
 	case "gemini":
 		return geminiStaticModels(), nil

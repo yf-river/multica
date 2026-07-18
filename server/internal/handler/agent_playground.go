@@ -134,7 +134,11 @@ func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.
 		if !allowed {
 			continue
 		}
-		resp = append(resp, agentPlaygroundExperimentRowToResponse(row))
+		resp = append(resp, agentPlaygroundExperimentToResponse(
+			row.AgentPlaygroundExperiment,
+			row.InputCount,
+			row.AgentCount,
+		))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
@@ -1003,10 +1007,6 @@ func latestAssistantMessage(ctx context.Context, queries *db.Queries, chatSessio
 		}
 	}
 	return "", nil
-}
-
-func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperimentsRow) agentPlaygroundExperimentResponse {
-	return agentPlaygroundExperimentToResponse(row.AgentPlaygroundExperiment, row.InputCount, row.AgentCount)
 }
 
 func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment, inputCount, agentCount int32) agentPlaygroundExperimentResponse {

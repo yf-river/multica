@@ -81,18 +81,14 @@ func (c *codexClient) trySetThreadName(ctx context.Context, threadID, name strin
 	if name == "" {
 		return
 	}
-	if err := c.setThreadName(ctx, threadID, name); err != nil {
-		logger.Warn("codex thread/name/set failed; continuing without provider-native thread title",
-			"thread_id", threadID, "error", err)
-	}
-}
-
-func (c *codexClient) setThreadName(ctx context.Context, threadID, name string) error {
 	_, err := c.request(ctx, "thread/name/set", map[string]any{
 		"threadId": threadID,
 		"name":     name,
 	})
-	return err
+	if err != nil {
+		logger.Warn("codex thread/name/set failed; continuing without provider-native thread title",
+			"thread_id", threadID, "error", err)
+	}
 }
 
 // applyCodexReasoningEffort writes the per-agent thinking_level into a

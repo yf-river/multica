@@ -137,10 +137,11 @@ func projectTaskCompletionFallbackComment(
 	}
 	body := util.UnescapeBackslashEscapes(payload.Output)
 	if !agentMentionURLPattern.MatchString(body) {
-		dispatchBody, err := fallbackDispatchCommentFromMessages(ctx, queries, task.ID)
+		messages, err := queries.ListTaskMessages(ctx, task.ID)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list task messages for dispatch fallback: %w", err)
 		}
+		dispatchBody := dispatchCommentFromTaskMessages(messages)
 		if dispatchBody != "" {
 			body = dispatchBody
 		}

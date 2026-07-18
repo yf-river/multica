@@ -116,20 +116,6 @@ var claudeStaticEffortFallback = []string{"low", "medium", "high"}
 // reject than artificially block valid combinations.
 var claudeStaticEffortFullSuperset = []string{"low", "medium", "high", "xhigh", "max"}
 
-// annotateClaudeThinking populates each entry's Thinking field by
-// running `claude --help` once and projecting the parsed superset
-// through claudeModelEffortAllow. Errors are silently absorbed so a
-// missing CLI doesn't break model listing — the UI just hides the
-// picker for that model.
-func annotateClaudeThinking(ctx context.Context, models []Model, executablePath string) {
-	mapping := loadClaudeThinkingByModel(ctx, executablePath)
-	for i := range models {
-		if t, ok := mapping[models[i].ID]; ok && t != nil {
-			models[i].Thinking = t
-		}
-	}
-}
-
 func loadClaudeThinkingByModel(ctx context.Context, executablePath string) map[string]*ModelThinking {
 	if executablePath == "" {
 		executablePath = "claude"
@@ -264,12 +250,7 @@ type codexDebugModelsResponse struct {
 	} `json:"models"`
 }
 
-// annotateCodexThinking decorates each model entry with its reasoning
-// catalog. Models the CLI doesn't know about (older codex install,
-// brand-new ID we haven't shipped) get Thinking=nil — the UI hides
-// the picker for those rows rather than guessing.
-func annotateCodexThinking(ctx context.Context, models []Model, executablePath string) {
-	mapping := loadCodexThinkingByModel(ctx, executablePath)
+func applyModelThinking(models []Model, mapping map[string]*ModelThinking) {
 	for i := range models {
 		if t, ok := mapping[models[i].ID]; ok && t != nil {
 			models[i].Thinking = t
