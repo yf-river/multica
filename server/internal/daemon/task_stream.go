@@ -580,12 +580,7 @@ func convertProjectResourcesForEnv(resources []protocol.TaskProjectResource) []e
 	}
 	result := make([]execenv.ProjectResourceForEnv, len(resources))
 	for i, r := range resources {
-		result[i] = execenv.ProjectResourceForEnv{
-			ID:           r.ID,
-			ResourceType: r.ResourceType,
-			ResourceRef:  r.ResourceRef,
-			Label:        r.Label,
-		}
+		result[i] = execenv.ProjectResourceForEnv(r)
 	}
 	return result
 }

@@ -90,22 +90,12 @@ type projectResourceFile struct {
 // MarshalJSON renders the resource_ref field as raw JSON instead of a base64
 // blob. The struct's other fields are simple strings.
 func (p ProjectResourceForEnv) MarshalJSON() ([]byte, error) {
-	type alias struct {
-		ID           string          `json:"id"`
-		ResourceType string          `json:"resource_type"`
-		ResourceRef  json.RawMessage `json:"resource_ref"`
-		Label        string          `json:"label,omitempty"`
+	type projectResourceJSON ProjectResourceForEnv
+	value := projectResourceJSON(p)
+	if len(value.ResourceRef) == 0 {
+		value.ResourceRef = json.RawMessage("{}")
 	}
-	ref := p.ResourceRef
-	if len(ref) == 0 {
-		ref = json.RawMessage("{}")
-	}
-	return json.Marshal(alias{
-		ID:           p.ID,
-		ResourceType: p.ResourceType,
-		ResourceRef:  ref,
-		Label:        p.Label,
-	})
+	return json.Marshal(value)
 }
 
 // writeProjectResources writes .multica/project/resources.json into the

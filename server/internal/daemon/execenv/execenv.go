@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/executionpolicy"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // shortID returns the first eight characters of an identifier after removing
@@ -32,17 +33,9 @@ type RepoContextForEnv struct {
 	Description string // optional repo description
 }
 
-// ProjectResourceForEnv describes a single resource attached to the issue's
-// project. The resource_ref payload is type-specific JSON; the agent reads
-// resources.json on disk for the full structure. This struct only carries
-// fields the meta-skill template needs to render a human-readable summary
-// (URL for github_repo, generic label otherwise).
-type ProjectResourceForEnv struct {
-	ID           string          // server-assigned UUID
-	ResourceType string          // e.g. "github_repo"
-	ResourceRef  json.RawMessage // raw JSONB payload from the API
-	Label        string          // optional user-supplied label
-}
+// ProjectResourceForEnv keeps the claimed-task wire shape while adding the
+// on-disk empty-resource normalization used by context.go.
+type ProjectResourceForEnv protocol.TaskProjectResource
 
 // PrepareParams holds all inputs needed to set up an execution environment.
 type PrepareParams struct {

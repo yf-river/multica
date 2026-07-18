@@ -9,11 +9,6 @@ import (
 
 var taskDurationBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200}
 
-type activeTaskLabels struct {
-	source      string
-	runtimeMode string
-}
-
 type BusinessMetrics struct {
 	taskEnqueued     *prometheus.CounterVec
 	taskDispatched   *prometheus.CounterVec
@@ -35,7 +30,7 @@ type BusinessMetrics struct {
 	taskLeaseExpired  *prometheus.CounterVec
 
 	activeMu    sync.Mutex
-	activeTasks map[string]activeTaskLabels
+	activeTasks map[string]taskRunningKey
 
 	// Product and operational event counters. See business_events.go.
 	// for the field-level docs and labels.
@@ -145,7 +140,7 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Name:      "lease_expired_total",
 			Help:      "Total dispatched or running task leases expired by the scheduler.",
 		}, metricLabels("multica_task_lease_expired_total")),
-		activeTasks: map[string]activeTaskLabels{},
+		activeTasks: map[string]taskRunningKey{},
 		events:      newBusinessEventMetrics(),
 	}
 	m.prewarmFailureReasons()
@@ -315,7 +310,7 @@ func (m *BusinessMetrics) markTaskInProgress(taskID, source, runtimeMode string)
 	if _, ok := m.activeTasks[taskID]; ok {
 		return
 	}
-	m.activeTasks[taskID] = activeTaskLabels{source: source, runtimeMode: runtimeMode}
+	m.activeTasks[taskID] = taskRunningKey{source: source, runtimeMode: runtimeMode}
 	m.taskInProgress.WithLabelValues(source, runtimeMode).Inc()
 }
 
