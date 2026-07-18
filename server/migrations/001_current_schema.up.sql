@@ -203,8 +203,7 @@ BEGIN
     END IF;
     BEGIN
         UPDATE task_usage_hourly_rollup_state
-           SET last_run_started_at = now(),
-               last_error          = NULL
+           SET last_error = NULL
          WHERE id = 1
         RETURNING watermark_at INTO v_from;
         v_upper := now() - INTERVAL '5 minutes';
@@ -237,14 +236,12 @@ BEGIN
             v_rows := rollup_task_usage_hourly_window(v_from, v_to);
             UPDATE task_usage_hourly_rollup_state
                SET watermark_at         = v_to,
-                   last_run_finished_at = now(),
-                   last_run_rows        = v_rows
+                   last_run_finished_at = now()
              WHERE id = 1;
         ELSE
             UPDATE task_usage_hourly_rollup_state
                SET watermark_at         = GREATEST(watermark_at, v_to),
-                   last_run_finished_at = now(),
-                   last_run_rows        = 0
+                   last_run_finished_at = now()
              WHERE id = 1;
         END IF;
         PERFORM pg_advisory_unlock(4246);
@@ -1687,9 +1684,7 @@ CREATE TABLE public.task_usage_hourly_dirty (
 CREATE TABLE public.task_usage_hourly_rollup_state (
     id smallint DEFAULT 1 NOT NULL,
     watermark_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
-    last_run_started_at timestamp with time zone,
     last_run_finished_at timestamp with time zone,
-    last_run_rows bigint DEFAULT 0 NOT NULL,
     last_error text,
     CONSTRAINT task_usage_hourly_rollup_state_id_check CHECK ((id = 1))
 );

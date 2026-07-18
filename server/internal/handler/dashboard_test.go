@@ -524,20 +524,16 @@ func TestRollupTaskUsageHourlyFastForwardsEmptyHistory(t *testing.T) {
 	}
 
 	var ageSeconds float64
-	var rows int64
 	var lastError *string
 	if err := tx.QueryRow(ctx, `
-		SELECT EXTRACT(EPOCH FROM (now() - watermark_at)), last_run_rows, last_error
+		SELECT EXTRACT(EPOCH FROM (now() - watermark_at)), last_error
 		  FROM task_usage_hourly_rollup_state
 		 WHERE id = 1
-	`).Scan(&ageSeconds, &rows, &lastError); err != nil {
+	`).Scan(&ageSeconds, &lastError); err != nil {
 		t.Fatalf("read rollup state: %v", err)
 	}
 	if age := time.Duration(ageSeconds) * time.Second; age > 10*time.Minute {
 		t.Fatalf("empty history should fast-forward near now()-5min, got age %s", age)
-	}
-	if rows != 0 {
-		t.Fatalf("empty history should affect 0 rows, got %d", rows)
 	}
 	if lastError != nil {
 		t.Fatalf("expected last_error cleared, got %q", *lastError)

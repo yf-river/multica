@@ -1211,9 +1211,7 @@ type TaskUsageHourlyDirty struct {
 type TaskUsageHourlyRollupState struct {
 	ID                int16              `json:"id"`
 	WatermarkAt       pgtype.Timestamptz `json:"watermark_at"`
-	LastRunStartedAt  pgtype.Timestamptz `json:"last_run_started_at"`
 	LastRunFinishedAt pgtype.Timestamptz `json:"last_run_finished_at"`
-	LastRunRows       int64              `json:"last_run_rows"`
 	LastError         pgtype.Text        `json:"last_error"`
 }
 
