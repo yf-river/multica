@@ -532,6 +532,7 @@ export class TestApiClient {
   }): Promise<AgentResponse> {
     const res = await this.authedFetch("/api/agents", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({
         name: data.name,
         description: data.description ?? "E2E 创建的训练评估执行智能体",
@@ -684,6 +685,7 @@ export class TestApiClient {
   async createIssue(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/issues", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ title, ...opts }),
     });
     if (!res.ok) {
@@ -781,6 +783,7 @@ export class TestApiClient {
   ): Promise<TestWorkspaceMember> {
     const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({
         account: data.account,
         name: data.name ?? data.account,
@@ -1081,7 +1084,7 @@ export class TestApiClient {
     const res = await this.authedFetch("/api/prompt-library", {
       method: "POST",
       body: JSON.stringify(data),
-      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      headers: { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() },
     });
     if (!res.ok) {
       throw new Error(`create prompt library item failed: ${res.status} ${await res.text()}`);
@@ -1124,7 +1127,7 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-library/${id}/versions`, {
       method: "POST",
       body: JSON.stringify(data),
-      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      headers: { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() },
     });
     if (!res.ok) {
       throw new Error(`create prompt library version failed: ${res.status} ${await res.text()}`);
@@ -1141,7 +1144,7 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-library/${promptId}/versions/${versionId}/trials`, {
       method: "POST",
       body: JSON.stringify(data),
-      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+      headers: { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() },
     });
     if (!res.ok) {
       throw new Error(`create prompt library trial failed: ${res.status} ${await res.text()}`);
@@ -1181,6 +1184,7 @@ export class TestApiClient {
   async createPromptEvaluationAsset(data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
     const res = await this.authedFetch("/api/prompt-evaluation-assets", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -1201,6 +1205,7 @@ export class TestApiClient {
   async createPromptEvaluationDatasetVersion(id: string, data: Record<string, unknown> = {}): Promise<PromptEvaluationDatasetVersion> {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -1453,6 +1458,7 @@ export class TestApiClient {
   async createPromptEvaluationEvidenceSnapshot(runId: string): Promise<PromptEvaluationEvidenceSnapshot> {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?snapshot_type=${encodeURIComponent("验收归档")}`, {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
     });
     if (!res.ok) {
       throw new Error(`create prompt evaluation evidence snapshot failed: ${res.status}`);
