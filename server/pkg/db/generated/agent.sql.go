@@ -954,28 +954,16 @@ type ExpireStaleQueuedTasksParams struct {
 }
 
 // Fails tasks that have been sitting in 'queued' for longer than the TTL.
-// This is the cleanup arm of the MUL-1899 "queued backlog" fix: even with the
-// new dispatch-time admission gate that refuses to enqueue when the runtime
-// is offline, we still need to drain the historical 87k+ doomed rows and
-// handle edge cases where a runtime goes offline AFTER a task is already
-// queued (the admission check protects new enqueues, not in-flight queue
-// depth).
+// Admission prevents enqueueing against an offline runtime; this query handles
+// a runtime that goes offline after the task was queued.
 //
-// Concurrency safety: the daemon's claim path may race with this sweeper to
-// transition the same row out of 'queued'. We protect against that two
-// ways:
+// The daemon claim path may race with this sweep:
 //  1. The CTE selects victims with FOR UPDATE SKIP LOCKED so a row that is
-//     currently being claimed (or otherwise locked) is skipped — no lock
-//     contention with the dispatch path, and we won't queue up behind it.
+//     being claimed is skipped without lock contention.
 //  2. The outer UPDATE re-checks status='queued' AND the TTL predicate at
-//     apply time. If a daemon claimed the row between selection and update
-//     (e.g. lock released after the claim transaction commits), the row is
-//     already 'dispatched'/'running' and the WHERE clause filters it out
-//     so we cannot clobber an in-flight task.
+//     apply time so a newly claimed task cannot be overwritten.
 //
-// Capped via LIMIT inside the CTE so a single sweep tick cannot monopolise
-// the DB when the backlog is large — the sweeper drains the rest on
-// subsequent ticks.
+// LIMIT bounds each cleanup transaction.
 func (q *Queries) ExpireStaleQueuedTasks(ctx context.Context, arg ExpireStaleQueuedTasksParams) ([]AgentTaskQueue, error) {
 	rows, err := q.db.Query(ctx, expireStaleQueuedTasks, arg.TtlSecs, arg.MaxPerTick)
 	if err != nil {

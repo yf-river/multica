@@ -43,22 +43,10 @@ const (
 	// watchdog), so this only needs to sit generously above any realistic single
 	// run rather than track a per-run wall-clock cap (MUL-3064).
 	runningTimeoutSeconds = 9000.0
-	// queuedTTLSeconds expires tasks that have been sitting in 'queued'
-	// for longer than this without ever being claimed. This is the cleanup
-	// arm of the MUL-1899 backlog fix: even with the dispatch-time
-	// admission gate that blocks new enqueues against offline runtimes,
-	// tasks already on the queue when a runtime drops off (or that lost
-	// the race against a runtime that went offline mid-tick) need a
-	// time-bounded exit. 2 hours is conservatively above any reasonable
-	// "queued behind a long-running task" window for an online runtime, so we
-	// don't expire legitimately-pending work, while still draining the historical
-	// 87k autopilot backlog within ~24h once enabled.
+	// queuedTTLSeconds bounds how long an unclaimed task can remain queued after
+	// its runtime goes offline. Two hours accommodates a long task ahead of it.
 	queuedTTLSeconds = 2 * 3600.0
-	// queuedExpireBatchSize caps how many queued rows a single sweeper tick
-	// transitions to failed. Keeps the sweep transaction short even when
-	// the historical backlog is large (~89k at MUL-1899 baseline). At 30s
-	// ticks and 500 rows/tick we drain 60k rows/hour worst case — plenty
-	// of headroom for the documented backlog without monopolising DB CPU.
+	// queuedExpireBatchSize keeps each cleanup transaction short.
 	queuedExpireBatchSize = 500
 )
 
@@ -262,11 +250,8 @@ func sweepStaleTasks(ctx context.Context, taskSvc *service.TaskService) {
 }
 
 // sweepExpiredQueuedTasks fails tasks that have been sitting in 'queued' for
-// longer than the TTL. Companion to the dispatch-time admission gate added
-// in MUL-1899: that gate prevents new doomed enqueues; this gate drains the
-// historical backlog and catches the race where a runtime goes offline AFTER
-// a task is already queued. Capped to queuedExpireBatchSize per tick so a
-// big backlog can't monopolise the DB.
+// longer than the TTL. Admission prevents enqueueing against an offline
+// runtime; this sweep handles a runtime that goes offline after enqueue.
 func sweepExpiredQueuedTasks(ctx context.Context, taskSvc *service.TaskService) {
 	batch, err := taskSvc.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    queuedTTLSeconds,

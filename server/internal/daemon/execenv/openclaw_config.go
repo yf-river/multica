@@ -150,10 +150,8 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (op
 
 	// Parse the agent's managed mcp_config (if any) before writing the wrapper
 	// so a malformed value fails the prepare step rather than crashing the
-	// openclaw subprocess later. Same fail-closed posture as Codex's
-	// ensureCodexMcpConfig — silent fallback to the user's global mcp.servers
-	// would be indistinguishable from "the managed set applied" and is exactly
-	// the surprise the MCP Tab is supposed to remove.
+	// openclaw subprocess later. Fail closed so a managed set cannot silently
+	// inherit the user's global mcp.servers.
 	managedMcp, hasManagedMcp, err := openclawManagedMcpServers(opts.McpConfig)
 	if err != nil {
 		return openclawConfigResult{}, fmt.Errorf("render openclaw mcp_config: %w", err)
@@ -238,8 +236,7 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (op
 //
 // Exists=false: a fresh install with no on-disk config. Emit a minimal
 // config containing only the workspace override. There is no user data to
-// $include here, so this is not the silent-fallback case the reviewer
-// flagged.
+// $include here.
 //
 // snapshotPath, when non-empty, points at a sanitized copy of the user's
 // resolved config (mcp stripped) sitting in envRoot. It is the $include

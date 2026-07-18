@@ -45,7 +45,7 @@ describe("resolveRemoteApiUrl", () => {
     expect(resolveRemoteApiUrl({ PORT: "  " })).toBe("http://localhost:8080");
   });
 
-  it("falls back to the historical backend port when no env is configured", () => {
+  it("uses the current backend default when no env is configured", () => {
     expect(resolveRemoteApiUrl({})).toBe("http://localhost:8080");
   });
 });

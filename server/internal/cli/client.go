@@ -69,11 +69,8 @@ func newHTTPError(method, path string, resp *http.Response) *HTTPError {
 }
 
 // defaultHTTPTimeout is the per-request timeout for the CLI's HTTP client.
-// It can be overridden with the MULTICA_HTTP_TIMEOUT environment variable
-// (see httpTimeout). 30s is chosen over the historical 15s because complex
-// networks (notably in mainland China) routinely need more than 15s to
-// complete the TLS handshake plus request round-trip, which surfaced as an
-// opaque "context deadline exceeded" to users.
+// It can be overridden with MULTICA_HTTP_TIMEOUT. Thirty seconds accommodates
+// slower TLS handshakes and request round-trips.
 const defaultHTTPTimeout = 30 * time.Second
 
 // httpTimeout returns the HTTP client timeout, honoring MULTICA_HTTP_TIMEOUT.
@@ -103,16 +100,13 @@ const apiContextGrace = 5 * time.Second
 // APITimeout returns the deadline budget for a single CLI API command. It is
 // always at least the configured HTTP transport timeout (see httpTimeout,
 // which honors MULTICA_HTTP_TIMEOUT) plus a small grace margin, so a
-// command-level context never truncates an in-flight request below the timeout
-// the user configured. This is the fix for command contexts that previously
-// hardcoded a 15s deadline shorter than the 30s/env transport timeout.
+// command-level context never truncates the configured transport timeout.
 func APITimeout() time.Duration {
 	return AtLeastAPITimeout(0)
 }
 
 // AtLeastAPITimeout returns max(min, APITimeout()). Use it for commands that
-// need a larger floor than usual (for example file uploads, which historically
-// used a 60s budget).
+// need a larger floor than usual, such as file uploads.
 func AtLeastAPITimeout(min time.Duration) time.Duration {
 	budget := httpTimeout() + apiContextGrace
 	if min > budget {

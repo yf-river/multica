@@ -37,19 +37,13 @@ const (
 
 // newDBPool builds a pgxpool with sane production defaults and env overrides.
 //
-// pgxpool.New(ctx, url) — used previously — silently picks MaxConns =
-// max(4, NumCPU). On our prod pods (small CPU request) that resolved to 4,
-// which got fully saturated by the daemon claim/heartbeat traffic and showed
-// up as ~900ms acquire waits on every query.
-//
 // Configuration precedence (highest first):
 //  1. DATABASE_MAX_CONNS / DATABASE_MIN_CONNS env vars
 //  2. pool_max_conns / pool_min_conns query params on DATABASE_URL
 //     (honored natively by pgxpool.ParseConfig)
 //  3. The defaults defined here (defaultMaxConns / defaultMinConns)
 //
-// pgx's own built-in default (max(4, NumCPU)) is intentionally NOT used as a
-// fallback — it is the value that caused the prod incident.
+// Explicit defaults keep the pool independent of host CPU count.
 func newDBPool(ctx context.Context, dbURL string) (*pgxpool.Pool, error) {
 	cfg, err := dbPoolConfig(dbURL)
 	if err != nil {
@@ -66,10 +60,8 @@ func dbPoolConfig(dbURL string) (*pgxpool.Config, error) {
 
 	urlParams := poolParamsFromURL(dbURL)
 
-	// Compute the non-env fallback first: honor URL pool_* params if the
-	// operator set them, otherwise use our code default. This fallback is
-	// also what an *invalid* env value falls back to — never pgx's built-in
-	// default of 4/0, which is the value that caused the prod incident.
+	// URL parameters override code defaults; environment values override both.
+	// Invalid environment values preserve the URL/default result.
 	maxFallback := defaultMaxConns
 	if urlParams["pool_max_conns"] {
 		maxFallback = cfg.MaxConns

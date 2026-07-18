@@ -122,11 +122,8 @@ export function IssueActionsMenuItems({
     staleTime: 30_000,
   });
 
-  // Synchronous click handler — the awaited fetch in the previous version
-  // dropped the browser's transient user activation, which made
-  // navigator.clipboard.writeText() reject from the menu when the cache
-  // was cold. We now read straight from the cached query result and write
-  // to the clipboard inside the same task as the click.
+  // Keep clipboard access in the click task so browser user activation remains
+  // valid; the menu-open query above supplies the cached workdir.
   const handleCopyWorkdirPath = useCallback(() => {
     const latestWorkDir = pickLatestWorkDir(tasks);
     if (!latestWorkDir) {

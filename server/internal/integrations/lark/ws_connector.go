@@ -386,9 +386,7 @@ func (c *WSLongConnConnector) writeFrame(mu *sync.Mutex, conn WSConn, f *Frame) 
 	return conn.WriteMessage(websocket.BinaryMessage, payload)
 }
 
-// pingLoop sends a periodic app-layer ping frame on the cadence Lark
-// asked for. The previous implementation used WebSocket protocol PING
-// (WriteControl), which the SDK source confirms Lark ignores.
+// pingLoop sends the app-layer ping frame required by Lark's protocol.
 func (c *WSLongConnConnector) pingLoop(ctx context.Context, conn WSConn, writeMu *sync.Mutex, serviceID int32, interval time.Duration, log *slog.Logger, done chan<- struct{}) {
 	defer close(done)
 	if interval <= 0 {

@@ -117,28 +117,9 @@ func (m *Manager) runJob(ctx context.Context, job *JobSpec, now time.Time) error
 		return fmt.Errorf("scheduler: scope provider for %q: %w", job.Name, err)
 	}
 
-	// Close out abandoned RUNNING leases before planning. We run this
-	// for EVERY job, regardless of AllowStaleReentry, because:
-	//
-	//   * Non-reentrant jobs (AllowStaleReentry=false) need the FAILED
-	//     audit row + alert; this was the original motivation.
-	//
-	//   * Reentrant jobs (AllowStaleReentry=true) running in
-	//     `latest_only` mode never re-claim historical plan_times, so
-	//     a stuck RUNNING row from a crashed pod would otherwise sit
-	//     in the table forever and pin
-	//     `scheduler_running_stale_total > 0`. Marking it FAILED keeps
-	//     the gauge truthful and (because tryClaim's
-	//     retry-from-FAILED branch is still eligible at the same
-	//     plan_time when attempts remain) preserves the retry path.
-	//
-	//   * Reentrant `every_plan` jobs would otherwise rely on the
-	//     stale-steal branch in tryClaim — but that only fires when
-	//     the same plan_time is being attempted again, which races
-	//     this sweep harmlessly: whichever wins, the row leaves
-	//     RUNNING.
-	//
-	// MUL-2957 review: see张大彪's blocker #1.
+	// Close abandoned RUNNING leases before planning. This keeps audit/metrics
+	// truthful for latest-only jobs and preserves retry eligibility; every-plan
+	// claims may race safely because either path transitions the row from RUNNING.
 	if affected, err := markStaleAsFailed(ctx, m.pool, job.Name, now); err != nil {
 		m.logger.Warn("scheduler: mark stale failed",
 			"job", job.Name, "error", err)
