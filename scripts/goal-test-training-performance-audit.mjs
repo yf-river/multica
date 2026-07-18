@@ -24,13 +24,13 @@ const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRe
   [frontendURL, browserURL, backendURL],
   requestPath,
 );
-const maxRouteMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_ROUTE_MS || "3500");
-const maxClickMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_CLICK_MS || "3500");
-const maxApiMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_MS || "1200");
+const maxRouteMs = 3500;
+const maxClickMs = 3500;
+const maxApiMs = 1200;
 // Optimization mode also loads project resource context for skill candidates.
 // Keep the budget tight, but allow a small number of workspace/project resource
 // calls so the audit is not coupled to having exactly three demo projects.
-const maxApiRequests = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_REQUESTS || "20");
+const maxApiRequests = 20;
 mkdirSync(artifactRoot, { recursive: true });
 
 const routes = [

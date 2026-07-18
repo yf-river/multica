@@ -21,10 +21,10 @@ const { isAuditedRequest, countByPath } = createBrowserRequestTools(
   [frontendURL, browserURL, backendURL],
   requestPath,
 );
-const maxClickMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_MS || "3500");
-const maxTotalMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_TOTAL_MS || "6000");
-const maxApiMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_API_MS || "1200");
-const maxApiRequests = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_API_REQUESTS || "20");
+const maxClickMs = 3500;
+const maxTotalMs = 6000;
+const maxApiMs = 1200;
+const maxApiRequests = 20;
 mkdirSync(artifactRoot, { recursive: true });
 
 const dashboardClicks = [

@@ -21,10 +21,9 @@ const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRe
   [frontendURL, browserURL, backendURL],
   requestPath,
 );
-const warmupEnabled = process.env.GOAL_TEST_UI_AUDIT_WARMUP !== "0";
-const maxRouteMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_ROUTE_MS || "3000");
-const maxApiMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_MS || "1000");
-const maxApiRequests = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_REQUESTS || "20");
+const maxRouteMs = 3000;
+const maxApiMs = 1000;
+const maxApiRequests = 20;
 const screenshotDir = path.join(artifactRoot, "ui-audit-screenshots");
 
 mkdirSync(screenshotDir, { recursive: true });
@@ -154,7 +153,7 @@ const forbiddenText = [
 ];
 
 const token = await loginGoalTest({ backendURL, account, password });
-const warmup = warmupEnabled ? await warmupRoutes(token) : { enabled: false, results: [] };
+const warmup = await warmupRoutes(token);
 const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
 await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
