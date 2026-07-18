@@ -67,15 +67,6 @@ func registerDurableEvents(dispatcher *eventoutbox.Dispatcher, name string, cons
 	return nil
 }
 
-func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
-	cfg := realtime.DefaultShardedStreamRelayConfig()
-	cfg.Shards = envPositiveInteger("REALTIME_RELAY_SHARDS", cfg.Shards)
-	cfg.StreamMaxLen = envPositiveInteger("REALTIME_RELAY_STREAM_MAXLEN", cfg.StreamMaxLen)
-	cfg.ReadCount = envPositiveInteger("REALTIME_RELAY_XREAD_COUNT", cfg.ReadCount)
-	cfg.ReadBlock = envDuration("REALTIME_RELAY_XREAD_BLOCK", cfg.ReadBlock)
-	return cfg
-}
-
 func envPositiveInteger[T ~int | ~int32 | ~int64](name string, def T) T {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -179,7 +170,7 @@ func main() {
 			storeRedis = newNamedRedisClient(opts, "store")
 			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
 			relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-			relayConfig := shardedRelayConfigFromEnv()
+			relayConfig := realtime.DefaultShardedStreamRelayConfig()
 			sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
 			sharded.SetDaemonRuntimeDeliverer(daemonHub)
 			relay = sharded
