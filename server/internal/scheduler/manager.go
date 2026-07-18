@@ -12,52 +12,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Options configure a Manager. Defaults are set in NewManager so all
-// fields are optional for callers.
-type Options struct {
-	// RunnerID identifies this process in audit rows. Empty defaults
-	// to a fresh UUID — readable enough for short-lived debugging,
-	// still unique across replicas.
-	RunnerID string
-
-	// TickInterval is how often the manager wakes up to evaluate due
-	// plans across all registered jobs. Should be smaller than the
-	// shortest job cadence; defaults to 30 * time.Second.
-	TickInterval time.Duration
-
-	// Logger is used for structured logs. nil defaults to
-	// slog.Default().
-	Logger *slog.Logger
-}
-
 // Manager is the per-process scheduler. Register one or more jobs and
 // call Run with a cancellable context.
 type Manager struct {
-	pool   *pgxpool.Pool
-	opts   Options
-	jobs   map[string]*JobSpec
-	mu     sync.RWMutex
-	logger *slog.Logger
+	pool         *pgxpool.Pool
+	jobs         map[string]*JobSpec
+	mu           sync.RWMutex
+	runnerID     string
+	tickInterval time.Duration
+	logger       *slog.Logger
 }
 
 // NewManager constructs a Manager. The pool MUST point at the database
 // containing the sys_cron_executions table. The manager does not start
 // any goroutine until Run is called.
-func NewManager(pool *pgxpool.Pool, opts Options) *Manager {
-	if opts.RunnerID == "" {
-		opts.RunnerID = uuid.NewString()
-	}
-	if opts.TickInterval <= 0 {
-		opts.TickInterval = 30 * time.Second
-	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
+func NewManager(pool *pgxpool.Pool) *Manager {
+	runnerID := uuid.NewString()
 	return &Manager{
-		pool:   pool,
-		opts:   opts,
-		jobs:   make(map[string]*JobSpec),
-		logger: opts.Logger.With("component", "scheduler", "runner_id", opts.RunnerID),
+		pool:         pool,
+		jobs:         make(map[string]*JobSpec),
+		runnerID:     runnerID,
+		tickInterval: 30 * time.Second,
+		logger:       slog.Default().With("component", "scheduler", "runner_id", runnerID),
 	}
 }
 
@@ -90,11 +66,11 @@ func (m *Manager) snapshot() []*JobSpec {
 	return out
 }
 
-// Run blocks until ctx is cancelled, ticking every Options.TickInterval.
+// Run blocks until ctx is cancelled, ticking every 30 seconds.
 // Returns the cause of ctx termination (typically context.Canceled).
 func (m *Manager) Run(ctx context.Context) error {
 	m.logger.Info("scheduler starting",
-		"tick_interval", m.opts.TickInterval.String(),
+		"tick_interval", m.tickInterval.String(),
 		"jobs", len(m.snapshot()))
 
 	// First tick immediately so a fresh start does not wait a full
@@ -103,7 +79,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		m.logger.Warn("scheduler tick error", "error", err)
 	}
 
-	t := time.NewTicker(m.opts.TickInterval)
+	t := time.NewTicker(m.tickInterval)
 	defer t.Stop()
 	for {
 		select {
@@ -262,7 +238,7 @@ func (m *Manager) processPlan(
 	planTime time.Time,
 	now time.Time,
 ) {
-	c, err := tryClaim(ctx, m.pool, job, scope, planTime, now, m.opts.RunnerID)
+	c, err := tryClaim(ctx, m.pool, job, scope, planTime, now, m.runnerID)
 	if err != nil {
 		m.logger.Warn("scheduler claim error",
 			"job", job.Name, "scope", scope.String(),
@@ -331,7 +307,7 @@ func (m *Manager) runClaimed(
 			Scope:    scope,
 			PlanTime: planTime,
 			Attempt:  c.Attempt,
-			RunnerID: m.opts.RunnerID,
+			RunnerID: m.runnerID,
 			Heartbeat: func(ctx context.Context) error {
 				return heartbeat(ctx, m.pool, c.ID, c.LeaseToken, job.StaleTimeout)
 			},

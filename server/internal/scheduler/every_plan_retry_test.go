@@ -35,7 +35,7 @@ func TestManagerEveryPlanRetriesFailedSamePlanTime(t *testing.T) {
 		return HandlerResult{}, errors.New("simulated handler failure")
 	}
 
-	mgr := NewManager(pool, Options{RunnerID: "retry-runner"})
+	mgr := newManagerWithRunnerID(pool, "retry-runner")
 	if err := mgr.Register(*job); err != nil {
 		t.Fatalf("register: %v", err)
 	}

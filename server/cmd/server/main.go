@@ -348,7 +348,7 @@ func main() {
 	// missing because of an unusual partial-migration state — by
 	// logging them on the tick that fails and retrying on the next
 	// cycle, so a temporary outage does not crash the server.
-	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
+	schedulerMgr := scheduler.NewManager(pool)
 	registeredJobs := 0
 	for _, job := range []scheduler.JobSpec{
 		scheduler.TaskUsageHourlyJob(pool),

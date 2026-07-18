@@ -2,11 +2,20 @@ package scheduler
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func newManagerWithRunnerID(pool *pgxpool.Pool, runnerID string) *Manager {
+	mgr := NewManager(pool)
+	mgr.runnerID = runnerID
+	mgr.logger = slog.Default().With("component", "scheduler", "runner_id", runnerID)
+	return mgr
+}
 
 func TestManagerTickClosesAbandonedRunning(t *testing.T) {
 	for _, allowStaleReentry := range []bool{true, false} {
@@ -48,7 +57,7 @@ func TestManagerTickClosesAbandonedRunning(t *testing.T) {
 				t.Fatalf("seed stale RUNNING row: %v", err)
 			}
 
-			mgr := NewManager(pool, Options{RunnerID: "manager-under-test"})
+			mgr := newManagerWithRunnerID(pool, "manager-under-test")
 			if err := mgr.Register(*job); err != nil {
 				t.Fatalf("register: %v", err)
 			}
@@ -102,7 +111,7 @@ func TestManagerHandlerPanicWritesFailed(t *testing.T) {
 		panic("simulated handler boom")
 	}
 
-	mgr := NewManager(pool, Options{RunnerID: "panic-runner"})
+	mgr := newManagerWithRunnerID(pool, "panic-runner")
 	if err := mgr.Register(*job); err != nil {
 		t.Fatalf("register: %v", err)
 	}
