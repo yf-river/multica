@@ -77,8 +77,7 @@ describe("IssueActionsDropdown", () => {
     fireEvent.click(await screen.findByText("负责人"));
 
     // The shared picker exposes a search input and renders the workspace
-    // member under a "成员" group — both come from `AssigneePicker`, not
-    // the legacy submenu (which had neither).
+    // member under a "成员" group.
     expect(
       await screen.findByPlaceholderText("分配给..."),
     ).toBeInTheDocument();

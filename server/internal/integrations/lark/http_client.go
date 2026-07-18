@@ -313,11 +313,9 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 // "Hello!" adds visual chrome that the user doesn't want; the
 // routing decision (markdown vs text) lives at the Patcher layer.
 //
-// Why schema 2.0 rather than the legacy schema with a `div` +
-// `lark_md` text element: the legacy `lark_md` tag's markdown
-// dialect is much narrower — no fenced code blocks (syntax
-// highlighting), no tables, no heading sizes. Schema-2.0's
-// `markdown` tag is closer to GFM.
+// Schema 2.0's `markdown` element supports the formatting this path needs:
+// fenced code blocks with syntax highlighting, tables, and heading sizes.
+// Its markdown dialect is close to GFM.
 func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
 	if p.ChatID == "" {
 		return "", errors.New("lark http client: missing chat_id")

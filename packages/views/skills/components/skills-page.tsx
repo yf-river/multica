@@ -95,7 +95,7 @@ import { useT, useTimeAgo } from "../../i18n";
 // track exactly like the old max-content placeholder did; the empty
 // placeholder cell stays rendered to keep subgrid auto-placement intact.
 //
-// TWO-ZONE RESPONSIVENESS (replaces the retired per-tier breakpoints):
+// TWO-ZONE RESPONSIVENESS:
 // - Container ≥ @2xl (672px): WYSIWYG — every user-enabled column renders.
 //   The grid carries min-width = Σ(enabled tracks + gaps) so when the
 //   enabled set outgrows the container the wrapper scrolls horizontally.
@@ -632,8 +632,7 @@ export default function SkillsPage() {
   // padding on the rows wrapper, so the mounted rows remain direct subgrid
   // children and column alignment is untouched. Fixed ROW_HEIGHT rows mean
   // no per-row measurement. The scroll element is the SINGLE outer
-  // scroller (both axes) — see ListGridBody's comment for why the split
-  // scroll structure was retired.
+  // scroller (both axes) so horizontal and vertical offsets share one owner.
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,

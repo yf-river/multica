@@ -670,10 +670,8 @@ function formatMilliseconds(ms: number): string {
 // "Retry #N" when parent_task_id is set so retries are scannable as
 // retries even when their summary is inherited.
 //
-// Fallback chain for legacy tasks created before the snapshot field
-// shipped, OR for sources we don't snapshot (direct assignment / chat):
-// degrade to a short structural label by trigger source. New tasks
-// (post-061 migration) almost always hit the snapshot path.
+// Tasks without a summary (including direct assignment and chat) use a short
+// structural label derived from the current trigger source.
 
 // ─── Row visual config ─────────────────────────────────────────────────────
 

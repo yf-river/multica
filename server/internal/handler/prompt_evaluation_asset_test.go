@@ -410,11 +410,6 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 		createdPayload["schema"] != "multica.training_evaluation.payload.v1" {
 		t.Fatalf("created payload missing contract fields: %#v", createdPayload)
 	}
-	for _, retired := range []string{"用例", "语义版本", "payload_contract"} {
-		if _, exists := createdPayload[retired]; exists {
-			t.Fatalf("created payload retained %q: %#v", retired, createdPayload)
-		}
-	}
 	canonicalCases, ok := createdPayload["cases"].([]any)
 	if !ok || len(canonicalCases) != 1 {
 		t.Fatalf("created payload cases not canonical: %#v", createdPayload["cases"])

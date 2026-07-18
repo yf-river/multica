@@ -62,8 +62,7 @@ func sortedIDStrings(ids []pgtype.UUID) []string {
 }
 
 // TestFilterStaleRuntimesByLiveness_NoopStorePassesThrough confirms that with
-// no Redis the filter returns every candidate — the sweeper trusts the DB
-// stale window and behaves like the legacy MarkStaleRuntimesOffline path.
+// no Redis the filter returns every candidate and trusts the DB stale window.
 func TestFilterStaleRuntimesByLiveness_NoopStorePassesThrough(t *testing.T) {
 	a := "11111111-1111-1111-1111-111111111111"
 	b := "22222222-2222-2222-2222-222222222222"

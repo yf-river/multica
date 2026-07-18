@@ -104,9 +104,8 @@ func TestDecodeLarkFrameGroupMentionDiscrimination(t *testing.T) {
 // fix: in a multi-bot group chat the per-app `mentions[].id.open_id`
 // is structurally inverted across WS perspectives, so we route on
 // `union_id` (the stable, cross-app identifier captured at install
-// time) when the installation row knows it. The open_id path remains
-// as a transitional fallback for installations that haven't been
-// backfilled yet.
+// time) when the installation row knows it. The open_id path remains the
+// current boundary for installations without contact scope.
 func TestDecodeLarkFrameGroupMentionUnionID(t *testing.T) {
 	t.Parallel()
 

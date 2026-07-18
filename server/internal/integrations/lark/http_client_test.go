@@ -813,10 +813,8 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 
 // TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails covers the case
 // where /contact/v3/users returns a non-zero code (e.g. the app's
-// contact scope was never approved). The install must still succeed
-// with an empty UnionID so the operator can backfill later instead
-// of the QR flow failing outright. The decoder transitional fallback
-// keeps single-bot installs working in the gap.
+// contact scope was never approved). The install must still succeed with an
+// empty UnionID because open_id remains the current single-bot boundary.
 func TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails(t *testing.T) {
 	fake := newLarkFake(t)
 	fake.stubToken("tok_bi_softfail", 7200)
@@ -839,7 +837,7 @@ func TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails(t *testing.T) {
 		t.Errorf("OpenID: got %q want ou_bot_softfail", info.OpenID)
 	}
 	if info.UnionID != "" {
-		t.Errorf("UnionID: got %q want empty (soft-fail leaves backfill to operator)", info.UnionID)
+		t.Errorf("UnionID: got %q want empty when contact scope is unavailable", info.UnionID)
 	}
 }
 

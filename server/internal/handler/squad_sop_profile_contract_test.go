@@ -3,7 +3,7 @@ package handler
 import "testing"
 
 func TestSquadSOPProfileAcceptsOnlyCanonicalStepFields(t *testing.T) {
-	canonical := []byte(`{"profile_key":"current","steps":[{"key":"build","name":"Build","role_key":"developer"}]}`)
+	canonical := []byte(`{"profile_key":"current","steps":[{"key":"build","name":"Build","role_key":"developer","skill":"project/implement"}]}`)
 	if _, err := normalizeSquadSOPProfile(canonical); err != nil {
 		t.Fatalf("canonical profile rejected: %v", err)
 	}
@@ -12,15 +12,7 @@ func TestSquadSOPProfileAcceptsOnlyCanonicalStepFields(t *testing.T) {
 		t.Fatalf("canonical steps = %#v", steps)
 	}
 
-	for _, retired := range []string{
-		`{"steps":[{"step_key":"build"}]}`,
-		`{"steps":[{"id":"build"}]}`,
-		`{"steps":[{"key":"build","title":"Build"}]}`,
-		`{"steps":[{"key":"build","label":"Build"}]}`,
-		`{"steps":[{"key":"build","role":"developer"}]}`,
-	} {
-		if _, err := normalizeSquadSOPProfile([]byte(retired)); err == nil {
-			t.Fatalf("retired profile accepted: %s", retired)
-		}
+	if _, err := normalizeSquadSOPProfile([]byte(`{"steps":[{"key":"build","unexpected":"value"}]}`)); err == nil {
+		t.Fatal("profile with an unsupported step field was accepted")
 	}
 }

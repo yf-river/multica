@@ -577,10 +577,8 @@ type MarkRuntimesOfflineByIDsRow struct {
 // Re-checks the stale predicate inside the UPDATE so a concurrent heartbeat
 // between the SELECT (candidate gather), the LivenessStore filter, and this
 // UPDATE cannot demote a runtime that just refreshed last_seen_at. The
-// legacy MarkStaleRuntimesOffline UPDATE had this property implicitly
-// because the predicate and the write lived in one statement; here we
-// carry it forward explicitly so the SELECT/filter/UPDATE pipeline retains
-// the same race-freedom.
+// Keep the stale predicate in the write so the SELECT/filter/UPDATE pipeline
+// cannot overwrite a concurrent heartbeat.
 func (q *Queries) MarkRuntimesOfflineByIDs(ctx context.Context, arg MarkRuntimesOfflineByIDsParams) ([]MarkRuntimesOfflineByIDsRow, error) {
 	rows, err := q.db.Query(ctx, markRuntimesOfflineByIDs, arg.Ids, arg.StaleSeconds)
 	if err != nil {

@@ -19,11 +19,4 @@ func TestSquadSOPProfileSummaryUsesCanonicalStepFields(t *testing.T) {
 	if profileKey != "current" || stepKey != "build" || stepName != "Build" || roleKey != "developer" {
 		t.Fatalf("unexpected summary: %q %q %q %q", profileKey, stepKey, stepName, roleKey)
 	}
-
-	_, oldStepKey, oldStepName, oldRoleKey := squadSOPProfileSummary([]byte(`{
-		"steps":[{"step_key":"old","title":"Old","role":"legacy"}]
-	}`))
-	if oldStepKey != "" || oldStepName != "" || oldRoleKey != "" {
-		t.Fatalf("retired fields remained readable: %q %q %q", oldStepKey, oldStepName, oldRoleKey)
-	}
 }

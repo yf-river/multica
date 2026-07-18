@@ -587,9 +587,11 @@ func normalizeSquadSOPProfile(raw json.RawMessage) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("sop_profile.steps[%d] must be an object", index)
 		}
-		for _, retired := range []string{"step_key", "id", "title", "label", "role"} {
-			if _, exists := step[retired]; exists {
-				return nil, fmt.Errorf("sop_profile.steps[%d].%s is not supported", index, retired)
+		for field := range step {
+			switch field {
+			case "key", "name", "role_key", "skill":
+			default:
+				return nil, fmt.Errorf("sop_profile.steps[%d].%s is not supported", index, field)
 			}
 		}
 		key, ok := step["key"].(string)
