@@ -687,10 +687,9 @@ func (d *Daemon) runRuntimePoller(
 	}
 }
 
+const codexMinTaskInterval = 10 * time.Second
+
 func (d *Daemon) waitForRuntimeTaskSpacing(ctx context.Context, runtimeID string, wakeup <-chan struct{}) (bool, error) {
-	if d.cfg.CodexMinTaskInterval <= 0 {
-		return false, nil
-	}
 	d.mu.Lock()
 	rt := d.runtimeIndex[runtimeID]
 	last := d.runtimeLastTaskStart[runtimeID]
@@ -698,7 +697,7 @@ func (d *Daemon) waitForRuntimeTaskSpacing(ctx context.Context, runtimeID string
 	if rt.Provider != "codex" || last.IsZero() {
 		return false, nil
 	}
-	wait := d.cfg.CodexMinTaskInterval - time.Since(last)
+	wait := codexMinTaskInterval - time.Since(last)
 	if wait <= 0 {
 		return false, nil
 	}
@@ -710,7 +709,7 @@ func (d *Daemon) waitForRuntimeTaskSpacing(ctx context.Context, runtimeID string
 }
 
 func (d *Daemon) recordRuntimeTaskStart(runtimeID string) {
-	if d.cfg.CodexMinTaskInterval <= 0 || runtimeID == "" {
+	if runtimeID == "" {
 		return
 	}
 	d.mu.Lock()
