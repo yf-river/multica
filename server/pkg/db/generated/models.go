@@ -1107,7 +1107,6 @@ type SysCronExecution struct {
 	Result       []byte             `json:"result"`
 	ErrorCode    pgtype.Text        `json:"error_code"`
 	ErrorMsg     pgtype.Text        `json:"error_msg"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 

@@ -1583,7 +1583,6 @@ CREATE TABLE public.sys_cron_executions (
     result jsonb DEFAULT '{}'::jsonb NOT NULL,
     error_code text,
     error_msg text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_sys_cron_attempt CHECK (((attempt >= 1) AND (max_attempts >= attempt))),
     CONSTRAINT chk_sys_cron_duration CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
