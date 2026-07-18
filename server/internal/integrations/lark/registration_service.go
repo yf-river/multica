@@ -55,37 +55,6 @@ const (
 	RegistrationReasonInternalError        = "internal_error"
 )
 
-// RegistrationServiceConfig configures the service.
-type RegistrationServiceConfig struct {
-	// SessionTTL caps how long a successful or errored session stays in
-	// the in-process cache before GC. Default 30 minutes — long enough
-	// for the frontend to fetch the final status after the dialog
-	// closes, short enough that abandoned sessions do not pin memory
-	// forever. Independent of the device-flow expiry (Lark's
-	// expire_in, ~10 min).
-	SessionTTL time.Duration
-
-	// Now is overridable for deterministic expiry-bound tests.
-	Now func() time.Time
-
-	// Logger is used for protocol-level warnings (Lark error codes,
-	// post-success bot info failures). Nil uses slog.Default().
-	Logger *slog.Logger
-}
-
-func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
-	if c.SessionTTL == 0 {
-		c.SessionTTL = 30 * time.Minute
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.Logger == nil {
-		c.Logger = slog.Default()
-	}
-	return c
-}
-
 // RegistrationService owns the device-flow install lifecycle. It is the
 // one place that:
 //
@@ -102,7 +71,9 @@ func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
 // into Postgres would add a migration + GC sweep without delivering any
 // product capability the user can re-use across server restarts.
 type RegistrationService struct {
-	cfg                 RegistrationServiceConfig
+	sessionTTL          time.Duration
+	now                 func() time.Time
+	logger              *slog.Logger
 	client              *RegistrationClient
 	api                 APIClient
 	queries             *db.Queries
@@ -137,7 +108,6 @@ type beginInstallCall struct {
 // silent half-init at startup cannot leave the install button
 // returning 500s at runtime.
 func NewRegistrationService(
-	cfg RegistrationServiceConfig,
 	client *RegistrationClient,
 	api APIClient,
 	queries *db.Queries,
@@ -168,7 +138,9 @@ func NewRegistrationService(
 		return nil, errors.New("lark registration: event bus is required")
 	}
 	return &RegistrationService{
-		cfg:                 cfg.withDefaults(),
+		sessionTTL:          30 * time.Minute,
+		now:                 time.Now,
+		logger:              slog.Default(),
 		client:              client,
 		api:                 api,
 		queries:             queries,
@@ -360,7 +332,7 @@ func (s *RegistrationService) openRegistrationSession(ctx context.Context, p Beg
 		return BeginInstallResult{}, fmt.Errorf("lark registration: begin: %w", err)
 	}
 
-	now := s.cfg.Now()
+	now := s.now()
 	sessionID, err := randomToken(24)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: mint session id: %w", err)
@@ -492,7 +464,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.cfg.Logger.Info("lark registration: session expired",
+			s.logger.Info("lark registration: session expired",
 				"session_id", sess.id,
 				"workspace_id", util.UUIDToString(sess.workspaceID))
 			sess.markError(RegistrationReasonExpired, "QR expired before authorization", s.gcDeadline())
@@ -504,7 +476,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 		if err != nil {
 			var re *RegistrationError
 			if errors.As(err, &re) {
-				s.cfg.Logger.Warn("lark registration: protocol error",
+				s.logger.Warn("lark registration: protocol error",
 					"session_id", sess.id, "code", re.Code, "desc", re.Description)
 				sess.markError(RegistrationReasonProtocol, re.Error(), s.gcDeadline())
 				return
@@ -512,7 +484,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			// Transient transport error (DNS, network) — log and try
 			// again on the next tick rather than killing the session,
 			// which lets a 30-second cross-region blip self-heal.
-			s.cfg.Logger.Warn("lark registration: transport error, will retry",
+			s.logger.Warn("lark registration: transport error, will retry",
 				"session_id", sess.id, "err", err)
 			continue
 		}
@@ -534,7 +506,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			// hostname-prefix matching.
 			domain = res.SwitchedDomain
 			region = res.SwitchedRegion
-			s.cfg.Logger.Info("lark registration: switched cloud after tenant-brand mismatch",
+			s.logger.Info("lark registration: switched cloud after tenant-brand mismatch",
 				"session_id", sess.id, "domain", domain, "region", string(region))
 			continue
 		case res.ClientID != "" && res.ClientSecret != "":
@@ -548,7 +520,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			case "expired_token":
 				reason = RegistrationReasonExpired
 			}
-			s.cfg.Logger.Info("lark registration: terminal error",
+			s.logger.Info("lark registration: terminal error",
 				"session_id", sess.id, "code", res.Err.Code, "desc", res.Err.Description)
 			sess.markError(reason, res.Err.Error(), s.gcDeadline())
 			return
@@ -571,7 +543,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	creds := InstallationCredentials{AppID: res.ClientID, AppSecret: res.ClientSecret, Region: region}
 	info, err := s.api.GetBotInfo(ctx, creds)
 	if err != nil {
-		s.cfg.Logger.Warn("lark registration: bot info failed",
+		s.logger.Warn("lark registration: bot info failed",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonBotInfoFailed, err.Error(), s.gcDeadline())
 		return
@@ -585,7 +557,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	// database locks. Installation and installer binding then commit together.
 	sealed, err := s.installs.box.Seal([]byte(res.ClientSecret))
 	if err != nil {
-		s.cfg.Logger.Error("lark registration: seal app_secret",
+		s.logger.Error("lark registration: seal app_secret",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
@@ -593,7 +565,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		s.cfg.Logger.Error("lark registration: begin tx",
+		s.logger.Error("lark registration: begin tx",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
@@ -612,7 +584,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		Region:             string(region),
 	})
 	if err != nil {
-		s.cfg.Logger.Warn("lark registration: upsert installation",
+		s.logger.Warn("lark registration: upsert installation",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInstallationConflict, err.Error(), s.gcDeadline())
 		return
@@ -624,14 +596,14 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		MulticaUserID:  sess.initiatorID,
 		LarkOpenID:     res.OpenID,
 	}); err != nil {
-		s.cfg.Logger.Warn("lark registration: bind installer",
+		s.logger.Warn("lark registration: bind installer",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInstallerBindFailed, err.Error(), s.gcDeadline())
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		s.cfg.Logger.Error("lark registration: commit",
+		s.logger.Error("lark registration: commit",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
@@ -641,7 +613,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	// workspace client without a page refresh — not only on the tab that
 	// happens to poll the status endpoint to success.
 	s.publishInstalled(sess.workspaceID, inst.ID)
-	s.cfg.Logger.Info("lark registration: install complete",
+	s.logger.Info("lark registration: install complete",
 		"session_id", sess.id,
 		"workspace_id", util.UUIDToString(sess.workspaceID),
 		"agent_id", util.UUIDToString(sess.agentID),
@@ -649,7 +621,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 }
 
 func (s *RegistrationService) gcDeadline() time.Time {
-	return s.cfg.Now().Add(s.cfg.SessionTTL)
+	return s.now().Add(s.sessionTTL)
 }
 
 // gcExpiredLocked drops any session whose `gcAfter` is in the past.
@@ -657,7 +629,7 @@ func (s *RegistrationService) gcDeadline() time.Time {
 // gcAfter when it terminates, and an expired-by-deadline session
 // closes itself.
 func (s *RegistrationService) gcExpiredLocked() {
-	now := s.cfg.Now()
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, sess := range s.sessions {

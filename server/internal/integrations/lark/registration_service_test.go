@@ -38,13 +38,10 @@ func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
 		"interval":                  60,
 		"expire_in":                 1,
 	})
-	service := &RegistrationService{
-		cfg:    RegistrationServiceConfig{}.withDefaults(),
-		client: NewRegistrationClient(RegistrationConfig{Domain: fake.URL()}),
-		getAgentInWorkspace: func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error) {
-			return db.Agent{Name: "Replay Bot"}, nil
-		},
-		sessions: make(map[string]*registrationSession),
+	service := newRegistrationServiceForTest(t)
+	service.client = NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
+	service.getAgentInWorkspace = func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error) {
+		return db.Agent{Name: "Replay Bot"}, nil
 	}
 	id := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 	params := BeginInstallParams{
@@ -152,31 +149,31 @@ func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 		needle string
 	}{
 		{"missing client", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
+			_, err := NewRegistrationService(nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "RegistrationClient"},
 		{"missing api", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
+			_, err := NewRegistrationService(client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "APIClient"},
 		{"missing queries", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, nil, fakeTxStarter{}, &InstallationService{}, binder, events.New())
+			_, err := NewRegistrationService(client, api, nil, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "queries"},
 		{"missing tx", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, nil, &InstallationService{}, binder, events.New())
+			_, err := NewRegistrationService(client, api, &db.Queries{}, nil, &InstallationService{}, binder, events.New())
 			return err
 		}, "TxStarter"},
 		{"missing installs", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, nil, binder, events.New())
+			_, err := NewRegistrationService(client, api, &db.Queries{}, fakeTxStarter{}, nil, binder, events.New())
 			return err
 		}, "InstallationService"},
 		{"missing binder", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil, events.New())
+			_, err := NewRegistrationService(client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil, events.New())
 			return err
 		}, "bind installer"},
 		{"missing event bus", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, nil)
+			_, err := NewRegistrationService(client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, nil)
 			return err
 		}, "event bus"},
 	}
@@ -253,7 +250,7 @@ func TestRegistrationGetSessionNotFound(t *testing.T) {
 func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {
 	clock := &fakeClockSvc{now: time.Unix(1_700_000_000, 0)}
 	s := newRegistrationServiceForTest(t)
-	s.cfg.Now = clock.Now
+	s.now = clock.Now
 	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 
 	s.mu.Lock()
@@ -353,9 +350,11 @@ func (fakeTxStarter) Begin(_ context.Context) (pgx.Tx, error) {
 func newRegistrationServiceForTest(t *testing.T) *RegistrationService {
 	t.Helper()
 	return &RegistrationService{
-		cfg:      RegistrationServiceConfig{}.withDefaults(),
-		bus:      events.New(),
-		sessions: make(map[string]*registrationSession),
+		sessionTTL: 30 * time.Minute,
+		now:        time.Now,
+		logger:     newDiscardLogger(),
+		bus:        events.New(),
+		sessions:   make(map[string]*registrationSession),
 	}
 }
 

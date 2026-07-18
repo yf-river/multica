@@ -393,7 +393,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				}
 				regClient := lark.NewRegistrationClient(regCfg)
 				regSvc, rerr := lark.NewRegistrationService(
-					lark.RegistrationServiceConfig{Logger: slog.Default()},
 					regClient,
 					larkClient,
 					queries,
