@@ -97,12 +97,10 @@ export function trainingWorkbenchTabFromView(view: string | null): TrainingWorkb
   return TRAINING_WORKBENCH_TAB_BY_VIEW[normalizeTrainingWorkbenchView(view)];
 }
 
-function trainingWorkbenchSectionFromView(view: string | null): TrainingWorkbenchSection {
-  return TRAINING_WORKBENCH_SECTION_BY_VIEW[normalizeTrainingWorkbenchView(view)];
-}
-
 export function trainingWorkbenchSectionLabelFromView(view: string | null): string {
-  return TRAINING_WORKBENCH_SECTION_LABEL_BY_SECTION[trainingWorkbenchSectionFromView(view)];
+  return TRAINING_WORKBENCH_SECTION_LABEL_BY_SECTION[
+    TRAINING_WORKBENCH_SECTION_BY_VIEW[normalizeTrainingWorkbenchView(view)]
+  ];
 }
 
 export function trainingWorkbenchTitleFromView(view: string | null): string {

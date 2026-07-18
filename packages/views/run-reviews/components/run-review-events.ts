@@ -580,16 +580,10 @@ function semanticCommandResult(
     sourceLabel,
     object,
     title: `${titlePrefix}：${object}`,
-    ...semanticOutputState(output, command),
+    ...(output
+      ? outputOutcome(output, command)
+      : { outcome: "已记录", summary: "", severity: "normal" as const }),
   };
-}
-
-function semanticOutputState(
-  output: string | undefined,
-  command?: string,
-): Pick<SemanticToolAction, "outcome" | "summary" | "severity" | "suppressFailureSignal"> {
-  if (!output) return { outcome: "已记录", summary: "", severity: "normal" };
-  return outputOutcome(output, command);
 }
 
 function outputOutcome(

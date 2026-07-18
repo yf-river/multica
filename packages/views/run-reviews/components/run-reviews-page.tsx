@@ -855,10 +855,6 @@ function eventGroupOutcomeClass(group: RunReviewEventGroupData): string {
   return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 }
 
-function timelineNodeColorClass(node: IssueTimelineNode): string {
-  return `${timelinePaletteClass(node.agent_id || node.agent_name || node.node_id)} text-white`;
-}
-
 function timelinePaletteClass(key: string) {
   const colors = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-teal-600", "bg-indigo-600", "bg-cyan-700"];
   return colors[fnv1a32(key) % colors.length] ?? "bg-slate-600";
@@ -1063,7 +1059,9 @@ function TimelineLaneChart({
                 ) : (
                   row.segments.map((segment) => {
                     if (segment.startMs === null || segment.endMs === null) return null;
-                    const label = timelineSegmentTitle(row, segment);
+                    const label = timelineSegmentTooltipRows(row, segment)
+                      .map(([name, value]) => `${name} ${value}`)
+                      .join(" · ");
                     return (
                       <Tooltip key={segment.key}>
                         <TooltipTrigger
@@ -1106,7 +1104,9 @@ function TimelineLaneChart({
 function timelineSegmentClassName(kind: TimelineBarRow["kind"], _segment: TimelineBarSegment) {
   if (kind === "child") return "bg-sky-600 text-white";
   if (kind === "human_confirmation") return "border border-amber-700/30 bg-amber-500 text-white";
-  return timelineNodeColorClass(_segment.node);
+  return `${timelinePaletteClass(
+    _segment.node.agent_id || _segment.node.agent_name || _segment.node.node_id,
+  )} text-white`;
 }
 
 function TimelineSegmentText({ row, segment }: { row: TimelineBarRow; segment: TimelineBarSegment }) {
@@ -1120,11 +1120,6 @@ function TimelineSegmentText({ row, segment }: { row: TimelineBarRow; segment: T
   return `${formatDuration(segment.durationMs)} · ${formatNumber(segment.tokenTotal)} token`;
 }
 
-function timelineSegmentTitle(row: TimelineBarRow, segment: TimelineBarSegment) {
-  return timelineSegmentTooltipRows(row, segment)
-    .map(([label, value]) => `${label} ${value}`)
-    .join(" · ");
-}
 function IssueListSkeleton() {
   return (
     <div className="space-y-2 p-3">
