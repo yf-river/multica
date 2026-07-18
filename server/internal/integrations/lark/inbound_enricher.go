@@ -22,7 +22,7 @@ const larkMsgTypeMergeForward = "merge_forward"
 // visible "... (N more truncated)" marker.
 const defaultMaxForwardChildren = 100
 
-// DefaultRecentContextSize is the window the production wiring uses for
+// defaultRecentContextSize is the current group-context prefetch window.
 // the group-context prefetch: the page_size of the single list call made
 // when a user @-mentions the Bot in a group. It is a FETCH budget, not a
 // guaranteed rendered count — the trigger message itself and any quoted
@@ -30,24 +30,7 @@ const defaultMaxForwardChildren = 100
 // usually renders one or two fewer lines. 10 keeps the agent's prompt
 // meaningfully contextual without bloating it or straining the inbound
 // ACK budget (one list call, page_size 10).
-const DefaultRecentContextSize = 10
-
-// InboundEnricherConfig tunes the enricher. All fields default.
-type InboundEnricherConfig struct {
-	// MaxForwardChildren caps inlined forward children. <=0 uses
-	// defaultMaxForwardChildren.
-	MaxForwardChildren int
-	// RecentContextSize caps how many surrounding group messages the
-	// enricher prefetches and inlines as a <recent_context> block when a
-	// user @-mentions the Bot in a group. <=0 DISABLES the prefetch
-	// entirely (only explicitly-attached quote/forward context is used);
-	// the production wiring sets DefaultRecentContextSize. Values above
-	// Lark's 50-per-page cap are clamped by the client.
-	RecentContextSize int
-	// Logger receives best-effort warnings about fetch failures. Nil
-	// uses slog.Default().
-	Logger *slog.Logger
-}
+const defaultRecentContextSize = 10
 
 type inboundEnricher struct {
 	client             APIClient
@@ -59,18 +42,12 @@ type inboundEnricher struct {
 // NewInboundEnricher returns the connector callback that expands quoted,
 // forwarded, and recent group context through the Lark API. Fetch failures
 // degrade to visible placeholders and never block ingestion.
-func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) func(context.Context, InboundMessage, InstallationCredentials) InboundMessage {
-	if cfg.MaxForwardChildren <= 0 {
-		cfg.MaxForwardChildren = defaultMaxForwardChildren
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
+func NewInboundEnricher(client APIClient) func(context.Context, InboundMessage, InstallationCredentials) InboundMessage {
 	e := &inboundEnricher{
 		client:             client,
-		maxForwardChildren: cfg.MaxForwardChildren,
-		recentContextSize:  cfg.RecentContextSize,
-		logger:             cfg.Logger,
+		maxForwardChildren: defaultMaxForwardChildren,
+		recentContextSize:  defaultRecentContextSize,
+		logger:             slog.Default(),
 	}
 	return e.enrich
 }

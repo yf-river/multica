@@ -101,10 +101,24 @@ func textMsg(id, sender, text, createTime string) LarkMessage {
 	}
 }
 
-func enrich(t *testing.T, fake *enricherFakeClient, msg InboundMessage, cfg InboundEnricherConfig) InboundMessage {
+type enricherTestConfig struct {
+	MaxForwardChildren int
+	RecentContextSize  int
+}
+
+func enrich(t *testing.T, fake *enricherFakeClient, msg InboundMessage, cfg enricherTestConfig) InboundMessage {
 	t.Helper()
-	e := NewInboundEnricher(fake, cfg)
-	return e(context.Background(), msg, InstallationCredentials{AppID: "a", AppSecret: "s"})
+	maxForwardChildren := cfg.MaxForwardChildren
+	if maxForwardChildren <= 0 {
+		maxForwardChildren = defaultMaxForwardChildren
+	}
+	e := &inboundEnricher{
+		client:             fake,
+		maxForwardChildren: maxForwardChildren,
+		recentContextSize:  cfg.RecentContextSize,
+		logger:             newDiscardLogger(),
+	}
+	return e.enrich(context.Background(), msg, InstallationCredentials{AppID: "a", AppSecret: "s"})
 }
 
 // TestEnrichQuotedReply covers the MUL-2951 quoted-reply example: a text
@@ -118,7 +132,7 @@ func TestEnrichQuotedReply(t *testing.T) {
 	}
 	in := InboundMessage{MessageType: "text", MessageID: "om_child", Body: "去实现", ParentID: "om_parent"}
 
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 
 	want := `<quoted_message message_id="om_parent" sender="User 1" type="text">
 做一个删除 issue 的按钮吧
@@ -149,7 +163,7 @@ func TestEnrichMergeForward(t *testing.T) {
 	}
 	in := InboundMessage{MessageType: "merge_forward", MessageID: "om_forward"}
 
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 
 	want := `<forwarded_messages count="4">
 [User 1]: 你们线上的 Multica 能用吗
@@ -173,7 +187,7 @@ func TestEnrichMergeForwardSortsByCreateTime(t *testing.T) {
 		textMsg("c1", "ou_a", "first", "1000"),
 		textMsg("c3", "ou_a", "third", "3000"),
 	}
-	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, InboundEnricherConfig{})
+	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, enricherTestConfig{})
 	first := strings.Index(out.Body, "first")
 	second := strings.Index(out.Body, "second")
 	third := strings.Index(out.Body, "third")
@@ -194,7 +208,7 @@ func TestEnrichMergeForwardCap(t *testing.T) {
 		textMsg("c3", "ou_a", "three", "3000"),
 		textMsg("c4", "ou_a", "four", "4000"),
 	}
-	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, InboundEnricherConfig{MaxForwardChildren: 2})
+	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, enricherTestConfig{MaxForwardChildren: 2})
 	if !strings.Contains(out.Body, "... (2 more truncated)") {
 		t.Errorf("expected truncation marker, got %q", out.Body)
 	}
@@ -218,7 +232,7 @@ func TestEnrichQuotedMergeForwardNests(t *testing.T) {
 		textMsg("c2", "ou_b", "line B", "2000"),
 	}
 	in := InboundMessage{MessageType: "text", MessageID: "om_child", Body: "see above", ParentID: "om_fwd"}
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 
 	if !strings.Contains(out.Body, `<quoted_message message_id="om_fwd" sender="User 1" type="merge_forward">`) {
 		t.Errorf("missing quoted wrapper for merge_forward parent: %q", out.Body)
@@ -244,7 +258,7 @@ func TestEnrichNestedForwardChildIsPlaceholder(t *testing.T) {
 		textMsg("c1", "ou_a", "hello", "1000"),
 		{MessageID: "c2", MessageType: "merge_forward", SenderID: "ou_a", SenderType: "user", CreateTime: "2000"},
 	}
-	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, InboundEnricherConfig{})
+	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, enricherTestConfig{})
 	if !strings.Contains(out.Body, "[nested merge_forward, expand manually]") {
 		t.Errorf("nested forward child should be a placeholder: %q", out.Body)
 	}
@@ -262,7 +276,7 @@ func TestEnrichQuotedFetchFailureDegrades(t *testing.T) {
 	fake := newEnricherFake()
 	fake.errByID["om_gone"] = errors.New("not found")
 	in := InboundMessage{MessageType: "text", MessageID: "om_child", Body: "ping", ParentID: "om_gone"}
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 
 	want := `<quoted_message message_id="om_gone" type="error">[unable to fetch]</quoted_message>
 
@@ -276,7 +290,7 @@ func TestEnrichQuotedDeletedParentDegrades(t *testing.T) {
 	t.Parallel()
 	fake := newEnricherFake()
 	fake.byID["om_del"] = []LarkMessage{{MessageID: "om_del", MessageType: "text", Deleted: true, SenderID: "ou_a", SenderType: "user"}}
-	out := enrich(t, fake, InboundMessage{MessageType: "text", Body: "x", ParentID: "om_del"}, InboundEnricherConfig{})
+	out := enrich(t, fake, InboundMessage{MessageType: "text", Body: "x", ParentID: "om_del"}, enricherTestConfig{})
 	if !strings.Contains(out.Body, `type="error"`) {
 		t.Errorf("deleted parent should degrade to error block: %q", out.Body)
 	}
@@ -286,7 +300,7 @@ func TestEnrichForwardFetchFailureDegrades(t *testing.T) {
 	t.Parallel()
 	fake := newEnricherFake()
 	fake.errByID["om_f"] = errors.New("boom")
-	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, InboundEnricherConfig{})
+	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, enricherTestConfig{})
 	if out.Body != `<forwarded_messages type="error">[unable to fetch]</forwarded_messages>` {
 		t.Errorf("forward fetch failure should degrade: %q", out.Body)
 	}
@@ -298,7 +312,7 @@ func TestEnrichNoopWhenNothingAttached(t *testing.T) {
 	t.Parallel()
 	fake := newEnricherFake()
 	in := InboundMessage{MessageType: "text", MessageID: "om", Body: "hello"}
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 	if out.Body != "hello" {
 		t.Errorf("body should be unchanged, got %q", out.Body)
 	}
@@ -323,7 +337,7 @@ func TestEnrichPreservesCommandBodyForIssueParsing(t *testing.T) {
 		CommandBody: "/issue 删除 issue 按钮",
 		ParentID:    "om_parent",
 	}
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 
 	// Enriched Body now starts with the quoted block → no longer a command.
 	if _, ok := parseIssueCommand(out.Body); ok {
@@ -357,7 +371,7 @@ func TestEnrichResolvesMentionsInChildren(t *testing.T) {
 			Mentions:    []LarkMessageMention{{Key: "@_user_1", ID: "ou_alice", Name: "Alice"}},
 		},
 	}
-	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, InboundEnricherConfig{})
+	out := enrich(t, fake, InboundMessage{MessageType: "merge_forward", MessageID: "om_f"}, enricherTestConfig{})
 	if !strings.Contains(out.Body, "@Alice 看一下") {
 		t.Errorf("child mention not resolved: %q", out.Body)
 	}

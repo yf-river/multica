@@ -1099,10 +1099,7 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 	// agent's body via the IM API before dispatch. It shares the
 	// connector's resolved credentials and runs under the connector's
 	// EnrichTimeout so it cannot overrun the Lark long-conn ACK budget.
-	enricher := lark.NewInboundEnricher(apiClient, lark.InboundEnricherConfig{
-		RecentContextSize: lark.DefaultRecentContextSize,
-		Logger:            slog.Default(),
-	})
+	enricher := lark.NewInboundEnricher(apiClient)
 	conn, err := lark.NewWSLongConnConnector(lark.WSConnectorConfig{
 		Dialer:              dialer,
 		Endpoint:            endpointFetcher.Endpoint,
