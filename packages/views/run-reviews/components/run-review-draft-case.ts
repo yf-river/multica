@@ -16,7 +16,7 @@ import {
   toolMessageKey,
   toolOutputText,
 } from "./run-review-events";
-import { firstNonEmpty, formatJSON, stringFromUnknown, truncateText } from "./run-review-format";
+import { firstNonEmpty, fnv1a32, formatJSON, stringFromUnknown, truncateText } from "./run-review-format";
 import { buildChildLanes, buildStageRows } from "./run-review-timeline";
 
 const STAGES = SOP_STAGE_DEFINITIONS;
@@ -380,10 +380,5 @@ function latestMessageText(messages: TaskMessagePayload[]) {
 }
 
 function stableContentHash(value: string) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  return `fnv1a:${fnv1a32(value).toString(16).padStart(8, "0")}`;
 }

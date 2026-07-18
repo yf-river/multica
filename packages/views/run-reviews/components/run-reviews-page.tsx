@@ -52,6 +52,7 @@ import {
   formatJSON,
   formatNumber,
   formatPercent,
+  fnv1a32,
   shortId,
   statusLabel,
 } from "./run-review-format";
@@ -860,16 +861,7 @@ function timelineNodeColorClass(node: IssueTimelineNode): string {
 
 function timelinePaletteClass(key: string) {
   const colors = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-teal-600", "bg-indigo-600", "bg-cyan-700"];
-  return colors[stableHash(key) % colors.length] ?? "bg-slate-600";
-}
-
-function stableHash(value: string) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
+  return colors[fnv1a32(key) % colors.length] ?? "bg-slate-600";
 }
 
 function RunFailureBanner({

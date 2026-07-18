@@ -67,6 +67,15 @@ export function shortId(value: string) {
   return value.length > 8 ? value.slice(0, 8) : value;
 }
 
+export function fnv1a32(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
 export function statusLabel(status: string) {
   const labels: Record<string, string> = {
     backlog: "待规划",
