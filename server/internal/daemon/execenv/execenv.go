@@ -27,8 +27,6 @@ func shortID(id string) string {
 	return compact
 }
 
-type RepoContextForEnv = protocol.TaskRepository
-
 // ProjectResourceForEnv keeps the claimed-task wire shape while adding the
 // on-disk empty-resource normalization used by context.go.
 type ProjectResourceForEnv protocol.TaskProjectResource
@@ -79,10 +77,10 @@ type TaskContextForEnv struct {
 	AgentName               string
 	AgentInstructions       string // agent identity/persona instructions, injected into CLAUDE.md
 	AgentSkills             []SkillContextForEnv
-	Repos                   []RepoContextForEnv     // workspace repos available for checkout
-	ProjectID               string                  // issue's project, when present
-	ProjectTitle            string                  // human-readable project title
-	ProjectResources        []ProjectResourceForEnv // resources attached to the project
+	Repos                   []protocol.TaskRepository // workspace repos available for checkout
+	ProjectID               string                    // issue's project, when present
+	ProjectTitle            string                    // human-readable project title
+	ProjectResources        []ProjectResourceForEnv   // resources attached to the project
 	ExecutionPolicy         TaskExecutionPolicyForEnv
 	ChatSessionID           string // non-empty for chat tasks
 	AutopilotRunID          string // non-empty for autopilot run_only tasks
@@ -126,10 +124,8 @@ type SkillContextForEnv struct {
 	Name        string
 	Description string
 	Content     string
-	Files       []SkillFileContextForEnv
+	Files       []protocol.SkillFile
 }
-
-type SkillFileContextForEnv = protocol.SkillFile
 
 // Environment represents a prepared, isolated execution environment.
 type Environment struct {

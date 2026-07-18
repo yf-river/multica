@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func testLogger() *slog.Logger {
@@ -304,7 +306,7 @@ func TestProjectReposReplaceWorkspaceReposInMetaSkill(t *testing.T) {
 		IssueID:      "11111111-2222-3333-4444-555555555555",
 		ProjectID:    "22222222-3333-4444-5555-666666666666",
 		ProjectTitle: "Project A",
-		Repos: []RepoContextForEnv{
+		Repos: []protocol.TaskRepository{
 			{URL: "https://github.com/org/project-repo"},
 		},
 		ProjectResources: []ProjectResourceForEnv{
@@ -348,7 +350,7 @@ func TestPrepareWithRepoContext(t *testing.T) {
 
 	taskCtx := TaskContextForEnv{
 		IssueID: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-		Repos: []RepoContextForEnv{
+		Repos: []protocol.TaskRepository{
 			{URL: "https://github.com/org/backend"},
 			{URL: "https://github.com/org/frontend"},
 		},
@@ -410,7 +412,7 @@ func TestWriteContextFiles(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -537,7 +539,7 @@ func TestWriteContextFilesClaudeNativeSkills(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -866,7 +868,7 @@ func TestInjectRuntimeConfigClaude(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID: "test-issue-id",
 		AgentSkills: []SkillContextForEnv{
-			{Name: "Go Conventions", Content: "Follow Go conventions.", Files: []SkillFileContextForEnv{
+			{Name: "Go Conventions", Content: "Follow Go conventions.", Files: []protocol.SkillFile{
 				{Path: "example.go", Content: "package main"},
 			}},
 			{Name: "PR Review", Content: "Review PRs carefully."},
@@ -1085,7 +1087,7 @@ func TestWriteContextFilesCopilotNativeSkills(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -1136,7 +1138,7 @@ func TestWriteContextFilesOpencodeNativeSkills(t *testing.T) {
 				Name:        "Go Conventions",
 				Description: "Follow our internal Go style.",
 				Content:     "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -1279,7 +1281,7 @@ func TestWriteContextFilesOpenclawNativeSkills(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -1404,7 +1406,7 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 
 	taskCtx := TaskContextForEnv{
 		IssueID: "c3d4e5f6-a7b8-9012-cdef-123456789012",
-		Repos: []RepoContextForEnv{
+		Repos: []protocol.TaskRepository{
 			{URL: "https://github.com/org/backend"},
 		},
 	}
@@ -2298,7 +2300,7 @@ func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 			{
 				Name:    "Writing",
 				Content: "Write clearly.",
-				Files:   []SkillFileContextForEnv{{Path: "examples/example.md", Content: "Example"}},
+				Files:   []protocol.SkillFile{{Path: "examples/example.md", Content: "Example"}},
 			},
 		},
 	}}, testLogger())
@@ -2344,7 +2346,7 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 				{
 					Name:    "Writing",
 					Content: "Old writing guidance.",
-					Files:   []SkillFileContextForEnv{{Path: "examples/example.md", Content: "Old example"}},
+					Files:   []protocol.SkillFile{{Path: "examples/example.md", Content: "Old example"}},
 				},
 			},
 		},
@@ -2360,7 +2362,7 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 			{
 				Name:    "Writing",
 				Content: "Updated writing guidance.",
-				Files:   []SkillFileContextForEnv{{Path: "examples/example.md", Content: "Updated example"}},
+				Files:   []protocol.SkillFile{{Path: "examples/example.md", Content: "Updated example"}},
 			},
 		},
 	}}, testLogger())

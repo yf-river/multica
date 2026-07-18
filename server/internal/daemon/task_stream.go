@@ -543,7 +543,7 @@ func readProjectSkill(dir string, name string) (execenv.SkillContextForEnv, bool
 		if err != nil {
 			return err
 		}
-		skill.Files = append(skill.Files, execenv.SkillFileContextForEnv{Path: rel, Content: string(data)})
+		skill.Files = append(skill.Files, protocol.SkillFile{Path: rel, Content: string(data)})
 		return nil
 	})
 	if err != nil {

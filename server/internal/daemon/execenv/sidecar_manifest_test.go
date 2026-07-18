@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // walkRelative returns every relative path inside root (files and directories),
@@ -205,7 +207,7 @@ func TestPrepareThenCleanupSidecarsRoundTripEmptyWorkdir(t *testing.T) {
 						Name:        "Issue Review",
 						Description: "Review GH issues",
 						Content:     "Steps to review",
-						Files: []SkillFileContextForEnv{
+						Files: []protocol.SkillFile{
 							{Path: "templates/checklist.md", Content: "- [ ] check"},
 						},
 					},
@@ -674,7 +676,7 @@ func TestPrepareThenCleanupSidecarsSameSlugCollisionPerProvider(t *testing.T) {
 						Name:        "Issue Review",
 						Description: "Multica's version",
 						Content:     "---\nname: issue-review\n---\n\nMultica skill content.\n",
-						Files: []SkillFileContextForEnv{
+						Files: []protocol.SkillFile{
 							{Path: "templates/checklist.md", Content: "- [ ] check"},
 						},
 					},

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestWriteSkillFilesIgnoresBundledSkillMd(t *testing.T) {
@@ -15,7 +17,7 @@ func TestWriteSkillFilesIgnoresBundledSkillMd(t *testing.T) {
 		{
 			Name:    "Issue Review",
 			Content: "Primary skill body.",
-			Files: []SkillFileContextForEnv{
+			Files: []protocol.SkillFile{
 				{Path: "README.md", Content: "readme"},
 				{Path: "SKILL.md", Content: "duplicate primary, must be skipped"},
 				{Path: "./SKILL.md", Content: "non-canonical duplicate, must be skipped"},
