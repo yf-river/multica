@@ -21,7 +21,7 @@ const envDir = path.join(runDir, "env");
 const deploymentDir = path.join(runDir, "deployments");
 const logArchiveDir = path.join(runDir, "log-archive");
 const workspacesDir = path.join(runDir, "workspaces");
-const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
+const publicHost = "9.134.129.162";
 const demoAvatarPath = "/images/huyunfei-landscape-avatar.png";
 const profiles = {
   prod: {
@@ -108,8 +108,6 @@ function ensureEnvironment(item) {
   ensureCodexRunnerProfile(codexRunner);
   const lines = [
     `GOAL_TEST_ENV=${item.name}`,
-    `GOAL_TEST_ENV_LABEL=${item.label}`,
-    `GOAL_TEST_STABLE_COMMIT=${gitText(["rev-parse", "--short=12", "HEAD"])}`,
     `POSTGRES_DB=${item.databaseName}`,
     `POSTGRES_USER=${base.POSTGRES_USER || "multica"}`,
     `POSTGRES_PASSWORD=${base.POSTGRES_PASSWORD || "multica"}`,
@@ -890,7 +888,6 @@ function resolveCodexRunnerProfile(item, base) {
     defaultGoalTestCodexHome(),
   );
   return {
-    runnerID: firstNonEmpty(process.env.GOAL_TEST_CODEX_RUNNER_ID, base.GOAL_TEST_CODEX_RUNNER_ID, item.daemonID),
     codexHome: firstNonEmpty(process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, sourceHome),
     sourceHome,
     codexPath: firstNonEmpty(process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
@@ -901,7 +898,6 @@ function resolveCodexRunnerProfile(item, base) {
 
 function codexRunnerEnvLines(runner) {
   const lines = [
-    `GOAL_TEST_CODEX_RUNNER_ID=${runner.runnerID}`,
     `MULTICA_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_IMAGE_GENERATION=${runner.imageGeneration}`,
   ];
@@ -976,7 +972,7 @@ function nextBackupPath(file) {
 
 function summarizeCodexRunnerEnv(item, env) {
   return {
-    runner_id: env.GOAL_TEST_CODEX_RUNNER_ID || item.daemonID,
+    runner_id: item.daemonID,
     daemon_id: item.daemonID,
     codex_path: env.MULTICA_CODEX_PATH || "codex",
     codex_home: env.CODEX_HOME || "",

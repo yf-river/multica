@@ -18,8 +18,8 @@ const password = env.GOAL_TEST_PASSWORD || "develop123";
 const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
 const artifactRoot = acceptanceDir(repoRoot);
 const apply = process.argv.includes("--apply");
-const canonicalSOPOnly = process.argv.includes("--canonical-sop-only") || env.GOAL_TEST_CANONICAL_SOP_ONLY === "1";
-const keep = positiveInt(readArg("keep") ?? env.GOAL_TEST_PRUNE_DEV_DATA_KEEP, 5);
+const canonicalSOPOnly = process.argv.includes("--canonical-sop-only");
+const keep = positiveInt(readArg("keep"), 5);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 

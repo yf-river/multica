@@ -4,7 +4,3 @@ import process from "node:process";
 export function acceptanceDir(repoRoot) {
   return path.resolve(process.env.GOAL_TEST_ACCEPTANCE_DIR || path.join(repoRoot, "artifacts", "acceptance"));
 }
-
-export function acceptancePath(repoRoot, ...parts) {
-  return path.join(acceptanceDir(repoRoot), ...parts);
-}
