@@ -366,7 +366,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					ResolveCredentials: installSvc.Credentials,
 					GetAgent:           queries.GetAgent,
 					PublicURL:          signupConfig.PublicURL,
-					Logger:             slog.Default(),
 				})
 				dispatcher := &lark.Dispatcher{
 					Queries:         queries,

@@ -48,27 +48,15 @@ type OutcomeReplierConfig struct {
 	ResolveCredentials func(db.LarkInstallation) (InstallationCredentials, error)
 	GetAgent           func(context.Context, pgtype.UUID) (db.Agent, error)
 	PublicURL          string
-	BindingPath        string
-	Logger             *slog.Logger
 }
 
 // NewLarkOutcomeReplier returns the production replier. The enabled Lark
 // startup path owns dependency construction; disabled deployments never build
 // a Hub or replier.
 func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) *LarkOutcomeReplier {
-	log := cfg.Logger
-	if log == nil {
-		log = slog.Default()
-	}
+	log := slog.Default()
 	if cfg.PublicURL == "" {
 		log.Warn("lark outcome replier: MULTICA_PUBLIC_URL not set; binding prompt CTA will not work")
-	}
-	bindingPath := cfg.BindingPath
-	if bindingPath == "" {
-		bindingPath = "/lark/bind"
-	}
-	if !strings.HasPrefix(bindingPath, "/") {
-		bindingPath = "/" + bindingPath
 	}
 	return &LarkOutcomeReplier{
 		client:             cfg.APIClient,
@@ -76,7 +64,7 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) *LarkOutcomeReplier {
 		resolveCredentials: cfg.ResolveCredentials,
 		getAgent:           cfg.GetAgent,
 		publicURL:          strings.TrimRight(cfg.PublicURL, "/"),
-		bindingPath:        bindingPath,
+		bindingPath:        "/lark/bind",
 		noticeHeader:       "Multica",
 		log:                log,
 	}

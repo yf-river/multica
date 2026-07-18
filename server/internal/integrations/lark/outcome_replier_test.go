@@ -2,8 +2,6 @@ package lark
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -84,14 +82,15 @@ func stubAgentLookup(agent db.Agent) func(context.Context, pgtype.UUID) (db.Agen
 }
 
 func newOutcomeReplierForTest(stub *stubAPIClientWithRecorder, agent db.Agent) *LarkOutcomeReplier {
-	return NewLarkOutcomeReplier(OutcomeReplierConfig{
+	replier := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:          stub,
 		BindingSvc:         &BindingTokenService{},
 		ResolveCredentials: testCredentials("s"),
 		GetAgent:           stubAgentLookup(agent),
 		PublicURL:          "https://multica.test",
-		Logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+	replier.log = newDiscardLogger()
+	return replier
 }
 
 func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
