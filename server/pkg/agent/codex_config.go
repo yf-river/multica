@@ -17,11 +17,6 @@ import (
 	"time"
 )
 
-const (
-	codexMultiAgentEnv = "MULTICA_CODEX_MULTI_AGENT"
-	codexMemoryEnv     = "MULTICA_CODEX_MEMORY"
-)
-
 func buildCodexArgs(opts ExecOptions, env map[string]string, logger *slog.Logger, disableImageGeneration bool) []string {
 	args := []string{"app-server", "--listen", "stdio://"}
 	extra := filterCustomArgs(opts.ExtraArgs, codexBlockedArgs, logger)
@@ -66,16 +61,12 @@ func codexRuntimeOverrides(env map[string]string, goos, workDir string) []string
 			"-c", "sandbox_workspace_write.network_access=true",
 		)
 	}
-	if !codexFeatureOptedIn(env[codexMultiAgentEnv]) {
-		args = append(args, "--disable", "multi_agent")
-	}
-	if !codexFeatureOptedIn(env[codexMemoryEnv]) {
-		args = append(args,
-			"--disable", "memories",
-			"-c", "memories.generate_memories=false",
-			"-c", "memories.use_memories=false",
-		)
-	}
+	args = append(args,
+		"--disable", "multi_agent",
+		"--disable", "memories",
+		"-c", "memories.generate_memories=false",
+		"-c", "memories.use_memories=false",
+	)
 	if strings.TrimSpace(workDir) != "" {
 		absWorkDir, err := filepath.Abs(workDir)
 		if err != nil {
@@ -84,15 +75,6 @@ func codexRuntimeOverrides(env map[string]string, goos, workDir string) []string
 		args = append(args, "-c", "projects."+strconv.Quote(absWorkDir)+`.trust_level="trusted"`)
 	}
 	return args
-}
-
-func codexFeatureOptedIn(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func effectiveCodexModelForToolGuard(opts ExecOptions, extraArgs, customArgs []string) string {

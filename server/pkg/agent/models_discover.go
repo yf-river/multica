@@ -842,13 +842,9 @@ func isCursorModelIdentifier(s string) bool {
 
 // ── CodeBuddy model discovery ──
 
-// discoverCodebuddyModels returns the current CodeBuddy model catalog. An
-// operator-provided catalog takes precedence, then ACP discovery, then the
-// maintained static catalog.
+// discoverCodebuddyModels returns the current CodeBuddy model catalog from
+// ACP discovery, falling back to the maintained static catalog.
 func discoverCodebuddyModels(ctx context.Context, executablePath string) []Model {
-	if models := parseCodebuddyModelList(os.Getenv("MULTICA_CODEBUDDY_MODELS")); len(models) > 0 {
-		return models
-	}
 	if executablePath == "" {
 		executablePath = "codebuddy"
 	}

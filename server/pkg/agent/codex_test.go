@@ -1652,15 +1652,6 @@ func TestCodexRuntimeOverrides(t *testing.T) {
 		t.Errorf("darwin overrides must not add workspace-write network config: %v", darwin)
 	}
 
-	optedIn := codexRuntimeOverrides(map[string]string{
-		codexMultiAgentEnv: "yes",
-		codexMemoryEnv:     "ON",
-	}, "linux", "")
-	if containsArgPair(optedIn, "--disable", "multi_agent") ||
-		containsArgPair(optedIn, "--disable", "memories") ||
-		containsArgPair(optedIn, "-c", "memories.generate_memories=false") {
-		t.Errorf("opted-in features must remain controlled by user config: %v", optedIn)
-	}
 }
 
 func TestBuildCodexArgsAppendsRuntimePolicyAfterCustomConfig(t *testing.T) {

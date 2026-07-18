@@ -366,21 +366,6 @@ func TestParseCodebuddyModelList_DedupesAndGroups(t *testing.T) {
 	}
 }
 
-func TestDiscoverCodebuddyModelsUsesEnv(t *testing.T) {
-	t.Setenv("MULTICA_CODEBUDDY_MODELS", "glm-5.1-ioa, minimax-m2.7-ioa")
-
-	models := discoverCodebuddyModels(context.Background(), filepath.Join(t.TempDir(), "missing-codebuddy"))
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models from MULTICA_CODEBUDDY_MODELS, got %d: %+v", len(models), models)
-	}
-	if models[0].ID != "glm-5.1-ioa" || models[0].Provider != "zhipu" || !models[0].Default {
-		t.Fatalf("unexpected first env model: %+v", models[0])
-	}
-	if models[1].ID != "minimax-m2.7-ioa" || models[1].Provider != "minimax" {
-		t.Fatalf("unexpected second env model: %+v", models[1])
-	}
-}
-
 func TestCodebuddyStaticModels_ExpandedFallback(t *testing.T) {
 	t.Parallel()
 	models := codebuddyStaticModels()
