@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -41,52 +40,33 @@ import (
 // Structured bootstrap errors are surfaced verbatim so unsupported app
 // types and other provider failures remain visible to the Hub backoff loop.
 type HTTPConnectionTokenFetcher struct {
-	cfg HTTPConnectionTokenConfig
+	baseURL    string
+	httpClient *http.Client
 }
 
-// HTTPConnectionTokenConfig wires the fetcher's dependencies. BaseURL is
-// an optional deployment-wide override; when empty (the production
+// HTTPConnectionTokenConfig selects an optional deployment-wide host override.
+// When empty (the production
 // default) Endpoint() resolves the bootstrap host per installation from
 // the region. Tests substitute an httptest.Server URL to force all
 // regions to the fake server.
 type HTTPConnectionTokenConfig struct {
-	BaseURL    string
-	HTTPClient *http.Client
-	Now        func() time.Time
-	Logger     *slog.Logger
-}
-
-func (c HTTPConnectionTokenConfig) withDefaults() HTTPConnectionTokenConfig {
-	// BaseURL is intentionally NOT defaulted here. Empty means "no
-	// deployment-wide override" — Endpoint() then resolves the bootstrap
-	// host per installation from InstallationCredentials.Region, so one
-	// fetcher serves both Feishu and Lark. A non-empty BaseURL
-	// (MULTICA_LARK_CALLBACK_BASE_URL, or an httptest URL in tests)
-	// forces every installation to that host.
-	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
-	if c.HTTPClient == nil {
-		c.HTTPClient = &http.Client{Timeout: defaultRequestTimeout}
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.Logger == nil {
-		c.Logger = slog.Default()
-	}
-	return c
+	BaseURL string
 }
 
 // NewHTTPConnectionTokenFetcher returns the production endpoint resolver
 // bound to the supplied configuration.
 func NewHTTPConnectionTokenFetcher(cfg HTTPConnectionTokenConfig) (*HTTPConnectionTokenFetcher, error) {
-	cfg = cfg.withDefaults()
-	if cfg.BaseURL != "" {
-		parsed, err := url.ParseRequestURI(cfg.BaseURL)
+	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	if baseURL != "" {
+		parsed, err := url.ParseRequestURI(baseURL)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return nil, fmt.Errorf("lark callback base URL must be an absolute http(s) URL")
 		}
 	}
-	return &HTTPConnectionTokenFetcher{cfg: cfg}, nil
+	return &HTTPConnectionTokenFetcher{
+		baseURL:    baseURL,
+		httpClient: &http.Client{Timeout: defaultRequestTimeout},
+	}, nil
 }
 
 // bootstrapRequest mirrors the SDK's BootstrapRequest. Field names use
@@ -124,7 +104,7 @@ func (f *HTTPConnectionTokenFetcher) Endpoint(ctx context.Context, creds Install
 	// Resolve the bootstrap host per call: an explicit cfg.BaseURL
 	// override wins (env / httptest), otherwise the installation's region
 	// picks Feishu vs Lark so one fetcher serves both clouds.
-	base := f.cfg.BaseURL
+	base := f.baseURL
 	if base == "" {
 		base = creds.Region.OpenPlatformBaseURL()
 	}
@@ -138,7 +118,7 @@ func (f *HTTPConnectionTokenFetcher) Endpoint(ctx context.Context, creds Install
 	// the audience Multica server logs are read by today; if i18n
 	// matters later this becomes an env or a per-installation knob.
 	req.Header.Set("locale", "zh")
-	resp, err := f.cfg.HTTPClient.Do(req)
+	resp, err := f.httpClient.Do(req)
 	if err != nil {
 		return WSEndpoint{}, fmt.Errorf("http do: %w", err)
 	}

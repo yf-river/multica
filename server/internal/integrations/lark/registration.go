@@ -86,10 +86,7 @@ const (
 	registrationTenantBrandFeishu = "feishu"
 )
 
-// RegistrationConfig configures the device-flow client. All fields are
-// optional; the zero value targets accounts.feishu.cn over the standard
-// http.Client (with a 30s per-call timeout so a stalled poll cannot
-// silently pin a session goroutine for the entire expiry window).
+// RegistrationConfig selects the Feishu and Lark device-flow hosts.
 type RegistrationConfig struct {
 	// Domain is the initial polling host. Default
 	// "https://accounts.feishu.cn"; staging deployments can point this
@@ -101,39 +98,6 @@ type RegistrationConfig struct {
 	// user_info.tenant_brand="lark". Default
 	// "https://accounts.larksuite.com".
 	LarkDomain string
-
-	// HTTPClient is the transport for every request the client makes.
-	// Empty defaults to a fresh *http.Client with a 30s timeout — the
-	// device-flow endpoint is normally a sub-second call but we add
-	// headroom for cross-region paths.
-	HTTPClient *http.Client
-
-	// Source labels the QR-code URL's `source` query param so Lark's
-	// telemetry can attribute installs back to Multica. Empty defaults
-	// to "multica".
-	Source string
-
-	// Now is overridable for deterministic expiry-bound tests.
-	Now func() time.Time
-}
-
-func (c RegistrationConfig) withDefaults() RegistrationConfig {
-	if c.Domain == "" {
-		c.Domain = registrationDefaultFeishuDomain
-	}
-	if c.LarkDomain == "" {
-		c.LarkDomain = registrationDefaultLarkDomain
-	}
-	if c.HTTPClient == nil {
-		c.HTTPClient = &http.Client{Timeout: 30 * time.Second}
-	}
-	if c.Source == "" {
-		c.Source = "multica"
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	return c
 }
 
 // RegistrationClient runs the device-flow protocol but does NOT own
@@ -142,12 +106,26 @@ func (c RegistrationConfig) withDefaults() RegistrationConfig {
 // Splitting these lets the protocol client be deterministic and easy
 // to test against an httptest fake without involving the database.
 type RegistrationClient struct {
-	cfg RegistrationConfig
+	domain     string
+	larkDomain string
+	httpClient *http.Client
 }
 
 // NewRegistrationClient constructs the device-flow client.
 func NewRegistrationClient(cfg RegistrationConfig) *RegistrationClient {
-	return &RegistrationClient{cfg: cfg.withDefaults()}
+	domain := cfg.Domain
+	if domain == "" {
+		domain = registrationDefaultFeishuDomain
+	}
+	larkDomain := cfg.LarkDomain
+	if larkDomain == "" {
+		larkDomain = registrationDefaultLarkDomain
+	}
+	return &RegistrationClient{
+		domain:     domain,
+		larkDomain: larkDomain,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
 }
 
 type beginResult struct {
@@ -250,9 +228,9 @@ func (c *RegistrationClient) begin(ctx context.Context, namePreset string, regio
 		return nil, errors.New("registration: region must be feishu or lark")
 	}
 	// Pick the begin domain from the validated user choice.
-	domain := c.cfg.Domain
+	domain := c.domain
 	if region == RegionLark {
-		domain = c.cfg.LarkDomain
+		domain = c.larkDomain
 	}
 	var resp struct {
 		DeviceCode              string `json:"device_code"`
@@ -282,7 +260,7 @@ func (c *RegistrationClient) begin(ctx context.Context, namePreset string, regio
 	if resp.VerificationURIComplete == "" {
 		return nil, &RegistrationError{Code: "invalid_response", Description: "verification_uri_complete is empty"}
 	}
-	qr, err := decorateQRCodeURL(resp.VerificationURIComplete, c.cfg.Source, namePreset)
+	qr, err := decorateQRCodeURL(resp.VerificationURIComplete, "multica", namePreset)
 	if err != nil {
 		return nil, &RegistrationError{Code: "invalid_response", Description: "verification_uri_complete is not a URL: " + err.Error()}
 	}
@@ -313,7 +291,7 @@ func (c *RegistrationClient) poll(ctx context.Context, domain, deviceCode string
 		return nil, &RegistrationError{Code: "invalid_argument", Description: "device_code is required"}
 	}
 	if domain == "" {
-		domain = c.cfg.Domain
+		domain = c.domain
 	}
 	var resp struct {
 		ClientID     string `json:"client_id,omitempty"`
@@ -354,16 +332,16 @@ func (c *RegistrationClient) poll(ctx context.Context, domain, deviceCode string
 	if resp.UserInfo != nil {
 		switch resp.UserInfo.TenantBrand {
 		case registrationTenantBrandLark:
-			if !strings.HasPrefix(domain, c.cfg.LarkDomain) {
+			if !strings.HasPrefix(domain, c.larkDomain) {
 				return &PollResult{
-					SwitchedDomain: c.cfg.LarkDomain,
+					SwitchedDomain: c.larkDomain,
 					SwitchedRegion: RegionLark,
 				}, nil
 			}
 		case registrationTenantBrandFeishu:
-			if !strings.HasPrefix(domain, c.cfg.Domain) {
+			if !strings.HasPrefix(domain, c.domain) {
 				return &PollResult{
-					SwitchedDomain: c.cfg.Domain,
+					SwitchedDomain: c.domain,
 					SwitchedRegion: RegionFeishu,
 				}, nil
 			}
@@ -415,7 +393,7 @@ func (c *RegistrationClient) doForm(ctx context.Context, domain string, form url
 		return fmt.Errorf("registration: new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.cfg.HTTPClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("registration: http do: %w", err)
 	}

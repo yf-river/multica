@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,7 +46,6 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 
 	f, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{
 		BaseURL: srv.URL,
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatalf("constructor: %v", err)

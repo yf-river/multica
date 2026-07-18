@@ -318,7 +318,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// a single-cloud staging setup.
 				larkClient := lark.NewHTTPAPIClient(lark.HTTPClientConfig{
 					BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_HTTP_BASE_URL")),
-					Logger:  slog.Default(),
 				})
 				h.LarkAPIClient = larkClient
 				typingIndicator := lark.NewTypingIndicatorManager(larkClient, installSvc.Credentials, queries, slog.Default())
@@ -1087,7 +1086,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient lark.APIClient) (lark.ConnectorFactory, string, error) {
 	endpointFetcher, err := lark.NewHTTPConnectionTokenFetcher(lark.HTTPConnectionTokenConfig{
 		BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
-		Logger:  slog.Default(),
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("initialize endpoint fetcher: %w", err)
@@ -1105,7 +1103,6 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		DecodeFrame:         lark.DecodeLarkFrame,
 		Enrich:              enricher,
 		CredentialsProvider: installSvc.Credentials,
-		Logger:              slog.Default(),
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("initialize websocket connector: %w", err)

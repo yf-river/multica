@@ -166,10 +166,8 @@ func writeJSON(w http.ResponseWriter, body any) {
 // using the supplied clock so token expiry can be controlled
 // deterministically.
 func newTestClient(fake *larkFakeServer, now func() time.Time) *httpAPIClient {
-	c := NewHTTPAPIClient(HTTPClientConfig{
-		BaseURL: fake.URL(),
-		Now:     now,
-	}).(*httpAPIClient)
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()}).(*httpAPIClient)
+	c.now = now
 	return c
 }
 
@@ -458,7 +456,8 @@ func TestHTTPClient_TokenRefreshAfterExpiry(t *testing.T) {
 
 	now := time.Unix(1_700_000_000, 0)
 	clock := &fakeClock{now: now}
-	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL(), Now: clock.Now}).(*httpAPIClient)
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()}).(*httpAPIClient)
+	c.now = clock.Now
 
 	// First call — fetches token.
 	if _, err := c.SendInteractiveCard(context.Background(), SendCardParams{
@@ -905,7 +904,8 @@ func TestHTTPClient_TokenExpire_ClampedToSafety(t *testing.T) {
 
 	now := time.Unix(1_700_000_000, 0)
 	clock := &fakeClock{now: now}
-	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL(), Now: clock.Now}).(*httpAPIClient)
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()}).(*httpAPIClient)
+	c.now = clock.Now
 
 	if _, err := c.SendInteractiveCard(context.Background(), SendCardParams{
 		InstallationID: testCreds(),

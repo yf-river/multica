@@ -73,39 +73,6 @@ type HTTPClientConfig struct {
 	// a single deployment serves both Feishu and Lark. Trailing "/" is
 	// stripped.
 	BaseURL string
-
-	// HTTPClient is the transport used for every outbound call. Tests
-	// substitute an *http.Client whose Transport routes to an
-	// httptest.Server. Empty defaults to a fresh http.Client with
-	// defaultRequestTimeout.
-	HTTPClient *http.Client
-
-	// Now is overridable for deterministic token-expiry tests.
-	Now func() time.Time
-
-	// Logger receives warnings about Lark error codes. Nil uses
-	// slog.Default().
-	Logger *slog.Logger
-}
-
-func (c HTTPClientConfig) withDefaults() HTTPClientConfig {
-	// BaseURL is intentionally NOT defaulted to defaultLarkBaseURL here.
-	// An empty BaseURL means "no deployment-wide override" — each call
-	// then resolves its host from InstallationCredentials.Region (see
-	// resolveBaseURL), so one client serves both Feishu and Lark. A
-	// non-empty BaseURL (MULTICA_LARK_HTTP_BASE_URL, or an httptest URL
-	// in tests) forces every region to that host.
-	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
-	if c.HTTPClient == nil {
-		c.HTTPClient = &http.Client{Timeout: defaultRequestTimeout}
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.Logger == nil {
-		c.Logger = slog.Default()
-	}
-	return c
 }
 
 // NewHTTPAPIClient constructs the real APIClient that speaks to Lark's
@@ -114,12 +81,20 @@ func (c HTTPClientConfig) withDefaults() HTTPClientConfig {
 // keyed by app_id so a single Multica server reuses Lark's
 // tenant_access_token across calls to the same app.
 func NewHTTPAPIClient(cfg HTTPClientConfig) APIClient {
-	cfg = cfg.withDefaults()
-	return &httpAPIClient{cfg: cfg, tokens: make(map[string]*cachedToken)}
+	return &httpAPIClient{
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		httpClient: &http.Client{Timeout: defaultRequestTimeout},
+		now:        time.Now,
+		logger:     slog.Default(),
+		tokens:     make(map[string]*cachedToken),
+	}
 }
 
 type httpAPIClient struct {
-	cfg HTTPClientConfig
+	baseURL    string
+	httpClient *http.Client
+	now        func() time.Time
+	logger     *slog.Logger
 
 	mu sync.Mutex
 	// tokens caches tenant_access_token keyed by app_id only — NOT by
@@ -154,7 +129,7 @@ func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds Installatio
 		return "", errors.New("lark http client: missing app_secret")
 	}
 
-	now := c.cfg.Now()
+	now := c.now()
 	c.mu.Lock()
 	if t, ok := c.tokens[creds.AppID]; ok && t.expiresAt.After(now) {
 		val := t.value
@@ -191,7 +166,7 @@ func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds Installatio
 	if expire < tokenSafetyMargin*2 {
 		expire = tokenSafetyMargin * 2
 	}
-	expiresAt := c.cfg.Now().Add(expire - tokenSafetyMargin)
+	expiresAt := c.now().Add(expire - tokenSafetyMargin)
 
 	c.mu.Lock()
 	c.tokens[creds.AppID] = &cachedToken{value: resp.TenantAccessToken, expiresAt: expiresAt}
@@ -201,13 +176,13 @@ func (c *httpAPIClient) tenantAccessToken(ctx context.Context, creds Installatio
 }
 
 // resolveBaseURL picks the open-platform host for one call. An explicit
-// cfg.BaseURL (MULTICA_LARK_HTTP_BASE_URL, or an httptest URL in tests)
+// baseURL (MULTICA_LARK_HTTP_BASE_URL, or an httptest URL in tests)
 // overrides every region and routes all traffic there. With no override,
 // the host comes from the installation's region, so Feishu and Lark
 // installations served by the same process each reach their own cloud.
 func (c *httpAPIClient) resolveBaseURL(creds InstallationCredentials) string {
-	if c.cfg.BaseURL != "" {
-		return c.cfg.BaseURL
+	if c.baseURL != "" {
+		return c.baseURL
 	}
 	return creds.Region.OpenPlatformBaseURL()
 }
@@ -449,7 +424,7 @@ func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 	// have.
 	unionID, lookupErr := c.fetchBotUnionID(ctx, c.resolveBaseURL(creds), creds.AppID, token, botResp.Bot.OpenID)
 	if lookupErr != nil {
-		c.cfg.Logger.Warn("lark http client: bot union_id lookup failed; continuing without it",
+		c.logger.Warn("lark http client: bot union_id lookup failed; continuing without it",
 			"app_id", creds.AppID,
 			"bot_open_id", botResp.Bot.OpenID,
 			"err", lookupErr)
@@ -808,7 +783,7 @@ func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.cfg.HTTPClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http do: %w", err)
 	}

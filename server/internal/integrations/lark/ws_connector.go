@@ -57,17 +57,27 @@ import (
 // Provider bootstrap errors terminate this run and remain visible through
 // the Hub's bounded retry logging.
 type WSLongConnConnector struct {
-	cfg WSConnectorConfig
+	dialer              WSDialer
+	endpoint            func(context.Context, InstallationCredentials) (WSEndpoint, error)
+	decodeFrame         func([]byte, db.LarkInstallation) (InboundMessage, bool, error)
+	enrich              func(context.Context, InboundMessage, InstallationCredentials) InboundMessage
+	credentialsProvider func(db.LarkInstallation) (InstallationCredentials, error)
+	pingInterval        time.Duration
+	readDeadline        time.Duration
+	writeTimeout        time.Duration
+	chunkTTL            time.Duration
+	enrichTimeout       time.Duration
+	now                 func() time.Time
+	logger              *slog.Logger
 }
 
 // WSConnectorConfig wires the connector's dependencies. All injected
 // interfaces are required; nil dependencies cause NewWSLongConnConnector
 // to return an error rather than producing a connector that would panic
-// at first use. Time / logger fields default at construction.
+// at first use. Lifecycle timing is the connector's fixed current policy.
 type WSConnectorConfig struct {
-	// Dialer opens the WebSocket transport. Defaults to gorilla's
-	// DefaultDialer with a bounded HandshakeTimeout. Tests inject a
-	// fake that points at an httptest server.
+	// Dialer opens the WebSocket transport. Production supplies the Gorilla
+	// dialer with a bounded HandshakeTimeout; tests inject a fake.
 	Dialer WSDialer
 
 	// Endpoint resolves the per-installation WS URL + server
@@ -85,80 +95,18 @@ type WSConnectorConfig struct {
 	// should not tear down the entire connection.
 	DecodeFrame func([]byte, db.LarkInstallation) (InboundMessage, bool, error)
 
-	// Enricher optionally expands a decoded message's body with the
+	// Enricher expands a decoded message's body with the
 	// context the user explicitly attached (quoted reply / forwarded
 	// bundle) before it is emitted to the dispatcher. It runs on the
-	// inbound read loop, so it is bounded by EnrichTimeout to protect
+	// inbound read loop, so it is bounded by a two-second deadline to protect
 	// the Lark long-conn ACK budget; on timeout / fetch failure the
-	// enricher degrades to a placeholder rather than blocking. Nil
-	// disables enrichment (the decoded body is emitted as-is).
+	// enricher degrades to a placeholder rather than blocking.
 	Enrich func(context.Context, InboundMessage, InstallationCredentials) InboundMessage
-
-	// EnrichTimeout caps a single message's enrichment (at most two
-	// GetMessage calls). It MUST stay well under Lark's ~3s long-conn
-	// ACK window, since enrichment runs before the frame is ACKed.
-	// Zero defaults to 2 seconds.
-	EnrichTimeout time.Duration
 
 	// CredentialsProvider returns the InstallationCredentials the
 	// Endpoint needs. Production uses InstallationService.Credentials so
 	// the plaintext secret never sits on the LarkInstallation row in memory.
 	CredentialsProvider func(db.LarkInstallation) (InstallationCredentials, error)
-
-	// PingInterval is the fallback cadence for the app-layer ping.
-	// In production it is overridden per-installation by the
-	// PingInterval Lark returns in the bootstrap ClientConfig.
-	// Zero defaults to 2 minutes (matches the SDK default in
-	// `larksuite/oapi-sdk-go/v3/ws/client.go`).
-	PingInterval time.Duration
-
-	// ReadDeadline bounds a single ReadMessage call. Re-armed before
-	// each read; expiry yields a transient read error which the
-	// connector logs and uses to exit, deferring to the Hub's
-	// reconnect backoff. Zero defaults to 6 minutes so a healthy
-	// connection with the 2-minute default ping never trips it.
-	ReadDeadline time.Duration
-
-	// WriteTimeout bounds a single WriteMessage. Zero defaults to 10s.
-	WriteTimeout time.Duration
-
-	// ChunkTTL bounds how long the chunk assembler holds a partial
-	// multi-frame event before discarding the buffered chunks. Mirrors
-	// the SDK's 5-second default — long enough to absorb pacing across
-	// several chunks, short enough that an abandoned multi-frame event
-	// does not leak memory. Zero defaults to 5 seconds.
-	ChunkTTL time.Duration
-
-	// Now is overridable for deterministic tests. Defaults to time.Now.
-	Now func() time.Time
-
-	// Logger optional; defaults to slog.Default.
-	Logger *slog.Logger
-}
-
-func (c WSConnectorConfig) withDefaults() WSConnectorConfig {
-	if c.PingInterval == 0 {
-		c.PingInterval = 2 * time.Minute
-	}
-	if c.ReadDeadline == 0 {
-		c.ReadDeadline = 6 * time.Minute
-	}
-	if c.WriteTimeout == 0 {
-		c.WriteTimeout = 10 * time.Second
-	}
-	if c.ChunkTTL == 0 {
-		c.ChunkTTL = 5 * time.Second
-	}
-	if c.EnrichTimeout == 0 {
-		c.EnrichTimeout = 2 * time.Second
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.Logger == nil {
-		c.Logger = slog.Default()
-	}
-	return c
 }
 
 // NewWSLongConnConnector validates the supplied config and returns a
@@ -176,7 +124,23 @@ func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error)
 	if cfg.CredentialsProvider == nil {
 		return nil, errors.New("lark ws connector: CredentialsProvider is required")
 	}
-	return &WSLongConnConnector{cfg: cfg.withDefaults()}, nil
+	if cfg.Enrich == nil {
+		return nil, errors.New("lark ws connector: Enrich callback is required")
+	}
+	return &WSLongConnConnector{
+		dialer:              cfg.Dialer,
+		endpoint:            cfg.Endpoint,
+		decodeFrame:         cfg.DecodeFrame,
+		enrich:              cfg.Enrich,
+		credentialsProvider: cfg.CredentialsProvider,
+		pingInterval:        2 * time.Minute,
+		readDeadline:        6 * time.Minute,
+		writeTimeout:        10 * time.Second,
+		chunkTTL:            5 * time.Second,
+		enrichTimeout:       2 * time.Second,
+		now:                 time.Now,
+		logger:              slog.Default(),
+	}, nil
 }
 
 // Run opens one WebSocket session, reads
@@ -184,17 +148,17 @@ func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error)
 // connection errors, and returns. Nil return = clean exit; non-nil
 // return = connection failed (Hub steps up backoff).
 func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation, emit EventEmitter) error {
-	log := c.cfg.Logger.With(
+	log := c.logger.With(
 		"installation_id", util.UUIDToString(inst.ID),
 		"app_id", inst.AppID,
 	)
 
-	creds, err := c.cfg.CredentialsProvider(inst)
+	creds, err := c.credentialsProvider(inst)
 	if err != nil {
 		return fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	endpoint, err := c.cfg.Endpoint(ctx, creds)
+	endpoint, err := c.endpoint(ctx, creds)
 	if err != nil {
 		return fmt.Errorf("resolve ws endpoint: %w", err)
 	}
@@ -204,10 +168,10 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 	// our static default so we never degenerate to "ping every 0s".
 	pingInterval := endpoint.PingInterval
 	if pingInterval <= 0 {
-		pingInterval = c.cfg.PingInterval
+		pingInterval = c.pingInterval
 	}
 
-	conn, _, err := c.cfg.Dialer.DialContext(ctx, endpoint.URL, nil)
+	conn, _, err := c.dialer.DialContext(ctx, endpoint.URL, nil)
 	if err != nil {
 		return fmt.Errorf("dial ws: %w", err)
 	}
@@ -248,7 +212,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 	// after a reconnect — so the assembler is built here and dropped
 	// when Run returns, which also releases any partial buffers held by
 	// an abandoned event.
-	assembler := newChunkAssembler(c.cfg.ChunkTTL, c.cfg.Now)
+	assembler := newChunkAssembler(c.chunkTTL, c.now)
 
 	// Ping loop: app-layer binary ping frames at the server's PingInterval.
 	pingDone := make(chan struct{})
@@ -269,7 +233,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 	for {
 		// Re-arm the read deadline before every Read so a stalled
 		// connection eventually unblocks the syscall.
-		if err := conn.SetReadDeadline(c.cfg.Now().Add(c.cfg.ReadDeadline)); err != nil {
+		if err := conn.SetReadDeadline(c.now().Add(c.readDeadline)); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -350,7 +314,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 
 		// Data frames: hand the (possibly reassembled) JSON payload to
 		// the decoder, emit if it resolved to a message, and ACK back.
-		msg, ok, derr := c.cfg.DecodeFrame(payload, inst)
+		msg, ok, derr := c.decodeFrame(payload, inst)
 		if derr != nil {
 			log.Warn("lark ws connector: frame decode failed",
 				"err", derr.Error(),
@@ -383,11 +347,9 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 		// degrades to a placeholder on failure rather than blocking the
 		// pipeline. Most messages need no enrichment and return
 		// immediately without any network call.
-		if c.cfg.Enrich != nil {
-			enrichCtx, cancelEnrich := context.WithTimeout(ctx, c.cfg.EnrichTimeout)
-			msg = c.cfg.Enrich(enrichCtx, msg, creds)
-			cancelEnrich()
-		}
+		enrichCtx, cancelEnrich := context.WithTimeout(ctx, c.enrichTimeout)
+		msg = c.enrich(enrichCtx, msg, creds)
+		cancelEnrich()
 
 		_, emitErr := emit(ctx, msg)
 		if emitErr != nil {
@@ -417,7 +379,7 @@ func (c *WSLongConnConnector) writeFrame(mu *sync.Mutex, conn WSConn, f *Frame) 
 	payload := f.Marshal()
 	mu.Lock()
 	defer mu.Unlock()
-	deadline := c.cfg.Now().Add(c.cfg.WriteTimeout)
+	deadline := c.now().Add(c.writeTimeout)
 	if err := conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}

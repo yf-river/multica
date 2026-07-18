@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -152,22 +151,25 @@ func quietConnector(
 			return WSEndpoint{URL: "wss://test/ignored", ServiceID: 7, PingInterval: pingInterval}, nil
 		},
 		DecodeFrame: decoder,
+		Enrich: func(_ context.Context, msg InboundMessage, _ InstallationCredentials) InboundMessage {
+			return msg
+		},
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "test_app", AppSecret: "secret"}, nil
 		},
-		PingInterval: pingInterval,
-		ReadDeadline: time.Second,
-		WriteTimeout: time.Second,
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if len(enrich) > 0 {
 		cfg.Enrich = enrich[0]
-		cfg.EnrichTimeout = time.Second
 	}
 	c, err := NewWSLongConnConnector(cfg)
 	if err != nil {
 		t.Fatalf("NewWSLongConnConnector: %v", err)
 	}
+	c.pingInterval = pingInterval
+	c.readDeadline = time.Second
+	c.writeTimeout = time.Second
+	c.enrichTimeout = time.Second
+	c.logger = newDiscardLogger()
 	return c
 }
 
@@ -540,6 +542,12 @@ func TestWSConnectorRequiresAllDeps(t *testing.T) {
 			Endpoint:    func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil },
 			DecodeFrame: func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
 		}},
+		{"no enricher", WSConnectorConfig{
+			Dialer:              &fakeWSDialer{},
+			Endpoint:            func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil },
+			DecodeFrame:         func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
+			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) { return InstallationCredentials{}, nil },
+		}},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -564,7 +572,7 @@ func TestWSConnectorDialErrorIsReturned(t *testing.T) {
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "a"}, nil
 		},
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Enrich: func(_ context.Context, msg InboundMessage, _ InstallationCredentials) InboundMessage { return msg },
 	})
 	if err != nil {
 		t.Fatalf("constructor: %v", err)
@@ -754,7 +762,7 @@ func TestWSConnectorCredentialsErrorIsReturned(t *testing.T) {
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{}, credsErr
 		},
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Enrich: func(_ context.Context, msg InboundMessage, _ InstallationCredentials) InboundMessage { return msg },
 	})
 	if err != nil {
 		t.Fatalf("constructor: %v", err)

@@ -77,7 +77,8 @@ func TestHTTPClient_ResolvesHostFromRegion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &capturingRoundTripper{}
 			// No BaseURL → region resolution governs the host.
-			c := NewHTTPAPIClient(HTTPClientConfig{HTTPClient: &http.Client{Transport: rt}})
+			c := NewHTTPAPIClient(HTTPClientConfig{}).(*httpAPIClient)
+			c.httpClient = &http.Client{Transport: rt}
 			if _, err := c.GetBotInfo(context.Background(), InstallationCredentials{
 				AppID: "cli_x", AppSecret: "s", Region: tc.region,
 			}); err != nil {
@@ -100,10 +101,8 @@ func TestHTTPClient_ResolvesHostFromRegion(t *testing.T) {
 // existing test suite (and MULTICA_LARK_HTTP_BASE_URL) keeps working.
 func TestHTTPClient_BaseURLOverridesRegion(t *testing.T) {
 	rt := &capturingRoundTripper{}
-	c := NewHTTPAPIClient(HTTPClientConfig{
-		BaseURL:    "https://override.example.com",
-		HTTPClient: &http.Client{Transport: rt},
-	})
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: "https://override.example.com"}).(*httpAPIClient)
+	c.httpClient = &http.Client{Transport: rt}
 	if _, err := c.GetBotInfo(context.Background(), InstallationCredentials{
 		AppID: "cli_x", AppSecret: "s", Region: RegionLark, // would be larksuite, but override wins
 	}); err != nil {
@@ -129,12 +128,11 @@ func TestWSEndpoint_ResolvesHostFromRegion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rt := &wsEndpointRoundTripper{}
-		f, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{
-			HTTPClient: &http.Client{Transport: rt},
-		})
+		f, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{})
 		if err != nil {
 			t.Fatalf("NewHTTPConnectionTokenFetcher: %v", err)
 		}
+		f.httpClient = &http.Client{Transport: rt}
 		if _, err := f.Endpoint(context.Background(), InstallationCredentials{
 			AppID: "cli_x", AppSecret: "s", Region: tc.region,
 		}); err != nil {
