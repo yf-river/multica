@@ -170,8 +170,7 @@ func main() {
 			storeRedis = newNamedRedisClient(opts, "store")
 			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
 			relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-			relayConfig := realtime.DefaultShardedStreamRelayConfig()
-			sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
+			sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis)
 			sharded.SetDaemonRuntimeDeliverer(daemonHub)
 			relay = sharded
 			daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
@@ -181,10 +180,6 @@ func main() {
 				"realtime: Redis relay enabled",
 				"node_id", relay.NodeID(),
 				"mode", "sharded",
-				"shards", relayConfig.Shards,
-				"stream_max_len", relayConfig.StreamMaxLen,
-				"xread_count", relayConfig.ReadCount,
-				"xread_block", relayConfig.ReadBlock.String(),
 				"store_pool_size", opts.PoolSize,
 				"realtime_write_pool_size", opts.PoolSize,
 				"realtime_read_pool_size", opts.PoolSize,

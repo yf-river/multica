@@ -23,43 +23,6 @@ const (
 	heartbeatKeySuffix              = ":heartbeat"
 )
 
-// ShardedStreamRelayConfig controls the fixed-reader Redis Stream relay.
-type ShardedStreamRelayConfig struct {
-	Shards       int
-	StreamMaxLen int64
-	ReadCount    int64
-	ReadBlock    time.Duration
-}
-
-// DefaultShardedStreamRelayConfig returns production-safe defaults: a small
-// fixed number of blocking readers per pod, bounded stream retention, and
-// batched reads.
-func DefaultShardedStreamRelayConfig() ShardedStreamRelayConfig {
-	return ShardedStreamRelayConfig{
-		Shards:       defaultShardedRelayShards,
-		StreamMaxLen: defaultShardedRelayStreamMaxLen,
-		ReadCount:    defaultShardedRelayReadCount,
-		ReadBlock:    defaultShardedRelayReadBlock,
-	}
-}
-
-func (c ShardedStreamRelayConfig) withDefaults() ShardedStreamRelayConfig {
-	def := DefaultShardedStreamRelayConfig()
-	if c.Shards <= 0 {
-		c.Shards = def.Shards
-	}
-	if c.StreamMaxLen <= 0 {
-		c.StreamMaxLen = def.StreamMaxLen
-	}
-	if c.ReadCount <= 0 {
-		c.ReadCount = def.ReadCount
-	}
-	if c.ReadBlock <= 0 {
-		c.ReadBlock = def.ReadBlock
-	}
-	return c
-}
-
 // ShardedStreamRelay publishes all realtime events into a fixed set of Redis
 // Streams. Every API node runs one XREAD BLOCK loop per shard and locally
 // filters events by hub subscriptions. This keeps blocked Redis connections
@@ -69,8 +32,6 @@ type ShardedStreamRelay struct {
 	writeRDB *redis.Client
 	readRDB  *redis.Client
 	nodeID   string
-	config   ShardedStreamRelayConfig
-
 	mu       sync.Mutex
 	stopping bool
 	wg       sync.WaitGroup
@@ -78,7 +39,7 @@ type ShardedStreamRelay struct {
 	daemonRuntime DaemonRuntimeDeliverer
 }
 
-func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config ShardedStreamRelayConfig) *ShardedStreamRelay {
+func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client) *ShardedStreamRelay {
 	if readRDB == nil {
 		readRDB = writeRDB
 	}
@@ -87,7 +48,6 @@ func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config Sha
 		writeRDB: writeRDB,
 		readRDB:  readRDB,
 		nodeID:   ulid.Make().String(),
-		config:   config.withDefaults(),
 	}
 }
 
@@ -115,12 +75,12 @@ func (r *ShardedStreamRelay) Start(ctx context.Context) {
 		M.RedisConnected.Store(true)
 	}
 
-	r.wg.Add(1 + r.config.Shards)
+	r.wg.Add(1 + defaultShardedRelayShards)
 	go func() {
 		defer r.wg.Done()
 		r.heartbeatLoop(ctx)
 	}()
-	for shard := 0; shard < r.config.Shards; shard++ {
+	for shard := 0; shard < defaultShardedRelayShards; shard++ {
 		shard := shard
 		go func() {
 			defer r.wg.Done()
@@ -144,7 +104,7 @@ func (r *ShardedStreamRelay) PublishWithID(scopeType, scopeID, exclude string, f
 	stream := fmt.Sprintf(shardedStreamKeyFormat, r.shardFor(scopeType, scopeID))
 	args := &redis.XAddArgs{
 		Stream: stream,
-		MaxLen: r.config.StreamMaxLen,
+		MaxLen: defaultShardedRelayStreamMaxLen,
 		Approx: true,
 		Values: envelopeRedisValues(ev),
 	}
@@ -168,7 +128,7 @@ func (r *ShardedStreamRelay) shardFor(scopeType, scopeID string) int {
 	_, _ = h.Write([]byte(scopeType))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(scopeID))
-	return int(h.Sum32() % uint32(r.config.Shards))
+	return int(h.Sum32() % uint32(defaultShardedRelayShards))
 }
 
 func (r *ShardedStreamRelay) readShard(ctx context.Context, shard int) {
@@ -179,11 +139,11 @@ func (r *ShardedStreamRelay) readShard(ctx context.Context, shard int) {
 			return
 		}
 
-		readCtx, cancel := context.WithTimeout(ctx, r.config.ReadBlock+time.Second)
+		readCtx, cancel := context.WithTimeout(ctx, defaultShardedRelayReadBlock+time.Second)
 		res, err := r.readRDB.XRead(readCtx, &redis.XReadArgs{
 			Streams: []string{stream, lastID},
-			Count:   r.config.ReadCount,
-			Block:   r.config.ReadBlock,
+			Count:   defaultShardedRelayReadCount,
+			Block:   defaultShardedRelayReadBlock,
 		}).Result()
 		cancel()
 
