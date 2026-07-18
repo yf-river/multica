@@ -196,9 +196,20 @@ func (c *httpAPIClient) invalidateToken(appID string) {
 	c.mu.Unlock()
 }
 
-type sendMessageResponse struct {
+type larkAPIResponse struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
+}
+
+func (c *httpAPIClient) responseError(appID, operation string, response larkAPIResponse) error {
+	if isTokenError(response.Code) {
+		c.invalidateToken(appID)
+	}
+	return fmt.Errorf("%s: code=%d msg=%q", operation, response.Code, response.Msg)
+}
+
+type sendMessageResponse struct {
+	larkAPIResponse
 	Data struct {
 		MessageID string `json:"message_id"`
 	} `json:"data"`
@@ -234,10 +245,7 @@ func (c *httpAPIClient) sendMessage(
 		return "", fmt.Errorf("lark http client: %s: %w", operation, err)
 	}
 	if response.Code != 0 || response.Data.MessageID == "" {
-		if isTokenError(response.Code) {
-			c.invalidateToken(installation.AppID)
-		}
-		return "", fmt.Errorf("lark http client: %s: code=%d msg=%q", operation, response.Code, response.Msg)
+		return "", c.responseError(installation.AppID, "lark http client: "+operation, response.larkAPIResponse)
 	}
 	return response.Data.MessageID, nil
 }
@@ -344,19 +352,13 @@ func (c *httpAPIClient) SendBindingPromptCard(ctx context.Context, p BindingProm
 		"msg_type":   "interactive",
 		"content":    cardJSON,
 	}
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
+	var resp larkAPIResponse
 	path := "/open-apis/im/v1/messages?" + q.Encode()
 	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
 		return fmt.Errorf("lark http client: send binding prompt: %w", err)
 	}
 	if resp.Code != 0 {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return fmt.Errorf("lark http client: send binding prompt: code=%d msg=%q", resp.Code, resp.Msg)
+		return c.responseError(p.InstallationID.AppID, "lark http client: send binding prompt", resp)
 	}
 	return nil
 }
@@ -399,9 +401,8 @@ func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 		return BotInfo{}, err
 	}
 	var botResp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Bot  struct {
+		larkAPIResponse
+		Bot struct {
 			OpenID string `json:"open_id"`
 		} `json:"bot"`
 	}
@@ -409,10 +410,7 @@ func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 		return BotInfo{}, fmt.Errorf("lark http client: bot info: %w", err)
 	}
 	if botResp.Code != 0 {
-		if isTokenError(botResp.Code) {
-			c.invalidateToken(creds.AppID)
-		}
-		return BotInfo{}, fmt.Errorf("lark http client: bot info: code=%d msg=%q", botResp.Code, botResp.Msg)
+		return BotInfo{}, c.responseError(creds.AppID, "lark http client: bot info", botResp.larkAPIResponse)
 	}
 	if botResp.Bot.OpenID == "" {
 		return BotInfo{}, errors.New("lark http client: bot info: response missing open_id")
@@ -459,8 +457,7 @@ func (c *httpAPIClient) GetMessage(ctx context.Context, creds InstallationCreden
 	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID) + "?" + q.Encode()
 
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		larkAPIResponse
 		Data struct {
 			Items []larkRESTMessageItem `json:"items"`
 		} `json:"data"`
@@ -469,10 +466,7 @@ func (c *httpAPIClient) GetMessage(ctx context.Context, creds InstallationCreden
 		return nil, fmt.Errorf("lark http client: get message: %w", err)
 	}
 	if resp.Code != 0 {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(creds.AppID)
-		}
-		return nil, fmt.Errorf("lark http client: get message: code=%d msg=%q", resp.Code, resp.Msg)
+		return nil, c.responseError(creds.AppID, "lark http client: get message", resp.larkAPIResponse)
 	}
 
 	out := make([]LarkMessage, 0, len(resp.Data.Items))
@@ -522,8 +516,7 @@ func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds Installation
 	path := "/open-apis/im/v1/messages?" + q.Encode()
 
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		larkAPIResponse
 		Data struct {
 			Items []larkRESTMessageItem `json:"items"`
 		} `json:"data"`
@@ -532,10 +525,7 @@ func (c *httpAPIClient) ListChatMessages(ctx context.Context, creds Installation
 		return nil, fmt.Errorf("lark http client: list chat messages: %w", err)
 	}
 	if resp.Code != 0 {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(creds.AppID)
-		}
-		return nil, fmt.Errorf("lark http client: list chat messages: code=%d msg=%q", resp.Code, resp.Msg)
+		return nil, c.responseError(creds.AppID, "lark http client: list chat messages", resp.larkAPIResponse)
 	}
 
 	out := make([]LarkMessage, 0, len(resp.Data.Items))
@@ -569,8 +559,7 @@ func (c *httpAPIClient) AddMessageReaction(ctx context.Context, p AddReactionPar
 	}
 	path := "/open-apis/im/v1/messages/" + url.PathEscape(p.MessageID) + "/reactions"
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		larkAPIResponse
 		Data struct {
 			ReactionID string `json:"reaction_id"`
 		} `json:"data"`
@@ -579,10 +568,7 @@ func (c *httpAPIClient) AddMessageReaction(ctx context.Context, p AddReactionPar
 		return "", fmt.Errorf("lark http client: add message reaction: %w", err)
 	}
 	if resp.Code != 0 || resp.Data.ReactionID == "" {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return "", fmt.Errorf("lark http client: add message reaction: code=%d msg=%q", resp.Code, resp.Msg)
+		return "", c.responseError(p.InstallationID.AppID, "lark http client: add message reaction", resp.larkAPIResponse)
 	}
 	return resp.Data.ReactionID, nil
 }
@@ -601,18 +587,12 @@ func (c *httpAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReact
 		return err
 	}
 	path := "/open-apis/im/v1/messages/" + url.PathEscape(p.MessageID) + "/reactions/" + url.PathEscape(p.ReactionID)
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
+	var resp larkAPIResponse
 	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodDelete, path, token, nil, &resp); err != nil {
 		return fmt.Errorf("lark http client: delete message reaction: %w", err)
 	}
 	if resp.Code != 0 {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return fmt.Errorf("lark http client: delete message reaction: code=%d msg=%q", resp.Code, resp.Msg)
+		return c.responseError(p.InstallationID.AppID, "lark http client: delete message reaction", resp)
 	}
 	return nil
 }
@@ -645,8 +625,7 @@ func (c *httpAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCre
 	path := "/open-apis/contact/v3/users/batch?" + q.Encode()
 
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		larkAPIResponse
 		Data struct {
 			Items []struct {
 				OpenID string `json:"open_id"`
@@ -658,10 +637,7 @@ func (c *httpAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCre
 		return nil, fmt.Errorf("lark http client: batch get users: %w", err)
 	}
 	if resp.Code != 0 {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(creds.AppID)
-		}
-		return nil, fmt.Errorf("lark http client: batch get users: code=%d msg=%q", resp.Code, resp.Msg)
+		return nil, c.responseError(creds.AppID, "lark http client: batch get users", resp.larkAPIResponse)
 	}
 
 	out := make(map[string]string, len(resp.Data.Items))
@@ -734,8 +710,7 @@ func (c *httpAPIClient) fetchBotUnionID(ctx context.Context, baseURL, appID, tok
 	q.Set("user_id_type", "open_id")
 	path := "/open-apis/contact/v3/users/" + url.PathEscape(openID) + "?" + q.Encode()
 	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
+		larkAPIResponse
 		Data struct {
 			User struct {
 				UnionID string `json:"union_id"`
@@ -746,14 +721,7 @@ func (c *httpAPIClient) fetchBotUnionID(ctx context.Context, baseURL, appID, tok
 		return "", fmt.Errorf("contact users: %w", err)
 	}
 	if resp.Code != 0 {
-		// invalidateToken is keyed by app_id (the cache key on
-		// httpAPIClient.tokens), NOT by the bearer string. Passing
-		// the bearer would do nothing and a stale token would keep
-		// being reused on every retry until natural TTL expiry.
-		if isTokenError(resp.Code) {
-			c.invalidateToken(appID)
-		}
-		return "", fmt.Errorf("contact users: code=%d msg=%q", resp.Code, resp.Msg)
+		return "", c.responseError(appID, "contact users", resp.larkAPIResponse)
 	}
 	return resp.Data.User.UnionID, nil
 }
