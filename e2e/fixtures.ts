@@ -424,6 +424,7 @@ export class TestApiClient {
 
     const res = await this.authedFetch("/api/workspaces", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ name, slug }),
     });
     if (res.ok) {
