@@ -5,7 +5,7 @@ import { CalendarClock, CalendarDays } from "lucide-react";
 import type { UpdateIssueRequest } from "@multica/core/types";
 import {
   dateOnlyToLocalDate,
-  formatDateOnly,
+  formatShortDateOnly,
   isPastDateOnly,
   toDateOnly,
 } from "@multica/core/issues/date";
@@ -76,7 +76,7 @@ function IssueDatePicker({
             {icon}
             {date ? (
               <span className={dateClassName}>
-                {formatDateOnly(value, { month: "short", day: "numeric" }, "zh-CN")}
+                {formatShortDateOnly(value, "zh-CN")}
               </span>
             ) : (
               <span className="text-muted-foreground">{triggerLabel}</span>

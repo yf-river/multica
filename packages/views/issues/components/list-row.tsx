@@ -6,7 +6,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AppLink } from "../../navigation";
 import type { Issue } from "@multica/core/types";
-import { formatDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly } from "@multica/core/issues/date";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -25,10 +25,6 @@ import { issueAnimateLayoutChanges } from "../utils/drag-utils";
 export interface ChildProgress {
   done: number;
   total: number;
-}
-
-function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 function ListRowContent({
@@ -143,12 +139,12 @@ function ListRowContent({
           )}
           {showStartDate && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              {formatDate(issue.start_date!)}
+              {formatShortDateOnly(issue.start_date, "zh-CN")}
             </span>
           )}
           {showDueDate && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              {formatDate(issue.due_date!)}
+              {formatShortDateOnly(issue.due_date, "zh-CN")}
             </span>
           )}
           {showAssignee && (

@@ -85,14 +85,17 @@ export function dateOnlyToLocalDate(
  * Format a calendar day for display, timezone-safely (the day never shifts with
  * the viewer's timezone). Returns "" for an empty/unparseable value.
  */
-export function formatDateOnly(
+export function formatShortDateOnly(
   value: string | null | undefined,
-  options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" },
   locale?: string,
 ): string {
   const d = dateOnlyToUTCDate(value);
   if (!d) return "";
-  return d.toLocaleDateString(locale, { ...options, timeZone: "UTC" });
+  return d.toLocaleDateString(locale, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 /** True when the calendar day is strictly before today (viewer's local day). */

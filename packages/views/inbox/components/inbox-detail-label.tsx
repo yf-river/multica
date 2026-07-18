@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly } from "@multica/core/issues/date";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { StatusIcon } from "../../issues/components/status-icon";
@@ -33,12 +33,6 @@ export function useTypeLabels(): Record<InboxItemType, string> {
     quick_create_done: t(($) => $.types.quick_create_done),
     quick_create_failed: t(($) => $.types.quick_create_failed),
   };
-}
-
-// start_date / due_date are calendar days — format timezone-safely so the day
-// never shifts with the viewer's offset (see @multica/core/issues/date).
-function shortDate(dateStr: string): string {
-  return formatDateOnly(dateStr, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 export function InboxDetailLabel({ item }: { item: InboxItem }) {
@@ -86,11 +80,11 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
       return <span>{typeLabels[item.type]}</span>;
     }
     case "start_date_changed": {
-      if (details.to) return <span>{t(($) => $.labels.set_start_date_to, { date: shortDate(details.to) })}</span>;
+      if (details.to) return <span>{t(($) => $.labels.set_start_date_to, { date: formatShortDateOnly(details.to, "zh-CN") })}</span>;
       return <span>{t(($) => $.labels.removed_start_date)}</span>;
     }
     case "due_date_changed": {
-      if (details.to) return <span>{t(($) => $.labels.set_due_date_to, { date: shortDate(details.to) })}</span>;
+      if (details.to) return <span>{t(($) => $.labels.set_due_date_to, { date: formatShortDateOnly(details.to, "zh-CN") })}</span>;
       return <span>{t(($) => $.labels.removed_due_date)}</span>;
     }
     case "new_comment": {

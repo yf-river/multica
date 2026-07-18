@@ -1,6 +1,6 @@
 import { CalendarClock, CalendarDays, ChevronRight, Plus, Tag } from "lucide-react";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
-import { formatDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly } from "@multica/core/issues/date";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import { PropRow } from "../../common/prop-row";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -47,7 +47,7 @@ interface IssueDetailSidebarProps {
 
 function shortDate(date: string | null): string {
   if (!date) return "—";
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
+  return formatShortDateOnly(date, "zh-CN");
 }
 
 export function IssueDetailSidebar({

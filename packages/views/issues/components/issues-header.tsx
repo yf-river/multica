@@ -75,7 +75,7 @@ import {
   useIssueViewStore,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
-import { addDaysDateOnly, dateOnlyToLocalDate, formatDateOnly, toDateOnly, todayDateOnly } from "@multica/core/issues/date";
+import { addDaysDateOnly, dateOnlyToLocalDate, formatShortDateOnly, toDateOnly, todayDateOnly } from "@multica/core/issues/date";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import type { Issue } from "@multica/core/types";
 import { useT } from "../../i18n";
@@ -115,7 +115,7 @@ function getActiveFilterCount(state: {
 }
 
 function shortDateLabel(dateOnly: string) {
-  return formatDateOnly(dateOnly, { month: "short", day: "numeric" }) || dateOnly;
+  return formatShortDateOnly(dateOnly) || dateOnly;
 }
 
 function normalizeDateRange(from: Date, to: Date) {

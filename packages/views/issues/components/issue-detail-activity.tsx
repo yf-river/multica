@@ -1,7 +1,7 @@
 import { Calendar, CalendarClock, ChevronDown, ChevronRight } from "lucide-react";
 import type { IssuePriority, IssueStatus, TimelineEntry } from "@multica/core/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
-import { formatDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly } from "@multica/core/issues/date";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PriorityIcon } from "./priority-icon";
@@ -53,12 +53,12 @@ function formatActivity(
     }
     case "start_date_changed": {
       if (!details.to) return t(($) => $.activity.start_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "zh-CN");
+      const formatted = formatShortDateOnly(details.to, "zh-CN");
       return t(($) => $.activity.start_date_set, { date: formatted });
     }
     case "due_date_changed": {
       if (!details.to) return t(($) => $.activity.due_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "zh-CN");
+      const formatted = formatShortDateOnly(details.to, "zh-CN");
       return t(($) => $.activity.due_date_set, { date: formatted });
     }
     case "title_changed":

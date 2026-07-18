@@ -6,7 +6,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
-import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { CalendarClock, CalendarDays } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -28,10 +28,6 @@ import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";
 import { TAPDSourceBadge } from "./tapd-source-badge";
 import { issueAnimateLayoutChanges } from "../utils/drag-utils";
-
-function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
-}
 
 function descriptionPreview(markdown: string): string {
   return markdown
@@ -257,7 +253,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                       trigger={
                         <span className="flex items-center gap-1 text-xs text-muted-foreground">
                           <CalendarClock className="size-3" />
-                          {formatDate(issue.start_date!)}
+                          {formatShortDateOnly(issue.start_date, "zh-CN")}
                         </span>
                       }
                     />
@@ -265,7 +261,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                 ) : (
                   <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                     <CalendarClock className="size-3" />
-                    {formatDate(issue.start_date!)}
+                    {formatShortDateOnly(issue.start_date, "zh-CN")}
                   </span>
                 )
               )}
@@ -284,7 +280,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                           }`}
                         >
                           <CalendarDays className="size-3" />
-                          {formatDate(issue.due_date!)}
+                          {formatShortDateOnly(issue.due_date, "zh-CN")}
                         </span>
                       }
                     />
@@ -298,7 +294,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                     }`}
                   >
                     <CalendarDays className="size-3" />
-                    {formatDate(issue.due_date!)}
+                    {formatShortDateOnly(issue.due_date, "zh-CN")}
                   </span>
                 )
               )}
