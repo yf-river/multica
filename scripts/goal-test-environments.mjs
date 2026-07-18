@@ -201,7 +201,7 @@ async function deployEnvironment(item, build) {
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
     daemon_max_concurrent_tasks: daemonConcurrencyMetadata(env),
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
     frontend_mode: item.frontendMode,
     binary_versions: {
       multica: binaryVersion("./server/bin/multica", ["version"], env),
@@ -297,7 +297,6 @@ async function prewarmDevWebOnly(item) {
     frontend_url: `http://${publicHost}:${item.frontendPort}`,
     web_prewarm: webPrewarm,
   }, null, 2));
-  if (!webPrewarm.ok && process.env.GOAL_TEST_WEB_PREWARM_STRICT === "1") process.exit(2);
 }
 
 function restartDevDaemon(item) {
@@ -309,14 +308,14 @@ function restartDevDaemon(item) {
   stopPid(pidPath(item, "daemon"));
   const daemonPID = startDaemonProcess(item, env);
   updateFastDeploymentMetadata(item, env, { daemon: daemonPID }, "dev-daemon", {
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
   });
   console.log(JSON.stringify({
     environment: item.name,
     action: "dev-daemon",
     status: "restarted",
     daemon_profile: item.daemonProfile,
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
     pid: daemonPID,
   }, null, 2));
 }
@@ -367,7 +366,6 @@ function buildEnvironmentRuntime(item) {
     NEXT_PUBLIC_APP_VERSION: deploymentCommit,
     REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
   };
-  applyCodexRunnerRuntimeEnv(env);
   return { envFile, env };
 }
 
@@ -419,8 +417,8 @@ async function prewarmDevWebRoutes(item) {
   const base = `http://127.0.0.1:${item.frontendPort}`;
   const slug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
   const scope = prewarmScope();
-  const concurrency = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_CONCURRENCY, 2, 1, 8);
-  const timeoutSec = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_TIMEOUT_SEC, 90, 5, 240);
+  const concurrency = 2;
+  const timeoutSec = 90;
   const coreRoutes = [
     "/login",
     `/${slug}/issues`,
@@ -535,12 +533,6 @@ async function runConcurrent(items, concurrency, worker) {
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker()));
   return results;
-}
-
-function boundedInt(value, fallback, min, max) {
-  const parsed = Number.parseInt(String(value || ""), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
 }
 
 function startDaemonProcess(item, env) {
@@ -787,16 +779,10 @@ function describeEnvironment(item) {
     daemon_profile: item.daemonProfile,
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT || "",
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
     env_file: envPath(item),
     frontend_mode: item.frontendMode,
   };
-}
-
-function applyEnvPreview(env) {
-  const preview = { ...env };
-  applyCodexRunnerRuntimeEnv(preview);
-  return preview;
 }
 
 function envPath(item) {
@@ -899,18 +885,16 @@ function isAllowedLogNoise(service, line) {
 
 function resolveCodexRunnerProfile(item, base) {
   const sourceHome = firstNonEmpty(
-    process.env.GOAL_TEST_CODEX_SOURCE_HOME,
-    base.GOAL_TEST_CODEX_SOURCE_HOME,
     process.env.CODEX_HOME,
     base.CODEX_HOME,
     defaultGoalTestCodexHome(),
   );
   return {
     runnerID: firstNonEmpty(process.env.GOAL_TEST_CODEX_RUNNER_ID, base.GOAL_TEST_CODEX_RUNNER_ID, item.daemonID),
-    codexHome: firstNonEmpty(process.env.GOAL_TEST_CODEX_HOME, base.GOAL_TEST_CODEX_HOME, process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, sourceHome),
+    codexHome: firstNonEmpty(process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, sourceHome),
     sourceHome,
-    codexPath: firstNonEmpty(process.env.GOAL_TEST_CODEX_PATH, base.GOAL_TEST_CODEX_PATH, process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
-    codexModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_MODEL, base.GOAL_TEST_CODEX_MODEL, process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
+    codexPath: firstNonEmpty(process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
+    codexModel: firstNonEmpty(process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
     imageGeneration: firstNonEmpty(process.env.MULTICA_CODEX_IMAGE_GENERATION, base.MULTICA_CODEX_IMAGE_GENERATION, "disabled"),
   };
 }
@@ -918,31 +902,17 @@ function resolveCodexRunnerProfile(item, base) {
 function codexRunnerEnvLines(runner) {
   const lines = [
     `GOAL_TEST_CODEX_RUNNER_ID=${runner.runnerID}`,
-    `GOAL_TEST_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_IMAGE_GENERATION=${runner.imageGeneration}`,
   ];
   if (runner.codexHome) {
-    lines.push(`GOAL_TEST_CODEX_HOME=${runner.codexHome}`);
     lines.push(`MULTICA_CODEX_HOME=${runner.codexHome}`);
     lines.push(`CODEX_HOME=${runner.codexHome}`);
   }
-  if (runner.sourceHome) {
-    lines.push(`GOAL_TEST_CODEX_SOURCE_HOME=${runner.sourceHome}`);
-  }
   if (runner.codexModel) {
-    lines.push(`GOAL_TEST_CODEX_MODEL=${runner.codexModel}`);
     lines.push(`MULTICA_CODEX_MODEL=${runner.codexModel}`);
   }
   return lines;
-}
-
-function applyCodexRunnerRuntimeEnv(env) {
-  if (env.GOAL_TEST_CODEX_HOME) env.CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
-  if (env.GOAL_TEST_CODEX_HOME) env.MULTICA_CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
-  if (env.GOAL_TEST_CODEX_PATH) env.MULTICA_CODEX_PATH = env.GOAL_TEST_CODEX_PATH;
-  if (env.GOAL_TEST_CODEX_MODEL) env.MULTICA_CODEX_MODEL = env.GOAL_TEST_CODEX_MODEL;
-  if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "disabled";
 }
 
 function defaultGoalTestCodexHome() {
@@ -1008,7 +978,7 @@ function summarizeCodexRunnerEnv(item, env) {
   return {
     runner_id: env.GOAL_TEST_CODEX_RUNNER_ID || item.daemonID,
     daemon_id: item.daemonID,
-    codex_path: env.MULTICA_CODEX_PATH || env.GOAL_TEST_CODEX_PATH || "codex",
+    codex_path: env.MULTICA_CODEX_PATH || "codex",
     codex_home: env.CODEX_HOME || "",
     model: env.MULTICA_CODEX_MODEL || "",
     image_generation: env.MULTICA_CODEX_IMAGE_GENERATION || "auto",
