@@ -200,7 +200,6 @@ func main() {
 		pool,
 		bus,
 		"api-"+uuid.NewString(),
-		eventoutbox.DispatcherConfig{},
 	)
 	if err != nil {
 		slog.Error("initialize domain event dispatcher", "error", err)

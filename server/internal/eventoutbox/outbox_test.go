@@ -128,7 +128,7 @@ func (fixture outboxFixture) activityConsumer(action string, failFirst *atomic.B
 
 func newTestDispatcher(t *testing.T, fixture outboxFixture, bus *events.Bus) *Dispatcher {
 	t.Helper()
-	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, bus, "test-"+uuid.NewString(), DispatcherConfig{
+	dispatcher, err := newConfiguredDispatcher(fixture.queries, outboxTestPool, bus, "test-"+uuid.NewString(), dispatcherConfig{
 		BatchSize: 10,
 		Lease:     time.Second,
 		RetryBase: time.Millisecond,
@@ -138,6 +138,14 @@ func newTestDispatcher(t *testing.T, fixture outboxFixture, bus *events.Bus) *Di
 		t.Fatalf("NewDispatcher: %v", err)
 	}
 	return dispatcher
+}
+
+func newConfiguredDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, leaseOwner string, config dispatcherConfig) (*Dispatcher, error) {
+	dispatcher, err := NewDispatcher(queries, txStarter, bus, leaseOwner)
+	if err == nil {
+		dispatcher.config = config.withDefaults()
+	}
+	return dispatcher, err
 }
 
 func TestEnqueueRollsBackWithBusinessTransaction(t *testing.T) {
@@ -270,7 +278,7 @@ func TestStreamKeySerializesEventsAcrossDispatchers(t *testing.T) {
 		return nil, nil
 	}
 	newDispatcher := func(owner string) *Dispatcher {
-		dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), owner, DispatcherConfig{
+		dispatcher, err := newConfiguredDispatcher(fixture.queries, outboxTestPool, events.New(), owner, dispatcherConfig{
 			BatchSize: 10,
 			Lease:     time.Second,
 			RetryBase: 50 * time.Millisecond,
@@ -321,7 +329,7 @@ func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
 	poisonFirst := true
 	var mu sync.Mutex
 	completed := make([]int, 0, 2)
-	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), "dead-letter-"+uuid.NewString(), DispatcherConfig{
+	dispatcher, err := newConfiguredDispatcher(fixture.queries, outboxTestPool, events.New(), "dead-letter-"+uuid.NewString(), dispatcherConfig{
 		BatchSize:   10,
 		Lease:       time.Second,
 		RetryBase:   time.Millisecond,
@@ -395,7 +403,7 @@ func TestDeadLetterProjectionCommitsWithTerminalEventState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue dead-letter projection event: %v", err)
 	}
-	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), "dead-letter-projection-"+uuid.NewString(), DispatcherConfig{
+	dispatcher, err := newConfiguredDispatcher(fixture.queries, outboxTestPool, events.New(), "dead-letter-projection-"+uuid.NewString(), dispatcherConfig{
 		BatchSize:   10,
 		Lease:       time.Second,
 		RetryBase:   time.Millisecond,
@@ -471,7 +479,7 @@ func TestPruneExpiredKeepsFreshAndPendingEvents(t *testing.T) {
 		}
 	}
 
-	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), "retention-"+uuid.NewString(), DispatcherConfig{
+	dispatcher, err := newConfiguredDispatcher(fixture.queries, outboxTestPool, events.New(), "retention-"+uuid.NewString(), dispatcherConfig{
 		ProcessedRetention:  7 * 24 * time.Hour,
 		DeadLetterRetention: 30 * 24 * time.Hour,
 		CleanupBatchSize:    10,

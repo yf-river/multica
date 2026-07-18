@@ -86,7 +86,7 @@ type registeredConsumer struct {
 	deadLetter DeadLetterHandler
 }
 
-type DispatcherConfig struct {
+type dispatcherConfig struct {
 	BatchSize           int32
 	PollInterval        time.Duration
 	Lease               time.Duration
@@ -100,7 +100,7 @@ type DispatcherConfig struct {
 	Logger              *slog.Logger
 }
 
-func (cfg DispatcherConfig) withDefaults() DispatcherConfig {
+func (cfg dispatcherConfig) withDefaults() dispatcherConfig {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 50
 	}
@@ -142,13 +142,13 @@ type Dispatcher struct {
 	txStarter  TxStarter
 	bus        *events.Bus
 	leaseOwner string
-	config     DispatcherConfig
+	config     dispatcherConfig
 
 	mu        sync.RWMutex
 	consumers map[string][]registeredConsumer
 }
 
-func NewDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, leaseOwner string, cfg DispatcherConfig) (*Dispatcher, error) {
+func NewDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, leaseOwner string) (*Dispatcher, error) {
 	if queries == nil || txStarter == nil || bus == nil {
 		return nil, errors.New("event outbox: queries, transaction starter, and bus are required")
 	}
@@ -161,7 +161,7 @@ func NewDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, le
 		txStarter:  txStarter,
 		bus:        bus,
 		leaseOwner: leaseOwner,
-		config:     cfg.withDefaults(),
+		config:     (dispatcherConfig{}).withDefaults(),
 		consumers:  make(map[string][]registeredConsumer),
 	}, nil
 }

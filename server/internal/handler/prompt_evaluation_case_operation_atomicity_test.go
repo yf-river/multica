@@ -268,15 +268,6 @@ func TestPromptEvaluationCaseOperationDeadLetterSetsTruthfulFailure(t *testing.T
 		testPool,
 		events.New(),
 		"case-operation-dead-letter-"+uuid.NewString(),
-		eventoutbox.DispatcherConfig{
-			BatchSize:       10,
-			PollInterval:    time.Millisecond,
-			Lease:           time.Second,
-			RetryBase:       time.Millisecond,
-			MaxRetry:        time.Millisecond,
-			MaxAttempts:     1,
-			CleanupInterval: time.Hour,
-		},
 	)
 	if err != nil {
 		t.Fatalf("create case operation dispatcher: %v", err)
@@ -290,6 +281,11 @@ func TestPromptEvaluationCaseOperationDeadLetterSetsTruthfulFailure(t *testing.T
 			WHERE operation.id::text = event.payload->>'operation_id'
 		  )
 	`, promptEvaluationCaseOperationRequestedEvent, testWorkspaceID)
+	mustExec(t, ctx, `
+		UPDATE domain_event_outbox
+		SET attempts = 11
+		WHERE event_type = $1 AND payload->>'operation_id' = $2
+	`, promptEvaluationCaseOperationRequestedEvent, operation.ID)
 	if err := testHandler.RegisterPromptEvaluationCaseOperationConsumer(dispatcher); err != nil {
 		t.Fatalf("register case operation consumer: %v", err)
 	}
