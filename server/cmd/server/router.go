@@ -377,7 +377,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					FlushReply:      replier.Reply,
 					Logger:          slog.Default(),
 				}
-				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, replier.Reply, typingIndicator.Add, lark.HubConfig{})
+				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, replier.Reply, typingIndicator.Add)
 				slog.Info("lark inbound pipeline wired", "connector", connectorLabel)
 
 				// Device-flow registration service: end-to-end install

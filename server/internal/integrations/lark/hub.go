@@ -83,10 +83,9 @@ type EventConnector func(ctx context.Context, inst db.LarkInstallation, emit Eve
 // inject a factory configured with their APIClient + secretbox box.
 type ConnectorFactory func(inst db.LarkInstallation) (EventConnector, error)
 
-// HubConfig tunes the Hub's lifecycle loops. All fields have sensible
-// production defaults via withDefaults; tests typically set Now and
-// Logger to inject determinism.
-type HubConfig struct {
+// hubConfig tunes the Hub's lifecycle loops. Production uses the defaults;
+// tests override individual values for deterministic timing.
+type hubConfig struct {
 	// LeaseTTL is how long a successful AcquireLarkWSLease grant is
 	// valid before another server replica may steal it. Renewals
 	// happen on a tighter interval (LeaseRenewInterval); the gap
@@ -149,7 +148,7 @@ type HubConfig struct {
 	Logger *slog.Logger
 }
 
-func (c HubConfig) withDefaults() HubConfig {
+func (c hubConfig) withDefaults() hubConfig {
 	if c.LeaseTTL == 0 {
 		c.LeaseTTL = 90 * time.Second
 	}
@@ -194,7 +193,7 @@ func (c HubConfig) withDefaults() HubConfig {
 //
 // Lifecycle:
 //
-//	hub := NewHub(queries, factory, dispatcher, replier, HubConfig{})
+//	hub := NewHub(queries, factory, dispatcher, replier, addTyping)
 //	go hub.Run(ctx)             // returns when ctx is cancelled
 //	... ctx cancellation triggers ...
 //	hub.Wait()                  // joins on every per-installation goroutine
@@ -204,7 +203,7 @@ type Hub struct {
 	dispatcher *Dispatcher
 	reply      ReplyFunc
 	addTyping  func(context.Context, db.LarkInstallation, pgtype.UUID, string, string)
-	cfg        HubConfig
+	cfg        hubConfig
 
 	// nodeID is the per-process lease ownership token. The CAS
 	// predicate on AcquireLarkWSLease treats matching tokens as
@@ -268,16 +267,14 @@ func NewHub(
 	dispatcher *Dispatcher,
 	reply ReplyFunc,
 	addTyping func(context.Context, db.LarkInstallation, pgtype.UUID, string, string),
-	cfg HubConfig,
 ) *Hub {
-	cfg = cfg.withDefaults()
 	return &Hub{
 		queries:     queries,
 		factory:     factory,
 		dispatcher:  dispatcher,
 		reply:       reply,
 		addTyping:   addTyping,
-		cfg:         cfg,
+		cfg:         hubConfig{}.withDefaults(),
 		nodeID:      newNodeID(),
 		supervisors: make(map[string]supervisorEntry),
 		runDone:     make(chan struct{}),

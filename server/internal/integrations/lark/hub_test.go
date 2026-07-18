@@ -173,8 +173,21 @@ func newDiscardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newTestHub(q HubQueries, factory ConnectorFactory, configure ...func(*HubConfig)) *Hub {
-	cfg := HubConfig{
+func newConfiguredHub(
+	q HubQueries,
+	factory ConnectorFactory,
+	dispatcher *Dispatcher,
+	reply ReplyFunc,
+	addTyping func(context.Context, db.LarkInstallation, pgtype.UUID, string, string),
+	cfg hubConfig,
+) *Hub {
+	hub := NewHub(q, factory, dispatcher, reply, addTyping)
+	hub.cfg = cfg.withDefaults()
+	return hub
+}
+
+func newTestHub(q HubQueries, factory ConnectorFactory, configure ...func(*hubConfig)) *Hub {
+	cfg := hubConfig{
 		LeaseTTL:           500 * time.Millisecond,
 		LeaseRenewInterval: 20 * time.Millisecond,
 		PollInterval:       20 * time.Millisecond,
@@ -186,7 +199,7 @@ func newTestHub(q HubQueries, factory ConnectorFactory, configure ...func(*HubCo
 	for _, apply := range configure {
 		apply(&cfg)
 	}
-	return NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, cfg)
+	return newConfiguredHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, cfg)
 }
 
 func TestHubAcquiresLeaseAndStartsSupervisor(t *testing.T) {
@@ -197,7 +210,7 @@ func TestHubAcquiresLeaseAndStartsSupervisor(t *testing.T) {
 	conn := &fakeConnector{}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := newTestHub(q, factory, func(cfg *HubConfig) {
+	hub := newTestHub(q, factory, func(cfg *hubConfig) {
 		cfg.LeaseRenewInterval = 50 * time.Millisecond
 		cfg.PollInterval = 10 * time.Millisecond
 		cfg.MaxBackoff = 50 * time.Millisecond
@@ -342,7 +355,7 @@ func TestHubRestartsSupervisorOnCredentialsRotation(t *testing.T) {
 		return (&fakeConnector{}).Run, nil
 	}
 
-	hub := newTestHub(q, factory, func(cfg *HubConfig) {
+	hub := newTestHub(q, factory, func(cfg *hubConfig) {
 		cfg.LeaseRenewInterval = 50 * time.Millisecond
 	})
 
@@ -406,7 +419,7 @@ func TestHubDoesNotRestartSupervisorOnUnchangedRow(t *testing.T) {
 		return (&fakeConnector{}).Run, nil
 	}
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
+	hub := newConfiguredHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, hubConfig{
 		LeaseTTL:           500 * time.Millisecond,
 		LeaseRenewInterval: 50 * time.Millisecond,
 		PollInterval:       10 * time.Millisecond,
@@ -563,7 +576,7 @@ func TestHubRotationEndToEndKeepsSuccessorLeased(t *testing.T) {
 		return (&fakeConnector{}).Run, nil
 	}
 
-	hub := newTestHub(q, factory, func(cfg *HubConfig) {
+	hub := newTestHub(q, factory, func(cfg *hubConfig) {
 		cfg.LeaseRenewInterval = 30 * time.Millisecond
 		cfg.PollInterval = 15 * time.Millisecond
 	})
@@ -679,7 +692,7 @@ func TestHubLeaseLossCancelsConnector(t *testing.T) {
 	}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
+	hub := newConfiguredHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, hubConfig{
 		LeaseTTL:           500 * time.Millisecond,
 		LeaseRenewInterval: 20 * time.Millisecond,
 		PollInterval:       1 * time.Hour, // disable sweep noise; we drive lease state by hand.
@@ -731,7 +744,7 @@ func TestHubReleaseLeaseBoundedByTimeout(t *testing.T) {
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
 	releaseTimeout := 50 * time.Millisecond
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
+	hub := newConfiguredHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, hubConfig{
 		LeaseTTL:            500 * time.Millisecond,
 		LeaseRenewInterval:  20 * time.Millisecond,
 		PollInterval:        1 * time.Hour,
@@ -789,7 +802,7 @@ func TestHubWaitWithTimeoutReturnsTrueWhenSupervisorsExit(t *testing.T) {
 	conn := &fakeConnector{}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
+	hub := newConfiguredHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, hubConfig{
 		LeaseTTL:           500 * time.Millisecond,
 		LeaseRenewInterval: 20 * time.Millisecond,
 		PollInterval:       1 * time.Hour,
@@ -821,10 +834,10 @@ func TestHubWaitBeforeRunPreventsLaterSupervisorStart(t *testing.T) {
 		Status: "active",
 	}}
 	var factoryCalls atomic.Int32
-	hub := NewHub(q, func(db.LarkInstallation) (EventConnector, error) {
+	hub := newConfiguredHub(q, func(db.LarkInstallation) (EventConnector, error) {
 		factoryCalls.Add(1)
 		return (&fakeConnector{}).Run, nil
-	}, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{Logger: newDiscardLogger()})
+	}, &Dispatcher{}, discardOutcomeReply, discardTyping, hubConfig{Logger: newDiscardLogger()})
 
 	hub.Wait()
 	done := make(chan struct{})
@@ -859,7 +872,7 @@ func TestHubWaitWithTimeoutReturnsFalseWhenSupervisorStuck(t *testing.T) {
 	// LeaseReleaseTimeout > ShutdownTimeout so the release is still
 	// blocked when the join deadline expires. This pins the "join
 	// deadline trips before the supervisor unwinds" branch.
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
+	hub := newConfiguredHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, hubConfig{
 		LeaseTTL:            500 * time.Millisecond,
 		LeaseRenewInterval:  20 * time.Millisecond,
 		PollInterval:        1 * time.Hour,
@@ -892,13 +905,13 @@ func TestHubWaitWithTimeoutReturnsFalseWhenSupervisorStuck(t *testing.T) {
 
 // TestHubConfigDefaultsCoverShutdownKnobs documents that callers
 // that omit the new shutdown knobs still get sensible defaults
-// (matching the behavior router.go relies on by passing HubConfig{}).
+// (matching the behavior the production constructor relies on).
 // If the defaults regress to zero, releaseLease would derive a
 // 0-deadline ctx that fails instantly — the real symptom would be
 // "release lease failed: context deadline exceeded" warnings on
 // every shutdown.
 func TestHubConfigDefaultsCoverShutdownKnobs(t *testing.T) {
-	c := HubConfig{}.withDefaults()
+	c := hubConfig{}.withDefaults()
 	if c.LeaseReleaseTimeout <= 0 {
 		t.Fatalf("LeaseReleaseTimeout default must be > 0; got %s", c.LeaseReleaseTimeout)
 	}
@@ -985,7 +998,7 @@ func (s *slowReplier) ctxErr() error {
 func TestHubScheduleReplyReturnsImmediately(t *testing.T) {
 	t.Parallel()
 	rep := newSlowReplier(10 * time.Second)
-	hub := NewHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, HubConfig{
+	hub := newConfiguredHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, hubConfig{
 		ReplyTimeout: 100 * time.Millisecond,
 		Logger:       newDiscardLogger(),
 	})
@@ -1027,7 +1040,7 @@ func TestHubReplyTimeoutCancelsHungReplier(t *testing.T) {
 	t.Parallel()
 	timeout := 80 * time.Millisecond
 	rep := newSlowReplier(10 * time.Second)
-	hub := NewHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, HubConfig{
+	hub := newConfiguredHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, hubConfig{
 		ReplyTimeout: timeout,
 		Logger:       newDiscardLogger(),
 	})
@@ -1062,7 +1075,7 @@ func TestHubReplyTimeoutCancelsHungReplier(t *testing.T) {
 func TestHubWaitDrainsInFlightReplies(t *testing.T) {
 	t.Parallel()
 	rep := newSlowReplier(30 * time.Millisecond) // shorter than ReplyTimeout
-	hub := NewHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, HubConfig{
+	hub := newConfiguredHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, hubConfig{
 		ReplyTimeout: 1 * time.Second,
 		Logger:       newDiscardLogger(),
 	})
@@ -1095,7 +1108,7 @@ func TestHubWaitDrainsInFlightReplies(t *testing.T) {
 // without hitting the broader ShutdownTimeout.
 func TestHubReplyTimeoutDefaultIsUnder3s(t *testing.T) {
 	t.Parallel()
-	c := HubConfig{}.withDefaults()
+	c := hubConfig{}.withDefaults()
 	if c.ReplyTimeout <= 0 {
 		t.Fatalf("ReplyTimeout default must be > 0; got %s", c.ReplyTimeout)
 	}
@@ -1130,7 +1143,7 @@ func TestHubACKNotBlockedByOutboundReply(t *testing.T) {
 	// regressed. 5s sleep, ReplyTimeout 2.5s — replier must be
 	// cancelled at ~2.5s and the ACK must NOT have waited for it.
 	rep := newSlowReplier(5 * time.Second)
-	hub := NewHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, HubConfig{
+	hub := newConfiguredHub(nil, nil, &Dispatcher{}, rep.Reply, discardTyping, hubConfig{
 		ReplyTimeout: 2500 * time.Millisecond,
 		Logger:       newDiscardLogger(),
 	})
