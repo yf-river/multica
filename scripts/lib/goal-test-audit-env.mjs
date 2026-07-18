@@ -28,7 +28,7 @@ export function readGoalTestEnvFile(file) {
 
 export function resolveGoalTestAuditUrls(env) {
   return {
-    frontendURL: trimSlash(process.env.GOAL_TEST_FRONTEND_URL || env.FRONTEND_ORIGIN || "http://9.134.129.162:13682"),
+    frontendURL: trimSlash(env.FRONTEND_ORIGIN || "http://9.134.129.162:13682"),
     browserURL: trimSlash(process.env.GOAL_TEST_BROWSER_URL || `http://127.0.0.1:${env.FRONTEND_PORT || "13682"}`),
     backendURL: trimSlash(process.env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || "http://127.0.0.1:18762"),
   };
