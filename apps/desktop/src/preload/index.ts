@@ -172,7 +172,9 @@ const daemonAPI = {
   onStatusChange: (callback: (status: DaemonStatus) => void) => {
     const handler = (_: unknown, status: DaemonStatus) => callback(status);
     ipcRenderer.on("daemon:status", handler);
-    return () => ipcRenderer.removeListener("daemon:status", handler);
+    return () => {
+      ipcRenderer.removeListener("daemon:status", handler);
+    };
   },
   setTargetApiUrl: (url: string): Promise<void> =>
     ipcRenderer.invoke("daemon:set-target-api-url", url),
@@ -200,7 +202,9 @@ const daemonAPI = {
   onLogLine: (callback: (line: string) => void) => {
     const handler = (_: unknown, line: string) => callback(line);
     ipcRenderer.on("daemon:log-line", handler);
-    return () => ipcRenderer.removeListener("daemon:log-line", handler);
+    return () => {
+      ipcRenderer.removeListener("daemon:log-line", handler);
+    };
   },
   openLogFile: (): Promise<DaemonCommandResult> =>
     ipcRenderer.invoke("daemon:open-log-file"),
@@ -213,7 +217,9 @@ const updaterAPI = {
     const handler = (_: unknown, info: UpdaterReleaseInfo) =>
       callback(info);
     ipcRenderer.on("updater:update-downloaded", handler);
-    return () => ipcRenderer.removeListener("updater:update-downloaded", handler);
+    return () => {
+      ipcRenderer.removeListener("updater:update-downloaded", handler);
+    };
   },
   installUpdate: (): Promise<void> => ipcRenderer.invoke("updater:install"),
   checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("updater:check"),
