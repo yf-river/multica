@@ -102,7 +102,7 @@
     "chat_hint_prefix": "智能体将在",
     "chat_hint_suffix": "，复用服务器已有目录，不隔离 worktree。",
     "gongfeng_provider": "Gongfeng",
-    "legacy_resource_label": "兼容代码资源"
+    "resource_label_fallback": "项目资源"
   },
   "delete_dialog": {
     "title": "删除项目",

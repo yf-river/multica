@@ -5,7 +5,7 @@
  * context — `https://` or `localhost`. On a plain `http://` origin it is
  * `undefined`, so `navigator.clipboard.writeText` throws and the copy silently
  * fails (the symptom behind self-hosted-over-http bug reports). When the secure
- * API is unavailable we fall back to a hidden `<textarea>` + the legacy
+ * API is unavailable we fall back to a hidden `<textarea>` + the browser
  * `document.execCommand('copy')`, which works in non-secure contexts.
  *
  * @returns `true` on success, `false` on failure. Callers should gate their
@@ -20,7 +20,7 @@ export async function copyText(text: string): Promise<boolean> {
       return true;
     } catch {
       // Permission denied / document not focused / blocked — fall through to
-      // the legacy path below rather than failing outright.
+      // the execCommand path below rather than failing outright.
     }
   }
 

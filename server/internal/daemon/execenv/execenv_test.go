@@ -1521,7 +1521,7 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 // "never inline --content for agent-authored comments" guardrail reaches EVERY
 // provider on every host OS — post-MUL-2904 the corruption is shell-driven, so
 // the directive is no longer Codex-scoped. The Available Commands entry still
-// lists all three input modes as available, and the legacy over-broad
+// lists all three input modes as available, and the over-broad
 // `--description-stdin` / "MUST pipe via stdin" phrasings (#1795 / #1851, which
 // broke Windows non-ASCII) must NOT reappear.
 //
@@ -2756,11 +2756,11 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	sharedHome := t.TempDir()
 	t.Setenv("CODEX_HOME", sharedHome)
 
-	userSkill := filepath.Join(sharedHome, "skills", "deprecated")
+	userSkill := filepath.Join(sharedHome, "skills", "removed-skill")
 	if err := os.MkdirAll(userSkill, 0o755); err != nil {
 		t.Fatalf("seed user skill: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("deprecated"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("removed"), 0o644); err != nil {
 		t.Fatalf("seed user SKILL.md: %v", err)
 	}
 
@@ -2777,7 +2777,7 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	}
 	defer func() { _ = env.Cleanup(true) }()
 
-	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "deprecated", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "removed-skill", "SKILL.md")); err != nil {
 		t.Fatalf("user skill should be seeded in round 1: %v", err)
 	}
 
@@ -2795,7 +2795,7 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
-	if _, err := os.Stat(filepath.Join(reused.CodexHome, "skills", "deprecated")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(reused.CodexHome, "skills", "removed-skill")); !os.IsNotExist(err) {
 		t.Errorf("removed user skill still present in per-task home after reuse, err=%v", err)
 	}
 }

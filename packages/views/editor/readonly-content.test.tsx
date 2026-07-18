@@ -303,7 +303,7 @@ describe("ReadonlyContent code styling", () => {
 });
 
 describe("ReadonlyContent Mermaid rendering", () => {
-  it("renders mermaid code fences in a sized sandbox iframe with legacy rgb colors", async () => {
+  it("renders mermaid code fences in a sized sandbox iframe with CSS rgb colors", async () => {
     const originalGetComputedStyle = window.getComputedStyle;
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudoElt) => {
       if (element instanceof HTMLElement && element.style.color.startsWith("var(")) {

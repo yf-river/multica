@@ -399,9 +399,9 @@ func TestPrepareThenCleanupSidecarsWithProjectResources(t *testing.T) {
 	}
 }
 
-// TestCleanupSidecarsNoOpWhenManifestMissing pins backward compatibility
-// with envRoots that predate the manifest mechanism (older daemons, GC'd
-// scratch dirs, fresh tempdirs). Cleanup must be a silent no-op rather
+// TestCleanupSidecarsNoOpWhenManifestMissing pins cleanup for envRoots
+// without a manifest (GC'd scratch dirs, interrupted setup, fresh tempdirs).
+// Cleanup must be a silent no-op rather
 // than an error when there's nothing to clean.
 func TestCleanupSidecarsNoOpWhenManifestMissing(t *testing.T) {
 	t.Parallel()

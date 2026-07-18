@@ -71,11 +71,11 @@ describe("fragment-nav shim runtime behavior", () => {
 
   it("falls back to <a name='...'> when no element id matches", () => {
     const target = testDocument.createElement("a");
-    target.setAttribute("name", "legacy");
+    target.setAttribute("name", "section-anchor");
     testDocument.body.appendChild(target);
 
     const link = testDocument.createElement("a");
-    link.setAttribute("href", "#legacy");
+    link.setAttribute("href", "#section-anchor");
     testDocument.body.appendChild(link);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });

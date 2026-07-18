@@ -24,7 +24,7 @@ export function Mermaid({ chart }: { chart: string }) {
 
     void import("mermaid").then(({ default: mermaid }) => {
       const css = getComputedStyle(document.documentElement);
-      // Mermaid's khroma parser only understands legacy color syntax (hex /
+      // Mermaid's khroma parser only understands CSS color keywords plus hex /
       // rgb / hsl / named). Our tokens are authored in oklch(), which
       // getComputedStyle preserves verbatim, and a `color-mix(in srgb, ...)`
       // round-trip still serializes as `color(srgb r g b)` per CSS Color 4.

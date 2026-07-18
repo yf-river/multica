@@ -484,7 +484,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
     expect(providerProps.attachments?.[0]?.download_url).toContain("Signature=fresh");
   });
 
-  it("backfills an empty caller download_url from the session upload on id collision", async () => {
+  it("fills an empty caller download_url from the session upload on id collision", async () => {
     // The create-issue draft persists attachment records with download_url
     // stripped (the signed URL is response-scoped). While the upload session
     // is still alive, the provider should hand back the signed URL so the
@@ -518,7 +518,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
 
     expect(providerProps.attachments).toHaveLength(1);
     expect(providerProps.attachments?.[0]?.download_url).toContain("Signature=fresh");
-    // Everything except the backfilled field still comes from the caller copy.
+    // Everything except the filled field still comes from the caller copy.
     expect(providerProps.attachments?.[0]?.filename).toBe(draftRecord.filename);
   });
 

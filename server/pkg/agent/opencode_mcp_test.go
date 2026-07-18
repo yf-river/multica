@@ -114,7 +114,7 @@ func TestBuildOpenCodeMCPConfigContent_Local(t *testing.T) {
 		t.Fatalf("environment = %#v, want {TOKEN:x}", local["environment"])
 	}
 	if _, present := local["env"]; present {
-		t.Fatal("legacy `env` key should have been renamed to `environment`")
+		t.Fatal("source `env` key should have been projected to `environment`")
 	}
 }
 

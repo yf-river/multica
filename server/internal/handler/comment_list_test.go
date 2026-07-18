@@ -693,7 +693,7 @@ func TestListComments_RecentWithSinceFilteredEmptySuppressesCursor(t *testing.T)
 
 	// `since` = base + 1h (i.e. AFTER every comment in the fixture, where the
 	// freshest row sits at base + 12m). With recent=1 the page is technically
-	// "full" (1 thread out of 1 requested) so the legacy `len(seen) >= N`
+	// "full" (1 thread out of 1 requested) so the stale `len(seen) >= N`
 	// check would emit a cursor — but every row in that page is <= since, so
 	// the body is empty AND no older page can ever yield a >since row.
 	v := url.Values{}
@@ -735,8 +735,8 @@ func TestListComments_RecentWithSinceKeepsCursorWhenPageHasRows(t *testing.T) {
 
 // TestListComments_RecentWithSinceSuppressesCursorWhenHeadPastSince covers
 // the mixed case from Elon's #2787 second review: the page is full (so the
-// legacy `len(seen) >= N` check would emit a cursor) AND the `since` filter
-// keeps rows from fresher threads (so the legacy `len(comments) == 0`
+// stale `len(seen) >= N` check would emit a cursor) AND the `since` filter
+// keeps rows from fresher threads (so the stale `len(comments) == 0`
 // suppression does NOT trip), but the head (oldest-active) thread already
 // sits at or before `since`. Older pages walk strictly less-recent threads,
 // so none of them can produce a `> since` comment — emitting a cursor here
@@ -1045,7 +1045,7 @@ func TestListComments_ThreadTailZeroReplyCountIsAllowed(t *testing.T) {
 }
 
 // TestListComments_ThreadTailNotFoundReturns404 makes the not-found surface
-// of the paged path match the legacy thread path. A stale anchor is a
+// of the paged path match the direct thread path. A stale anchor is a
 // realistic agent footgun (mention a comment that was later deleted), and
 // returning [] would be indistinguishable from "the thread really does
 // have no comments".

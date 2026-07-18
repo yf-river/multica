@@ -378,7 +378,7 @@ function ResourceRow({
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="truncate flex-1">
-        {resource.label || t(($) => $.resources.legacy_resource_label)}
+        {resource.label || t(($) => $.resources.resource_label_fallback)}
       </span>
       <button
         type="button"

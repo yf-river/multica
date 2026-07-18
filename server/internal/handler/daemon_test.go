@@ -3906,9 +3906,9 @@ func TestRequireDaemonWorkspaceAccess_CacheMissBackfills(t *testing.T) {
 		t.Fatalf("expected access granted via DB lookup, got denied (status %d)", w.Code)
 	}
 
-	// Cache should now be backfilled.
+	// Cache should now be populated from the verified DB hit.
 	if !testHandler.MembershipCache.Get(ctx, testUserID, testWorkspaceID) {
-		t.Fatal("expected cache to be backfilled after DB hit")
+		t.Fatal("expected cache to be populated after DB hit")
 	}
 }
 
