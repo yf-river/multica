@@ -14,7 +14,7 @@ import (
 const createTaskToken = `-- name: CreateTaskToken :one
 INSERT INTO task_token (token_hash, task_id, agent_id, workspace_id, user_id, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at, created_at
+RETURNING id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at
 `
 
 type CreateTaskTokenParams struct {
@@ -44,7 +44,6 @@ func (q *Queries) CreateTaskToken(ctx context.Context, arg CreateTaskTokenParams
 		&i.WorkspaceID,
 		&i.UserID,
 		&i.ExpiresAt,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -59,7 +58,7 @@ func (q *Queries) DeleteTaskTokensByTask(ctx context.Context, taskID pgtype.UUID
 }
 
 const getTaskTokenByHash = `-- name: GetTaskTokenByHash :one
-SELECT id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at, created_at FROM task_token
+SELECT id, token_hash, task_id, agent_id, workspace_id, user_id, expires_at FROM task_token
 WHERE token_hash = $1 AND expires_at > now()
 `
 
@@ -74,7 +73,6 @@ func (q *Queries) GetTaskTokenByHash(ctx context.Context, tokenHash string) (Tas
 		&i.WorkspaceID,
 		&i.UserID,
 		&i.ExpiresAt,
-		&i.CreatedAt,
 	)
 	return i, err
 }

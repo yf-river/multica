@@ -664,7 +664,6 @@ CREATE TABLE public.chat_idempotency_record (
     request_hash text NOT NULL,
     response_status integer,
     response_body jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chat_idempotency_record_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text]))),
     CONSTRAINT chat_idempotency_record_operation_check CHECK ((operation = ANY (ARRAY['create_session'::text, 'send_message'::text]))),
     CONSTRAINT chat_idempotency_record_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text)),
@@ -822,8 +821,6 @@ CREATE TABLE public.github_pending_installation (
     account_login text NOT NULL,
     account_type text DEFAULT 'User'::text NOT NULL,
     account_avatar_url text,
-    received_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT github_pending_installation_account_login_check CHECK ((account_login <> ''::text)),
     CONSTRAINT github_pending_installation_account_type_check CHECK ((account_type = ANY (ARRAY['User'::text, 'Organization'::text])))
 );
@@ -844,8 +841,6 @@ CREATE TABLE public.github_pull_request (
     closed_at timestamp with time zone,
     pr_created_at timestamp with time zone NOT NULL,
     pr_updated_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     head_sha text DEFAULT ''::text NOT NULL,
     mergeable_state text,
     additions integer DEFAULT 0 NOT NULL,
@@ -971,7 +966,6 @@ CREATE TABLE public.lark_chat_session_binding (
     installation_id uuid NOT NULL,
     lark_chat_id text NOT NULL,
     lark_chat_type text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lark_chat_session_binding_lark_chat_type_check CHECK ((lark_chat_type = ANY (ARRAY['p2p'::text, 'group'::text])))
 );
 CREATE TABLE public.lark_inbound_audit (
@@ -1606,8 +1600,7 @@ CREATE TABLE public.task_token (
     agent_id uuid NOT NULL,
     workspace_id uuid NOT NULL,
     user_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    expires_at timestamp with time zone NOT NULL
 );
 CREATE TABLE public.task_trace_event (
     id uuid DEFAULT gen_random_uuid() NOT NULL,

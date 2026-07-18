@@ -42,8 +42,7 @@ INSERT INTO github_pending_installation (
 ON CONFLICT (installation_id) DO UPDATE SET
     account_login = EXCLUDED.account_login,
     account_type = EXCLUDED.account_type,
-    account_avatar_url = EXCLUDED.account_avatar_url,
-    updated_at = now()
+    account_avatar_url = EXCLUDED.account_avatar_url
 RETURNING *;
 
 -- name: DeletePendingGitHubInstallation :exec
@@ -99,8 +98,7 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     END,
     additions     = EXCLUDED.additions,
     deletions     = EXCLUDED.deletions,
-    changed_files = EXCLUDED.changed_files,
-    updated_at = now()
+    changed_files = EXCLUDED.changed_files
 RETURNING *;
 
 -- name: GetGitHubPullRequest :one

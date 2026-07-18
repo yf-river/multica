@@ -259,15 +259,14 @@ type AutopilotTriggerRotationRequest struct {
 }
 
 type ChatIdempotencyRecord struct {
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ActorType      string             `json:"actor_type"`
-	ActorID        pgtype.UUID        `json:"actor_id"`
-	Operation      string             `json:"operation"`
-	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
-	RequestHash    string             `json:"request_hash"`
-	ResponseStatus pgtype.Int4        `json:"response_status"`
-	ResponseBody   []byte             `json:"response_body"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	ActorType      string      `json:"actor_type"`
+	ActorID        pgtype.UUID `json:"actor_id"`
+	Operation      string      `json:"operation"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+	RequestHash    string      `json:"request_hash"`
+	ResponseStatus pgtype.Int4 `json:"response_status"`
+	ResponseBody   []byte      `json:"response_body"`
 }
 
 type ChatMessage struct {
@@ -403,12 +402,10 @@ type GithubPendingCheckSuite struct {
 }
 
 type GithubPendingInstallation struct {
-	InstallationID   int64              `json:"installation_id"`
-	AccountLogin     string             `json:"account_login"`
-	AccountType      string             `json:"account_type"`
-	AccountAvatarUrl pgtype.Text        `json:"account_avatar_url"`
-	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	InstallationID   int64       `json:"installation_id"`
+	AccountLogin     string      `json:"account_login"`
+	AccountType      string      `json:"account_type"`
+	AccountAvatarUrl pgtype.Text `json:"account_avatar_url"`
 }
 
 type GithubPullRequest struct {
@@ -428,8 +425,6 @@ type GithubPullRequest struct {
 	ClosedAt        pgtype.Timestamptz `json:"closed_at"`
 	PrCreatedAt     pgtype.Timestamptz `json:"pr_created_at"`
 	PrUpdatedAt     pgtype.Timestamptz `json:"pr_updated_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	HeadSha         string             `json:"head_sha"`
 	MergeableState  pgtype.Text        `json:"mergeable_state"`
 	Additions       int32              `json:"additions"`
@@ -545,12 +540,11 @@ type LarkBindingToken struct {
 }
 
 type LarkChatSessionBinding struct {
-	ID             pgtype.UUID        `json:"id"`
-	ChatSessionID  pgtype.UUID        `json:"chat_session_id"`
-	InstallationID pgtype.UUID        `json:"installation_id"`
-	LarkChatID     string             `json:"lark_chat_id"`
-	LarkChatType   string             `json:"lark_chat_type"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ID             pgtype.UUID `json:"id"`
+	ChatSessionID  pgtype.UUID `json:"chat_session_id"`
+	InstallationID pgtype.UUID `json:"installation_id"`
+	LarkChatID     string      `json:"lark_chat_id"`
+	LarkChatType   string      `json:"lark_chat_type"`
 }
 
 type LarkInboundAudit struct {
@@ -1130,7 +1124,6 @@ type TaskToken struct {
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	UserID      pgtype.UUID        `json:"user_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskTraceEvent struct {

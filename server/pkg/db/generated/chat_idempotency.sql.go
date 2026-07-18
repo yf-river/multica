@@ -23,7 +23,7 @@ WHERE workspace_id = $1
   AND request_hash = $6
   AND response_status IS NULL
   AND response_body IS NULL
-RETURNING workspace_id, actor_type, actor_id, operation, idempotency_key, request_hash, response_status, response_body, created_at
+RETURNING workspace_id, actor_type, actor_id, operation, idempotency_key, request_hash, response_status, response_body
 `
 
 type CompleteChatIdempotencyRecordParams struct {
@@ -58,13 +58,12 @@ func (q *Queries) CompleteChatIdempotencyRecord(ctx context.Context, arg Complet
 		&i.RequestHash,
 		&i.ResponseStatus,
 		&i.ResponseBody,
-		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const lockChatIdempotencyRecord = `-- name: LockChatIdempotencyRecord :one
-SELECT workspace_id, actor_type, actor_id, operation, idempotency_key, request_hash, response_status, response_body, created_at FROM chat_idempotency_record
+SELECT workspace_id, actor_type, actor_id, operation, idempotency_key, request_hash, response_status, response_body FROM chat_idempotency_record
 WHERE workspace_id = $1
   AND actor_type = $2
   AND actor_id = $3
@@ -99,7 +98,6 @@ func (q *Queries) LockChatIdempotencyRecord(ctx context.Context, arg LockChatIde
 		&i.RequestHash,
 		&i.ResponseStatus,
 		&i.ResponseBody,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -114,7 +112,7 @@ INSERT INTO chat_idempotency_record (
     request_hash
 ) VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT DO NOTHING
-RETURNING workspace_id, actor_type, actor_id, operation, idempotency_key, request_hash, response_status, response_body, created_at
+RETURNING workspace_id, actor_type, actor_id, operation, idempotency_key, request_hash, response_status, response_body
 `
 
 type ReserveChatIdempotencyRecordParams struct {
@@ -148,7 +146,6 @@ func (q *Queries) ReserveChatIdempotencyRecord(ctx context.Context, arg ReserveC
 		&i.RequestHash,
 		&i.ResponseStatus,
 		&i.ResponseBody,
-		&i.CreatedAt,
 	)
 	return i, err
 }
