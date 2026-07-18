@@ -1,9 +1,6 @@
 "use client";
 
-interface ActivityBucketLike {
-  total: number;
-  failed: number;
-}
+import type { AgentActivity } from "@multica/core/agents";
 
 interface SparklineProps {
   /**
@@ -12,7 +9,7 @@ interface SparklineProps {
    * the column conveys *throughput + failure share* in one glance — both
    * dimensions live on the same shape, no extra row chrome required.
    */
-  buckets: readonly ActivityBucketLike[];
+  buckets: readonly AgentActivity["buckets"][number][];
   width: number;
   height: number;
   className?: string;

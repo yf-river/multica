@@ -1,5 +1,6 @@
 import type { WSMessage, WSEventType } from "../types/events";
 import { type Logger, noopLogger } from "../logger";
+import type { ClientIdentity } from "../platform/types";
 
 type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => void;
 
@@ -14,23 +15,13 @@ function summarizeUnparseable(data: unknown): string {
   return `${text.slice(0, UNPARSEABLE_LOG_MAX_CHARS)}… (truncated, ${text.length} chars total)`;
 }
 
-/** Identifies the WS client to the server. Sent as `client_platform`,
- *  `client_version`, and `client_os` query parameters on the upgrade URL —
- *  browsers cannot set custom headers on WebSocket handshakes, so query
- *  params are the only portable channel. */
-interface WSClientIdentity {
-  platform?: string;
-  version?: string;
-  os?: string;
-}
-
 export class WSClient {
   private ws: WebSocket | null = null;
   private baseUrl: string;
   private token: string | null = null;
   private workspaceSlug: string | null = null;
   private cookieAuth = false;
-  private identity: WSClientIdentity | undefined;
+  private identity: ClientIdentity | undefined;
   private handlers = new Map<WSEventType, Set<EventHandler>>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private hasConnectedBefore = false;
@@ -47,7 +38,8 @@ export class WSClient {
     options?: {
       logger?: Logger;
       cookieAuth?: boolean;
-      identity?: WSClientIdentity;
+      /** Sent as query parameters because browser WebSocket handshakes cannot set headers. */
+      identity?: ClientIdentity;
     },
   ) {
     this.baseUrl = url;
