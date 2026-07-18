@@ -306,49 +306,26 @@ func isPiDiscoveryNoise(line string) bool {
 		strings.HasPrefix(lower, "info:")
 }
 
-// discoverHermesModels spins up a throwaway `hermes acp` process,
-// drives just enough of the protocol to receive the model list
-// advertised in the `session/new` response, and shuts it down. The
-// list and the `current` flag both come from hermes' own
-// `_build_model_state` so whatever ~/.hermes/config.yaml resolves
-// to at runtime is exactly what the UI shows.
-//
-// Failure modes (hermes missing, no credentials, config resolution
-// error) all return an empty list so the UI falls back to the
-// creatable manual-entry input instead of blocking the form.
-func discoverHermesModels(ctx context.Context, executablePath string) ([]Model, error) {
-	return discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+// Hermes, Kimi and Kiro expose the same model catalog in ACP session/new.
+// Only their executable environment differs; discovery, parsing and failure
+// behavior have one implementation.
+var acpDiscoveryProviders = map[string]acpDiscoveryProvider{
+	"hermes": {
 		defaultBin:   "hermes",
 		clientName:   "multica-model-discovery",
 		extraEnv:     []string{"HERMES_YOLO_MODE=1"},
 		tmpdirPrefix: "multica-hermes-discovery-",
-	})
-}
-
-// discoverKimiModels spins up a throwaway `kimi acp` process and
-// drives the same minimal ACP handshake as Hermes to surface the
-// model catalog advertised by Kimi's `session/new` response. Kimi's
-// ACPServer.new_session returns a `models` block of the same shape
-// (`availableModels`/`currentModelId`) so the parsing path is shared.
-//
-// Failure modes (kimi missing, not logged in, config error) all
-// return an empty list so the UI falls back to manual entry.
-func discoverKimiModels(ctx context.Context, executablePath string) ([]Model, error) {
-	return discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+	},
+	"kimi": {
 		defaultBin:   "kimi",
 		clientName:   "multica-model-discovery",
 		tmpdirPrefix: "multica-kimi-discovery-",
-	})
-}
-
-// discoverKiroModels spins up a throwaway `kiro-cli acp` process and parses
-// the models block Kiro returns from session/new.
-func discoverKiroModels(ctx context.Context, executablePath string) ([]Model, error) {
-	return discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+	},
+	"kiro": {
 		defaultBin:   "kiro-cli",
 		clientName:   "multica-model-discovery",
 		tmpdirPrefix: "multica-kiro-discovery-",
-	})
+	},
 }
 
 // discoverCopilotModels spins up `copilot --acp` and reads the
