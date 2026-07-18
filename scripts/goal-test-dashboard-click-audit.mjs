@@ -16,7 +16,7 @@ import {
 const {
   env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
   artifactRoot, generatedAt, stamp,
-} = loadGoalTestBrowserAudit(process.env.GOAL_TEST_DASHBOARD_CLICK_AUDIT_DIR);
+} = loadGoalTestBrowserAudit();
 const { isAuditedRequest, countByPath } = createBrowserRequestTools(
   [frontendURL, browserURL, backendURL],
   requestPath,

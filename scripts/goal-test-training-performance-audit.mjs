@@ -18,7 +18,7 @@ import {
 const {
   env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
   artifactRoot, generatedAt, stamp,
-} = loadGoalTestBrowserAudit(process.env.GOAL_TEST_TRAINING_AUDIT_DIR);
+} = loadGoalTestBrowserAudit();
 configureGoalTestNoProxy([browserURL, frontendURL, backendURL]);
 const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRequestTools(
   [frontendURL, browserURL, backendURL],

@@ -4,7 +4,7 @@ import process from "node:process";
 import { acceptanceDir } from "./acceptance-artifacts.mjs";
 import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./goal-test-audit-env.mjs";
 
-export function loadGoalTestBrowserAudit(artifactDir) {
+export function loadGoalTestBrowserAudit() {
   const env = loadGoalTestIntEnv();
   const urls = resolveGoalTestAuditUrls(env);
   const generatedAt = new Date().toISOString();
@@ -14,7 +14,7 @@ export function loadGoalTestBrowserAudit(artifactDir) {
     workspaceSlug: process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio",
     account: process.env.GOAL_TEST_ACCOUNT || "develop",
     password: process.env.GOAL_TEST_PASSWORD || "develop123",
-    artifactRoot: acceptanceDir(repoRoot, artifactDir),
+    artifactRoot: acceptanceDir(repoRoot),
     generatedAt,
     stamp: generatedAt.replace(/[:.]/g, "-"),
   };
