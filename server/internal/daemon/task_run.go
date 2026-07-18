@@ -83,7 +83,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentName:                        agentName,
 		AgentInstructions:                instructions,
 		AgentSkills:                      convertSkillsForEnv(skills),
-		Repos:                            convertReposForEnv(task.Repos),
+		Repos:                            task.Repos,
 		ProjectID:                        task.ProjectID,
 		ProjectTitle:                     task.ProjectTitle,
 		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),

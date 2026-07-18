@@ -403,17 +403,6 @@ func repoDataToInfo(repos []protocol.TaskRepository) []repocache.RepoInfo {
 	return info
 }
 
-func convertReposForEnv(repos []protocol.TaskRepository) []execenv.RepoContextForEnv {
-	if len(repos) == 0 {
-		return nil
-	}
-	result := make([]execenv.RepoContextForEnv, len(repos))
-	for i, r := range repos {
-		result[i] = execenv.RepoContextForEnv{URL: r.URL, Description: r.Description}
-	}
-	return result
-}
-
 func effectiveTaskExecutionPolicy(task Task) executionpolicy.Policy {
 	if task.ExecutionPolicy == nil {
 		return executionpolicy.Policy{
@@ -646,12 +635,7 @@ func convertSkillsForEnv(skills []protocol.TaskSkill) []execenv.SkillContextForE
 			Name:        s.Name,
 			Description: s.Description,
 			Content:     s.Content,
-		}
-		for _, f := range s.Files {
-			result[i].Files = append(result[i].Files, execenv.SkillFileContextForEnv{
-				Path:    f.Path,
-				Content: f.Content,
-			})
+			Files:       s.Files,
 		}
 	}
 	return result

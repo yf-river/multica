@@ -27,11 +27,7 @@ func shortID(id string) string {
 	return compact
 }
 
-// RepoContextForEnv describes a workspace repo available for checkout.
-type RepoContextForEnv struct {
-	URL         string // remote URL
-	Description string // optional repo description
-}
+type RepoContextForEnv = protocol.TaskRepository
 
 // ProjectResourceForEnv keeps the claimed-task wire shape while adding the
 // on-disk empty-resource normalization used by context.go.
@@ -133,11 +129,7 @@ type SkillContextForEnv struct {
 	Files       []SkillFileContextForEnv
 }
 
-// SkillFileContextForEnv represents a supporting file within a skill.
-type SkillFileContextForEnv struct {
-	Path    string
-	Content string
-}
+type SkillFileContextForEnv = protocol.SkillFile
 
 // Environment represents a prepared, isolated execution environment.
 type Environment struct {
