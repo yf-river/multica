@@ -197,16 +197,10 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 	return meta, true
 }
 
-func providerNeedsInlineSystemPrompt(provider string) bool {
-	switch provider {
-	case "kiro", "kimi":
+func needsInlineSystemPrompt(provider string, policy executionpolicy.Policy) bool {
+	if provider == "kiro" || provider == "kimi" {
 		return true
-	default:
-		return false
 	}
-}
-
-func coordinatorNeedsInlineSystemPrompt(provider string, policy executionpolicy.Policy) bool {
 	return supportsClaudeFamilyToolEnvelope(provider) && policy.IsCoordinatorWithoutRepo()
 }
 

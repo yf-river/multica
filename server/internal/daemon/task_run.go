@@ -475,11 +475,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ThinkingLevel:             thinkingLevel,
 		OpenclawMode:              openclawMode,
 	}
-	// Kiro and Kimi do not reliably load workdir runtime files, so they receive
-	// the brief inline. Other providers load the single workdir copy.
-	if coordinatorNeedsInlineSystemPrompt(provider, toolPolicy) {
-		execOpts.SystemPrompt = runtimeBrief
-	} else if providerNeedsInlineSystemPrompt(provider) {
+	// Kiro/Kimi cannot rely on workdir runtime files; repository-less Claude
+	// coordinators also need the brief because their tool envelope cannot read it.
+	if needsInlineSystemPrompt(provider, toolPolicy) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
 

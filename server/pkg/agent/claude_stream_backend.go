@@ -15,7 +15,7 @@ import (
 type claudeStreamBackendSpec struct {
 	provider          string
 	defaultExecutable string
-	buildArgs         func(ExecOptions, *slog.Logger) []string
+	blockedArgs       map[string]blockedArgMode
 	rejectAsyncTools  bool
 }
 
@@ -30,7 +30,8 @@ func executeClaudeStreamBackend(ctx context.Context, prompt string, opts ExecOpt
 
 	timeout := opts.Timeout
 	runCtx, cancel := runContext(ctx, timeout)
-	process, err := startClaudeProtocolProcess(runCtx, cancel, cfg, opts, execPath, spec.buildArgs(opts, cfg.Logger), spec.provider)
+	args := buildClaudeStreamArgs(opts, spec.blockedArgs, cfg.Logger)
+	process, err := startClaudeProtocolProcess(runCtx, cancel, cfg, opts, execPath, args, spec.provider)
 	if err != nil {
 		return nil, err
 	}

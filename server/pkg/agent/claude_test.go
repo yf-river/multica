@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
+	return buildClaudeStreamArgs(opts, claudeBlockedArgs, logger)
+}
+
 func TestClaudeHandleAssistantText(t *testing.T) {
 	t.Parallel()
 

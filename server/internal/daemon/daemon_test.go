@@ -177,13 +177,13 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if got := maxTurnsForExecutionPolicy(5, pm); got != 5 {
 		t.Fatalf("configured coordinator max turns = %d, want 5", got)
 	}
-	if !coordinatorNeedsInlineSystemPrompt("codebuddy", pm) {
+	if !needsInlineSystemPrompt("codebuddy", pm) {
 		t.Fatal("codebuddy coordinator should receive inline system prompt")
 	}
-	if !coordinatorNeedsInlineSystemPrompt("claude", pm) {
+	if !needsInlineSystemPrompt("claude", pm) {
 		t.Fatal("claude coordinator should receive inline system prompt")
 	}
-	if coordinatorNeedsInlineSystemPrompt("codex", pm) {
+	if needsInlineSystemPrompt("codex", pm) {
 		t.Fatal("codex coordinator should not use claude-family inline prompt path")
 	}
 	denied := disallowedToolsForExecutionPolicy("codebuddy", pm)
@@ -212,7 +212,7 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if got := maxTurnsForExecutionPolicy(0, impl); got != 0 {
 		t.Fatalf("implementation default max turns = %d, want 0", got)
 	}
-	if coordinatorNeedsInlineSystemPrompt("codebuddy", impl) {
+	if needsInlineSystemPrompt("codebuddy", impl) {
 		t.Fatal("implementation stage should not receive coordinator inline system prompt")
 	}
 	implDenied := disallowedToolsForExecutionPolicy("codebuddy", impl)
@@ -385,8 +385,8 @@ func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.provider, func(t *testing.T) {
 			t.Parallel()
-			if got := providerNeedsInlineSystemPrompt(tc.provider); got != tc.want {
-				t.Fatalf("providerNeedsInlineSystemPrompt(%q) = %v, want %v", tc.provider, got, tc.want)
+			if got := needsInlineSystemPrompt(tc.provider, executionpolicy.Policy{}); got != tc.want {
+				t.Fatalf("needsInlineSystemPrompt(%q) = %v, want %v", tc.provider, got, tc.want)
 			}
 		})
 	}

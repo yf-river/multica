@@ -19,7 +19,7 @@ type claudeBackend struct {
 func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
 	return executeClaudeStreamBackend(ctx, prompt, opts, b.cfg, claudeStreamBackendSpec{
 		provider: "claude", defaultExecutable: "claude",
-		buildArgs: buildClaudeArgs, rejectAsyncTools: true,
+		blockedArgs: claudeBlockedArgs, rejectAsyncTools: true,
 	})
 }
 
@@ -97,10 +97,6 @@ var claudeBlockedArgs = map[string]blockedArgMode{
 	// log a warning rather than letting the CLI receive two conflicting
 	// --effort values.
 	"--effort": blockedWithValue,
-}
-
-func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
-	return buildClaudeStreamArgs(opts, claudeBlockedArgs, logger)
 }
 
 func buildClaudeStreamArgs(opts ExecOptions, blockedArgs map[string]blockedArgMode, logger *slog.Logger) []string {
