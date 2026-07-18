@@ -328,13 +328,8 @@ func (h *Handler) handleCheckSuiteEvent(ctx context.Context, body []byte) {
 	affectedWorkspaces := map[string]struct{}{}
 	affectedIssues := map[string]struct{}{}
 	for _, prRef := range p.CheckSuite.PullRequests {
-		// Scope the lookup to the installation's workspace. The
-		// (workspace_id, repo_owner, repo_name, pr_number) tuple is the
-		// real uniqueness key: if the same repo lived under a different
-		// workspace historically, a bare (owner, repo, number) lookup
-		// could return either row arbitrarily and land this suite on
-		// the wrong PR (or skip the right one because the installation
-		// ids no longer match).
+		// Workspace is part of the PR identity; omitting it can attribute a
+		// check suite to another tenant that tracks the same repository.
 		pr, err := h.Queries.GetGitHubPullRequest(ctx, db.GetGitHubPullRequestParams{
 			WorkspaceID: inst.WorkspaceID,
 			RepoOwner:   p.Repository.Owner.Login,

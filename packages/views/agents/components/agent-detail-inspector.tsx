@@ -526,10 +526,6 @@ function DescriptionEditorBody({
 }
 
 
-// ---------------------------------------------------------------------------
-// Presence badge — unchanged from the previous version
-// ---------------------------------------------------------------------------
-
 function PresenceBadge({
   presence,
 }: {

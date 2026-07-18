@@ -481,16 +481,15 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		})
 	}
 
-	// Append any workspace custom runtime profiles whose command resolves on
-	// this host (MUL-3284). This is best-effort: a fetch error (e.g. an older
-	// server returning 404) must never fail registration — the daemon simply
-	// continues with the built-in runtimes it already collected. A profile
+	// Append workspace custom runtime profiles whose command resolves on this
+	// host. A fetch error must not fail registration; the daemon continues with
+	// the built-in runtimes it already collected. A profile
 	// whose command_name is not on PATH is skipped (the host doesn't have it).
 	//
 	// profileSig is a content hash of the workspace's profile list captured
 	// here so the workspaceSyncLoop can detect server-side profile changes
 	// between sync ticks without making an extra round trip on every tick
-	// (MUL-3332). An empty string means the fetch failed and the caller must
+	// between sync ticks. An empty string means the fetch failed and the caller must
 	// keep whatever signature was previously cached on the workspaceState.
 	profileSig := d.appendProfileRuntimes(ctx, workspaceID, &runtimes)
 

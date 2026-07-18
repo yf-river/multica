@@ -38,14 +38,8 @@ import (
 // re-using it on a reconnect would yield an auth rejection that looks
 // like a Lark outage. The connector calls Endpoint() once per Run.
 //
-// PersonalAgent compatibility — OPEN RISK (MUL-2671 review thread):
-// the official Feishu docs describe long-conn mode as "supports
-// 企业自建应用 only". The PersonalAgent device-flow archetype is not
-// listed as supported; live confirmation is pending. If the bootstrap
-// call returns a structured "app type not supported" error, this code
-// surfaces the code+msg directly so the Hub's backoff loop logs the
-// real reason instead of looping silently. The smoke test path is
-// `multica` -> register a PersonalAgent -> enable WS -> watch logs.
+// Structured bootstrap errors are surfaced verbatim so unsupported app
+// types and other provider failures remain visible to the Hub backoff loop.
 type HTTPConnectionTokenFetcher struct {
 	cfg HTTPConnectionTokenConfig
 }

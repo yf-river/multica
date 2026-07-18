@@ -54,13 +54,8 @@ import (
 // renewLeaseUntil's cancelRun is meaningless and two replicas can
 // process the same installation during a healthy-but-silent socket.
 //
-// PersonalAgent compatibility risk: the official Feishu docs describe
-// long-conn as "supports 企业自建应用 only". PersonalAgent device-flow
-// apps are not listed as supported. If the bootstrap call returns a
-// structured error from Lark, this connector exits Run with the error
-// wrapped and the Hub's backoff loop logs it on every retry — making
-// the misconfiguration visible. See MUL-2671 review thread for the
-// smoke-test path.
+// Provider bootstrap errors terminate this run and remain visible through
+// the Hub's bounded retry logging.
 type WSLongConnConnector struct {
 	cfg WSConnectorConfig
 }

@@ -235,10 +235,8 @@ func runtimeConfigPath(workDir, provider string) string {
 //     the file unboundedly. The pre-block content (including any managed
 //     separator established by the first inject) is preserved verbatim.
 //
-// The previous implementation called os.WriteFile unconditionally, which
-// silently truncated a repository's CLAUDE.md / AGENTS.md / GEMINI.md the
-// first time the agent was pointed at the user's own directory via the
-// local_directory project resource flow. See MUL-2753.
+// Existing repository instructions must be preserved outside the managed
+// marker block, including for local_directory resources.
 func writeRuntimeConfigFile(path, brief string) error {
 	block := runtimeMarkerBegin + "\n" + strings.TrimRight(brief, "\n") + "\n" + runtimeMarkerEnd + "\n"
 

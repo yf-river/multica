@@ -19,12 +19,8 @@ import (
 // change it without also updating those consumers.
 const openclawNoParseableOutput = "openclaw returned no parseable output"
 
-// minOpenclawVersion is the lowest openclaw version that emits its
-// --json result on stdout. PR #2101 swapped the adapter from reading
-// stderr to stdout; older builds wrote JSON to stderr and now appear
-// to silently produce no output. The check in Execute fails fast with
-// a hardcoded upgrade hint so users see an actionable message instead
-// of "openclaw returned no parseable output".
+// minOpenclawVersion is the lowest version that emits --json results on
+// stdout. Execute fails fast with an upgrade hint for unsupported versions.
 const minOpenclawVersion = "2026.5.5"
 
 // openclawVersionPattern extracts a three-segment dotted version from
