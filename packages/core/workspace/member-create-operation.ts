@@ -20,15 +20,13 @@ const useMemberCreateOperationStore: RecoverableOperationStore<PendingMemberCrea
     "multica_member_create_operation",
   );
 
-async function fingerprintMemberRequest(request: CreateMemberRequest) {
-  const normalized = JSON.stringify({
+function fingerprintMemberRequest(request: CreateMemberRequest) {
+  return JSON.stringify({
     account: request.account.trim().toLowerCase(),
     name: request.name?.trim() || request.account.trim().toLowerCase(),
     role: request.role ?? "member",
     passwordProvided: Boolean(request.password),
   });
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function recoverPending(
@@ -45,7 +43,7 @@ export async function createMemberWithRecovery(
   workspaceId: string,
   request: CreateMemberRequest,
 ): Promise<MemberWithUser> {
-  const requestFingerprint = await fingerprintMemberRequest(request);
+  const requestFingerprint = fingerprintMemberRequest(request);
   const pending = useMemberCreateOperationStore.getState().pending;
   if (pending) {
     const recovered = await recoverPending(workspaceId, pending);

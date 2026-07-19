@@ -31,13 +31,20 @@ test.describe("Authentication", () => {
   });
 
   test("login without a workspace opens the current workspace creation flow", async ({ page }) => {
-    const api = new TestApiClient();
+    const ownerApi = await createTestApi();
     const account = `${DEFAULT_E2E_ACCOUNT.slice(0, 40)}_no_workspace`;
-    await api.login(account, "无工作区用户", E2E_FIXTURE_PASSWORD);
-    for (const workspace of await api.getWorkspaces()) {
-      await api.deleteWorkspace(workspace.id);
-    }
-    const token = api.getToken();
+    const [workspace] = await ownerApi.getWorkspaces();
+    if (!workspace) throw new Error("E2E workspace was not created");
+    const member = await ownerApi.createWorkspaceMember(workspace.id, {
+      account,
+      name: "无工作区用户",
+      password: E2E_FIXTURE_PASSWORD,
+    });
+    await ownerApi.deleteWorkspaceMember(workspace.id, member.id);
+
+    const userApi = new TestApiClient();
+    await userApi.login(account, "无工作区用户", E2E_FIXTURE_PASSWORD);
+    const token = userApi.getToken();
     if (!token) throw new Error("zero-workspace fixture login returned no token");
     await authenticateBrowserSession(page, token);
 
@@ -46,6 +53,7 @@ test.describe("Authentication", () => {
     await expect(page).toHaveURL(/\/workspaces\/new$/, { timeout: 15000 });
     await expect(page.getByRole("heading", { name: "欢迎使用 Multica" })).toBeVisible();
     await expect(page.getByRole("button", { name: "创建工作区" })).toBeDisabled();
+    await ownerApi.cleanup();
   });
 
   test("unauthenticated user is redirected to /login", async ({ page }) => {

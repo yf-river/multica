@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiTransportError, getApi, setApiInstance } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
@@ -14,7 +13,6 @@ describe("createMemberWithRecovery", () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
     setApiInstance(new ApiClient("http://core.test"));
-    vi.stubGlobal("crypto", webcrypto);
     localStorage.clear();
     workspaceSequence += 1;
     setCurrentWorkspace(`member-create-${workspaceSequence}`, `workspace-${workspaceSequence}`);
@@ -39,7 +37,8 @@ describe("createMemberWithRecovery", () => {
       return key ? localStorage.getItem(key) : "";
     }).join("");
     expect(stored).not.toContain("member-password-sentinel");
-    expect(stored).toMatch(/[0-9a-f]{64}/);
+    expect(stored).toContain("new-member");
+    expect(stored).toContain("passwordProvided");
   });
 
   it("recovers a committed member by its deterministic request id", async () => {
