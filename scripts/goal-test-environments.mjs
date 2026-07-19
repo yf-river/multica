@@ -134,7 +134,8 @@ function ensureEnvironment(item) {
 }
 
 function ensureStableSecretKey(item, name) {
-  const keyPath = path.join(envDir, `${item.name}-${name}.key`);
+  const keyPath = path.join(sharedEnvironmentSecretDir(), `${item.name}-${name}.key`);
+  mkdirSync(path.dirname(keyPath), { recursive: true });
   if (existsSync(keyPath)) {
     const existing = readFileSync(keyPath, "utf8").trim();
     if (existing) return existing;
@@ -142,6 +143,12 @@ function ensureStableSecretKey(item, name) {
   const value = randomBytes(32).toString("base64");
   writeFileSync(keyPath, `${value}\n`, { mode: 0o600 });
   return value;
+}
+
+function sharedEnvironmentSecretDir() {
+  const commonGitDir = gitText(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!commonGitDir) return envDir;
+  return path.join(path.dirname(commonGitDir), ".run", "env");
 }
 
 async function deployEnvironment(item, build) {
