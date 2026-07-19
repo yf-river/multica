@@ -34,6 +34,17 @@ export function resolveGoalTestAuditUrls(env) {
   };
 }
 
+export function resolveGoalTestPlaywrightAPIBase(processEnv, runEnv) {
+  return trimSlash(
+    processEnv.GOAL_TEST_BACKEND_URL ||
+      runEnv.NEXT_PUBLIC_API_URL ||
+      runEnv.REMOTE_API_URL ||
+      (runEnv.PORT ? `http://127.0.0.1:${runEnv.PORT}` : "") ||
+      processEnv.NEXT_PUBLIC_API_URL ||
+      "http://127.0.0.1:18762",
+  );
+}
+
 function trimSlash(value) {
   return value.replace(/\/+$/, "");
 }
