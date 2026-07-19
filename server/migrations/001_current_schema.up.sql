@@ -586,13 +586,9 @@ CREATE TABLE public.autopilot (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     assignee_type text DEFAULT 'agent'::text NOT NULL,
     project_id uuid,
-    request_key uuid,
-    request_hash text,
-    initial_trigger_id uuid,
     CONSTRAINT autopilot_assignee_type_check CHECK ((assignee_type = ANY (ARRAY['agent'::text, 'squad'::text]))),
     CONSTRAINT autopilot_created_by_type_check CHECK ((created_by_type = ANY (ARRAY['member'::text, 'agent'::text]))),
     CONSTRAINT autopilot_execution_mode_check CHECK ((execution_mode = ANY (ARRAY['create_issue'::text, 'run_only'::text]))),
-    CONSTRAINT autopilot_request_identity_complete CHECK ((((request_key IS NULL) AND (request_hash IS NULL)) OR ((request_key IS NOT NULL) AND (request_hash ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT autopilot_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'archived'::text])))
 );
 CREATE TABLE public.autopilot_run (
@@ -610,7 +606,6 @@ CREATE TABLE public.autopilot_run (
     result jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     squad_id uuid,
-    request_key uuid,
     CONSTRAINT autopilot_run_source_check CHECK ((source = ANY (ARRAY['schedule'::text, 'manual'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_run_status_check CHECK ((status = ANY (ARRAY['issue_created'::text, 'running'::text, 'completed'::text, 'failed'::text, 'skipped'::text]))),
     CONSTRAINT autopilot_run_trigger_payload_is_object CHECK (((trigger_payload IS NULL) OR (jsonb_typeof(trigger_payload) = 'object'::text)))
@@ -706,12 +701,9 @@ CREATE TABLE public.external_credential_profile (
     last_error text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    idempotency_key uuid,
-    request_hash text,
     CONSTRAINT external_credential_capabilities_object CHECK ((jsonb_typeof(capabilities) = 'object'::text)),
     CONSTRAINT external_credential_profile_check CHECK (((secret_ref <> ''::text) OR (encrypted_secret IS NOT NULL))),
     CONSTRAINT external_credential_profile_provider_check CHECK ((provider = ANY (ARRAY['tapd'::text, 'gongfeng'::text]))),
-    CONSTRAINT external_credential_profile_request_hash_check CHECK (((request_hash IS NULL) OR (request_hash ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT external_credential_profile_status_check CHECK ((status = ANY (ARRAY['unverified'::text, 'verified'::text, 'failed'::text, 'disabled'::text])))
 );
 CREATE TABLE public.feedback (
@@ -721,9 +713,6 @@ CREATE TABLE public.feedback (
     message text NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    idempotency_key uuid,
-    request_hash text,
-    CONSTRAINT feedback_create_request_shape_check CHECK ((((idempotency_key IS NULL) AND (request_hash IS NULL)) OR ((idempotency_key IS NOT NULL) AND (request_hash ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT task_trace_event_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text))
 );
 CREATE TABLE public.github_installation (
@@ -972,9 +961,7 @@ CREATE TABLE public.personal_access_token (
     expires_at timestamp with time zone,
     last_used_at timestamp with time zone,
     revoked boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    idempotency_key uuid,
-    request_hash text
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 CREATE TABLE public.pinned_item (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1626,11 +1613,7 @@ CREATE TABLE public.webhook_delivery (
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     last_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    replay_actor_id uuid,
-    replay_request_key uuid,
-    replay_request_hash text,
     CONSTRAINT webhook_delivery_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text]))),
-    CONSTRAINT webhook_delivery_replay_request_shape_check CHECK ((((replay_actor_id IS NULL) AND (replay_request_key IS NULL) AND (replay_request_hash IS NULL)) OR ((replay_actor_id IS NOT NULL) AND (replay_request_key IS NOT NULL) AND (replay_request_hash ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT webhook_delivery_signature_status_check CHECK ((signature_status = ANY (ARRAY['not_required'::text, 'valid'::text, 'invalid'::text, 'missing'::text]))),
     CONSTRAINT webhook_delivery_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'rejected'::text, 'ignored'::text, 'failed'::text])))
 );
@@ -1895,17 +1878,12 @@ ALTER TABLE ONLY public.workspace
     ADD CONSTRAINT workspace_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.workspace
     ADD CONSTRAINT workspace_slug_key UNIQUE (slug);
-CREATE UNIQUE INDEX activity_log_squad_evaluation_task_unique ON public.activity_log USING btree (issue_id, actor_id, ((details ->> 'task_id'::text))) WHERE ((actor_type = 'agent'::text) AND (action = 'squad_leader_evaluated'::text));
 CREATE UNIQUE INDEX agent_personal_no_owner_name_active_unique ON public.agent USING btree (workspace_id, name) WHERE ((archived_at IS NULL) AND (scope = 'personal'::text) AND (owner_id IS NULL));
 CREATE UNIQUE INDEX agent_personal_owner_name_active_unique ON public.agent USING btree (workspace_id, owner_id, name) WHERE ((archived_at IS NULL) AND (scope = 'personal'::text) AND (owner_id IS NOT NULL));
 CREATE UNIQUE INDEX agent_runtime_workspace_daemon_profile_key ON public.agent_runtime USING btree (workspace_id, daemon_id, profile_id) WHERE (profile_id IS NOT NULL);
 CREATE UNIQUE INDEX agent_runtime_workspace_daemon_provider_key ON public.agent_runtime USING btree (workspace_id, daemon_id, provider) WHERE (profile_id IS NULL);
 CREATE UNIQUE INDEX agent_workspace_name_active_unique ON public.agent USING btree (workspace_id, name) WHERE ((archived_at IS NULL) AND (scope = 'workspace'::text));
-CREATE UNIQUE INDEX autopilot_create_request_unique ON public.autopilot USING btree (workspace_id, created_by_type, created_by_id, request_key) WHERE (request_key IS NOT NULL);
-CREATE UNIQUE INDEX autopilot_run_request_key_unique ON public.autopilot_run USING btree (autopilot_id, source, request_key) WHERE (request_key IS NOT NULL);
 CREATE INDEX comment_issue_resolved_at_idx ON public.comment USING btree (issue_id, resolved_at);
-CREATE UNIQUE INDEX external_credential_profile_create_request_unique ON public.external_credential_profile USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
-CREATE UNIQUE INDEX feedback_user_idempotency_key_idx ON public.feedback USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
 CREATE INDEX idx_activity_log_issue_keyset ON public.activity_log USING btree (issue_id, created_at DESC, id DESC);
 CREATE INDEX idx_agent_playground_agent_experiment_order ON public.agent_playground_agent USING btree (experiment_id, display_order);
 CREATE INDEX idx_agent_playground_experiment_workspace_created ON public.agent_playground_experiment USING btree (workspace_id, created_at DESC);
@@ -1960,7 +1938,7 @@ CREATE INDEX idx_inbox_recipient ON public.inbox_item USING btree (recipient_typ
 CREATE INDEX idx_issue_assignee ON public.issue USING btree (assignee_type, assignee_id);
 CREATE INDEX idx_issue_first_executed_at ON public.issue USING btree (workspace_id, first_executed_at) WHERE (first_executed_at IS NOT NULL);
 CREATE INDEX idx_issue_metadata_gin ON public.issue USING gin (metadata jsonb_path_ops);
-CREATE UNIQUE INDEX idx_issue_origin ON public.issue USING btree (workspace_id, origin_type, origin_id) WHERE (origin_type IS NOT NULL);
+CREATE INDEX idx_issue_origin ON public.issue USING btree (origin_type, origin_id) WHERE (origin_type IS NOT NULL);
 CREATE INDEX idx_issue_parent ON public.issue USING btree (parent_issue_id);
 CREATE INDEX idx_issue_project ON public.issue USING btree (project_id);
 CREATE INDEX idx_issue_pull_request_pr ON public.issue_pull_request USING btree (pull_request_id);
@@ -2044,14 +2022,13 @@ CREATE INDEX idx_squad_sop_run_workspace_created ON public.squad_sop_run USING b
 CREATE INDEX idx_squad_sop_step_event_issue_created ON public.squad_sop_step_event USING btree (issue_id, created_at DESC);
 CREATE INDEX idx_squad_sop_step_event_run_created ON public.squad_sop_step_event USING btree (run_id, created_at);
 CREATE INDEX idx_squad_sop_step_event_squad_created ON public.squad_sop_step_event USING btree (squad_id, created_at DESC);
-CREATE UNIQUE INDEX idx_squad_sop_terminal_event_task_unique ON public.squad_sop_step_event USING btree (run_id, task_id, event_type) WHERE ((task_id IS NOT NULL) AND (created_by_type = 'system'::text) AND (event_type = ANY (ARRAY['步骤完成'::text, '步骤失败'::text])));
 CREATE INDEX idx_squad_workspace ON public.squad USING btree (workspace_id);
 CREATE INDEX idx_squad_workspace_scope ON public.squad USING btree (workspace_id, scope) WHERE (archived_at IS NULL);
 CREATE INDEX idx_sys_cron_exec_failed_recent ON public.sys_cron_executions USING btree (job_name, plan_time DESC) WHERE (status = 'FAILED'::text);
 CREATE INDEX idx_sys_cron_exec_finished ON public.sys_cron_executions USING btree (finished_at) WHERE (status = ANY (ARRAY['SUCCESS'::text, 'FAILED'::text]));
 CREATE INDEX idx_sys_cron_exec_job_plan ON public.sys_cron_executions USING btree (job_name, scope_kind, scope_id, plan_time DESC);
 CREATE INDEX idx_sys_cron_exec_running_stale ON public.sys_cron_executions USING btree (stale_after) WHERE (status = 'RUNNING'::text);
-CREATE UNIQUE INDEX idx_task_message_task_id_seq ON public.task_message USING btree (task_id, seq);
+CREATE INDEX idx_task_message_task_id_seq ON public.task_message USING btree (task_id, seq);
 CREATE UNIQUE INDEX idx_task_token_hash ON public.task_token USING btree (token_hash);
 CREATE INDEX idx_task_token_task ON public.task_token USING btree (task_id);
 CREATE INDEX idx_task_trace_event_agent_created ON public.task_trace_event USING btree (agent_id, created_at DESC);
@@ -2072,12 +2049,10 @@ CREATE INDEX idx_webhook_delivery_autopilot ON public.webhook_delivery USING btr
 CREATE UNIQUE INDEX idx_webhook_delivery_dedupe ON public.webhook_delivery USING btree (trigger_id, dedupe_key) WHERE ((dedupe_key IS NOT NULL) AND (status <> ALL (ARRAY['rejected'::text, 'failed'::text])));
 CREATE INDEX idx_webhook_delivery_run ON public.webhook_delivery USING btree (autopilot_run_id) WHERE (autopilot_run_id IS NOT NULL);
 CREATE UNIQUE INDEX issue_label_workspace_name_lower_idx ON public.issue_label USING btree (workspace_id, lower(name));
-CREATE UNIQUE INDEX personal_access_token_create_request_unique ON public.personal_access_token USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
 CREATE INDEX prompt_evaluation_asset_prompt_idx ON public.prompt_evaluation_asset USING btree (prompt_id);
 CREATE INDEX prompt_evaluation_asset_workspace_type_idx ON public.prompt_evaluation_asset USING btree (workspace_id, asset_type);
 CREATE INDEX prompt_library_item_workspace_project_idx ON public.prompt_library_item USING btree (workspace_id, project_id);
 CREATE INDEX prompt_library_item_workspace_type_idx ON public.prompt_library_item USING btree (workspace_id, prompt_type);
-CREATE UNIQUE INDEX webhook_delivery_replay_request_unique ON public.webhook_delivery USING btree (workspace_id, replay_actor_id, replay_request_key) WHERE (replay_request_key IS NOT NULL);
 CREATE TRIGGER trg_atq_dirty_hourly BEFORE DELETE OR UPDATE OF runtime_id, issue_id ON public.agent_task_queue FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_atq();
 CREATE TRIGGER trg_issue_delete_dirty_hourly BEFORE DELETE ON public.issue FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_issue_delete();
 CREATE TRIGGER trg_issue_project_dirty_hourly BEFORE UPDATE OF project_id ON public.issue FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_issue_project();
@@ -2174,8 +2149,6 @@ ALTER TABLE ONLY public.attachment
     ADD CONSTRAINT attachment_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.attachment
     ADD CONSTRAINT attachment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.autopilot
-    ADD CONSTRAINT autopilot_initial_trigger_id_fkey FOREIGN KEY (initial_trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.autopilot
     ADD CONSTRAINT autopilot_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.autopilot_run

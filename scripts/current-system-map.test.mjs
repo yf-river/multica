@@ -110,6 +110,40 @@ test("current idempotency and outbox tables have an upgrade migration", () => {
   );
 });
 
+test("current request identity columns have an upgrade migration", () => {
+  const baseline = fs.readFileSync(
+    path.join(root, "server/migrations/001_current_schema.up.sql"),
+    "utf8",
+  );
+  const upgrade = fs.readFileSync(
+    path.join(root, "server/migrations/011_current_request_identity_and_uniqueness.up.sql"),
+    "utf8",
+  );
+  const requiredColumns = {
+    autopilot: ["request_key", "request_hash", "initial_trigger_id"],
+    autopilot_run: ["request_key"],
+    external_credential_profile: ["idempotency_key", "request_hash"],
+    feedback: ["idempotency_key", "request_hash"],
+    personal_access_token: ["idempotency_key", "request_hash"],
+    webhook_delivery: ["replay_actor_id", "replay_request_key", "replay_request_hash"],
+  };
+
+  for (const [table, columns] of Object.entries(requiredColumns)) {
+    const tableDefinition = baseline.match(
+      new RegExp(`CREATE TABLE public\\.${table} \\(([\\s\\S]*?)\\n\\);`),
+    )?.[1];
+    assert.ok(tableDefinition, `baseline table ${table} is missing`);
+    for (const column of columns) {
+      assert.equal(
+        new RegExp(`^\\s*${column}\\s`, "m").test(tableDefinition),
+        false,
+        `${table}.${column} must not exist only in the already-applied baseline`,
+      );
+      assert.match(upgrade, new RegExp(`\\b${column}\\b`));
+    }
+  }
+});
+
 test("Handler methods have one current HTTP registration", () => {
   const registrations = new Map();
   for (const route of inventory.backend.chiRoutes) {
