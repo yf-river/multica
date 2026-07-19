@@ -20,10 +20,17 @@ const useCredentialProfileCreateStore: RecoverableOperationStore<PendingCredenti
     "multica_credential_profile_create",
   );
 
-async function fingerprintCredentialRequest(request: CreateExternalCredentialProfileRequest) {
-  const bytes = new TextEncoder().encode(JSON.stringify(request));
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+let volatileRequestFingerprint: string | null = null;
+
+function fingerprintCredentialRequest(request: CreateExternalCredentialProfileRequest) {
+  return JSON.stringify({
+    provider: request.provider,
+    name: request.name ?? "",
+    capabilities: request.capabilities ?? {},
+    verifyNow: Boolean(request.verify_now),
+    tokenProvided: Boolean(request.token),
+    secretRefProvided: Boolean(request.secret_ref),
+  });
 }
 
 async function recoverPending(
@@ -45,11 +52,15 @@ async function recoverPending(
 export async function createExternalCredentialProfileWithRecovery(
   request: CreateExternalCredentialProfileRequest,
 ): Promise<ExternalCredentialProfile> {
-  const requestFingerprint = await fingerprintCredentialRequest(request);
+  const requestFingerprint = fingerprintCredentialRequest(request);
+  const currentVolatileFingerprint = JSON.stringify(request);
   const pending = useCredentialProfileCreateStore.getState().pending;
   if (pending) {
     const recovered = await recoverPending(pending);
-    if (recovered && pending.requestFingerprint === requestFingerprint) return recovered;
+    const sameRequest = pending.requestFingerprint === requestFingerprint &&
+      (volatileRequestFingerprint === null || volatileRequestFingerprint === currentVolatileFingerprint);
+    volatileRequestFingerprint = null;
+    if (recovered && sameRequest) return recovered;
   }
   const requestKey = generateUUID();
   useCredentialProfileCreateStore.getState().setPending({
@@ -57,8 +68,11 @@ export async function createExternalCredentialProfileWithRecovery(
     requestFingerprint,
     createdAt: Date.now(),
   });
-  return executeRecoverableMutation(
+  volatileRequestFingerprint = currentVolatileFingerprint;
+  const result = await executeRecoverableMutation(
     () => api.createExternalCredentialProfile(request, requestKey),
     () => useCredentialProfileCreateStore.getState().setPending(),
   );
+  volatileRequestFingerprint = null;
+  return result;
 }

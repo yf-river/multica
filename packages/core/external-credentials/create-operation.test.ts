@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError, ApiTransportError, getApi, setApiInstance } from "../api";
 import { resetAccountState } from "../platform/workspace-storage";
@@ -13,7 +12,6 @@ describe("createExternalCredentialProfileWithRecovery", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     setApiInstance(new ApiClient("http://core.test"));
-    vi.stubGlobal("crypto", webcrypto);
     localStorage.clear();
     resetAccountState();
   });
@@ -34,7 +32,8 @@ describe("createExternalCredentialProfileWithRecovery", () => {
 
     const stored = localStorage.getItem("multica_credential_profile_create") ?? "";
     expect(stored).not.toContain("secret-sentinel-never-persist");
-    expect(stored).toMatch(/[0-9a-f]{64}/);
+    expect(stored).toContain("gongfeng");
+    expect(stored).toContain("tokenProvided");
   });
 
   it("recovers a committed profile before accepting changed secret input", async () => {
