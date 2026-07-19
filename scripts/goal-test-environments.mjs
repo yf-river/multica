@@ -232,7 +232,7 @@ async function deployEnvironment(item, build) {
 }
 
 async function startDevWeb(item, action) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   const existingPID = listeningPID(item.frontendPort);
   const existing = inspectPID(existingPID);
@@ -268,7 +268,7 @@ async function startDevWeb(item, action) {
 }
 
 async function restartDevServer(item) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   ensureDatabase(env.DATABASE_URL, item.databaseName);
   buildServerBinary(env);
@@ -291,7 +291,7 @@ async function restartDevServer(item) {
 }
 
 async function prewarmDevWebOnly(item) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   const webPrewarm = await prewarmDevWebRoutes(item);
   updateFastDeploymentMetadata(item, env, {}, "dev-ui-prewarm", { web_prewarm: webPrewarm });
   console.log(JSON.stringify({
@@ -305,7 +305,7 @@ async function prewarmDevWebOnly(item) {
 }
 
 function restartDevDaemon(item) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   buildMulticaBinary(env);
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 10_000);
@@ -363,6 +363,18 @@ function runDevCheck(item) {
 
 function buildEnvironmentRuntime(item) {
   const envFile = ensureEnvironment(item);
+  return runtimeFromEnvironmentFile(item, envFile);
+}
+
+function buildDeployedEnvironmentRuntime(item) {
+  const envFile = envPath(item);
+  if (!existsSync(envFile) || !existsSync(deploymentPath(item))) {
+    fail(`goal-test ${item.name} is not deployed; run the deploy command before a fast action`);
+  }
+  return runtimeFromEnvironmentFile(item, envFile);
+}
+
+function runtimeFromEnvironmentFile(item, envFile) {
   const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
   const env = {
     ...process.env,
@@ -643,8 +655,6 @@ function isExpectedWebProcess(processInfo, item) {
 }
 
 function verifyAll() {
-  ensureEnvironment(profiles.prod);
-  ensureEnvironment(profiles.int);
   const prod = verifyEnvironment(profiles.prod, true);
   const intEnv = verifyEnvironment(withFrontendMode(profiles.int, deployedFrontendMode(profiles.int)), true);
   const isolation = {
@@ -670,7 +680,6 @@ function verifyAll() {
 }
 
 function verifyTarget(item) {
-  ensureEnvironment(item);
   const result = verifyEnvironment(withFrontendMode(item, deployedFrontendMode(item)), true);
   return {
     schema: "multica.goal_test.environment_evidence.v1",
@@ -694,8 +703,6 @@ function deployedFrontendMode(item) {
 }
 
 function verifyAllLogs() {
-  ensureEnvironment(profiles.prod);
-  ensureEnvironment(profiles.int);
   const prod = verifyLogsForEnvironment(profiles.prod);
   const intEnv = verifyLogsForEnvironment(profiles.int);
   return {
@@ -709,7 +716,6 @@ function verifyAllLogs() {
 }
 
 function verifyLogsTarget(item) {
-  ensureEnvironment(item);
   const result = verifyLogsForEnvironment(item);
   return {
     schema: "multica.goal_test.log_evidence.v1",
@@ -770,7 +776,6 @@ function verifyEnvironment(item, requireRunning) {
 }
 
 function describeEnvironment(item) {
-  ensureEnvironment(item);
   const env = readEnvFile(envPath(item));
   return {
     environment: item.name,
