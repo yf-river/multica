@@ -1,22 +1,37 @@
 import { expect, test } from "@playwright/test";
 import {
+  authenticateBrowserSession,
   createTestApi,
   expectCommittedResponseRecovery,
   interceptCommittedResponseLoss,
-  loginAsDefault,
   waitForPageText,
 } from "./helpers";
+import { TestApiClient } from "./fixtures";
+import { E2E_FIXTURE_PASSWORD } from "./test-identity";
 
 test("credential creation recovers after the committed response is lost", async ({ page }) => {
-  const api = await createTestApi();
-  const workspaceSlug = await loginAsDefault(page);
+  const ownerApi = await createTestApi();
+  const [workspace] = await ownerApi.getWorkspaces();
+  if (!workspace) throw new Error("E2E workspace was not created");
+  const account = "credential_recovery_user";
+  const member = await ownerApi.createWorkspaceMember(workspace.id, {
+    account,
+    name: "凭据恢复用户",
+    password: E2E_FIXTURE_PASSWORD,
+  });
+  const api = new TestApiClient();
+  await api.login(account, "凭据恢复用户", E2E_FIXTURE_PASSWORD);
+  const token = api.getToken();
+  if (!token) throw new Error("credential recovery fixture login returned no token");
+  await authenticateBrowserSession(page, token);
+  const workspaceSlug = workspace.slug;
   const provider = "tapd" as const;
   const profileName = "tapd-default";
   const recovery = await interceptCommittedResponseLoss(page, "**/api/external-credential-profiles", 201);
 
   const removeFixtureProfiles = async () => {
     const profiles = await api.listExternalCredentialProfiles(provider);
-    for (const profile of profiles.filter((item) => item.name === profileName)) {
+    for (const profile of profiles) {
       await api.deleteExternalCredentialProfile(profile.id);
     }
   };
@@ -47,5 +62,7 @@ test("credential creation recovers after the committed response is lost", async 
   } finally {
     await removeFixtureProfiles().catch(() => undefined);
     await api.cleanup();
+    await ownerApi.deleteWorkspaceMember(workspace.id, member.id).catch(() => undefined);
+    await ownerApi.cleanup();
   }
 });
