@@ -20,7 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
-func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTask(ctx context.Context, agentID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	var (
 		outcome                                                              = "unknown"
@@ -52,7 +52,10 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 	}
 
 	t0 = time.Now()
-	task, err := s.Queries.ClaimAgentTask(ctx, agentID)
+	task, err := s.Queries.ClaimAgentTaskForRuntime(ctx, db.ClaimAgentTaskForRuntimeParams{
+		AgentID:   agentID,
+		RuntimeID: runtimeID,
+	})
 	claimAgentMs = time.Since(t0).Milliseconds()
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -180,7 +183,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 		triedAgents[agentKey] = struct{}{}
 		tried++
 
-		task, err := s.ClaimTask(ctx, candidate.AgentID)
+		task, err := s.ClaimTask(ctx, candidate.AgentID, runtimeID)
 		if err != nil {
 			loopMs = time.Since(loopStart).Milliseconds()
 			outcome = "error_claim"

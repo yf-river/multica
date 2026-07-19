@@ -275,7 +275,7 @@ SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE atq.id = $1 AND a.workspace_id = $2;
 
--- name: ClaimAgentTask :one
+-- name: ClaimAgentTaskForRuntime :one
 -- Claims the next queued task for an agent, enforcing per-(issue, agent) serialization:
 -- a task is only claimable when no other task for the same issue AND same agent is
 -- already dispatched or running. This allows different agents to work on the same
@@ -289,7 +289,9 @@ UPDATE agent_task_queue
 SET status = 'dispatched', dispatched_at = now()
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
-    WHERE atq.agent_id = $1 AND atq.status = 'queued'
+    WHERE atq.agent_id = sqlc.arg('agent_id')
+      AND atq.runtime_id = sqlc.arg('runtime_id')
+      AND atq.status = 'queued'
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id

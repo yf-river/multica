@@ -562,6 +562,63 @@ func TestClaimTaskByRuntime_DoesNotReclaimDifferentRuntimeTask(t *testing.T) {
 	}
 }
 
+func TestClaimTaskByRuntime_DoesNotDispatchQueuedTaskForPreviousRuntime(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	oldRuntimeID := createClaimReclaimRuntime(t, ctx, "Previous queued-task runtime")
+	currentRuntimeID := createClaimReclaimRuntime(t, ctx, "Current queued-task runtime")
+	agentID, currentIssueID := createClaimReclaimAgentAndIssue(t, ctx, currentRuntimeID, "Runtime-specific claim agent")
+	var oldIssueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'Previous runtime queued task', 'in_progress', 'none', $2, 'member',
+			(SELECT COALESCE(MAX(number), 82649) + 1 FROM issue WHERE workspace_id = $1), 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&oldIssueID); err != nil {
+		t.Fatalf("setup: create previous runtime issue: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, oldIssueID) })
+
+	var oldTaskID, currentTaskID string
+	for _, fixture := range []struct {
+		runtimeID string
+		taskID    *string
+	}{
+		{runtimeID: oldRuntimeID, taskID: &oldTaskID},
+		{runtimeID: currentRuntimeID, taskID: &currentTaskID},
+	} {
+		issueID := currentIssueID
+		if fixture.runtimeID == oldRuntimeID {
+			issueID = oldIssueID
+		}
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
+			VALUES ($1, $2, $3, 'queued', 0)
+			RETURNING id
+		`, agentID, fixture.runtimeID, issueID).Scan(fixture.taskID); err != nil {
+			t.Fatalf("setup: create queued task: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = ANY($1::uuid[])`, []string{oldTaskID, currentTaskID})
+	})
+
+	claimed, err := testHandler.TaskService.ClaimTaskForRuntime(ctx, parseUUID(currentRuntimeID))
+	if err != nil {
+		t.Fatalf("ClaimTaskForRuntime: %v", err)
+	}
+	if claimed == nil || uuidToString(claimed.ID) != currentTaskID {
+		t.Fatalf("claimed task = %+v, want current runtime task %s", claimed, currentTaskID)
+	}
+	var oldStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, oldTaskID).Scan(&oldStatus); err != nil {
+		t.Fatalf("load previous runtime task: %v", err)
+	}
+	if oldStatus != "queued" {
+		t.Fatalf("previous runtime task status = %q, want queued", oldStatus)
+	}
+}
+
 // Claims include workspace context for the Agent system prompt.
 func TestClaimTaskByRuntime_PopulatesWorkspaceContext(t *testing.T) {
 	requireHandlerDatabase(t)
