@@ -642,33 +642,6 @@ CREATE TABLE public.autopilot_trigger (
     CONSTRAINT autopilot_trigger_kind_check CHECK ((kind = ANY (ARRAY['schedule'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_trigger_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text])))
 );
-CREATE TABLE public.autopilot_trigger_rotation_request (
-    workspace_id uuid NOT NULL,
-    actor_id uuid NOT NULL,
-    idempotency_key uuid NOT NULL,
-    trigger_id uuid NOT NULL,
-    request_hash text NOT NULL,
-    response_status integer,
-    response_body jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    CONSTRAINT autopilot_trigger_rotation_request_completion_check CHECK ((((response_status IS NULL) AND (response_body IS NULL) AND (completed_at IS NULL)) OR (((response_status >= 200) AND (response_status <= 599)) AND (response_body IS NOT NULL) AND (completed_at IS NOT NULL)))),
-    CONSTRAINT autopilot_trigger_rotation_request_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text))
-);
-CREATE TABLE public.chat_idempotency_record (
-    workspace_id uuid NOT NULL,
-    actor_type text NOT NULL,
-    actor_id uuid NOT NULL,
-    operation text NOT NULL,
-    idempotency_key uuid NOT NULL,
-    request_hash text NOT NULL,
-    response_status integer,
-    response_body jsonb,
-    CONSTRAINT chat_idempotency_record_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text]))),
-    CONSTRAINT chat_idempotency_record_operation_check CHECK ((operation = ANY (ARRAY['create_session'::text, 'send_message'::text]))),
-    CONSTRAINT chat_idempotency_record_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT chat_idempotency_record_response_check CHECK ((((response_status IS NULL) AND (response_body IS NULL)) OR ((response_status = 201) AND (response_body IS NOT NULL))))
-);
 CREATE TABLE public.chat_message (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     chat_session_id uuid NOT NULL,
@@ -718,43 +691,6 @@ CREATE TABLE public.comment_reaction (
     emoji text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT comment_reaction_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text])))
-);
-CREATE TABLE public.domain_event_delivery (
-    event_id uuid NOT NULL,
-    consumer text NOT NULL
-);
-CREATE TABLE public.domain_event_outbox (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    event_type text NOT NULL,
-    workspace_id uuid,
-    actor_type text,
-    actor_id text,
-    task_id text,
-    chat_session_id text,
-    payload jsonb NOT NULL,
-    attempts integer DEFAULT 0 NOT NULL,
-    available_at timestamp with time zone DEFAULT now() NOT NULL,
-    lease_owner text,
-    lease_until timestamp with time zone,
-    last_error text,
-    processed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    stream_key text,
-    sequence_no bigint NOT NULL,
-    dead_lettered_at timestamp with time zone,
-    dead_letter_reason text,
-    CONSTRAINT domain_event_outbox_attempts_check CHECK ((attempts >= 0)),
-    CONSTRAINT domain_event_outbox_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
-    CONSTRAINT domain_event_outbox_single_terminal_state CHECK (((processed_at IS NULL) OR (dead_lettered_at IS NULL))),
-    CONSTRAINT domain_event_outbox_stream_key_length CHECK (((stream_key IS NULL) OR ((char_length(stream_key) >= 1) AND (char_length(stream_key) <= 512))))
-);
-ALTER TABLE public.domain_event_outbox ALTER COLUMN sequence_no ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME public.domain_event_outbox_sequence_no_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
 );
 CREATE TABLE public.external_credential_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1431,20 +1367,6 @@ CREATE TABLE public.prompt_library_version (
     CONSTRAINT prompt_library_version_variables_array CHECK ((jsonb_typeof(variables) = 'array'::text)),
     CONSTRAINT prompt_library_version_version_check CHECK ((version > 0))
 );
-CREATE TABLE public.resource_create_request (
-    workspace_id uuid NOT NULL,
-    actor_id uuid NOT NULL,
-    resource_type text NOT NULL,
-    idempotency_key uuid NOT NULL,
-    request_hash text NOT NULL,
-    resource_id uuid,
-    response_body jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    CONSTRAINT resource_create_request_completion_check CHECK ((((resource_id IS NULL) AND (response_body IS NULL) AND (completed_at IS NULL)) OR ((resource_id IS NOT NULL) AND (response_body IS NOT NULL) AND (completed_at IS NOT NULL)))),
-    CONSTRAINT resource_create_request_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT resource_create_request_resource_type_check CHECK ((resource_type = ANY (ARRAY['workspace'::text, 'workspace_member'::text, 'project'::text, 'squad'::text, 'agent'::text, 'skill'::text, 'attachment'::text, 'quick_create'::text, 'issue'::text, 'comment'::text, 'autopilot_trigger'::text, 'issue_rerun'::text, 'runtime_profile'::text, 'label'::text, 'project_resource'::text, 'prompt_library_item'::text, 'prompt_library_version'::text, 'prompt_library_trial'::text, 'agent_playground_experiment'::text, 'prompt_evaluation_agent_run'::text, 'prompt_evaluation_local_run'::text, 'prompt_evaluation_re_eval_asset'::text, 'prompt_evaluation_candidate'::text, 'prompt_evaluation_candidate_publish'::text, 'prompt_evaluation_candidate_reject'::text, 'prompt_evaluation_asset'::text, 'prompt_evaluation_case'::text, 'prompt_evaluation_trace_import'::text, 'prompt_evaluation_dataset_version'::text, 'prompt_evaluation_evidence_snapshot'::text, 'prompt_evaluation_evidence_batch'::text, 'prompt_evaluation_dataset_restore'::text, 'prompt_evaluation_skill_inventory'::text, 'prompt_evaluation_skill_snapshot'::text, 'prompt_evaluation_skill_case_drafts'::text, 'prompt_evaluation_skill_apply'::text])))
-);
 CREATE TABLE public.runtime_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1479,18 +1401,6 @@ CREATE TABLE public.skill_file (
     content text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-CREATE TABLE public.skill_import_request (
-    workspace_id uuid NOT NULL,
-    actor_id uuid NOT NULL,
-    idempotency_key uuid NOT NULL,
-    request_hash text NOT NULL,
-    response_status integer,
-    response_body jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    CONSTRAINT skill_import_request_completion_check CHECK ((((response_status IS NULL) AND (response_body IS NULL) AND (completed_at IS NULL)) OR (((response_status >= 200) AND (response_status <= 599)) AND (response_body IS NOT NULL) AND (completed_at IS NOT NULL)))),
-    CONSTRAINT skill_import_request_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text))
 );
 CREATE TABLE public.squad (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -1779,10 +1689,6 @@ ALTER TABLE ONLY public.autopilot_subscriber
     ADD CONSTRAINT autopilot_subscriber_pkey PRIMARY KEY (autopilot_id, user_type, user_id);
 ALTER TABLE ONLY public.autopilot_trigger
     ADD CONSTRAINT autopilot_trigger_pkey PRIMARY KEY (id);
-ALTER TABLE ONLY public.autopilot_trigger_rotation_request
-    ADD CONSTRAINT autopilot_trigger_rotation_request_pkey PRIMARY KEY (workspace_id, actor_id, idempotency_key);
-ALTER TABLE ONLY public.chat_idempotency_record
-    ADD CONSTRAINT chat_idempotency_record_pkey PRIMARY KEY (workspace_id, actor_type, actor_id, operation, idempotency_key);
 ALTER TABLE ONLY public.chat_message
     ADD CONSTRAINT chat_message_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.chat_session
@@ -1793,10 +1699,6 @@ ALTER TABLE ONLY public.comment_reaction
     ADD CONSTRAINT comment_reaction_comment_id_actor_type_actor_id_emoji_key UNIQUE (comment_id, actor_type, actor_id, emoji);
 ALTER TABLE ONLY public.comment_reaction
     ADD CONSTRAINT comment_reaction_pkey PRIMARY KEY (id);
-ALTER TABLE ONLY public.domain_event_delivery
-    ADD CONSTRAINT domain_event_delivery_pkey PRIMARY KEY (event_id, consumer);
-ALTER TABLE ONLY public.domain_event_outbox
-    ADD CONSTRAINT domain_event_outbox_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.external_credential_profile
     ADD CONSTRAINT external_credential_profile_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.external_credential_profile
@@ -1933,8 +1835,6 @@ ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_unique UNIQUE (prompt_id, version);
-ALTER TABLE ONLY public.resource_create_request
-    ADD CONSTRAINT resource_create_request_pkey PRIMARY KEY (workspace_id, actor_id, resource_type, idempotency_key);
 ALTER TABLE ONLY public.runtime_profile
     ADD CONSTRAINT runtime_profile_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.runtime_profile
@@ -1943,8 +1843,6 @@ ALTER TABLE ONLY public.skill_file
     ADD CONSTRAINT skill_file_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.skill_file
     ADD CONSTRAINT skill_file_skill_id_path_key UNIQUE (skill_id, path);
-ALTER TABLE ONLY public.skill_import_request
-    ADD CONSTRAINT skill_import_request_pkey PRIMARY KEY (workspace_id, actor_id, idempotency_key);
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.skill
@@ -2045,8 +1943,6 @@ CREATE INDEX idx_autopilot_run_status ON public.autopilot_run USING btree (autop
 CREATE INDEX idx_autopilot_subscriber_user ON public.autopilot_subscriber USING btree (user_type, user_id);
 CREATE INDEX idx_autopilot_trigger_autopilot ON public.autopilot_trigger USING btree (autopilot_id);
 CREATE INDEX idx_autopilot_trigger_next_run ON public.autopilot_trigger USING btree (next_run_at) WHERE ((enabled = true) AND (kind = 'schedule'::text));
-CREATE INDEX idx_autopilot_trigger_rotation_request_completed_at ON public.autopilot_trigger_rotation_request USING btree (completed_at) WHERE (completed_at IS NOT NULL);
-CREATE INDEX idx_autopilot_trigger_rotation_request_incomplete_created_at ON public.autopilot_trigger_rotation_request USING btree (created_at) WHERE (completed_at IS NULL);
 CREATE UNIQUE INDEX idx_autopilot_trigger_webhook_token ON public.autopilot_trigger USING btree (webhook_token) WHERE ((kind = 'webhook'::text) AND (webhook_token IS NOT NULL));
 CREATE INDEX idx_autopilot_workspace ON public.autopilot USING btree (workspace_id);
 CREATE INDEX idx_chat_message_session ON public.chat_message USING btree (chat_session_id, created_at);
@@ -2054,9 +1950,6 @@ CREATE INDEX idx_chat_session_creator ON public.chat_session USING btree (creato
 CREATE INDEX idx_chat_session_workspace ON public.chat_session USING btree (workspace_id);
 CREATE INDEX idx_comment_issue_keyset ON public.comment USING btree (issue_id, created_at DESC, id DESC);
 CREATE INDEX idx_comment_reaction_comment_id ON public.comment_reaction USING btree (comment_id);
-CREATE INDEX idx_domain_event_outbox_dead_lettered ON public.domain_event_outbox USING btree (dead_lettered_at, sequence_no) WHERE (dead_lettered_at IS NOT NULL);
-CREATE INDEX idx_domain_event_outbox_pending ON public.domain_event_outbox USING btree (available_at, sequence_no) WHERE ((processed_at IS NULL) AND (dead_lettered_at IS NULL));
-CREATE INDEX idx_domain_event_outbox_pending_stream ON public.domain_event_outbox USING btree (stream_key, sequence_no) WHERE ((processed_at IS NULL) AND (dead_lettered_at IS NULL) AND (stream_key IS NOT NULL));
 CREATE INDEX idx_external_credential_profile_user_provider ON public.external_credential_profile USING btree (user_id, provider, created_at DESC);
 CREATE INDEX idx_feedback_user_created ON public.feedback USING btree (user_id, created_at DESC);
 CREATE INDEX idx_github_installation_workspace ON public.github_installation USING btree (workspace_id);
@@ -2139,12 +2032,8 @@ CREATE INDEX idx_prompt_library_trial_prompt_created ON public.prompt_library_tr
 CREATE INDEX idx_prompt_library_trial_workspace_created ON public.prompt_library_trial USING btree (workspace_id, created_at DESC);
 CREATE INDEX idx_prompt_library_version_prompt_version ON public.prompt_library_version USING btree (prompt_id, version DESC);
 CREATE INDEX idx_prompt_library_version_workspace_created ON public.prompt_library_version USING btree (workspace_id, created_at DESC);
-CREATE INDEX idx_resource_create_request_completed_at ON public.resource_create_request USING btree (completed_at) WHERE (completed_at IS NOT NULL);
-CREATE INDEX idx_resource_create_request_incomplete_created_at ON public.resource_create_request USING btree (created_at) WHERE (completed_at IS NULL);
 CREATE INDEX idx_runtime_profile_workspace ON public.runtime_profile USING btree (workspace_id);
 CREATE INDEX idx_skill_file_skill ON public.skill_file USING btree (skill_id);
-CREATE INDEX idx_skill_import_request_completed_at ON public.skill_import_request USING btree (completed_at) WHERE (completed_at IS NOT NULL);
-CREATE INDEX idx_skill_import_request_incomplete_created_at ON public.skill_import_request USING btree (created_at) WHERE (completed_at IS NULL);
 CREATE INDEX idx_skill_workspace ON public.skill USING btree (workspace_id);
 CREATE INDEX idx_squad_member_entity ON public.squad_member USING btree (member_type, member_id);
 CREATE INDEX idx_squad_member_squad ON public.squad_member USING btree (squad_id);
@@ -2301,14 +2190,8 @@ ALTER TABLE ONLY public.autopilot_run
     ADD CONSTRAINT autopilot_run_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.autopilot_trigger
     ADD CONSTRAINT autopilot_trigger_autopilot_id_fkey FOREIGN KEY (autopilot_id) REFERENCES public.autopilot(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.autopilot_trigger_rotation_request
-    ADD CONSTRAINT autopilot_trigger_rotation_request_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.autopilot_trigger_rotation_request
-    ADD CONSTRAINT autopilot_trigger_rotation_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.autopilot
     ADD CONSTRAINT autopilot_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.chat_idempotency_record
-    ADD CONSTRAINT chat_idempotency_record_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.chat_message
     ADD CONSTRAINT chat_message_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.chat_session
@@ -2327,10 +2210,6 @@ ALTER TABLE ONLY public.comment_reaction
     ADD CONSTRAINT comment_reaction_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.comment
     ADD CONSTRAINT comment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.domain_event_delivery
-    ADD CONSTRAINT domain_event_delivery_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.domain_event_outbox(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.domain_event_outbox
-    ADD CONSTRAINT domain_event_outbox_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.external_credential_profile
     ADD CONSTRAINT external_credential_profile_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.feedback
@@ -2555,14 +2434,10 @@ ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_source_candidate_id_fkey FOREIGN KEY (source_candidate_id) REFERENCES public.prompt_evaluation_optimization_candidate(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.resource_create_request
-    ADD CONSTRAINT resource_create_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id);
 ALTER TABLE ONLY public.skill_file
     ADD CONSTRAINT skill_file_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES public.skill(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.skill_import_request
-    ADD CONSTRAINT skill_import_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.squad

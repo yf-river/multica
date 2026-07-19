@@ -81,6 +81,35 @@ test("implicit database and websocket contracts are visible", () => {
   assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
 });
 
+test("current idempotency and outbox tables have an upgrade migration", () => {
+  const requiredTables = [
+    "autopilot_trigger_rotation_request",
+    "chat_idempotency_record",
+    "domain_event_delivery",
+    "domain_event_outbox",
+    "resource_create_request",
+    "skill_import_request",
+  ];
+  const upMigrations = inventory.persistence.database.migrations.filter(
+    (migration) => migration.direction === "up",
+  );
+  const baseline = upMigrations.find((migration) => migration.version === 1);
+  const upgrade = upMigrations.find(
+    (migration) => migration.version === 6 && migration.name === "current_idempotency_and_outbox",
+  );
+
+  assert.ok(upgrade, "current database upgrade migration 006 is missing");
+  assert.deepEqual(
+    requiredTables.filter((table) => baseline.tablesCreated.some((created) => created.name === table)),
+    [],
+    "upgrade-required tables must not exist only in the already-applied baseline",
+  );
+  assert.deepEqual(
+    upgrade.tablesCreated.map((table) => table.name).sort(),
+    requiredTables,
+  );
+});
+
 test("Handler methods have one current HTTP registration", () => {
   const registrations = new Map();
   for (const route of inventory.backend.chiRoutes) {
