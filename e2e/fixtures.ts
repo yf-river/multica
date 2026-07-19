@@ -907,10 +907,11 @@ export class TestApiClient {
       const result = await client.query<InternalSquadTemplateStats>(
         `
           WITH target_squads AS (
-            SELECT id FROM squad WHERE workspace_id = $1 AND name = $2
+            SELECT id FROM squad WHERE workspace_id = $1 AND name = $2 AND archived_at IS NULL
           ),
           target_agents AS (
-            SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE ($3 || ' · %')
+            SELECT id FROM agent
+            WHERE workspace_id = $1 AND name LIKE ($3 || ' · %') AND archived_at IS NULL
           )
           SELECT
             (SELECT count(*)::int FROM target_squads) AS squad_count,
