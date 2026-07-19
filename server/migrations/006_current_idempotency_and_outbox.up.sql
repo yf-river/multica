@@ -52,7 +52,7 @@ CREATE TABLE public.domain_event_outbox (
     processed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     stream_key text,
-    sequence_no bigint GENERATED ALWAYS AS IDENTITY,
+    sequence_no bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
     dead_lettered_at timestamp with time zone,
     dead_letter_reason text,
     CONSTRAINT domain_event_outbox_attempts_check CHECK ((attempts >= 0)),
