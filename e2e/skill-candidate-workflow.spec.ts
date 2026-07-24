@@ -139,8 +139,8 @@ test.describe("Skill candidate workflow", () => {
     await git(GONGFENG_BASE_REPO, ["worktree", "add", "--detach", tempRepoPath, GONGFENG_BRANCH]);
 
     const skillPath = GONGFENG_SKILL_PATH;
-    await git(tempRepoPath, ["config", "user.email", "e2e@example.com"]);
-    await git(tempRepoPath, ["config", "user.name", "Goal D E2E"]);
+    await git(tempRepoPath, ["config", "--worktree", "user.email", "e2e@example.com"]);
+    await git(tempRepoPath, ["config", "--worktree", "user.name", "Goal D E2E"]);
     await readFile(path.join(tempRepoPath, skillPath), "utf8");
     const changelogPath = path.posix.join(path.posix.dirname(skillPath), "CHANGELOG.md");
     const candidatePatch = await createAppendPatch(

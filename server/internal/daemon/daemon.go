@@ -721,7 +721,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 		"idle_watchdog", d.cfg.AgentIdleWatchdog,
 		"max_concurrent_tasks", d.cfg.MaxConcurrentTasks,
 		"gc_enabled", d.cfg.GCEnabled,
-		"launched_by", d.cfg.LaunchedBy,
 	)
 
 	// Load auth token from CLI config.
@@ -927,7 +926,6 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		"legacy_daemon_ids": d.cfg.LegacyDaemonIDs,
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
-		"launched_by":       d.cfg.LaunchedBy,
 		"runtimes":          runtimes,
 	}
 

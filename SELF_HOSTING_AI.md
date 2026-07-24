@@ -1,31 +1,31 @@
-# Self-Hosting Setup (for AI Agents)
+# 自部署配置清单（面向 AI 智能体）
 
-This document is designed for AI agents to execute. Follow these steps exactly to deploy a local Multica instance and connect to it.
+本文档为 AI 智能体执行用，缩为可执行检查清单。详细说明见 [SELF_HOSTING.md](SELF_HOSTING.md)（快速上手与常规运维）与 [SELF_HOSTING_ADVANCED.md](SELF_HOSTING_ADVANCED.md)（环境变量、反向代理、迁移、usage rollup 等唯一详细来源）。
 
-## Prerequisites
+## 前置
 
-- Docker and Docker Compose installed
-- Homebrew installed (for CLI)
-- At least one AI agent CLI on PATH: `claude` or `codex`
+- 已装 Docker 与 Docker Compose
+- 已装 Homebrew（用于 CLI）
+- PATH 上至少有一个 AI 智能体 CLI：`claude` 或 `codex`
 
-## Install
+## 安装
 
 ```bash
-# Install CLI + provision self-host server
+# 装 CLI + provision 自部署 server
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
 
-# Configure CLI for localhost, authenticate, and start daemon
+# 配置 CLI 指向 localhost、认证、启动守护进程
 multica setup self-host
 ```
 
-Wait for the server output `✓ Multica server is running and CLI is ready!` before running `multica setup self-host`.
+等 server 输出 `✓ Multica server is running and CLI is ready!` 后再跑 `multica setup self-host`。
 
-**Expected result:**
-- Frontend at http://localhost:3000
-- Backend at http://localhost:8080
-- `multica` CLI installed and configured for localhost
+**预期结果：**
+- 前端：http://localhost:3000
+- 后端：http://localhost:8080
+- `multica` CLI 已装并配为 localhost
 
-## Alternative: Manual Setup
+## 备选：手动配置
 
 ```bash
 git clone https://github.com/multica-ai/multica.git
@@ -35,23 +35,23 @@ brew install multica-ai/tap/multica
 multica setup self-host
 ```
 
-The `multica setup self-host` command will:
-1. Configure CLI to connect to localhost:8080 / localhost:3000
-2. Open a browser for account/password login
-3. Discover workspaces automatically
-4. Start the daemon in the background
+`multica setup self-host` 会：
+1. 配置 CLI 连接 localhost:8080 / localhost:3000
+2. 打开浏览器做账号/密码登录
+3. 自动发现工作区
+4. 后台启动守护进程
 
-## Verification
+## 验证
 
 ```bash
 multica daemon status
 ```
 
-Should show `running` with detected agents.
+应显示 `running` 与检测到的智能体。
 
-## Production Demo / Observability Verification
+## 生产演示 / 可观测性验证
 
-Before marking a self-host deployment ready for internal team use or a leadership demo, collect evidence from the product, API, logs, and database. The full Chinese runbook lives in:
+自部署标记为内部团队使用或领导演示就绪前，从产品、API、日志、数据库收集证据。完整中文 runbook 见：
 
 ```text
 apps/docs/content/docs/production-observability.zh.mdx
@@ -66,7 +66,7 @@ curl -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://lo
 pnpm acceptance:evidence
 ```
 
-然后打开 `/{workspaceSlug}/training?view=demo-dashboard` 并确认：
+然后打开 `/{workspaceSlug}/training?view=demo-dashboard` 确认：
 
 - 页面能看到 CodeBuddy 运行时就绪状态。
 - 训练评估运行指标不是空数据。
@@ -88,28 +88,30 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws \
 pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
 ```
 
-## Stopping
+## 停止
 
 ```bash
-# Stop the daemon
+# 停守护进程
 multica daemon stop
 
-# Stop all Docker services
+# 停所有 Docker 服务
 cd multica
 make selfhost-stop
 ```
 
-## Custom Ports
+## 自定义端口
 
-If the default ports (8080/3000) are in use:
+默认端口（8080/3000）被占用时：
 
-1. Edit `.env` and change `PORT` and `FRONTEND_PORT`
-2. Run `make selfhost`
-3. Run `multica setup self-host --port <PORT> --frontend-port <FRONTEND_PORT>`
+1. 编辑 `.env`，改 `PORT` 与 `FRONTEND_PORT`
+2. 跑 `make selfhost`
+3. 跑 `multica setup self-host --port <PORT> --frontend-port <FRONTEND_PORT>`
 
-## Troubleshooting
+## 故障排查
 
-- **Backend not ready:** `docker compose -f docker-compose.selfhost.yml logs backend`
-- **Frontend not ready:** `docker compose -f docker-compose.selfhost.yml logs frontend`
-- **Daemon issues:** `multica daemon logs`
-- **Health checks:** `curl http://localhost:8080/health` for liveness, `curl http://localhost:8080/readyz` for dependency-aware readiness
+- **后端未就绪：** `docker compose -f docker-compose.selfhost.yml logs backend`
+- **前端未就绪：** `docker compose -f docker-compose.selfhost.yml logs frontend`
+- **守护进程问题：** `multica daemon logs`
+- **健康检查：** `curl http://localhost:8080/health` 查存活，`curl http://localhost:8080/readyz` 查带依赖感知的 readiness
+
+环境变量、反向代理、迁移、usage rollup 等详细说明见 [SELF_HOSTING_ADVANCED.md](SELF_HOSTING_ADVANCED.md)。

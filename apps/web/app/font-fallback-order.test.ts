@@ -29,14 +29,4 @@ describe("CJK font fallback order", () => {
 
     expectChineseFontsBeforeKoreanFonts(cssSource);
   });
-
-  it("keeps desktop Chinese font fallbacks before Korean font fallbacks", () => {
-    const desktopCss = readFileSync(
-      resolve(repoRoot, "apps/desktop/src/renderer/src/globals.css"),
-      "utf8",
-    );
-
-    expectChineseFontsBeforeKoreanFonts(desktopCss);
-  });
-
 });

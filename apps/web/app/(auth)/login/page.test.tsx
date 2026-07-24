@@ -111,26 +111,4 @@ describe("LoginPage", () => {
       expect(mockRouterPush).toHaveBeenCalled();
     });
   });
-
-  it("mints a token and deep-links to Desktop when already logged in with platform=desktop", async () => {
-    searchParamsState.params = new URLSearchParams({ platform: "desktop" });
-    authStateRef.state.user = {
-      id: "u1",
-      account: "alice",
-      onboarded_at: "2026-01-01T00:00:00Z",
-    };
-    mockIssueCliToken.mockResolvedValue({ token: "handoff-jwt" });
-
-    Object.defineProperty(window, "location", {
-      writable: true,
-      value: { href: "http://localhost:3000/login?platform=desktop" },
-    });
-
-    render(<LoginPage />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(mockIssueCliToken).toHaveBeenCalled();
-      expect(window.location.href).toBe("multica://auth/callback?token=handoff-jwt");
-    });
-  });
 });

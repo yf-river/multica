@@ -42,9 +42,6 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
-import {
-  useLocalDaemonStatus,
-} from "../../platform";
 import { useT } from "../../i18n";
 import {
   buildGongfengResourceRefFromWorkspaceRepo,
@@ -76,7 +73,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
   const workspace = useCurrentWorkspace();
-  const daemonStatus = useLocalDaemonStatus();
   const [open, setOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
@@ -89,7 +85,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const deleteResource = useDeleteProjectResource(wsId, projectId);
   const syncResource = useSyncProjectResource(wsId, projectId);
 
-  const localDaemonId = daemonStatus.daemonId;
+  const localDaemonId = null;
 
   const attachedUrls = new Set(
     resources.filter(isGongfengRef).map((r) => r.resource_ref.url),

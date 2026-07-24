@@ -6,14 +6,12 @@
   "scripts": {
     "dev:web": "turbo dev --filter=@multica/web",
     "dev:docs": "turbo dev --filter=@multica/docs",
-    "dev:desktop": "turbo dev --filter=@multica/desktop",
-    "dev:desktop:staging": "turbo dev:staging --filter=@multica/desktop",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "lint": "turbo lint",
     "code-health:audit": "mkdir -p artifacts/code-health/one-time-cleanup && pnpm code-health:knip && pnpm code-health:jscpd && pnpm code-health:go",
-    "code-health:go": "mkdir -p artifacts/code-health/one-time-cleanup && sh -c 'cd server && GOENV_VERSION=1.26.1 golangci-lint run ./... --timeout 5m || { echo \"golangci-lint failed; falling back to GOENV_VERSION=1.26.1 go test ./...\"; GOENV_VERSION=1.26.1 go test ./...; }' > artifacts/code-health/one-time-cleanup/go-audit.txt 2>&1 || true",
+    "code-health:go": "mkdir -p artifacts/code-health/one-time-cleanup && sh -c 'cd server && GOENV_VERSION=1.26.1 golangci-lint run ./... --timeout 5m || { echo \"golangci-lint 失败；回退到 GOENV_VERSION=1.26.1 go test ./...\"; GOENV_VERSION=1.26.1 go test ./...; }' > artifacts/code-health/one-time-cleanup/go-audit.txt 2>&1 || true",
     "code-health:jscpd": "mkdir -p artifacts/code-health/one-time-cleanup && jscpd apps packages server scripts --config .jscpd.json --exit-code 0",
     "code-health:knip": "mkdir -p artifacts/code-health/one-time-cleanup && knip --config knip.json --reporter markdown --no-exit-code > artifacts/code-health/one-time-cleanup/knip-report.md",
     "clean": "turbo clean && rm -rf node_modules",
@@ -23,8 +21,7 @@
   "packageManager": "pnpm@10.28.2",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "electron"
+      "esbuild"
     ],
     "overrides": {
       "@types/react": "catalog:",

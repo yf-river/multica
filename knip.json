@@ -11,8 +11,6 @@
     "packages/views/locales/**"
   ],
   "ignoreFiles": [
-    "apps/desktop/src/renderer/src/env.d.ts",
-    "apps/desktop/src/preload/index.d.ts",
     "apps/web/lib/use-cases-source.ts",
     "apps/web/source.config.ts",
     "apps/web/test/helpers.tsx"
@@ -102,21 +100,6 @@
       ],
       "project": [
         "**/*.{ts,tsx,mjs}"
-      ]
-    },
-    "apps/desktop": {
-      "entry": [
-        "src/main/index.ts",
-        "src/preload/index.ts",
-        "src/renderer/src/main.tsx",
-        "electron.vite.config.ts",
-        "eslint.config.mjs",
-        "scripts/**/*.mjs"
-      ],
-      "project": [
-        "src/**/*.{ts,tsx}",
-        "scripts/**/*.mjs",
-        "*.{ts,mjs}"
       ]
     },
     "apps/docs": {

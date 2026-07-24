@@ -479,70 +479,17 @@ sent from a pre-workspace surface.
 
 - `$pageview` — fired by the web tracker
   (`apps/web/components/pageview-tracker.tsx`) on Next.js App Router
-  **pathname** changes, and by the desktop tracker
-  (`apps/desktop/.../pageview-tracker.tsx`) on visible-surface changes.
-  Both mount once at the root and drive the acquisition funnel's
-  `/ → signup` step. posthog-js's automatic pageview capture is
-  disabled in `initAnalytics` so we own the event shape.
-  `capturePageview` (`packages/core/analytics`) **section-normalizes** the
-  path before emitting: query string / hash are stripped and resource-id
-  segments are collapsed, so `/acme/issues/8d5c…` and `/acme/issues/MUL-12`
-  both report as `/acme/issues`, and consecutive views of the same section
-  are deduplicated. This keeps PostHog at section granularity rather than
-  billing a `$pageview` per resource or per filter/sort/search change. The
-  tracker is deliberately NOT keyed on the query string.
-- `onboarding_runtime_path_selected` — fired from
-  `packages/views/onboarding/steps/step-platform-fork.tsx` when the web
-  user clicks one of the Step 3 fork cards (before any server
-  call happens, so it's frontend-only). Properties: `path`
-  (`download_desktop` / `cli`), `source`
-  (`onboarding`), `surface` (`step3`), `workspace_id`, and `is_mac`.
-  Also writes `platform_preference` (`web` / `desktop`) to person
-  properties so every subsequent event on the user can be broken down
-  by chosen platform. **Note**: semantic "download
-  intent" is now better served by `download_intent_expressed` below —
-  `path: "download_desktop"` signals Step 3 path choice specifically,
-  not actual download start.
-
-- `onboarding_runtime_detected` — fired from
-  `packages/views/onboarding/steps/step-runtime-connect.tsx` (desktop
-  Step 3) once per mount, when the scanning phase resolves — either
-  immediately on first runtime registration, or after the 5 s empty
-  timeout. Answers the question "did the user have any AI CLI
-  installed on this machine when they hit Step 3" — currently
-  unanswerable from the existing funnel because the bundled daemon
-  fails to register at all when zero CLIs are on PATH, so
-  `runtime_registered` is silent on that cohort. Splits
-  `completion_path=runtime_skipped` into "had CLIs, skipped anyway"
-  vs "no CLIs available, had no choice". Properties:
-  - `source`: `onboarding`.
-  - `surface`: `step3_desktop`.
-  - `workspace_id`: current onboarding workspace.
-  - `outcome`: `found` (at least one runtime registered before the
-    5 s grace window expired) or `empty` (none registered by then).
-  - `runtime_count`: number of runtimes visible to this user at
-    resolution time.
-  - `online_count`: subset of `runtime_count` whose `status` is
-    `online`.
-  - `providers`: sorted array of distinct provider names (e.g.
-    `["claude", "codex"]`).
-  - `has_claude` / `has_codex` / `has_cursor`: convenience booleans
-    derived from `providers` for funnel breakdowns without array
-    filtering in HogQL.
-  - `detect_ms`: wall-clock ms from component mount to resolution.
-    Surfaces daemon boot latency — `found` events with a high
-    `detect_ms` approach the timeout threshold and inform whether
-    to lengthen the grace period.
-
-  Person properties set with `$set`:
-  - `has_any_cli`: boolean — cohort signal for "user has at least
-    one local AI CLI detected on this machine".
-  - `detected_cli_count`: number — granular cohort signal.
-
-  Not emitted from the web Step 3 (`step-platform-fork.tsx`) — web
-  users don't run the bundled daemon, so their runtime list reflects
-  daemons from other machines and would corrupt the
-  "CLI installed locally" signal.
+  **pathname** changes. Mounts once at the root and drives the
+  acquisition funnel's `/ → signup` step. posthog-js's automatic
+  pageview capture is disabled in `initAnalytics` so we own the event
+  shape. `capturePageview` (`packages/core/analytics`)
+  **section-normalizes** the path before emitting: query string / hash
+  are stripped and resource-id segments are collapsed, so
+  `/acme/issues/8d5c…` and `/acme/issues/MUL-12` both report as
+  `/acme/issues`, and consecutive views of the same section are
+  deduplicated. This keeps PostHog at section granularity rather than
+  billing a `$pageview` per resource or per filter/sort/search change.
+  The tracker is deliberately NOT keyed on the query string.
 
 - `feedback_opened` — fired when the in-app Feedback modal mounts
   (user clicked "Feedback" in the Help launcher). Paired with the

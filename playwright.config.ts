@@ -19,6 +19,6 @@ export default defineConfig({
       use: { browserName: "chromium" },
     },
   ],
-  // Don't auto-start servers — they must be running already
-  // This avoids complexity and port conflicts during testing
+  // 不自动启动 server——必须已运行
+  // 避免测试中的复杂度与端口冲突
 });

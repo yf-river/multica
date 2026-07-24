@@ -93,15 +93,13 @@ const (
 )
 
 // Platform is used as the "platform" event property so funnels can split by
-// web / desktop / cli. Request-path events use PlatformServer as a fallback
+// web / cli / server. Request-path events use PlatformServer as a fallback
 // when the caller is a server-originating action (e.g. auto-created user);
-// otherwise the frontend passes the real platform via a header / body field
-// in later iterations.
+// otherwise the frontend passes the real platform via a header / body field.
 const (
-	PlatformServer  = "server"
-	PlatformWeb     = "web"
-	PlatformDesktop = "desktop"
-	PlatformCLI     = "cli"
+	PlatformServer = "server"
+	PlatformWeb    = "web"
+	PlatformCLI    = "cli"
 )
 
 // Signup builds the account-created event used by the internal login flow.

@@ -20,7 +20,7 @@ Multica 服务器从不接触你的 API key，也不接触工具本身。下面�
 
 下面每一款工具都有两个共同前提：
 
-1. **Multica 守护进程在运行。** 装完 [Multica CLI](/zh/cli) 后跑 `multica daemon start`；或者用 [Multica 桌面端](/zh/desktop-app)，它启动时自动拉起守护进程。守护进程没起来，就没人去扫工具。
+1. **Multica 守护进程在运行。** 装完 [Multica CLI](/zh/cli) 后跑 `multica daemon start`。守护进程没起来，就没人去扫工具。
 2. **工具的可执行文件在 `PATH` 上。** 守护进程通过名字 shell out 调起工具（见每一节里 **守护进程扫描** 那行的命令名）。终端里 `which <名字>` 找不到，守护进程也找不到。装完后打开新终端（或者重启守护进程），让新的 `PATH` 生效。
 
 装完一款工具后，重启守护进程：

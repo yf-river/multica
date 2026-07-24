@@ -1,5 +1,4 @@
-# Development override: build the backend/web images from the current checkout
-# instead of pulling the official GHCR images.
+# 开发 override：从当前 checkout 构建后端/web 镜像，而非拉取官方 GHCR 镜像。
 
 services:
   backend:

@@ -179,8 +179,6 @@
   "update": {
     "cli_version_label": "CLI 版本：",
     "version_unknown": "未知",
-    "managed_by_desktop": "由桌面端管理",
-    "managed_by_desktop_title": "CLI 二进制由 Multica 桌面端管理 —— 升级桌面端即可升级 CLI。",
     "latest": "最新",
     "available": "可用",
     "action": "更新",

@@ -40,10 +40,9 @@ import {
 /**
  * Workspace welcome experience for users who just finished onboarding.
  *
- * Mounted in the workspace shell on both web and desktop. Subscribes to
- * the Zustand welcome-store signal that `OnboardingFlow.handleRuntimeNext`
- * parks before navigating. Renders null when there is no signal or when
- * the signal has been dismissed.
+ * Mounted in the workspace shell. Subscribes to the Zustand welcome-store
+ * signal that parks before navigating. Renders null when there is no signal
+ * or when the signal has been dismissed.
  *
  * Two sub-templates driven by `signal.choice`:
  *
