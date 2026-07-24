@@ -10,7 +10,7 @@
     "backlog": "待规划",
     "todo": "待办",
     "in_progress": "进行中",
-    "in_review": "审核中",
+    "in_review": "验收中",
     "done": "已完成",
     "blocked": "已阻塞",
     "cancelled": "已取消"

@@ -1089,7 +1089,7 @@ describe("IssueDetail (shared)", () => {
 
     // Only the 8 most recent entries (act-3..act-10) are rendered by default.
     // act-1 and act-2 are folded behind the show-more line.
-    expect(screen.getByText(/状态从 进行中 改为 审核中/)).toBeInTheDocument(); // act-3
+    expect(screen.getByText(/状态从 进行中 改为 验收中/)).toBeInTheDocument(); // act-3
     expect(screen.getByText(/截止日期设为/)).toBeInTheDocument(); // act-10
     expect(screen.queryByText(/状态从 待办 改为 进行中/)).not.toBeInTheDocument(); // act-1
     expect(screen.queryByText(/优先级从 低 改为 中/)).not.toBeInTheDocument(); // act-2
@@ -1128,9 +1128,9 @@ describe("IssueDetail (shared)", () => {
     // exactly within the limit, so no "Show N more activities" line appears.
     expect(screen.getByText(/状态从 待办 改为 进行中/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 低 改为 高/)).toBeInTheDocument();
-    expect(screen.getByText(/状态从 进行中 改为 审核中/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 进行中 改为 验收中/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 高 改为 紧急/)).toBeInTheDocument();
-    expect(screen.getByText(/状态从 审核中 改为 已完成/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 验收中 改为 已完成/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 紧急 改为 低/)).toBeInTheDocument();
     expect(screen.getByText(/状态从 已完成 改为 已阻塞/)).toBeInTheDocument();
     expect(screen.getByText(/截止日期设为/)).toBeInTheDocument();
@@ -1183,9 +1183,9 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText(/优先级从 无优先级 改为 低/)).toBeInTheDocument();
     expect(screen.getByText(/状态从 待办 改为 进行中/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 低 改为 中/)).toBeInTheDocument();
-    expect(screen.getByText(/状态从 进行中 改为 审核中/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 进行中 改为 验收中/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 中 改为 高/)).toBeInTheDocument();
-    expect(screen.getByText(/状态从 审核中 改为 已完成/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 验收中 改为 已完成/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 高 改为 紧急/)).toBeInTheDocument();
     expect(screen.getByText(/状态从 已完成 改为 已阻塞/)).toBeInTheDocument();
     expect(screen.getByText(/优先级从 紧急 改为 低/)).toBeInTheDocument();

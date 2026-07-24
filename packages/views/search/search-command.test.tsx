@@ -682,7 +682,7 @@ describe("SearchCommand", () => {
     );
 
     expect(screen.getByTitle("张艾丽")).toBeInTheDocument();
-    expect(screen.queryByText("审核中")).not.toBeInTheDocument();
+    expect(screen.queryByText("验收中")).not.toBeInTheDocument();
   });
 
   it("最近访问 issue 显示负责人头像而不是状态文本", () => {
