@@ -41,3 +41,10 @@ make check            # 完整验证流水线
 ## 验证策略
 
 开发期运行 changed-aware 检查，提交前按影响面验证，完整发布或全栈变更再运行 `make check`。详见 [CLAUDE.md → 验证策略](CLAUDE.md)。
+
+## 联调环境运维要点
+
+- **联调 postgres 在远端**：`.run/env/goal-test-int.env` 的 `DATABASE_URL` 指向 `9.134.129.162:5432`，**不是本机 docker 容器**。本机 `multica_*-postgres-1` 容器与联调环境无关。
+- **查联调数据优先用 API**：`curl http://9.134.129.162:18762/api/workspaces`（先 `POST /auth/login` 拿 token）。不要直接查本机 postgres——那会读到空库，误判为「无数据」。
+- **goal-test 默认工作区是 `ai-studio`**：`GOAL_TEST_INT_WORKSPACE=ai-studio`。删除该工作区会导致 `make goal-test-e2e-preflight` 与部署验证失败，需同步改环境变量或重建。
+
