@@ -2390,10 +2390,6 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 	}, nil
 }
 
-func (h *Handler) ListPromptEvaluationExperimentDimensions(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusGone, "prompt evaluation experiments have been removed; use test suites and evaluation runs")
-}
-
 func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
