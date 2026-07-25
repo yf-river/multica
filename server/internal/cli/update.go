@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -34,41 +33,6 @@ type GitHubRelease struct {
 	TagName string               `json:"tag_name"`
 	HTMLURL string               `json:"html_url"`
 	Assets  []GitHubReleaseAsset `json:"assets"`
-}
-
-// parseReleaseVersion extracts the three numeric components of v. Returns
-// (parts, true) on success; (_, false) when v is missing, malformed, or
-// carries any non-numeric tail (a dev-describe suffix, a 4th component, a
-// pre-release tag, etc.). The strict shape is intentional: the manual
-// updater must never silently downgrade a developer build to a public
-// release just because the dev-describe patch happened to look numeric
-// after trimming.
-func parseReleaseVersion(v string) ([3]int, bool) {
-	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
-	if s == "" {
-		return [3]int{}, false
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return [3]int{}, false
-	}
-	var out [3]int
-	for i, p := range parts {
-		if p == "" {
-			return [3]int{}, false
-		}
-		for _, r := range p {
-			if r < '0' || r > '9' {
-				return [3]int{}, false
-			}
-		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return [3]int{}, false
-		}
-		out[i] = n
-	}
-	return out, true
 }
 
 type GitHubReleaseAsset struct {
