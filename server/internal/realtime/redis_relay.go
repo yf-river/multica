@@ -147,12 +147,6 @@ type scopeConsumer struct {
 	done   chan struct{}
 }
 
-// NewRedisRelay constructs a relay. The caller is responsible for invoking
-// Start before producing messages.
-func NewRedisRelay(hub *Hub, rdb *redis.Client) *RedisRelay {
-	return NewRedisRelayWithClients(hub, rdb, rdb)
-}
-
 // NewRedisRelayWithClients constructs a relay with separate Redis clients for
 // writes and blocking reads. The read client is reserved for XREADGROUP BLOCK
 // calls so long-polling stream consumers cannot exhaust the pool used by XADD,

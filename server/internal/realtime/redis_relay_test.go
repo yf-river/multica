@@ -33,7 +33,7 @@ func TestRedisRelayStopPreventsNewConsumers(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 	t.Cleanup(func() { client.Close() })
 
-	relay := NewRedisRelay(hub, client)
+	relay := NewRedisRelayWithClients(hub, client, client)
 	relay.Stop()
 	relay.startConsumer(context.Background(), ScopeWorkspace, "workspace-1")
 
