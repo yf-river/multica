@@ -47,30 +47,6 @@ import { useT } from "../../i18n";
 
 const MACHINE_FILTERS: RuntimeMachineFilter[] = ["all", "online", "issues"];
 
-interface RuntimesPageProps {
-  /** Desktop-only daemon id used to mark the row for this Mac. */
-  localDaemonId?: string | null;
-  /** Desktop-only friendly device name for the local daemon. */
-  localMachineName?: string | null;
-  /** Desktop-only controls shown when the local machine is selected. */
-  localMachineActions?: React.ReactNode;
-  /**
-   * Desktop-only signal: this host always owns a local machine, even
-   * when no runtime is currently registered (daemon stopped, not yet
-   * started, or runtime GC'd). When true, a placeholder local row is
-   * synthesized so `localMachineActions` (the daemon Start button) is
-   * always reachable. Web omits this.
-   */
-  hasLocalMachine?: boolean;
-  /**
-   * Desktop-only signal: the bundled daemon is still booting / hasn't
-   * registered with the server yet. Forwarded so the empty state can show
-   * a "starting" indicator instead of the static "register a runtime" hint
-   * during the boot window. Web omits this.
-   */
-  bootstrapping?: boolean;
-}
-
 // Re-render every 30s so derived health (recently_lost → offline transitions)
 // catches up even when no underlying query data has changed.
 function useNowTick(intervalMs = 30_000): number {
@@ -82,13 +58,7 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
-function RuntimesPage({
-  localDaemonId,
-  localMachineName,
-  localMachineActions,
-  hasLocalMachine,
-  bootstrapping,
-}: RuntimesPageProps = {}) {
+function RuntimesPage() {
   const isLoading = useAuthStore((s) => s.isLoading);
   const { t } = useT("runtimes");
   const pendingMachineName = t(($) => $.machine.pending_custom_runtimes);
@@ -102,8 +72,7 @@ function RuntimesPage({
     null,
   );
   // Tracks whether the user has explicitly picked a machine. Until then,
-  // auto-default keeps preferring the Local section (which on desktop may
-  // appear later than remotes — `localDaemonId` is fetched async).
+  // auto-default keeps preferring the Local section.
   const userSelectedRef = useRef(false);
   const handleSelectMachine = useCallback((id: string) => {
     userSelectedRef.current = true;
@@ -163,18 +132,9 @@ function RuntimesPage({
         pendingProfiles,
         runtimes,
         ownerId: currentUserId,
-        localDaemonId,
-        localMachineName,
         fallbackMachineName: pendingMachineName,
       }),
-    [
-      pendingProfiles,
-      runtimes,
-      currentUserId,
-      localDaemonId,
-      localMachineName,
-      pendingMachineName,
-    ],
+    [pendingProfiles, runtimes, currentUserId, pendingMachineName],
   );
 
   const workloadIndex = useMemo(
@@ -186,21 +146,9 @@ function RuntimesPage({
     () =>
       buildRuntimeMachines(visibleRuntimes, {
         now,
-        localDaemonId,
-        localMachineName,
-        currentUserId,
         workloadByRuntimeId: workloadIndex,
-        ensureLocalMachine: hasLocalMachine,
       }),
-    [
-      visibleRuntimes,
-      now,
-      localDaemonId,
-      localMachineName,
-      currentUserId,
-      workloadIndex,
-      hasLocalMachine,
-    ],
+    [visibleRuntimes, now, workloadIndex],
   );
 
   const machineCounts = useMemo(() => runtimeMachineCounts(machines), [machines]);
@@ -235,9 +183,7 @@ function RuntimesPage({
   if (isLoading || fetching) return <RuntimesPageSkeleton />;
 
   const totalCount = visibleRuntimes.length;
-  // Desktop always has a synthesized local machine row, so the
-  // "register a runtime" empty state would hide the Start button.
-  const showEmpty = totalCount === 0 && !bootstrapping && !hasLocalMachine;
+  const showEmpty = totalCount === 0;
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -256,7 +202,6 @@ function RuntimesPage({
         <div className="flex min-h-0 flex-1 flex-col bg-background">
           <MachineSidebar
             machines={filteredMachines}
-            totalMachines={machines.length}
             counts={machineCounts}
             selectedMachineId={selectedMachine?.id ?? null}
             search={machineSearch}
@@ -268,10 +213,6 @@ function RuntimesPage({
           <MachineDetail
             machine={selectedMachine}
             now={now}
-            bootstrapping={bootstrapping}
-            actions={
-              selectedMachine?.isCurrent ? localMachineActions : undefined
-            }
           />
         </div>
       ) : (
@@ -291,7 +232,6 @@ function RuntimesPage({
             >
               <MachineSidebar
                 machines={filteredMachines}
-                totalMachines={machines.length}
                 counts={machineCounts}
                 selectedMachineId={selectedMachine?.id ?? null}
                 search={machineSearch}
@@ -307,10 +247,6 @@ function RuntimesPage({
               <MachineDetail
                 machine={selectedMachine}
                 now={now}
-                bootstrapping={bootstrapping}
-                actions={
-                  selectedMachine?.isCurrent ? localMachineActions : undefined
-                }
               />
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -404,7 +340,6 @@ function PageHeaderBar({
 
 function MachineSidebar({
   machines,
-  totalMachines,
   counts,
   selectedMachineId,
   search,
@@ -415,7 +350,6 @@ function MachineSidebar({
   className,
 }: {
   machines: RuntimeMachine[];
-  totalMachines: number;
   counts: { all: number; online: number; issues: number };
   selectedMachineId: string | null;
   search: string;
@@ -502,9 +436,7 @@ function MachineSidebar({
               {t(($) => $.machine.no_matches_title)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {totalMachines > 0
-                ? t(($) => $.machine.no_matches_hint)
-                : t(($) => $.page.bootstrapping.hint)}
+              {t(($) => $.machine.no_matches_hint)}
             </p>
           </div>
         )}
@@ -644,13 +576,9 @@ function ProviderIconStack({ providers }: { providers: string[] }) {
 function MachineDetail({
   machine,
   now,
-  bootstrapping,
-  actions,
 }: {
   machine: RuntimeMachine | null;
   now: number;
-  bootstrapping?: boolean;
-  actions?: React.ReactNode;
 }) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
@@ -658,24 +586,10 @@ function MachineDetail({
   if (!machine) {
     return (
       <main className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
-        {bootstrapping ? (
-          <>
-            <Server className="h-8 w-8 animate-pulse text-muted-foreground/40" />
-            <p className="mt-3 text-sm text-muted-foreground">
-              {t(($) => $.page.bootstrapping.title)}
-            </p>
-            <p className="mt-1 max-w-xs text-xs text-muted-foreground/70">
-              {t(($) => $.page.bootstrapping.hint)}
-            </p>
-          </>
-        ) : (
-          <>
-            <Monitor className="h-8 w-8 text-muted-foreground/40" />
-            <p className="mt-3 text-sm text-muted-foreground">
-              {t(($) => $.machine.select_machine)}
-            </p>
-          </>
-        )}
+        <Monitor className="h-8 w-8 text-muted-foreground/40" />
+        <p className="mt-3 text-sm text-muted-foreground">
+          {t(($) => $.machine.select_machine)}
+        </p>
       </main>
     );
   }
@@ -751,7 +665,6 @@ function MachineDetail({
               ))}
             </div>
           </div>
-          {actions && <div className="shrink-0">{actions}</div>}
         </div>
       </div>
 

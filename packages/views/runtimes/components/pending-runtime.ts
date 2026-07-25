@@ -45,22 +45,16 @@ export function pendingRuntimeFromProfile({
   profile,
   createdAt,
   ownerId,
-  localDaemonId,
-  localMachineName,
   fallbackMachineName,
 }: {
   profile: RuntimeProfile;
   createdAt: number;
   ownerId?: string | null;
-  localDaemonId?: string | null;
-  localMachineName?: string | null;
   fallbackMachineName?: string | null;
 }): AgentRuntime {
   const pendingSince = new Date(createdAt).toISOString();
   const machineName =
-    localMachineName?.trim() ||
-    fallbackMachineName?.trim() ||
-    "Pending custom runtimes";
+    fallbackMachineName?.trim() || "Pending custom runtimes";
   const metadata: PendingRuntimeMetadata = {
     pending_custom_runtime: true,
     runtime_profile_id: profile.id,
@@ -71,7 +65,7 @@ export function pendingRuntimeFromProfile({
   return {
     id: pendingRuntimeId(profile.id),
     workspace_id: profile.workspace_id,
-    daemon_id: localDaemonId ?? null,
+    daemon_id: null,
     name: `${profile.display_name} (${machineName})`,
     runtime_mode: "local",
     provider: profile.protocol_family,
@@ -92,15 +86,11 @@ export function pendingRuntimesForProfiles({
   pendingProfiles,
   runtimes,
   ownerId,
-  localDaemonId,
-  localMachineName,
   fallbackMachineName,
 }: {
   pendingProfiles: PendingRuntimeProfile[];
   runtimes: AgentRuntime[];
   ownerId?: string | null;
-  localDaemonId?: string | null;
-  localMachineName?: string | null;
   fallbackMachineName?: string | null;
 }): AgentRuntime[] {
   if (pendingProfiles.length === 0) return runtimes;
@@ -116,8 +106,6 @@ export function pendingRuntimesForProfiles({
         profile,
         createdAt,
         ownerId,
-        localDaemonId,
-        localMachineName,
         fallbackMachineName,
       }),
     );

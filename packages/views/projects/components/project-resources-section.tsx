@@ -86,8 +86,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const deleteResource = useDeleteProjectResource(wsId, projectId);
   const syncResource = useSyncProjectResource(wsId, projectId);
 
-  const localDaemonId = null;
-
   const attachedUrls = new Set(
     resources.filter(isGongfengRef).map((r) => r.resource_ref.url),
   );
@@ -197,7 +195,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                 <ResourceRow
                   key={resource.id}
                   resource={resource}
-                  localDaemonId={localDaemonId}
                   canEdit={false}
                   onRemove={() => handleRemove(resource)}
                   onSync={() => handleSync(resource)}
@@ -298,7 +295,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
 
 interface ResourceRowProps {
   resource: ProjectResource;
-  localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
   onSync: () => void;
@@ -311,7 +307,6 @@ interface ResourceRowProps {
 
 function ResourceRow({
   resource,
-  localDaemonId,
   canEdit,
   onRemove,
   onSync,
@@ -323,7 +318,6 @@ function ResourceRow({
     return (
       <LocalDirectoryRow
         resource={resource}
-        localDaemonId={localDaemonId}
         canEdit={canEdit}
         onRemove={onRemove}
         onRename={onRenameLocalDirectory}
@@ -496,7 +490,6 @@ function statusLabel(value: string): string {
 
 interface LocalDirectoryRowProps {
   resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef };
-  localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
   onRename: (
@@ -507,7 +500,6 @@ interface LocalDirectoryRowProps {
 
 function LocalDirectoryRow({
   resource,
-  localDaemonId,
   canEdit,
   onRemove,
   onRename,
@@ -516,14 +508,11 @@ function LocalDirectoryRow({
   const ref = resource.resource_ref;
   const display = (ref.label || resource.label || ref.local_path).trim() ||
     ref.local_path;
-  const isForeignDaemon =
-    localDaemonId !== null && ref.daemon_id !== localDaemonId;
-  const isLocalUnknown = localDaemonId === null;
-  // "disabled" in the spec sense — visual de-emphasis + no chat hint, and
-  // rename is hidden on foreign / unknown-daemon rows because the label
-  // belongs to the owning device. Delete stays available so the user can
+  // Without a local daemon (web), the owning device is never "this machine" —
+  // the row is always visually de-emphasized and rename is hidden because the
+  // label belongs to the owning device. Delete stays available so the user can
   // drop a stale registration from any device.
-  const mismatch = isForeignDaemon || isLocalUnknown;
+  const mismatch = true;
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(display);
@@ -578,9 +567,7 @@ function LocalDirectoryRow({
               <div className="font-mono">{ref.local_path}</div>
               {mismatch && (
                 <div className="text-muted-foreground">
-                  {isLocalUnknown
-                    ? t(($) => $.resources.local_no_daemon_tooltip)
-                    : t(($) => $.resources.local_other_machine_tooltip)}
+                  {t(($) => $.resources.local_no_daemon_tooltip)}
                 </div>
               )}
               <div className="text-muted-foreground">
