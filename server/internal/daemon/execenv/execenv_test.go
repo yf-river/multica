@@ -55,7 +55,7 @@ func prepareSeededCodexConfigHome(t *testing.T) preparedCodexConfigHome {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("first prepareCodexHome: %v", err)
 	}
 
@@ -1914,7 +1914,7 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2016,7 +2016,7 @@ model = "o3"
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2047,7 +2047,7 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2111,7 +2111,7 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 	// Shared source rotates to v2 while the per-task copy is still stuck on v0.
 	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v2"}`), 0o644)
 
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2150,7 +2150,7 @@ env_key = "NEW_API_KEY"
 	seedSharedCodexConfigFiles(t, home.sharedHome, "rotate", newConfig, `{"model":"new-model"}`, "new instructions")
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(home.codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
@@ -2231,7 +2231,7 @@ func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T)
 	}
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(home.codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
@@ -2548,7 +2548,7 @@ func TestPrepareCodexHomeEnsuresNetworkAccess(t *testing.T) {
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
 	// Default prepareCodexHome assumes linux-like behavior.
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 

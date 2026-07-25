@@ -45,14 +45,6 @@ type CodexHomeOptions struct {
 	GOOS string
 }
 
-// prepareCodexHome is a thin wrapper around prepareCodexHomeWithOpts kept for
-// tests that don't care about platform-aware sandbox configuration. It
-// assumes a Linux-like environment where workspace-write + network_access
-// works correctly.
-func prepareCodexHome(codexHome string, logger *slog.Logger) error {
-	return prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, logger)
-}
-
 // prepareCodexHomeWithOpts creates a per-task CODEX_HOME directory and seeds
 // it from the daemon's shared runtime Codex home. Auth is symlinked to the
 // runtime profile; config files are copied; session/log/state files stay local
