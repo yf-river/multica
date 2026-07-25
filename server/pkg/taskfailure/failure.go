@@ -28,7 +28,6 @@
 //
 //   - 14 agent-side values (with `agent_error.` prefix) produced by
 //     Classify(rawError) when the agent process surfaced an error string.
-//     IsAgentError reports membership in this set.
 //
 // Wire stability: the string forms of these constants are persisted into
 // the database and surfaced as Prometheus labels. Renaming a value is a
@@ -36,8 +35,6 @@
 // classifier in MUL-1949 grows a matching rule and a backfill migration
 // re-classifies historical rows.
 package taskfailure
-
-import "strings"
 
 // Reason is a string-backed enum of the canonical failure_reason values
 // stored in agent_task_queue.failure_reason. Use the Reason* constants
@@ -217,19 +214,6 @@ var allReasons = []Reason{
 // String returns the wire form of the reason — what gets written to the
 // failure_reason column and exposed as a Prometheus label value.
 func (r Reason) String() string { return string(r) }
-
-// IsAgentError reports whether the reason originates inside the agent
-// process (provider error, runner crash, context overflow, etc.) as
-// opposed to the platform/scheduler/runtime layer (queue expiry, runtime
-// offline, sweeper timeout, etc.).
-//
-// The classification is intentionally based on a string prefix rather
-// than an enum membership test: any future agent_error.* value
-// automatically inherits the correct grouping without needing to update
-// this method.
-func (r Reason) IsAgentError() bool {
-	return strings.HasPrefix(string(r), agentErrorPrefix)
-}
 
 // AllReasons returns the canonical 21 reasons in a stable order. The
 // caller MUST NOT mutate the returned slice; a copy is returned so
