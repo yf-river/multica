@@ -186,7 +186,7 @@ func TestPrepareDirectoryMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	// Verify directory structure.
 	for _, sub := range []string{"workdir", "output", "logs"} {
@@ -244,7 +244,7 @@ func TestPrepareWithProjectResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	// resources.json should exist and decode back to what we wrote.
 	resourcesPath := filepath.Join(env.WorkDir, ".multica", "project", "resources.json")
@@ -410,7 +410,7 @@ func TestPrepareWithRepoContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	// Inject runtime config (done separately in daemon, replicate here).
 	if _, err := InjectRuntimeConfig(env.WorkDir, "claude", taskCtx); err != nil {
@@ -651,7 +651,7 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
 
@@ -717,7 +717,7 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
 
@@ -836,41 +836,6 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 				t.Errorf("SKILL.md should carry refreshed content v2; got:\n%s", body)
 			}
 		})
-	}
-}
-
-func TestCleanupPreservesLogs(t *testing.T) {
-	t.Parallel()
-	workspacesRoot := t.TempDir()
-
-	env, err := Prepare(PrepareParams{
-		WorkspacesRoot: workspacesRoot,
-		WorkspaceID:    "ws-test-003",
-		TaskID:         "d4e5f6a7-b8c9-0123-defa-234567890123",
-		AgentName:      "Preserve Test",
-		Task:           TaskContextForEnv{IssueID: "preserve-test-id"},
-	}, testLogger())
-	if err != nil {
-		t.Fatalf("Prepare failed: %v", err)
-	}
-
-	// Write something to logs/.
-	os.WriteFile(filepath.Join(env.RootDir, "logs", "test.log"), []byte("log data"), 0o644)
-
-	// Cleanup with removeAll=false.
-	if err := env.Cleanup(false); err != nil {
-		t.Fatalf("Cleanup failed: %v", err)
-	}
-
-	// workdir should be gone.
-	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
-		t.Fatal("expected workdir to be removed")
-	}
-
-	// logs should still exist.
-	logFile := filepath.Join(env.RootDir, "logs", "test.log")
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		t.Fatal("expected logs/test.log to be preserved")
 	}
 }
 
@@ -1454,7 +1419,7 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if _, err := InjectRuntimeConfig(env.WorkDir, "opencode", taskCtx); err != nil {
 		t.Fatalf("InjectRuntimeConfig failed: %v", err)
@@ -2586,7 +2551,7 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if env.CodexHome == "" {
 		t.Fatal("expected CodexHome to be set after Prepare")
@@ -2629,7 +2594,7 @@ func TestPrepareCodexHomeTrustsTaskWorkDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
 	if err != nil {
@@ -2670,7 +2635,7 @@ func TestReuseRestoresCodexPluginCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if err := os.RemoveAll(filepath.Join(env.CodexHome, "plugins")); err != nil {
 		t.Fatalf("remove codex plugins dir: %v", err)
@@ -2708,7 +2673,7 @@ func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if err := os.RemoveAll(filepath.Join(env.CodexHome, "skills")); err != nil {
 		t.Fatalf("remove codex skills dir: %v", err)
@@ -2771,7 +2736,7 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-skill-update-test",
@@ -2846,7 +2811,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "summarize", "SKILL.md")); err != nil {
 		t.Fatalf("user skill SKILL.md not seeded: %v", err)
@@ -2905,7 +2870,7 @@ func TestPrepareCodexWorkspaceSkillBeatsUserSkillOnConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "writing", "SKILL.md"))
 	if err != nil {
@@ -2941,7 +2906,7 @@ func TestPrepareCodexNoUserSkillsDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills")); !os.IsNotExist(err) {
 		t.Errorf("skills dir should not exist when neither user nor workspace skills are present, err=%v", err)
 	}
@@ -2987,7 +2952,7 @@ func TestPrepareCodexResolvesUserSkillSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	dst := filepath.Join(env.CodexHome, "skills", "lark-mail")
 	fi, err := os.Lstat(dst)
@@ -3038,7 +3003,7 @@ func TestPrepareCodexSkipsStaleUserSkillSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "removed-skill")); !os.IsNotExist(err) {
 		t.Errorf("stale user skill should not be seeded, err=%v", err)
@@ -3073,7 +3038,7 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("v2"), 0o644); err != nil {
 		t.Fatalf("update user SKILL.md: %v", err)
@@ -3127,7 +3092,7 @@ func TestReuseClearsUserSkillResidueOnWorkspaceConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	// Round 1 had no workspace skill, so the user version should be present.
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "writing", "drafts", "stale.md")); err != nil {
@@ -3185,7 +3150,7 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "deprecated", "SKILL.md")); err != nil {
 		t.Fatalf("user skill should be seeded in round 1: %v", err)
@@ -4254,7 +4219,7 @@ func TestPrepareLocalWorkDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer os.RemoveAll(env.RootDir)
 
 	if !env.LocalDirectory {
 		t.Fatal("expected env.LocalDirectory to be true")
@@ -4281,95 +4246,5 @@ func TestPrepareLocalWorkDir(t *testing.T) {
 	contextPath := filepath.Join(userDir, ".agent_context", "issue_context.md")
 	if _, err := os.Stat(contextPath); err != nil {
 		t.Fatalf("expected context file in user dir: %v", err)
-	}
-}
-
-func TestEnvironmentCleanupPreservesLocalDirectory(t *testing.T) {
-	t.Parallel()
-	workspacesRoot := t.TempDir()
-	userDir := t.TempDir()
-
-	// Drop a sentinel file inside the user's directory so we can verify
-	// Cleanup never removed it.
-	sentinel := filepath.Join(userDir, "user-file.txt")
-	if err := os.WriteFile(sentinel, []byte("keep me"), 0o644); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
-
-	env, err := Prepare(PrepareParams{
-		WorkspacesRoot: workspacesRoot,
-		WorkspaceID:    "ws-local",
-		TaskID:         "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
-		AgentName:      "Test Agent",
-		LocalWorkDir:   userDir,
-		Task:           TaskContextForEnv{IssueID: "issue-1"},
-	}, testLogger())
-	if err != nil {
-		t.Fatalf("Prepare failed: %v", err)
-	}
-
-	// removeAll=true on a local_directory env MUST NOT touch the user's
-	// directory. envRoot (the daemon's logbook) is fair game.
-	if err := env.Cleanup(true); err != nil {
-		t.Fatalf("Cleanup: %v", err)
-	}
-	if _, err := os.Stat(sentinel); err != nil {
-		t.Fatalf("user file removed by Cleanup: %v", err)
-	}
-	if _, err := os.Stat(env.RootDir); !os.IsNotExist(err) {
-		t.Fatalf("expected envRoot to be cleaned, got err=%v", err)
-	}
-
-	// removeAll=false should also leave the user's directory alone (the
-	// existing semantics for non-local tasks would have removed WorkDir
-	// — that's exactly what we must NOT do here).
-	env2, err := Prepare(PrepareParams{
-		WorkspacesRoot: workspacesRoot,
-		WorkspaceID:    "ws-local-2",
-		TaskID:         "b2b2c3d4-e5f6-7890-abcd-ef1234567890",
-		AgentName:      "Test Agent",
-		LocalWorkDir:   userDir,
-		Task:           TaskContextForEnv{IssueID: "issue-1"},
-	}, testLogger())
-	if err != nil {
-		t.Fatalf("Prepare 2: %v", err)
-	}
-	if err := env2.Cleanup(false); err != nil {
-		t.Fatalf("Cleanup 2: %v", err)
-	}
-	if _, err := os.Stat(sentinel); err != nil {
-		t.Fatalf("partial Cleanup removed user file: %v", err)
-	}
-}
-
-// TestEnvironmentCleanupStandardModeRemovesWorkdir is the negative control:
-// a non-local_directory env preserves its existing semantics so the
-// local_directory branch can't silently regress the regular flow.
-func TestEnvironmentCleanupStandardModeRemovesWorkdir(t *testing.T) {
-	t.Parallel()
-	workspacesRoot := t.TempDir()
-
-	env, err := Prepare(PrepareParams{
-		WorkspacesRoot: workspacesRoot,
-		WorkspaceID:    "ws-std",
-		TaskID:         "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
-		AgentName:      "Test Agent",
-		Task:           TaskContextForEnv{IssueID: "issue-1"},
-	}, testLogger())
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
-	if env.LocalDirectory {
-		t.Fatal("expected LocalDirectory to be false for standard env")
-	}
-	if err := env.Cleanup(false); err != nil {
-		t.Fatalf("Cleanup: %v", err)
-	}
-	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
-		t.Fatalf("expected workdir to be removed in standard mode")
-	}
-	// output/logs should remain.
-	if _, err := os.Stat(filepath.Join(env.RootDir, "output")); err != nil {
-		t.Fatalf("output/ removed by partial cleanup: %v", err)
 	}
 }
