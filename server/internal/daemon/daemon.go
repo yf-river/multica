@@ -1210,15 +1210,6 @@ func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
 	}
 }
 
-// waitBackgroundSyncs blocks until every background sync started by
-// registerTaskRepos has finished. Intended for test teardown: tests that
-// hand the daemon a t.TempDir-backed repo cache must call this before
-// returning, otherwise an in-flight clone/fetch can race against TempDir
-// cleanup and surface as an unrelated "directory not empty" failure.
-func (d *Daemon) waitBackgroundSyncs() {
-	d.bgSyncs.Wait()
-}
-
 func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []RepoData) {
 	if d.repoCache == nil {
 		return

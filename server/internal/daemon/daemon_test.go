@@ -1072,7 +1072,7 @@ func newRepoReadyTestDaemon(t *testing.T, handler http.HandlerFunc) *Daemon {
 	// t.TempDir cache root is cleaned up, otherwise an in-flight clone/fetch
 	// races against the deletion and the test fails with a misleading
 	// "directory not empty" cleanup error.
-	t.Cleanup(d.waitBackgroundSyncs)
+	t.Cleanup(d.bgSyncs.Wait)
 	return d
 }
 
