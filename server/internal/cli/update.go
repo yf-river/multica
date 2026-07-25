@@ -36,34 +36,13 @@ type GitHubRelease struct {
 	Assets  []GitHubReleaseAsset `json:"assets"`
 }
 
-// IsNewerVersion reports whether latest is strictly newer than current. Both
-// arguments may carry an optional "v" prefix; non-numeric tails are ignored
-// (a 4th component, pre-release tag, etc.). Returns false if either side
-// cannot be parsed — the caller treats that as "stay on current".
-func IsNewerVersion(latest, current string) bool {
-	l, ok := parseReleaseVersion(latest)
-	if !ok {
-		return false
-	}
-	c, ok := parseReleaseVersion(current)
-	if !ok {
-		return false
-	}
-	for i := 0; i < 3; i++ {
-		if l[i] != c[i] {
-			return l[i] > c[i]
-		}
-	}
-	return false
-}
-
 // parseReleaseVersion extracts the three numeric components of v. Returns
 // (parts, true) on success; (_, false) when v is missing, malformed, or
 // carries any non-numeric tail (a dev-describe suffix, a 4th component, a
-// pre-release tag, etc.). The strict shape is intentional: this is the only
-// parser used by IsNewerVersion, and the manual updater must never silently
-// downgrade a developer build to a public release just because the
-// dev-describe patch happened to look numeric after trimming.
+// pre-release tag, etc.). The strict shape is intentional: the manual
+// updater must never silently downgrade a developer build to a public
+// release just because the dev-describe patch happened to look numeric
+// after trimming.
 func parseReleaseVersion(v string) ([3]int, bool) {
 	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
 	if s == "" {
