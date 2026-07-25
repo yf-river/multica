@@ -654,69 +654,6 @@ export interface RuntimeUsageByHour {
   priced: boolean;
 }
 
-// One (date, provider, model) bucket of token usage for the workspace
-// dashboard. Workspace-scoped (no runtime_id) and optionally narrowed to a
-// single project on the server side. The backend computes cost per row.
-export interface DashboardUsageDaily {
-  date: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
-}
-
-// Per-(agent, model) token totals for the workspace dashboard. Identical wire
-// shape to RuntimeUsageByAgent; the client folds by agent_id and sums cost.
-export interface DashboardUsageByAgent {
-  agent_id: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
-}
-
-// Per-agent total terminal-task run-time + counts. Powers the workspace
-// dashboard's "time by agent" list. failed_count is a subset of
-// task_count (failed tasks still contribute to total_seconds because
-// they consumed runtime to fail).
-export interface DashboardAgentRunTime {
-  agent_id: string;
-  total_seconds: number;
-  task_count: number;
-  failed_count: number;
-}
-
-// One (date) bucket of terminal-task run-time + counts for the workspace
-// dashboard. Powers the Time and Tasks metrics on the daily-trend toggle
-// — same toggle as Tokens / Cost, anchored on completed_at so day buckets
-// line up with the per-agent run-time card.
-export interface DashboardRunTimeDaily {
-  date: string;
-  total_seconds: number;
-  task_count: number;
-  failed_count: number;
-}
-
 export interface RuntimeModel {
   id: string;
   label: string;

@@ -2,18 +2,12 @@
   "title": "用量",
   "subtitle": "查看当前工作区或项目的模型用量、成本线索、运行时长和任务数；执行链路和失败复盘在「运行复盘」查看。",
   "filter": {
-    "project_label": "项目",
-    "all_projects": "全部项目",
     "period_label": "时间范围"
   },
   "kpi": {
     "cost_label": "费用 · {{days}}天",
     "tokens_label": "模型用量 · {{days}}天",
-    "tokens_hint": "输入 {{input}} · 输出 {{output}}",
-    "run_time_label": "运行时长 · {{days}}天",
-    "run_time_hint": "共 {{tasks}} 个任务",
-    "tasks_label": "任务数 · {{days}}天",
-    "tasks_hint": "失败 {{failed}} 个"
+    "tokens_hint": "输入 {{input}} · 输出 {{output}}"
   },
   "dim": {
     "label": "维度",
@@ -21,31 +15,17 @@
     "weekly": "按周"
   },
   "daily": {
-    "title_cost": "每日费用",
-    "title_tokens": "每日模型用量",
-    "title_time": "每日运行时长",
-    "title_tasks": "每日任务数",
     "metric_cost": "费用",
     "metric_tokens": "模型用量",
-    "metric_time": "运行时长",
-    "metric_tasks": "任务数",
     "no_data": "所选时间范围内暂无消耗。"
   },
   "weekly": {
-    "title_cost": "每周费用",
-    "title_tokens": "每周模型用量",
-    "title_time": "每周运行时长",
-    "title_tasks": "每周任务数",
     "partial_label": "{{range}}（未满 · 已过 {{covered}} / 7 天）"
   },
   "leaderboard": {
     "title": "排行榜",
     "caption": "{{count}} 个智能体",
     "header_agent": "智能体",
-    "header_tokens": "模型用量",
-    "header_cost": "费用",
-    "header_time": "运行时长",
-    "header_tasks": "任务数",
     "no_data": "所选时间范围内暂无智能体活动。"
   },
   "empty": {

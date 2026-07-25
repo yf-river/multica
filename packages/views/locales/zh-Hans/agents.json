@@ -4,9 +4,6 @@
     "tagline": "能领取任务、留下评论、推进状态的 AI 队友。",
     "learn_more": "了解更多 →",
     "new_agent": "新建智能体",
-    "search_placeholder": "搜索智能体...",
-    "show_archived": "显示已归档（{{count}}）→",
-    "of_total": "{{visible}} / {{total}}",
     "list_load_failed": "无法加载智能体列表",
     "list_load_failed_default": "获取智能体列表时出错。",
     "try_again": "重试"
@@ -24,14 +21,7 @@
       "tooltip": "工作区 · 工作区内所有人都可以使用该智能体"
     }
   },
-  "sort": {
-    "label_recent": "最近活跃",
-    "label_name": "名称",
-    "label_runs": "运行最多",
-    "label_created": "最近创建"
-  },
   "availability": {
-    "all": "全部",
     "online": "在线",
     "unstable": "不稳定",
     "offline": "离线",
@@ -42,23 +32,12 @@
     "queued": "排队中",
     "idle": "空闲"
   },
-  "archived": {
-    "active_link": "活跃智能体",
-    "title": "已归档智能体"
-  },
   "empty": {
     "title": "还没有智能体",
     "description": "创建一个智能体，像分配给同事那样把任务交给它。本地智能体在你的机器上运行，云智能体在 Multica 运行时上运行。"
   },
   "no_matches": {
-    "title": "无匹配项",
-    "search_archived": "没有已归档智能体匹配\"{{query}}\"。",
-    "no_archived": "还没有已归档智能体。",
-    "search_active": "没有智能体匹配\"{{query}}\"。",
-    "search_active_filtered": "在该筛选下没有智能体匹配\"{{query}}\"。",
-    "no_filter_match": "该筛选下没有匹配的智能体。",
-    "search_runtime_filtered": "\"{{machine}}\"上没有匹配\"{{query}}\"的智能体。",
-    "runtime_filtered": "\"{{machine}}\"上还没有智能体。"
+    "title": "无匹配项"
   },
   "runtime_filter": {
     "all": "全部运行时",
@@ -71,9 +50,7 @@
   "columns": {
     "agent": "智能体",
     "status": "状态",
-    "workload": "工作负载",
     "runtime": "运行时",
-    "activity_7d": "活动（7 天）",
     "runs": "运行次数",
     "last_active": "最近活跃",
     "model": "模型",
@@ -81,22 +58,12 @@
     "owner": "拥有者"
   },
   "row": {
-    "you": "你",
     "archived": "已归档",
     "no_description": "暂无描述",
     "fallback_runtime_cloud": "云端",
-    "fallback_runtime_local": "本地",
     "actions_aria": "行操作",
     "task_count_one": "{{count}} 个任务",
     "task_count_other": "{{count}} 个任务"
-  },
-  "activity_tooltip": {
-    "created_today": "今天创建",
-    "created_days_ago_other": "{{count}} 天前创建",
-    "last_7_days": "近 7 天",
-    "no_activity": "无活动",
-    "runs_other": "{{count}} 次运行",
-    "failed_suffix": " · {{count}} 次失败（{{percent}}%）"
   },
   "row_actions": {
     "cancel_all_tasks": "取消全部任务",
@@ -288,8 +255,6 @@
       "placeholder": "定义这个智能体的角色、专长和工作风格。\n\n# 示例\n你是一名专注 React 和 TypeScript 的前端工程师。\n\n## 工作风格\n- 写小而聚焦的 PR —— 每个逻辑变更一个 commit\n- 优先组合而不是继承\n- 新组件总是配单元测试\n\n## 约束\n- 未经明确批准不要修改 shared/ 下的 type\n- 遵循 features/ 中现有的组件模式"
     },
     "env": {
-      "intro_readonly": "在智能体进程启动时注入。只有工作区所有者 / 管理员可以查看或编辑值；每次解锁和编辑都会写入工作区审计日志。",
-      "empty_readonly": "尚未配置环境变量。",
       "intro_prefix": "在智能体进程启动时注入（例如 ",
       "intro_separator": "、",
       "intro_suffix": "）。",
@@ -358,9 +323,7 @@
       "remove_failed_toast": "移除 skill 失败",
       "add_dialog_title": "添加 skill",
       "add_dialog_description": "选择一个工作区 skill 分配给该智能体。",
-      "add_dialog_search_placeholder": "搜索 skill",
       "add_dialog_empty": "全部工作区 skill 都已分配。",
-      "add_dialog_no_match": "没有匹配的 skill。",
       "add_dialog_empty_partial": "已无可添加的 skill —— 全部都已分配给该智能体。",
       "add_dialog_saving": "添加中…",
       "add_dialog_confirm_default": "添加",
@@ -415,9 +378,6 @@
   "char_counter": {
     "over_limit": " · 超出 {{count}} 字"
   },
-  "presence": {
-    "queue_badge": "+{{count}} 排队"
-  },
   "resource_scope": {
     "personal": {
       "label": "个人",
@@ -461,13 +421,6 @@
     "sort_label": "排序",
     "sort_chronological": "时间顺序",
     "sort_newest_first": "最新在前"
-  },
-  "task_failure": {
-    "agent_error": "智能体执行出错",
-    "timeout": "任务超时",
-    "runtime_offline": "守护进程离线",
-    "runtime_recovery": "守护进程已重启",
-    "manual": "用户取消"
   },
   "last_active": {
     "today": "今天",

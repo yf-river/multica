@@ -5,7 +5,6 @@ import zhHansSettings from "./zh-Hans/settings.json";
 import zhHansIssues from "./zh-Hans/issues.json";
 import zhHansAgents from "./zh-Hans/agents.json";
 import zhHansEditor from "./zh-Hans/editor.json";
-import zhHansOnboarding from "./zh-Hans/onboarding.json";
 import zhHansLabels from "./zh-Hans/labels.json";
 import zhHansMembers from "./zh-Hans/members.json";
 import zhHansMyIssues from "./zh-Hans/my-issues.json";
@@ -31,7 +30,6 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     issues: zhHansIssues,
     agents: zhHansAgents,
     editor: zhHansEditor,
-    onboarding: zhHansOnboarding,
     labels: zhHansLabels,
     members: zhHansMembers,
     "my-issues": zhHansMyIssues,

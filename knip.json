@@ -11,8 +11,6 @@
     "packages/views/locales/**"
   ],
   "ignoreFiles": [
-    "apps/web/lib/use-cases-source.ts",
-    "apps/web/source.config.ts",
     "apps/web/test/helpers.tsx"
   ],
   "ignoreBinaries": [
@@ -52,8 +50,6 @@
     "class-variance-authority",
     "clsx",
     "cmdk",
-    "date-fns",
-    "embla-carousel-react",
     "emoji-mart",
     "linkify-it",
     "lowlight",
@@ -70,7 +66,6 @@
     "tailwind-merge",
     "tailwindcss",
     "tw-animate-css",
-    "vaul",
     "vitest",
     "zod"
   ],

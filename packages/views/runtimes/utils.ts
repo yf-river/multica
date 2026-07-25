@@ -198,14 +198,14 @@ export function usageTokenTotal(
   );
 }
 
-export interface CostBreakdown {
+interface CostBreakdown {
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
 }
 
-export function estimateCostBreakdown(usage: Priceable): CostBreakdown {
+function estimateCostBreakdown(usage: Priceable): CostBreakdown {
   return {
     input: usage.input_cost_usd ?? 0,
     output: usage.output_cost_usd ?? 0,
@@ -569,7 +569,7 @@ export function weekStartIso(iso: string): string {
 
 // "May 12" — short, locale-aware month/day for a YYYY-MM-DD string. Parsing
 // via UTC keeps the displayed day stable regardless of the browser's tz.
-export function formatShortDate(iso: string): string {
+function formatShortDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1));
   return dt.toLocaleString("en", {

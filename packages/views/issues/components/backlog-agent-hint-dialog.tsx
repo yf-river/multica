@@ -42,7 +42,7 @@ interface BacklogAgentHintContentProps {
   onMoveToTodo: () => void;
 }
 
-export function BacklogAgentHintContent({
+function BacklogAgentHintContent({
   onKeepInBacklog,
   onDismissPermanently,
   onMoveToTodo,

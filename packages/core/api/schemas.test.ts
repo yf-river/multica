@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
-  DashboardAgentRunTimeListSchema,
-  DashboardUsageByAgentListSchema,
-  DashboardUsageDailyListSchema,
   EMPTY_USER,
   ListIssuesResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -322,40 +319,7 @@ describe("PromptEvaluationAssetSchema", () => {
 // The contract these schemas must hold: a row missing a field degrades
 // that field to a sane default rather than dropping the WHOLE array to
 // the `[]` fallback — one drifted row must not blank the entire chart.
-describe("dashboard + runtime usage schema drift", () => {
-  it("coerces a missing numeric field to 0 instead of dropping the array", () => {
-    const parsed = DashboardUsageDailyListSchema.parse([
-      { date: "2026-05-19", model: "claude-opus-4-7", input_tokens: 100 },
-    ]);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]?.output_tokens).toBe(0);
-    expect(parsed[0]?.cache_read_tokens).toBe(0);
-    expect(parsed[0]?.cache_write_tokens).toBe(0);
-  });
-
-  it("coerces a missing date key to \"\" so the rest of the series survives", () => {
-    const parsed = DashboardUsageDailyListSchema.parse([
-      { model: "claude-opus-4-7", input_tokens: 5 },
-    ]);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]?.date).toBe("");
-  });
-
-  it("coerces a missing agent_id key to \"\" for the agent-runtime panel", () => {
-    const parsed = DashboardAgentRunTimeListSchema.parse([
-      { total_seconds: 42, task_count: 3, failed_count: 0 },
-    ]);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]?.agent_id).toBe("");
-  });
-
-  it("coerces a missing agent_id key to \"\" for the usage-by-agent panel", () => {
-    const parsed = DashboardUsageByAgentListSchema.parse([
-      { model: "claude-opus-4-7", input_tokens: 7 },
-    ]);
-    expect(parsed[0]?.agent_id).toBe("");
-  });
-
+describe("runtime usage schema drift", () => {
   it("coerces missing fields on every runtime usage schema", () => {
     expect(RuntimeUsageListSchema.parse([{ date: "2026-05-19" }])[0]?.input_tokens).toBe(0);
     expect(RuntimeHourlyActivityListSchema.parse([{ hour: 9 }])[0]?.count).toBe(0);
@@ -368,19 +332,11 @@ describe("dashboard + runtime usage schema drift", () => {
     // provider was added for cross-provider model disambiguation; a server
     // predating it omits the field. The schema must fill "" (→ bare-model
     // pricing lookup) rather than drop the row.
-    expect(
-      DashboardUsageDailyListSchema.parse([{ date: "2026-05-19", model: "claude-opus-4-7" }])[0]
-        ?.provider,
-    ).toBe("");
-    expect(
-      DashboardUsageByAgentListSchema.parse([{ model: "claude-opus-4-7" }])[0]?.provider,
-    ).toBe("");
     expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
     expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
   });
 
   it("rejects a non-array body so parseWithFallback can return its fallback", () => {
-    expect(DashboardUsageDailyListSchema.safeParse(null).success).toBe(false);
     expect(RuntimeUsageListSchema.safeParse({ rows: [] }).success).toBe(false);
   });
 

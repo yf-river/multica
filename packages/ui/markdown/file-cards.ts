@@ -69,7 +69,7 @@ function toFileCardHtml(filename: string, url: string): string {
  * Uses exact hostname match against `cdnDomain` (e.g. "multica-static.copilothub.ai"),
  * and also matches any `.amazonaws.com` subdomain as a fallback for direct S3 URLs.
  */
-export function isCdnUrl(url: string, cdnDomain: string): boolean {
+function isCdnUrl(url: string, cdnDomain: string): boolean {
   try {
     const u = new URL(url)
     return u.hostname === cdnDomain || u.hostname.endsWith('.amazonaws.com')
@@ -82,7 +82,7 @@ export function isCdnUrl(url: string, cdnDomain: string): boolean {
  * Check if a CDN URL is a non-image file that should render as a file card.
  * Image URLs (png, jpg, etc.) are excluded — they render as inline images.
  */
-export function isFileCardUrl(url: string, cdnDomain: string): boolean {
+function isFileCardUrl(url: string, cdnDomain: string): boolean {
   try {
     return isCdnUrl(url, cdnDomain) && !IMAGE_EXTS.test(new URL(url).pathname)
   } catch {

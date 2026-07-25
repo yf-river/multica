@@ -16,12 +16,6 @@
       "agents_label": "我的智能体和小队",
       "agents_description": "分配给我的智能体的任务"
     },
-    "filter_button": "筛选",
-    "filter_status": "状态",
-    "filter_priority": "优先级",
-    "issue_count_other": "{{count}} 个任务",
-    "reset_filters": "重置所有筛选",
-    "display_settings": "显示设置",
     "grouping": "分组",
     "group_status": "状态",
     "group_assignee": "负责人",
@@ -29,13 +23,6 @@
     "ascending": "升序",
     "descending": "降序",
     "card_properties": "卡片属性",
-    "view_board": "看板视图",
-    "view_list": "列表视图",
-    "view_swimlane": "泳道视图",
-    "view_label": "视图",
-    "view_board_short": "看板",
-    "view_list_short": "列表",
-    "view_swimlane_short": "泳道",
     "sort_manual": "手动"
   },
   "errors": {
