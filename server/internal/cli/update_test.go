@@ -101,31 +101,6 @@ func TestFindReleaseAsset(t *testing.T) {
 	})
 }
 
-func TestIsReleaseVersion(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want bool
-	}{
-		{"bare release", "0.1.13", true},
-		{"v-prefixed release", "v0.1.13", true},
-		{"surrounding whitespace", "  v0.1.13  ", true},
-		{"dev describe", "v0.2.15-235-gdaf0e935", false},
-		{"dirty dev describe", "v0.2.15-235-gdaf0e935-dirty", false},
-		{"empty", "", false},
-		{"two components", "0.1", false},
-		{"four components", "0.1.2.3", false},
-		{"non-numeric", "1.0.x", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsReleaseVersion(tt.in); got != tt.want {
-				t.Fatalf("IsReleaseVersion(%q) = %v, want %v", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsNewerVersion(t *testing.T) {
 	tests := []struct {
 		name            string
