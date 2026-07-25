@@ -76,37 +76,6 @@ func (p OpenclawGatewayPin) IsZero() bool {
 	return p == OpenclawGatewayPin{}
 }
 
-// String masks the bearer token when the pin is rendered as a string —
-// `%v` / `%+v` / direct `fmt.Stringer` use cases all go through here. The
-// raw Token field still exists for the wrapper-config emitter that needs
-// it; this is a belt against a future caller that logs a whole task-prep
-// summary at a level a non-admin can see (issue #3260 CR).
-func (p OpenclawGatewayPin) String() string {
-	tok := ""
-	if p.Token != "" {
-		tok = "***"
-	}
-	return fmt.Sprintf("OpenclawGatewayPin{Host:%q Port:%d Token:%s TLS:%t}", p.Host, p.Port, tok, p.TLS)
-}
-
-// MarshalJSON masks the bearer token in any default JSON dump (debug
-// endpoints, error envelopes, structured-log encoders). The wrapper config
-// writer goes through buildGatewayOverride which assembles a map directly,
-// so it is unaffected by this masking.
-func (p OpenclawGatewayPin) MarshalJSON() ([]byte, error) {
-	type alias struct {
-		Host  string `json:"host,omitempty"`
-		Port  int    `json:"port,omitempty"`
-		Token string `json:"token,omitempty"`
-		TLS   bool   `json:"tls,omitempty"`
-	}
-	masked := alias{Host: p.Host, Port: p.Port, TLS: p.TLS}
-	if p.Token != "" {
-		masked.Token = "***"
-	}
-	return json.Marshal(masked)
-}
-
 // OpenclawConfigResult is what prepareOpenclawConfig returns to its callers
 // in execenv.go. ConfigPath is the wrapper file the daemon points
 // OPENCLAW_CONFIG_PATH at. IncludeRoot is the directory the daemon must add
