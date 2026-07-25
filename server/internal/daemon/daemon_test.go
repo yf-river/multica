@@ -725,24 +725,6 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 	}
 }
 
-func TestIsWorkspaceNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	err := &requestError{
-		Method:     http.MethodPost,
-		Path:       "/api/daemon/register",
-		StatusCode: http.StatusNotFound,
-		Body:       `{"error":"workspace not found"}`,
-	}
-	if !isWorkspaceNotFoundError(err) {
-		t.Fatal("expected workspace not found error to be recognized")
-	}
-
-	if isWorkspaceNotFoundError(&requestError{StatusCode: http.StatusInternalServerError, Body: `{"error":"workspace not found"}`}) {
-		t.Fatal("did not expect 500 to be treated as workspace not found")
-	}
-}
-
 func TestIsTaskNotFoundError(t *testing.T) {
 	t.Parallel()
 

@@ -27,18 +27,6 @@ func (e *requestError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
-// isWorkspaceNotFoundError returns true if the error is a 404 with "workspace not found" body.
-func isWorkspaceNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "workspace not found")
-}
-
 // isTaskNotFoundError returns true if the error is a 404 with "task not found"
 // body. The daemon uses this to detect that a task was deleted server-side
 // (issue removed, agent reassigned, ...) while the local agent was still
@@ -176,21 +164,6 @@ func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error)
 
 func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
-}
-
-// MarkTaskWaitingLocalDirectory parks a freshly-dispatched task in the
-// waiting_local_directory state on the server. The daemon calls this after
-// it has claimed a task whose project carries a local_directory resource
-// but the path mutex is held by another in-flight task. reason is a short
-// human-readable hint (e.g. "<path>") surfaced by the UI alongside the
-// status. Idempotent on the daemon's side — calling twice with the same
-// reason is a no-op once the row is already waiting_local_directory (the
-// underlying SQL filters on status='dispatched', so the second call is a
-// 400 the daemon swallows and proceeds to wait).
-func (c *Client) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID, reason string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/wait-local-directory", taskID), map[string]any{
-		"reason": reason,
-	}, nil)
 }
 
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
