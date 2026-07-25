@@ -218,30 +218,6 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 	return nil
 }
 
-// ensureDirSymlink creates a symlink dst → src for a directory.
-// Unlike ensureSymlink, it creates the source directory if it doesn't exist,
-// so Codex can write to it immediately.
-func ensureDirSymlink(src, dst string) error {
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		return fmt.Errorf("create shared dir %s: %w", src, err)
-	}
-
-	// Check if dst already exists.
-	if fi, err := os.Lstat(dst); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(dst)
-			if err == nil && target == src {
-				return nil // already correct
-			}
-			os.Remove(dst)
-		} else {
-			// Regular file/dir exists — don't overwrite.
-			return nil
-		}
-	}
-
-	return createDirLink(src, dst)
-}
 
 // ensureSymlink ensures dst tracks src. If src doesn't exist, it's a no-op.
 // If dst is already a symlink pointing at src, it's a no-op. Otherwise — a
