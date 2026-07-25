@@ -1,9 +1,7 @@
 package daemon
 
 import (
-	"log/slog"
 	"testing"
-	"time"
 )
 
 func TestTaskWakeupURL(t *testing.T) {
@@ -43,35 +41,5 @@ func TestTaskWakeupURL(t *testing.T) {
 				t.Fatalf("taskWakeupURL() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-// TestWSHeartbeatFreshnessTracksAckWindow pins the WS freshness bookkeeping.
-// HTTP heartbeats are no longer suppressed by this marker because heartbeat
-// responses also deliver UI-triggered async actions such as model discovery.
-func TestWSHeartbeatFreshnessTracksAckWindow(t *testing.T) {
-	d := New(Config{HeartbeatInterval: 15 * time.Second}, slog.Default())
-
-	if d.wsHeartbeatRecentlyAcked("runtime-1") {
-		t.Fatalf("expected unrecorded runtime to be stale")
-	}
-
-	d.recordWSHeartbeatAck("runtime-1")
-	if !d.wsHeartbeatRecentlyAcked("runtime-1") {
-		t.Fatalf("expected just-acked runtime to be fresh")
-	}
-
-	// Force the entry past the freshness window.
-	d.wsHBMu.Lock()
-	d.wsHBLastAck["runtime-1"] = time.Now().Add(-d.wsHeartbeatFreshness() - time.Second)
-	d.wsHBMu.Unlock()
-	if d.wsHeartbeatRecentlyAcked("runtime-1") {
-		t.Fatalf("expected aged runtime to be stale")
-	}
-
-	d.recordWSHeartbeatAck("runtime-2")
-	d.clearWSHeartbeatAcks()
-	if d.wsHeartbeatRecentlyAcked("runtime-2") {
-		t.Fatalf("expected clearWSHeartbeatAcks to drop all entries")
 	}
 }

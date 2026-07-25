@@ -637,18 +637,6 @@ func (w *runtimeSetWatcher) notify() {
 	}
 }
 
-// wsHeartbeatFreshness defines how long a WS heartbeat ack is considered
-// "fresh enough" to suppress the HTTP heartbeat for that runtime. The window
-// is 2× HeartbeatInterval so a single dropped WS ack still keeps HTTP
-// suppressed, but two missed acks (~30s of WS silence) re-enable HTTP — well
-// inside the server-side 45s offline threshold.
-func (d *Daemon) wsHeartbeatFreshness() time.Duration {
-	if d.cfg.HeartbeatInterval <= 0 {
-		return 30 * time.Second
-	}
-	return 2 * d.cfg.HeartbeatInterval
-}
-
 // recordWSHeartbeatAck stamps the runtime as having received a fresh WS
 // heartbeat ack from the server. Called by the WS read pump.
 func (d *Daemon) recordWSHeartbeatAck(runtimeID string) {
@@ -658,19 +646,6 @@ func (d *Daemon) recordWSHeartbeatAck(runtimeID string) {
 	d.wsHBMu.Lock()
 	d.wsHBLastAck[runtimeID] = time.Now()
 	d.wsHBMu.Unlock()
-}
-
-// wsHeartbeatRecentlyAcked reports whether the runtime received a WS
-// heartbeat ack inside the freshness window. The HTTP heartbeat loop uses
-// this to skip duplicate work when WS is already keeping the runtime alive.
-func (d *Daemon) wsHeartbeatRecentlyAcked(runtimeID string) bool {
-	d.wsHBMu.RLock()
-	last, ok := d.wsHBLastAck[runtimeID]
-	d.wsHBMu.RUnlock()
-	if !ok {
-		return false
-	}
-	return time.Since(last) < d.wsHeartbeatFreshness()
 }
 
 // clearWSHeartbeatAcks drops all WS heartbeat freshness records. Called on

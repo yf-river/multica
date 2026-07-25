@@ -316,7 +316,7 @@ func TestHandleWSHeartbeatAck_NormalAckRecordsFreshness(t *testing.T) {
 		RuntimeID: "rt-1",
 		Status:    "ok",
 	})
-	if !d.wsHeartbeatRecentlyAcked("rt-1") {
+	if _, ok := d.wsHBLastAck["rt-1"]; !ok {
 		t.Fatalf("normal ack should record WS freshness for rt-1")
 	}
 }
