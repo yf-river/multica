@@ -1319,15 +1319,6 @@ func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue 
 	}
 }
 
-func firstSOPStringField(obj map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if v, ok := obj[key].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
 func normalizeSquadSOPProfile(raw []byte) []byte {
 	if len(raw) == 0 || string(raw) == "null" {
 		return []byte(`{}`)
@@ -2045,8 +2036,8 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 // maybeLogClaimSlow emits one structured log per ClaimTask call when its total
 // latency exceeds 300ms, so the prod tail can be diagnosed without flooding
 // logs at normal poll rates. Called via defer so it captures the full path
-// including post-claim updateAgentStatus / broadcastTaskDispatch (both of
-// which can hit the DB) and any error exit.
+// including post-claim broadcastTaskDispatch (which can hit the DB) and any
+// error exit.
 func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, start time.Time, getAgentMs, countRunningMs, claimAgentMs, updateStatusMs, dispatchMs int64) {
 	totalMs := time.Since(start).Milliseconds()
 	if totalMs < 300 {
@@ -3135,7 +3126,6 @@ func (s *TaskService) enqueueIssueAfterSourceSummary(ctx context.Context, issue 
 var (
 	gongfengMRURLRe     = regexp.MustCompile(`https://git\.code\.tencent\.com/([A-Za-z0-9_.~%+/\-]+?)/(?:-/)?merge_requests/([0-9]+)`)
 	gongfengMRBranchRe  = regexp.MustCompile(`(?im)(?:源分支|source\s+branch|source_branch)\s*(?:[：:]|\|)\s*` + "`?" + `([A-Za-z0-9._/\-]+)` + "`?")
-	gongfengMRTitleLine = regexp.MustCompile(`(?m)(?:MR\s*(?:已创建|created)?|merge\s+request)\s*[：:]\s*(.+)$`)
 )
 
 type gongfengMRCommentRef struct {
@@ -4015,17 +4005,6 @@ func (s *TaskService) ReconcileAgentStatus(ctx context.Context, agentID pgtype.U
 		return
 	}
 	slog.Debug("agent status reconciled", "agent_id", util.UUIDToString(agentID), "status", agent.Status)
-	s.publishAgentStatus(agent)
-}
-
-func (s *TaskService) updateAgentStatus(ctx context.Context, agentID pgtype.UUID, status string) {
-	agent, err := s.Queries.UpdateAgentStatus(ctx, db.UpdateAgentStatusParams{
-		ID:     agentID,
-		Status: status,
-	})
-	if err != nil {
-		return
-	}
 	s.publishAgentStatus(agent)
 }
 

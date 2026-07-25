@@ -23,14 +23,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/metrics"
 )
 
-// frontendOnlyEvents are declared in events.go but emitted from the frontend,
-// not from server code. They still need a Prometheus counter (so a future
-// server-side emission point lights up the same label set) but the server
-// has no Capture call site to lint.
-var frontendOnlyEvents = map[string]bool{
-	analytics.EventOnboardingStarted: true,
-}
-
 // TestEveryAnalyticsEventHasPrometheusCounter asserts that every Event*
 // constant declared in analytics/events.go is dispatched by
 // metrics.IncForEvent (verified by sending a synthetic event through

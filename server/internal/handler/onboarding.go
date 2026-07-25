@@ -169,9 +169,6 @@ type questionnaireAnswers struct {
 	Version        int           `json:"version"`
 }
 
-func (q questionnaireAnswers) sourceResolved() bool {
-	return len(q.Source) > 0 || q.SourceSkipped
-}
 func (q questionnaireAnswers) roleResolved() bool {
 	return q.Role != "" || q.RoleSkipped
 }

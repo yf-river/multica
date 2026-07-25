@@ -437,10 +437,6 @@ func TestCursorStepFinishParsing(t *testing.T) {
 func TestCursorUsageNoDoubleCount(t *testing.T) {
 	t.Parallel()
 
-	type jsonlEvent struct {
-		raw string
-	}
-
 	tests := []struct {
 		name  string
 		lines []string
