@@ -63,14 +63,6 @@ func thinkingCachePut(key thinkingCacheKey, value map[string]*ModelThinking) {
 	thinkingCache[key] = thinkingCacheEntry{value: value, expiresAt: time.Now().Add(thinkingDiscoveryTTL)}
 }
 
-// resetThinkingCacheForTests is exposed for tests only; production code
-// must rely on the TTL or process restart for invalidation.
-func resetThinkingCacheForTests() {
-	thinkingCacheMu.Lock()
-	thinkingCache = map[thinkingCacheKey]thinkingCacheEntry{}
-	thinkingCacheMu.Unlock()
-}
-
 // ── Claude ───────────────────────────────────────────────────────────
 //
 // `claude --help` advertises `--effort <level>` with the full superset
