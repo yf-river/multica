@@ -25,11 +25,6 @@ var (
 	piControlTokenRE = regexp.MustCompile(`<\|[A-Za-z0-9_-]+>[A-Za-z0-9_-]*|<[A-Za-z0-9_-]+\|>`)
 )
 
-func stripPiToolCallMarkup(s string) string {
-	s = stripPiStructuredToolMarkup(s)
-	return piControlTokenRE.ReplaceAllString(s, "")
-}
-
 func drainPiTextBuffer(buf *strings.Builder, delta string) string {
 	buf.WriteString(delta)
 	emit, pending := drainPiSanitizedText(buf.String())
