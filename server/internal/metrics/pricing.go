@@ -184,24 +184,6 @@ func EstimateUsageCostBreakdownUSD(provider, model string, inputTokens, outputTo
 	return breakdown, true
 }
 
-func EstimateUsageCostUSD(modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) (float64, bool) {
-	price, ok := PriceForModelAlias(modelAlias)
-	if !ok {
-		return 0, false
-	}
-	if isCodeBuddyUsage("", modelAlias) {
-		breakdown := estimateCodeBuddyUsageCostBreakdownUSD(price, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
-		return breakdown.TotalCostUSD, true
-	}
-	breakdown := UsageCostBreakdown{
-		InputCostUSD:      RoundCostUSD(tokenCostUSD(inputTokens, price.InputPerM)),
-		OutputCostUSD:     RoundCostUSD(tokenCostUSD(outputTokens, price.OutputPerM)),
-		CacheReadCostUSD:  RoundCostUSD(tokenCostUSD(cacheReadTokens, price.CacheReadPerM)),
-		CacheWriteCostUSD: RoundCostUSD(tokenCostUSD(cacheWriteTokens, price.CacheWritePerM)),
-	}
-	return RoundCostUSD(breakdown.InputCostUSD + breakdown.OutputCostUSD + breakdown.CacheReadCostUSD + breakdown.CacheWriteCostUSD), true
-}
-
 func CanonicalModelPriceKey(modelAlias string) (provider, model string, ok bool) {
 	price, ok := PriceForModelAlias(modelAlias)
 	if !ok {
