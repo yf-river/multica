@@ -41,10 +41,6 @@ type taskArtifactCommentOptions struct {
 	Summary string
 }
 
-func collectTaskMarkdownArtifacts(workDir string) ([]taskMarkdownArtifact, error) {
-	return collectTaskMarkdownArtifactsSince(workDir, time.Time{})
-}
-
 func collectTaskMarkdownArtifactsSince(workDir string, minModTime time.Time) ([]taskMarkdownArtifact, error) {
 	workDir = strings.TrimSpace(workDir)
 	if workDir == "" {

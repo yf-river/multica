@@ -15,31 +15,6 @@ import (
 	"time"
 )
 
-func TestCollectTaskMarkdownArtifactsScansArtifactsTree(t *testing.T) {
-	t.Parallel()
-
-	workDir := t.TempDir()
-	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "02-design.md"), "# design")
-	writeArtifactTestFile(t, filepath.Join(workDir, ".multica", "artifacts", "01-clarify.md"), "# clarify")
-	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "acceptance", "01-clarify.md"), "# acceptance")
-	writeArtifactTestFile(t, filepath.Join(workDir, "docs", "ignore.md"), "# ignore")
-	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "empty.md"), "")
-	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "note.txt"), "ignore")
-
-	got, err := collectTaskMarkdownArtifacts(workDir)
-	if err != nil {
-		t.Fatalf("collectTaskMarkdownArtifacts: %v", err)
-	}
-	names := make([]string, 0, len(got))
-	for _, artifact := range got {
-		names = append(names, artifact.DisplayName)
-	}
-	want := []string{"01-clarify.md", "acceptance/01-clarify.md", "multica/02-design.md"}
-	if !reflect.DeepEqual(names, want) {
-		t.Fatalf("artifact names = %#v, want %#v", names, want)
-	}
-}
-
 func TestCollectTaskMarkdownArtifactsFromDirsIncludesIssueArtifactDir(t *testing.T) {
 	t.Parallel()
 
