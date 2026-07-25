@@ -60,25 +60,6 @@ func drainPiSanitizedText(s string) (string, string) {
 	return piControlTokenRE.ReplaceAllString(out.String(), ""), ""
 }
 
-func stripPiStructuredToolMarkup(s string) string {
-	var out strings.Builder
-	for i := 0; i < len(s); {
-		start, prefixLen := nextPiToolMarkupPrefix(s, i)
-		if start == -1 {
-			out.WriteString(s[i:])
-			break
-		}
-		out.WriteString(s[i:start])
-		end, ok := scanPiToolMarkupEnd(s, start+prefixLen)
-		if !ok {
-			out.WriteString(s[start:])
-			break
-		}
-		i = end
-	}
-	return out.String()
-}
-
 func safePiTextEmitLen(s string) int {
 	hold := 0
 	for _, prefix := range []string{"call:", "response:"} {
