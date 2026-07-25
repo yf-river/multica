@@ -301,11 +301,6 @@ func (h *Hub) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 	h.typingIndicator = m
 }
 
-// NodeID exposes the per-process lease token. Useful for tests and
-// for observability (so operators can correlate DB lease rows to a
-// running replica).
-func (h *Hub) NodeID() string { return h.nodeID }
-
 // Run is the Hub's main loop. It scans installations every
 // PollInterval, attempts to lease any that are not currently being
 // supervised by this process, and reaps supervisors for installations
