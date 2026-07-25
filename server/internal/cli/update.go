@@ -251,12 +251,6 @@ func fetchURLBytes(url string, timeout time.Duration) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// UpdateViaDownload downloads the latest release binary from GitHub and replaces
-// the current executable in-place. Returns the combined output message and any error.
-func UpdateViaDownload(targetVersion string) (string, error) {
-	return UpdateViaDownloadWithTimeout(targetVersion, DefaultUpdateDownloadTimeout)
-}
-
 // UpdateViaDownloadWithTimeout downloads the latest release binary with a caller-selected timeout.
 func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Duration) (string, error) {
 	// Determine current binary path.
