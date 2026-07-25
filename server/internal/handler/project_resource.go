@@ -1199,11 +1199,10 @@ func mustMarshalRaw(v any) json.RawMessage {
 }
 
 // findLocalDirectoryConflict enforces "at most one local_directory resource
-// per (project, daemon)". The daemon picks the first matching daemon_id row
-// out of a task's resources (findLocalDirectoryAssignment), so letting a
-// project carry two rows for the same daemon would mean the agent silently
-// writes into whichever happens to come back first — a safety hazard for a
-// feature that operates directly on the user's real working directory.
+// per (project, daemon)". Letting a project carry two rows for the same
+// daemon would mean the agent silently writes into whichever row the daemon
+// happens to pick first — a safety hazard for a feature that operates
+// directly on the user's real working directory.
 //
 // The DB-level UNIQUE(project_id, resource_type, resource_ref) constraint
 // alone is not enough here: it only fires on full ref-JSON equality, so a
