@@ -37,15 +37,6 @@ func GeneratePATToken() (string, error) {
 	return "mul_" + hex.EncodeToString(b), nil
 }
 
-// GenerateDaemonToken creates a new daemon auth token: "mdt_" + 40 random hex chars.
-func GenerateDaemonToken() (string, error) {
-	b := make([]byte, 20) // 20 bytes = 40 hex chars
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate daemon token: %w", err)
-	}
-	return "mdt_" + hex.EncodeToString(b), nil
-}
-
 // GenerateAgentTaskToken creates a new task-scoped agent auth token:
 // "mat_" + 40 random hex chars. The token is single-purpose — bound to a
 // specific (agent_id, task_id) pair on the server side — and is what the
