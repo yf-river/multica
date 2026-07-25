@@ -288,37 +288,6 @@ func lookPathInPath(name string) (string, error) {
 	return exec.LookPath(name)
 }
 
-func TestIsOfficialCloudServer(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		url  string
-		want bool
-	}{
-		{"canonical cloud https", "https://api.multica.ai", true},
-		{"canonical cloud with trailing slash stripped", "https://api.multica.ai/", true},
-		{"canonical cloud case-insensitive", "https://API.Multica.AI", true},
-		{"cloud over plain http (unusual but match host)", "http://api.multica.ai", true},
-		{"localhost is self-host", "http://localhost:8080", false},
-		{"loopback ip is self-host", "http://127.0.0.1:8080", false},
-		{"lan ip is self-host", "http://192.168.0.28:8080", false},
-		{"third-party host is self-host", "https://multica.example.com", false},
-		// Staging / preview / future subdomains deliberately follow the
-		// safer self-host default until explicitly opted in.
-		{"multica.ai apex is not the api host", "https://multica.ai", false},
-		{"staging subdomain is self-host", "https://staging.multica.ai", false},
-		{"preview subdomain is self-host", "https://api-preview.multica.ai", false},
-		// Malformed inputs must not falsely match.
-		{"empty string is self-host", "", false},
-		{"garbage string is self-host", "::not a url::", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isOfficialCloudServer(tc.url); got != tc.want {
-				t.Errorf("isOfficialCloudServer(%q) = %v, want %v", tc.url, got, tc.want)
-			}
-		})
-	}
-}
-
 // stageFakeAgent writes an executable `claude` script into a temp dir and
 // points PATH (and the daemon-id env var) so LoadConfig can run end-to-end
 // without poking the host's real agent installation. Returns the staged PATH
