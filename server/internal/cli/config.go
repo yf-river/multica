@@ -81,11 +81,6 @@ type OpenClawOverride struct {
 	StateDir   string `json:"state_dir,omitempty"`
 }
 
-// CLIConfigPath returns the default path for the CLI config file.
-func CLIConfigPath() (string, error) {
-	return CLIConfigPathForProfile("")
-}
-
 // CLIConfigPathForProfile returns the config file path for the given profile.
 // An empty profile returns the default path (~/.multica/config.json).
 // A named profile returns ~/.multica/profiles/<name>/config.json.
