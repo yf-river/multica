@@ -72,10 +72,6 @@ func collectTaskMarkdownArtifactsSince(workDir string, minModTime time.Time) ([]
 	return artifacts, nil
 }
 
-func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMarkdownArtifact, error) {
-	return collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir, time.Time{})
-}
-
 func collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir string, minModTime time.Time) ([]taskMarkdownArtifact, error) {
 	artifacts, err := collectTaskMarkdownArtifactsSince(workDir, minModTime)
 	if err != nil {
