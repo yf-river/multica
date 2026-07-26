@@ -462,7 +462,6 @@ Multica 只有**单体 skill**(SKILL.md + skill_file),没有 plugin / bundle 概
 **现状**:`POST /api/skills/import` 当前支持 3 个 source(`fetchFromClawHub` skill.go:642-744、`fetchFromSkillsSh` skill.go:757-879、`fetchFromGitHub` skill.go:1363-1463)。ClawHub 是个独立 HTTP 客户端,不复用 GitHub 基础设施。
 
 **判断**(详见之前讨论):
-- ClawHub 服务的是 OpenClaw 平台(Multica 同生态位竞品的内容生态)
 - UI 没有发现/搜索层,用户只能粘 URL,而 ClawHub 装机量远低于 skills.sh,用户主动逛的概率极低
 - 独立代码路径,API 演进时单独跟进
 

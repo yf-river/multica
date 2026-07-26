@@ -2,6 +2,47 @@ package metrics
 
 import "testing"
 
+func TestEstimateUsageCostBreakdownUSDAliasCoverage(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   string
+		model      string
+		input      int64
+		output     int64
+		cacheRead  int64
+		cacheWrite int64
+		want       float64
+	}{
+		{name: "minimax", model: "minimax-m2.7-ioa", input: 1_000_000, output: 1_000_000, cacheRead: 100_000, cacheWrite: 100_000, want: 1.5435},
+		{name: "deepseek-v4-pro-ioa", provider: "codebuddy", model: "deepseek-v4-pro-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 1.308625},
+		{name: "codex-spark", provider: "codex", model: "gpt-5.3-codex-spark", input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 16.1},
+		{name: "deepseek-v4-flash-ioa", provider: "codebuddy", model: "deepseek-v4-flash-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 0.4228},
+		{name: "kimi-k2.6-ioa", provider: "codebuddy", model: "kimi-k2.6-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 5.11},
+		{name: "kimi-k2.7-ioa", provider: "codebuddy", model: "kimi-k2.7-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 5.14},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			breakdown, ok := EstimateUsageCostBreakdownUSD(tt.provider, tt.model, tt.input, tt.output, tt.cacheRead, tt.cacheWrite)
+			if !ok {
+				t.Fatalf("expected %s/%s to resolve", tt.provider, tt.model)
+			}
+			if breakdown.TotalCostUSD != tt.want {
+				t.Fatalf("total = %v, want %v", breakdown.TotalCostUSD, tt.want)
+			}
+		})
+	}
+}
+
+func TestEstimateUsageCostBreakdownUSDUnknownModel(t *testing.T) {
+	breakdown, ok := EstimateUsageCostBreakdownUSD("", "unknown-model", 1_000_000, 1_000_000, 0, 0)
+	if ok {
+		t.Fatal("unexpected pricing for unknown model")
+	}
+	if breakdown != (UsageCostBreakdown{}) {
+		t.Fatalf("breakdown = %+v, want zero value", breakdown)
+	}
+}
+
 func TestEstimateUsageCostBreakdownUSDCodeBuddyOfficialSamples(t *testing.T) {
 	tests := []struct {
 		name       string

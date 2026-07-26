@@ -18,18 +18,18 @@ const (
 	labelModelAlias     = "model_alias"
 
 	// PR3 labels (team usage and runtime observability).
-	labelPlatform     = "platform"
-	labelPath         = "path"
-	labelCadence      = "cadence"
-	labelTriggerKind  = "trigger_kind"
-	labelReason       = "reason"
-	labelRecoverable  = "recoverable"
-	labelKind         = "kind"
-	labelStatus       = "status"
-	labelEventKind    = "event_kind"
-	labelAction       = "action"
-	labelResult       = "result"
-	labelOp           = "op"
+	labelPlatform    = "platform"
+	labelPath        = "path"
+	labelCadence     = "cadence"
+	labelTriggerKind = "trigger_kind"
+	labelReason      = "reason"
+	labelRecoverable = "recoverable"
+	labelKind        = "kind"
+	labelStatus      = "status"
+	labelEventKind   = "event_kind"
+	labelAction      = "action"
+	labelResult      = "result"
+	labelOp          = "op"
 )
 
 var businessMetricLabels = map[string][]string{
@@ -116,7 +116,6 @@ var (
 		"kiro":          "kiro",
 		"kimi":          "kimi",
 		"multica_agent": "multica_agent",
-		"openclaw":      "openclaw",
 		"opencode":      "opencode",
 		"pi":            "pi",
 		"other":         "other",

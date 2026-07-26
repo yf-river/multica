@@ -98,7 +98,6 @@ func runtimeConfigProviderFileCases() []runtimeConfigProviderFileCase {
 		{"codex", "AGENTS.md"},
 		{"copilot", "AGENTS.md"},
 		{"opencode", "AGENTS.md"},
-		{"openclaw", "AGENTS.md"},
 		{"hermes", "AGENTS.md"},
 		{"pi", "AGENTS.md"},
 		{"cursor", "AGENTS.md"},

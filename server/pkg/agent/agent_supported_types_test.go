@@ -8,9 +8,8 @@ import (
 // TestSupportedTypesLockstepWithNew guards the iron-rule whitelist: every type
 // in SupportedTypes must be constructable by New, and New must reject anything
 // not in SupportedTypes. This is the single source of truth the custom runtime
-// profile protocol_family validation (handler) and the runtime_profile
-// protocol_family CHECK (migration 120) are aligned to. If a backend is added
-// to New, it must be added here too — and to the migration CHECK.
+// profile protocol_family validation (handler) is aligned to. If a backend is
+// added to New, it must be added here too.
 func TestSupportedTypesLockstepWithNew(t *testing.T) {
 	cfg := Config{Logger: slog.Default()}
 
@@ -33,20 +32,21 @@ func TestSupportedTypesLockstepWithNew(t *testing.T) {
 	}
 }
 
-// TestSupportedTypesMatchesMigrationWhitelist pins the exact set so a drift
-// from the runtime_profile.protocol_family CHECK in migration 120 fails loudly.
-func TestSupportedTypesMatchesMigrationWhitelist(t *testing.T) {
+// TestSupportedTypesMatchesCurrentWhitelist pins the exact set of backends the
+// current server can launch. Historical migrations may retain removed enum
+// values so existing databases remain readable.
+func TestSupportedTypesMatchesCurrentWhitelist(t *testing.T) {
 	want := map[string]bool{
 		"claude": true, "codebuddy": true, "codex": true, "copilot": true,
-		"opencode": true, "openclaw": true, "hermes": true, "gemini": true,
+		"opencode": true, "hermes": true, "gemini": true,
 		"pi": true, "cursor": true, "kimi": true, "kiro": true, "antigravity": true,
 	}
 	if len(SupportedTypes) != len(want) {
-		t.Fatalf("SupportedTypes has %d entries, migration whitelist has %d; keep them in lockstep", len(SupportedTypes), len(want))
+		t.Fatalf("SupportedTypes has %d entries, current whitelist has %d; keep them in lockstep", len(SupportedTypes), len(want))
 	}
 	for _, typ := range SupportedTypes {
 		if !want[typ] {
-			t.Errorf("SupportedTypes contains %q which is not in the migration 120 protocol_family CHECK", typ)
+			t.Errorf("SupportedTypes contains %q which is not in the current whitelist", typ)
 		}
 	}
 }

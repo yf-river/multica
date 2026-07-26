@@ -197,10 +197,9 @@ type AgentData struct {
 	McpConfig     json.RawMessage   `json:"mcp_config,omitempty"`
 	Model         string            `json:"model,omitempty"`
 	ThinkingLevel string            `json:"thinking_level,omitempty"`
-	// RuntimeConfig is the per-provider runtime_config JSON as stored on
-	// the agent record, forwarded verbatim by the claim endpoint. The
-	// daemon decodes provider-specific fields (e.g. openclaw mode +
-	// gateway endpoint, see issue #3260); other backends ignore it.
+	// RuntimeConfig is the runtime_config JSON stored on the agent record and
+	// forwarded verbatim by the claim endpoint. Current built-in backends
+	// ignore it; the field remains for wire and database compatibility.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 

@@ -1,5 +1,5 @@
-// Package prompteval 提供提示词评估相关的通用工具函数，
-// 由 handler 与 service 层共享，避免跨层重复实现。
+// Package prompteval provides prompt-evaluation helpers shared by the handler
+// and service layers.
 package prompteval
 
 import (
@@ -8,7 +8,7 @@ import (
 	"unicode"
 )
 
-// TruncatePromptEvaluationEvidence 按 rune 截断证据文本并追加省略号。
+// TruncatePromptEvaluationEvidence truncates evidence by rune and appends an ellipsis.
 func TruncatePromptEvaluationEvidence(value string, maxRunes int) string {
 	runes := []rune(value)
 	if len(runes) <= maxRunes {
@@ -17,7 +17,7 @@ func TruncatePromptEvaluationEvidence(value string, maxRunes int) string {
 	return string(runes[:maxRunes]) + "..."
 }
 
-// MustJSONBytes 序列化为 JSON，失败时返回空对象字面量。
+// MustJSONBytes marshals a value as JSON and returns an empty object on failure.
 func MustJSONBytes(value any) []byte {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -26,7 +26,8 @@ func MustJSONBytes(value any) []byte {
 	return raw
 }
 
-// DecodePayloadObject 将 JSON 字节解码为对象，空输入或解码失败返回空对象。
+// DecodePayloadObject decodes a JSON object and returns an empty object for
+// empty or invalid input.
 func DecodePayloadObject(raw []byte) map[string]any {
 	var payload map[string]any
 	if len(raw) > 0 {
@@ -38,7 +39,7 @@ func DecodePayloadObject(raw []byte) map[string]any {
 	return payload
 }
 
-// ContainsHanRune 判断字符串是否包含汉字。
+// ContainsHanRune reports whether a string contains a Han character.
 func ContainsHanRune(value string) bool {
 	for _, r := range value {
 		if unicode.Is(unicode.Han, r) {
@@ -48,8 +49,8 @@ func ContainsHanRune(value string) bool {
 	return false
 }
 
-// AppendPromptEvaluationAgentRunHistory 将一次 Agent 运行记录追加到历史，
-// 按 run_id 去重并最多保留 20 条。
+// AppendPromptEvaluationAgentRunHistory prepends an agent run, deduplicates by
+// run_id, and retains at most 20 entries.
 func AppendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
 	history, _ := raw.([]any)
 	runID := StringFromAny(result["run_id"])
@@ -68,7 +69,7 @@ func AppendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any
 	return next
 }
 
-// StringFromAny 将常见标量类型转为字符串，无法转换时返回空串。
+// StringFromAny converts common scalar types to strings.
 func StringFromAny(value any) string {
 	switch v := value.(type) {
 	case string:

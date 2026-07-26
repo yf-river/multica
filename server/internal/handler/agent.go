@@ -68,12 +68,12 @@ type AgentResponse struct {
 }
 
 // runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
-// any non-empty `runtime_config.gateway.token` (openclaw gateway mode, issue
-// #3260). The token is a bearer credential; surfacing the real value through
-// GET responses would let anyone with read access to the agent dump the
-// gateway secret. The mask is a sentinel — when the UI later PATCHes the
-// agent and submits the same mask verbatim under that field, the update
-// handler restores the persisted token instead of overwriting it.
+// any non-empty legacy `runtime_config.gateway.token`. The token is a bearer
+// credential; surfacing the real value through GET responses would let anyone
+// with read access to the agent dump the gateway secret. The mask is a
+// sentinel — when the UI later PATCHes the agent and submits the same mask
+// verbatim under that field, the update handler restores the persisted token
+// instead of overwriting it.
 const runtimeConfigGatewayTokenMask = "***"
 
 func agentToResponse(a db.Agent) AgentResponse {
@@ -145,7 +145,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
 // mask sentinel when a non-empty value is present. No-op for any other
-// shape so non-openclaw / non-gateway agents pass through untouched.
+// shape so non-gateway runtime configs pass through untouched.
 func maskGatewayToken(rc any) {
 	root, ok := rc.(map[string]any)
 	if !ok {
@@ -414,11 +414,9 @@ type TaskAgentData struct {
 	McpConfig     json.RawMessage          `json:"mcp_config,omitempty"`
 	Model         string                   `json:"model,omitempty"`
 	ThinkingLevel string                   `json:"thinking_level,omitempty"`
-	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The
-	// daemon decodes it per-provider — e.g. the openclaw backend reads
-	// `mode` + `gateway.*` to choose between embedded and gateway routing
-	// (issue #3260). Other providers ignore the payload entirely. Sent
-	// raw so the daemon can evolve its schema without a server roundtrip.
+	// RuntimeConfig is the agent's saved runtime_config JSON as-is. Current
+	// built-in backends ignore it; it remains on the wire for compatibility
+	// with existing records and custom clients.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 

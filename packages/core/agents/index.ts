@@ -7,4 +7,3 @@ export * from "./constants";
 export * from "./scope-label";
 export * from "./use-workspace-agent-availability";
 export * from "./mcp-support";
-export * from "./openclaw-runtime-config";

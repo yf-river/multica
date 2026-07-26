@@ -105,8 +105,6 @@ session cookie 的 `Secure` flag 自动从 `FRONTEND_ORIGIN` 的 scheme 派生�
 | `MULTICA_COPILOT_MODEL` | 覆盖 Copilot 模型（注意：GitHub Copilot 按账户权益路由模型，可能不生效） |
 | `MULTICA_OPENCODE_PATH` | 自定义 `opencode` 二进制路径 |
 | `MULTICA_OPENCODE_MODEL` | 覆盖使用的 OpenCode 模型 |
-| `MULTICA_OPENCLAW_PATH` | 自定义 `openclaw` 二进制路径 |
-| `MULTICA_OPENCLAW_MODEL` | 覆盖使用的 OpenClaw 模型 |
 | `MULTICA_HERMES_PATH` | 自定义 `hermes` 二进制路径 |
 | `MULTICA_HERMES_MODEL` | 覆盖使用的 Hermes 模型 |
 | `MULTICA_GEMINI_PATH` | 自定义 `gemini` 二进制路径 |

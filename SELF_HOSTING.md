@@ -85,7 +85,6 @@ brew install multica-ai/tap/multica
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（PATH 中的 `claude`）
 - [Codex](https://github.com/openai/codex)（PATH 中的 `codex`）
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot)（PATH 中的 `copilot`）
-- [OpenClaw](https://github.com/openclaw/openclaw)（PATH 中的 `openclaw`）
 - [OpenCode](https://github.com/anomalyco/opencode)（PATH 中的 `opencode`）
 - [Hermes](https://github.com/NousResearch/hermes)（PATH 中的 `hermes`）
 - Gemini（PATH 中的 `gemini`）

@@ -38,17 +38,11 @@ type PrepareParams struct {
 	AgentName      string // for git branch naming only
 	Provider       string // agent provider (determines runtime config and skill injection paths)
 	CodexVersion   string // detected Codex CLI version (only used when Provider == "codex")
-	OpenclawBin    string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
-	// via a per-task config file. Cursor and OpenClaw consume it here; other
+	// via a per-task config file. Cursor consumes it here; other
 	// providers wire MCP via ExecOptions.McpConfig in the agent backend.
 	McpConfig json.RawMessage
-	// OpenclawGateway pins the OpenClaw Gateway endpoint inside the per-task
-	// wrapper. Only consulted when Provider == "openclaw" and the agent's
-	// runtime_config selected gateway mode (issue #3260). Zero means "inherit
-	// whatever the user's global openclaw.json already configures".
-	OpenclawGateway OpenclawGatewayPin
 	// LocalWorkDir, when non-empty, redirects the agent's working directory
 	// to a user-supplied absolute path instead of the synthesised envRoot/
 	// workdir. The path is NOT copied or mounted — the agent operates on
@@ -158,19 +152,6 @@ type Environment struct {
 	ManagedWorktree bool
 	// CodexHome is the path to the per-task CODEX_HOME directory (set only for codex provider).
 	CodexHome string
-	// OpenclawConfigPath is the path to the per-task synthesized OpenClaw
-	// config (set only for openclaw provider). The daemon exports this as
-	// OPENCLAW_CONFIG_PATH on the openclaw subprocess so its native skill
-	// scanner pins workspaceDir to WorkDir.
-	OpenclawConfigPath string
-	// OpenclawIncludeRoot is the directory of the user's active OpenClaw
-	// config (set only for openclaw provider with an on-disk user config).
-	// The daemon must prepend it to OPENCLAW_INCLUDE_ROOTS so OpenClaw is
-	// allowed to follow the wrapper's `$include` link out of envRoot into
-	// the user's config — by default OpenClaw confines `$include` to the
-	// directory holding the wrapper file. Empty when no $include is
-	// emitted (fresh install).
-	OpenclawIncludeRoot string
 	// CursorDataDir is the per-task Cursor data directory (set only for
 	// cursor provider when the agent has managed mcp_config). The daemon
 	// exports this as CURSOR_DATA_DIR so project-level MCP approvals are
@@ -283,45 +264,22 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		logger.Warn("execenv: write sidecar manifest failed (non-fatal)", "error", err)
 	}
 
-	// For OpenClaw, synthesize a per-task config that pins workspace to
-	// workDir. The skill scanner then reads {workDir}/skills/ (written by
-	// writeContextFiles above). Fail closed on errors: a malformed user
-	// config that the openclaw CLI can't read is a real problem and
-	// silently degrading to a minimal config would mask it by booting
-	// OpenClaw without the agents / providers / API keys it expects.
-	if params.Provider == "openclaw" {
-		result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
-			OpenclawBin: params.OpenclawBin,
-			McpConfig:   params.McpConfig,
-			Gateway:     params.OpenclawGateway,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("execenv: prepare openclaw config: %w", err)
-		}
-		env.OpenclawConfigPath = result.ConfigPath
-		env.OpenclawIncludeRoot = result.IncludeRoot
-	}
-
 	logger.Info("execenv: prepared env", "root", envRoot, "repos_available", len(params.Task.Repos))
 	return env, nil
 }
 
 // ReuseParams describes the inputs to Reuse. It mirrors PrepareParams for
-// the per-provider knobs (CodexVersion, OpenclawBin) so callers can pass
-// the same resolved binary path on both first-run and reuse paths.
+// the per-provider knobs so callers can pass the same values on both first-run
+// and reuse paths.
 type ReuseParams struct {
 	WorkDir      string
 	Provider     string
 	CodexVersion string // only used when Provider == "codex"
-	OpenclawBin  string // only used when Provider == "openclaw"; empty = PATH lookup
 	// McpConfig is the agent's saved `mcp_config` JSON. Reused on reuse so a
 	// freshly-saved managed set re-materialises into the wrapper before the
 	// task starts — without this a stale wrapper from a prior run would keep
 	// the old MCP set in play.
 	McpConfig json.RawMessage
-	// OpenclawGateway is the per-task Gateway pin re-applied on reuse so the
-	// agent picks up any runtime_config changes saved since the prior run.
-	OpenclawGateway OpenclawGatewayPin
 	// LocalDirectory is true when the reused WorkDir is a user-supplied
 	// directory (the local_directory flow). The flag is propagated into
 	// the returned Environment so downstream callers (notably the GC
@@ -438,26 +396,6 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
 			logger.Warn("execenv: refresh sidecar manifest failed", "error", err)
 		}
-	}
-
-	// Refresh the per-task OpenClaw config on reuse — the user may have
-	// added/removed agents or rotated providers since the prior task ran,
-	// and the workspace override always re-targets the current workDir.
-	// Fail closed: a user config that can no longer be parsed should block
-	// reuse rather than degrade to a minimal config that boots OpenClaw
-	// without the registered agents.
-	if params.Provider == "openclaw" {
-		result, err := prepareOpenclawConfig(env.RootDir, params.WorkDir, OpenclawConfigPrep{
-			OpenclawBin: params.OpenclawBin,
-			McpConfig:   params.McpConfig,
-			Gateway:     params.OpenclawGateway,
-		})
-		if err != nil {
-			logger.Warn("execenv: refresh openclaw config failed", "error", err)
-			return nil
-		}
-		env.OpenclawConfigPath = result.ConfigPath
-		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
 	logger.Info("execenv: reusing env", "workdir", params.WorkDir)

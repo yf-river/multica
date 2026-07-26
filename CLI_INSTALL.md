@@ -166,12 +166,12 @@ multica daemon start
 multica daemon status
 ```
 
-预期输出显示 `running` 状态及检测到的智能体（如 `claude`、`codex`、`copilot`、`opencode`、`openclaw`、`hermes`、`gemini`、`pi`、`cursor-agent`）。
+预期输出显示 `running` 状态及检测到的智能体（如 `claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi`、`cursor-agent`）。
 
 **若守护进程启动失败：**
 - 查日志：`multica daemon logs`
 - 若端口冲突，守护进程可能已在另一个 profile 下运行。
-- 若未检测到智能体，确保至少一个 AI CLI（`claude`、`codex`、`copilot`、`opencode`、`openclaw`、`hermes`、`gemini`、`pi` 或 `cursor-agent`）已安装且在 `$PATH` 中。
+- 若未检测到智能体，确保至少一个 AI CLI（`claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi` 或 `cursor-agent`）已安装且在 `$PATH` 中。
 
 ---
 
@@ -185,12 +185,12 @@ multica daemon status
 
 确认：
 1. 状态为 `running`
-2. 至少列出一个智能体（如 `claude`、`codex`、`copilot`、`opencode`、`openclaw`、`hermes`、`gemini`、`pi` 或 `cursor-agent`）
+2. 至少列出一个智能体（如 `claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi` 或 `cursor-agent`）
 3. 至少 watch 一个工作区
 
 若智能体列表为空，告诉用户：
 
-> 「Multica 守护进程在跑但未检测到任何 AI 智能体 CLI。请安装至少一个受支持的 CLI（`claude`、`codex`、`copilot`、`opencode`、`openclaw`、`hermes`、`gemini`、`pi` 或 `cursor-agent`），然后用 `multica daemon stop && multica daemon start` 重启守护进程。」
+> 「Multica 守护进程在跑但未检测到任何 AI 智能体 CLI。请安装至少一个受支持的 CLI（`claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi` 或 `cursor-agent`），然后用 `multica daemon stop && multica daemon start` 重启守护进程。」
 
 ---
 
