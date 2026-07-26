@@ -6,11 +6,55 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+// repoNameFromURL, sanitizeName, and nonAlphanumeric were dropped from
+// prod (git.go) because nothing outside tests calls them — the live copies
+// used by daemon/repocache live in internal/daemon/repocache/cache.go.
+// They are kept here so the existing TestSanitizeName / TestRepoNameFromURL
+// coverage still pins the historic execenv semantics.
+
+func repoNameFromURL(url string) string {
+	url = strings.TrimRight(url, "/")
+	url = strings.TrimSuffix(url, ".git")
+
+	if i := strings.LastIndex(url, "/"); i >= 0 {
+		url = url[i+1:]
+	}
+	if i := strings.LastIndex(url, ":"); i >= 0 {
+		url = url[i+1:]
+		if j := strings.LastIndex(url, "/"); j >= 0 {
+			url = url[j+1:]
+		}
+	}
+
+	name := strings.TrimSpace(url)
+	if name == "" {
+		return "repo"
+	}
+	return name
+}
+
+var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9]+`)
+
+func sanitizeName(name string) string {
+	s := strings.ToLower(strings.TrimSpace(name))
+	s = nonAlphanumeric.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 30 {
+		s = s[:30]
+		s = strings.TrimRight(s, "-")
+	}
+	if s == "" {
+		s = "agent"
+	}
+	return s
+}
 
 func testLogger() *slog.Logger {
 	return slog.Default()
