@@ -2,8 +2,6 @@ package lark
 
 import (
 	"context"
-	"errors"
-	"log/slog"
 )
 
 // APIClient is the narrow surface this package needs from the Lark Open
@@ -279,93 +277,4 @@ type InstallationCredentials struct {
 	// both clouds — see http_client.go resolveBaseURL and
 	// ws_endpoint.go Endpoint.
 	Region Region
-}
-
-// ErrAPIClientNotConfigured is returned by the stub client to signal
-// that a real Lark client has not been wired in yet. Call sites SHOULD
-// treat this as an expected condition on self-host deployments without
-// a Lark app — log a warning, fall back to "Lark integration not
-// configured", and continue serving other workspace functionality.
-var ErrAPIClientNotConfigured = errors.New("lark: API client not configured")
-
-// stubAPIClient is the default APIClient used when no production client
-// has been registered. It refuses every transport call with
-// ErrAPIClientNotConfigured so a misconfigured deployment fails loudly
-// instead of silently dropping cards or device-flow registration
-// responses.
-//
-// We deliberately do NOT silently succeed: a stub that returned ""
-// message IDs would let the inbound dispatcher record bogus
-// lark_outbound_card_message rows pointing at nothing.
-type stubAPIClient struct {
-	log *slog.Logger
-}
-
-// NewStubAPIClient returns the default no-op APIClient. The hub
-// constructs one of these when no real implementation has been
-// supplied, so subsystems that depend on APIClient (outbound patcher,
-// device-flow registration) can still wire up; their first call
-// surfaces a clear error.
-func NewStubAPIClient(log *slog.Logger) APIClient {
-	if log == nil {
-		log = slog.Default()
-	}
-	return &stubAPIClient{log: log}
-}
-
-func (s *stubAPIClient) IsConfigured() bool { return false }
-
-func (s *stubAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error) {
-	s.log.Warn("lark stub client: SendInteractiveCard called", "chat_id", string(p.ChatID))
-	return "", ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
-	s.log.Warn("lark stub client: PatchInteractiveCard called", "card_message_id", p.LarkCardMessageID)
-	return ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
-	s.log.Warn("lark stub client: SendTextMessage called", "chat_id", string(p.ChatID))
-	return "", ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCardParams) (string, error) {
-	s.log.Warn("lark stub client: SendMarkdownCard called", "chat_id", string(p.ChatID))
-	return "", ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) SendBindingPromptCard(ctx context.Context, p BindingPromptParams) error {
-	s.log.Warn("lark stub client: SendBindingPromptCard called", "open_id", string(p.OpenID))
-	return ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) GetBotInfo(ctx context.Context, creds InstallationCredentials) (BotInfo, error) {
-	s.log.Warn("lark stub client: GetBotInfo called", "app_id", creds.AppID)
-	return BotInfo{}, ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) GetMessage(ctx context.Context, creds InstallationCredentials, messageID string) ([]LarkMessage, error) {
-	s.log.Warn("lark stub client: GetMessage called", "message_id", messageID)
-	return nil, ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) ListChatMessages(ctx context.Context, creds InstallationCredentials, p ListMessagesParams) ([]LarkMessage, error) {
-	s.log.Warn("lark stub client: ListChatMessages called", "chat_id", string(p.ChatID))
-	return nil, ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) BatchGetUsers(ctx context.Context, creds InstallationCredentials, openIDs []string) (map[string]string, error) {
-	s.log.Warn("lark stub client: BatchGetUsers called", "count", len(openIDs))
-	return nil, ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) AddMessageReaction(ctx context.Context, p AddReactionParams) (string, error) {
-	s.log.Warn("lark stub client: AddMessageReaction called", "message_id", p.MessageID, "emoji_type", p.EmojiType)
-	return "", ErrAPIClientNotConfigured
-}
-
-func (s *stubAPIClient) DeleteMessageReaction(ctx context.Context, p DeleteReactionParams) error {
-	s.log.Warn("lark stub client: DeleteMessageReaction called", "message_id", p.MessageID, "reaction_id", p.ReactionID)
-	return ErrAPIClientNotConfigured
 }

@@ -21,7 +21,7 @@ func TestPersistSelfHostConfigIfReachable(t *testing.T) {
 			WorkspaceID: "ws-1",
 			Token:       "mul_existing_token",
 		}
-		if err := cli.SaveCLIConfig(existing); err != nil {
+		if err := cli.SaveCLIConfigForProfile(existing, ""); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
 
@@ -36,7 +36,7 @@ func TestPersistSelfHostConfigIfReachable(t *testing.T) {
 			t.Fatalf("proceed: want false for unreachable server")
 		}
 
-		got, err := cli.LoadCLIConfig()
+		got, err := cli.LoadCLIConfigForProfile("")
 		if err != nil {
 			t.Fatalf("load config: %v", err)
 		}
@@ -62,7 +62,7 @@ func TestPersistSelfHostConfigIfReachable(t *testing.T) {
 			t.Fatalf("proceed: want true for reachable server")
 		}
 
-		got, err := cli.LoadCLIConfig()
+		got, err := cli.LoadCLIConfigForProfile("")
 		if err != nil {
 			t.Fatalf("load config: %v", err)
 		}

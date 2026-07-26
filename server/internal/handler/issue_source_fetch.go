@@ -83,11 +83,6 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			newKeyCount++
 		}
 	}
-	if normalized.Status == "fetched" {
-		if _, present := existing["source_fetch_error"]; present {
-			// Deleting an existing stale error does not add a key.
-		}
-	}
 	if len(existing)+newKeyCount > maxIssueMetadataKeys {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("metadata cannot exceed %d keys", maxIssueMetadataKeys))
 		return

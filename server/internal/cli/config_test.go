@@ -29,7 +29,7 @@ func TestCLIConfig_BackwardCompat_OldFileLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadCLIConfig()
+	cfg, err := LoadCLIConfigForProfile("")
 	if err != nil {
 		t.Fatalf("LoadCLIConfig on historical file: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestCLIConfig_BackwardCompat_RemovedBackendsOmittedFromJSON(t *testing.T) {
 		ServerURL: "https://api.multica.ai",
 		Token:     "mul_xyz",
 	}
-	if err := SaveCLIConfig(cfg); err != nil {
+	if err := SaveCLIConfigForProfile(cfg, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,11 +92,11 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 			"prof-2": "/usr/local/bin/special-claude",
 		},
 	}
-	if err := SaveCLIConfig(original); err != nil {
+	if err := SaveCLIConfigForProfile(original, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	loaded, err := LoadCLIConfig()
+	loaded, err := LoadCLIConfigForProfile("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	t.Setenv("HOME", tmp)
 
 	cfg := CLIConfig{ServerURL: "https://api.multica.ai", Token: "mul_xyz"}
-	if err := SaveCLIConfig(cfg); err != nil {
+	if err := SaveCLIConfigForProfile(cfg, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,11 +183,11 @@ func TestCLIConfig_UnknownFieldsArePreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadCLIConfig()
+	cfg, err := LoadCLIConfigForProfile("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveCLIConfig(cfg); err != nil {
+	if err := SaveCLIConfigForProfile(cfg, ""); err != nil {
 		t.Fatal(err)
 	}
 

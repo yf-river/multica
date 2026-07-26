@@ -29,7 +29,7 @@ import (
 // the logs.
 func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 	client := NewRegistrationClient(RegistrationConfig{})
-	api := NewStubAPIClient(nil)
+	api := NewHTTPAPIClient(HTTPClientConfig{})
 	cases := []struct {
 		name   string
 		fn     func() error

@@ -247,10 +247,7 @@ func validateFilePath(p string) bool {
 		return false
 	}
 	cleaned := filepath.Clean(p)
-	if strings.HasPrefix(cleaned, "..") {
-		return false
-	}
-	return true
+	return !strings.HasPrefix(cleaned, "..")
 }
 
 func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id string) (db.Skill, bool) {

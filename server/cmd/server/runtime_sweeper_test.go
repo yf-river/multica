@@ -7,8 +7,14 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func newSweeperTaskService(queries *db.Queries, bus *events.Bus) *service.TaskService {
+	return service.NewTaskService(queries, testPool, realtime.NewHub(), bus)
+}
 
 // setupSweeperTestFixture creates an issue and a task in the given status with
 // timestamps old enough to trigger the sweeper. Returns (issueID, agentID, taskID).
@@ -213,8 +219,7 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 		t.Fatalf("expected task %s to be in failed tasks list", taskID)
 	}
 
-	// Call broadcastFailedTasks — this is what we're testing
-	broadcastFailedTasks(context.Background(), queries, nil, bus, failedTasks)
+	newSweeperTaskService(queries, bus).HandleFailedTasks(context.Background(), failedTasks)
 
 	// Verify the event was published with WorkspaceID (the core of the bug fix)
 	mu.Lock()
@@ -248,8 +253,8 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 	}
 }
 
-// TestSweepStaleTasksReconcileAgentStatus verifies that after the sweeper fails
-// stale tasks, the agent status is reconciled from "working" back to "idle".
+// TestSweepStaleTasksReconcileAgentStatus verifies that after the sweeper
+// fails a retryable stale task, the replacement task keeps the agent working.
 func TestSweepStaleTasksReconcileAgentStatus(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -282,16 +287,17 @@ func TestSweepStaleTasksReconcileAgentStatus(t *testing.T) {
 		t.Fatal("expected at least 1 stale task")
 	}
 
-	broadcastFailedTasks(context.Background(), queries, nil, bus, failedTasks)
+	newSweeperTaskService(queries, bus).HandleFailedTasks(context.Background(), failedTasks)
 
-	// Verify agent status is now "idle" in DB
+	// The timeout failure creates a queued retry, so the reconciled agent
+	// remains working.
 	var agentStatus string
 	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
 	if err != nil {
 		t.Fatalf("failed to query agent status: %v", err)
 	}
-	if agentStatus != "idle" {
-		t.Fatalf("expected agent status 'idle', got '%s'", agentStatus)
+	if agentStatus != "working" {
+		t.Fatalf("expected agent status 'working', got '%s'", agentStatus)
 	}
 
 	// Verify agent:status event was published with correct WorkspaceID
@@ -343,7 +349,7 @@ func TestSweepDispatchedStaleTask(t *testing.T) {
 		t.Fatal("expected at least 1 stale dispatched task")
 	}
 
-	broadcastFailedTasks(context.Background(), queries, nil, bus, failedTasks)
+	newSweeperTaskService(queries, bus).HandleFailedTasks(context.Background(), failedTasks)
 
 	// Verify DB: task should be failed
 	var status string
@@ -376,24 +382,21 @@ func TestSweepDispatchedStaleTask(t *testing.T) {
 		t.Fatalf("expected task:failed event for task %s", taskID)
 	}
 
-	// Verify agent status reconciled to idle
+	// The timeout failure creates a queued retry, so the agent remains working.
 	var agentStatus string
 	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
 	if err != nil {
 		t.Fatalf("failed to query agent: %v", err)
 	}
-	if agentStatus != "idle" {
-		t.Fatalf("expected agent status 'idle' after sweep, got '%s'", agentStatus)
+	if agentStatus != "working" {
+		t.Fatalf("expected agent status 'working' after sweep, got '%s'", agentStatus)
 	}
 }
 
-// TestSweepResetsInProgressIssueToTodo verifies the core fix: when the sweeper
-// force-fails a stale task whose issue is still in_progress (because the daemon
-// crashed mid-run), the issue is reset back to todo so the daemon can re-queue it.
-//
-// Without this fix the issue stays in_progress permanently — the agent never runs
-// to update the status because it was never dispatched.
-func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
+// TestSweepKeepsInProgressIssueDuringRetry verifies that a retryable stale
+// task does not flap its issue out of in_progress while the replacement task
+// is queued.
+func TestSweepKeepsInProgressIssueDuringRetry(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
 	}
@@ -427,16 +430,15 @@ func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
 		t.Fatalf("expected task %s to be in failed tasks, got %v", taskID, failedTasks)
 	}
 
-	// This is what we're testing: issue must be reset from in_progress → todo.
-	broadcastFailedTasks(ctx, queries, nil, bus, failedTasks)
+	newSweeperTaskService(queries, bus).HandleFailedTasks(ctx, failedTasks)
 
 	var issueStatus string
 	err = testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus)
 	if err != nil {
 		t.Fatalf("failed to query issue status: %v", err)
 	}
-	if issueStatus != "todo" {
-		t.Fatalf("expected issue status 'todo' after sweep, got '%s' — issue is stuck", issueStatus)
+	if issueStatus != "in_progress" {
+		t.Fatalf("expected issue status 'in_progress' while retry is queued, got '%s'", issueStatus)
 	}
 }
 
@@ -463,7 +465,7 @@ func TestSweepDoesNotResetIssueAlreadyInReview(t *testing.T) {
 		t.Fatalf("FailStaleTasks failed: %v", err)
 	}
 
-	broadcastFailedTasks(ctx, queries, nil, bus, failedTasks)
+	newSweeperTaskService(queries, bus).HandleFailedTasks(ctx, failedTasks)
 
 	// Issue should remain in_review — the sweeper must not clobber agent progress.
 	var issueStatus string

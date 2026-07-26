@@ -71,7 +71,7 @@ func TestMain(m *testing.M) {
 
 	bus := events.New()
 	registerListeners(bus, hub)
-	router := NewRouter(pool, hub, bus, analytics.NoopClient{}, nil)
+	router, _ := NewRouterWithOptions(pool, hub, bus, analytics.NoopClient{}, nil, RouterOptions{})
 	testServer = httptest.NewServer(router)
 
 	// Generate a JWT token directly for the test user

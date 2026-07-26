@@ -16,8 +16,7 @@
 //     the connector can post the matching Lark-side reply card)
 //  6. AuditLogger (lark_inbound_audit; deliberately no body column)
 //  7. APIClient interface + http_client.go (real Lark Open Platform
-//     transport for IM v1 send/patch + binding prompt + bot info;
-//     stubAPIClient refuses calls when no production client is wired)
+//     transport for IM v1 send/patch + binding prompt + bot info)
 //  8. Hub (WS lease + per-installation supervisor goroutines with
 //     exponential backoff + jitter; renewer cancels the connector's
 //     run ctx on lease loss to keep §4.4 ownership safe across

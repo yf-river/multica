@@ -42,13 +42,6 @@ package taskfailure
 // taxonomy change can be made package-wide.
 type Reason string
 
-// agentErrorPrefix marks the 14 sub-reasons that originate inside the
-// agent process (provider error, runner crash, context overflow, etc.)
-// as opposed to the 7 platform-side reasons (queue expiry, runtime
-// offline, sweeper timeout, etc.). IsAgentError uses this prefix so
-// callers don't have to enumerate the agent-side reasons by hand.
-const agentErrorPrefix = "agent_error."
-
 const (
 	// Platform / scheduler side: failure attributable to Multica
 	// infrastructure rather than anything the agent process did. These

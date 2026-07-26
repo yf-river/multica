@@ -517,20 +517,6 @@ func (f CredentialsProviderFunc) Credentials(ctx context.Context, inst db.LarkIn
 	return f(ctx, inst)
 }
 
-// EndpointFetcherFunc adapts a plain function to EndpointFetcher.
-type EndpointFetcherFunc func(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error)
-
-func (f EndpointFetcherFunc) Endpoint(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error) {
-	return f(ctx, creds)
-}
-
-// FrameDecoderFunc adapts a plain function to FrameDecoder.
-type FrameDecoderFunc func(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error)
-
-func (f FrameDecoderFunc) Decode(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error) {
-	return f(payload, inst)
-}
-
 // GorillaDialer is the production WSDialer.
 type GorillaDialer struct {
 	Dialer *websocket.Dialer

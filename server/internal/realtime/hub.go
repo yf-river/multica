@@ -626,7 +626,7 @@ func (h *Hub) evictSlow(slow []*Client) {
 				delete(room, c)
 				if len(room) == 0 {
 					delete(h.rooms, key)
-					drainedRooms = append(drainedRooms, emptied{key.Type, key.ID})
+					drainedRooms = append(drainedRooms, emptied(key))
 				}
 			}
 		}

@@ -134,10 +134,9 @@ type Handler struct {
 	// LarkAPIClient is the live transport that backs SendInteractiveCard,
 	// PatchInteractiveCard, SendBindingPromptCard, GetBotInfo. The
 	// router wires the real Lark HTTP client whenever
-	// MULTICA_LARK_SECRET_KEY is set; tests that need a no-op
-	// behaviour can swap in `lark.NewStubAPIClient(...)` directly. The
-	// UI consults IsConfigured() to decide whether to surface install
-	// entry points.
+	// MULTICA_LARK_SECRET_KEY is set. It remains nil when Lark is not
+	// configured. The UI consults IsConfigured() to decide whether to
+	// surface install entry points.
 	LarkAPIClient lark.APIClient
 	// LarkHub owns the per-installation supervisor goroutines that
 	// hold the §4.4 WS lease and run the EventConnector. Nil only

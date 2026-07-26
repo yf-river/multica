@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,7 +40,7 @@ func TestRedeemLarkBindingToken_NotConfigured(t *testing.T) {
 
 func TestBeginLarkInstall_NotConfigured(t *testing.T) {
 	// When the device-flow registration service is nil (no at-rest
-	// key, or the stub APIClient is the only one wired), the begin
+	// key or no real API client), the begin
 	// endpoint must short-circuit to 503 — silently returning a
 	// "configured: false" envelope would hide a real misconfiguration
 	// from the operator. The UI hides the bind button in that case
@@ -96,18 +95,11 @@ func TestListLarkInstallations_NotConfiguredReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestListLarkInstallations_StubClientReportsInstallNotSupported pins
-// the front-half of the "don't expose a doomed install flow"
-// guarantee: even when the at-rest key + registration service are set,
-// install_supported flips false if the underlying APIClient is the
-// stub. The stub cannot complete the post-poll GetBotInfo call that
-// finalizes a device-flow install, so the UI must hide install entry
-// points until a real client is wired.
-func TestListLarkInstallations_StubClientReportsInstallNotSupported(t *testing.T) {
-	stubLogger := slog.New(slog.NewTextHandler(httptest.NewRecorder(), nil))
-	h := &Handler{
-		LarkAPIClient: lark.NewStubAPIClient(stubLogger),
-	}
+// TestListLarkInstallations_MissingClientReportsInstallNotSupported pins
+// the front-half of the "don't expose a doomed install flow" guarantee:
+// without an API client, install_supported remains false.
+func TestListLarkInstallations_MissingClientReportsInstallNotSupported(t *testing.T) {
+	h := &Handler{}
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/x/lark/installations", nil)
 	w := httptest.NewRecorder()
 	h.ListLarkInstallations(w, req)
@@ -122,7 +114,7 @@ func TestListLarkInstallations_StubClientReportsInstallNotSupported(t *testing.T
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.InstallSupported {
-		t.Fatalf("install_supported must be false while only stub APIClient is wired")
+		t.Fatalf("install_supported must be false without an APIClient")
 	}
 }
 
@@ -135,10 +127,9 @@ func TestListLarkInstallations_StubClientReportsInstallNotSupported(t *testing.T
 // install_supported via the APIClient path — that path is not
 // consulted in the early-return branch.
 func TestListLarkInstallations_NotConfigured_HardCodedInstallSupportedFalse(t *testing.T) {
-	stubLogger := slog.New(slog.NewTextHandler(httptest.NewRecorder(), nil))
 	h := &Handler{
 		LarkInstallations: nil, // triggers the not-configured early return.
-		LarkAPIClient:     lark.NewStubAPIClient(stubLogger),
+		LarkAPIClient:     lark.NewHTTPAPIClient(lark.HTTPClientConfig{}),
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/x/lark/installations", nil)
 	w := httptest.NewRecorder()

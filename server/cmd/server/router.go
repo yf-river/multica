@@ -114,18 +114,6 @@ func parseTrustedProxies(raw string) []netip.Prefix {
 	return out
 }
 
-// NewRouter creates the fully-configured Chi router with all middleware and routes.
-// rdb is optional: when non-nil the runtime local-skill request stores are
-// swapped for Redis-backed implementations so multiple API nodes share the
-// same pending queue (required for multi-node prod). This should be a request
-// path Redis client, not the realtime relay's blocking read client. A nil rdb
-// keeps the default in-memory stores which are fine for single-node dev and
-// tests.
-func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client) chi.Router {
-	r, _ := NewRouterWithOptions(pool, hub, bus, analyticsClient, rdb, RouterOptions{})
-	return r
-}
-
 type RouterOptions struct {
 	HTTPMetrics     *obsmetrics.HTTPMetrics
 	BusinessMetrics *obsmetrics.BusinessMetrics
@@ -143,8 +131,7 @@ type RouterOptions struct {
 // need to drive background lifecycle on services attached to the
 // handler (e.g. starting the Lark inbound Hub under a long-running
 // context, calling Wait on shutdown) use the returned handler;
-// callers that only need the HTTP handler (tests, the simple
-// NewRouter shim) discard the second value.
+// callers that only need the HTTP handler discard the second value.
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler) {
 	queries := db.New(pool)
 	daemonHub := opts.DaemonHub
@@ -301,9 +288,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// OutcomeReplier wires the outbound side of the
 				// EventEmitter contract: NeedsBinding / AgentOffline /
 				// AgentArchived translate to a Lark-side reply card.
-				// Requires the real APIClient (the stub returns
-				// ErrAPIClientNotConfigured on every send) and the
-				// binding token service. When either is missing, the
+				// Requires the real APIClient and the binding token
+				// service. When either is missing, the
 				// Hub falls back to the noop replier and the outcomes
 				// get logged but not delivered — clearly visible in
 				// boot output so operators understand the gap.

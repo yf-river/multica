@@ -87,14 +87,6 @@ func workspaceReposForResponse(raw []byte) []any {
 	return repos
 }
 
-type MemberResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	UserID      string `json:"user_id"`
-	Role        string `json:"role"`
-	CreatedAt   string `json:"created_at"`
-}
-
 func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

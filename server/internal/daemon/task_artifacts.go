@@ -196,11 +196,7 @@ func shouldPersistFinalOutputAsArtifact(task Task, result TaskResult, output str
 	if strings.HasPrefix(output, "# ") || strings.Contains(output, "\n# ") || strings.Contains(output, "\n## ") {
 		return true
 	}
-	runes := []rune(output)
-	if len(runes) >= 700 {
-		return true
-	}
-	return false
+	return len([]rune(output)) >= 700
 }
 
 func finalOutputArtifactFilename(task Task) string {

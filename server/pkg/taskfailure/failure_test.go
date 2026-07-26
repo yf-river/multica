@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+const agentErrorPrefix = "agent_error."
+
 // TestReasonStringWireValues pins the on-the-wire string for every
 // canonical reason. These strings are persisted into
 // agent_task_queue.failure_reason and surfaced as Prometheus labels —

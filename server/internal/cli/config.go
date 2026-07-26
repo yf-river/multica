@@ -58,11 +58,6 @@ func ProfileDir(profile string) (string, error) {
 	return filepath.Join(home, ".multica", "profiles", profile), nil
 }
 
-// LoadCLIConfig reads the CLI config from disk (default profile).
-func LoadCLIConfig() (CLIConfig, error) {
-	return LoadCLIConfigForProfile("")
-}
-
 // LoadCLIConfigForProfile reads the CLI config for the given profile.
 func LoadCLIConfigForProfile(profile string) (CLIConfig, error) {
 	path, err := CLIConfigPathForProfile(profile)
@@ -81,11 +76,6 @@ func LoadCLIConfigForProfile(profile string) (CLIConfig, error) {
 		return CLIConfig{}, fmt.Errorf("parse CLI config: %w", err)
 	}
 	return cfg, nil
-}
-
-// SaveCLIConfig writes the CLI config to disk atomically (default profile).
-func SaveCLIConfig(cfg CLIConfig) error {
-	return SaveCLIConfigForProfile(cfg, "")
 }
 
 // SaveCLIConfigForProfile writes the CLI config for the given profile.
