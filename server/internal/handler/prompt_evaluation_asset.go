@@ -25,6 +25,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -4648,7 +4649,7 @@ func buildPromptEvaluationExecutionEvidence(
 			Seq:       seq,
 			TaskID:    message.TaskID,
 			Tool:      message.Tool,
-			Summary:   truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
+			Summary:   prompteval.TruncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
 			Details:   details,
 			CreatedAt: message.CreatedAt,
 		})
@@ -4711,7 +4712,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				UseSpanID:      fmt.Sprintf("message:%d", message.Seq),
 				Input:          message.Input,
 				ResultCategory: "未返回",
-				Summary:        truncatePromptEvaluationEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
+				Summary:        prompteval.TruncatePromptEvaluationEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
 				CreatedAt:      message.CreatedAt,
 			}
 			chains = append(chains, chain)
@@ -4737,7 +4738,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 					chains[index].ResultCategory = "异常线索"
 				}
 				chains[index].CompletedAt = message.CreatedAt
-				chains[index].Summary = truncatePromptEvaluationEvidence(
+				chains[index].Summary = prompteval.TruncatePromptEvaluationEvidence(
 					fmt.Sprintf("工具 %s 已配对：调用 #%d，结果 #%d", tool, chains[index].UseSeq, message.Seq),
 					240,
 				)
@@ -4756,7 +4757,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				ResultSpanID:   fmt.Sprintf("message:%d", message.Seq),
 				Output:         message.Output,
 				ResultCategory: "孤立返回",
-				Summary:        truncatePromptEvaluationEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
+				Summary:        prompteval.TruncatePromptEvaluationEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
 				CompletedAt:    message.CreatedAt,
 			})
 		}
@@ -5152,7 +5153,7 @@ func promptEvaluationTraceSpanSummary(event TaskTraceEventResponse) string {
 	if tokenTotal := event.InputTokens + event.OutputTokens + event.CacheReadTokens + event.CacheWriteTokens; tokenTotal > 0 {
 		parts = append(parts, fmt.Sprintf("token：%d", tokenTotal))
 	}
-	return truncatePromptEvaluationEvidence(strings.Join(nonEmptyStrings(parts...), "；"), 240)
+	return prompteval.TruncatePromptEvaluationEvidence(strings.Join(nonEmptyStrings(parts...), "；"), 240)
 }
 
 func nonEmptyStrings(values ...string) []string {
@@ -5301,12 +5302,12 @@ func buildPromptEvaluationIOContext(trials []PromptEvaluationTrialResponse, mess
 		"消息摘要":   "未记录",
 	}
 	if len(trials) > 0 {
-		context["用例输入摘要"] = truncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Input), 300)
-		context["用例输出摘要"] = truncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Output), 300)
+		context["用例输入摘要"] = prompteval.TruncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Input), 300)
+		context["用例输出摘要"] = prompteval.TruncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Output), 300)
 	}
 	if len(messages) > 0 {
 		message := messages[len(messages)-1]
-		context["消息摘要"] = truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
+		context["消息摘要"] = prompteval.TruncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
 	}
 	return context
 }
@@ -5724,8 +5725,8 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 			"seq":     message.Seq,
 			"type":    message.Type,
 			"tool":    message.Tool.String,
-			"content": truncatePromptEvaluationEvidence(message.Content.String, 800),
-			"output":  truncatePromptEvaluationEvidence(message.Output.String, 800),
+			"content": prompteval.TruncatePromptEvaluationEvidence(message.Content.String, 800),
+			"output":  prompteval.TruncatePromptEvaluationEvidence(message.Output.String, 800),
 		})
 	}
 	traceRows := make([]map[string]any, 0, len(traceEvents))
@@ -7310,7 +7311,7 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 			if name == "" {
 				name = "未命名维度"
 			}
-			lines = append(lines, "- "+name+"："+stringFromAny(item["优先级"])+"优先级，得分 "+stringFromAny(item["得分"])+"，证据："+truncatePromptEvaluationEvidence(stringFromAny(item["最新证据"]), 160))
+			lines = append(lines, "- "+name+"："+stringFromAny(item["优先级"])+"优先级，得分 "+stringFromAny(item["得分"])+"，证据："+prompteval.TruncatePromptEvaluationEvidence(stringFromAny(item["最新证据"]), 160))
 		}
 		rationale = "基于失败用例、维度评分弱项和真实运行证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
 	}
@@ -7325,7 +7326,7 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 				if content == "" {
 					continue
 				}
-				lines = append(lines, "- task消息 #"+stringFromAny(message["seq"])+"："+truncatePromptEvaluationEvidence(content, 240))
+				lines = append(lines, "- task消息 #"+stringFromAny(message["seq"])+"："+prompteval.TruncatePromptEvaluationEvidence(content, 240))
 			}
 		}
 		if traces, ok := runtimeEvidence["trace事件"].([]map[string]any); ok && len(traces) > 0 {
@@ -7378,7 +7379,7 @@ func buildPromptEvaluationAgentOptimizationCandidateContent(prompt db.PromptLibr
 			"失败原因：" + failureReason,
 			"",
 			"智能体优化输出摘要：",
-			truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(output.Raw, output.Rationale, "智能体未返回结构化候选正文，已基于运行证据生成待确认候选。"), 1200),
+			prompteval.TruncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(output.Raw, output.Rationale, "智能体未返回结构化候选正文，已基于运行证据生成待确认候选。"), 1200),
 			"",
 			"请在后续执行中严格遵守：",
 			"1. 全部输出使用中文，明确需求边界、影响范围和验收条件。",
@@ -7410,7 +7411,7 @@ func buildPromptEvaluationAgentOptimizationCandidateContent(prompt db.PromptLibr
 	lines = append(lines, "人工发布要求：发布前必须由验收者确认该候选不会降低原有通过用例质量。")
 	rationale := "由真实智能体优化运行输出自动生成候选；原提示词不被自动替换，必须人工确认后发布。"
 	if output.Rationale != "" {
-		rationale = "由真实智能体优化运行输出自动生成候选：" + truncatePromptEvaluationEvidence(output.Rationale, 240)
+		rationale = "由真实智能体优化运行输出自动生成候选：" + prompteval.TruncatePromptEvaluationEvidence(output.Rationale, 240)
 	}
 	return strings.Join(lines, "\n"), rationale
 }
@@ -7452,7 +7453,7 @@ func parsePromptEvaluationAgentOptimizationOutput(sourceSummary map[string]any) 
 			}
 		}
 	}
-	return promptEvaluationAgentOptimizationOutput{Raw: truncatePromptEvaluationEvidence(strings.Join(rawParts, "\n\n"), 2000)}
+	return promptEvaluationAgentOptimizationOutput{Raw: prompteval.TruncatePromptEvaluationEvidence(strings.Join(rawParts, "\n\n"), 2000)}
 }
 
 func promptEvaluationAgentOptimizationOutputFromJSON(value any) promptEvaluationAgentOptimizationOutput {
@@ -7513,7 +7514,7 @@ func buildPromptEvaluationSourcePromptSnapshot(prompt db.PromptLibraryItem) map[
 		"状态":        prompt.Status,
 		"变量":        decodeJSONDefault(prompt.Variables, []any{}),
 		"标签":        decodeJSONDefault(prompt.Tags, []any{}),
-		"内容摘要":      truncatePromptEvaluationEvidence(prompt.Content, 1200),
+		"内容摘要":      prompteval.TruncatePromptEvaluationEvidence(prompt.Content, 1200),
 	}
 }
 
@@ -7545,14 +7546,6 @@ func buildPromptEvaluationPublishedPromptTags(raw []byte) []byte {
 		next = append(next, tag)
 	}
 	return mustJSONBytes(next)
-}
-
-func truncatePromptEvaluationEvidence(value string, maxRunes int) string {
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	return string(runes[:maxRunes]) + "..."
 }
 
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
@@ -7850,7 +7843,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	if err == nil {
 		detail := providerName + " runtime「" + best.Name + "」在线且心跳新鲜，但最近任务 " + uuidToString(recentCapacityFailure.ID) + " 返回模型容量或额度限制，当前不能证明 " + promptEvaluationAgentModel() + " 可执行。"
 		if recentCapacityFailure.Error.Valid && strings.TrimSpace(recentCapacityFailure.Error.String) != "" {
-			detail += " 最近错误：" + truncatePromptEvaluationEvidence(recentCapacityFailure.Error.String, 180)
+			detail += " 最近错误：" + prompteval.TruncatePromptEvaluationEvidence(recentCapacityFailure.Error.String, 180)
 		}
 		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "如果持续出现 429/529，请申请 "+fallbackPromptEvaluationAgentModel+" 模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
 		resp.LastSeenAgeSeconds = ageSeconds

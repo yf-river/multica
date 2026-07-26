@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -452,7 +453,7 @@ func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQ
 			"seq":     message.Seq,
 			"type":    message.Type,
 			"tool":    message.Tool,
-			"content": truncatePromptEvaluationEvidence(promptEvaluationTextValue(message.Content), 800),
+			"content": prompteval.TruncatePromptEvaluationEvidence(promptEvaluationTextValue(message.Content), 800),
 		})
 	}
 	return map[string]any{
@@ -1051,14 +1052,6 @@ func mustJSONBytes(value any) []byte {
 		return []byte("{}")
 	}
 	return raw
-}
-
-func truncatePromptEvaluationEvidence(value string, maxRunes int) string {
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	return string(runes[:maxRunes]) + "..."
 }
 
 func promptEvaluationTextValue(value pgtype.Text) string {
