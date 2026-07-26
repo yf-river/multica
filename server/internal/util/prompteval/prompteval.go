@@ -52,11 +52,11 @@ func ContainsHanRune(value string) bool {
 // 按 run_id 去重并最多保留 20 条。
 func AppendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
 	history, _ := raw.([]any)
-	runID := stringFromAny(result["run_id"])
+	runID := StringFromAny(result["run_id"])
 	next := []any{result}
 	for _, item := range history {
 		if runID != "" {
-			if existing, ok := item.(map[string]any); ok && stringFromAny(existing["run_id"]) == runID {
+			if existing, ok := item.(map[string]any); ok && StringFromAny(existing["run_id"]) == runID {
 				continue
 			}
 		}
@@ -68,8 +68,8 @@ func AppendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any
 	return next
 }
 
-// stringFromAny 是 StringFromAny 导出前的包内过渡实现，二者行为一致。
-func stringFromAny(value any) string {
+// StringFromAny 将常见标量类型转为字符串，无法转换时返回空串。
+func StringFromAny(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v

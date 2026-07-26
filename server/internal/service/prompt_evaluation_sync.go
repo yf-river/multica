@@ -667,7 +667,7 @@ func promptEvaluationAgentDimensionVerdictPassed(dimensionName string, verdict p
 	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
 		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListEmpty(verdict.Evidence, "缺失", "missing", "missing_variables")
 	case strings.Contains(normalized, "中文"):
-		return prompteval.ContainsHanRune(stringFromAny(verdict.Output)) || prompteval.ContainsHanRune(verdict.Conclusion)
+		return prompteval.ContainsHanRune(prompteval.StringFromAny(verdict.Output)) || prompteval.ContainsHanRune(verdict.Conclusion)
 	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
 		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListNonEmpty(verdict.Evidence, "命中", "matched", "matched_contains")
 	default:
@@ -697,7 +697,7 @@ func promptEvaluationAgentEvidenceListEmpty(record map[string]any, keys ...strin
 	if list, ok := value.([]any); ok {
 		return len(list) == 0
 	}
-	if text := strings.TrimSpace(stringFromAny(value)); text != "" {
+	if text := strings.TrimSpace(prompteval.StringFromAny(value)); text != "" {
 		return text == "无" || text == "[]"
 	}
 	return true
@@ -708,7 +708,7 @@ func promptEvaluationAgentEvidenceListNonEmpty(record map[string]any, keys ...st
 	if list, ok := value.([]any); ok {
 		return len(list) > 0
 	}
-	return strings.TrimSpace(stringFromAny(value)) != ""
+	return strings.TrimSpace(prompteval.StringFromAny(value)) != ""
 }
 
 func promptEvaluationAgentVerdictsFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue, messages []db.TaskMessage) ([]promptEvaluationAgentCaseVerdict, bool) {
@@ -792,8 +792,8 @@ func parsePromptEvaluationAgentVerdicts(raw any, totalCases int32) ([]promptEval
 	if !ok {
 		return nil, false
 	}
-	if stringFromAny(value["schema_version"]) != "1" ||
-		stringFromAny(value["schema"]) != "multica.training_evaluation.agent_verdict.v1" {
+	if prompteval.StringFromAny(value["schema_version"]) != "1" ||
+		prompteval.StringFromAny(value["schema"]) != "multica.training_evaluation.agent_verdict.v1" {
 		return nil, false
 	}
 	list, ok := value["case_results"].([]any)
@@ -968,7 +968,7 @@ func firstValue(row map[string]any, keys ...string) any {
 
 func firstNonEmptyString(row map[string]any, keys ...string) string {
 	for _, key := range keys {
-		if value := strings.TrimSpace(stringFromAny(row[key])); value != "" {
+		if value := strings.TrimSpace(prompteval.StringFromAny(row[key])); value != "" {
 			return value
 		}
 	}
@@ -1029,28 +1029,6 @@ func clampInt32(value int64) int32 {
 		return 0
 	}
 	return int32(value)
-}
-
-func stringFromAny(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case int:
-		return strconv.Itoa(v)
-	case int32:
-		return strconv.FormatInt(int64(v), 10)
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	default:
-		return ""
-	}
 }
 
 func intFromAny(value any) (int, bool) {

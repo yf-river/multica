@@ -1087,18 +1087,18 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 		return false
 	}
 	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		if stringFromAny(scope["template_key"]) != template.Key ||
-			stringFromAny(scope["role_key"]) != role.Key ||
-			stringFromAny(scope["squad_scope"]) != squadScope ||
-			stringFromAny(scope["agent_scope"]) != agentScope {
+		if prompteval.StringFromAny(scope["template_key"]) != template.Key ||
+			prompteval.StringFromAny(scope["role_key"]) != role.Key ||
+			prompteval.StringFromAny(scope["squad_scope"]) != squadScope ||
+			prompteval.StringFromAny(scope["agent_scope"]) != agentScope {
 			return false
 		}
-		if squadScope == squadScopePersonal && stringFromAny(scope["owner_id"]) != uuidToString(ownerID) {
+		if squadScope == squadScopePersonal && prompteval.StringFromAny(scope["owner_id"]) != uuidToString(ownerID) {
 			return false
 		}
 		return true
 	}
-	return stringFromAny(runtimeConfig["模板"]) == template.Key && stringFromAny(runtimeConfig["角色"]) == role.Name
+	return prompteval.StringFromAny(runtimeConfig["模板"]) == template.Key && prompteval.StringFromAny(runtimeConfig["角色"]) == role.Name
 }
 
 func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
@@ -1269,12 +1269,12 @@ func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate
 func internalSquadProfileKey(squad db.Squad) string {
 	profile := decodeJSONDefault(squad.SopProfile, map[string]any{})
 	profileMap, _ := profile.(map[string]any)
-	return stringFromAny(profileMap["profile_key"])
+	return prompteval.StringFromAny(profileMap["profile_key"])
 }
 
 func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTemplate) bool {
 	key := internalSquadProfileKey(squad)
-	return key != "" && (key == template.Key || key == stringFromAny(template.Profile["profile_key"]))
+	return key != "" && (key == template.Key || key == prompteval.StringFromAny(template.Profile["profile_key"]))
 }
 
 func matchesInternalSquadTarget(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID, requireName bool) bool {

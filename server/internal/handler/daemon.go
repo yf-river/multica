@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -1160,7 +1161,7 @@ func roleKeyFromAgentRuntimeConfig(agent db.Agent) string {
 		return ""
 	}
 	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		return stringFromAny(scope["role_key"])
+		return prompteval.StringFromAny(scope["role_key"])
 	}
 	return ""
 }

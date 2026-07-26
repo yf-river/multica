@@ -1470,15 +1470,15 @@ func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
 			collectPromptEvaluationProfileValues(seen, item)
 		}
 	default:
-		if item := strings.TrimSpace(stringFromAny(v)); item != "" {
+		if item := strings.TrimSpace(prompteval.StringFromAny(v)); item != "" {
 			seen[item] = true
 		}
 	}
 }
 
 func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
-	target := stringFromAny(firstValue(payload, "实验对象", "experiment_target", "target", "对象"))
-	baseline := stringFromAny(firstValue(payload, "基线输出", "baseline_output", "baseline", "baseline_result"))
+	target := prompteval.StringFromAny(firstValue(payload, "实验对象", "experiment_target", "target", "对象"))
+	baseline := prompteval.StringFromAny(firstValue(payload, "基线输出", "baseline_output", "baseline", "baseline_result"))
 	raw := firstValue(payload, "对比维度", "实验维度", "evaluation_dimensions", "评估维度", "指标", "metric_contract")
 	values := promptEvaluationDimensionValues(raw)
 	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(values))
@@ -1537,7 +1537,7 @@ func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue
 		}
 		return result
 	case map[string]any:
-		if name := strings.TrimSpace(stringFromAny(firstValue(v, "name", "名称", "dimension", "维度"))); name != "" {
+		if name := strings.TrimSpace(prompteval.StringFromAny(firstValue(v, "name", "名称", "dimension", "维度"))); name != "" {
 			payload := make(map[string]any, len(v))
 			for key, item := range v {
 				payload[key] = item
@@ -1563,7 +1563,7 @@ func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue
 		}
 		return result
 	default:
-		if item := strings.TrimSpace(stringFromAny(v)); item != "" {
+		if item := strings.TrimSpace(prompteval.StringFromAny(v)); item != "" {
 			return []promptEvaluationDimensionValue{{Name: item, Payload: map[string]any{}}}
 		}
 	}
@@ -5109,7 +5109,7 @@ func promptEvaluationToolExitCode(output string) (int, bool) {
 
 func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {
 	for _, key := range []string{"tool_call_id", "call_id", "id", "工具调用ID", "调用ID"} {
-		if value := strings.TrimSpace(stringFromAny(message.Input[key])); value != "" {
+		if value := strings.TrimSpace(prompteval.StringFromAny(message.Input[key])); value != "" {
 			return value
 		}
 	}
@@ -5355,9 +5355,9 @@ func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEv
 	}
 	if insight != nil {
 		summary["服务端解释"] = map[string]any{
-			"质量判断":   stringFromAny(insight["质量判断"]),
-			"建议动作":   stringFromAny(insight["建议动作"]),
-			"失败主因":   stringFromAny(insight["失败主因"]),
+			"质量判断":   prompteval.StringFromAny(insight["质量判断"]),
+			"建议动作":   prompteval.StringFromAny(insight["建议动作"]),
+			"失败主因":   prompteval.StringFromAny(insight["失败主因"]),
 			"维度摘要数":  len(anySliceFromRecord(insight, "维度评分摘要")),
 			"维度趋势数":  len(anySliceFromRecord(insight, "维度评分趋势")),
 			"优化候选数":  len(anySliceFromRecord(insight, "优化候选证据")),
@@ -5410,9 +5410,9 @@ func (h *Handler) buildPromptEvaluationEvidenceSnapshotInsight(ctx context.Conte
 			"prompt_id": resp.PromptID,
 			"状态":        resp.Status,
 			"失败用例数":     resp.FailedCaseCount,
-			"候选优先级":     stringFromAny(metrics["候选优先级"]),
+			"候选优先级":     prompteval.StringFromAny(metrics["候选优先级"]),
 			"失败维度":      metrics["失败维度"],
-			"优先级依据":     stringFromAny(metrics["候选优先级依据"]),
+			"优先级依据":     prompteval.StringFromAny(metrics["候选优先级依据"]),
 			"修改依据":      resp.Rationale,
 		})
 	}
@@ -5771,11 +5771,11 @@ func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(c
 		return nil, err
 	}
 	payload := prompteval.DecodePayloadObject(asset.Payload)
-	taskType := stringFromAny(payload["任务类型"])
+	taskType := prompteval.StringFromAny(payload["任务类型"])
 	if taskType != "智能体优化运行" && taskType != "Agent 优化运行" {
 		return nil, nil
 	}
-	sourceRunID := strings.TrimSpace(stringFromAny(payload["来源运行"]))
+	sourceRunID := strings.TrimSpace(prompteval.StringFromAny(payload["来源运行"]))
 	if sourceRunID == "" {
 		return nil, nil
 	}
@@ -5807,7 +5807,7 @@ func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(c
 	}
 	for _, item := range existing {
 		summary := decodeJSONDefault(item.SourceFailureSummary, map[string]any{})
-		if summaryMap, ok := summary.(map[string]any); ok && stringFromAny(summaryMap["来源Agent优化运行"]) == uuidToString(agentRun.ID) {
+		if summaryMap, ok := summary.(map[string]any); ok && prompteval.StringFromAny(summaryMap["来源Agent优化运行"]) == uuidToString(agentRun.ID) {
 			return &item, nil
 		}
 	}
@@ -6797,7 +6797,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	payload["最近Agent运行"] = runIndex
 	payload["Agent运行记录"] = prompteval.AppendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
 	if asset.AssetType == promptEvaluationAssetOptimize {
-		sourceRunID := stringFromAny(payload["来源运行"])
+		sourceRunID := prompteval.StringFromAny(payload["来源运行"])
 		eventName := "创建优化运行"
 		if optimizationRetry > 0 {
 			eventName = "重试优化运行"
@@ -6991,7 +6991,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		return db.PromptEvaluationRun{}, false
 	}
 	for idx, c := range cases {
-		name := stringFromAny(firstValue(c, "name", "名称"))
+		name := prompteval.StringFromAny(firstValue(c, "name", "名称"))
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
@@ -7161,8 +7161,8 @@ func promptEvaluationWeakDimensionSummaries(rows []db.ListPromptEvaluationDimens
 	}
 	sort.Slice(result, func(i, j int) bool {
 		priorityRank := map[string]int{"高": 0, "中": 1, "低": 2}
-		leftPriority := priorityRank[stringFromAny(result[i]["优先级"])]
-		rightPriority := priorityRank[stringFromAny(result[j]["优先级"])]
+		leftPriority := priorityRank[prompteval.StringFromAny(result[i]["优先级"])]
+		rightPriority := priorityRank[prompteval.StringFromAny(result[j]["优先级"])]
 		if leftPriority != rightPriority {
 			return leftPriority < rightPriority
 		}
@@ -7171,14 +7171,14 @@ func promptEvaluationWeakDimensionSummaries(rows []db.ListPromptEvaluationDimens
 		if leftScore != rightScore {
 			return leftScore < rightScore
 		}
-		return stringFromAny(result[i]["维度名称"]) < stringFromAny(result[j]["维度名称"])
+		return prompteval.StringFromAny(result[i]["维度名称"]) < prompteval.StringFromAny(result[j]["维度名称"])
 	})
 	return result
 }
 
 func promptEvaluationCandidatePriority(weakDimensions []map[string]any) string {
 	for _, item := range weakDimensions {
-		if stringFromAny(item["优先级"]) == "高" {
+		if prompteval.StringFromAny(item["优先级"]) == "高" {
 			return "高"
 		}
 	}
@@ -7292,8 +7292,8 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	if len(failedCases) > 0 {
 		lines = append(lines, "", "失败用例摘要：")
 		for _, item := range failedCases {
-			name := stringFromAny(item["用例名称"])
-			reason := stringFromAny(item["失败原因"])
+			name := prompteval.StringFromAny(item["用例名称"])
+			reason := prompteval.StringFromAny(item["失败原因"])
 			if name == "" {
 				name = "未命名用例"
 			}
@@ -7306,11 +7306,11 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	if weakDimensions, ok := sourceSummary["失败维度"].([]map[string]any); ok && len(weakDimensions) > 0 {
 		lines = append(lines, "", "维度优先级：")
 		for _, item := range weakDimensions {
-			name := stringFromAny(item["维度名称"])
+			name := prompteval.StringFromAny(item["维度名称"])
 			if name == "" {
 				name = "未命名维度"
 			}
-			lines = append(lines, "- "+name+"："+stringFromAny(item["优先级"])+"优先级，得分 "+stringFromAny(item["得分"])+"，证据："+prompteval.TruncatePromptEvaluationEvidence(stringFromAny(item["最新证据"]), 160))
+			lines = append(lines, "- "+name+"："+prompteval.StringFromAny(item["优先级"])+"优先级，得分 "+prompteval.StringFromAny(item["得分"])+"，证据："+prompteval.TruncatePromptEvaluationEvidence(prompteval.StringFromAny(item["最新证据"]), 160))
 		}
 		rationale = "基于失败用例、维度评分弱项和真实运行证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
 	}
@@ -7318,21 +7318,21 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 		lines = append(lines, "", "真实智能体输出摘要：")
 		if messages, ok := runtimeEvidence["task消息"].([]map[string]any); ok && len(messages) > 0 {
 			for _, message := range messages {
-				content := strings.TrimSpace(stringFromAny(message["content"]))
+				content := strings.TrimSpace(prompteval.StringFromAny(message["content"]))
 				if content == "" {
-					content = strings.TrimSpace(stringFromAny(message["output"]))
+					content = strings.TrimSpace(prompteval.StringFromAny(message["output"]))
 				}
 				if content == "" {
 					continue
 				}
-				lines = append(lines, "- task消息 #"+stringFromAny(message["seq"])+"："+prompteval.TruncatePromptEvaluationEvidence(content, 240))
+				lines = append(lines, "- task消息 #"+prompteval.StringFromAny(message["seq"])+"："+prompteval.TruncatePromptEvaluationEvidence(content, 240))
 			}
 		}
 		if traces, ok := runtimeEvidence["trace事件"].([]map[string]any); ok && len(traces) > 0 {
 			for _, trace := range traces {
-				name := stringFromAny(firstValue(trace, "event_name", "event_type"))
-				status := stringFromAny(trace["status"])
-				reason := stringFromAny(trace["failure_reason"])
+				name := prompteval.StringFromAny(firstValue(trace, "event_name", "event_type"))
+				status := prompteval.StringFromAny(trace["status"])
+				reason := prompteval.StringFromAny(trace["failure_reason"])
 				if name == "" {
 					name = "未命名 trace"
 				}
@@ -7344,7 +7344,7 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 		}
 		if usages, ok := runtimeEvidence["task用量"].([]map[string]any); ok && len(usages) > 0 {
 			for _, usage := range usages {
-				lines = append(lines, "- 用量 "+stringFromAny(usage["provider"])+"/"+stringFromAny(usage["model"])+"：输入 "+stringFromAny(usage["input_tokens"])+"，输出 "+stringFromAny(usage["output_tokens"])+"，预估成本 "+stringFromAny(usage["estimated_cost"]))
+				lines = append(lines, "- 用量 "+prompteval.StringFromAny(usage["provider"])+"/"+prompteval.StringFromAny(usage["model"])+"：输入 "+prompteval.StringFromAny(usage["input_tokens"])+"，输出 "+prompteval.StringFromAny(usage["output_tokens"])+"，预估成本 "+prompteval.StringFromAny(usage["estimated_cost"]))
 			}
 		}
 	}
@@ -7420,7 +7420,7 @@ func parsePromptEvaluationAgentOptimizationOutput(sourceSummary map[string]any) 
 	var rawParts []string
 	parseMessage := func(message map[string]any) (promptEvaluationAgentOptimizationOutput, bool) {
 		for _, key := range []string{"content", "output"} {
-			raw := strings.TrimSpace(stringFromAny(message[key]))
+			raw := strings.TrimSpace(prompteval.StringFromAny(message[key]))
 			if raw == "" {
 				continue
 			}
@@ -7783,7 +7783,7 @@ func promptEvaluationAgentIDFromAny(raw any) string {
 	case string:
 		return strings.TrimSpace(v)
 	case map[string]any:
-		return stringFromAny(firstValue(v, "agent_id", "id", "智能体标识", "执行智能体标识"))
+		return prompteval.StringFromAny(firstValue(v, "agent_id", "id", "智能体标识", "执行智能体标识"))
 	default:
 		return ""
 	}
@@ -7978,7 +7978,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 	inputTokens := 0
 	outputTokens := 0
 	for idx, c := range cases {
-		name := stringFromAny(firstValue(c, "name", "名称"))
+		name := prompteval.StringFromAny(firstValue(c, "name", "名称"))
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
@@ -8206,7 +8206,7 @@ func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]a
 }
 
 func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPromptEvaluationCase {
-	name := stringFromAny(firstValue(item, "name", "名称", "case_name", "用例名称"))
+	name := prompteval.StringFromAny(firstValue(item, "name", "名称", "case_name", "用例名称"))
 	if name == "" {
 		name = "用例 " + strconv.Itoa(index+1)
 	}
@@ -8270,12 +8270,12 @@ func promptVariableDefaults(raw []byte) map[string]string {
 	_ = json.Unmarshal(raw, &variables)
 	defaults := map[string]string{}
 	for _, variable := range variables {
-		name := stringFromAny(variable["name"])
+		name := prompteval.StringFromAny(variable["name"])
 		if name == "" {
 			continue
 		}
 		if value, ok := variable["default_value"]; ok {
-			defaults[name] = stringFromAny(value)
+			defaults[name] = prompteval.StringFromAny(value)
 		}
 	}
 	return defaults
@@ -8305,15 +8305,15 @@ func applyPromptEvaluationOptimizationRunContract(payload map[string]any, assetI
 	round := map[string]any{
 		"轮次":              roundIndex,
 		"重试序号":            retryIndex,
-		"运行ID":            stringFromAny(runIndex["run_id"]),
+		"运行ID":            prompteval.StringFromAny(runIndex["run_id"]),
 		"来源运行":            sourceRunID,
-		"状态":              stringFromAny(runIndex["状态"]),
-		"执行Agent":         stringFromAny(runIndex["执行Agent"]),
-		"模型":              stringFromAny(runIndex["模型"]),
-		"runtime":         stringFromAny(runIndex["runtime"]),
-		"runtime_id":      stringFromAny(runIndex["runtime_id"]),
-		"trace/task id":   stringFromAny(runIndex["trace/task id"]),
-		"chat_session_id": stringFromAny(runIndex["chat_session_id"]),
+		"状态":              prompteval.StringFromAny(runIndex["状态"]),
+		"执行Agent":         prompteval.StringFromAny(runIndex["执行Agent"]),
+		"模型":              prompteval.StringFromAny(runIndex["模型"]),
+		"runtime":         prompteval.StringFromAny(runIndex["runtime"]),
+		"runtime_id":      prompteval.StringFromAny(runIndex["runtime_id"]),
+		"trace/task id":   prompteval.StringFromAny(runIndex["trace/task id"]),
+		"chat_session_id": prompteval.StringFromAny(runIndex["chat_session_id"]),
 		"创建时间":            now,
 		"验收口径": []string{
 			"必须保留中文语义",
@@ -8329,10 +8329,10 @@ func applyPromptEvaluationOptimizationRunContract(payload map[string]any, assetI
 	logs = append(logs, map[string]any{
 		"seq":   len(logs) + 1,
 		"事件":    eventName,
-		"状态":    stringFromAny(runIndex["状态"]),
+		"状态":    prompteval.StringFromAny(runIndex["状态"]),
 		"轮次":    roundIndex,
-		"运行ID":  stringFromAny(runIndex["run_id"]),
-		"任务ID":  stringFromAny(runIndex["trace/task id"]),
+		"运行ID":  prompteval.StringFromAny(runIndex["run_id"]),
+		"任务ID":  prompteval.StringFromAny(runIndex["trace/task id"]),
 		"消息":    eventName + "已入队，等待智能体输出候选并回写证据",
 		"记录时间":  now,
 		"可回读证据": []string{"运行历史", "运行证据", "task messages", "trace 事件", "task usage"},
@@ -8674,11 +8674,11 @@ func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []prompt
 		if !ok {
 			continue
 		}
-		versionID := strings.TrimSpace(stringFromAny(firstValue(m, "dataset_version_id", "version_id", "数据集版本ID")))
+		versionID := strings.TrimSpace(prompteval.StringFromAny(firstValue(m, "dataset_version_id", "version_id", "数据集版本ID")))
 		if versionID == "" {
 			continue
 		}
-		datasetID := strings.TrimSpace(stringFromAny(firstValue(m, "dataset_id", "dataset_asset_id", "数据集ID")))
+		datasetID := strings.TrimSpace(prompteval.StringFromAny(firstValue(m, "dataset_id", "dataset_asset_id", "数据集ID")))
 		if datasetID == "" {
 			result = append(result, promptEvaluationDatasetVersionRef{DatasetVersionID: versionID})
 			continue
@@ -8686,7 +8686,7 @@ func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []prompt
 		result = append(result, promptEvaluationDatasetVersionRef{
 			DatasetAssetID:   datasetID,
 			DatasetVersionID: versionID,
-			DatasetName:      strings.TrimSpace(stringFromAny(firstValue(m, "dataset_name", "数据集名称", "name", "名称"))),
+			DatasetName:      strings.TrimSpace(prompteval.StringFromAny(firstValue(m, "dataset_name", "数据集名称", "name", "名称"))),
 		})
 	}
 	return result
@@ -8712,7 +8712,7 @@ func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
 			}
 		case []any:
 			for _, item := range v {
-				if s := strings.TrimSpace(stringFromAny(item)); s != "" {
+				if s := strings.TrimSpace(prompteval.StringFromAny(item)); s != "" {
 					result = append(result, s)
 				}
 			}
@@ -8743,28 +8743,6 @@ func asMap(value any) map[string]any {
 	return map[string]any{}
 }
 
-func stringFromAny(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case int:
-		return strconv.Itoa(v)
-	case int32:
-		return strconv.Itoa(int(v))
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	default:
-		return ""
-	}
-}
-
 func firstNonEmptyPromptEvaluationString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -8776,7 +8754,7 @@ func firstNonEmptyPromptEvaluationString(values ...string) string {
 
 func firstNonEmptyPromptEvaluationField(row map[string]any, keys ...string) string {
 	for _, key := range keys {
-		if value := strings.TrimSpace(stringFromAny(row[key])); value != "" {
+		if value := strings.TrimSpace(prompteval.StringFromAny(row[key])); value != "" {
 			return value
 		}
 	}
@@ -8787,7 +8765,7 @@ func stringMapFromAny(value any) map[string]string {
 	result := map[string]string{}
 	if m, ok := value.(map[string]any); ok {
 		for key, raw := range m {
-			result[key] = stringFromAny(raw)
+			result[key] = prompteval.StringFromAny(raw)
 		}
 	}
 	return result
@@ -8803,7 +8781,7 @@ func stringListFromAny(value any) []string {
 	case []any:
 		out := make([]string, 0, len(v))
 		for _, item := range v {
-			if s := strings.TrimSpace(stringFromAny(item)); s != "" {
+			if s := strings.TrimSpace(prompteval.StringFromAny(item)); s != "" {
 				out = append(out, s)
 			}
 		}

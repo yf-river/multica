@@ -661,7 +661,7 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	if evidence["run_kind"] != "模板渲染检查" || evidence["case_count"] != 2 || evidence["pass_rate"] != float64(1) {
 		t.Fatalf("run evidence metrics = %+v", evidence)
 	}
-	if !strings.Contains(stringFromAny(evidence["proof_boundary"]), "Gongfeng/agent skill runtime") {
+	if !strings.Contains(prompteval.StringFromAny(evidence["proof_boundary"]), "Gongfeng/agent skill runtime") {
 		t.Fatalf("run evidence boundary = %+v", evidence)
 	}
 }

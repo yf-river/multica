@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -1953,7 +1954,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	syncedPayload := syncedAsset.Payload.(map[string]any)
 	agentRun := syncedPayload["最近Agent运行"].(map[string]any)
-	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(stringFromAny(agentRun["评估结论"]), "结构化逐用例评估") {
+	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(prompteval.StringFromAny(agentRun["评估结论"]), "结构化逐用例评估") {
 		t.Fatalf("auto-synced asset agent run = %#v", agentRun)
 	}
 }

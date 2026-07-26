@@ -20,6 +20,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -2631,7 +2632,7 @@ func roleKeyFromAgentRuntimeConfig(raw []byte) string {
 		return ""
 	}
 	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		return stringFromAny(scope["role_key"])
+		return prompteval.StringFromAny(scope["role_key"])
 	}
 	return ""
 }

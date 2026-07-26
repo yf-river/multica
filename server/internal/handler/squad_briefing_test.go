@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -92,7 +93,7 @@ func TestEnsureInternalSquadTemplateCreatesCodingSquadIdempotently(t *testing.T)
 	if first.Squad.Name != "Multica 编码小队" || first.Squad.MemberCount != 6 || len(first.Agents) != 6 {
 		t.Fatalf("first internal squad response = %+v", first)
 	}
-	if stringFromAny(first.Squad.SOPProfile.(map[string]any)["profile_key"]) != "multica-coding" {
+	if prompteval.StringFromAny(first.Squad.SOPProfile.(map[string]any)["profile_key"]) != "multica-coding" {
 		t.Fatalf("sop profile = %#v", first.Squad.SOPProfile)
 	}
 	second := create()
