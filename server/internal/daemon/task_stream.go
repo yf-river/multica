@@ -641,40 +641,6 @@ func convertSkillsForEnv(skills []protocol.TaskSkill) []execenv.SkillContextForE
 	return result
 }
 
-// composeOpenclawIncludeRoots returns the value the daemon should set for
-// OPENCLAW_INCLUDE_ROOTS on the child openclaw process so its `$include`
-// loader will follow the wrapper's reference out of envRoot into the
-// user's active config directory.
-//
-// addRoot is the directory we must grant (typically dirname of the user's
-// active openclaw.json). userValue is whatever the daemon's own
-// environment already has under OPENCLAW_INCLUDE_ROOTS — the user's own
-// cross-directory layout. We prepend addRoot, dedupe by string equality,
-// drop empty path segments, and return ok=false when there's nothing to
-// grant (addRoot is empty — fresh install case), so callers can leave the
-// env var alone in that case.
-//
-// Path separator is the OS-native list separator (`:` on Unix, `;` on
-// Windows) to match how OpenClaw splits the env var.
-func composeOpenclawIncludeRoots(addRoot, userValue string) (string, bool) {
-	if addRoot == "" {
-		return "", false
-	}
-	parts := []string{addRoot}
-	seen := map[string]struct{}{addRoot: {}}
-	for _, p := range strings.Split(userValue, string(os.PathListSeparator)) {
-		if p == "" {
-			continue
-		}
-		if _, dup := seen[p]; dup {
-			continue
-		}
-		seen[p] = struct{}{}
-		parts = append(parts, p)
-	}
-	return strings.Join(parts, string(os.PathListSeparator)), true
-}
-
 // isBlockedEnvKey returns true if the key must not be overridden by user-
 // configured custom_env. This prevents accidental or malicious override of
 // daemon-internal variables and critical system paths.
@@ -684,7 +650,7 @@ func isBlockedEnvKey(key string) bool {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "CODEX_HOME", "CURSOR_DATA_DIR", "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "CODEX_HOME", "CURSOR_DATA_DIR":
 		return true
 	}
 	return false

@@ -142,8 +142,6 @@ func TestIsBlockedEnvKey(t *testing.T) {
 		{key: "CODEX_HOME", want: true},
 		{key: "CURSOR_DATA_DIR", want: true},
 		{key: "cursor_data_dir", want: true},
-		{key: "OPENCLAW_CONFIG_PATH", want: true},
-		{key: "OPENCLAW_INCLUDE_ROOTS", want: true},
 		{key: "ANTHROPIC_API_KEY", want: false},
 		{key: "CURSOR_AGENT", want: false},
 	}
@@ -374,7 +372,6 @@ func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 		provider string
 		want     bool
 	}{
-		{provider: "openclaw", want: false},
 		{provider: "hermes", want: false},
 		{provider: "kiro", want: true},
 		{provider: "kimi", want: true},
@@ -387,80 +384,6 @@ func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 			t.Parallel()
 			if got := needsInlineSystemPrompt(tc.provider, executionpolicy.Policy{}); got != tc.want {
 				t.Fatalf("needsInlineSystemPrompt(%q) = %v, want %v", tc.provider, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestComposeOpenclawIncludeRoots — the Elon must-fix regression: the
-// daemon must grant OpenClaw permission to follow the wrapper's $include
-// link from envRoot into the user's active config dir, while preserving
-// any roots the user already configured in their shell env so their own
-// cross-directory layouts keep working.
-func TestComposeOpenclawIncludeRoots(t *testing.T) {
-	t.Parallel()
-
-	sep := string(os.PathListSeparator)
-	cases := []struct {
-		name    string
-		add     string
-		user    string
-		want    string
-		wantSet bool
-	}{
-		{
-			// Fresh install — preparer emits no $include, so daemon
-			// shouldn't touch OPENCLAW_INCLUDE_ROOTS at all.
-			name:    "fresh_install_no_root_to_grant",
-			add:     "",
-			user:    "/some/user/dir",
-			wantSet: false,
-		},
-		{
-			// User has no existing value — output is just the granted dir.
-			name:    "no_user_value",
-			add:     "/home/alice/.openclaw",
-			user:    "",
-			want:    "/home/alice/.openclaw",
-			wantSet: true,
-		},
-		{
-			// User has their own include roots — daemon must prepend
-			// granted dir AND preserve user's entries verbatim.
-			name:    "preserves_user_value",
-			add:     "/home/alice/.openclaw",
-			user:    "/etc/openclaw" + sep + "/opt/openclaw/shared",
-			want:    "/home/alice/.openclaw" + sep + "/etc/openclaw" + sep + "/opt/openclaw/shared",
-			wantSet: true,
-		},
-		{
-			// User's value already contains the granted dir — daemon
-			// must dedupe rather than emit a redundant entry that would
-			// trip OpenClaw confused-deputy heuristics.
-			name:    "dedupes_when_user_already_grants_same_dir",
-			add:     "/home/alice/.openclaw",
-			user:    "/home/alice/.openclaw" + sep + "/etc/openclaw",
-			want:    "/home/alice/.openclaw" + sep + "/etc/openclaw",
-			wantSet: true,
-		},
-		{
-			// Stray empty segments from a malformed user env are skipped.
-			name:    "skips_empty_segments_in_user_value",
-			add:     "/home/alice/.openclaw",
-			user:    "" + sep + "/etc/openclaw" + sep + "",
-			want:    "/home/alice/.openclaw" + sep + "/etc/openclaw",
-			wantSet: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, ok := composeOpenclawIncludeRoots(tc.add, tc.user)
-			if ok != tc.wantSet {
-				t.Fatalf("ok = %v, want %v (got = %q)", ok, tc.wantSet, got)
-			}
-			if got != tc.want {
-				t.Errorf("got = %q, want %q", got, tc.want)
 			}
 		})
 	}

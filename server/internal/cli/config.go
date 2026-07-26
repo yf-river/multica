@@ -15,22 +15,8 @@ type CLIConfig struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Token       string `json:"token,omitempty"`
 
-	// Backends contains optional machine-local backend discovery overrides.
-	Backends *backendOverrides `json:"backends,omitempty"`
-
 	// ProfileCommandOverrides maps runtime profile IDs to local executables.
 	ProfileCommandOverrides map[string]string `json:"profile_command_overrides,omitempty"`
-}
-
-type backendOverrides struct {
-	OpenClaw *OpenClawOverride `json:"openclaw,omitempty"`
-}
-
-// OpenClawOverride configures its local binary and native state directory.
-// Explicit MULTICA_OPENCLAW_PATH and OPENCLAW_STATE_DIR values take precedence.
-type OpenClawOverride struct {
-	BinaryPath string `json:"binary_path,omitempty"`
-	StateDir   string `json:"state_dir,omitempty"`
 }
 
 // CLIConfigPathForProfile returns the config file path for the given profile.

@@ -105,7 +105,7 @@ var (
 	runtimeModeLabels     = newLabelNormalizer("unknown", "local", "cloud")
 	runtimeProviderLabels = newLabelNormalizer(
 		"other", "antigravity", "claude", "codebuddy", "codex", "copilot", "cursor", "gemini",
-		"hermes", "kiro", "kimi", "multica_agent", "openclaw", "opencode", "pi",
+		"hermes", "kiro", "kimi", "multica_agent", "opencode", "pi",
 	)
 	terminalStatusLabels   = newLabelNormalizer("other", "completed", "failed", "cancelled", "blocked")
 	tokenTypeLabels        = newLabelNormalizer("input", "output", "cache_read", "cache_write")

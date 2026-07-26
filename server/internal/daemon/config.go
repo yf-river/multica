@@ -57,7 +57,6 @@ var agentProviderSpecs = []agentProviderSpec{
 	{provider: "claude", pathEnv: "MULTICA_CLAUDE_PATH", command: "claude", modelEnv: "MULTICA_CLAUDE_MODEL"},
 	{provider: "codex", pathEnv: "MULTICA_CODEX_PATH", command: "codex", modelEnv: "MULTICA_CODEX_MODEL"},
 	{provider: "opencode", pathEnv: "MULTICA_OPENCODE_PATH", command: "opencode", modelEnv: "MULTICA_OPENCODE_MODEL"},
-	{provider: "openclaw", pathEnv: "MULTICA_OPENCLAW_PATH", command: "openclaw", modelEnv: "MULTICA_OPENCLAW_MODEL"},
 	{provider: "hermes", pathEnv: "MULTICA_HERMES_PATH", command: "hermes", modelEnv: "MULTICA_HERMES_MODEL"},
 	{provider: "gemini", pathEnv: "MULTICA_GEMINI_PATH", command: "gemini", modelEnv: "MULTICA_GEMINI_MODEL"},
 	{provider: "pi", pathEnv: "MULTICA_PI_PATH", command: "pi", modelEnv: "MULTICA_PI_MODEL"},
@@ -78,7 +77,7 @@ type Config struct {
 	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
 	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
 	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro, antigravity
+	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro, antigravity
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
@@ -139,16 +138,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Local config is optional. Explicit process environment still wins over
-	// OpenClaw config, and a malformed config does not prevent daemon startup.
+	// Local config is optional. A malformed config does not prevent daemon startup.
 	var profileCommandOverrides map[string]string
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		if cliCfg.Backends != nil {
-			applyOpenclawOverride(cliCfg.Backends.OpenClaw)
-		}
 		// Copy machine-local paths so loaded config cannot alias daemon state.
 		if len(cliCfg.ProfileCommandOverrides) > 0 {
 			profileCommandOverrides = make(map[string]string, len(cliCfg.ProfileCommandOverrides))
@@ -218,7 +213,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	agents = filterAgentsByProviderEnv(agents)
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
 	}
 
 	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")
@@ -635,22 +630,4 @@ func isSafeAgentName(s string) bool {
 		}
 	}
 	return true
-}
-
-// applyOpenclawOverride exposes machine-local config through the environment
-// already consumed by discovery and child processes. Explicit env wins.
-func applyOpenclawOverride(oc *cli.OpenClawOverride) {
-	if oc == nil {
-		return
-	}
-	if oc.BinaryPath != "" {
-		if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); !set {
-			_ = os.Setenv("MULTICA_OPENCLAW_PATH", oc.BinaryPath)
-		}
-	}
-	if oc.StateDir != "" {
-		if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); !set {
-			_ = os.Setenv("OPENCLAW_STATE_DIR", oc.StateDir)
-		}
-	}
 }

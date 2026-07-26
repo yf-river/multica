@@ -72,8 +72,8 @@ const modelCacheTTL = 60 * time.Second
 
 // ListModels returns the models supported by the given agent provider.
 // For providers with a known static catalog it returns the baked-in
-// list; for providers with a CLI discovery mechanism (opencode, pi,
-// openclaw) it shells out with caching and falls back to the static
+// list; for providers with a CLI discovery mechanism (opencode, pi) it
+// shells out with caching and falls back to the static
 // list on failure.
 //
 // For claude, codex, and opencode, the catalog is augmented with per-model
@@ -122,10 +122,6 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 	case "pi":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverPiModels(ctx, executablePath)
-		})
-	case "openclaw":
-		return cachedDiscovery(providerType, func() ([]Model, error) {
-			return discoverOpenclawAgents(ctx, executablePath)
 		})
 	case "codebuddy":
 		return cachedDiscovery(providerType, func() ([]Model, error) {

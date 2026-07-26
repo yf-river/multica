@@ -48,7 +48,6 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "codex",
   "copilot",
   "opencode",
-  "openclaw",
   "hermes",
   "gemini",
   "pi",
@@ -212,7 +211,7 @@ export interface Agent {
    * MCP server configuration forwarded to runtimes that consume
    * `agent.mcp_config` (see providerSupportsMcpConfig). Each backend
    * materialises it in the runtime-native place: Claude flags, Codex
-   * config.toml, ACP session params, OpenCode env config, OpenClaw
+   * config.toml, ACP session params, and OpenCode env config
    * wrapper config, etc. `null` means no managed config; the daemon uses
    * the CLI's own default. MUL-2764.
    *

@@ -69,8 +69,8 @@ type AgentResponse struct {
 }
 
 // runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
-// any non-empty `runtime_config.gateway.token` (openclaw gateway mode, issue
-// #3260). The token is a bearer credential; surfacing the real value through
+// any non-empty `runtime_config.gateway.token`. The token is a bearer
+// credential; surfacing the real value through
 // GET responses would let anyone with read access to the agent dump the
 // gateway secret. The mask is a sentinel — when the UI later PATCHes the
 // agent and submits the same mask verbatim under that field, the update
@@ -157,7 +157,7 @@ func writeAgentResponseDecodeError(w http.ResponseWriter, r *http.Request, agent
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
 // mask sentinel when a non-empty value is present. No-op for any other
-// shape so non-openclaw / non-gateway agents pass through untouched.
+// shape so configurations without a gateway token pass through untouched.
 func maskGatewayToken(rc map[string]any) {
 	gw, ok := rc["gateway"].(map[string]any)
 	if !ok {

@@ -543,53 +543,6 @@ func TestDiscoverPiModelsNonZeroExit(t *testing.T) {
 	}
 }
 
-func TestParseOpenclawAgentsJSONArray(t *testing.T) {
-	input := []byte(`[
-	{"id": "deepseek", "name": "DeepSeek", "model": "deepseek-v4"},
-	{"id": "claude", "name": "Claude", "model": "claude-sonnet-4-6"},
-	{"id": "deepseek", "name": "Duplicate", "model": "ignored"},
-	{"name": "Missing ID", "model": "ignored"}
-]`)
-	models, ok := parseOpenclawAgentsJSON(input)
-	if !ok {
-		t.Fatal("expected parseOpenclawAgentsJSON to accept an array")
-	}
-	if len(models) != 2 {
-		t.Fatalf("got %d, want 2: %+v", len(models), models)
-	}
-	if models[0].ID != "deepseek" || models[0].Label != "DeepSeek (deepseek-v4)" {
-		t.Errorf("unexpected first entry: %+v", models[0])
-	}
-}
-
-func TestOpenclawEntriesToModelsUsesIDOverName(t *testing.T) {
-	// When both id and name are present, Model.ID should use the id field
-	// because openclaw resolves --agent by id. Names with spaces (e.g.
-	// "Sub2API OPS") would be mangled by openclaw's normalizeAgentId.
-	input := []byte(`[{"id": "sub2api", "name": "Sub2API OPS", "model": "gpt-4o"}]`)
-	models, ok := parseOpenclawAgentsJSON(input)
-	if !ok {
-		t.Fatal("expected parseOpenclawAgentsJSON to accept array")
-	}
-	if len(models) != 1 {
-		t.Fatalf("got %d models, want 1", len(models))
-	}
-	if models[0].ID != "sub2api" {
-		t.Errorf("Model.ID = %q, want %q (should use id, not name)", models[0].ID, "sub2api")
-	}
-	if models[0].Label != "Sub2API OPS (gpt-4o)" {
-		t.Errorf("Model.Label = %q, want %q (should use name for display)", models[0].Label, "Sub2API OPS (gpt-4o)")
-	}
-}
-
-func TestParseOpenclawAgentsJSONRejectsGarbage(t *testing.T) {
-	for _, input := range []string{"not json", `{"agents":[]}`, "null"} {
-		if _, ok := parseOpenclawAgentsJSON([]byte(input)); ok {
-			t.Errorf("expected ok=false for %q", input)
-		}
-	}
-}
-
 func TestParseCursorModels(t *testing.T) {
 	input := `Available models
 

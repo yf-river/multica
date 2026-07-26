@@ -16,7 +16,6 @@ func TestSupportedTypesMatchFactoryAndSchema(t *testing.T) {
 		"codex":       reflect.TypeOf((*CodexBrokerBackend)(nil)),
 		"copilot":     reflect.TypeOf((*copilotBackend)(nil)),
 		"opencode":    reflect.TypeOf((*opencodeBackend)(nil)),
-		"openclaw":    reflect.TypeOf((*openclawBackend)(nil)),
 		"hermes":      reflect.TypeOf((*hermesBackend)(nil)),
 		"gemini":      reflect.TypeOf((*geminiBackend)(nil)),
 		"pi":          reflect.TypeOf((*piBackend)(nil)),
@@ -83,7 +82,7 @@ func TestLaunchHeaderCoversAllSupportedBackends(t *testing.T) {
 	// entry to launchHeaders in agent.go and extend this list.
 	supported := []string{
 		"antigravity", "claude", "codebuddy", "codex", "copilot", "cursor", "gemini",
-		"hermes", "kimi", "kiro", "openclaw", "opencode", "pi",
+		"hermes", "kimi", "kiro", "opencode", "pi",
 	}
 	for _, t_ := range supported {
 		if header := LaunchHeader(t_); header == "" {

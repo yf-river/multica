@@ -100,7 +100,7 @@ func TestMaskGatewayTokenSkipsEmptyToken(t *testing.T) {
 	}
 }
 
-func TestMaskGatewayTokenNoOpOnNonOpenclawShape(t *testing.T) {
+func TestMaskGatewayTokenNoOpWithoutGatewayShape(t *testing.T) {
 	t.Parallel()
 
 	rc := map[string]any{"some_other_key": "value"}

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 func TestPatternsFromEnv_DefaultsWhenUnset(t *testing.T) {
@@ -494,7 +491,6 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 	for _, name := range []string{
 		"MULTICA_CLAUDE_PATH",
 		"MULTICA_OPENCODE_PATH",
-		"MULTICA_OPENCLAW_PATH",
 		"MULTICA_HERMES_PATH",
 		"MULTICA_GEMINI_PATH",
 		"MULTICA_PI_PATH",
@@ -504,170 +500,6 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 		"MULTICA_KIRO_PATH",
 	} {
 		t.Setenv(name, filepath.Join(missingDir, strings.ToLower(name)))
-	}
-}
-
-func TestApplyOpenclawOverride_DoesNothingWhenNil(t *testing.T) {
-	// Pre-set both env vars to known values; verify they survive untouched.
-	t.Setenv("MULTICA_OPENCLAW_PATH", "/before/openclaw")
-	t.Setenv("OPENCLAW_STATE_DIR", "/before/state")
-
-	applyOpenclawOverride(nil)
-
-	if got := os.Getenv("MULTICA_OPENCLAW_PATH"); got != "/before/openclaw" {
-		t.Errorf("MULTICA_OPENCLAW_PATH mutated: got %q, want /before/openclaw", got)
-	}
-	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/before/state" {
-		t.Errorf("OPENCLAW_STATE_DIR mutated: got %q, want /before/state", got)
-	}
-}
-
-func TestApplyOpenclawOverride_SetsBothWhenEnvUnset(t *testing.T) {
-	t.Setenv("MULTICA_OPENCLAW_PATH", "")
-	t.Setenv("OPENCLAW_STATE_DIR", "")
-	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	t.Cleanup(func() {
-		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	})
-
-	applyOpenclawOverride(&cli.OpenClawOverride{
-		BinaryPath: "/from/config/openclaw",
-		StateDir:   "/from/config/state",
-	})
-
-	if got := os.Getenv("MULTICA_OPENCLAW_PATH"); got != "/from/config/openclaw" {
-		t.Errorf("MULTICA_OPENCLAW_PATH: got %q, want /from/config/openclaw", got)
-	}
-	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/from/config/state" {
-		t.Errorf("OPENCLAW_STATE_DIR: got %q, want /from/config/state", got)
-	}
-}
-
-// Explicit process environment takes precedence over local config.
-func TestApplyOpenclawOverride_EnvWinsOverConfig(t *testing.T) {
-	// User has already exported these in their shell.
-	t.Setenv("MULTICA_OPENCLAW_PATH", "/from/env/openclaw")
-	t.Setenv("OPENCLAW_STATE_DIR", "/from/env/state")
-
-	applyOpenclawOverride(&cli.OpenClawOverride{
-		BinaryPath: "/from/config/openclaw",
-		StateDir:   "/from/config/state",
-	})
-
-	if got := os.Getenv("MULTICA_OPENCLAW_PATH"); got != "/from/env/openclaw" {
-		t.Errorf("MULTICA_OPENCLAW_PATH: env should win, got %q want /from/env/openclaw", got)
-	}
-	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/from/env/state" {
-		t.Errorf("OPENCLAW_STATE_DIR: env should win, got %q want /from/env/state", got)
-	}
-}
-
-// Empty override fields must not mask normal discovery.
-func TestApplyOpenclawOverride_PartialFields_OnlySetsConfigured(t *testing.T) {
-	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	t.Cleanup(func() {
-		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	})
-
-	applyOpenclawOverride(&cli.OpenClawOverride{
-		StateDir: "/from/config/state",
-		// BinaryPath intentionally empty — must NOT call Setenv("MULTICA_OPENCLAW_PATH", "")
-	})
-
-	if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); set {
-		t.Errorf("MULTICA_OPENCLAW_PATH should remain unset when BinaryPath is empty; got %q", os.Getenv("MULTICA_OPENCLAW_PATH"))
-	}
-	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/from/config/state" {
-		t.Errorf("OPENCLAW_STATE_DIR: got %q, want /from/config/state", got)
-	}
-}
-
-// Local backend config feeds discovery and the spawned tool environment.
-func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
-	stageFakeAgent(t)
-	// Add an OpenClaw executable outside normal PATH discovery.
-	customDir := t.TempDir()
-	customOpenclaw := filepath.Join(customDir, "non-default-openclaw")
-	if err := os.WriteFile(customOpenclaw, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake openclaw: %v", err)
-	}
-
-	// Make sure no env-var override is leaking in from the test runner.
-	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	t.Cleanup(func() {
-		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	})
-
-	homeForCLIConfig := t.TempDir()
-	t.Setenv("HOME", homeForCLIConfig)
-	var cfg cli.CLIConfig
-	configJSON, err := json.Marshal(map[string]any{
-		"server_url": "http://localhost:8080",
-		"backends": map[string]any{
-			"openclaw": map[string]string{
-				"binary_path": customOpenclaw,
-				"state_dir":   "/var/lib/openclaw-isolated",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal cli config: %v", err)
-	}
-	if err := json.Unmarshal(configJSON, &cfg); err != nil {
-		t.Fatalf("unmarshal cli config: %v", err)
-	}
-	if err := cli.SaveCLIConfigForProfile(cfg, ""); err != nil {
-		t.Fatalf("save cli config: %v", err)
-	}
-
-	loaded, err := LoadConfig(Overrides{
-		ServerURL:      "http://localhost:8080",
-		WorkspacesRoot: t.TempDir(),
-	})
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-
-	openclaw, ok := loaded.Agents["openclaw"]
-	if !ok {
-		t.Fatalf("agents map missing 'openclaw' key; got keys=%v", agentKeys(loaded.Agents))
-	}
-	if openclaw.Path != customOpenclaw {
-		t.Errorf("openclaw.Path: got %q, want %q (the binary configured in CLI config)", openclaw.Path, customOpenclaw)
-	}
-	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/var/lib/openclaw-isolated" {
-		t.Errorf("OPENCLAW_STATE_DIR: got %q, want injected from config", got)
-	}
-}
-
-func TestLoadConfig_WithoutBackendConfigUsesPathDiscovery(t *testing.T) {
-	stageFakeAgent(t)
-
-	// Point HOME at an empty dir — no config.json present.
-	t.Setenv("HOME", t.TempDir())
-	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	t.Cleanup(func() {
-		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
-	})
-
-	_, err := LoadConfig(Overrides{
-		ServerURL:      "http://localhost:8080",
-		WorkspacesRoot: t.TempDir(),
-	})
-	if err != nil {
-		t.Fatalf("LoadConfig with no config file should not fail: %v", err)
-	}
-
-	if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); set {
-		t.Errorf("OPENCLAW_STATE_DIR should remain unset when no config file is present; got %q", os.Getenv("OPENCLAW_STATE_DIR"))
 	}
 }
 

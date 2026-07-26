@@ -124,24 +124,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// Try to reuse the workdir from a previous task on the same (agent, issue) pair.
 	var env *execenv.Environment
-	openclawBin := ""
-	if provider == "openclaw" {
-		openclawBin = entry.Path
-	}
 	var agentMcpConfig json.RawMessage
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
-	}
-	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
-	// ExecOptions all see the same mode + gateway pin (issue #3260).
-	var openclawMode string
-	var openclawGateway execenv.OpenclawGatewayPin
-	if task.Agent != nil && provider == "openclaw" {
-		var err error
-		openclawMode, openclawGateway, err = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig)
-		if err != nil {
-			return TaskResult{}, err
-		}
 	}
 	var issueSpace *preparedIssueExecutionSpace
 	if issueExecutionSpaceEnabled(task) && executionPolicy.CanAccessRepo {
@@ -166,12 +151,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.PriorWorkDir != "" && issueSpace == nil {
 		var err error
 		env, err = execenv.Reuse(execenv.ReuseParams{
-			WorkDir:         task.PriorWorkDir,
-			Provider:        provider,
-			OpenclawBin:     openclawBin,
-			McpConfig:       agentMcpConfig,
-			OpenclawGateway: openclawGateway,
-			Task:            taskCtx,
+			WorkDir:   task.PriorWorkDir,
+			Provider:  provider,
+			McpConfig: agentMcpConfig,
+			Task:      taskCtx,
 		}, d.logger)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("reuse execution environment: %w", err)
@@ -180,15 +163,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env == nil {
 		var err error
 		prepParams := execenv.PrepareParams{
-			WorkspacesRoot:  d.cfg.WorkspacesRoot,
-			WorkspaceID:     task.WorkspaceID,
-			TaskID:          task.ID,
-			AgentName:       agentName,
-			Provider:        provider,
-			OpenclawBin:     openclawBin,
-			McpConfig:       agentMcpConfig,
-			OpenclawGateway: openclawGateway,
-			Task:            taskCtx,
+			WorkspacesRoot: d.cfg.WorkspacesRoot,
+			WorkspaceID:    task.WorkspaceID,
+			TaskID:         task.ID,
+			AgentName:      agentName,
+			Provider:       provider,
+			McpConfig:      agentMcpConfig,
+			Task:           taskCtx,
 		}
 		if issueSpace != nil {
 			prepParams.ManagedWorkDir = managedWorkDirForIssueSpace(issueSpace)
@@ -322,22 +303,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// persistent ~/.cursor/projects state.
 	if env.CursorDataDir != "" {
 		agentEnv["CURSOR_DATA_DIR"] = env.CursorDataDir
-	}
-	// Point OpenClaw at the per-task synthesized config. The config pins
-	// agents.defaults.workspace (and any agents.list[].workspace) to the
-	// task workdir, so the CLI's native skill scanner picks up the per-task
-	// skills written under {workDir}/skills/. Falls back silently when the
-	// preparer didn't run (non-openclaw provider, or write failure).
-	if env.OpenclawConfigPath != "" {
-		agentEnv["OPENCLAW_CONFIG_PATH"] = env.OpenclawConfigPath
-	}
-	// Grant the wrapper config permission to $include the user's active
-	// config across directories. OpenClaw's $include defaults to confining
-	// resolution to the wrapper's own directory; without this, the
-	// wrapper-out-of-envRoot $include into ~/.openclaw/openclaw.json is
-	// rejected and the run boots with no user-registered agents.
-	if rootsValue, ok := composeOpenclawIncludeRoots(env.OpenclawIncludeRoot, os.Getenv("OPENCLAW_INCLUDE_ROOTS")); ok {
-		agentEnv["OPENCLAW_INCLUDE_ROOTS"] = rootsValue
 	}
 	// Inject user-configured custom environment variables (e.g. ANTHROPIC_API_KEY,
 	// ANTHROPIC_BASE_URL for router/proxy mode, or CLAUDE_CODE_USE_BEDROCK for
@@ -473,7 +438,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		PermissionMode:            permissionModeForExecutionPolicy(provider, toolPolicy),
 		McpConfig:                 mcpConfig,
 		ThinkingLevel:             thinkingLevel,
-		OpenclawMode:              openclawMode,
 	}
 	// Kiro/Kimi cannot rely on workdir runtime files; repository-less Claude
 	// coordinators also need the brief because their tool envelope cannot read it.

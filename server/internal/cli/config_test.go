@@ -49,76 +49,6 @@ func TestCLIConfigWithoutOverridesLoads(t *testing.T) {
 	if cfg.Token != "mul_abcdef" {
 		t.Errorf("Token: got %q", cfg.Token)
 	}
-	if cfg.Backends != nil {
-		t.Errorf("Backends should be nil, got %+v", cfg.Backends)
-	}
-}
-
-func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-
-	original := CLIConfig{
-		ServerURL: "https://api.multica.ai",
-		Token:     "mul_xyz",
-		Backends: &backendOverrides{
-			OpenClaw: &OpenClawOverride{
-				BinaryPath: "/opt/openclaw-prod/bin/openclaw",
-				StateDir:   "/var/lib/openclaw-prod",
-			},
-		},
-	}
-	if err := SaveCLIConfigForProfile(original, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	loaded, err := LoadCLIConfigForProfile("")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if loaded.Backends == nil || loaded.Backends.OpenClaw == nil {
-		t.Fatalf("Backends.OpenClaw should be non-nil after round-trip, got %+v", loaded.Backends)
-	}
-	if loaded.Backends.OpenClaw.BinaryPath != original.Backends.OpenClaw.BinaryPath {
-		t.Errorf("BinaryPath round-trip: got %q, want %q",
-			loaded.Backends.OpenClaw.BinaryPath, original.Backends.OpenClaw.BinaryPath)
-	}
-	if loaded.Backends.OpenClaw.StateDir != original.Backends.OpenClaw.StateDir {
-		t.Errorf("StateDir round-trip: got %q, want %q",
-			loaded.Backends.OpenClaw.StateDir, original.Backends.OpenClaw.StateDir)
-	}
-}
-
-func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-
-	cfg := CLIConfig{
-		ServerURL: "https://api.multica.ai",
-		Token:     "mul_xyz",
-		Backends: &backendOverrides{
-			OpenClaw: &OpenClawOverride{
-				StateDir: "/var/lib/openclaw-prod",
-			},
-		},
-	}
-	if err := SaveCLIConfigForProfile(cfg, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	data, raw := readSavedConfigJSON(t, tmp)
-
-	openclaw, ok := raw["backends"].(map[string]any)["openclaw"].(map[string]any)
-	if !ok {
-		t.Fatalf("could not navigate to backends.openclaw in: %s", string(data))
-	}
-	if _, present := openclaw["binary_path"]; present {
-		t.Errorf("binary_path should be omitted when empty, got: %s", string(data))
-	}
-	if _, present := openclaw["state_dir"]; !present {
-		t.Errorf("state_dir should be present when set, got: %s", string(data))
-	}
 }
 
 func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
@@ -130,9 +60,6 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 		AppURL:      "https://app.multica.ai",
 		WorkspaceID: "ws-123",
 		Token:       "mul_xyz",
-		Backends: &backendOverrides{
-			OpenClaw: &OpenClawOverride{StateDir: "/var/lib/openclaw-prod"},
-		},
 		ProfileCommandOverrides: map[string]string{
 			"prof-1": "/opt/bin/company-codex",
 			"prof-2": "/usr/local/bin/special-claude",
@@ -169,10 +96,6 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 	if loaded.Token != original.Token {
 		t.Errorf("Token = %q, want %q", loaded.Token, original.Token)
 	}
-	if loaded.Backends == nil || loaded.Backends.OpenClaw == nil ||
-		loaded.Backends.OpenClaw.StateDir != "/var/lib/openclaw-prod" {
-		t.Errorf("Backends.OpenClaw not preserved: %+v", loaded.Backends)
-	}
 }
 
 func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
@@ -187,8 +110,5 @@ func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	data, raw := readSavedConfigJSON(t, tmp)
 	if _, ok := raw["profile_command_overrides"]; ok {
 		t.Errorf("profile_command_overrides should be omitted when empty, got: %s", string(data))
-	}
-	if _, ok := raw["backends"]; ok {
-		t.Errorf("backends should be omitted when empty, got: %s", string(data))
 	}
 }
