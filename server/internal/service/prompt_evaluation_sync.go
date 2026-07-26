@@ -186,8 +186,8 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		EstimatedCost:     estimatedCost,
 		FailureReason:     pgtype.Text{String: failureReason, Valid: true},
 		Conclusion:        pgtype.Text{String: conclusion, Valid: true},
-		Metrics:           mustJSONBytes(metrics),
-		Evidence:          mustJSONBytes(evidence),
+		Metrics:           prompteval.MustJSONBytes(metrics),
+		Evidence:          prompteval.MustJSONBytes(evidence),
 		StartedAt:         task.StartedAt,
 		CompletedAt:       task.CompletedAt,
 	})
@@ -211,7 +211,7 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		OutputTokens:  perCaseOutput,
 		DurationMs:    averageMs,
 		FailureReason: trialFailureReason,
-		Evidence: mustJSONBytes(map[string]any{
+		Evidence: prompteval.MustJSONBytes(map[string]any{
 			"run_id":        util.UUIDToString(run.ID),
 			"task_id":       util.UUIDToString(task.ID),
 			"同步来源":          "Agent task 自动回写",
@@ -234,8 +234,8 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 				OutputTokens:  perCaseOutput,
 				DurationMs:    averageMs,
 				FailureReason: verdict.FailureReason,
-				Output:        mustJSONBytes(verdict.Output),
-				Evidence: mustJSONBytes(map[string]any{
+				Output:        prompteval.MustJSONBytes(verdict.Output),
+				Evidence: prompteval.MustJSONBytes(map[string]any{
 					"run_id":        util.UUIDToString(run.ID),
 					"task_id":       util.UUIDToString(task.ID),
 					"同步来源":          "Agent task 结构化逐用例评估",
@@ -322,7 +322,7 @@ func syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, q *db.Querie
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
-		Payload:     mustJSONBytes(payload),
+		Payload:     prompteval.MustJSONBytes(payload),
 	})
 	return err
 }
@@ -1044,14 +1044,6 @@ func decodeJSONDefault(raw []byte, fallback any) any {
 		return fallback
 	}
 	return value
-}
-
-func mustJSONBytes(value any) []byte {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return []byte("{}")
-	}
-	return raw
 }
 
 func promptEvaluationTextValue(value pgtype.Text) string {

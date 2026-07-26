@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -625,7 +626,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		return
 	}
 	payload := buildPromptEvaluationSkillReEvalPayload(sourceAsset, candidate, *sourceSnapshot, reEvalSnapshot, cases)
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), candidate.PromptID, promptEvaluationAssetTestSuite)
+	profile := promptEvaluationAssetProfileFromPayload(prompteval.MustJSONBytes(payload), candidate.PromptID, promptEvaluationAssetTestSuite)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "Skill re-eval " + shortPromptEvaluationID(uuidToString(candidate.ID)) + " " + time.Now().UTC().Format("20060102-150405")
@@ -647,7 +648,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		Name:                     name,
 		Description:              description,
 		AssetType:                promptEvaluationAssetTestSuite,
-		Payload:                  mustJSONBytes(payload),
+		Payload:                  prompteval.MustJSONBytes(payload),
 		Status:                   "启用",
 		CreatedBy:                parseUUID(userID),
 		StructureSchema:          profile.StructureSchema,
@@ -793,7 +794,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
-		Payload:     mustJSONBytes(payload),
+		Payload:     prompteval.MustJSONBytes(payload),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save skill re-eval run")
@@ -937,7 +938,7 @@ SET metrics = COALESCE(metrics, '{}'::jsonb) || $3::jsonb,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candidate_content, rationale, failed_case_count, source_failure_summary, source_prompt_snapshot, metrics, status, published_prompt_id, published_at, created_by, created_at, updated_at
-`, candidateID, workspaceID, mustJSONBytes(patch))
+`, candidateID, workspaceID, prompteval.MustJSONBytes(patch))
 	var item db.PromptEvaluationOptimizationCandidate
 	err := row.Scan(
 		&item.ID,
@@ -963,7 +964,7 @@ RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candida
 }
 
 func (h *Handler) updatePromptEvaluationAssetPayload(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, payload map[string]any) (db.PromptEvaluationAsset, bool) {
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), asset.PromptID, asset.AssetType)
+	profile := promptEvaluationAssetProfileFromPayload(prompteval.MustJSONBytes(payload), asset.PromptID, asset.AssetType)
 	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:                       asset.ID,
 		WorkspaceID:              asset.WorkspaceID,
@@ -971,7 +972,7 @@ func (h *Handler) updatePromptEvaluationAssetPayload(w http.ResponseWriter, r *h
 		Name:                     pgtype.Text{String: asset.Name, Valid: true},
 		Description:              pgtype.Text{String: asset.Description, Valid: true},
 		AssetType:                pgtype.Text{String: asset.AssetType, Valid: true},
-		Payload:                  mustJSONBytes(payload),
+		Payload:                  prompteval.MustJSONBytes(payload),
 		Status:                   pgtype.Text{String: asset.Status, Valid: true},
 		StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
 		StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},

@@ -18,6 +18,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -493,7 +494,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 }
 
 func userCenterSOPMCPConfig() []byte {
-	return mustJSONBytes(map[string]any{
+	return prompteval.MustJSONBytes(map[string]any{
 		"mcpServers": map[string]any{
 			"mcp-server-tapd": map[string]any{
 				"command": "uvx",
@@ -1040,7 +1041,7 @@ func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalS
 	if squadScope == squadScopePersonal {
 		scopeOwnerID = uuidToString(ownerID)
 	}
-	return mustJSONBytes(map[string]any{
+	return prompteval.MustJSONBytes(map[string]any{
 		"provider": runtime.Provider,
 		"用途":       template.Name,
 		"角色":       role.Name,
@@ -1157,7 +1158,7 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 				return db.Squad{}, err
 			}
 		} else {
-			sopProfile := mustJSONBytes(template.Profile)
+			sopProfile := prompteval.MustJSONBytes(template.Profile)
 			squad, err = h.Queries.CreateSquad(ctx, db.CreateSquadParams{
 				WorkspaceID:  workspaceID,
 				Name:         template.Name,
@@ -1174,7 +1175,7 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 		}
 	}
 	if uuidToString(squad.ID) != "" {
-		profileBytes := mustJSONBytes(template.Profile)
+		profileBytes := prompteval.MustJSONBytes(template.Profile)
 		leaderID := parseUUID(agents[0].ID)
 		if itemNeedsInternalSquadSync(squad, template, profileBytes, leaderID, scope) {
 			params := db.UpdateSquadParams{

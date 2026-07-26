@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -602,7 +603,7 @@ func TestPromptEvaluationSkillReEvalPayloadUsesApprovedDraftsAndSnapshot(t *test
 func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testing.T) {
 	candidate := dbPromptEvaluationCandidateForSkillTest()
 	reEvalAssetID := "33333333-3333-4333-8333-333333333333"
-	candidate.Metrics = mustJSONBytes(map[string]any{
+	candidate.Metrics = prompteval.MustJSONBytes(map[string]any{
 		"skill_re_eval": map[string]any{
 			"asset_id": reEvalAssetID,
 		},

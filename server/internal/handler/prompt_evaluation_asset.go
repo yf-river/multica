@@ -1403,14 +1403,14 @@ func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, fi
 		if preserveEmpty {
 			return nil, true
 		}
-		return mustJSONBytes(normalizePromptEvaluationPayloadObject(map[string]any{})), true
+		return prompteval.MustJSONBytes(normalizePromptEvaluationPayloadObject(map[string]any{})), true
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		writeError(w, http.StatusBadRequest, field+" must be a JSON object")
 		return nil, false
 	}
-	return mustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
+	return prompteval.MustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
 }
 
 func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID, assetType string) promptEvaluationAssetProfile {
@@ -2192,11 +2192,11 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 			WorkspaceID:   workspaceUUID,
 			AssetID:       asset.ID,
 			OperationType: operationType,
-			Filter:        mustJSONBytes(filterPayload),
-			Input:         mustJSONBytes(inputPayload),
+			Filter:        prompteval.MustJSONBytes(filterPayload),
+			Input:         prompteval.MustJSONBytes(inputPayload),
 			ChangedCount:  0,
 			SkippedCount:  0,
-			SampleCaseIds: mustJSONBytes([]string{}),
+			SampleCaseIds: prompteval.MustJSONBytes([]string{}),
 			CreatedBy:     parseUUID(userID),
 			Status:        pgtype.Text{String: "已入队", Valid: true},
 		})
@@ -2294,7 +2294,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 			ExpectedContains: item.ExpectedContains,
 			Input:            item.Input,
 			Expected:         item.Expected,
-			Tags:             mustJSONBytes(nextTags),
+			Tags:             prompteval.MustJSONBytes(nextTags),
 			Status:           item.Status,
 			Source:           item.Source,
 		})
@@ -2331,7 +2331,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 			"target_tag":     job.TargetTag,
 			"created_at":     time.Now().Format(time.RFC3339),
 		}
-		payloadBytes := mustJSONBytes(payload)
+		payloadBytes := prompteval.MustJSONBytes(payload)
 		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, job.Asset.PromptID, job.Asset.AssetType)
 		if _, err = qtx.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
 			ID:                       job.Asset.ID,
@@ -2358,7 +2358,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 			WorkspaceID:   job.WorkspaceID,
 			ChangedCount:  int32(len(changed)),
 			SkippedCount:  skippedCount,
-			SampleCaseIds: mustJSONBytes(sampleIDs),
+			SampleCaseIds: prompteval.MustJSONBytes(sampleIDs),
 		})
 	} else {
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
@@ -2366,11 +2366,11 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 			WorkspaceID:   job.WorkspaceID,
 			AssetID:       job.Asset.ID,
 			OperationType: job.OperationType,
-			Filter:        mustJSONBytes(job.FilterPayload),
-			Input:         mustJSONBytes(job.InputPayload),
+			Filter:        prompteval.MustJSONBytes(job.FilterPayload),
+			Input:         prompteval.MustJSONBytes(job.InputPayload),
 			ChangedCount:  int32(len(changed)),
 			SkippedCount:  skippedCount,
-			SampleCaseIds: mustJSONBytes(sampleIDs),
+			SampleCaseIds: prompteval.MustJSONBytes(sampleIDs),
 			CreatedBy:     job.CreatedBy,
 			Status:        pgtype.Text{String: "已完成", Valid: true},
 			StartedAt:     now,
@@ -2748,11 +2748,11 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			PromptID:         asset.PromptID,
 			CaseIndex:        caseIndex,
 			CaseName:         promptEvaluationTraceCaseName(event, caseIndex),
-			Variables:        mustJSONBytes(promptEvaluationTraceVariables(event)),
-			ExpectedContains: mustJSONBytes(expectedContains),
-			Input:            mustJSONBytes(promptEvaluationTraceInput(event)),
-			Expected:         mustJSONBytes(promptEvaluationTraceExpected(event, expectedContains)),
-			Tags:             mustJSONBytes(promptEvaluationTraceTags(event, req.Tags)),
+			Variables:        prompteval.MustJSONBytes(promptEvaluationTraceVariables(event)),
+			ExpectedContains: prompteval.MustJSONBytes(expectedContains),
+			Input:            prompteval.MustJSONBytes(promptEvaluationTraceInput(event)),
+			Expected:         prompteval.MustJSONBytes(promptEvaluationTraceExpected(event, expectedContains)),
+			Tags:             prompteval.MustJSONBytes(promptEvaluationTraceTags(event, req.Tags)),
 			Status:           "启用",
 			Source:           "trace",
 			CreatedBy:        parseUUID(userID),
@@ -2761,7 +2761,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			writeError(w, http.StatusInternalServerError, "failed to create trace dataset case")
 			return
 		}
-		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, mustJSONBytes(expectedContains))
+		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, prompteval.MustJSONBytes(expectedContains))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create trace dataset assertions")
 			return
@@ -2908,7 +2908,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 		return
 	}
 	if metadata == nil {
-		metadata = mustJSONBytes(map[string]any{})
+		metadata = prompteval.MustJSONBytes(map[string]any{})
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -2979,7 +2979,7 @@ func (h *Handler) createPromptEvaluationDatasetVersionFromCurrent(ctx context.Co
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
-		Payload:     mustJSONBytes(payload),
+		Payload:     prompteval.MustJSONBytes(payload),
 	}); err != nil {
 		return db.PromptEvaluationDatasetVersion{}, err
 	}
@@ -3197,7 +3197,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		"version_label":      version.VersionLabel,
 		"restored_at":        time.Now().Format(time.RFC3339),
 	}
-	payloadBytes := mustJSONBytes(payload)
+	payloadBytes := prompteval.MustJSONBytes(payload)
 	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID, asset.AssetType)
 	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:                       asset.ID,
@@ -4397,8 +4397,8 @@ func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Conte
 		RunID:         runID,
 		SnapshotType:  snapshotType,
 		SchemaVersion: "multica.prompt_evaluation.evidence_snapshot.v1",
-		Summary:       mustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now, insight)),
-		Evidence:      mustJSONBytes(payload),
+		Summary:       prompteval.MustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now, insight)),
+		Evidence:      prompteval.MustJSONBytes(payload),
 		CreatedBy:     createdBy,
 	})
 }
@@ -5669,9 +5669,9 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		CandidateContent:     candidateContent,
 		FailedCaseCount:      promptEvaluationRunFailedCaseCount(run, trials),
 		Rationale:            rationale,
-		SourceFailureSummary: mustJSONBytes(sourceSummary),
-		SourcePromptSnapshot: mustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
-		Metrics:              mustJSONBytes(candidateMetrics),
+		SourceFailureSummary: prompteval.MustJSONBytes(sourceSummary),
+		SourcePromptSnapshot: prompteval.MustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
+		Metrics:              prompteval.MustJSONBytes(candidateMetrics),
 		Status:               "待确认",
 		CreatedBy:            parseUUID(userID),
 	})
@@ -5847,8 +5847,8 @@ func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(c
 		CandidateContent:     candidateContent,
 		FailedCaseCount:      promptEvaluationRunFailedCaseCount(sourceRun, trials),
 		Rationale:            rationale,
-		SourceFailureSummary: mustJSONBytes(sourceSummary),
-		SourcePromptSnapshot: mustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
+		SourceFailureSummary: prompteval.MustJSONBytes(sourceSummary),
+		SourcePromptSnapshot: prompteval.MustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
 		Metrics:              agentRun.Metrics,
 		Status:               "待确认",
 		CreatedBy:            createdBy,
@@ -6170,18 +6170,18 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)
-		expectedContains := mustJSONBytes(normalized.ExpectedContains)
+		expectedContains := prompteval.MustJSONBytes(normalized.ExpectedContains)
 		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 			WorkspaceID:      asset.WorkspaceID,
 			AssetID:          asset.ID,
 			PromptID:         asset.PromptID,
 			CaseIndex:        payloadStartIndex + int32(idx),
 			CaseName:         normalized.Name,
-			Variables:        mustJSONBytes(normalized.Variables),
+			Variables:        prompteval.MustJSONBytes(normalized.Variables),
 			ExpectedContains: expectedContains,
-			Input:            mustJSONBytes(normalized.Input),
-			Expected:         mustJSONBytes(normalized.Expected),
-			Tags:             mustJSONBytes(normalized.Tags),
+			Input:            prompteval.MustJSONBytes(normalized.Input),
+			Expected:         prompteval.MustJSONBytes(normalized.Expected),
+			Tags:             prompteval.MustJSONBytes(normalized.Tags),
 			Status:           asset.Status,
 			Source:           "payload",
 			CreatedBy:        createdBy,
@@ -6286,7 +6286,7 @@ func promptEvaluationDatasetImportPayload(export PromptEvaluationDatasetExportRe
 			"source":            normalizeImportedPromptEvaluationCaseSource(item.Source),
 		})
 	}
-	return mustJSONBytes(map[string]any{
+	return prompteval.MustJSONBytes(map[string]any{
 		"schema": promptEvaluationDatasetImportV1,
 		"导入来源": map[string]any{
 			"schema":          export.Schema,
@@ -6388,18 +6388,18 @@ func (h *Handler) ImportPromptEvaluationDataset(w http.ResponseWriter, r *http.R
 		if caseIndex < 0 {
 			caseIndex = int32(idx)
 		}
-		expectedContains := mustJSONBytes(item.ExpectedContains)
+		expectedContains := prompteval.MustJSONBytes(item.ExpectedContains)
 		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 			WorkspaceID:      workspaceUUID,
 			AssetID:          asset.ID,
 			PromptID:         promptID,
 			CaseIndex:        caseIndex,
 			CaseName:         strings.TrimSpace(item.CaseName),
-			Variables:        mustJSONBytes(item.Variables),
+			Variables:        prompteval.MustJSONBytes(item.Variables),
 			ExpectedContains: expectedContains,
-			Input:            mustJSONBytes(item.Input),
-			Expected:         mustJSONBytes(item.Expected),
-			Tags:             mustJSONBytes(item.Tags),
+			Input:            prompteval.MustJSONBytes(item.Input),
+			Expected:         prompteval.MustJSONBytes(item.Expected),
+			Tags:             prompteval.MustJSONBytes(item.Tags),
 			Status:           normalizePromptLibraryStatus(item.Status),
 			Source:           normalizeImportedPromptEvaluationCaseSource(item.Source),
 			CreatedBy:        parseUUID(userID),
@@ -6884,8 +6884,8 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		EstimatedCost:     result.EstimatedCost,
 		FailureReason:     result.FailureReason,
 		Conclusion:        result.Conclusion,
-		Metrics:           mustJSONBytes(metrics),
-		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "提示词版本": result.PromptVersion, "数据集版本": datasetVersionBindings, "实验维度评分": result.DimensionScores}),
+		Metrics:           prompteval.MustJSONBytes(metrics),
+		Evidence:          prompteval.MustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "提示词版本": result.PromptVersion, "数据集版本": datasetVersionBindings, "实验维度评分": result.DimensionScores}),
 		StartedAt:         pgtype.Timestamptz{Time: now, Valid: true},
 		CompletedAt:       pgtype.Timestamptz{Time: now, Valid: true},
 		CreatedBy:         createdBy,
@@ -6910,15 +6910,15 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 			CaseIndex:      int32(idx),
 			CaseName:       caseResult.Name,
 			Status:         caseResult.Status,
-			Input:          mustJSONBytes(map[string]any{"变量": caseResult.Variables}),
-			Expected:       mustJSONBytes(map[string]any{"期望包含": caseResult.ExpectedContains}),
-			Output:         mustJSONBytes(map[string]any{"已匹配": caseResult.MatchedContains, "使用变量": caseResult.UsedVariables, "缺失变量": caseResult.MissingVariables}),
+			Input:          prompteval.MustJSONBytes(map[string]any{"变量": caseResult.Variables}),
+			Expected:       prompteval.MustJSONBytes(map[string]any{"期望包含": caseResult.ExpectedContains}),
+			Output:         prompteval.MustJSONBytes(map[string]any{"已匹配": caseResult.MatchedContains, "使用变量": caseResult.UsedVariables, "缺失变量": caseResult.MissingVariables}),
 			RenderedPrompt: caseResult.RenderedPrompt,
 			InputTokens:    int32(estimatePromptEvaluationTokens(caseResult.RenderedPrompt)),
 			OutputTokens:   int32(estimatePromptEvaluationTokens(caseResult.RenderedPrompt)),
 			DurationMs:     result.AverageDurationMs,
 			FailureReason:  failureReason,
-			Evidence:       mustJSONBytes(map[string]any{"run_id": uuidToString(run.ID), "trace/task id": uuidToString(run.ID)}),
+			Evidence:       prompteval.MustJSONBytes(map[string]any{"run_id": uuidToString(run.ID), "trace/task id": uuidToString(run.ID)}),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation trial")
 			return db.PromptEvaluationRun{}, false
@@ -6952,12 +6952,12 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		PassRate:          0,
 		TotalDurationMs:   0,
 		AverageDurationMs: 0,
-		InputTokens:       int32(estimatePromptEvaluationTokens(string(mustJSONBytes(payload)))),
+		InputTokens:       int32(estimatePromptEvaluationTokens(string(prompteval.MustJSONBytes(payload)))),
 		OutputTokens:      0,
 		EstimatedCost:     0,
 		FailureReason:     "无",
 		Conclusion:        "等待智能体执行完成",
-		Metrics: mustJSONBytes(map[string]any{
+		Metrics: prompteval.MustJSONBytes(map[string]any{
 			"总用例数":          len(cases),
 			"通过数":           0,
 			"失败数":           0,
@@ -6971,7 +6971,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"评估结论":          "等待智能体执行完成",
 			"数据集版本数":        len(datasetVersionBindings),
 		}),
-		Evidence: mustJSONBytes(map[string]any{
+		Evidence: prompteval.MustJSONBytes(map[string]any{
 			"task_id":         uuidToString(taskID),
 			"chat_session_id": uuidToString(chatSessionID),
 			"agent_id":        uuidToString(agent.ID),
@@ -7003,11 +7003,11 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			CaseIndex:     int32(idx),
 			CaseName:      name,
 			Status:        "待执行",
-			Input:         mustJSONBytes(map[string]any{"变量": firstValue(c, "variables", "变量", "输入变量")}),
-			Expected:      mustJSONBytes(map[string]any{"期望包含": firstValue(c, "expected_contains", "期望包含", "期望")}),
-			Output:        mustJSONBytes(map[string]any{}),
+			Input:         prompteval.MustJSONBytes(map[string]any{"变量": firstValue(c, "variables", "变量", "输入变量")}),
+			Expected:      prompteval.MustJSONBytes(map[string]any{"期望包含": firstValue(c, "expected_contains", "期望包含", "期望")}),
+			Output:        prompteval.MustJSONBytes(map[string]any{}),
 			FailureReason: "等待智能体执行完成",
-			Evidence:      mustJSONBytes(map[string]any{"run_id": uuidToString(run.ID), "task_id": uuidToString(taskID)}),
+			Evidence:      prompteval.MustJSONBytes(map[string]any{"run_id": uuidToString(run.ID), "task_id": uuidToString(taskID)}),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create queued prompt evaluation trial")
 			return db.PromptEvaluationRun{}, false
@@ -7545,7 +7545,7 @@ func buildPromptEvaluationPublishedPromptTags(raw []byte) []byte {
 		seen[tag] = true
 		next = append(next, tag)
 	}
-	return mustJSONBytes(next)
+	return prompteval.MustJSONBytes(next)
 }
 
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
@@ -7977,14 +7977,6 @@ func decodePayloadObject(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return payload
-}
-
-func mustJSONBytes(value any) []byte {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return []byte("{}")
-	}
-	return raw
 }
 
 func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any, cases []map[string]any) promptEvaluationRunResult {
@@ -8504,7 +8496,7 @@ func promptEvaluationDatasetRowsFingerprint(rows []db.PromptEvaluationDatasetRow
 			"source":            row.Source,
 		})
 	}
-	sum := sha256.Sum256(mustJSONBytes(snapshot))
+	sum := sha256.Sum256(prompteval.MustJSONBytes(snapshot))
 	return fmt.Sprintf("%x", sum[:])
 }
 
@@ -8518,7 +8510,7 @@ func promptEvaluationDatasetVersionRowFingerprint(row db.PromptEvaluationDataset
 		"tags":              decodeJSONDefault(row.Tags, []any{}),
 		"source":            row.Source,
 	}
-	sum := sha256.Sum256(mustJSONBytes(snapshot))
+	sum := sha256.Sum256(prompteval.MustJSONBytes(snapshot))
 	return fmt.Sprintf("%x", sum[:])
 }
 
@@ -8615,7 +8607,7 @@ func promptEvaluationDatasetVersionRestoreMetadata(version db.PromptEvaluationDa
 			}
 		}
 	}
-	return mustJSONBytes(metadata)
+	return prompteval.MustJSONBytes(metadata)
 }
 
 func promptEvaluationDatasetVersionSummary(version db.PromptEvaluationDatasetVersion) map[string]any {
