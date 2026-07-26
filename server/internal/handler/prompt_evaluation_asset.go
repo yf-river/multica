@@ -6795,7 +6795,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		runIndex["重试序号"] = optimizationRetry
 	}
 	payload["最近Agent运行"] = runIndex
-	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
+	payload["Agent运行记录"] = prompteval.AppendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
 	if asset.AssetType == promptEvaluationAssetOptimize {
 		sourceRunID := stringFromAny(payload["来源运行"])
 		eventName := "创建优化运行"
@@ -8284,24 +8284,6 @@ func promptVariableDefaults(raw []byte) map[string]string {
 func appendPromptEvaluationRunHistory(raw any, result promptEvaluationRunResult) []any {
 	history, _ := raw.([]any)
 	next := append([]any{result}, history...)
-	if len(next) > 20 {
-		next = next[:20]
-	}
-	return next
-}
-
-func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
-	history, _ := raw.([]any)
-	runID := stringFromAny(result["run_id"])
-	next := []any{result}
-	for _, item := range history {
-		if runID != "" {
-			if existing, ok := item.(map[string]any); ok && stringFromAny(existing["run_id"]) == runID {
-				continue
-			}
-		}
-		next = append(next, item)
-	}
 	if len(next) > 20 {
 		next = next[:20]
 	}

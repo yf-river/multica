@@ -4,6 +4,7 @@ package prompteval
 
 import (
 	"encoding/json"
+	"strconv"
 	"unicode"
 )
 
@@ -45,4 +46,47 @@ func ContainsHanRune(value string) bool {
 		}
 	}
 	return false
+}
+
+// AppendPromptEvaluationAgentRunHistory 将一次 Agent 运行记录追加到历史，
+// 按 run_id 去重并最多保留 20 条。
+func AppendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
+	history, _ := raw.([]any)
+	runID := stringFromAny(result["run_id"])
+	next := []any{result}
+	for _, item := range history {
+		if runID != "" {
+			if existing, ok := item.(map[string]any); ok && stringFromAny(existing["run_id"]) == runID {
+				continue
+			}
+		}
+		next = append(next, item)
+	}
+	if len(next) > 20 {
+		next = next[:20]
+	}
+	return next
+}
+
+// stringFromAny 是 StringFromAny 导出前的包内过渡实现，二者行为一致。
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int:
+		return strconv.Itoa(v)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	default:
+		return ""
+	}
 }
