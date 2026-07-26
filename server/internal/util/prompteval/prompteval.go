@@ -2,7 +2,10 @@
 // 由 handler 与 service 层共享，避免跨层重复实现。
 package prompteval
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"unicode"
+)
 
 // TruncatePromptEvaluationEvidence 按 rune 截断证据文本并追加省略号。
 func TruncatePromptEvaluationEvidence(value string, maxRunes int) string {
@@ -32,4 +35,14 @@ func DecodePayloadObject(raw []byte) map[string]any {
 		return map[string]any{}
 	}
 	return payload
+}
+
+// ContainsHanRune 判断字符串是否包含汉字。
+func ContainsHanRune(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }

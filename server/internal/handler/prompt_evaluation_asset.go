@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -8126,7 +8125,7 @@ func promptEvaluationDimensionCasePassed(dimensionName string, result promptEval
 	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
 		return len(result.MissingVariables) == 0
 	case strings.Contains(normalized, "中文"):
-		return containsHanRune(result.RenderedPrompt)
+		return prompteval.ContainsHanRune(result.RenderedPrompt)
 	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
 		return len(result.ExpectedContains) == len(result.MatchedContains)
 	default:
@@ -8146,15 +8145,6 @@ func promptEvaluationDimensionRule(dimensionName string) string {
 	default:
 		return "逐用例沿用总体通过状态"
 	}
-}
-
-func containsHanRune(value string) bool {
-	for _, r := range value {
-		if unicode.Is(unicode.Han, r) {
-			return true
-		}
-	}
-	return false
 }
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {
