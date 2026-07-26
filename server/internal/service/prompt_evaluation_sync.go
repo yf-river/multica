@@ -293,7 +293,7 @@ func syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, q *db.Querie
 	if err != nil {
 		return err
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	record := map[string]any{
 		"运行时间":            time.Now().UTC().Format(time.RFC3339),
 		"run_id":          util.UUIDToString(run.ID),
@@ -1022,17 +1022,6 @@ func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any
 		next = next[:20]
 	}
 	return next
-}
-
-func decodePayloadObject(raw []byte) map[string]any {
-	var payload map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &payload)
-	}
-	if payload == nil {
-		return map[string]any{}
-	}
-	return payload
 }
 
 func decodeJSONDefault(raw []byte, fallback any) any {

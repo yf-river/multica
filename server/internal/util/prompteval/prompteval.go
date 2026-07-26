@@ -21,3 +21,15 @@ func MustJSONBytes(value any) []byte {
 	}
 	return raw
 }
+
+// DecodePayloadObject 将 JSON 字节解码为对象，空输入或解码失败返回空对象。
+func DecodePayloadObject(raw []byte) map[string]any {
+	var payload map[string]any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &payload)
+	}
+	if payload == nil {
+		return map[string]any{}
+	}
+	return payload
+}

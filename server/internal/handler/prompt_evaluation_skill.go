@@ -303,7 +303,7 @@ func (h *Handler) CreatePromptEvaluationSkillInventory(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	payload["optimization_target"] = "skill"
 	payload["skill_inventory"] = inventory
 	payload["skill_inventory_contract"] = promptEvaluationSkillInventorySchema
@@ -336,7 +336,7 @@ func (h *Handler) CreatePromptEvaluationSkillSnapshot(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	payload["optimization_target"] = "skill"
 	payload["skill_snapshot"] = snapshot
 	payload["skill_snapshot_contract"] = promptEvaluationSkillSnapshotSchema
@@ -366,7 +366,7 @@ func (h *Handler) CreatePromptEvaluationSkillCaseDrafts(w http.ResponseWriter, r
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	payload["skill_case_draft_contract"] = promptEvaluationSkillCaseDraftSchema
 	payload["skill_case_drafts"] = appendJSONList(payload["skill_case_drafts"], skillCaseDraftsAsAny(drafts)...)
 	updated, ok := h.updatePromptEvaluationAssetPayload(w, r, asset, payload)
@@ -760,7 +760,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to load skill re-eval asset")
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	if err := validatePromptEvaluationSkillReEvalAsset(candidate, asset, payload); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1483,7 +1483,7 @@ func normalizePromptEvaluationSkillPatch(raw PromptEvaluationSkillPatch, candida
 }
 
 func skillPatchFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) *PromptEvaluationSkillPatch {
-	metrics := decodePayloadObject(candidate.Metrics)
+	metrics := prompteval.DecodePayloadObject(candidate.Metrics)
 	raw, ok := metrics["skill_patch"]
 	if !ok {
 		return nil
@@ -1587,7 +1587,7 @@ func applySkillPatchReEvalDefaults(req *PreparePromptEvaluationSkillReEvalReques
 }
 
 func skillApplyFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) *PromptEvaluationSkillApplyResult {
-	metrics := decodePayloadObject(candidate.Metrics)
+	metrics := prompteval.DecodePayloadObject(candidate.Metrics)
 	raw, ok := metrics["skill_apply"]
 	if !ok {
 		return nil
@@ -1607,7 +1607,7 @@ func skillApplyFromCandidate(candidate db.PromptEvaluationOptimizationCandidate)
 }
 
 func skillSnapshotFromAsset(asset db.PromptEvaluationAsset) *PromptEvaluationSkillSnapshotResponse {
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	for _, key := range []string{"skill_snapshot", "re_eval_snapshot", "source_skill_snapshot"} {
 		if snapshot, ok := decodeSkillSnapshotAny(payload[key]); ok {
 			return &snapshot
@@ -1632,7 +1632,7 @@ func decodeSkillSnapshotAny(value any) (PromptEvaluationSkillSnapshotResponse, b
 }
 
 func skillCaseDraftsFromAsset(asset db.PromptEvaluationAsset) []PromptEvaluationSkillCaseDraft {
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	rawList, ok := payload["skill_case_drafts"].([]any)
 	if !ok {
 		return nil
@@ -1656,7 +1656,7 @@ func skillCaseDraftsFromAsset(asset db.PromptEvaluationAsset) []PromptEvaluation
 }
 
 func skillReEvalAssetIDFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) string {
-	metrics := decodePayloadObject(candidate.Metrics)
+	metrics := prompteval.DecodePayloadObject(candidate.Metrics)
 	reEvalPlan := asMap(metrics["skill_re_eval"])
 	return stringFromAny(reEvalPlan["asset_id"])
 }

@@ -1414,7 +1414,7 @@ func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, fi
 }
 
 func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID, assetType string) promptEvaluationAssetProfile {
-	payload := decodePayloadObject(raw)
+	payload := prompteval.DecodePayloadObject(raw)
 	cases := promptEvaluationCases(payload)
 	variableCount := 0
 	assertionCount := 0
@@ -2321,7 +2321,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 		if err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("reload prompt evaluation cases: %w", err)
 		}
-		payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(job.Asset.Payload), promptEvaluationPayloadCasesFromCaseRows(allCases)))
+		payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(prompteval.DecodePayloadObject(job.Asset.Payload), promptEvaluationPayloadCasesFromCaseRows(allCases)))
 		payload["最近批量用例操作"] = map[string]any{
 			"operation_type": job.OperationType,
 			"changed_count":  len(changed),
@@ -2972,7 +2972,7 @@ func (h *Handler) createPromptEvaluationDatasetVersionFromCurrent(ctx context.Co
 	}); err != nil {
 		return db.PromptEvaluationDatasetVersion{}, err
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	payload["最近数据集版本"] = promptEvaluationDatasetVersionSummary(version)
 	payload["数据集版本说明"] = "数据集版本是当前启用样本行的不可变快照；评估运行会在证据中记录当次绑定版本，保证后续复盘可追溯。"
 	if _, err := qtx.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
@@ -3190,7 +3190,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		restoredCases = append(restoredCases, promptEvaluationCaseToResponse(created, assertions))
 	}
 
-	payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(asset.Payload), promptEvaluationPayloadCasesFromDatasetVersionRows(rows)))
+	payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(prompteval.DecodePayloadObject(asset.Payload), promptEvaluationPayloadCasesFromDatasetVersionRows(rows)))
 	payload["最近恢复数据集版本"] = map[string]any{
 		"dataset_version_id": uuidToString(version.ID),
 		"version":            version.Version,
@@ -3361,7 +3361,7 @@ func promptEvaluationTraceInput(event db.TaskTraceEvent) map[string]any {
 		"输出token":   event.OutputTokens,
 		"失败原因":      event.FailureReason,
 		"错误类型":      event.ErrorType,
-		"metadata":  decodePayloadObject(event.Metadata),
+		"metadata":  prompteval.DecodePayloadObject(event.Metadata),
 	}
 }
 
@@ -5771,7 +5771,7 @@ func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(c
 	if err != nil {
 		return nil, err
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	taskType := stringFromAny(payload["任务类型"])
 	if taskType != "智能体优化运行" && taskType != "Agent 优化运行" {
 		return nil, nil
@@ -6167,7 +6167,7 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation experiment dimensions")
 		return false
 	}
-	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
+	cases := promptEvaluationCases(prompteval.DecodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)
 		expectedContains := prompteval.MustJSONBytes(normalized.ExpectedContains)
@@ -6259,7 +6259,7 @@ func (h *Handler) ExportPromptEvaluationDataset(w http.ResponseWriter, r *http.R
 		Asset:         promptEvaluationAssetToResponse(asset),
 		CaseCount:     len(cases),
 		Cases:         cases,
-		Payload:       decodePayloadObject(asset.Payload),
+		Payload:       prompteval.DecodePayloadObject(asset.Payload),
 	})
 }
 
@@ -6660,7 +6660,7 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
 	if !ok {
 		return
@@ -6716,7 +6716,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
+	payload := prompteval.DecodePayloadObject(asset.Payload)
 	agentRow, runtimeRow, ok := h.selectPromptEvaluationExecutionAgent(w, r, asset.WorkspaceID, parseUUID(userID), member, payload)
 	if !ok {
 		return
@@ -6857,7 +6857,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		"失败原因":    result.FailureReason,
 		"评估结论":    result.Conclusion,
 	}
-	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, decodePayloadObject(asset.Payload))
+	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, prompteval.DecodePayloadObject(asset.Payload))
 	if !ok {
 		return db.PromptEvaluationRun{}, false
 	}
@@ -7077,7 +7077,7 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 		}
 	}
 	if len(executableRows) == 0 {
-		return promptEvaluationCases(decodePayloadObject(asset.Payload)), true
+		return promptEvaluationCases(prompteval.DecodePayloadObject(asset.Payload)), true
 	}
 	assertions, err := h.Queries.ListPromptEvaluationCaseAssertions(r.Context(), db.ListPromptEvaluationCaseAssertionsParams{
 		WorkspaceID: asset.WorkspaceID,
@@ -7966,17 +7966,6 @@ func promptEvaluationPayloadWithCases(payload map[string]any, cases []map[string
 	result["cases"] = cases
 	result["用例"] = cases
 	return result
-}
-
-func decodePayloadObject(raw []byte) map[string]any {
-	var payload map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &payload)
-	}
-	if payload == nil {
-		return map[string]any{}
-	}
-	return payload
 }
 
 func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any, cases []map[string]any) promptEvaluationRunResult {
