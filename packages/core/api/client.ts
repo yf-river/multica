@@ -589,13 +589,13 @@ export class ApiClient {
     });
   }
 
-  async markOnboardingComplete(payload?: {
-    completion_path?: OnboardingCompletionPath;
+  async markOnboardingComplete(payload: {
+    completion_path: OnboardingCompletionPath;
     workspace_id?: string;
   }): Promise<User> {
     const raw = await this.fetch<unknown>("/api/me/onboarding/complete", {
       method: "POST",
-      body: payload ? JSON.stringify(payload) : undefined,
+      body: JSON.stringify(payload),
     });
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "POST /api/me/onboarding/complete",
@@ -1484,10 +1484,17 @@ export class ApiClient {
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
-    return this.fetch("/api/skills/import", {
+    const result = await this.fetch<{ status: string; skill?: Skill }>(
+      "/api/skills/import",
+      {
       method: "POST",
-      body: JSON.stringify(data),
-    });
+        body: JSON.stringify({ ...data, on_conflict: "fail" }),
+      },
+    );
+    if (result.status !== "created" || !result.skill) {
+      throw new Error(`Unexpected skill import result: ${result.status}`);
+    }
+    return result.skill;
   }
 
   async listAgentSkills(agentId: string): Promise<SkillSummary[]> {

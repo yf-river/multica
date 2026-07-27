@@ -95,8 +95,8 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 
 	hub := NewHub()
 	conn := newTestHubConnection(t, hub, ClientIdentity{
-		WorkspaceID: "ws-1",
-		RuntimeIDs:  []string{"runtime-1"},
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
 	})
 
 	deadline := time.Now().Add(time.Second)
@@ -317,10 +317,10 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 
 	hub := NewHub()
 	var calls atomic.Int32
-	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string, _ bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		calls.Add(1)
-		if identity.WorkspaceID != "ws-1" {
-			t.Errorf("identity workspace = %q, want ws-1", identity.WorkspaceID)
+		if identity.PrimaryWorkspaceID() != "ws-1" {
+			t.Errorf("identity workspace = %q, want ws-1", identity.PrimaryWorkspaceID())
 		}
 		return &protocol.DaemonHeartbeatAckPayload{
 			RuntimeID: runtimeID,
@@ -329,8 +329,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	})
 
 	conn := newTestHubConnection(t, hub, ClientIdentity{
-		WorkspaceID: "ws-1",
-		RuntimeIDs:  []string{"runtime-1"},
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
 	})
 
 	hbFrame, err := json.Marshal(protocol.Message{
@@ -368,7 +368,7 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 
 	hub := NewHub()
 	const stall = 250 * time.Millisecond
-	hub.SetHeartbeatHandler(func(ctx context.Context, _ ClientIdentity, runtimeID string, _ bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(ctx context.Context, _ ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		select {
 		case <-time.After(stall):
 		case <-ctx.Done():
@@ -409,7 +409,7 @@ func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 
 	hub := NewHub()
 	var called atomic.Bool
-	hub.SetHeartbeatHandler(func(context.Context, ClientIdentity, string, bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(context.Context, ClientIdentity, string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		called.Store(true)
 		return &protocol.DaemonHeartbeatAckPayload{Status: "ok"}, nil
 	})

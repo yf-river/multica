@@ -357,14 +357,7 @@ func (h *Hub) Wait() {
 // LeaseTTL on the next replica, and in-flight replies abort at their
 // own ReplyTimeout (already strictly under 3s, so well under any
 // reasonable ShutdownTimeout).
-//
-// A timeout <= 0 falls back to unbounded Wait, matching the legacy
-// behavior.
 func (h *Hub) WaitWithTimeout(timeout time.Duration) bool {
-	if timeout <= 0 {
-		h.Wait()
-		return true
-	}
 	done := make(chan struct{})
 	go func() {
 		h.Wait()

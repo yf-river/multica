@@ -399,6 +399,7 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID:          issueID,
 		TriggerCommentID: "reply-abc",
+		TriggerThreadID:  "thread-root",
 		NewCommentCount:  4,
 		NewCommentsSince: since,
 	}
@@ -412,7 +413,7 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 		t.Errorf("comment brief must discourage blindly reading every new comment, got:\n%s", out)
 	}
 	// Parent thread first.
-	if !strings.Contains(out, "--thread reply-abc --since "+since+" --output json") {
+	if !strings.Contains(out, "--thread thread-root --since "+since+" --output json") {
 		t.Errorf("comment brief must point at the triggering (parent) thread --since read first, got:\n%s", out)
 	}
 	if !strings.Contains(out, "--tail 30") {

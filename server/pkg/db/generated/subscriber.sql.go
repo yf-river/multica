@@ -34,26 +34,6 @@ func (q *Queries) AddIssueSubscriber(ctx context.Context, arg AddIssueSubscriber
 	return err
 }
 
-const isIssueSubscriber = `-- name: IsIssueSubscriber :one
-SELECT EXISTS(
-    SELECT 1 FROM issue_subscriber
-    WHERE issue_id = $1 AND user_type = $2 AND user_id = $3
-) AS subscribed
-`
-
-type IsIssueSubscriberParams struct {
-	IssueID  pgtype.UUID `json:"issue_id"`
-	UserType string      `json:"user_type"`
-	UserID   pgtype.UUID `json:"user_id"`
-}
-
-func (q *Queries) IsIssueSubscriber(ctx context.Context, arg IsIssueSubscriberParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isIssueSubscriber, arg.IssueID, arg.UserType, arg.UserID)
-	var subscribed bool
-	err := row.Scan(&subscribed)
-	return subscribed, err
-}
-
 const listIssueSubscribers = `-- name: ListIssueSubscribers :many
 SELECT issue_id, user_type, user_id, reason, created_at FROM issue_subscriber
 WHERE issue_id = $1

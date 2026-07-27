@@ -124,56 +124,6 @@ func (q *Queries) DeletePromptEvaluationTestSuiteCasesByCase(ctx context.Context
 	return items, nil
 }
 
-const listPromptEvaluationTestSuiteCases = `-- name: ListPromptEvaluationTestSuiteCases :many
-SELECT id, workspace_id, test_suite_asset_id, case_id, case_index, case_name, variables, expected_contains, expected, tags, status, source, created_by, created_at, updated_at FROM prompt_evaluation_test_suite_case
-WHERE workspace_id = $1
-  AND ($2::uuid IS NULL OR test_suite_asset_id = $2)
-  AND ($3::text IS NULL OR status = $3)
-ORDER BY test_suite_asset_id, case_index ASC, created_at ASC
-`
-
-type ListPromptEvaluationTestSuiteCasesParams struct {
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	TestSuiteAssetID pgtype.UUID `json:"test_suite_asset_id"`
-	Status           pgtype.Text `json:"status"`
-}
-
-func (q *Queries) ListPromptEvaluationTestSuiteCases(ctx context.Context, arg ListPromptEvaluationTestSuiteCasesParams) ([]PromptEvaluationTestSuiteCase, error) {
-	rows, err := q.db.Query(ctx, listPromptEvaluationTestSuiteCases, arg.WorkspaceID, arg.TestSuiteAssetID, arg.Status)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []PromptEvaluationTestSuiteCase{}
-	for rows.Next() {
-		var i PromptEvaluationTestSuiteCase
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.TestSuiteAssetID,
-			&i.CaseID,
-			&i.CaseIndex,
-			&i.CaseName,
-			&i.Variables,
-			&i.ExpectedContains,
-			&i.Expected,
-			&i.Tags,
-			&i.Status,
-			&i.Source,
-			&i.CreatedBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const refreshPromptEvaluationTestSuiteCaseCount = `-- name: RefreshPromptEvaluationTestSuiteCaseCount :exec
 UPDATE prompt_evaluation_asset a SET
     test_suite_case_count = (

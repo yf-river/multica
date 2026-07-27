@@ -22,11 +22,11 @@ import "fmt"
 // there are no new comments (newCommentCount <= 0) or issueID is empty. In those
 // cases the caller falls back to BuildResumedCommentsHint (when a prior session
 // is active) or BuildColdCommentsHint.
-func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
+func BuildNewCommentsHint(issueID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
 	if newCommentCount <= 0 || newCommentsSince == "" || issueID == "" {
 		return ""
 	}
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+	threadID := triggerThreadID
 	// When we know the triggering thread, steer the agent to read THAT thread
 	// first rather than blindly pulling every new comment issue-wide. The
 	// issue-wide --since catch-up is demoted to an only-if-needed fallback.
@@ -60,7 +60,7 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 // replies should refresh the triggering conversation rather than trusting
 // resumed memory alone.
 func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+	threadID := triggerThreadID
 	if issueID == "" || threadID == "" {
 		return ""
 	}
@@ -88,8 +88,8 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 // single-source rule as BuildNewCommentsHint, PR #2816). Returns "" when there
 // is no triggering comment to thread from, so the caller can keep a final plain
 // fallback.
-func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+func BuildColdCommentsHint(issueID, triggerThreadID string) string {
+	threadID := triggerThreadID
 	if issueID == "" || threadID == "" {
 		return ""
 	}
@@ -100,13 +100,6 @@ func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) st
 			"Need cross-thread background? `multica issue comment list %s --recent 20 --output json`.\n\n",
 		issueID, threadID, issueID,
 	)
-}
-
-func activeThreadID(triggerThreadID, triggerCommentID string) string {
-	if triggerThreadID != "" {
-		return triggerThreadID
-	}
-	return triggerCommentID
 }
 
 // BuildCommentReplyInstructions returns the canonical block telling an agent

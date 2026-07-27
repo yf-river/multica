@@ -599,7 +599,6 @@ func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
 type SearchIssueResponse struct {
 	IssueResponse
 	MatchSource               string  `json:"match_source"`
-	MatchedSnippet            *string `json:"matched_snippet,omitempty"`
 	MatchedDescriptionSnippet *string `json:"matched_description_snippet,omitempty"`
 	MatchedCommentSnippet     *string `json:"matched_comment_snippet,omitempty"`
 }
@@ -1075,10 +1074,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		if sr.matchedCommentContent != "" {
 			snippet := extractSnippet(sr.matchedCommentContent, q)
 			sir.MatchedCommentSnippet = &snippet
-			// Keep backward compat: also set MatchedSnippet for comment-source matches
-			if sr.matchSource == "comment" {
-				sir.MatchedSnippet = &snippet
-			}
 		}
 		// Populate description snippet when description matches
 		if sr.matchSource == "description" || descriptionContains(sr.issue.Description, q, terms) {

@@ -71,7 +71,7 @@ func TestRegistrationClient_Begin_HappyPath(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "Ada - Multica", "")
+	res, err := c.Begin(context.Background(), "Ada - Multica", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestRegistrationClient_Begin_OmitsNameWhenPresetEmpty(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "", "")
+	res, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestRegistrationClient_Begin_DefaultsWhenServerOmitsTimers(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "", "")
+	res, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestRegistrationClient_Begin_LarkError(t *testing.T) {
 		"error_description": "missing archetype",
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Begin(context.Background(), "", "")
+	_, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err == nil {
 		t.Fatal("expected error from Lark error response")
 	}
@@ -265,7 +265,7 @@ func TestRegistrationClient_Begin_HTTPNon2xx(t *testing.T) {
 		_, _ = w.Write([]byte("server boom"))
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Begin(context.Background(), "", "")
+	_, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err == nil {
 		t.Fatal("want error on 500")
 	}
@@ -475,11 +475,11 @@ func TestRegistrationClient_Poll_DomainSwitchOnFeishuTenant(t *testing.T) {
 // gate flips on only one side.
 func TestRegistrationClient_Poll_NoSwitchWhenAlreadyOnMatchingHost(t *testing.T) {
 	cases := []struct {
-		name        string
-		brand       string
-		begunOn     string
-		feishuHost  string
-		larkHost    string
+		name       string
+		brand      string
+		begunOn    string
+		feishuHost string
+		larkHost   string
 	}{
 		{
 			name:       "lark brand on lark host is a no-op",

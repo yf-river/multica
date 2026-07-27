@@ -97,27 +97,6 @@ func (q *Queries) CreateActivity(ctx context.Context, arg CreateActivityParams) 
 	return i, err
 }
 
-const getActivity = `-- name: GetActivity :one
-SELECT id, workspace_id, issue_id, actor_type, actor_id, action, details, created_at FROM activity_log
-WHERE id = $1
-`
-
-func (q *Queries) GetActivity(ctx context.Context, id pgtype.UUID) (ActivityLog, error) {
-	row := q.db.QueryRow(ctx, getActivity, id)
-	var i ActivityLog
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.IssueID,
-		&i.ActorType,
-		&i.ActorID,
-		&i.Action,
-		&i.Details,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const hasSquadLeaderNoActionEvaluationForTask = `-- name: HasSquadLeaderNoActionEvaluationForTask :one
 SELECT EXISTS (
   SELECT 1

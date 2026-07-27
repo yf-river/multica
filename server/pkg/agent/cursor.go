@@ -80,13 +80,7 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		finalStatus := "completed"
 		var finalError string
 		resultSeen := false
-		// stepUsage accumulates per-step token counts from "step_finish" events.
-		// resultUsage holds authoritative session totals from "result" events.
-		// If the result event includes usage, we use resultUsage exclusively;
-		// otherwise we fall back to stepUsage.
-		stepUsage := make(map[string]TokenUsage)
 		resultUsage := make(map[string]TokenUsage)
-		hasResultUsage := false
 
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
@@ -151,9 +145,6 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					output.WriteString(evt.ResultText)
 				}
 				b.accumulateResultUsage(resultUsage, &evt, configuredModel)
-				if evt.hasResultUsage() {
-					hasResultUsage = true
-				}
 				// Current Cursor Agent versions can emit the terminal result
 				// event but keep a worker process alive. Treat result as the
 				// protocol boundary so the daemon can report completion.
@@ -166,34 +157,7 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				}
 				trySend(msgCh, Message{Type: MessageError, Content: errMsg})
 
-			case "text":
-				if evt.Part != nil {
-					var part cursorTextPart
-					_ = json.Unmarshal(evt.Part, &part)
-					if part.Text != "" {
-						output.WriteString(part.Text)
-						trySend(msgCh, Message{Type: MessageText, Content: part.Text})
-					}
-				}
-
-			case "step_finish":
-				if evt.Part != nil {
-					var part cursorStepFinishPart
-					_ = json.Unmarshal(evt.Part, &part)
-					model := cursorUsageModel(evt.Model, configuredModel)
-					u := stepUsage[model]
-					u.InputTokens += int64(part.Tokens.Input)
-					u.OutputTokens += int64(part.Tokens.Output)
-					u.CacheReadTokens += int64(part.Tokens.Cache.Read)
-					stepUsage[model] = u
-				}
 			}
-		}
-
-		// Use result usage if available (session totals); otherwise fall back
-		// to accumulated step_finish usage.
-		if !hasResultUsage {
-			resultUsage = stepUsage
 		}
 
 		exitErr := cmd.Wait()
@@ -279,10 +243,8 @@ func (b *cursorBackend) accumulateResultUsage(usage map[string]TokenUsage, evt *
 	model := cursorUsageModel(evt.Model, configuredModel)
 	u := usage[model]
 
-	// Cursor agent has emitted token usage in multiple shapes: top-level
-	// camelCase fields, nested camelCase usage, and nested legacy snake_case
-	// usage. Prefer top-level result totals when present, otherwise use the
-	// nested usage object.
+	// Prefer top-level result totals when present, otherwise use the current
+	// nested camelCase usage object.
 	if evt.InputTokens != 0 || evt.OutputTokens != 0 || evt.CacheReadTokens != 0 || evt.CacheWriteTokens != 0 {
 		u.InputTokens += evt.InputTokens
 		u.OutputTokens += evt.OutputTokens
@@ -332,9 +294,6 @@ type cursorStreamEvent struct {
 	// error fields
 	ErrorMsg string `json:"error,omitempty"`
 	Detail   string `json:"detail,omitempty"`
-
-	// legacy compat
-	Part json.RawMessage `json:"part,omitempty"`
 }
 
 func (evt *cursorStreamEvent) readSessionID() string {
@@ -344,59 +303,11 @@ func (evt *cursorStreamEvent) readSessionID() string {
 	return ""
 }
 
-func (evt *cursorStreamEvent) hasResultUsage() bool {
-	return evt.Usage != nil || evt.InputTokens != 0 || evt.OutputTokens != 0 || evt.CacheReadTokens != 0 || evt.CacheWriteTokens != 0
-}
-
 type cursorUsage struct {
-	InputTokens           int64 `json:"input_tokens"`
-	OutputTokens          int64 `json:"output_tokens"`
-	CacheReadInputTokens  int64 `json:"cached_input_tokens"`
-	CacheWriteInputTokens int64
-}
-
-func (u *cursorUsage) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		InputTokensSnake              int64 `json:"input_tokens"`
-		InputTokensCamel              int64 `json:"inputTokens"`
-		OutputTokensSnake             int64 `json:"output_tokens"`
-		OutputTokensCamel             int64 `json:"outputTokens"`
-		CachedInputTokensSnake        int64 `json:"cached_input_tokens"`
-		CachedInputTokensCamel        int64 `json:"cachedInputTokens"`
-		CacheReadTokensCamel          int64 `json:"cacheReadTokens"`
-		CacheReadInputTokensSnake     int64 `json:"cache_read_input_tokens"`
-		CacheReadInputTokensCamel     int64 `json:"cacheReadInputTokens"`
-		CacheWriteTokensCamel         int64 `json:"cacheWriteTokens"`
-		CacheCreationInputTokensSnake int64 `json:"cache_creation_input_tokens"`
-		CacheCreationInputTokensCamel int64 `json:"cacheCreationInputTokens"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	u.InputTokens = firstNonZeroInt64(raw.InputTokensSnake, raw.InputTokensCamel)
-	u.OutputTokens = firstNonZeroInt64(raw.OutputTokensSnake, raw.OutputTokensCamel)
-	u.CacheReadInputTokens = firstNonZeroInt64(
-		raw.CachedInputTokensSnake,
-		raw.CachedInputTokensCamel,
-		raw.CacheReadTokensCamel,
-		raw.CacheReadInputTokensSnake,
-		raw.CacheReadInputTokensCamel,
-	)
-	u.CacheWriteInputTokens = firstNonZeroInt64(
-		raw.CacheWriteTokensCamel,
-		raw.CacheCreationInputTokensSnake,
-		raw.CacheCreationInputTokensCamel,
-	)
-	return nil
-}
-
-func firstNonZeroInt64(values ...int64) int64 {
-	for _, v := range values {
-		if v != 0 {
-			return v
-		}
-	}
-	return 0
+	InputTokens           int64 `json:"inputTokens"`
+	OutputTokens          int64 `json:"outputTokens"`
+	CacheReadInputTokens  int64 `json:"cacheReadTokens"`
+	CacheWriteInputTokens int64 `json:"cacheWriteTokens"`
 }
 
 type cursorAssistantMessage struct {
@@ -411,21 +322,6 @@ type cursorContentBlock struct {
 	ID    string          `json:"id,omitempty"`
 	Name  string          `json:"name,omitempty"`
 	Input json.RawMessage `json:"input,omitempty"`
-}
-
-type cursorTextPart struct {
-	Text string `json:"text"`
-}
-
-type cursorStepFinishPart struct {
-	Tokens struct {
-		Input  int `json:"input"`
-		Output int `json:"output"`
-		Cache  struct {
-			Read int `json:"read"`
-		} `json:"cache"`
-	} `json:"tokens"`
-	Cost float64 `json:"cost"`
 }
 
 // ── Helpers ──

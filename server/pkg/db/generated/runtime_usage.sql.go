@@ -56,7 +56,7 @@ func (q *Queries) GetRuntimeTaskHourlyActivity(ctx context.Context, arg GetRunti
 const getRuntimeUsageByHour = `-- name: GetRuntimeUsageByHour :many
 SELECT
     EXTRACT(HOUR FROM tu.created_at AT TIME ZONE $2::text)::int AS hour,
-    LOWER(tu.provider) AS provider,
+    tu.provider,
     tu.model,
     SUM(tu.input_tokens)::bigint AS input_tokens,
     SUM(tu.output_tokens)::bigint AS output_tokens,
@@ -67,8 +67,8 @@ FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.runtime_id = $1
   AND tu.created_at >= $3::timestamptz
-GROUP BY EXTRACT(HOUR FROM tu.created_at AT TIME ZONE $2::text), LOWER(tu.provider), tu.model
-ORDER BY hour, LOWER(tu.provider), tu.model
+GROUP BY EXTRACT(HOUR FROM tu.created_at AT TIME ZONE $2::text), tu.provider, tu.model
+ORDER BY hour, tu.provider, tu.model
 `
 
 type GetRuntimeUsageByHourParams struct {
@@ -127,7 +127,7 @@ func (q *Queries) GetRuntimeUsageByHour(ctx context.Context, arg GetRuntimeUsage
 const listRuntimeUsage = `-- name: ListRuntimeUsage :many
 SELECT
     DATE(bucket_hour AT TIME ZONE $2::text) AS date,
-    LOWER(provider) AS provider,
+    provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
     SUM(output_tokens)::bigint       AS output_tokens,
@@ -136,8 +136,8 @@ SELECT
 FROM task_usage_hourly
 WHERE runtime_id = $1
   AND bucket_hour >= $3::timestamptz
-GROUP BY DATE(bucket_hour AT TIME ZONE $2::text), LOWER(provider), model
-ORDER BY DATE(bucket_hour AT TIME ZONE $2::text) DESC, LOWER(provider), model
+GROUP BY DATE(bucket_hour AT TIME ZONE $2::text), provider, model
+ORDER BY DATE(bucket_hour AT TIME ZONE $2::text) DESC, provider, model
 `
 
 type ListRuntimeUsageParams struct {
@@ -164,9 +164,6 @@ type ListRuntimeUsageRow struct {
 // @tz is required, even if the caller intends "UTC", so the bucket
 // cast is unambiguous — `bucket_hour` is UTC and the caller picks the
 // calendar boundary per request.
-//
-// provider is LOWER()-normalized so mixed-case historical rows merge
-// (same reason as ListRuntimeUsageByAgent below).
 func (q *Queries) ListRuntimeUsage(ctx context.Context, arg ListRuntimeUsageParams) ([]ListRuntimeUsageRow, error) {
 	rows, err := q.db.Query(ctx, listRuntimeUsage, arg.RuntimeID, arg.Tz, arg.Since)
 	if err != nil {
@@ -198,7 +195,7 @@ func (q *Queries) ListRuntimeUsage(ctx context.Context, arg ListRuntimeUsagePara
 const listRuntimeUsageByAgent = `-- name: ListRuntimeUsageByAgent :many
 SELECT
     atq.agent_id,
-    LOWER(tu.provider) AS provider,
+    tu.provider,
     tu.model,
     SUM(tu.input_tokens)::bigint AS input_tokens,
     SUM(tu.output_tokens)::bigint AS output_tokens,
@@ -209,8 +206,8 @@ FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.runtime_id = $1
   AND tu.created_at >= $2::timestamptz
-GROUP BY atq.agent_id, LOWER(tu.provider), tu.model
-ORDER BY atq.agent_id, LOWER(tu.provider), tu.model
+GROUP BY atq.agent_id, tu.provider, tu.model
+ORDER BY atq.agent_id, tu.provider, tu.model
 `
 
 type ListRuntimeUsageByAgentParams struct {
@@ -236,8 +233,6 @@ type ListRuntimeUsageByAgentRow struct {
 //
 // This view doesn't bucket by date, so it doesn't need @tz; only the
 // @since cutoff is provided in runtime-local terms (computed in Go).
-// provider is LOWER()-normalized so mixed-case historical rows merge with
-// new rows (see ListDashboardUsageDaily in task_usage.sql).
 func (q *Queries) ListRuntimeUsageByAgent(ctx context.Context, arg ListRuntimeUsageByAgentParams) ([]ListRuntimeUsageByAgentRow, error) {
 	rows, err := q.db.Query(ctx, listRuntimeUsageByAgent, arg.RuntimeID, arg.Since)
 	if err != nil {
@@ -277,7 +272,7 @@ SELECT
     atq.status,
     atq.started_at,
     atq.completed_at,
-    LOWER(tu.provider) AS provider,
+    tu.provider,
     tu.model,
     SUM(tu.input_tokens)::bigint AS input_tokens,
     SUM(tu.output_tokens)::bigint AS output_tokens,
@@ -288,8 +283,8 @@ JOIN agent_task_queue atq ON atq.id = tu.task_id
 LEFT JOIN issue i ON i.id = atq.issue_id
 WHERE atq.runtime_id = $1
   AND tu.created_at >= $2::timestamptz
-GROUP BY atq.id, atq.issue_id, i.number, i.title, atq.agent_id, atq.status, atq.started_at, atq.completed_at, LOWER(tu.provider), tu.model
-ORDER BY atq.id, LOWER(tu.provider), tu.model
+GROUP BY atq.id, atq.issue_id, i.number, i.title, atq.agent_id, atq.status, atq.started_at, atq.completed_at, tu.provider, tu.model
+ORDER BY atq.id, tu.provider, tu.model
 `
 
 type ListRuntimeUsageByTaskParams struct {

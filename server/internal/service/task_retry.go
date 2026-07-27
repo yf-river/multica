@@ -37,21 +37,9 @@ import (
 // pointer on both the task row and the chat_session — otherwise the next
 // chat turn would silently start a brand-new session and lose memory.
 //
-// failureReason is a coarse classifier consumed by the auto-retry path.
-// Pass "" when unknown — the server runs the raw error text through
-// taskfailure.Classify so the persisted failure_reason still lands in
-// the canonical refined taxonomy rather than the legacy "agent_error"
-// coarse bucket. Daemon callers that already produced a refined reason
-// (via classifyPoisonedError, the timeout / runtime classifier, etc.)
-// will have their value preserved untouched.
+// failureReason is the classifier consumed by the auto-retry path. Pass ""
+// when unknown; the server classifies the raw error text before persisting.
 func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, failureReason string) (*db.AgentTaskQueue, error) {
-	// MUL-2946: synthesise a refined reason from the error text whenever the
-	// caller didn't supply one. This is the last write-path guard against
-	// "agent_error" coarse rows ending up in agent_task_queue.failure_reason
-	// — every other path either provides a classified reason directly
-	// (sweepers writing 'queued_expired' / 'runtime_offline' / 'timeout'
-	// / 'runtime_recovery' via SQL) or runs the daemon's classifyPoisonedError
-	// + taskfailure.Classify chain.
 	if failureReason == "" {
 		failureReason = taskfailure.Classify(errMsg).String()
 	}
@@ -60,7 +48,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
 			Error:         pgtype.Text{String: errMsg, Valid: true},
-			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
+			FailureReason: failureReason,
 			SessionID:     pgtype.Text{String: sessionID, Valid: sessionID != ""},
 			WorkDir:       pgtype.Text{String: workDir, Valid: workDir != ""},
 		})

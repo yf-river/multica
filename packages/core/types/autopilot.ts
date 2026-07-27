@@ -113,9 +113,7 @@ export interface CreateAutopilotRequest {
   title: string;
   description?: string;
   project_id?: string | null;
-  // Optional on the wire — when omitted the server defaults to "agent" so
-  // older clients keep working.
-  assignee_type?: AutopilotAssigneeType;
+  assignee_type: AutopilotAssigneeType;
   assignee_id: string;
   execution_mode: AutopilotExecutionMode;
   issue_title_template?: string;

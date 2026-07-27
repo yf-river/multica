@@ -37,52 +37,12 @@ func TestRegion_OpenPlatformBaseURL(t *testing.T) {
 	}{
 		{RegionFeishu, "https://open.feishu.cn"},
 		{RegionLark, "https://open.larksuite.com"},
-		{Region(""), "https://open.feishu.cn"},
-		{Region("bogus"), "https://open.feishu.cn"},
+		{Region(""), ""},
+		{Region("bogus"), ""},
 	}
 	for _, tc := range cases {
 		if got := tc.region.OpenPlatformBaseURL(); got != tc.want {
 			t.Errorf("Region(%q).OpenPlatformBaseURL() = %q, want %q", tc.region, got, tc.want)
-		}
-	}
-}
-
-// TestRegionOrDefault pins the normalization used at every credential-
-// build site: unknown / empty strings collapse to Feishu so a malformed
-// row never yields an empty host or a CHECK-violating write.
-func TestRegionOrDefault(t *testing.T) {
-	cases := map[string]Region{
-		"feishu": RegionFeishu,
-		"lark":   RegionLark,
-		"":       RegionFeishu,
-		"LARK":   RegionFeishu, // case-sensitive on purpose; CHECK stores lowercase
-		"intl":   RegionFeishu,
-	}
-	for in, want := range cases {
-		if got := RegionOrDefault(in); got != want {
-			t.Errorf("RegionOrDefault(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-// TestIsLarkInternationalHost gates the upgrade-repair backfill: only a
-// deployment-wide override pointing at open.larksuite.com should relabel
-// legacy installs. Mainland, empty, mock/staging, and scheme-less values
-// must NOT trigger it.
-func TestIsLarkInternationalHost(t *testing.T) {
-	cases := map[string]bool{
-		"https://open.larksuite.com":  true,
-		"https://open.larksuite.com/": true,
-		"https://OPEN.LARKSUITE.COM":  true, // host compare is case-insensitive
-		"https://open.feishu.cn":      false,
-		"":                            false,
-		"   ":                         false,
-		"https://mock.internal:8080":  false,
-		"open.larksuite.com":          false, // no scheme → not a usable override anyway
-	}
-	for in, want := range cases {
-		if got := isLarkInternationalHost(in); got != want {
-			t.Errorf("isLarkInternationalHost(%q) = %v, want %v", in, got, want)
 		}
 	}
 }
@@ -99,7 +59,6 @@ func TestHTTPClient_ResolvesHostFromRegion(t *testing.T) {
 	}{
 		{"feishu", RegionFeishu, "open.feishu.cn"},
 		{"lark", RegionLark, "open.larksuite.com"},
-		{"empty defaults to feishu", Region(""), "open.feishu.cn"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,7 +113,6 @@ func TestWSEndpoint_ResolvesHostFromRegion(t *testing.T) {
 	}{
 		{RegionFeishu, "open.feishu.cn"},
 		{RegionLark, "open.larksuite.com"},
-		{Region(""), "open.feishu.cn"},
 	}
 	for _, tc := range cases {
 		rt := &wsEndpointRoundTripper{}

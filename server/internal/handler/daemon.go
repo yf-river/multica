@@ -169,14 +169,9 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 type DaemonRegisterRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 	DaemonID    string `json:"daemon_id"`
-	// LegacyDaemonIDs lists prior hostname-derived daemon_ids this machine
-	// may have registered under before switching to a persistent UUID. The
-	// handler merges any matching runtime rows into the new row so agents
-	// and tasks keep working without manual intervention.
-	LegacyDaemonIDs []string `json:"legacy_daemon_ids"`
-	DeviceName      string   `json:"device_name"`
-	CLIVersion      string   `json:"cli_version"` // multica CLI version
-	Runtimes        []struct {
+	DeviceName  string `json:"device_name"`
+	CLIVersion  string `json:"cli_version"` // multica CLI version
+	Runtimes    []struct {
 		Name     string          `json:"name"`
 		Type     string          `json:"type"`
 		Version  string          `json:"version"` // agent CLI version (claude/codex)
@@ -409,22 +404,21 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 			inserted = prow.Inserted
 			registered = db.AgentRuntime{
-				ID:             prow.ID,
-				WorkspaceID:    prow.WorkspaceID,
-				DaemonID:       prow.DaemonID,
-				Name:           prow.Name,
-				RuntimeMode:    prow.RuntimeMode,
-				Provider:       prow.Provider,
-				Status:         prow.Status,
-				DeviceInfo:     prow.DeviceInfo,
-				Metadata:       prow.Metadata,
-				LastSeenAt:     prow.LastSeenAt,
-				CreatedAt:      prow.CreatedAt,
-				UpdatedAt:      prow.UpdatedAt,
-				OwnerID:        prow.OwnerID,
-				LegacyDaemonID: prow.LegacyDaemonID,
-				Scope:          prow.Scope,
-				ProfileID:      prow.ProfileID,
+				ID:          prow.ID,
+				WorkspaceID: prow.WorkspaceID,
+				DaemonID:    prow.DaemonID,
+				Name:        prow.Name,
+				RuntimeMode: prow.RuntimeMode,
+				Provider:    prow.Provider,
+				Status:      prow.Status,
+				DeviceInfo:  prow.DeviceInfo,
+				Metadata:    prow.Metadata,
+				LastSeenAt:  prow.LastSeenAt,
+				CreatedAt:   prow.CreatedAt,
+				UpdatedAt:   prow.UpdatedAt,
+				OwnerID:     prow.OwnerID,
+				Scope:       prow.Scope,
+				ProfileID:   prow.ProfileID,
 			}
 		} else {
 			row, err := h.Queries.UpsertAgentRuntime(r.Context(), db.UpsertAgentRuntimeParams{
@@ -453,22 +447,21 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 			inserted = row.Inserted
 			registered = db.AgentRuntime{
-				ID:             row.ID,
-				WorkspaceID:    row.WorkspaceID,
-				DaemonID:       row.DaemonID,
-				Name:           row.Name,
-				RuntimeMode:    row.RuntimeMode,
-				Provider:       row.Provider,
-				Status:         row.Status,
-				DeviceInfo:     row.DeviceInfo,
-				Metadata:       row.Metadata,
-				LastSeenAt:     row.LastSeenAt,
-				CreatedAt:      row.CreatedAt,
-				UpdatedAt:      row.UpdatedAt,
-				OwnerID:        row.OwnerID,
-				LegacyDaemonID: row.LegacyDaemonID,
-				Scope:          row.Scope,
-				ProfileID:      row.ProfileID,
+				ID:          row.ID,
+				WorkspaceID: row.WorkspaceID,
+				DaemonID:    row.DaemonID,
+				Name:        row.Name,
+				RuntimeMode: row.RuntimeMode,
+				Provider:    row.Provider,
+				Status:      row.Status,
+				DeviceInfo:  row.DeviceInfo,
+				Metadata:    row.Metadata,
+				LastSeenAt:  row.LastSeenAt,
+				CreatedAt:   row.CreatedAt,
+				UpdatedAt:   row.UpdatedAt,
+				OwnerID:     row.OwnerID,
+				Scope:       row.Scope,
+				ProfileID:   row.ProfileID,
 			}
 		}
 
@@ -496,21 +489,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Seamless migration from the previous hostname-derived identity. The
-		// daemon sends every legacy daemon_id it may have registered under
-		// (e.g. "host.local", "host", "host-staging"); for each match we
-		// reassign agents + tasks onto the new UUID-keyed row, then delete
-		// the stale row so there's only ever one runtime per machine.
-		//
-		// Only built-in runtimes participate: legacy rows predate custom
-		// profiles, so a profile-keyed instance never has a hostname-derived
-		// ancestor to merge, and mergeLegacyRuntimes scopes by provider alone
-		// (no profile_id), which could otherwise fold a built-in row into a
-		// custom one of the same provider.
-		if !isCustom {
-			h.mergeLegacyRuntimes(r, registered, provider, req.LegacyDaemonIDs)
-		}
-
 		resp = append(resp, runtimeToResponse(registered))
 	}
 
@@ -528,88 +506,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		"repos_version": repoResp.ReposVersion,
 		"settings":      repoResp.Settings,
 	})
-}
-
-// mergeLegacyRuntimes folds every runtime row keyed on a prior hostname-derived
-// daemon_id into the newly registered UUID-keyed row. For each legacy id the
-// lookup is case-insensitive and returns *all* matching rows — case-only drift
-// may have already minted duplicates historically (e.g. `Foo.local` AND
-// `foo.local` coexisting), and we need to consolidate every one of them, not
-// just the first. Per match we reassign agents and tasks, record the legacy
-// id on the new row for audit, then delete the stale row.
-//
-// Scoping by (workspace_id, provider) is sufficient since provider is single-
-// runtime-per-daemon; `unique (workspace_id, daemon_id, provider)` prevents
-// any two *exact* matches but the `LOWER(...)` comparison crosses that bound
-// precisely when case-duplicate rows exist — which is the bug we're fixing.
-// We also dedupe across legacy ids so overlapping candidates (e.g. `foo` and
-// `foo.local` both resolving to the same stored row) don't double-process.
-func (h *Handler) mergeLegacyRuntimes(r *http.Request, registered db.AgentRuntime, provider string, legacyIDs []string) {
-	newID := uuidToString(registered.ID)
-	merged := make(map[string]struct{})
-
-	for _, legacyID := range legacyIDs {
-		legacyID = strings.TrimSpace(legacyID)
-		if legacyID == "" {
-			continue
-		}
-
-		matches, err := h.Queries.FindLegacyRuntimesByDaemonID(r.Context(), db.FindLegacyRuntimesByDaemonIDParams{
-			WorkspaceID: registered.WorkspaceID,
-			Provider:    provider,
-			DaemonID:    legacyID,
-		})
-		if err != nil {
-			slog.Warn("legacy runtime merge: lookup failed", "legacy_daemon_id", legacyID, "error", err)
-			continue
-		}
-		for _, old := range matches {
-			oldID := uuidToString(old.ID)
-			if oldID == newID {
-				continue
-			}
-			if _, seen := merged[oldID]; seen {
-				continue
-			}
-			merged[oldID] = struct{}{}
-
-			agents, err := h.Queries.ReassignAgentsToRuntime(r.Context(), db.ReassignAgentsToRuntimeParams{
-				NewRuntimeID: registered.ID,
-				OldRuntimeID: old.ID,
-			})
-			if err != nil {
-				slog.Warn("legacy runtime merge: reassign agents failed", "legacy_daemon_id", legacyID, "old_runtime_id", oldID, "new_runtime_id", newID, "error", err)
-				continue
-			}
-			tasks, err := h.Queries.ReassignTasksToRuntime(r.Context(), db.ReassignTasksToRuntimeParams{
-				NewRuntimeID: registered.ID,
-				OldRuntimeID: old.ID,
-			})
-			if err != nil {
-				slog.Warn("legacy runtime merge: reassign tasks failed", "legacy_daemon_id", legacyID, "old_runtime_id", oldID, "new_runtime_id", newID, "error", err)
-				continue
-			}
-			if err := h.Queries.RecordRuntimeLegacyDaemonID(r.Context(), db.RecordRuntimeLegacyDaemonIDParams{
-				ID:             registered.ID,
-				LegacyDaemonID: strToText(legacyID),
-			}); err != nil {
-				slog.Warn("legacy runtime merge: record legacy daemon_id failed", "legacy_daemon_id", legacyID, "error", err)
-			}
-			if err := h.Queries.DeleteAgentRuntime(r.Context(), old.ID); err != nil {
-				slog.Warn("legacy runtime merge: delete old runtime failed", "old_runtime_id", oldID, "error", err)
-				continue
-			}
-
-			slog.Info("legacy runtime merged",
-				"legacy_daemon_id", legacyID,
-				"old_runtime_id", oldID,
-				"new_runtime_id", newID,
-				"provider", provider,
-				"agents_reassigned", agents,
-				"tasks_reassigned", tasks,
-			)
-		}
-	}
 }
 
 func (h *Handler) GetDaemonWorkspaceRepos(w http.ResponseWriter, r *http.Request) {
@@ -690,9 +586,8 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 }
 
 type DaemonHeartbeatRequest struct {
-	RuntimeID           string          `json:"runtime_id"`
-	SupportsBatchImport bool            `json:"supports_batch_import,omitempty"`
-	Metadata            json.RawMessage `json:"metadata,omitempty"`
+	RuntimeID string          `json:"runtime_id"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -841,7 +736,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ack, m, err := h.processHeartbeat(r.Context(), rt, req.SupportsBatchImport)
+	ack, m, err := h.processHeartbeat(r.Context(), rt)
 	updateMs = m.UpdateMs
 	probeModelMs = m.ProbeModelMs
 	popModelMs = m.PopModelMs
@@ -869,9 +764,6 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if ack.PendingLocalSkills != nil {
 		resp["pending_local_skills"] = ack.PendingLocalSkills
 	}
-	if ack.PendingLocalSkillImport != nil {
-		resp["pending_local_skill_import"] = ack.PendingLocalSkillImport
-	}
 	if len(ack.PendingLocalSkillImports) > 0 {
 		resp["pending_local_skill_imports"] = ack.PendingLocalSkillImports
 	}
@@ -892,7 +784,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 // and tells the daemon to drop the stale runtime and re-register. Other DB
 // errors still propagate as errors so they keep their existing Warn logging
 // and the daemon does not mistake a hiccup for a deletion.
-func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 	runtimeUUID, err := util.ParseUUID(runtimeID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid runtime_id: %w", err)
@@ -911,7 +803,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	if !identity.AllowsWorkspace(uuidToString(rt.WorkspaceID)) {
 		return nil, fmt.Errorf("runtime not in connection workspace")
 	}
-	ack, _, err := h.processHeartbeat(ctx, rt, supportsBatchImport)
+	ack, _, err := h.processHeartbeat(ctx, rt)
 	return ack, err
 }
 
@@ -972,7 +864,7 @@ type heartbeatMetrics struct {
 // the WebSocket daemon:heartbeat path: records liveness and pulls any pending
 // actions queued for the runtime. Auth and request decoding live in the
 // caller because they differ between transports.
-func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, heartbeatMetrics, error) {
+func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime) (*protocol.DaemonHeartbeatAckPayload, heartbeatMetrics, error) {
 	var m heartbeatMetrics
 	runtimeID := uuidToString(rt.ID)
 
@@ -1054,43 +946,24 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 	switch {
 	case probeErr == nil && hasImport:
 		popStart := time.Now()
-		if supportsBatchImport {
-			pendingImports, popErr := h.LocalSkillImportStore.PopPendingBatch(ctx, runtimeID, maxLocalSkillImportBatch)
-			m.PopImportMs = time.Since(popStart).Milliseconds()
-			if popErr != nil {
-				slog.Warn("local skill import PopPendingBatch failed", "error", popErr, "runtime_id", runtimeID, "claimed", len(pendingImports))
+		pendingImports, popErr := h.LocalSkillImportStore.PopPendingBatch(ctx, runtimeID, maxLocalSkillImportBatch)
+		m.PopImportMs = time.Since(popStart).Milliseconds()
+		if popErr != nil {
+			slog.Warn("local skill import PopPendingBatch failed", "error", popErr, "runtime_id", runtimeID, "claimed", len(pendingImports))
+		}
+		// Always dispatch whatever was claimed — even on partial
+		// failure the claimed requests have already transitioned to
+		// running in the store. Dropping them here would leave them
+		// stranded until the running timeout.
+		if len(pendingImports) > 0 {
+			batch := make([]protocol.DaemonHeartbeatPendingLocalSkillImport, 0, len(pendingImports))
+			for _, p := range pendingImports {
+				batch = append(batch, protocol.DaemonHeartbeatPendingLocalSkillImport{
+					ID:       p.ID,
+					SkillKey: p.SkillKey,
+				})
 			}
-			// Always dispatch whatever was claimed — even on partial
-			// failure the claimed requests have already transitioned to
-			// running in the store. Dropping them here would leave them
-			// stranded until the running timeout.
-			if len(pendingImports) > 0 {
-				// Backwards compat: singular field carries the first item so
-				// old daemons that don't know the plural field still get one.
-				ack.PendingLocalSkillImport = &protocol.DaemonHeartbeatPendingLocalSkillImport{
-					ID:       pendingImports[0].ID,
-					SkillKey: pendingImports[0].SkillKey,
-				}
-				batch := make([]protocol.DaemonHeartbeatPendingLocalSkillImport, 0, len(pendingImports))
-				for _, p := range pendingImports {
-					batch = append(batch, protocol.DaemonHeartbeatPendingLocalSkillImport{
-						ID:       p.ID,
-						SkillKey: p.SkillKey,
-					})
-				}
-				ack.PendingLocalSkillImports = batch
-			}
-		} else {
-			pendingImport, popErr := h.LocalSkillImportStore.PopPending(ctx, runtimeID)
-			m.PopImportMs = time.Since(popStart).Milliseconds()
-			if popErr != nil {
-				slog.Warn("local skill import PopPending failed", "error", popErr, "runtime_id", runtimeID)
-			} else if pendingImport != nil {
-				ack.PendingLocalSkillImport = &protocol.DaemonHeartbeatPendingLocalSkillImport{
-					ID:       pendingImport.ID,
-					SkillKey: pendingImport.SkillKey,
-				}
-			}
+			ack.PendingLocalSkillImports = batch
 		}
 	case probeErr != nil:
 		if errors.Is(probeErr, context.DeadlineExceeded) || errors.Is(probeErr, context.Canceled) {
@@ -1353,14 +1226,6 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if agent.McpConfig != nil {
 			mcpConfig = json.RawMessage(agent.McpConfig)
 		}
-		// runtime_config is stored as JSONB and may legitimately be the
-		// empty object `{}` for agents that haven't opted into any
-		// provider-specific tuning. Forward only non-empty payloads so the
-		// daemon's per-provider decoders treat absent-or-empty identically.
-		var runtimeConfig json.RawMessage
-		if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
-			runtimeConfig = json.RawMessage(agent.RuntimeConfig)
-		}
 		resp.Agent = &TaskAgentData{
 			ID:            uuidToString(agent.ID),
 			Name:          agent.Name,
@@ -1371,7 +1236,6 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			McpConfig:     mcpConfig,
 			Model:         agent.Model.String,
 			ThinkingLevel: agent.ThinkingLevel.String,
-			RuntimeConfig: runtimeConfig,
 		}
 		resp.ExecutionPolicy = &executionPolicy
 	}
@@ -2305,30 +2169,19 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider is lowercased on write so client-side pricing lookups tolerate
-	// case drift. An empty provider (an older daemon that omits the field) is
-	// stamped from the task's runtime, so generic model ids like `auto` still
-	// resolve to a provider instead of landing as '' and pricing $0.
-	var runtimeProvider string
-	runtimeProviderLoaded := false
-	for _, u := range req.Usage {
-		provider := normalizeProvider(u.Provider)
-		if provider == "" {
-			if !runtimeProviderLoaded {
-				if rt, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID); err == nil {
-					runtimeProvider = normalizeProvider(rt.Provider)
-				} else {
-					slog.Warn("load runtime provider for usage backfill failed",
-						"task_id", taskID, "runtime_id", uuidToString(task.RuntimeID), "error", err)
-				}
-				runtimeProviderLoaded = true
-			}
-			provider = runtimeProvider
+	for i := range req.Usage {
+		req.Usage[i].Provider = normalizeProvider(req.Usage[i].Provider)
+		if req.Usage[i].Provider == "" {
+			writeError(w, http.StatusBadRequest, "usage provider is required")
+			return
 		}
-		u = h.normalizeTaskUsagePayload(r.Context(), task, provider, u)
+	}
+
+	for _, u := range req.Usage {
+		u = h.normalizeTaskUsagePayload(r.Context(), task, u.Provider, u)
 		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
 			TaskID:           parseUUID(taskID),
-			Provider:         provider,
+			Provider:         u.Provider,
 			Model:            u.Model,
 			InputTokens:      u.InputTokens,
 			OutputTokens:     u.OutputTokens,
@@ -2338,7 +2191,7 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
 			continue
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
+		h.TaskService.CaptureTaskUsage(r.Context(), task, u.Provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

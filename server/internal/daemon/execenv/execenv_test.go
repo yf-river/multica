@@ -2323,45 +2323,6 @@ approval_policy = "on-failure"
 	}
 }
 
-func TestEnsureCodexSandboxConfigStripsLegacyInlineDirectives(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	// Simulate a config.toml produced by an older daemon version that wrote
-	// sandbox directives inline (no managed block markers). After migration,
-	// the inline directives should be gone and only the managed block should
-	// carry them.
-	existing := `model = "o3"
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = true
-`
-	os.WriteFile(configPath, []byte(existing), 0o644)
-
-	policy := codexSandboxPolicyFor("darwin", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-	if !strings.Contains(s, `model = "o3"`) {
-		t.Error("should have preserved unrelated user config")
-	}
-	// Inline sandbox_mode and [sandbox_workspace_write] should be stripped.
-	if strings.Count(s, "sandbox_mode") != 1 {
-		t.Errorf("expected exactly one sandbox_mode line (inside managed block), got:\n%s", s)
-	}
-	if strings.Contains(s, "[sandbox_workspace_write]") {
-		t.Errorf("darwin fallback should not retain workspace-write section:\n%s", s)
-	}
-	if !strings.Contains(s, `sandbox_mode = "danger-full-access"`) {
-		t.Errorf("expected danger-full-access on macOS, got:\n%s", s)
-	}
-}
-
 func TestEnsureCodexSandboxConfigHoistsAboveUserTables(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -3249,28 +3210,6 @@ func TestWriteGCMeta_EmptyKind(t *testing.T) {
 	}
 }
 
-// Pre-v2 meta files lacked the kind field. ReadGCMeta must default an empty
-// kind to GCKindIssue so the existing on-disk meta files keep flowing
-// through the issue path.
-func TestReadGCMeta_LegacyFileDefaultsToIssueKind(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	legacy := []byte(`{"issue_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","workspace_id":"ws","completed_at":"2025-01-01T00:00:00Z"}`)
-	if err := os.WriteFile(filepath.Join(dir, gcMetaFile), legacy, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	meta, err := ReadGCMeta(dir)
-	if err != nil {
-		t.Fatalf("ReadGCMeta: %v", err)
-	}
-	if meta.Kind != GCKindIssue {
-		t.Fatalf("legacy kind: want %q, got %q", GCKindIssue, meta.Kind)
-	}
-	if meta.IssueID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
-		t.Fatalf("legacy issue_id: got %q", meta.IssueID)
-	}
-}
-
 // New v2 meta files for chat / autopilot / quick-create round-trip without
 // being misclassified as the issue kind.
 func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
@@ -3768,6 +3707,7 @@ func TestInjectRuntimeConfigCommentTriggerColdStartRead(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID:          issueID,
 		TriggerCommentID: triggerID,
+		TriggerThreadID:  triggerID,
 	}
 	if _, err := InjectRuntimeConfig(dir, "claude", ctx); err != nil {
 		t.Fatalf("InjectRuntimeConfig failed: %v", err)

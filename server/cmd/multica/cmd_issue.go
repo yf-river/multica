@@ -1651,7 +1651,11 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		matchInfo := strVal(issue, "match_source")
-		if snippet := strVal(issue, "matched_snippet"); snippet != "" {
+		snippet := strVal(issue, "matched_description_snippet")
+		if matchInfo == "comment" {
+			snippet = strVal(issue, "matched_comment_snippet")
+		}
+		if snippet != "" {
 			if utf8.RuneCountInString(snippet) > 50 {
 				runes := []rune(snippet)
 				snippet = string(runes[:47]) + "..."

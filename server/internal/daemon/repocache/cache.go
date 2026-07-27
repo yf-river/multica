@@ -265,32 +265,31 @@ func gitCloneBare(url, dest string) error {
 	// a mirror-style fetch refspec. Convert the bare repo to the standard
 	// remote-tracking layout immediately so subsequent fetches write to
 	// refs/remotes/origin/* and can't conflict with worktree-locked heads.
-	if err := ensureRemoteTrackingLayout(dest); err != nil {
+	if err := setFetchRefspec(dest, modernFetchRefspec); err != nil {
 		os.RemoveAll(dest)
 		return fmt.Errorf("configure fetch refspec: %w", err)
+	}
+	if err := gitFetch(dest); err != nil {
+		os.RemoveAll(dest)
+		return fmt.Errorf("populate remote-tracking refs: %w", err)
 	}
 	return nil
 }
 
-// gitFetch runs `git fetch origin` on a bare cache, migrating its fetch
-// refspec to the remote-tracking layout first if it's still using the legacy
-// mirror-style layout from an older version of this package. After a
-// successful fetch it also refreshes refs/remotes/origin/HEAD so a remote
+// gitFetch runs `git fetch origin` on a bare cache. After a successful fetch
+// it also refreshes refs/remotes/origin/HEAD so a remote
 // default-branch change (e.g. master→main on an existing repo) actually
 // takes effect in getRemoteDefaultBranch. Plain `git fetch origin` never
 // touches that symref on its own, so without this call an existing cache
 // would keep basing new worktrees on the original default branch forever
 // after the remote flipped.
 func gitFetch(barePath string) error {
-	if err := ensureRemoteTrackingLayout(barePath); err != nil {
-		return fmt.Errorf("ensure refspec: %w", err)
-	}
 	if err := runGitFetch(barePath); err != nil {
 		return err
 	}
 	// Refresh refs/remotes/origin/HEAD after every successful fetch.
 	// set-head --auto is lightweight (a single ls-remote HEAD round-trip)
-	// and non-fatal: if it fails we still have the step 2-5 fallbacks in
+	// and non-fatal: if it fails we still have the other resolution paths in
 	// getRemoteDefaultBranch, but the modern-cache default-branch-change
 	// path (the only path that can't be recovered any other way) relies
 	// on this call.
@@ -301,8 +300,6 @@ func gitFetch(barePath string) error {
 	return nil
 }
 
-// runGitFetch is the raw `git fetch origin` wrapper. Callers should go through
-// gitFetch, which migrates legacy caches first.
 func runGitFetch(barePath string) error {
 	cmd := exec.Command("git", "-C", barePath, "fetch", "origin")
 	cmd.Env = gitEnv()
@@ -311,55 +308,6 @@ func runGitFetch(barePath string) error {
 		return fmt.Errorf("git fetch: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
-}
-
-// ensureRemoteTrackingLayout upgrades a bare repo from the legacy mirror
-// refspec (+refs/heads/*:refs/heads/*) to the standard remote-tracking refspec
-// (+refs/heads/*:refs/remotes/origin/*). It's idempotent: on an already-modern
-// cache it's a single `git config --get` call. On legacy caches it rewrites
-// the refspec, performs a backfill fetch to populate refs/remotes/origin/*,
-// and runs `git remote set-head origin --auto` so getRemoteDefaultBranch can
-// resolve the remote's default branch.
-func ensureRemoteTrackingLayout(barePath string) error {
-	cur, err := readFetchRefspec(barePath)
-	if err != nil {
-		return err
-	}
-	if cur == modernFetchRefspec || cur == strings.TrimPrefix(modernFetchRefspec, "+") {
-		return nil // already modern
-	}
-	if err := setFetchRefspec(barePath, modernFetchRefspec); err != nil {
-		return err
-	}
-	// Backfill refs/remotes/origin/* by fetching with the new refspec. This
-	// writes to the origin/* namespace, so even worktree-locked refs/heads/*
-	// branches can't collide.
-	if err := runGitFetch(barePath); err != nil {
-		return fmt.Errorf("backfill fetch after refspec migration: %w", err)
-	}
-	// Set refs/remotes/origin/HEAD so getRemoteDefaultBranch can read it.
-	// Non-fatal: if this fails we fall back to origin/main, origin/master.
-	cmd := exec.Command("git", "-C", barePath, "remote", "set-head", "origin", "--auto")
-	cmd.Env = gitEnv()
-
-	_ = cmd.Run()
-	return nil
-}
-
-// readFetchRefspec returns the current remote.origin.fetch config value, or
-// the empty string if it's not set. Distinguishes "missing" (exit 1) from
-// real git errors.
-func readFetchRefspec(barePath string) (string, error) {
-	cmd := exec.Command("git", "-C", barePath, "config", "--get", "remote.origin.fetch")
-
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
-			return "", nil // key missing, not an error
-		}
-		return "", fmt.Errorf("read remote.origin.fetch: %w", err)
-	}
-	return strings.TrimSpace(string(out)), nil
 }
 
 func setFetchRefspec(barePath, refspec string) error {
@@ -693,10 +641,8 @@ func updateExistingWorktree(worktreePath, branchName, baseRef string) (string, e
 	}
 
 	// Create a new branch from the resolved default-branch ref and switch to
-	// it. baseRef is a ref path returned by getRemoteDefaultBranch — usually
-	// "refs/remotes/origin/<branch>" but may be "refs/heads/<branch>" on a
-	// legacy/migration-pending cache. Either form is valid as a checkout
-	// startpoint.
+	// it. baseRef is a ref path returned by getRemoteDefaultBranch under
+	// refs/remotes/origin/.
 	checkoutCmd := exec.Command("git", "-C", worktreePath, "checkout", "-b", branchName, baseRef)
 	out, err := checkoutCmd.CombinedOutput()
 	if err == nil {
@@ -731,18 +677,12 @@ func updateExistingWorktree(worktreePath, branchName, baseRef string) (string, e
 //     order alone (git for-each-ref sorts alphabetically), so we refuse to
 //     guess; returning a wrong default would silently base new agent work on
 //     an arbitrary feature branch.
-//  5. Legacy last-resort: the bare repo's own HEAD as a plain refs/heads/*
-//     ref, for caches that haven't populated refs/remotes/origin/* at all
-//     yet (e.g. a migration-pending cache whose backfill fetch failed).
-//     Gated on refs/remotes/origin/* being completely empty so we don't fall
-//     back to a stale snapshot when the cache has real remote-tracking refs
-//     but we just can't pick between them.
 //
 // Returns "" only when none of the above resolve — which the caller treats
 // as a hard error with a clear "cache has no usable refs" message.
 func getRemoteDefaultBranch(barePath string) string {
 	// 1) Primary: refs/remotes/origin/HEAD set by `git remote set-head
-	//    origin --auto` during ensureRemoteTrackingLayout. Verify the
+	//    origin --auto` during fetch. Verify the
 	//    target actually exists — a partial set-head or a manually-broken
 	//    repo can leave a symref pointing at a deleted ref, and returning
 	//    it here would later fail in `git worktree add` with a confusing
@@ -785,9 +725,8 @@ func getRemoteDefaultBranch(barePath string) string {
 	//    disambiguated from refname order alone; returning the alphabetically-
 	//    first entry would silently base new agent work on a feature branch
 	//    instead of the real default. Count entries here so step 5 can tell
-	//    "legacy empty" apart from "ambiguous".
-	originCount := 0
 	var singleton string
+	originCount := 0
 	foreachCmd := exec.Command("git", "-C", barePath, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/")
 	if out, err := foreachCmd.Output(); err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -804,15 +743,6 @@ func getRemoteDefaultBranch(barePath string) string {
 			return singleton
 		}
 	}
-	// 5) Last-resort fallback: legacy / migration-pending caches still have
-	//    refs/heads/* and a bare HEAD from the mirror-style layout. Gate this
-	//    on refs/remotes/origin/* being completely empty — if origin/* has
-	//    multiple refs but none match bare HEAD, the cache is in an
-	//    ambiguous state and returning the local head would mask the
-	//    problem with a stale snapshot. Let the caller fail loudly instead.
-	if originCount == 0 && bareRef != "" {
-		return bareRef
-	}
 	return ""
 }
 
@@ -820,10 +750,8 @@ func getRemoteDefaultBranch(barePath string) string {
 // "refs/heads/main") if HEAD is a symbolic ref to an existing branch.
 // Returns "" if HEAD is detached, missing, or points at a non-existent ref.
 //
-// Only used by getRemoteDefaultBranch as a last-resort fallback for caches
-// that haven't successfully populated refs/remotes/origin/* yet. Healthy
-// modern caches should never reach this path because origin/* resolution
-// succeeds first.
+// The result is used only as a branch-name hint and is never returned as a
+// worktree base directly.
 func bareHeadBranch(barePath string) string {
 	cmd := exec.Command("git", "-C", barePath, "symbolic-ref", "HEAD")
 
@@ -847,19 +775,6 @@ func bareHeadBranch(barePath string) string {
 // hooks it owns so it never deletes a hook installed by the user or another
 // tool. Do not change without bumping the recognition logic.
 const multicaHookMarker = "# multica:prepare-commit-msg:co-authored-by"
-
-// daemonInstalledHookSignatures lists substrings that identify a
-// prepare-commit-msg hook as one the daemon installed. removeCoAuthoredByHook
-// treats a hook as Multica-owned if its content contains ANY of these
-// substrings. The list deliberately includes the legacy comment that the
-// daemon used before multicaHookMarker existed, so disabling the toggle on
-// existing installations still cleans up old hooks seeded by previous daemon
-// versions. Add to this list — never remove from it — so future tweaks to
-// prepareCommitMsgHook keep recognizing every previously-shipped variant.
-var daemonInstalledHookSignatures = []string{
-	multicaHookMarker,
-	"# Installed by the Multica daemon.",
-}
 
 // prepareCommitMsgHook is the prepare-commit-msg hook script that appends a
 // Co-authored-by trailer for the Multica Agent to every commit message.
@@ -916,23 +831,16 @@ func installCoAuthoredByHook(worktreePath string) error {
 }
 
 // isDaemonInstalledHook reports whether a prepare-commit-msg hook on disk was
-// installed by the Multica daemon (current or any previously released
-// version). It returns false for hooks that don't carry any known daemon
-// signature, so a user-installed hook at the same path is left alone.
+// installed by the Multica daemon. It returns false for hooks that don't carry
+// the daemon marker, so a user-installed hook at the same path is left alone.
 func isDaemonInstalledHook(contents []byte) bool {
-	body := string(contents)
-	for _, sig := range daemonInstalledHookSignatures {
-		if strings.Contains(body, sig) {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(string(contents), multicaHookMarker)
 }
 
 // removeCoAuthoredByHook removes the prepare-commit-msg hook installed by
 // installCoAuthoredByHook. It only deletes the file when the content matches
-// a known daemon signature (current marker or any previously released hook
-// content), so a user-installed prepare-commit-msg hook is never touched.
+// the current daemon marker, so a user-installed prepare-commit-msg hook is
+// never touched.
 // Returns nil when no hook is present or when an unrelated hook occupies
 // the path.
 func removeCoAuthoredByHook(worktreePath string) error {

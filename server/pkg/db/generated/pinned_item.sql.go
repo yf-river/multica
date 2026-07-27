@@ -68,21 +68,6 @@ func (q *Queries) DeletePinnedItem(ctx context.Context, arg DeletePinnedItemPara
 	return err
 }
 
-const deletePinnedItemsByItem = `-- name: DeletePinnedItemsByItem :exec
-DELETE FROM pinned_item
-WHERE item_type = $1 AND item_id = $2
-`
-
-type DeletePinnedItemsByItemParams struct {
-	ItemType string      `json:"item_type"`
-	ItemID   pgtype.UUID `json:"item_id"`
-}
-
-func (q *Queries) DeletePinnedItemsByItem(ctx context.Context, arg DeletePinnedItemsByItemParams) error {
-	_, err := q.db.Exec(ctx, deletePinnedItemsByItem, arg.ItemType, arg.ItemID)
-	return err
-}
-
 const getMaxPinnedItemPosition = `-- name: GetMaxPinnedItemPosition :one
 SELECT COALESCE(MAX(position), 0)::float8 AS max_position
 FROM pinned_item

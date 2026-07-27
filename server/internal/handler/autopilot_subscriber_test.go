@@ -56,6 +56,7 @@ func createDispatchedAutopilotIssue(t *testing.T, ctx context.Context, autopilot
 
 	body := map[string]any{
 		"title":                autopilotTitle,
+		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": issueTitle,
@@ -122,6 +123,7 @@ func TestCreateAutopilotPersistsMemberSubscribers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Subscriber template autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -170,6 +172,7 @@ func TestCreateAutopilotRejectsNonMemberSubscriberType(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Bad subscriber type",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -194,6 +197,7 @@ func TestCreateAutopilotRejectsForeignSubscriber(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Foreign subscriber",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -220,6 +224,7 @@ func TestCreateAutopilotRollsBackWhenSubscriberInsertFails(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          title,
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -264,6 +269,7 @@ func TestUpdateAutopilotFullReplaceSubscribers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Replace subscribers autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -326,6 +332,7 @@ func TestUpdateAutopilotRollsBackWhenSubscriberInsertFails(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          originalTitle,
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -394,6 +401,7 @@ func TestUpdateAutopilotPreservesSubscribersWhenOmitted(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Preserve subscribers autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -542,6 +550,7 @@ func TestDeleteAutopilotRemovesSubscribers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Delete-with-subscribers autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{

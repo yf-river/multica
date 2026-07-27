@@ -99,23 +99,6 @@ func (q *Queries) ClearOtherThreadResolutions(ctx context.Context, arg ClearOthe
 	return items, nil
 }
 
-const countComments = `-- name: CountComments :one
-SELECT count(*) FROM comment
-WHERE issue_id = $1 AND workspace_id = $2
-`
-
-type CountCommentsParams struct {
-	IssueID     pgtype.UUID `json:"issue_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) CountComments(ctx context.Context, arg CountCommentsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countComments, arg.IssueID, arg.WorkspaceID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countNewCommentsSince = `-- name: CountNewCommentsSince :one
 SELECT count(*) FROM comment
 WHERE issue_id = $1

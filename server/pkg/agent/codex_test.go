@@ -234,113 +234,10 @@ func TestCodexHandleServerRequestUnknownReturnsError(t *testing.T) {
 	}
 }
 
-func TestCodexLegacyEventTaskStarted(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var gotStatus bool
-	c.onMessage = func(msg Message) {
-		if msg.Type == MessageStatus && msg.Status == "running" {
-			gotStatus = true
-		}
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_started"}}}`)
-
-	if !gotStatus {
-		t.Fatal("expected status=running message")
-	}
-	if !c.turnStarted {
-		t.Fatal("expected turnStarted=true")
-	}
-	if c.notificationProtocol != "legacy" {
-		t.Fatalf("expected protocol=legacy, got %q", c.notificationProtocol)
-	}
-}
-
-func TestCodexLegacyEventAgentMessage(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var gotText string
-	c.onMessage = func(msg Message) {
-		if msg.Type == MessageText {
-			gotText = msg.Content
-		}
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"agent_message","message":"I found the bug"}}}`)
-
-	if gotText != "I found the bug" {
-		t.Fatalf("expected text 'I found the bug', got %q", gotText)
-	}
-}
-
-func TestCodexLegacyEventExecCommand(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var messages []Message
-	c.onMessage = func(msg Message) {
-		messages = append(messages, msg)
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"exec_command_begin","call_id":"c1","command":"ls -la"}}}`)
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"exec_command_end","call_id":"c1","output":"total 42"}}}`)
-
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messages))
-	}
-	if messages[0].Type != MessageToolUse || messages[0].Tool != "exec_command" || messages[0].CallID != "c1" {
-		t.Fatalf("unexpected begin message: %+v", messages[0])
-	}
-	if messages[1].Type != MessageToolResult || messages[1].CallID != "c1" || messages[1].Output != "total 42" {
-		t.Fatalf("unexpected end message: %+v", messages[1])
-	}
-}
-
-func TestCodexLegacyEventTaskComplete(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var done bool
-	c.onTurnDone = func(aborted bool) {
-		done = true
-		if aborted {
-			t.Fatal("expected aborted=false")
-		}
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_complete"}}}`)
-
-	if !done {
-		t.Fatal("expected onTurnDone to be called")
-	}
-}
-
-func TestCodexLegacyEventTurnAborted(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var abortedResult bool
-	c.onTurnDone = func(aborted bool) {
-		abortedResult = aborted
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"turn_aborted"}}}`)
-
-	if !abortedResult {
-		t.Fatal("expected aborted=true")
-	}
-}
-
 func TestCodexRawTurnStarted(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	// The zero value "" doesn't match "unknown", so protocol auto-detection
-	// won't trigger. Set it explicitly as production code would.
-	c.notificationProtocol = "unknown"
 
 	var gotStatus bool
 	c.onMessage = func(msg Message) {
@@ -354,9 +251,6 @@ func TestCodexRawTurnStarted(t *testing.T) {
 	if !gotStatus {
 		t.Fatal("expected status=running message")
 	}
-	if c.notificationProtocol != "raw" {
-		t.Fatalf("expected protocol=raw, got %q", c.notificationProtocol)
-	}
 	if c.turnID != "turn-1" {
 		t.Fatalf("expected turnID=turn-1, got %q", c.turnID)
 	}
@@ -366,7 +260,6 @@ func TestCodexRawTurnCompleted(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var doneCount int
 	c.onTurnDone = func(aborted bool) {
@@ -387,7 +280,6 @@ func TestCodexRawTurnCompletedSubtractsCachedInput(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.onTurnDone = func(aborted bool) {}
 
 	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-usage","status":"completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50}}}}`)
@@ -409,7 +301,6 @@ func TestCodexRawTurnCompletedDeduplication(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var doneCount int
 	c.onTurnDone = func(aborted bool) {
@@ -428,7 +319,6 @@ func TestCodexRawTurnCompletedAborted(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var wasAborted bool
 	c.onTurnDone = func(aborted bool) {
@@ -446,7 +336,6 @@ func TestCodexRawTurnCompletedFailedCapturesError(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var wasAborted bool
 	c.onTurnDone = func(aborted bool) {
@@ -467,7 +356,6 @@ func TestCodexRawTurnCompletedFailedWithoutMessageFallsBack(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.onTurnDone = func(aborted bool) {}
 
 	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-f","status":"failed"}}}`)
@@ -481,7 +369,6 @@ func TestCodexRawErrorNotificationTerminal(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	done := false
 	var activities []string
 	c.onSemanticActivity = func(activity string) {
@@ -511,7 +398,6 @@ func TestCodexRawErrorNotificationRetryingIgnored(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	var activities []string
 	c.onSemanticActivity = func(activity string) {
 		activities = append(activities, activity)
@@ -638,7 +524,6 @@ func TestCodexRawItemCommandExecution(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var messages []Message
 	c.onMessage = func(msg Message) {
@@ -663,7 +548,6 @@ func TestCodexRawItemAgentMessageFinalAnswer(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.turnStarted = true
 
 	var gotText string
@@ -691,7 +575,6 @@ func TestCodexRawThreadStatusIdle(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.turnStarted = true
 
 	var turnDone bool
@@ -716,7 +599,6 @@ func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.threadID = "thr_main"
 
 	var doneCount int
@@ -743,7 +625,6 @@ func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.threadID = "thr_main"
 	c.turnStarted = true
 
@@ -1243,32 +1124,6 @@ func TestCodexStartOrResumeThreadStartFailureSurfaces(t *testing.T) {
 	}
 }
 
-func TestCodexProtocolDetectionLegacyBlocksRaw(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-
-	var messages []Message
-	c.onMessage = func(msg Message) {
-		messages = append(messages, msg)
-	}
-
-	// First: receive a legacy event -> locks to "legacy"
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_started"}}}`)
-
-	if c.notificationProtocol != "legacy" {
-		t.Fatalf("expected legacy, got %q", c.notificationProtocol)
-	}
-
-	// Now send a raw notification -> should be ignored
-	messagesBefore := len(messages)
-	c.handleLine(`{"jsonrpc":"2.0","method":"turn/started","params":{"turn":{"id":"turn-1"}}}`)
-
-	if len(messages) != messagesBefore {
-		t.Fatal("raw notification should be ignored in legacy mode")
-	}
-}
-
 func TestStderrTailForwardsAndCapturesTail(t *testing.T) {
 	t.Parallel()
 
@@ -1539,38 +1394,6 @@ func TestCodexExecuteFirstTurnRetryErrorDoesNotSatisfyProgress(t *testing.T) {
 	}
 	if strings.Contains(result.Error, CodexSemanticInactivityMarker) {
 		t.Fatalf("retrying error should not demote first-turn timeout to semantic inactivity, got %q", result.Error)
-	}
-}
-
-func TestCodexExecuteLegacyFirstTurnMessageSatisfiesProgress(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("shell-script fixture is POSIX-only")
-	}
-
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-legacy"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_started"}}}'`+"\n"+
-		`sleep 0.05`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"agent_message","message":"legacy alive"}}}'`+"\n"+
-		`sleep 0.07`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_complete"}}}'`+"\n")
-
-	result := executeFakeCodex(t, fakePath, ExecOptions{
-		Timeout:                   5 * time.Second,
-		SemanticInactivityTimeout: 100 * time.Millisecond,
-	})
-	if result.Status != "completed" {
-		t.Fatalf("expected completed, got status=%q error=%q", result.Status, result.Error)
-	}
-	if result.Output != "legacy alive" {
-		t.Fatalf("expected legacy output, got %q", result.Output)
 	}
 }
 

@@ -191,12 +191,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
-			// Fall back to RFC3339 for backwards-compat with the original CLI.
-			t, err = time.Parse(time.RFC3339, v)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
-				return
-			}
+			writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
+			return
 		}
 		sinceTime = pgtype.Timestamptz{Time: t, Valid: true}
 	}
@@ -292,11 +288,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	if beforeTimeStr != "" {
 		t, err := time.Parse(time.RFC3339Nano, beforeTimeStr)
 		if err != nil {
-			t, err = time.Parse(time.RFC3339, beforeTimeStr)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid before parameter; expected RFC3339 format")
-				return
-			}
+			writeError(w, http.StatusBadRequest, "invalid before parameter; expected RFC3339 format")
+			return
 		}
 		beforeCursor = pgtype.Timestamptz{Time: t, Valid: true}
 		uuid, perr := util.ParseUUID(beforeIDStr)
@@ -1828,9 +1821,6 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 			continue
 		}
 		roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agent))
-		if roleKey == "" {
-			roleKey = legacySOPRoleKeyFromAgentName(agent.Name)
-		}
 		if _, ok := wantedRoles[roleKey]; !ok {
 			continue
 		}
@@ -1859,25 +1849,6 @@ func normalizeSOPRoleAlias(value string) (string, bool) {
 		return "05-verify", true
 	default:
 		return "", false
-	}
-}
-
-func legacySOPRoleKeyFromAgentName(name string) string {
-	switch name {
-	case projectSOPAgentPM:
-		return "pm"
-	case projectSOPAgent01:
-		return "01-clarify"
-	case projectSOPAgent02:
-		return "02-design"
-	case projectSOPAgent03:
-		return "03-task-split"
-	case projectSOPAgent04:
-		return "04-implement"
-	case projectSOPAgent05:
-		return "05-verify"
-	default:
-		return ""
 	}
 }
 

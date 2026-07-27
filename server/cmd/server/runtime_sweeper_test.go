@@ -254,7 +254,8 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 }
 
 // TestSweepStaleTasksReconcileAgentStatus verifies that after the sweeper
-// fails a retryable stale task, the replacement task keeps the agent working.
+// fails a retryable stale task, the agent stays idle until the queued
+// replacement task is claimed.
 func TestSweepStaleTasksReconcileAgentStatus(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -289,15 +290,15 @@ func TestSweepStaleTasksReconcileAgentStatus(t *testing.T) {
 
 	newSweeperTaskService(queries, bus).HandleFailedTasks(context.Background(), failedTasks)
 
-	// The timeout failure creates a queued retry, so the reconciled agent
-	// remains working.
+	// Queued tasks are not active work. The agent becomes working when a
+	// daemon claims the replacement task.
 	var agentStatus string
 	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
 	if err != nil {
 		t.Fatalf("failed to query agent status: %v", err)
 	}
-	if agentStatus != "working" {
-		t.Fatalf("expected agent status 'working', got '%s'", agentStatus)
+	if agentStatus != "idle" {
+		t.Fatalf("expected agent status 'idle', got '%s'", agentStatus)
 	}
 
 	// Verify agent:status event was published with correct WorkspaceID
@@ -382,14 +383,15 @@ func TestSweepDispatchedStaleTask(t *testing.T) {
 		t.Fatalf("expected task:failed event for task %s", taskID)
 	}
 
-	// The timeout failure creates a queued retry, so the agent remains working.
+	// The replacement is only queued, so the agent stays idle until it is
+	// claimed.
 	var agentStatus string
 	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
 	if err != nil {
 		t.Fatalf("failed to query agent: %v", err)
 	}
-	if agentStatus != "working" {
-		t.Fatalf("expected agent status 'working' after sweep, got '%s'", agentStatus)
+	if agentStatus != "idle" {
+		t.Fatalf("expected agent status 'idle' after sweep, got '%s'", agentStatus)
 	}
 }
 

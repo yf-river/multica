@@ -1038,12 +1038,8 @@ type ExpireStaleQueuedTasksParams struct {
 }
 
 // Fails tasks that have been sitting in 'queued' for longer than the TTL.
-// This is the cleanup arm of the MUL-1899 "queued backlog" fix: even with the
-// new dispatch-time admission gate that refuses to enqueue when the runtime
-// is offline, we still need to drain the historical 87k+ doomed rows and
-// handle edge cases where a runtime goes offline AFTER a task is already
-// queued (the admission check protects new enqueues, not in-flight queue
-// depth).
+// Handles the case where a runtime goes offline after a task has already
+// entered the queue.
 //
 // Concurrency safety: the daemon's claim path may race with this sweeper to
 // transition the same row out of 'queued'. We protect against that two
@@ -1113,7 +1109,7 @@ UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = $2,
-    failure_reason = COALESCE($3, 'agent_error'),
+    failure_reason = $3::text,
     session_id = COALESCE($4, session_id),
     work_dir = COALESCE($5, work_dir)
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
@@ -1123,7 +1119,7 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 type FailAgentTaskParams struct {
 	ID            pgtype.UUID `json:"id"`
 	Error         pgtype.Text `json:"error"`
-	FailureReason pgtype.Text `json:"failure_reason"`
+	FailureReason string      `json:"failure_reason"`
 	SessionID     pgtype.Text `json:"session_id"`
 	WorkDir       pgtype.Text `json:"work_dir"`
 }
@@ -1135,8 +1131,7 @@ type FailAgentTaskParams struct {
 // back to GetLastChatTaskSession and continue the conversation instead of
 // silently starting over.
 //
-// failure_reason is a coarse classifier consumed by the auto-retry path;
-// 'agent_error' is the safe default when the daemon doesn't supply one.
+// failure_reason is the classifier consumed by the auto-retry path.
 func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, failAgentTask,
 		arg.ID,
@@ -1424,8 +1419,7 @@ WHERE agent_id = $1 AND issue_id = $2
     status = 'completed'
     OR (
       status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
-      AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
+      AND failure_reason NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
     )
   )
   AND session_id IS NOT NULL
@@ -1467,15 +1461,6 @@ type GetLastTaskSessionRow struct {
 // conversation history itself is unprocessable (oversized image, malformed
 // base64, etc.), or a Codex semantic inactivity timeout whose recorded
 // session may replay the same stuck state.
-//
-// The error-text ILIKE clause is defense-in-depth for the api_invalid_request
-// shape: a legacy row tagged 'agent_error' (pre-MUL-1921), a deploy-window
-// row that the old code wrote between migration and rollout, or a future
-// error format that escapes the daemon classifier all still get filtered
-// here as long as the canonical Anthropic 400 marker is present in the
-// error text. Migration 079 backfills the failure_reason column itself,
-// so observability stays accurate; this clause guarantees session resume
-// never picks up a bad session even when failure_reason hasn't caught up.
 func (q *Queries) GetLastTaskSession(ctx context.Context, arg GetLastTaskSessionParams) (GetLastTaskSessionRow, error) {
 	row := q.db.QueryRow(ctx, getLastTaskSession, arg.AgentID, arg.IssueID)
 	var i GetLastTaskSessionRow
@@ -1695,22 +1680,6 @@ func (q *Queries) HasActiveTaskForIssue(ctx context.Context, issueID pgtype.UUID
 	var has_active bool
 	err := row.Scan(&has_active)
 	return has_active, err
-}
-
-const hasPendingTaskForIssue = `-- name: HasPendingTaskForIssue :one
-SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched')
-`
-
-// Returns true if there is a queued or dispatched (but not yet running) task for the issue.
-// Used by the coalescing queue: allow enqueue when a task is running (so
-// the agent picks up new comments on the next cycle) but skip if a pending
-// task already exists (natural dedup).
-func (q *Queries) HasPendingTaskForIssue(ctx context.Context, issueID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingTaskForIssue, issueID)
-	var has_pending bool
-	err := row.Scan(&has_pending)
-	return has_pending, err
 }
 
 const hasPendingTaskForIssueAndAgent = `-- name: HasPendingTaskForIssueAndAgent :one
@@ -2769,47 +2738,6 @@ type UpdateAgentCustomEnvParams struct {
 // handler's audit-log + **** sentinel guard.
 func (q *Queries) UpdateAgentCustomEnv(ctx context.Context, arg UpdateAgentCustomEnvParams) (Agent, error) {
 	row := q.db.QueryRow(ctx, updateAgentCustomEnv, arg.ID, arg.CustomEnv)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Scope,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-	)
-	return i, err
-}
-
-const updateAgentStatus = `-- name: UpdateAgentStatus :one
-UPDATE agent SET status = $2, updated_at = now()
-WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
-`
-
-type UpdateAgentStatusParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Status string      `json:"status"`
-}
-
-func (q *Queries) UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, updateAgentStatus, arg.ID, arg.Status)
 	var i Agent
 	err := row.Scan(
 		&i.ID,

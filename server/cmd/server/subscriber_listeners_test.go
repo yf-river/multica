@@ -60,15 +60,17 @@ func cleanupTestUser(t *testing.T, account string) {
 	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
 }
 
-func isSubscribed(t *testing.T, queries *db.Queries, issueID, userType, userID string) bool {
+func isSubscribed(t *testing.T, issueID, userType, userID string) bool {
 	t.Helper()
-	subscribed, err := queries.IsIssueSubscriber(context.Background(), db.IsIssueSubscriberParams{
-		IssueID:  util.MustParseUUID(issueID),
-		UserType: userType,
-		UserID:   util.MustParseUUID(userID),
-	})
-	if err != nil {
-		t.Fatalf("IsIssueSubscriber: %v", err)
+	var subscribed bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1
+			FROM issue_subscriber
+			WHERE issue_id = $1 AND user_type = $2 AND user_id = $3
+		)
+	`, issueID, userType, userID).Scan(&subscribed); err != nil {
+		t.Fatalf("check issue subscriber: %v", err)
 	}
 	return subscribed
 }
@@ -109,7 +111,7 @@ func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed after issue:created")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
@@ -150,10 +152,10 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed")
 	}
-	if !isSubscribed(t, queries, issueID, "member", assigneeID) {
+	if !isSubscribed(t, issueID, "member", assigneeID) {
 		t.Fatal("expected assignee to be subscribed")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 2 {
@@ -193,7 +195,7 @@ func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to remain subscribed")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
@@ -236,7 +238,7 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	if count := subscriberCount(t, queries, issueID); count != 1 {
 		t.Fatalf("expected 1 subscriber for self-assign, got %d", count)
 	}
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator/assignee to be subscribed")
 	}
 }
@@ -275,7 +277,7 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", assigneeID) {
+	if !isSubscribed(t, issueID, "member", assigneeID) {
 		t.Fatal("expected new assignee to be subscribed after assignee change")
 	}
 }
@@ -344,7 +346,7 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", commenterID) {
+	if !isSubscribed(t, issueID, "member", commenterID) {
 		t.Fatal("expected commenter to be subscribed after comment:created")
 	}
 }
@@ -428,7 +430,7 @@ func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed when autopilot publishes map payload")
 	}
 }

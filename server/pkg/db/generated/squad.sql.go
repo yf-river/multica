@@ -76,17 +76,6 @@ func (q *Queries) ArchiveSquad(ctx context.Context, arg ArchiveSquadParams) (Squ
 	return i, err
 }
 
-const countSquadMembers = `-- name: CountSquadMembers :one
-SELECT count(*) FROM squad_member WHERE squad_id = $1
-`
-
-func (q *Queries) CountSquadMembers(ctx context.Context, squadID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countSquadMembers, squadID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createSquad = `-- name: CreateSquad :one
 INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, scope, instructions, sop_profile)
 VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'workspace'), COALESCE($8, ''), COALESCE($9::jsonb, '{}'::jsonb))
@@ -143,38 +132,6 @@ SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, u
 
 func (q *Queries) GetSquad(ctx context.Context, id pgtype.UUID) (Squad, error) {
 	row := q.db.QueryRow(ctx, getSquad, id)
-	var i Squad
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.LeaderID,
-		&i.CreatorID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.AvatarUrl,
-		&i.Instructions,
-		&i.SopProfile,
-		&i.Scope,
-	)
-	return i, err
-}
-
-const getSquadByAssignee = `-- name: GetSquadByAssignee :one
-SELECT s.id, s.workspace_id, s.name, s.description, s.leader_id, s.creator_id, s.created_at, s.updated_at, s.archived_at, s.archived_by, s.avatar_url, s.instructions, s.sop_profile, s.scope FROM squad s WHERE s.id = $1 AND s.workspace_id = $2
-`
-
-type GetSquadByAssigneeParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-// Look up the squad when an issue is assigned to a squad.
-func (q *Queries) GetSquadByAssignee(ctx context.Context, arg GetSquadByAssigneeParams) (Squad, error) {
-	row := q.db.QueryRow(ctx, getSquadByAssignee, arg.ID, arg.WorkspaceID)
 	var i Squad
 	err := row.Scan(
 		&i.ID,
@@ -550,55 +507,6 @@ SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, u
 
 func (q *Queries) ListSquads(ctx context.Context, workspaceID pgtype.UUID) ([]Squad, error) {
 	rows, err := q.db.Query(ctx, listSquads, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Squad{}
-	for rows.Next() {
-		var i Squad
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.LeaderID,
-			&i.CreatorID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ArchivedAt,
-			&i.ArchivedBy,
-			&i.AvatarUrl,
-			&i.Instructions,
-			&i.SopProfile,
-			&i.Scope,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSquadsByMember = `-- name: ListSquadsByMember :many
-SELECT s.id, s.workspace_id, s.name, s.description, s.leader_id, s.creator_id, s.created_at, s.updated_at, s.archived_at, s.archived_by, s.avatar_url, s.instructions, s.sop_profile, s.scope FROM squad s
-JOIN squad_member sm ON sm.squad_id = s.id
-WHERE s.workspace_id = $1 AND sm.member_type = $2 AND sm.member_id = $3
-ORDER BY s.created_at ASC
-`
-
-type ListSquadsByMemberParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	MemberType  string      `json:"member_type"`
-	MemberID    pgtype.UUID `json:"member_id"`
-}
-
-// Find all squads a given entity belongs to in a workspace.
-func (q *Queries) ListSquadsByMember(ctx context.Context, arg ListSquadsByMemberParams) ([]Squad, error) {
-	rows, err := q.db.Query(ctx, listSquadsByMember, arg.WorkspaceID, arg.MemberType, arg.MemberID)
 	if err != nil {
 		return nil, err
 	}

@@ -41,10 +41,6 @@ RETURNING *;
 -- Defense-in-depth: workspace_id is a SQL-layer tenant guard. See DeleteIssue.
 DELETE FROM project WHERE id = $1 AND workspace_id = $2;
 
--- name: CountIssuesByProject :one
-SELECT count(*) FROM issue
-WHERE project_id = $1;
-
 -- name: GetProjectIssueStats :many
 SELECT project_id,
        count(*)::bigint AS total_count,

@@ -386,14 +386,6 @@ RETURNING *;
 -- base64, etc.), or a Codex semantic inactivity timeout whose recorded
 -- session may replay the same stuck state.
 --
--- The error-text ILIKE clause is defense-in-depth for the api_invalid_request
--- shape: a legacy row tagged 'agent_error' (pre-MUL-1921), a deploy-window
--- row that the old code wrote between migration and rollout, or a future
--- error format that escapes the daemon classifier all still get filtered
--- here as long as the canonical Anthropic 400 marker is present in the
--- error text. Migration 079 backfills the failure_reason column itself,
--- so observability stays accurate; this clause guarantees session resume
--- never picks up a bad session even when failure_reason hasn't caught up.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
   AND COALESCE(context->>'type', '') <> 'issue_source_summary'
@@ -401,8 +393,7 @@ WHERE agent_id = $1 AND issue_id = $2
     status = 'completed'
     OR (
       status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
-      AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
+      AND failure_reason NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
     )
   )
   AND session_id IS NOT NULL
@@ -429,13 +420,12 @@ LIMIT 1;
 -- back to GetLastChatTaskSession and continue the conversation instead of
 -- silently starting over.
 --
--- failure_reason is a coarse classifier consumed by the auto-retry path;
--- 'agent_error' is the safe default when the daemon doesn't supply one.
+-- failure_reason is the classifier consumed by the auto-retry path.
 UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = $2,
-    failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),
+    failure_reason = @failure_reason::text,
     session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir = COALESCE(sqlc.narg('work_dir'), work_dir)
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
@@ -485,12 +475,8 @@ RETURNING *;
 
 -- name: ExpireStaleQueuedTasks :many
 -- Fails tasks that have been sitting in 'queued' for longer than the TTL.
--- This is the cleanup arm of the MUL-1899 "queued backlog" fix: even with the
--- new dispatch-time admission gate that refuses to enqueue when the runtime
--- is offline, we still need to drain the historical 87k+ doomed rows and
--- handle edge cases where a runtime goes offline AFTER a task is already
--- queued (the admission check protects new enqueues, not in-flight queue
--- depth).
+-- Handles the case where a runtime goes offline after a task has already
+-- entered the queue.
 --
 -- Concurrency safety: the daemon's claim path may race with this sweeper to
 -- transition the same row out of 'queued'. We protect against that two
@@ -540,14 +526,6 @@ WHERE agent_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_direc
 -- or running task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
-
--- name: HasPendingTaskForIssue :one
--- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
--- Used by the coalescing queue: allow enqueue when a task is running (so
--- the agent picks up new comments on the next cycle) but skip if a pending
--- task already exists (natural dedup).
-SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched');
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
@@ -701,11 +679,6 @@ WHERE a.workspace_id = $1
   AND atq.completed_at >= $3
 ORDER BY atq.completed_at DESC NULLS LAST
 LIMIT 1;
-
--- name: UpdateAgentStatus :one
-UPDATE agent SET status = $2, updated_at = now()
-WHERE id = $1
-RETURNING *;
 
 -- name: RefreshAgentStatusFromTasks :one
 UPDATE agent AS a

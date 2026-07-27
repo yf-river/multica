@@ -231,7 +231,7 @@ func (q *Queries) ListDashboardRunTimeDaily(ctx context.Context, arg ListDashboa
 const listDashboardUsageByAgent = `-- name: ListDashboardUsageByAgent :many
 SELECT
     agent_id,
-    LOWER(provider) AS provider,
+    provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
     SUM(output_tokens)::bigint       AS output_tokens,
@@ -242,8 +242,8 @@ FROM task_usage_hourly
 WHERE workspace_id = $1
   AND bucket_hour >= $2::timestamptz
   AND ($3::uuid IS NULL OR project_id = $3)
-GROUP BY agent_id, LOWER(provider), model
-ORDER BY agent_id, LOWER(provider), model
+GROUP BY agent_id, provider, model
+ORDER BY agent_id, provider, model
 `
 
 type ListDashboardUsageByAgentParams struct {
@@ -274,8 +274,6 @@ type ListDashboardUsageByAgentRow struct {
 // hour the same way the daily version over-counted by day. The
 // frontend prefers `ListDashboardAgentRunTime` for the user-facing
 // "tasks" column, so this stays informational only.
-// provider is LOWER()-normalized so mixed-case historical rows merge with
-// new rows (see ListDashboardUsageDaily).
 func (q *Queries) ListDashboardUsageByAgent(ctx context.Context, arg ListDashboardUsageByAgentParams) ([]ListDashboardUsageByAgentRow, error) {
 	rows, err := q.db.Query(ctx, listDashboardUsageByAgent, arg.WorkspaceID, arg.Since, arg.ProjectID)
 	if err != nil {
@@ -308,7 +306,7 @@ func (q *Queries) ListDashboardUsageByAgent(ctx context.Context, arg ListDashboa
 const listDashboardUsageDaily = `-- name: ListDashboardUsageDaily :many
 SELECT
     DATE(bucket_hour AT TIME ZONE $2::text) AS date,
-    LOWER(provider) AS provider,
+    provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
     SUM(output_tokens)::bigint       AS output_tokens,
@@ -319,8 +317,8 @@ FROM task_usage_hourly
 WHERE workspace_id = $1
   AND bucket_hour >= $3::timestamptz
   AND ($4::uuid IS NULL OR project_id = $4)
-GROUP BY DATE(bucket_hour AT TIME ZONE $2::text), LOWER(provider), model
-ORDER BY DATE(bucket_hour AT TIME ZONE $2::text) DESC, LOWER(provider), model
+GROUP BY DATE(bucket_hour AT TIME ZONE $2::text), provider, model
+ORDER BY DATE(bucket_hour AT TIME ZONE $2::text) DESC, provider, model
 `
 
 type ListDashboardUsageDailyParams struct {
@@ -355,9 +353,6 @@ type ListDashboardUsageDailyRow struct {
 // with DATE_TRUNC here — DATE_TRUNC operates in the session tz and would
 // snap the cutoff back to UTC midnight, dragging in an extra partial
 // local day for any non-UTC viewer.
-// provider is LOWER()-normalized so mixed-case historical rows (written
-// before the handler lowercased provider on write) merge with new rows
-// instead of forming a separate case-variant bucket.
 func (q *Queries) ListDashboardUsageDaily(ctx context.Context, arg ListDashboardUsageDailyParams) ([]ListDashboardUsageDailyRow, error) {
 	rows, err := q.db.Query(ctx, listDashboardUsageDaily,
 		arg.WorkspaceID,

@@ -73,6 +73,7 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "update target ap",
+		"assignee_type":  "agent",
 		"assignee_id":    publicAgentID,
 		"execution_mode": "create_issue",
 	})

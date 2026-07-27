@@ -93,20 +93,15 @@ type LocalSkillListStore interface {
 }
 
 // LocalSkillImportRequestInput carries the fields needed to enqueue a
-// runtime-local-skill import. SupportsConflict gates the structured-conflict
-// contract: only clients that opt in receive the `conflict` terminal status;
-// older clients keep the legacy `failed` ("a skill with this name already
-// exists") behavior so an already-installed Desktop build doesn't regress when
-// it talks to an upgraded backend. See MUL-2800.
+// runtime-local-skill import.
 type LocalSkillImportRequestInput struct {
-	RuntimeID        string
-	CreatorID        string
-	SkillKey         string
-	Name             *string
-	Description      *string
-	Action           LocalSkillImportAction
-	TargetSkillID    string
-	SupportsConflict bool
+	RuntimeID     string
+	CreatorID     string
+	SkillKey      string
+	Name          *string
+	Description   *string
+	Action        LocalSkillImportAction
+	TargetSkillID string
 }
 
 // LocalSkillImportStore is the same contract as LocalSkillListStore but for
@@ -199,25 +194,21 @@ type RuntimeLocalSkillListRequest struct {
 }
 
 type RuntimeLocalSkillImportRequest struct {
-	ID            string                 `json:"id"`
-	RuntimeID     string                 `json:"runtime_id"`
-	SkillKey      string                 `json:"skill_key"`
-	Name          *string                `json:"name,omitempty"`
-	Description   *string                `json:"description,omitempty"`
-	Action        LocalSkillImportAction `json:"action,omitempty"`
-	TargetSkillID string                 `json:"target_skill_id,omitempty"`
-	// SupportsConflict records whether the initiating client opted into the
-	// structured-conflict contract; consulted at report time to decide between
-	// the new `conflict` status and the legacy `failed` behavior.
-	SupportsConflict bool                           `json:"supports_conflict,omitempty"`
-	Status           RuntimeLocalSkillRequestStatus `json:"status"`
-	Skill            *SkillResponse                 `json:"skill,omitempty"`
-	Conflict         *LocalSkillImportConflict      `json:"conflict,omitempty"`
-	Error            string                         `json:"error,omitempty"`
-	CreatedAt        time.Time                      `json:"created_at"`
-	UpdatedAt        time.Time                      `json:"updated_at"`
-	CreatorID        string                         `json:"-"`
-	RunStartedAt     *time.Time                     `json:"-"`
+	ID            string                         `json:"id"`
+	RuntimeID     string                         `json:"runtime_id"`
+	SkillKey      string                         `json:"skill_key"`
+	Name          *string                        `json:"name,omitempty"`
+	Description   *string                        `json:"description,omitempty"`
+	Action        LocalSkillImportAction         `json:"action,omitempty"`
+	TargetSkillID string                         `json:"target_skill_id,omitempty"`
+	Status        RuntimeLocalSkillRequestStatus `json:"status"`
+	Skill         *SkillResponse                 `json:"skill,omitempty"`
+	Conflict      *LocalSkillImportConflict      `json:"conflict,omitempty"`
+	Error         string                         `json:"error,omitempty"`
+	CreatedAt     time.Time                      `json:"created_at"`
+	UpdatedAt     time.Time                      `json:"updated_at"`
+	CreatorID     string                         `json:"-"`
+	RunStartedAt  *time.Time                     `json:"-"`
 }
 
 // InMemoryLocalSkillListStore is the single-node implementation — good enough
@@ -351,18 +342,17 @@ func (s *InMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSki
 	}
 
 	req := &RuntimeLocalSkillImportRequest{
-		ID:               randomID(),
-		RuntimeID:        input.RuntimeID,
-		SkillKey:         input.SkillKey,
-		Name:             input.Name,
-		Description:      input.Description,
-		Action:           input.Action,
-		TargetSkillID:    input.TargetSkillID,
-		SupportsConflict: input.SupportsConflict,
-		Status:           RuntimeLocalSkillPending,
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
-		CreatorID:        input.CreatorID,
+		ID:            randomID(),
+		RuntimeID:     input.RuntimeID,
+		SkillKey:      input.SkillKey,
+		Name:          input.Name,
+		Description:   input.Description,
+		Action:        input.Action,
+		TargetSkillID: input.TargetSkillID,
+		Status:        RuntimeLocalSkillPending,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		CreatorID:     input.CreatorID,
 	}
 	s.requests[req.ID] = req
 	return req, nil
@@ -495,10 +485,6 @@ type CreateRuntimeLocalSkillImportRequest struct {
 	// TargetSkillID must reference the existing same-name skill.
 	Action        LocalSkillImportAction `json:"action,omitempty"`
 	TargetSkillID string                 `json:"target_skill_id,omitempty"`
-	// SupportsConflict opts the client into the structured-conflict contract.
-	// Omit it (older clients) to keep the legacy `failed` behavior on a
-	// same-name collision. An overwrite request implies the new contract.
-	SupportsConflict bool `json:"supports_conflict,omitempty"`
 }
 
 type reportedRuntimeLocalSkill struct {
@@ -656,9 +642,6 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 		Description:   cleanOptionalString(req.Description),
 		Action:        req.Action,
 		TargetSkillID: targetSkillID,
-		// An overwrite request is inherently a new-client action, so it implies
-		// the structured-conflict contract even if the flag is omitted.
-		SupportsConflict: req.SupportsConflict || req.Action == LocalSkillImportActionOverwrite,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue local skill import: "+err.Error())
@@ -877,10 +860,8 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Create path: detect a same-name conflict before writing. For opted-in
-	// clients this is a structured terminal state (not a failure) so the caller
-	// can offer overwrite / rename / skip; older clients keep the legacy
-	// `failed` behavior (see resolveLocalSkillConflict).
+	// Create path: detect a same-name conflict before writing so the caller can
+	// offer overwrite, rename, or skip.
 	if existing, found, lerr := h.lookupSkillByName(r.Context(), rt.WorkspaceID, sanitizeNullBytes(name)); lerr != nil {
 		h.failLocalSkillImport(w, r, requestID, "failed to check for existing skill: "+lerr.Error())
 		return
@@ -906,8 +887,7 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 				h.resolveLocalSkillConflict(w, r, req, existing)
 				return
 			}
-			// Lost the row again (deleted between insert-fail and re-lookup):
-			// fall through to the legacy unique-violation message.
+			// The row was deleted between insert failure and re-lookup.
 			h.failLocalSkillImport(w, r, requestID, "a skill with this name already exists")
 			return
 		}
@@ -949,18 +929,10 @@ func (h *Handler) failLocalSkillImport(w http.ResponseWriter, r *http.Request, r
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// resolveLocalSkillConflict terminates a same-name create import. Clients that
-// opted into the structured-conflict contract (SupportsConflict) receive the
-// `conflict` status plus metadata so they can offer overwrite / rename / skip;
-// older clients keep the legacy `failed` ("a skill with this name already
-// exists") behavior so an installed Desktop build that predates the contract
-// doesn't regress when it hits an upgraded backend.
+// resolveLocalSkillConflict terminates a same-name create import with
+// structured metadata so callers can offer overwrite, rename, or skip.
 func (h *Handler) resolveLocalSkillConflict(w http.ResponseWriter, r *http.Request, req *RuntimeLocalSkillImportRequest, existing db.Skill) {
-	if req.SupportsConflict {
-		h.reportLocalSkillConflict(w, r, req.ID, req.CreatorID, existing)
-		return
-	}
-	h.failLocalSkillImport(w, r, req.ID, "a skill with this name already exists")
+	h.reportLocalSkillConflict(w, r, req.ID, req.CreatorID, existing)
 }
 
 // reportLocalSkillConflict records a same-name conflict as the terminal

@@ -105,20 +105,6 @@ SELECT EXISTS(
     WHERE squad_id = $1 AND member_type = $2 AND member_id = $3
 ) AS is_member;
 
--- name: CountSquadMembers :one
-SELECT count(*) FROM squad_member WHERE squad_id = $1;
-
--- name: GetSquadByAssignee :one
--- Look up the squad when an issue is assigned to a squad.
-SELECT s.* FROM squad s WHERE s.id = $1 AND s.workspace_id = $2;
-
--- name: ListSquadsByMember :many
--- Find all squads a given entity belongs to in a workspace.
-SELECT s.* FROM squad s
-JOIN squad_member sm ON sm.squad_id = s.id
-WHERE s.workspace_id = $1 AND sm.member_type = $2 AND sm.member_id = $3
-ORDER BY s.created_at ASC;
-
 -- name: TransferSquadAssignees :exec
 -- Transfer all issues assigned to a squad to the squad's leader agent.
 UPDATE issue SET assignee_type = 'agent', assignee_id = $2, updated_at = now()

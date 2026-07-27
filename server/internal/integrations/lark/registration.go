@@ -232,9 +232,8 @@ func (e *RegistrationError) Error() string {
 // Begin opens a new device-flow session against the open-platform host
 // for the requested region. Region is normally chosen explicitly by the
 // caller (the user picked "Feishu" or "Lark" in the UI) so the QR
-// renders against the same cloud the user expects to scan from; an
-// empty value falls back to Feishu (mainland) for back-compat with
-// callers that pre-date region-aware install. Lark may STILL surface a
+// renders against the same cloud the user expects to scan from. Lark may
+// still surface a
 // Lark-international tenant on a subsequent poll even when the begin
 // host was Feishu — the SwitchedDomain branch in RegistrationService
 // keeps that auto-detect path alive as a fallback for users who pick
@@ -249,13 +248,14 @@ func (e *RegistrationError) Error() string {
 // still change it on the form), and it rides on the QR URL — not the
 // begin POST body, which has no name field. Empty omits the pre-fill.
 func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, region Region) (*BeginResult, error) {
-	// Pick the begin domain off the requested region. Empty / unknown
-	// regions degrade to Feishu (mainland) — same back-compat invariant
-	// as RegionOrDefault, so callers that pre-date this signature
-	// (passing "") keep working.
-	domain := c.cfg.Domain
-	if region == RegionLark {
+	var domain string
+	switch region {
+	case RegionFeishu:
+		domain = c.cfg.Domain
+	case RegionLark:
 		domain = c.cfg.LarkDomain
+	default:
+		return nil, errors.New("lark registration: region must be feishu or lark")
 	}
 	var resp struct {
 		DeviceCode              string `json:"device_code"`

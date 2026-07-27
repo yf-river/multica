@@ -1,56 +1,16 @@
 package realtime
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
-func TestNewRedisRelayWithClientsSeparatesBlockingReadPool(t *testing.T) {
-	hub := NewHub()
-	writeClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
-	readClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
-	t.Cleanup(func() {
-		writeClient.Close()
-		readClient.Close()
-	})
-
-	relay := NewRedisRelayWithClients(hub, writeClient, readClient)
-
-	if relay.writeRDB != writeClient {
-		t.Fatal("expected relay to use the write client for non-blocking Redis commands")
-	}
-	if relay.readRDB != readClient {
-		t.Fatal("expected relay to reserve the read client for blocking XREADGROUP calls")
-	}
-}
-
-func TestRedisRelayStopPreventsNewConsumers(t *testing.T) {
-	hub := NewHub()
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
-	t.Cleanup(func() { client.Close() })
-
-	relay := NewRedisRelayWithClients(hub, client, client)
-	relay.Stop()
-	relay.startConsumer(context.Background(), ScopeWorkspace, "workspace-1")
-
-	relay.mu.Lock()
-	consumerCount := len(relay.consumers)
-	relay.mu.Unlock()
-	if consumerCount != 0 {
-		t.Fatalf("expected no consumers after Stop, got %d", consumerCount)
-	}
-	relay.Wait()
-}
-
-func TestDualWriteBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
+func TestRelayBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
 	hub := NewHub()
 	client := attachRealtimeTestClient(hub, ScopeWorkspace, "workspace-1")
 	publisher := &localFirstPublisher{t: t, client: client}
-	broadcaster := newDualWriteBroadcaster(hub, publisher)
+	broadcaster := NewRelayBroadcaster(hub, publisher)
 	message := []byte(`{"type":"issue:updated"}`)
 
 	broadcaster.BroadcastToScope(ScopeWorkspace, "workspace-1", message)

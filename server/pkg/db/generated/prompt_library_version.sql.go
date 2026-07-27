@@ -136,40 +136,6 @@ func (q *Queries) GetPromptLibraryVersionForPrompt(ctx context.Context, arg GetP
 	return i, err
 }
 
-const getPromptLibraryVersionInWorkspace = `-- name: GetPromptLibraryVersionInWorkspace :one
-SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, change_note, created_by, created_at FROM prompt_library_version
-WHERE id = $1 AND workspace_id = $2
-`
-
-type GetPromptLibraryVersionInWorkspaceParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetPromptLibraryVersionInWorkspace(ctx context.Context, arg GetPromptLibraryVersionInWorkspaceParams) (PromptLibraryVersion, error) {
-	row := q.db.QueryRow(ctx, getPromptLibraryVersionInWorkspace, arg.ID, arg.WorkspaceID)
-	var i PromptLibraryVersion
-	err := row.Scan(
-		&i.ID,
-		&i.PromptID,
-		&i.WorkspaceID,
-		&i.ProjectID,
-		&i.Version,
-		&i.Name,
-		&i.Description,
-		&i.PromptType,
-		&i.Content,
-		&i.Variables,
-		&i.Tags,
-		&i.Source,
-		&i.SourceCandidateID,
-		&i.ChangeNote,
-		&i.CreatedBy,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const listPromptLibraryVersions = `-- name: ListPromptLibraryVersions :many
 SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, change_note, created_by, created_at FROM prompt_library_version
 WHERE workspace_id = $1

@@ -37,7 +37,6 @@ const (
 	promptEvaluationDatasetExportV1      = "multica.prompt_evaluation.dataset_export.v1"
 	promptEvaluationDatasetImportV1      = "multica.prompt_evaluation.dataset_import.v1"
 	promptEvaluationAgentName            = "Multica 训练评估智能体"
-	legacyPromptEvaluationAgentName      = "Multica 训练评估 Agent"
 	defaultPromptEvaluationAgentProvider = "codebuddy"
 	defaultPromptEvaluationAgentModel    = "deepseek-v4-pro-ioa"
 	fallbackPromptEvaluationAgentModel   = "deepseek-v4-pro-ioa"
@@ -6285,7 +6284,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 	}
 	instructions := promptEvaluationAgentInstructions()
 	for _, existing := range agents {
-		if existing.Name != promptEvaluationAgentName && existing.Name != legacyPromptEvaluationAgentName {
+		if existing.Name != promptEvaluationAgentName {
 			continue
 		}
 		if uuidToString(existing.RuntimeID) == uuidToString(runtime.ID) &&

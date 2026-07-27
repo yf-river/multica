@@ -288,8 +288,6 @@ func TestSkillImportingSkillCoversWorkspaceImportContracts(t *testing.T) {
 		"existing_skill",
 		"id",
 		"name",
-		"legacy",
-		"multica skill list --output json",
 		"npx skills add",
 		"multica agent skills add <agent-id> --skill-ids <skill-id> --output json",
 		"multica agent skills list <agent-id> --output json",

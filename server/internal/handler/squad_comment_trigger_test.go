@@ -153,6 +153,8 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 
 	pmID := createHandlerTestAgent(t, projectSOPAgentPM, nil)
 	clarifyID := createHandlerTestAgent(t, projectSOPAgent01, nil)
+	setHandlerTestAgentRoleKey(t, pmID, "pm")
+	setHandlerTestAgentRoleKey(t, clarifyID, "01-clarify")
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -382,6 +384,8 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "SOP Auto Continue Leader", nil)
 	workerID := createHandlerTestAgent(t, "01-clarify", nil)
+	setHandlerTestAgentRoleKey(t, leaderID, "pm")
+	setHandlerTestAgentRoleKey(t, workerID, "01-clarify")
 
 	var leaderRuntimeID, workerRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
@@ -517,6 +521,8 @@ func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "SOP Final Auto Close Leader", nil)
 	verifyID := createHandlerTestAgent(t, "05-verify", nil)
+	setHandlerTestAgentRoleKey(t, leaderID, "pm")
+	setHandlerTestAgentRoleKey(t, verifyID, "05-verify")
 
 	var verifyRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
@@ -608,6 +614,8 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "SOP Final Blocked Leader", nil)
 	verifyID := createHandlerTestAgent(t, "SOP Final Blocked 05-verify", nil)
+	setHandlerTestAgentRoleKey(t, leaderID, "pm")
+	setHandlerTestAgentRoleKey(t, verifyID, "05-verify")
 
 	var leaderRuntimeID, verifyRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
@@ -712,6 +720,8 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "SOP Final MR Gate Leader", nil)
 	verifyID := createHandlerTestAgent(t, "SOP Final MR Gate 05-verify", nil)
+	setHandlerTestAgentRoleKey(t, leaderID, "pm")
+	setHandlerTestAgentRoleKey(t, verifyID, "05-verify")
 
 	var verifyRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
@@ -721,7 +731,7 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
 		WorkspaceID: util.MustParseUUID(testWorkspaceID),
 		Title:       "SOP Final MR Gate Gongfeng Project",
-		Status:      "active",
+		Status:      "in_progress",
 		Priority:    "medium",
 		Scope:       "workspace",
 		OwnerID:     util.MustParseUUID(testUserID),
@@ -831,6 +841,8 @@ func TestCompleteTask_FinalSOPStepClosesIssueAlreadyInReview(t *testing.T) {
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "SOP Final InReview Leader", nil)
 	verifyID := createHandlerTestAgent(t, "SOP Final InReview 05-verify", nil)
+	setHandlerTestAgentRoleKey(t, leaderID, "pm")
+	setHandlerTestAgentRoleKey(t, verifyID, "05-verify")
 
 	var verifyRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
@@ -908,6 +920,7 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 	ctx := context.Background()
 	sq := newSquadCommentTriggerFixture(t)
 	verifyID := createHandlerTestAgent(t, "SOP Child Auto Close 05-verify", nil)
+	setHandlerTestAgentRoleKey(t, verifyID, "05-verify")
 
 	var verifyRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
@@ -917,7 +930,7 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
 		WorkspaceID: util.MustParseUUID(testWorkspaceID),
 		Title:       "SOP Child Auto Close Gongfeng Project",
-		Status:      "active",
+		Status:      "in_progress",
 		Priority:    "medium",
 		Scope:       "workspace",
 		OwnerID:     util.MustParseUUID(testUserID),
@@ -941,17 +954,17 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 
 	var parentID, childID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "sop parent waits for auto-closed child", sq.SquadID).Scan(&parentID); err != nil {
+	`, testWorkspaceID, testUserID, "sop parent waits for auto-closed child", sq.SquadID, nextHandlerTestIssueNumber(t)).Scan(&parentID); err != nil {
 		t.Fatalf("create parent issue: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id, project_id, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, $3, 'in_progress', $4, $5, 'squad', $6)
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id, project_id, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'in_progress', $4, $5, 'squad', $6, $7)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "sop child auto closes with MR", parentID, project.ID, sq.SquadID).Scan(&childID); err != nil {
+	`, testWorkspaceID, testUserID, "sop child auto closes with MR", parentID, project.ID, sq.SquadID, nextHandlerTestIssueNumber(t)).Scan(&childID); err != nil {
 		t.Fatalf("create child issue: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1200,6 +1213,8 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "Cross Project Gate PM "+randomID()[:8], nil)
 	implementID := createHandlerTestAgent(t, projectSOPAgent04, nil)
+	setHandlerTestAgentRoleKey(t, leaderID, "pm")
+	setHandlerTestAgentRoleKey(t, implementID, "04-implement")
 	profile := `{
 		"mode":"stage_chain",
 		"steps":[
@@ -1231,10 +1246,10 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "cross-project parent gate "+randomID()[:8], squadID).Scan(&issueID); err != nil {
+	`, testWorkspaceID, testUserID, "cross-project parent gate "+randomID()[:8], squadID, nextHandlerTestIssueNumber(t)).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1245,9 +1260,9 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 	})
 	if childDone {
 		if _, err := testPool.Exec(ctx, `
-			INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id)
-			VALUES ($1, 'member', $2, 'ida-deployment child', 'done', $3)
-		`, testWorkspaceID, testUserID, issueID); err != nil {
+			INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id, number)
+			VALUES ($1, 'member', $2, 'ida-deployment child', 'done', $3, $4)
+		`, testWorkspaceID, testUserID, issueID, nextHandlerTestIssueNumber(t)); err != nil {
 			t.Fatalf("create done child: %v", err)
 		}
 	}
@@ -1368,10 +1383,10 @@ func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildr
 
 	var parentID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status)
-		VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress')
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, number)
+		VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress', $3)
 		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&parentID); err != nil {
+	`, testWorkspaceID, testUserID, nextHandlerTestIssueNumber(t)).Scan(&parentID); err != nil {
 		t.Fatalf("create parent issue: %v", err)
 	}
 	t.Cleanup(func() {

@@ -72,7 +72,7 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 		TenantKey:          textOrNull(p.TenantKey),
 		BotOpenID:          p.BotOpenID,
 		InstallerUserID:    p.InstallerUserID,
-		Region:             string(RegionOrDefault(string(p.Region))),
+		Region:             string(p.Region),
 	})
 }
 
@@ -147,6 +147,8 @@ func validateInstallationParams(p InstallationParams) error {
 		return errors.New("app_secret is required")
 	case p.BotOpenID == "":
 		return errors.New("bot_open_id is required")
+	case p.Region != RegionFeishu && p.Region != RegionLark:
+		return errors.New("region must be feishu or lark")
 	}
 	return nil
 }

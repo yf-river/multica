@@ -63,7 +63,7 @@ type PrepareParams struct {
 type TaskContextForEnv struct {
 	IssueID                 string
 	TriggerCommentID        string // comment that triggered this task (empty for on_assign)
-	TriggerThreadID         string // root comment ID for the triggering thread; falls back to TriggerCommentID when empty
+	TriggerThreadID         string // root comment ID for the triggering thread
 	NewCommentCount         int    // issue-wide comments since this agent's last run (excludes its own and the injected trigger)
 	NewCommentsSince        string // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
 	PriorSessionResumed     bool   // true when the daemon will resume an existing provider session for this task
@@ -455,10 +455,6 @@ const (
 // GCMeta is persisted to .gc_meta.json inside the env root so the GC loop
 // can decide whether the directory is reclaimable. It is a discriminated
 // union keyed on Kind: only the ID field matching Kind is meaningful.
-//
-// Older meta files (pre-v2) lack the Kind field; readers must default empty
-// Kind to GCKindIssue for backward compatibility — only IssueID was written
-// before, and only issue-centric tasks ever produced a meta file.
 type GCMeta struct {
 	Kind           GCMetaKind `json:"kind,omitempty"`
 	IssueID        string     `json:"issue_id,omitempty"`
@@ -501,9 +497,7 @@ func WriteGCMeta(envRoot string, meta GCMeta, logger *slog.Logger) error {
 	return os.WriteFile(filepath.Join(envRoot, gcMetaFile), data, 0o644)
 }
 
-// ReadGCMeta reads GC metadata from a task directory root. Pre-v2 meta files
-// (no kind field) are normalized to GCKindIssue so the legacy issue path
-// keeps working without a migration.
+// ReadGCMeta reads GC metadata from a task directory root.
 func ReadGCMeta(envRoot string) (*GCMeta, error) {
 	data, err := os.ReadFile(filepath.Join(envRoot, gcMetaFile))
 	if err != nil {
@@ -512,9 +506,6 @@ func ReadGCMeta(envRoot string) (*GCMeta, error) {
 	var meta GCMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
-	}
-	if meta.Kind == "" {
-		meta.Kind = GCKindIssue
 	}
 	return &meta, nil
 }

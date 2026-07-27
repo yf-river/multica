@@ -49,6 +49,7 @@ describe("ApiClient", () => {
     await client.createAutopilot({
       title: "Daily triage",
       project_id: "project-1",
+      assignee_type: "agent",
       assignee_id: "agent-1",
       execution_mode: "create_issue",
     });
@@ -80,6 +81,7 @@ describe("ApiClient", () => {
         body: JSON.stringify({
           title: "Daily triage",
           project_id: "project-1",
+          assignee_type: "agent",
           assignee_id: "agent-1",
           execution_mode: "create_issue",
         }),

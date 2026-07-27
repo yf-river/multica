@@ -20,18 +20,16 @@ const (
 	patchOnboardingBodyLimit = 16 * 1024
 )
 
-// completeOnboardingRequest carries the client's view of which exit the
-// user took from the flow. Used purely as an analytics dimension — server
-// state (onboarded_at) flips the same way regardless. Unknown / missing
-// → OnboardingPathUnknown so legacy clients still complete cleanly, just
-// without a funnel-ready label.
+// completeOnboardingRequest carries the client's view of which exit the user
+// took from the flow. It is used as an analytics dimension; server state
+// (onboarded_at) flips the same way regardless.
 //
 // `workspace_id` is retained for analytics enrichment; the v2 code path
 // used it to seed an install-runtime issue inside the same transaction,
 // but in v3 every workspace-content seeding lives in the frontend
 // welcome hook (see packages/views/workspace/welcome-after-onboarding.tsx).
 type completeOnboardingRequest struct {
-	CompletionPath string `json:"completion_path,omitempty"`
+	CompletionPath string `json:"completion_path"`
 	WorkspaceID    string `json:"workspace_id,omitempty"`
 }
 
@@ -60,13 +58,14 @@ func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Body is optional — an empty body is a legal legacy call.
 	var req completeOnboardingRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, ok := validCompletionPaths[req.CompletionPath]; !ok {
+		writeError(w, http.StatusBadRequest, "invalid completion_path")
+		return
 	}
 
 	// Validate workspace_id if supplied; we don't write with it, but a
@@ -95,10 +94,6 @@ func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if firstCompletion {
-		path := req.CompletionPath
-		if _, ok := validCompletionPaths[path]; !ok {
-			path = analytics.OnboardingPathUnknown
-		}
 		onboardedAt := ""
 		if user.OnboardedAt.Valid {
 			onboardedAt = user.OnboardedAt.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
@@ -106,7 +101,7 @@ func (h *Handler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.OnboardingCompleted(
 			userID,
 			req.WorkspaceID,
-			path,
+			req.CompletionPath,
 			onboardedAt,
 		))
 	}
@@ -118,55 +113,18 @@ type patchOnboardingRequest struct {
 	Questionnaire *json.RawMessage `json:"questionnaire,omitempty"`
 }
 
-// questionnaireAnswers mirrors the frontend's `QuestionnaireAnswers`
-// shape. `use_case` is multi-select (Step 3 allows picking several);
-// `source` is single-select (primary acquisition channel) but kept
-// as `stringOrSlice` for back-compat with v2 multi-select rows — the
-// client now always commits a one-element array. `role` stays
-// single-select.
-//
-// stringOrSlice also tolerates pre-array rows that wrote a bare
-// string into the JSONB column — `json.Unmarshal` would otherwise
-// fail on type mismatch when reading those back.
-type stringOrSlice []string
-
-func (s *stringOrSlice) UnmarshalJSON(data []byte) error {
-	// Empty / null both decode to nil slice.
-	if len(data) == 0 || string(data) == "null" {
-		*s = nil
-		return nil
-	}
-	// Try array first (current shape).
-	var arr []string
-	if err := json.Unmarshal(data, &arr); err == nil {
-		*s = arr
-		return nil
-	}
-	// Fall back to single string (pre-array shape from before this
-	// column held a slice). Empty string means "unanswered" — keep nil.
-	var single string
-	if err := json.Unmarshal(data, &single); err != nil {
-		return err
-	}
-	if single == "" {
-		*s = nil
-		return nil
-	}
-	*s = []string{single}
-	return nil
-}
-
+// questionnaireAnswers mirrors the frontend's `QuestionnaireAnswers` shape.
 type questionnaireAnswers struct {
-	Source         stringOrSlice `json:"source"`
-	SourceOther    string        `json:"source_other"`
-	SourceSkipped  bool          `json:"source_skipped"`
-	Role           string        `json:"role"`
-	RoleOther      string        `json:"role_other"`
-	RoleSkipped    bool          `json:"role_skipped"`
-	UseCase        stringOrSlice `json:"use_case"`
-	UseCaseOther   string        `json:"use_case_other"`
-	UseCaseSkipped bool          `json:"use_case_skipped"`
-	Version        int           `json:"version"`
+	Source         []string `json:"source"`
+	SourceOther    string   `json:"source_other"`
+	SourceSkipped  bool     `json:"source_skipped"`
+	Role           string   `json:"role"`
+	RoleOther      string   `json:"role_other"`
+	RoleSkipped    bool     `json:"role_skipped"`
+	UseCase        []string `json:"use_case"`
+	UseCaseOther   string   `json:"use_case_other"`
+	UseCaseSkipped bool     `json:"use_case_skipped"`
+	Version        int      `json:"version"`
 }
 
 func (q questionnaireAnswers) roleResolved() bool {

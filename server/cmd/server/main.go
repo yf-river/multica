@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -62,21 +61,6 @@ func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
 	cfg.ReadCount = envPositiveInt64("REALTIME_RELAY_XREAD_COUNT", cfg.ReadCount)
 	cfg.ReadBlock = envDuration("REALTIME_RELAY_XREAD_BLOCK", cfg.ReadBlock)
 	return cfg
-}
-
-func realtimeRelayModeFromEnv() string {
-	const defaultMode = "sharded"
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("REALTIME_RELAY_MODE")))
-	if raw == "" {
-		return defaultMode
-	}
-	switch raw {
-	case "sharded", "dual", "legacy":
-		return raw
-	default:
-		slog.Warn("invalid env var, using default", "name", "REALTIME_RELAY_MODE", "value", raw, "default", defaultMode)
-		return defaultMode
-	}
 }
 
 func envPositiveInt(name string, def int) int {
@@ -158,9 +142,9 @@ func main() {
 	daemonHub := daemonws.NewHub()
 	var daemonWakeup service.TaskWakeupNotifier = daemonHub
 
-	// MUL-1138: when REDIS_URL is set, route fanout through a Redis relay so
-	// multiple API nodes can deliver each other's events. Without it the hub
-	// is the sole broadcaster and the server stays single-node (legacy).
+	// When REDIS_URL is set, route fanout through a Redis relay so multiple
+	// API nodes can deliver each other's events. Without it the server runs
+	// explicitly in single-node mode.
 	// Runtime local-skill stores and realtime relay traffic use separate Redis
 	// clients so blocking stream consumers cannot starve request-path Redis
 	// operations.
@@ -169,8 +153,6 @@ func main() {
 	var storeRedis *redis.Client
 	var relayWriteRedis *redis.Client
 	var relayReadRedis *redis.Client
-	var shardedReadRedis *redis.Client
-	var legacyReadRedis *redis.Client
 	var relay realtime.ManagedRelay
 	defer func() {
 		if relay != nil {
@@ -180,8 +162,6 @@ func main() {
 		if relay != nil {
 			relay.Wait()
 		}
-		closeRedisClient("realtime-read-legacy", legacyReadRedis)
-		closeRedisClient("realtime-read-sharded", shardedReadRedis)
 		closeRedisClient("realtime-read", relayReadRedis)
 		closeRedisClient("realtime-write", relayWriteRedis)
 		closeRedisClient("store", storeRedis)
@@ -189,48 +169,31 @@ func main() {
 	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
 		opts, err := redis.ParseURL(redisURL)
 		if err != nil {
-			slog.Error("invalid REDIS_URL — falling back to in-memory hub", "error", err)
-		} else {
-			storeRedis = newNamedRedisClient(opts, "store")
-			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
-
-			relayMode := realtimeRelayModeFromEnv()
-			relayConfig := shardedRelayConfigFromEnv()
-			switch relayMode {
-			case "legacy":
-				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				relay = realtime.NewRedisRelayWithClients(hub, relayWriteRedis, relayReadRedis)
-				slog.Info("daemon websocket wakeup: Redis fanout disabled in legacy realtime relay mode")
-			case "dual":
-				shardedReadRedis = newNamedRedisClient(opts, "realtime-read-sharded")
-				legacyReadRedis = newNamedRedisClient(opts, "realtime-read-legacy")
-				sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, shardedReadRedis, relayConfig)
-				sharded.SetDaemonRuntimeDeliverer(daemonHub)
-				legacy := realtime.NewRedisRelayWithClients(hub, relayWriteRedis, legacyReadRedis)
-				relay = realtime.NewMirroredRelay(sharded, legacy)
-				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-			default:
-				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
-				sharded.SetDaemonRuntimeDeliverer(daemonHub)
-				relay = sharded
-				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-			}
-			relay.Start(relayCtx)
-			broadcaster = realtime.NewDualWriteBroadcaster(hub, relay)
-			slog.Info(
-				"realtime: Redis relay enabled",
-				"node_id", relay.NodeID(),
-				"mode", relayMode,
-				"shards", relayConfig.Shards,
-				"stream_max_len", relayConfig.StreamMaxLen,
-				"xread_count", relayConfig.ReadCount,
-				"xread_block", relayConfig.ReadBlock.String(),
-				"store_pool_size", opts.PoolSize,
-				"realtime_write_pool_size", opts.PoolSize,
-				"realtime_read_pool_size", opts.PoolSize,
-			)
+			slog.Error("invalid REDIS_URL", "error", err)
+			os.Exit(1)
 		}
+		storeRedis = newNamedRedisClient(opts, "store")
+		relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
+
+		relayConfig := shardedRelayConfigFromEnv()
+		relayReadRedis = newNamedRedisClient(opts, "realtime-read")
+		sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
+		sharded.SetDaemonRuntimeDeliverer(daemonHub)
+		relay = sharded
+		daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
+		relay.Start(relayCtx)
+		broadcaster = realtime.NewRelayBroadcaster(hub, relay)
+		slog.Info(
+			"realtime: Redis relay enabled",
+			"node_id", relay.NodeID(),
+			"shards", relayConfig.Shards,
+			"stream_max_len", relayConfig.StreamMaxLen,
+			"xread_count", relayConfig.ReadCount,
+			"xread_block", relayConfig.ReadBlock.String(),
+			"store_pool_size", opts.PoolSize,
+			"realtime_write_pool_size", opts.PoolSize,
+			"realtime_read_pool_size", opts.PoolSize,
+		)
 	} else {
 		slog.Info("realtime: REDIS_URL not set — using in-memory hub (single-node mode)")
 	}

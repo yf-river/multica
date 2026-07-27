@@ -52,16 +52,6 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 	return i, err
 }
 
-const deleteTaskMessages = `-- name: DeleteTaskMessages :exec
-DELETE FROM task_message
-WHERE task_id = $1
-`
-
-func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteTaskMessages, taskID)
-	return err
-}
-
 const listTaskMessages = `-- name: ListTaskMessages :many
 SELECT id, task_id, seq, type, tool, content, input, output, created_at FROM task_message
 WHERE task_id = $1

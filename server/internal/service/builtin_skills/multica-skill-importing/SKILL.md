@@ -169,13 +169,14 @@ multica skill import --url https://skills.sh/acme/repo/review-helper --on-confli
 multica skill import --url https://skills.sh/acme/repo/review-helper --on-conflict skip --output json
 ```
 
-Legacy compatibility: clients that do not send `on_conflict` keep the old
-contract. A duplicate import returns `409` and the body carries the existing
+The endpoint always returns the structured result contract. A duplicate import
+with the default `fail` strategy returns `409` and the body carries the existing
 workspace skill identity:
 
 ```json
 {
-  "error": "a skill with this name already exists",
+  "status": "conflict",
+  "reason": "a skill with this name already exists; use --on-conflict overwrite to replace it or --on-conflict rename to import a copy",
   "existing_skill": {
     "id": "<skill-id>",
     "name": "<skill-name>"
@@ -183,26 +184,16 @@ workspace skill identity:
 }
 ```
 
-Current CLI normalizes that legacy shape into `status: conflict` and exits
-non-zero for the default `fail` strategy. Treat `existing_skill.id` and
-`existing_skill.name` as the source of truth, then fetch details if needed:
+The CLI exits non-zero for the default `fail` strategy. Treat
+`existing_skill.id` and `existing_skill.name` as the source of truth, then fetch
+details if needed:
 
 ```bash
 multica skill get <skill-id> --output json
 ```
 
-Older servers may return a `409` whose body is only a string like `a skill with
-this name already exists`, with no `existing_skill` key. Recover by finding the
-existing workspace skill yourself:
-
-```bash
-multica skill list --output json
-multica skill get <skill-id> --output json
-```
-
-Then report that the skill already exists and include its `id` / `name`. Do not
-retry in a loop, and do not create a second skill under a different name just to
-dodge the conflict.
+Do not retry in a loop, and do not create a second skill under a different name
+just to dodge the conflict.
 
 ## Incorrect → correct
 

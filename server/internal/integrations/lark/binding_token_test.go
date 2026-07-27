@@ -1,12 +1,9 @@
 package lark
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // These tests cover the pure-Go halves of BindingTokenService — token
@@ -44,23 +41,6 @@ func TestRandomTokenURLSafe(t *testing.T) {
 	}
 	if strings.Contains(tok, "=") {
 		t.Fatalf("RawURLEncoding should drop padding, got %q", tok)
-	}
-}
-
-// TestRedeemAndBindRequiresTxStarter guards the constructor-misuse
-// path: if a future refactor wires up BindingTokenService without a
-// TxStarter (e.g. for a legacy code path that only needed Mint),
-// RedeemAndBind must fail fast with a clear error rather than panic
-// on the nil dereference at s.tx.Begin. The atomicity contract
-// documented above depends on that transaction existing.
-func TestRedeemAndBindRequiresTxStarter(t *testing.T) {
-	svc := &BindingTokenService{}
-	_, err := svc.RedeemAndBind(context.Background(), "tok", pgtype.UUID{})
-	if err == nil {
-		t.Fatal("expected error when TxStarter is nil, got nil")
-	}
-	if !strings.Contains(err.Error(), "missing TxStarter") {
-		t.Fatalf("expected missing-TxStarter error, got %v", err)
 	}
 }
 

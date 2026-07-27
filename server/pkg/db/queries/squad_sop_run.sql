@@ -18,13 +18,6 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *;
 
--- name: AttachLeaderTaskToSquadSOPRun :one
-UPDATE squad_sop_run
-SET leader_task_id = $2,
-    updated_at = now()
-WHERE id = $1
-RETURNING *;
-
 -- name: GetOpenSquadSOPRunByIssue :one
 SELECT * FROM squad_sop_run
 WHERE issue_id = $1 AND status IN ('待开始', '进行中', '已阻塞')
@@ -101,14 +94,3 @@ WHERE e.workspace_id = $1
   AND (sqlc.narg('agent_id')::uuid IS NULL OR atq.agent_id = sqlc.narg('agent_id'))
 ORDER BY e.created_at DESC, e.id DESC
 LIMIT $2 OFFSET $3;
-
--- name: CountWorkspaceSquadSOPStepEvents :one
-SELECT count(*)
-FROM squad_sop_step_event e
-JOIN issue i ON i.id = e.issue_id
-LEFT JOIN agent_task_queue atq ON atq.id = e.task_id
-WHERE e.workspace_id = $1
-  AND (sqlc.narg('since')::timestamptz IS NULL OR e.created_at >= sqlc.narg('since'))
-  AND (sqlc.narg('squad_id')::uuid IS NULL OR e.squad_id = sqlc.narg('squad_id'))
-  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
-  AND (sqlc.narg('agent_id')::uuid IS NULL OR atq.agent_id = sqlc.narg('agent_id'));

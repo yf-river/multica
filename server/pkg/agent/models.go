@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -630,8 +629,6 @@ func openCodeThinkingLevelsFromVariants(variants map[string]opencodeModelVariant
 }
 
 // discoverPiModels runs `pi --list-models` and parses its output.
-// Older pi versions print the list to stderr; newer versions use
-// stdout. We capture both and parse whichever is non-empty.
 func discoverPiModels(ctx context.Context, executablePath string) ([]Model, error) {
 	if executablePath == "" {
 		executablePath = "pi"
@@ -649,24 +646,15 @@ func discoverPiModels(ctx context.Context, executablePath string) ([]Model, erro
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, executablePath, "--list-models")
 	hideAgentWindow(cmd)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
 	stdout, err := cmd.Output()
-	if err != nil && len(stdout) == 0 && stderr.Len() == 0 {
+	if err != nil && len(stdout) == 0 {
 		return []Model{}, nil
 	}
-	text := string(stdout)
-	if strings.TrimSpace(text) == "" {
-		text = stderr.String()
-	}
-	return parsePiModels(text), nil
+	return parsePiModels(string(stdout)), nil
 }
 
-// parsePiModels accepts the `pi --list-models` output. Pi historically
-// emitted `provider:model` per line and now emits a multi-column table
-// (`provider  model  context …`); both shapes are normalized to
-// `provider/model` to match opencode/UI conventions. The case-insensitive
-// `provider` token in column 0 is treated as the table header and skipped.
+// parsePiModels accepts the current multi-column `pi --list-models` output
+// (`provider  model  context …`) and normalizes IDs to `provider/model`.
 func parsePiModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -693,17 +681,10 @@ func parsePiModels(output string) []Model {
 		if strings.EqualFold(first, "provider") {
 			continue
 		}
-		var id string
-		if strings.ContainsAny(first, ":/") {
-			// Legacy `provider:model` format — normalize colon to slash.
-			// Restricted to this branch so a model name with a `:` in
-			// the table format's column 1 is not silently rewritten.
-			id = strings.Replace(first, ":", "/", 1)
-		} else if len(fields) >= 2 {
-			id = first + "/" + fields[1]
-		} else {
+		if len(fields) < 2 {
 			continue
 		}
+		id := first + "/" + fields[1]
 		// A real id has a non-empty provider and model on both sides of the
 		// slash. Drop anything that doesn't (e.g. a stray `something:` token),
 		// a cheap structural backstop on top of the diagnostic filter above.
@@ -1218,14 +1199,9 @@ func isSafeModelIdentifier(s string) bool {
 
 // ── CodeBuddy model discovery ──
 
-// codebuddyModelRe matches the `--model <model> ... Currently supported: (m1, m2, ...)`
-// line in `codebuddy --help` output.
-var codebuddyModelRe = regexp.MustCompile(`--model\s*<[^>]+>\s*.*?Currently supported:\s*\(([^)]+)\)`)
-
-// discoverCodebuddyModels returns the CodeBuddy model catalog. Recent
-// CodeBuddy builds no longer print a supported-model list in --help, so an
-// operator-provided catalog takes precedence; the legacy --help parser is
-// retained for older builds and the static catalog is the final fallback.
+// discoverCodebuddyModels returns the CodeBuddy model catalog. An
+// operator-provided catalog takes precedence, followed by ACP discovery and
+// the static catalog.
 func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
 	if models := codebuddyModelsFromEnv(); len(models) > 0 {
 		return models, nil
@@ -1239,15 +1215,6 @@ func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Mode
 	models, err := discoverCodebuddyACPModels(ctx, executablePath)
 	if err == nil && len(models) > 0 {
 		return models, nil
-	}
-	if codebuddyHelpDiscoveryEnabled() {
-		helpOut := codebuddyHelpOutput(ctx, executablePath)
-		if helpOut != "" {
-			models := parseCodebuddyModels(helpOut)
-			if len(models) > 0 {
-				return models, nil
-			}
-		}
 	}
 	return codebuddyStaticModels(), nil
 }
@@ -1277,20 +1244,6 @@ func codebuddyModelsFromEnv() []Model {
 		}
 	}
 	return nil
-}
-
-// parseCodebuddyModels extracts model IDs from codebuddy --help output.
-// The help text contains a line like:
-//
-//	--model <model>  ... Currently supported: (model1, model2, ...)
-//
-// The first model in the list is marked as default.
-func parseCodebuddyModels(helpOutput string) []Model {
-	match := codebuddyModelRe.FindStringSubmatch(helpOutput)
-	if len(match) < 2 {
-		return nil
-	}
-	return parseCodebuddyModelList(match[1])
 }
 
 func parseCodebuddyModelList(rawList string) []Model {

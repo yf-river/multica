@@ -55,9 +55,8 @@ type CreateRuntimeProfileParams struct {
 	Enabled        bool        `json:"enabled"`
 }
 
-// Custom Runtime profiles (MUL-3284). Workspace-level definitions of a custom
-// runtime; see migration 120 for the table. Relational integrity (workspace,
-// created_by) is enforced in the application layer — there are no DB FKs.
+// Workspace-level definitions of custom runtimes. Relational integrity for
+// workspace and created_by is enforced in the application layer.
 func (q *Queries) CreateRuntimeProfile(ctx context.Context, arg CreateRuntimeProfileParams) (RuntimeProfile, error) {
 	row := q.db.QueryRow(ctx, createRuntimeProfile,
 		arg.WorkspaceID,
@@ -102,10 +101,9 @@ type DeleteAgentRuntimesByProfileRow struct {
 	Provider    string      `json:"provider"`
 }
 
-// Application-layer cascade: migration 120 dropped the DB ON DELETE CASCADE, so
-// the profile-delete path must remove the profile's registered runtime
-// instances itself. Returns the deleted rows so the caller can broadcast /
-// audit. Runs inside the same transaction as DeleteRuntimeProfile.
+// The profile-delete path removes registered runtime instances itself so it can
+// broadcast and audit each deletion. It runs in the same transaction as
+// DeleteRuntimeProfile.
 func (q *Queries) DeleteAgentRuntimesByProfile(ctx context.Context, profileID pgtype.UUID) ([]DeleteAgentRuntimesByProfileRow, error) {
 	rows, err := q.db.Query(ctx, deleteAgentRuntimesByProfile, profileID)
 	if err != nil {

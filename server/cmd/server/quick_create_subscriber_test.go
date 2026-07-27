@@ -99,7 +99,7 @@ func TestQuickCreateCompletion_SubscribesRequester(t *testing.T) {
 		t.Fatalf("CompleteTask: %v", err)
 	}
 
-	if !isSubscribed(t, fixture.queries, util.UUIDToString(issue.ID), "member", testUserID) {
+	if !isSubscribed(t, util.UUIDToString(issue.ID), "member", testUserID) {
 		t.Fatal("expected requester to be subscribed after quick-create completion")
 	}
 }

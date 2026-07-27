@@ -222,6 +222,39 @@ func createHandlerTestAgent(t *testing.T, name string, mcpConfig []byte) string 
 	return agentID
 }
 
+func setHandlerTestAgentRoleKey(t *testing.T, agentID, roleKey string) {
+	t.Helper()
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent
+		SET runtime_config = jsonb_build_object(
+			'internal_squad',
+			jsonb_build_object('role_key', $2::text)
+		)
+		WHERE id = $1
+	`, agentID, roleKey); err != nil {
+		t.Fatalf("failed to set handler test agent role key: %v", err)
+	}
+}
+
+func nextHandlerTestIssueNumber(t *testing.T) int {
+	t.Helper()
+
+	var number int
+	if err := testPool.QueryRow(context.Background(), `
+		UPDATE workspace
+		SET issue_counter = GREATEST(
+			issue_counter,
+			(SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)
+		) + 1
+		WHERE id = $1
+		RETURNING issue_counter
+	`, testWorkspaceID).Scan(&number); err != nil {
+		t.Fatalf("failed to allocate handler test issue number: %v", err)
+	}
+	return number
+}
+
 // createHandlerTestTaskForAgent seeds a running agent_task_queue row for the
 // given agent (with no associated issue) and returns the task UUID. Used by
 // tests that need to set X-Task-ID alongside X-Agent-ID — resolveActor now
@@ -420,6 +453,7 @@ func createSameTitleAutopilotFixture(t *testing.T, ctx context.Context, issueTit
 	w = httptest.NewRecorder()
 	req = newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                autopilotTitle,
+		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": issueTitle,
@@ -1708,6 +1742,7 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Creator attribution autopilot",
+		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": title,
@@ -1808,6 +1843,7 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Project-linked autopilot",
+		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": title,
@@ -1881,6 +1917,7 @@ func TestUpdateAutopilotCanSetAndClearProject(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Project update autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 	})
@@ -2331,6 +2368,7 @@ func TestCreateAutopilotRejectsMalformedAssigneeID(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots", map[string]any{
 		"title":          "Malformed assignee autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    "not-a-uuid",
 		"execution_mode": "run_only",
 	})

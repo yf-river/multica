@@ -2748,7 +2748,7 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
 		ID:            parseUUID(resp.TaskID),
 		Error:         pgtype.Text{String: "后台扫描判定任务失败", Valid: true},
-		FailureReason: pgtype.Text{String: "agent_error", Valid: true},
+		FailureReason: "agent_error",
 	})
 	if err != nil {
 		t.Fatalf("fail task row: %v", err)
@@ -2783,7 +2783,7 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
 		ID:            parseUUID(resp.TaskID),
 		Error:         pgtype.Text{String: "运行时离线，自动重试", Valid: true},
-		FailureReason: pgtype.Text{String: "runtime_offline", Valid: true},
+		FailureReason: "runtime_offline",
 	})
 	if err != nil {
 		t.Fatalf("fail task row: %v", err)

@@ -45,12 +45,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 		return InboundMessage{}, false, fmt.Errorf("envelope: %w", err)
 	}
 
-	// Lark long-conn data frames are always v2 event envelopes
-	// (schema "2.0"). The legacy webhook v1 "type":"event_callback"
-	// shape is not used on long-conn — we accept it defensively in
-	// case Lark adds a back-compat mode, but the canonical path is
-	// schema-driven.
-	if env.Type != "" && env.Type != "event_callback" {
+	if env.Schema != "2.0" {
 		return InboundMessage{}, false, nil
 	}
 
@@ -98,7 +93,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 	switch evt.Message.MessageType {
 	case "text", "post":
 		msg.Body = resolveMentions(flattenContent(evt.Message.MessageType, evt.Message.Content),
-			evt.Message.Mentions, inst.BotOpenID, botUnionID)
+			evt.Message.Mentions, botUnionID)
 	}
 
 	// Snapshot the user's own text as the command source BEFORE any
@@ -108,7 +103,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 	msg.CommandBody = msg.Body
 
 	if msg.ChatType == ChatTypeGroup {
-		msg.AddressedToBot = containsMention(evt.Message.Mentions, inst.BotOpenID, botUnionID)
+		msg.AddressedToBot = containsMention(evt.Message.Mentions, botUnionID)
 	}
 
 	return msg, true, nil
@@ -117,7 +112,6 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 // larkEventEnvelope mirrors the outer JSON Lark wraps every push in.
 type larkEventEnvelope struct {
 	Schema string          `json:"schema"`
-	Type   string          `json:"type"`
 	Header larkEventHeader `json:"header"`
 	Event  json.RawMessage `json:"event"`
 }
@@ -194,7 +188,7 @@ type larkMention struct {
 //     trailing space already in the output. Tabs, indentation, code
 //     blocks, table pipes, and any other intentional whitespace in
 //     the user's message are preserved verbatim.
-func resolveMentions(text string, mentions []larkMention, botOpenID, botUnionID string) string {
+func resolveMentions(text string, mentions []larkMention, botUnionID string) string {
 	if text == "" || len(mentions) == 0 {
 		return text
 	}
@@ -227,7 +221,7 @@ func resolveMentions(text string, mentions []larkMention, botOpenID, botUnionID 
 		}
 		end := i + len(matched.Key)
 		switch {
-		case isBotMention(*matched, botOpenID, botUnionID):
+		case isBotMention(*matched, botUnionID):
 			// Strip: eat one adjacent space (after the placeholder
 			// preferred; else backtrack one space we already emitted)
 			// so the seam is not left with a double space or a
@@ -253,19 +247,10 @@ func resolveMentions(text string, mentions []larkMention, botOpenID, botUnionID 
 
 // isBotMention identifies whether a payload mention refers to THIS
 // bot. Stays in lockstep with containsMention: when union_id is
-// known we trust it exclusively (open_id is structurally inverted
-// in multi-bot groups — matching on it would re-introduce the
-// MUL-2671 routing bug). Only when union_id is missing do we fall
-// back to open_id, which is correct in single-bot installs and the
-// best we can do in pre-backfill rows.
-func isBotMention(m larkMention, botOpenID, botUnionID string) bool {
-	if botUnionID != "" {
-		return m.ID.UnionID == botUnionID
-	}
-	if botOpenID == "" {
-		return false
-	}
-	return m.ID.OpenID == botOpenID
+// known we trust it exclusively because open_id is structurally inverted in
+// multi-bot groups.
+func isBotMention(m larkMention, botUnionID string) bool {
+	return botUnionID != "" && m.ID.UnionID == botUnionID
 }
 
 func extractTextBody(content string) string {
@@ -309,31 +294,15 @@ func normalizeChatType(t string) ChatType {
 //     compare against `mentions[].id.union_id`. This is the correct
 //     path and is unambiguous in multi-bot deployments.
 //
-//  2. When `union_id` is unknown — single-bot installs created
-//     before migration 112, or contact-scope-restricted operators
-//     where /contact/v3/users denied the lookup — fall back to the
-//     per-app `open_id` comparison. This is structurally inverted
-//     in multi-bot group chats but is fine for the p2p/single-bot
-//     case the WS sees most of the time, and avoids hard-failing
-//     pre-backfill installations.
-//
 // Empty inputs short-circuit to false rather than matching every
 // mention; that defends against an installation row that somehow
 // has both identifiers blank.
-func containsMention(mentions []larkMention, botOpenID, botUnionID string) bool {
-	if botUnionID != "" {
-		for _, m := range mentions {
-			if m.ID.UnionID == botUnionID {
-				return true
-			}
-		}
-		return false
-	}
-	if botOpenID == "" {
+func containsMention(mentions []larkMention, botUnionID string) bool {
+	if botUnionID == "" {
 		return false
 	}
 	for _, m := range mentions {
-		if m.ID.OpenID == botOpenID {
+		if m.ID.UnionID == botUnionID {
 			return true
 		}
 	}

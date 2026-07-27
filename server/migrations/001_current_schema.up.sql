@@ -1,5 +1,4 @@
--- Current schema baseline generated from the old migration chain.
--- Development-phase squash: no historical database upgrade compatibility is preserved.
+-- Canonical development schema baseline. Historical database upgrades are not supported.
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -249,14 +248,6 @@ BEGIN
                        AND tu.updated_at >= v_from
                        AND tu.updated_at <  v_upper
                     UNION ALL
-                    SELECT tu.created_at AS candidate_at
-                      FROM task_usage tu
-                      JOIN agent_task_queue atq ON atq.id = tu.task_id
-                     WHERE atq.runtime_id IS NOT NULL
-                       AND tu.updated_at IS NULL
-                       AND tu.created_at >= v_from
-                       AND tu.created_at <  v_upper
-                    UNION ALL
                     SELECT GREATEST(enqueued_at, v_from) AS candidate_at
                       FROM task_usage_hourly_dirty
                      WHERE enqueued_at < v_upper
@@ -341,13 +332,8 @@ BEGIN
           JOIN agent            a   ON a.id        = atq.agent_id
           LEFT JOIN issue       i   ON i.id        = atq.issue_id
          WHERE atq.runtime_id IS NOT NULL
-           AND (
-                (tu.updated_at >= p_from AND tu.updated_at < p_to)
-                -- Legacy updated_at-NULL rows; partial index from 078.
-                OR (tu.updated_at IS NULL
-                    AND tu.created_at >= p_from
-                    AND tu.created_at <  p_to)
-           )
+           AND tu.updated_at >= p_from
+           AND tu.updated_at < p_to
     ),
     dirty_from_queue AS (
         SELECT bucket_hour, workspace_id, runtime_id, agent_id,
@@ -515,7 +501,6 @@ CREATE TABLE public.agent_runtime (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     owner_id uuid,
-    legacy_daemon_id text,
     scope text DEFAULT 'workspace'::text NOT NULL,
     profile_id uuid,
     CONSTRAINT agent_runtime_runtime_mode_check CHECK ((runtime_mode = ANY (ARRAY['local'::text, 'cloud'::text]))),
@@ -705,18 +690,6 @@ CREATE TABLE public.comment_reaction (
     CONSTRAINT comment_reaction_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text])))
 );
 
-CREATE TABLE public.daemon_connection (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    agent_id uuid NOT NULL,
-    daemon_id text NOT NULL,
-    status text DEFAULT 'disconnected'::text NOT NULL,
-    last_heartbeat_at timestamp with time zone,
-    runtime_info jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT daemon_connection_status_check CHECK ((status = ANY (ARRAY['connected'::text, 'disconnected'::text])))
-);
-
 CREATE TABLE public.daemon_token (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     token_hash text NOT NULL,
@@ -889,14 +862,6 @@ CREATE TABLE public.issue (
     CONSTRAINT issue_status_check CHECK ((status = ANY (ARRAY['backlog'::text, 'todo'::text, 'in_progress'::text, 'in_review'::text, 'done'::text, 'blocked'::text, 'cancelled'::text])))
 );
 
-CREATE TABLE public.issue_dependency (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    issue_id uuid NOT NULL,
-    depends_on_issue_id uuid NOT NULL,
-    type text NOT NULL,
-    CONSTRAINT issue_dependency_type_check CHECK ((type = ANY (ARRAY['blocks'::text, 'blocked_by'::text, 'related'::text])))
-);
-
 CREATE TABLE public.issue_label (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -911,7 +876,6 @@ CREATE TABLE public.issue_pull_request (
     pull_request_id uuid NOT NULL,
     linked_by_type text,
     linked_by_id uuid,
-    linked_at timestamp with time zone DEFAULT now() NOT NULL,
     close_intent boolean DEFAULT false NOT NULL
 );
 
@@ -1009,7 +973,6 @@ CREATE TABLE public.lark_outbound_card_message (
     lark_chat_id text NOT NULL,
     lark_card_message_id text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
-    last_patched_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lark_outbound_card_message_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'streaming'::text, 'final'::text, 'error'::text])))
 );
@@ -1685,14 +1648,15 @@ CREATE TABLE public.task_trace_event (
 CREATE TABLE public.task_usage (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     task_id uuid NOT NULL,
-    provider text DEFAULT ''::text NOT NULL,
+    provider text NOT NULL,
     model text NOT NULL,
     input_tokens bigint DEFAULT 0 NOT NULL,
     output_tokens bigint DEFAULT 0 NOT NULL,
     cache_read_tokens bigint DEFAULT 0 NOT NULL,
     cache_write_tokens bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now()
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_usage_provider_normalized_check CHECK (((provider <> ''::text) AND (provider = lower(provider))))
 );
 
 CREATE TABLE public.task_usage_hourly (
@@ -1709,7 +1673,8 @@ CREATE TABLE public.task_usage_hourly (
     cache_write_tokens bigint DEFAULT 0 NOT NULL,
     task_count bigint DEFAULT 0 NOT NULL,
     event_count bigint DEFAULT 0 NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_usage_hourly_provider_normalized_check CHECK (((provider <> ''::text) AND (provider = lower(provider))))
 );
 
 CREATE TABLE public.task_usage_hourly_dirty (
@@ -1720,7 +1685,8 @@ CREATE TABLE public.task_usage_hourly_dirty (
     project_id uuid,
     provider text NOT NULL,
     model text NOT NULL,
-    enqueued_at timestamp with time zone DEFAULT now() NOT NULL
+    enqueued_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_usage_hourly_dirty_provider_normalized_check CHECK (((provider <> ''::text) AND (provider = lower(provider))))
 );
 
 CREATE TABLE public.task_usage_hourly_rollup_state (
@@ -1836,9 +1802,6 @@ ALTER TABLE ONLY public.comment_reaction
 ALTER TABLE ONLY public.comment_reaction
     ADD CONSTRAINT comment_reaction_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.daemon_connection
-    ADD CONSTRAINT daemon_connection_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.daemon_token
     ADD CONSTRAINT daemon_token_pkey PRIMARY KEY (id);
 
@@ -1874,9 +1837,6 @@ ALTER TABLE ONLY public.github_pull_request
 
 ALTER TABLE ONLY public.inbox_item
     ADD CONSTRAINT inbox_item_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.issue_dependency
-    ADD CONSTRAINT issue_dependency_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.issue_label
     ADD CONSTRAINT issue_label_pkey PRIMARY KEY (id);
@@ -2133,9 +2093,6 @@ ALTER TABLE ONLY public.task_usage
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_task_id_provider_model_key UNIQUE (task_id, provider, model);
 
-ALTER TABLE ONLY public.daemon_connection
-    ADD CONSTRAINT uq_daemon_agent UNIQUE (agent_id, daemon_id);
-
 ALTER TABLE ONLY public.issue
     ADD CONSTRAINT uq_issue_workspace_number UNIQUE (workspace_id, number);
 
@@ -2186,8 +2143,6 @@ CREATE INDEX idx_agent_runtime_status ON public.agent_runtime USING btree (works
 CREATE INDEX idx_agent_runtime_workspace ON public.agent_runtime USING btree (workspace_id);
 
 CREATE INDEX idx_agent_runtime_workspace_scope ON public.agent_runtime USING btree (workspace_id, scope);
-
-CREATE INDEX idx_agent_skill_agent ON public.agent_skill USING btree (agent_id);
 
 CREATE INDEX idx_agent_skill_skill ON public.agent_skill USING btree (skill_id);
 
@@ -2253,8 +2208,6 @@ CREATE INDEX idx_chat_session_workspace ON public.chat_session USING btree (work
 
 CREATE INDEX idx_comment_issue_keyset ON public.comment USING btree (issue_id, created_at DESC, id DESC);
 
-CREATE INDEX idx_comment_reaction_comment_id ON public.comment_reaction USING btree (comment_id);
-
 CREATE UNIQUE INDEX idx_daemon_token_hash ON public.daemon_token USING btree (token_hash);
 
 CREATE INDEX idx_daemon_token_workspace_daemon ON public.daemon_token USING btree (workspace_id, daemon_id);
@@ -2268,8 +2221,6 @@ CREATE INDEX idx_github_installation_workspace ON public.github_installation USI
 CREATE INDEX idx_github_pending_check_suite_received_at ON public.github_pending_check_suite USING btree (received_at);
 
 CREATE INDEX idx_github_pr_check_suite_aggregate ON public.github_pull_request_check_suite USING btree (pr_id, head_sha, app_id, updated_at DESC);
-
-CREATE INDEX idx_github_pull_request_workspace ON public.github_pull_request USING btree (workspace_id);
 
 CREATE INDEX idx_inbox_recipient ON public.inbox_item USING btree (recipient_type, recipient_id, read);
 
@@ -2287,8 +2238,6 @@ CREATE INDEX idx_issue_project ON public.issue USING btree (project_id);
 
 CREATE INDEX idx_issue_pull_request_pr ON public.issue_pull_request USING btree (pull_request_id);
 
-CREATE INDEX idx_issue_reaction_issue_id ON public.issue_reaction USING btree (issue_id);
-
 CREATE INDEX idx_issue_status ON public.issue USING btree (workspace_id, status);
 
 CREATE INDEX idx_issue_subscriber_user ON public.issue_subscriber USING btree (user_type, user_id);
@@ -2297,17 +2246,11 @@ CREATE INDEX idx_issue_work_completed_at ON public.issue USING btree (workspace_
 
 CREATE INDEX idx_issue_work_started_at ON public.issue USING btree (workspace_id, work_started_at) WHERE (work_started_at IS NOT NULL);
 
-CREATE INDEX idx_issue_workspace ON public.issue USING btree (workspace_id);
-
-CREATE INDEX idx_issue_workspace_number ON public.issue USING btree (workspace_id, number);
-
 CREATE INDEX idx_issue_workspace_owner_scope ON public.issue USING btree (workspace_id, owner_id, scope);
 
 CREATE INDEX idx_issue_workspace_scope ON public.issue USING btree (workspace_id, scope);
 
 CREATE INDEX idx_lark_binding_token_installation ON public.lark_binding_token USING btree (installation_id, expires_at);
-
-CREATE INDEX idx_lark_chat_session_binding_session ON public.lark_chat_session_binding USING btree (chat_session_id);
 
 CREATE INDEX idx_lark_inbound_audit_installation ON public.lark_inbound_audit USING btree (installation_id, received_at DESC);
 
@@ -2319,8 +2262,6 @@ CREATE INDEX idx_lark_installation_agent ON public.lark_installation USING btree
 
 CREATE INDEX idx_lark_installation_lease ON public.lark_installation USING btree (ws_lease_expires_at) WHERE (status = 'active'::text);
 
-CREATE INDEX idx_lark_installation_workspace ON public.lark_installation USING btree (workspace_id);
-
 CREATE INDEX idx_lark_outbound_card_session ON public.lark_outbound_card_message USING btree (chat_session_id, created_at DESC);
 
 CREATE UNIQUE INDEX idx_lark_outbound_card_task ON public.lark_outbound_card_message USING btree (task_id) WHERE (task_id IS NOT NULL);
@@ -2330,8 +2271,6 @@ CREATE INDEX idx_lark_user_binding_user ON public.lark_user_binding USING btree 
 CREATE INDEX idx_lark_user_binding_workspace_open ON public.lark_user_binding USING btree (workspace_id, lark_open_id);
 
 CREATE INDEX idx_member_user_workspace ON public.member USING btree (user_id, workspace_id);
-
-CREATE INDEX idx_member_workspace ON public.member USING btree (workspace_id);
 
 CREATE UNIQUE INDEX idx_one_pending_task_per_issue_agent ON public.agent_task_queue USING btree (issue_id, agent_id) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
 
@@ -2353,11 +2292,7 @@ CREATE INDEX idx_project_workspace_scope ON public.project USING btree (workspac
 
 CREATE INDEX idx_prompt_evaluation_case_assertion_asset ON public.prompt_evaluation_case_assertion USING btree (asset_id, case_id, assertion_index);
 
-CREATE INDEX idx_prompt_evaluation_case_assertion_case ON public.prompt_evaluation_case_assertion USING btree (case_id, assertion_index);
-
 CREATE INDEX idx_prompt_evaluation_case_assertion_workspace ON public.prompt_evaluation_case_assertion USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_case_asset_index ON public.prompt_evaluation_case USING btree (asset_id, case_index);
 
 CREATE INDEX idx_prompt_evaluation_case_operation_asset_created ON public.prompt_evaluation_case_operation USING btree (asset_id, created_at DESC);
 
@@ -2375,15 +2310,11 @@ CREATE INDEX idx_prompt_evaluation_case_tags_gin ON public.prompt_evaluation_cas
 
 CREATE INDEX idx_prompt_evaluation_case_workspace_created ON public.prompt_evaluation_case USING btree (workspace_id, created_at DESC);
 
-CREATE INDEX idx_prompt_evaluation_dataset_row_asset_index ON public.prompt_evaluation_dataset_row USING btree (dataset_asset_id, row_index);
-
 CREATE INDEX idx_prompt_evaluation_dataset_row_workspace_created ON public.prompt_evaluation_dataset_row USING btree (workspace_id, created_at DESC);
 
 CREATE INDEX idx_prompt_evaluation_dataset_version_asset_created ON public.prompt_evaluation_dataset_version USING btree (dataset_asset_id, created_at DESC);
 
 CREATE INDEX idx_prompt_evaluation_dataset_version_row_asset ON public.prompt_evaluation_dataset_version_row USING btree (dataset_asset_id, row_index);
-
-CREATE INDEX idx_prompt_evaluation_dataset_version_row_version_index ON public.prompt_evaluation_dataset_version_row USING btree (dataset_version_id, row_index);
 
 CREATE INDEX idx_prompt_evaluation_dataset_version_workspace_created ON public.prompt_evaluation_dataset_version USING btree (workspace_id, created_at DESC);
 
@@ -2411,15 +2342,11 @@ CREATE INDEX idx_prompt_evaluation_run_workspace_created ON public.prompt_evalua
 
 CREATE INDEX idx_prompt_evaluation_run_workspace_reviewed ON public.prompt_evaluation_run USING btree (workspace_id, reviewed_at DESC) WHERE (reviewed_at IS NOT NULL);
 
-CREATE INDEX idx_prompt_evaluation_test_suite_case_asset_index ON public.prompt_evaluation_test_suite_case USING btree (test_suite_asset_id, case_index);
-
 CREATE INDEX idx_prompt_evaluation_test_suite_case_workspace_created ON public.prompt_evaluation_test_suite_case USING btree (workspace_id, created_at DESC);
 
 CREATE INDEX idx_prompt_evaluation_trial_asset_created ON public.prompt_evaluation_trial USING btree (asset_id, created_at DESC);
 
 CREATE INDEX idx_prompt_evaluation_trial_run_case ON public.prompt_evaluation_trial USING btree (run_id, case_index);
-
-CREATE INDEX idx_prompt_library_version_prompt_version ON public.prompt_library_version USING btree (prompt_id, version DESC);
 
 CREATE INDEX idx_prompt_library_version_workspace_created ON public.prompt_library_version USING btree (workspace_id, created_at DESC);
 
@@ -2429,23 +2356,13 @@ CREATE INDEX idx_prompt_library_trial_workspace_created ON public.prompt_library
 
 CREATE INDEX idx_agent_playground_experiment_workspace_created ON public.agent_playground_experiment USING btree (workspace_id, created_at DESC);
 
-CREATE INDEX idx_agent_playground_input_experiment_index ON public.agent_playground_input USING btree (experiment_id, row_index);
-
 CREATE INDEX idx_agent_playground_agent_experiment_order ON public.agent_playground_agent USING btree (experiment_id, display_order);
 
 CREATE INDEX idx_agent_playground_result_experiment ON public.agent_playground_result USING btree (experiment_id, input_id, experiment_agent_id);
 
 CREATE INDEX idx_agent_playground_judgement_experiment ON public.agent_playground_judgement USING btree (experiment_id, input_id);
 
-CREATE INDEX idx_runtime_profile_workspace ON public.runtime_profile USING btree (workspace_id);
-
-CREATE INDEX idx_skill_file_skill ON public.skill_file USING btree (skill_id);
-
-CREATE INDEX idx_skill_workspace ON public.skill USING btree (workspace_id);
-
 CREATE INDEX idx_squad_member_entity ON public.squad_member USING btree (member_type, member_id);
-
-CREATE INDEX idx_squad_member_squad ON public.squad_member USING btree (squad_id);
 
 CREATE INDEX idx_squad_sop_run_issue_created ON public.squad_sop_run USING btree (issue_id, created_at DESC);
 
@@ -2491,8 +2408,6 @@ CREATE INDEX idx_task_trace_event_workspace_created ON public.task_trace_event U
 
 CREATE INDEX idx_task_usage_created_at ON public.task_usage USING btree (created_at);
 
-CREATE INDEX idx_task_usage_created_at_legacy ON public.task_usage USING btree (created_at) WHERE (updated_at IS NULL);
-
 CREATE INDEX idx_task_usage_hourly_dirty_enqueued_at ON public.task_usage_hourly_dirty USING btree (enqueued_at);
 
 CREATE INDEX idx_task_usage_hourly_runtime_time ON public.task_usage_hourly USING btree (runtime_id, bucket_hour DESC);
@@ -2502,8 +2417,6 @@ CREATE INDEX idx_task_usage_hourly_workspace_agent_time ON public.task_usage_hou
 CREATE INDEX idx_task_usage_hourly_workspace_project_time ON public.task_usage_hourly USING btree (workspace_id, project_id, bucket_hour DESC) WHERE (project_id IS NOT NULL);
 
 CREATE INDEX idx_task_usage_hourly_workspace_time ON public.task_usage_hourly USING btree (workspace_id, bucket_hour DESC);
-
-CREATE INDEX idx_task_usage_task_id ON public.task_usage USING btree (task_id);
 
 CREATE INDEX idx_task_usage_updated_at ON public.task_usage USING btree (updated_at);
 
@@ -2518,8 +2431,6 @@ CREATE INDEX idx_webhook_delivery_run ON public.webhook_delivery USING btree (au
 CREATE UNIQUE INDEX issue_label_workspace_name_lower_idx ON public.issue_label USING btree (workspace_id, lower(name));
 
 CREATE INDEX prompt_evaluation_asset_prompt_idx ON public.prompt_evaluation_asset USING btree (prompt_id);
-
-CREATE INDEX prompt_evaluation_asset_workspace_type_idx ON public.prompt_evaluation_asset USING btree (workspace_id, asset_type);
 
 CREATE INDEX prompt_library_item_workspace_project_idx ON public.prompt_library_item USING btree (workspace_id, project_id);
 
@@ -2653,9 +2564,6 @@ ALTER TABLE ONLY public.comment_reaction
 ALTER TABLE ONLY public.comment
     ADD CONSTRAINT comment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.daemon_connection
-    ADD CONSTRAINT daemon_connection_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.daemon_token
     ADD CONSTRAINT daemon_token_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 
@@ -2685,12 +2593,6 @@ ALTER TABLE ONLY public.inbox_item
 
 ALTER TABLE ONLY public.inbox_item
     ADD CONSTRAINT inbox_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_dependency
-    ADD CONSTRAINT issue_dependency_depends_on_issue_id_fkey FOREIGN KEY (depends_on_issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_dependency
-    ADD CONSTRAINT issue_dependency_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.issue_label
     ADD CONSTRAINT issue_label_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;

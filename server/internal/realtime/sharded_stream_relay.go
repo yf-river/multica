@@ -18,7 +18,13 @@ const (
 	defaultShardedRelayStreamMaxLen = 100000
 	defaultShardedRelayReadCount    = 128
 	defaultShardedRelayReadBlock    = 5 * time.Second
+	heartbeatTTL                    = 90 * time.Second
+	heartbeatPeriod                 = 30 * time.Second
 )
+
+func heartbeatKey(nodeID string) string {
+	return fmt.Sprintf("ws:node:%s:heartbeat", nodeID)
+}
 
 // ShardedStreamKey returns the Redis Stream key used by a fixed relay shard.
 func ShardedStreamKey(shard int) string {
@@ -258,7 +264,7 @@ func (r *ShardedStreamRelay) heartbeatLoop(ctx context.Context) {
 func (r *ShardedStreamRelay) heartbeatOnce(ctx context.Context) {
 	hbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := r.writeRDB.Set(hbCtx, HeartbeatKey(r.nodeID), time.Now().UTC().Format(time.RFC3339Nano), heartbeatTTL).Err(); err != nil {
+	if err := r.writeRDB.Set(hbCtx, heartbeatKey(r.nodeID), time.Now().UTC().Format(time.RFC3339Nano), heartbeatTTL).Err(); err != nil {
 		M.RedisConnected.Store(false)
 		M.SetRedisLastError(err.Error())
 		return
