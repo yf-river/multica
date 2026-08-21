@@ -49,6 +49,7 @@ describe("ApiClient", () => {
     await client.createAutopilot({
       title: "Daily triage",
       project_id: "project-1",
+      assignee_type: "agent",
       assignee_id: "agent-1",
       execution_mode: "create_issue",
     });
@@ -80,6 +81,7 @@ describe("ApiClient", () => {
         body: JSON.stringify({
           title: "Daily triage",
           project_id: "project-1",
+          assignee_type: "agent",
           assignee_id: "agent-1",
           execution_mode: "create_issue",
         }),
@@ -112,6 +114,28 @@ describe("ApiClient", () => {
         method: "POST",
       },
     ]);
+  });
+
+  it("sends offset when listing prompt evaluation runs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.listPromptEvaluationRuns({
+      since: "2026-07-01T00:00:00.000Z",
+      limit: 200,
+      offset: 400,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/prompt-evaluation-runs?since=2026-07-01T00%3A00%3A00.000Z&limit=200&offset=400",
+      expect.any(Object),
+    );
   });
 
   it("emits X-Client-* headers when identity is configured", async () => {

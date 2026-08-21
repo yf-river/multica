@@ -16,7 +16,7 @@ description: 代码命名规范、i18n 翻译术语表、中文风格指南的�
 工作区前置路由（用户进入工作区之前能访问的路由）必须用单个单词，或者 `/{noun}/{verb}` 格式。
 
 - ✅ `/login`、`/inbox`、`/workspaces/new`
-- ❌ `/new-workspace`、`/create-team`、`/accept-invite`
+- ❌ `/new-workspace`、`/create-team`、`/legacy-join`
 
 根目录的连字符词组会跟用户自选 workspace slug 冲突，逼着团队不停审保留字列表。把名词（`workspaces`）保留下来，整个 `/workspaces/*` 子树自动受保护。
 
@@ -32,11 +32,10 @@ monorepo 的包边界是硬约束：
 | --- | --- | --- |
 | `packages/core` | 仅平台无关基础库 | `react-dom`、`localStorage`、`process.env`、`next/*`、UI 库 |
 | `packages/ui` | 无业务依赖 | `@multica/core`、业务逻辑 |
-| `packages/views` | `core/`、`ui/` | `next/*`、`react-router-dom`、stores |
+| `packages/views` | `core/`、`ui/` | `next/*`、stores |
 | `apps/web/platform/` | `next/*` | 其他 app |
-| `apps/desktop/.../platform/` | `react-router-dom`、electron | 其他 app |
 
-两个 app 都有的逻辑，**必须**抽到共享包。"小段重复"也不算例外。
+复用的逻辑，**必须**抽到共享包。"小段重复"也不算例外。
 
 ### 文件与组件
 
@@ -149,9 +148,8 @@ Multica 的产品名词分两类：
 
 | 英 | 中 |
 | --- | --- |
-| Invite / Invitation | 邀请 |
+| Add user / Add member | 新增用户 / 添加成员 |
 | Search | 搜索 |
-| Email | 邮箱（label）/ 邮件（action） |
 | Password | 密码 |
 | Sign in / Log in | 登录 |
 | Sign up | 注册 |
@@ -254,13 +252,12 @@ i18next 用 `_one` / `_other`；中文不区分语法单复数，只填 `_other`
 - `inbox.empty.title`
 - `settings.preferences.language.title`
 
-### Web-only / Desktop-only 文案位置
+### Web-only 文案位置
 
 - 共享文案：放 namespace JSON 顶层
 - Web-only：放 `web` 段
-- Desktop-only：放 `desktop` 段
 
-参考 `auth.json`（`web` 段含 `prefer_desktop` / `desktop_handoff.*`）。
+参考 `auth.json`（`web` 段）。
 
 ---
 

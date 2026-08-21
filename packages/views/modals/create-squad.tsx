@@ -14,7 +14,7 @@ import {
 } from "@multica/core/workspace/queries";
 import { AGENT_DESCRIPTION_MAX_LENGTH } from "@multica/core/agents";
 import { isImeComposing } from "@multica/core/utils";
-import type { Agent, MemberWithUser } from "@multica/core/types";
+import type { Agent, MemberWithUser, SquadScope } from "@multica/core/types";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +34,7 @@ import { toast } from "sonner";
 
 import { useNavigation } from "../navigation";
 import { ActorAvatar } from "../common/actor-avatar";
+import { resourceSegmentedOptionClass } from "../common/resource-scope";
 import { AvatarPicker } from "../agents/components/avatar-picker";
 import { CharCounter } from "../agents/components/char-counter";
 import {
@@ -73,6 +74,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [scope, setScope] = useState<SquadScope>("workspace");
   const [leaderId, setLeaderId] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>([]);
   const [creating, setCreating] = useState(false);
@@ -100,6 +102,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
         description: description.trim() || undefined,
         leader_id: leaderId,
         avatar_url: avatarUrl ?? undefined,
+        scope,
       });
       queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
 
@@ -199,6 +202,8 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
+            <SquadScopePicker value={scope} onChange={setScope} />
+
             <LeaderPicker
               agents={activeAgents}
               currentUserId={currentUserId}
@@ -235,11 +240,89 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function SquadScopePicker({
+  value,
+  onChange,
+}: {
+  value: SquadScope;
+  onChange: (value: SquadScope) => void;
+}) {
+  const { t } = useT("modals");
+  const options: Array<{ value: SquadScope; label: string; hint: string }> = [
+    {
+      value: "workspace",
+      label: t(($) => $.create_squad.scope_workspace_label),
+      hint: t(($) => $.create_squad.scope_workspace_hint),
+    },
+    {
+      value: "personal",
+      label: t(($) => $.create_squad.scope_personal_label),
+      hint: t(($) => $.create_squad.scope_personal_hint),
+    },
+  ];
+  return (
+    <div>
+      <Label className="text-xs text-muted-foreground">
+        {t(($) => $.create_squad.scope_label)}
+      </Label>
+      <div className="mt-1.5 grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`${resourceSegmentedOptionClass(value === option.value)} text-left`}
+          >
+            <span className="block text-sm font-medium">{option.label}</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              {option.hint}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // LeaderPicker — single-select agent picker, grouped "My Agents" first then
 // "Workspace Agents". Empty workspaces render a disabled trigger that points
 // the user at agent creation.
 // ---------------------------------------------------------------------------
+function AgentPickerSection({
+  label,
+  agents,
+  isSelected,
+  onSelect,
+}: {
+  label: string;
+  agents: Agent[];
+  isSelected: (agent: Agent) => boolean;
+  onSelect: (agent: Agent) => void;
+}) {
+  if (agents.length === 0) return null;
+
+  return (
+    <PickerSection label={label}>
+      {agents.map((agent) => (
+        <PickerItem
+          key={agent.id}
+          selected={isSelected(agent)}
+          onClick={() => onSelect(agent)}
+        >
+          <ActorAvatar
+            actorType="agent"
+            actorId={agent.id}
+            size={18}
+            showStatusDot
+          />
+          <span className="truncate">{agent.name}</span>
+        </PickerItem>
+      ))}
+    </PickerSection>
+  );
+}
+
 function LeaderPicker({
   agents,
   currentUserId,
@@ -331,42 +414,26 @@ function LeaderPicker({
               />
             </div>
             <div className="max-h-72 overflow-y-auto p-1">
-              {filteredMine.length > 0 && (
-                <PickerSection label={t(($) => $.create_squad.group_my_agents)}>
-                  {filteredMine.map((a) => (
-                    <PickerItem
-                      key={a.id}
-                      selected={value === a.id}
-                      onClick={() => {
-                        onChange(a.id);
-                        setOpen(false);
-                        setFilter("");
-                      }}
-                    >
-                      <ActorAvatar actorType="agent" actorId={a.id} size={18} showStatusDot />
-                      <span className="truncate">{a.name}</span>
-                    </PickerItem>
-                  ))}
-                </PickerSection>
-              )}
-              {filteredOthers.length > 0 && (
-                <PickerSection label={t(($) => $.create_squad.group_workspace_agents)}>
-                  {filteredOthers.map((a) => (
-                    <PickerItem
-                      key={a.id}
-                      selected={value === a.id}
-                      onClick={() => {
-                        onChange(a.id);
-                        setOpen(false);
-                        setFilter("");
-                      }}
-                    >
-                      <ActorAvatar actorType="agent" actorId={a.id} size={18} showStatusDot />
-                      <span className="truncate">{a.name}</span>
-                    </PickerItem>
-                  ))}
-                </PickerSection>
-              )}
+              <AgentPickerSection
+                label={t(($) => $.create_squad.group_my_agents)}
+                agents={filteredMine}
+                isSelected={(agent) => value === agent.id}
+                onSelect={(agent) => {
+                  onChange(agent.id);
+                  setOpen(false);
+                  setFilter("");
+                }}
+              />
+              <AgentPickerSection
+                label={t(($) => $.create_squad.group_workspace_agents)}
+                agents={filteredOthers}
+                isSelected={(agent) => value === agent.id}
+                onSelect={(agent) => {
+                  onChange(agent.id);
+                  setOpen(false);
+                  setFilter("");
+                }}
+              />
               {filteredMine.length === 0 && filteredOthers.length === 0 && (
                 <PickerEmpty />
               )}
@@ -525,38 +592,22 @@ function AdditionalMembersPicker({
             />
           </div>
           <div id="squad-member-listbox" role="listbox" className="max-h-72 overflow-y-auto p-1">
-            {filteredMine.length > 0 && (
-              <PickerSection label={t(($) => $.create_squad.group_my_agents)}>
-                {filteredMine.map((a) => (
-                  <PickerItem
-                    key={a.id}
-                    selected={isSelected("agent", a.id)}
-                    onClick={() =>
-                      toggle({ type: "agent", id: a.id, name: a.name })
-                    }
-                  >
-                    <ActorAvatar actorType="agent" actorId={a.id} size={18} showStatusDot />
-                    <span className="truncate">{a.name}</span>
-                  </PickerItem>
-                ))}
-              </PickerSection>
-            )}
-            {filteredOthers.length > 0 && (
-              <PickerSection label={t(($) => $.create_squad.group_workspace_agents)}>
-                {filteredOthers.map((a) => (
-                  <PickerItem
-                    key={a.id}
-                    selected={isSelected("agent", a.id)}
-                    onClick={() =>
-                      toggle({ type: "agent", id: a.id, name: a.name })
-                    }
-                  >
-                    <ActorAvatar actorType="agent" actorId={a.id} size={18} showStatusDot />
-                    <span className="truncate">{a.name}</span>
-                  </PickerItem>
-                ))}
-              </PickerSection>
-            )}
+            <AgentPickerSection
+              label={t(($) => $.create_squad.group_my_agents)}
+              agents={filteredMine}
+              isSelected={(agent) => isSelected("agent", agent.id)}
+              onSelect={(agent) =>
+                toggle({ type: "agent", id: agent.id, name: agent.name })
+              }
+            />
+            <AgentPickerSection
+              label={t(($) => $.create_squad.group_workspace_agents)}
+              agents={filteredOthers}
+              isSelected={(agent) => isSelected("agent", agent.id)}
+              onSelect={(agent) =>
+                toggle({ type: "agent", id: agent.id, name: agent.name })
+              }
+            />
             {filteredMembers.length > 0 && (
               <PickerSection label={t(($) => $.create_squad.group_members)}>
                 {filteredMembers.map((m) => (

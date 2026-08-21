@@ -3,10 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 // useWorkspaceId is a Context-backed hook in core; stub it to a static id so
 // the card runs outside a WorkspaceIdProvider in tests.
@@ -114,7 +114,7 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     runtime_mode: "local" as const,
     runtime_config: {},
     custom_args: [],
-    visibility: "private" as const,
+    scope: "personal" as const,
     status: "idle" as const,
     max_concurrent_tasks: 1,
     model: "",
@@ -148,7 +148,7 @@ function makeTask(overrides: Record<string, unknown>) {
 
 function renderCard() {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <AgentLivePeekCard agentId="agent-1" />
     </I18nProvider>,
   );
@@ -170,7 +170,7 @@ beforeEach(() => {
 });
 
 describe("AgentLivePeekCard", () => {
-  it("renders Working state with the linked current issue", () => {
+  it("renders 处理中 state with the linked current issue", () => {
     mockSnapshot.current = [
       makeTask({
         id: "task-running",
@@ -194,14 +194,14 @@ describe("AgentLivePeekCard", () => {
 
     renderCard();
 
-    expect(screen.getByText("Working")).toBeInTheDocument();
+    expect(screen.getByText("处理中")).toBeInTheDocument();
     // identifier + title both render under the same link.
     const link = screen.getByRole("link", { name: /MUL-42/ });
     expect(link).toHaveAttribute("href", "/test/issues/issue-42");
     expect(link.textContent).toContain("Wire up live peek");
   });
 
-  it("renders Idle + empty issue copy when nothing is running", () => {
+  it("renders 空闲 + empty issue copy when nothing is running", () => {
     mockPresence.current = {
       availability: "online",
       workload: "idle",
@@ -219,11 +219,11 @@ describe("AgentLivePeekCard", () => {
 
     renderCard();
 
-    expect(screen.getByText("Idle")).toBeInTheDocument();
+    expect(screen.getByText("空闲")).toBeInTheDocument();
     expect(screen.getByText(enAgents.live_peek.no_current_issue)).toBeInTheDocument();
-    // "5m ago" — proves last activity falls back to the most recent terminal
+    // "分钟前" — proves last activity falls back to the most recent terminal
     // task in the snapshot.
-    expect(screen.getByText(/5m ago/)).toBeInTheDocument();
+    expect(screen.getByText(/分钟前/)).toBeInTheDocument();
     // No failed indicator on a completed terminal state.
     expect(screen.queryByText(enAgents.live_peek.failed_indicator)).toBeNull();
   });
@@ -249,7 +249,7 @@ describe("AgentLivePeekCard", () => {
 
     renderCard();
 
-    expect(screen.getByText("Idle")).toBeInTheDocument();
+    expect(screen.getByText("空闲")).toBeInTheDocument();
     expect(screen.getByText(enAgents.live_peek.failed_indicator)).toBeInTheDocument();
   });
 });

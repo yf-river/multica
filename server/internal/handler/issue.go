@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -29,25 +29,27 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	ID            string  `json:"id"`
-	WorkspaceID   string  `json:"workspace_id"`
-	Number        int32   `json:"number"`
-	Identifier    string  `json:"identifier"`
-	Title         string  `json:"title"`
-	Description   *string `json:"description"`
-	Status        string  `json:"status"`
-	Priority      string  `json:"priority"`
-	AssigneeType  *string `json:"assignee_type"`
-	AssigneeID    *string `json:"assignee_id"`
-	CreatorType   string  `json:"creator_type"`
-	CreatorID     string  `json:"creator_id"`
-	ParentIssueID *string `json:"parent_issue_id"`
-	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
-	StartDate     *string `json:"start_date"`
-	DueDate       *string `json:"due_date"`
-	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
+	ID              string  `json:"id"`
+	WorkspaceID     string  `json:"workspace_id"`
+	Number          int32   `json:"number"`
+	Identifier      string  `json:"identifier"`
+	Title           string  `json:"title"`
+	Description     *string `json:"description"`
+	Status          string  `json:"status"`
+	Priority        string  `json:"priority"`
+	AssigneeType    *string `json:"assignee_type"`
+	AssigneeID      *string `json:"assignee_id"`
+	CreatorType     string  `json:"creator_type"`
+	CreatorID       string  `json:"creator_id"`
+	ParentIssueID   *string `json:"parent_issue_id"`
+	ProjectID       *string `json:"project_id"`
+	Position        float64 `json:"position"`
+	StartDate       *string `json:"start_date"`
+	DueDate         *string `json:"due_date"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+	WorkStartedAt   *string `json:"work_started_at,omitempty"`
+	WorkCompletedAt *string `json:"work_completed_at,omitempty"`
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
@@ -61,6 +63,51 @@ type IssueResponse struct {
 	// preserves whatever labels are already in cache. nil pointer = "field
 	// absent, do not touch"; non-nil (incl. empty slice) = authoritative list.
 	Labels *[]LabelResponse `json:"labels,omitempty"`
+	// Summary fields let list/board cards render their first screen without
+	// fetching full member/agent/squad/project directories. Detail hovers still
+	// lazy-load the authoritative profile when opened.
+	Assignee *IssueActorSummaryResponse   `json:"assignee,omitempty"`
+	Project  *IssueProjectSummaryResponse `json:"project,omitempty"`
+	// Present on list-style responses so issue cards can render sub-issue
+	// progress without a workspace-wide child-progress request.
+	ChildProgress *IssueChildProgressResponse `json:"child_progress,omitempty"`
+	// Present on list-style responses so issue cards can render live agent
+	// cues and the "working" filter without a workspace-wide task snapshot.
+	AgentActivity *IssueAgentActivitySummaryResponse `json:"agent_activity,omitempty"`
+}
+
+type IssueActorSummaryResponse struct {
+	Type      string  `json:"type"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatar_url"`
+}
+
+type IssueProjectSummaryResponse struct {
+	ID    string  `json:"id"`
+	Title string  `json:"title"`
+	Icon  *string `json:"icon"`
+}
+
+type IssueChildProgressResponse struct {
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
+}
+
+type IssueAgentActivitySummaryResponse struct {
+	RunningCount int64    `json:"running_count"`
+	QueuedCount  int64    `json:"queued_count"`
+	AgentIDs     []string `json:"agent_ids"`
+}
+
+type IncompleteChildIssueResponse struct {
+	ID           string  `json:"id"`
+	Identifier   string  `json:"identifier"`
+	Title        string  `json:"title"`
+	Status       string  `json:"status"`
+	AssigneeType *string `json:"assignee_type,omitempty"`
+	AssigneeID   *string `json:"assignee_id,omitempty"`
+	ProjectID    *string `json:"project_id,omitempty"`
 }
 
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
@@ -69,6 +116,26 @@ type IssueResponse struct {
 // up as a 500.
 var validIssueStatuses = []string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"}
 var validIssuePriorities = []string{"urgent", "high", "medium", "low", "none"}
+
+var (
+	tapdMarkdownWikiURLRE = regexp.MustCompile(`https?://www\.tapd\.cn/([0-9]+)/markdown_wikis/show/\s*#\s*([0-9]+)`)
+	tapdProngStoryURLRE   = regexp.MustCompile(`https?://www\.tapd\.cn/([0-9]+)/prong/stories/view/([0-9]+)`)
+	tapdStoryListURLRE    = regexp.MustCompile(`https?://www\.tapd\.cn/tapd_fe/([0-9]+)/story/list\?[^\s<>]*dialog_preview_id=story_([0-9]+)[^\s<>]*`)
+	tapdStoryPreviewIDRE  = regexp.MustCompile(`^story_([0-9]+)$`)
+)
+
+type tapdWikiSourceRef struct {
+	WorkspaceID string
+	WikiID      string
+	URL         string
+}
+
+type tapdSourceRef struct {
+	WorkspaceID  string
+	ResourceType string
+	ResourceID   string
+	URL          string
+}
 
 func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []string) bool {
 	for _, a := range allowed {
@@ -80,29 +147,139 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 	return false
 }
 
+func incompleteChildIssues(children []db.Issue, issuePrefix string) []IncompleteChildIssueResponse {
+	incomplete := make([]IncompleteChildIssueResponse, 0)
+	for _, child := range children {
+		if child.Status == "done" {
+			continue
+		}
+		incomplete = append(incomplete, IncompleteChildIssueResponse{
+			ID:           uuidToString(child.ID),
+			Identifier:   issuePrefix + "-" + strconv.Itoa(int(child.Number)),
+			Title:        child.Title,
+			Status:       child.Status,
+			AssigneeType: textToPtr(child.AssigneeType),
+			AssigneeID:   uuidToPtr(child.AssigneeID),
+			ProjectID:    uuidToPtr(child.ProjectID),
+		})
+	}
+	return incomplete
+}
+
+func (h *Handler) incompleteChildrenBlockingDone(ctx context.Context, issue db.Issue) ([]IncompleteChildIssueResponse, error) {
+	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
+	if err != nil {
+		return nil, err
+	}
+	return incompleteChildIssues(children, h.getIssuePrefix(ctx, issue.WorkspaceID)), nil
+}
+
+func (h *Handler) writeIssueDoneBlockedByChildren(w http.ResponseWriter, incomplete []IncompleteChildIssueResponse) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":               "cannot mark issue done while child issues are not done",
+		"code":                "child_issues_not_done",
+		"incomplete_children": incomplete,
+	})
+}
+
+func (h *Handler) issueDoneBlockedByMissingGongfengMR(ctx context.Context, issue db.Issue) (bool, error) {
+	if !issue.ProjectID.Valid {
+		return false, nil
+	}
+	resources, err := h.Queries.ListProjectResources(ctx, issue.ProjectID)
+	if err != nil {
+		return false, err
+	}
+	requiresMR := false
+	for _, resource := range resources {
+		if resource.ResourceType == "gongfeng_repo" {
+			requiresMR = true
+			break
+		}
+	}
+	if !requiresMR {
+		return false, nil
+	}
+	pullRequests, err := h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	if err != nil {
+		return false, err
+	}
+	return len(pullRequests) == 0, nil
+}
+
+func (h *Handler) writeIssueDoneBlockedByMissingMR(w http.ResponseWriter) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error": "cannot mark Gongfeng-backed issue done without a linked MR",
+		"code":  "missing_linked_mr",
+	})
+}
+
+var (
+	errIssueParentNotFound = errors.New("parent issue not found in this workspace")
+	errIssueParentCycle    = errors.New("circular parent relationship detected")
+)
+
+func (h *Handler) validateIssueParentInWorkspace(ctx context.Context, issue db.Issue, parentID pgtype.UUID) error {
+	if parentID == issue.ID {
+		return errIssueParentCycle
+	}
+	seen := map[string]struct{}{}
+	cursor := parentID
+	for cursor.Valid {
+		key := uuidToString(cursor)
+		if _, exists := seen[key]; exists {
+			return errIssueParentCycle
+		}
+		seen[key] = struct{}{}
+
+		ancestor, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID:          cursor,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil || !ancestor.ID.Valid {
+			return errIssueParentNotFound
+		}
+		if ancestor.ID == issue.ID {
+			return errIssueParentCycle
+		}
+		cursor = ancestor.ParentIssueID
+	}
+	return nil
+}
+
+func (h *Handler) validateProjectInWorkspace(ctx context.Context, workspaceID, projectID pgtype.UUID) error {
+	_, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		ID:          projectID,
+		WorkspaceID: workspaceID,
+	})
+	return err
+}
+
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
+		ID:              uuidToString(i.ID),
+		WorkspaceID:     uuidToString(i.WorkspaceID),
+		Number:          i.Number,
+		Identifier:      identifier,
+		Title:           i.Title,
+		Description:     textToPtr(i.Description),
+		Status:          i.Status,
+		Priority:        i.Priority,
+		AssigneeType:    textToPtr(i.AssigneeType),
+		AssigneeID:      uuidToPtr(i.AssigneeID),
+		CreatorType:     i.CreatorType,
+		CreatorID:       uuidToString(i.CreatorID),
+		ParentIssueID:   uuidToPtr(i.ParentIssueID),
+		ProjectID:       uuidToPtr(i.ProjectID),
+		Position:        i.Position,
+		StartDate:       dateToPtr(i.StartDate),
+		DueDate:         dateToPtr(i.DueDate),
+		CreatedAt:       timestampToString(i.CreatedAt),
+		UpdatedAt:       timestampToString(i.UpdatedAt),
+		WorkStartedAt:   timestampToPtr(i.WorkStartedAt),
+		WorkCompletedAt: timestampToPtr(i.WorkCompletedAt),
+		Metadata:        parseIssueMetadata(i.Metadata),
 	}
 }
 
@@ -205,6 +382,210 @@ type GroupedIssuesResponse struct {
 type groupedIssueRow struct {
 	db.ListIssuesRow
 	GroupTotal int64
+	Summary    issueListSummary
+}
+
+type IssueStatusBucketResponse struct {
+	Issues []IssueResponse `json:"issues"`
+	Total  int64           `json:"total"`
+}
+
+type ListIssueBucketsResponse struct {
+	ByStatus map[string]IssueStatusBucketResponse `json:"by_status"`
+}
+
+type issueBucketRow struct {
+	db.ListIssuesRow
+	StatusTotal int64
+	Summary     issueListSummary
+}
+
+type issueListRow struct {
+	db.ListIssuesRow
+	Summary issueListSummary
+}
+
+type issueListSummary struct {
+	AssigneeName      pgtype.Text
+	AssigneeAvatarURL pgtype.Text
+	ProjectTitle      pgtype.Text
+	ProjectIcon       pgtype.Text
+	ChildDone         int64
+	ChildTotal        int64
+	AgentRunningCount int64
+	AgentQueuedCount  int64
+	AgentIDs          []pgtype.UUID
+}
+
+const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
+       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata,
+       COALESCE(assignee_member.name, assignee_agent.name, assignee_squad.name) AS assignee_name,
+       COALESCE(assignee_member.avatar_url, assignee_agent.avatar_url, assignee_squad.avatar_url) AS assignee_avatar_url,
+       project.title AS project_title,
+       project.icon AS project_icon,
+       COALESCE(child_progress.child_done, 0)::bigint AS child_done,
+       COALESCE(child_progress.child_total, 0)::bigint AS child_total,
+       COALESCE(agent_activity.running_count, 0)::bigint AS agent_running_count,
+       COALESCE(agent_activity.queued_count, 0)::bigint AS agent_queued_count,
+       COALESCE(agent_activity.agent_ids, ARRAY[]::uuid[]) AS agent_ids`
+
+func issueListJoinSQL(visibleAgentIDsRef string) string {
+	return fmt.Sprintf(`LEFT JOIN "user" assignee_member
+       ON i.assignee_type = 'member'
+      AND assignee_member.id = i.assignee_id
+LEFT JOIN agent assignee_agent
+       ON i.assignee_type = 'agent'
+      AND assignee_agent.id = i.assignee_id
+      AND assignee_agent.workspace_id = i.workspace_id
+LEFT JOIN squad assignee_squad
+       ON i.assignee_type = 'squad'
+      AND assignee_squad.id = i.assignee_id
+      AND assignee_squad.workspace_id = i.workspace_id
+LEFT JOIN project
+       ON project.id = i.project_id
+      AND project.workspace_id = i.workspace_id
+LEFT JOIN (
+       SELECT parent_issue_id,
+              COUNT(*) FILTER (WHERE status IN ('done', 'cancelled'))::bigint AS child_done,
+              COUNT(*)::bigint AS child_total
+         FROM issue
+        WHERE workspace_id = $1
+          AND parent_issue_id IS NOT NULL
+        GROUP BY parent_issue_id
+) child_progress
+       ON child_progress.parent_issue_id = i.id
+LEFT JOIN (
+       SELECT issue_id,
+              COUNT(*) FILTER (WHERE status = 'running')::bigint AS running_count,
+              COUNT(*) FILTER (WHERE status IN ('queued', 'dispatched', 'waiting_local_directory'))::bigint AS queued_count,
+              ARRAY_AGG(DISTINCT agent_id) FILTER (
+                  WHERE status IN ('queued', 'dispatched', 'waiting_local_directory', 'running')
+              ) AS agent_ids
+         FROM agent_task_queue
+        WHERE issue_id IS NOT NULL
+          AND agent_id = ANY(%s::uuid[])
+          AND status IN ('queued', 'dispatched', 'waiting_local_directory', 'running')
+        GROUP BY issue_id
+) agent_activity
+       ON agent_activity.issue_id = i.id`, visibleAgentIDsRef)
+}
+
+func scanIssueListRow(rows interface{ Scan(dest ...any) error }, row *issueListRow) error {
+	return rows.Scan(issueListScanDest(row)...)
+}
+
+func issueListScanDest(row *issueListRow) []any {
+	return []any{
+		&row.ID,
+		&row.WorkspaceID,
+		&row.Title,
+		&row.Description,
+		&row.Status,
+		&row.Priority,
+		&row.AssigneeType,
+		&row.AssigneeID,
+		&row.CreatorType,
+		&row.CreatorID,
+		&row.ParentIssueID,
+		&row.Position,
+		&row.StartDate,
+		&row.DueDate,
+		&row.CreatedAt,
+		&row.UpdatedAt,
+		&row.Number,
+		&row.ProjectID,
+		&row.Metadata,
+		&row.Summary.AssigneeName,
+		&row.Summary.AssigneeAvatarURL,
+		&row.Summary.ProjectTitle,
+		&row.Summary.ProjectIcon,
+		&row.Summary.ChildDone,
+		&row.Summary.ChildTotal,
+		&row.Summary.AgentRunningCount,
+		&row.Summary.AgentQueuedCount,
+		&row.Summary.AgentIDs,
+	}
+}
+
+func issueListRowWithSummaryToResponse(row issueListRow, issuePrefix string) IssueResponse {
+	resp := issueListRowToResponse(row.ListIssuesRow, issuePrefix)
+	attachIssueListSummary(&resp, row.Summary)
+	return resp
+}
+
+func attachIssueListSummary(resp *IssueResponse, summary issueListSummary) {
+	if resp.AssigneeType != nil && resp.AssigneeID != nil {
+		name := unknownIssueAssigneeName(*resp.AssigneeType)
+		if summary.AssigneeName.Valid {
+			name = summary.AssigneeName.String
+		}
+		resp.Assignee = &IssueActorSummaryResponse{
+			Type:      *resp.AssigneeType,
+			ID:        *resp.AssigneeID,
+			Name:      name,
+			AvatarURL: textToPtr(summary.AssigneeAvatarURL),
+		}
+	}
+	if resp.ProjectID != nil && summary.ProjectTitle.Valid {
+		resp.Project = &IssueProjectSummaryResponse{
+			ID:    *resp.ProjectID,
+			Title: summary.ProjectTitle.String,
+			Icon:  textToPtr(summary.ProjectIcon),
+		}
+	}
+	resp.ChildProgress = &IssueChildProgressResponse{
+		Done:  summary.ChildDone,
+		Total: summary.ChildTotal,
+	}
+	agentIDs := make([]string, 0, len(summary.AgentIDs))
+	for _, id := range summary.AgentIDs {
+		if id.Valid {
+			agentIDs = append(agentIDs, uuidToString(id))
+		}
+	}
+	resp.AgentActivity = &IssueAgentActivitySummaryResponse{
+		RunningCount: summary.AgentRunningCount,
+		QueuedCount:  summary.AgentQueuedCount,
+		AgentIDs:     agentIDs,
+	}
+}
+
+func unknownIssueAssigneeName(assigneeType string) string {
+	switch assigneeType {
+	case "member":
+		return "未知成员"
+	case "agent":
+		return "未知智能体"
+	case "squad":
+		return "未知小队"
+	default:
+		return "未知负责人"
+	}
+}
+
+func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.Request, workspaceID string) ([]pgtype.UUID, bool) {
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return nil, false
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return nil, false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return nil, false
+	}
+	ids := make([]pgtype.UUID, 0, len(allowed))
+	for id := range allowed {
+		parsed, err := util.ParseUUID(id)
+		if err == nil {
+			ids = append(ids, parsed)
+		}
+	}
+	return ids, true
 }
 
 func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
@@ -218,7 +599,6 @@ func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
 type SearchIssueResponse struct {
 	IssueResponse
 	MatchSource               string  `json:"match_source"`
-	MatchedSnippet            *string `json:"matched_snippet,omitempty"`
 	MatchedDescriptionSnippet *string `json:"matched_description_snippet,omitempty"`
 	MatchedCommentSnippet     *string `json:"matched_comment_snippet,omitempty"`
 }
@@ -349,15 +729,16 @@ var identifierNumberRe = regexp.MustCompile(`(?i)^[a-z]+-(\d+)$`)
 // parseQueryNumber extracts an issue number from the query if it looks like
 // an identifier (e.g. "MUL-123") or a bare number (e.g. "123").
 func parseQueryNumber(q string) (int, bool) {
+	const maxIssueNumber = 2147483647
 	q = strings.TrimSpace(q)
 	// Check for identifier pattern like "MUL-123"
 	if m := identifierNumberRe.FindStringSubmatch(q); m != nil {
-		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 && n <= maxIssueNumber {
 			return n, true
 		}
 	}
 	// Check for bare number
-	if n, err := strconv.Atoi(q); err == nil && n > 0 {
+	if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= maxIssueNumber {
 		return n, true
 	}
 	return 0, false
@@ -693,10 +1074,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		if sr.matchedCommentContent != "" {
 			snippet := extractSnippet(sr.matchedCommentContent, q)
 			sir.MatchedCommentSnippet = &snippet
-			// Keep backward compat: also set MatchedSnippet for comment-source matches
-			if sr.matchSource == "comment" {
-				sir.MatchedSnippet = &snippet
-			}
 		}
 		// Populate description snippet when description matches
 		if sr.matchSource == "description" || descriptionContains(sr.issue.Description, q, terms) {
@@ -959,6 +1336,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	whereSql := strings.Join(where, " AND ")
+	countArgs := append([]any(nil), args...)
 
 	// Build ORDER BY clause.
 	orderBy := sortCol
@@ -971,16 +1349,20 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	orderBy += ", i.created_at DESC"
 
+	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	visibleAgentIDsRef := addArg(visibleAgentIDs)
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 
-	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata
+	query := fmt.Sprintf(`SELECT %s
 FROM issue i
+%s
 WHERE %s
 ORDER BY %s
-LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
+LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), whereSql, orderBy, limitRef, offsetRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -990,30 +1372,10 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	}
 	defer rows.Close()
 
-	var issues []db.ListIssuesRow
+	var issues []issueListRow
 	for rows.Next() {
-		var row db.ListIssuesRow
-		if err := rows.Scan(
-			&row.ID,
-			&row.WorkspaceID,
-			&row.Title,
-			&row.Description,
-			&row.Status,
-			&row.Priority,
-			&row.AssigneeType,
-			&row.AssigneeID,
-			&row.CreatorType,
-			&row.CreatorID,
-			&row.ParentIssueID,
-			&row.Position,
-			&row.StartDate,
-			&row.DueDate,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.Number,
-			&row.ProjectID,
-			&row.Metadata,
-		); err != nil {
+		var row issueListRow
+		if err := scanIssueListRow(rows, &row); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
 			return
@@ -1028,8 +1390,6 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 
 	// Get the true total count for pagination awareness.
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
-	// Count query uses the same args minus the OFFSET and LIMIT params (last two added).
-	countArgs := args[:len(args)-2]
 	var total int64
 	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		total = int64(len(issues))
@@ -1043,7 +1403,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
 	resp := make([]IssueResponse, len(issues))
 	for i, issue := range issues {
-		resp[i] = issueListRowToResponse(issue, prefix)
+		resp[i] = issueListRowWithSummaryToResponse(issue, prefix)
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -1055,6 +1415,257 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		"issues": resp,
 		"total":  total,
 	})
+}
+
+func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if h.DB == nil {
+		writeError(w, http.StatusInternalServerError, "database is unavailable")
+		return
+	}
+
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+
+	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
+	if len(statuses) == 0 {
+		statuses = validIssueStatuses
+	}
+	for _, status := range statuses {
+		if !slices.Contains(validIssueStatuses, status) {
+			writeError(w, http.StatusBadRequest, "invalid statuses")
+			return
+		}
+	}
+
+	limit := 50
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	where := []string{"i.workspace_id = $1", "i.status = ANY($2::text[])"}
+	args := []any{wsUUID, statuses}
+	addArg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+
+	if p := r.URL.Query().Get("priority"); p != "" {
+		where = append(where, fmt.Sprintf("i.priority = %s", addArg(p)))
+	}
+	if raw := r.URL.Query().Get("assignee_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "assignee_id")
+		if !ok {
+			return
+		}
+		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(id)))
+	}
+	if raw := r.URL.Query().Get("assignee_ids"); raw != "" {
+		ids, ok := parseUUIDParamList(w, raw, "assignee_ids")
+		if !ok {
+			return
+		}
+		if len(ids) > 0 {
+			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
+		}
+	}
+	if raw := r.URL.Query().Get("creator_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")
+		if !ok {
+			return
+		}
+		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(id)))
+	}
+	if raw := r.URL.Query().Get("project_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "project_id")
+		if !ok {
+			return
+		}
+		where = append(where, fmt.Sprintf("i.project_id = %s::uuid", addArg(id)))
+	}
+	if raw := r.URL.Query().Get("involves_user_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "involves_user_id")
+		if !ok {
+			return
+		}
+		ref := addArg(id)
+		where = append(where, fmt.Sprintf(`(
+    (i.assignee_type = 'agent' AND i.assignee_id IN (
+       SELECT a.id FROM agent a
+        WHERE a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+    ))
+    OR (i.assignee_type = 'squad' AND i.assignee_id IN (
+       SELECT sm.squad_id
+         FROM squad_member sm
+         JOIN squad s ON s.id = sm.squad_id
+        WHERE s.workspace_id = $1
+          AND sm.member_type = 'member'
+          AND sm.member_id   = %[1]s::uuid
+       UNION
+       SELECT s.id
+         FROM squad s
+         JOIN agent a ON a.id = s.leader_id
+        WHERE s.workspace_id = $1
+          AND a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+       UNION
+       SELECT sm.squad_id
+         FROM squad_member sm
+         JOIN squad s ON s.id = sm.squad_id
+         JOIN agent a ON a.id = sm.member_id
+        WHERE s.workspace_id = $1
+          AND sm.member_type = 'agent'
+          AND a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+    ))
+)`, ref))
+	}
+	metadataFilter, ok := parseMetadataFilterParam(w, r.URL.Query().Get("metadata"))
+	if !ok {
+		return
+	}
+	if metadataFilter != nil {
+		where = append(where, fmt.Sprintf("i.metadata @> %s::jsonb", addArg(string(metadataFilter))))
+	}
+	dateFilter, ok := parseIssueDateFilter(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	where = appendIssueDateFilter(where, addArg, dateFilter)
+
+	sortCol := "position"
+	if s := r.URL.Query().Get("sort"); s != "" {
+		switch s {
+		case "position", "title", "created_at", "start_date", "due_date":
+			sortCol = s
+		case "priority":
+			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+		default:
+			writeError(w, http.StatusBadRequest, "invalid sort value")
+			return
+		}
+	}
+	sortDir := "ASC"
+	if sortCol != "position" {
+		if d := r.URL.Query().Get("direction"); d != "" {
+			switch strings.ToLower(d) {
+			case "asc":
+				sortDir = "ASC"
+			case "desc":
+				sortDir = "DESC"
+			default:
+				writeError(w, http.StatusBadRequest, "invalid direction value")
+				return
+			}
+		}
+	}
+	orderBy := sortCol
+	if !strings.HasPrefix(sortCol, "CASE") {
+		orderBy = "i." + sortCol
+	}
+	orderBy += " " + sortDir
+	if sortCol == "start_date" || sortCol == "due_date" {
+		orderBy += " NULLS LAST"
+	}
+	orderBy += ", i.created_at DESC"
+
+	whereSQL := strings.Join(where, " AND ")
+	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	visibleAgentIDsRef := addArg(visibleAgentIDs)
+	offsetRef := addArg(int64(offset))
+	limitRef := addArg(int64(limit))
+	query := fmt.Sprintf(`WITH ranked AS (
+  SELECT %s,
+         COUNT(*) OVER (PARTITION BY i.status) AS status_total,
+         ROW_NUMBER() OVER (PARTITION BY i.status ORDER BY %s) AS status_row_number
+    FROM issue i
+    %s
+   WHERE %s
+)
+SELECT id, workspace_id, title, description, status, priority,
+       assignee_type, assignee_id, creator_type, creator_id,
+       parent_issue_id, position, start_date, due_date, created_at, updated_at, number, project_id, metadata,
+       assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total,
+       agent_running_count, agent_queued_count, agent_ids, status_total
+  FROM ranked
+ WHERE status_row_number > %s
+   AND status_row_number <= (%s + %s)
+ ORDER BY status, status_row_number`, issueListSelectSQL, orderBy, issueListJoinSQL(visibleAgentIDsRef), whereSQL, offsetRef, offsetRef, limitRef)
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		slog.Warn("ListIssueBuckets query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
+		return
+	}
+	defer rows.Close()
+
+	bucketRows := []issueBucketRow{}
+	for rows.Next() {
+		var row issueBucketRow
+		base := issueListRow{ListIssuesRow: row.ListIssuesRow, Summary: row.Summary}
+		dest := append(issueListScanDest(&base), &row.StatusTotal)
+		if err := rows.Scan(dest...); err != nil {
+			slog.Warn("ListIssueBuckets scan failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
+			return
+		}
+		row.ListIssuesRow = base.ListIssuesRow
+		row.Summary = base.Summary
+		bucketRows = append(bucketRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("ListIssueBuckets rows failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
+		return
+	}
+
+	ids := make([]pgtype.UUID, len(bucketRows))
+	for i, row := range bucketRows {
+		ids[i] = row.ID
+	}
+	prefix := h.getIssuePrefix(ctx, wsUUID)
+	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+	byStatus := make(map[string]IssueStatusBucketResponse, len(statuses))
+	for _, status := range statuses {
+		byStatus[status] = IssueStatusBucketResponse{Issues: []IssueResponse{}, Total: 0}
+	}
+	for _, row := range bucketRows {
+		status := row.Status
+		issue := issueListRowWithSummaryToResponse(issueListRow{
+			ListIssuesRow: row.ListIssuesRow,
+			Summary:       row.Summary,
+		}, prefix)
+		labels := labelsMap[issue.ID]
+		if labels == nil {
+			labels = []LabelResponse{}
+		}
+		issue.Labels = &labels
+		bucket := byStatus[status]
+		bucket.Issues = append(bucket.Issues, issue)
+		bucket.Total = row.StatusTotal
+		byStatus[status] = bucket
+	}
+
+	writeJSON(w, http.StatusOK, ListIssueBucketsResponse{ByStatus: byStatus})
 }
 
 type issueActorFilter struct {
@@ -1467,26 +2078,31 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
+	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	visibleAgentIDsRef := addArg(visibleAgentIDs)
 	query := fmt.Sprintf(`
 WITH ranked AS (
 	SELECT
-		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-		i.parent_issue_id, i.position, i.due_date, i.created_at, i.updated_at,
-		i.number, i.project_id, i.metadata,
+		%s,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
 		ROW_NUMBER() OVER (
 			PARTITION BY i.assignee_type, i.assignee_id
 			ORDER BY %s
 		) AS rn
 	FROM issue i
+	%s
 	WHERE %s
 )
 SELECT
 	id, workspace_id, title, description, status, priority,
 	assignee_type, assignee_id, creator_type, creator_id,
-	parent_issue_id, position, due_date, created_at, updated_at,
-	number, project_id, metadata, group_total
+	parent_issue_id, position, start_date, due_date, created_at, updated_at,
+	number, project_id, metadata,
+	assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total,
+	agent_running_count, agent_queued_count, agent_ids, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY
@@ -1498,7 +2114,7 @@ ORDER BY
 	END,
 	assignee_type NULLS LAST,
 	assignee_id NULLS LAST,
-	rn`, intraGroupOrder, strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
+	rn`, issueListSelectSQL, intraGroupOrder, issueListJoinSQL(visibleAgentIDsRef), strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1511,31 +2127,15 @@ ORDER BY
 	groupedRows := []groupedIssueRow{}
 	for rows.Next() {
 		var row groupedIssueRow
-		if err := rows.Scan(
-			&row.ID,
-			&row.WorkspaceID,
-			&row.Title,
-			&row.Description,
-			&row.Status,
-			&row.Priority,
-			&row.AssigneeType,
-			&row.AssigneeID,
-			&row.CreatorType,
-			&row.CreatorID,
-			&row.ParentIssueID,
-			&row.Position,
-			&row.DueDate,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.Number,
-			&row.ProjectID,
-			&row.Metadata,
-			&row.GroupTotal,
-		); err != nil {
+		base := issueListRow{ListIssuesRow: row.ListIssuesRow, Summary: row.Summary}
+		dest := append(issueListScanDest(&base), &row.GroupTotal)
+		if err := rows.Scan(dest...); err != nil {
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list grouped issues")
 			return
 		}
+		row.ListIssuesRow = base.ListIssuesRow
+		row.Summary = base.Summary
 		groupedRows = append(groupedRows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1568,7 +2168,10 @@ ORDER BY
 			})
 		}
 
-		issue := issueListRowToResponse(row.ListIssuesRow, prefix)
+		issue := issueListRowWithSummaryToResponse(issueListRow{
+			ListIssuesRow: row.ListIssuesRow,
+			Summary:       row.Summary,
+		}, prefix)
 		labels := labelsMap[issue.ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -1768,13 +2371,23 @@ type QuickCreateIssueRequest struct {
 	Prompt        string   `json:"prompt"`
 	ProjectID     string   `json:"project_id,omitempty"`
 	ParentIssueID string   `json:"parent_issue_id,omitempty"`
+	Status        string   `json:"status,omitempty"`
+	Priority      string   `json:"priority,omitempty"`
+	AssigneeType  string   `json:"assignee_type,omitempty"`
+	AssigneeID    string   `json:"assignee_id,omitempty"`
+	StartDate     string   `json:"start_date,omitempty"`
+	DueDate       string   `json:"due_date,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
-// QuickCreateIssueResponse echoes the queued task id so the frontend can
-// correlate the eventual inbox item, even though completion is fully async.
+// QuickCreateIssueResponse returns either a queued quick-create task or a
+// directly-created source-backed issue when the server can materialize the
+// source before dispatch.
 type QuickCreateIssueResponse struct {
-	TaskID string `json:"task_id"`
+	TaskID            string `json:"task_id,omitempty"`
+	IssueID           string `json:"issue_id,omitempty"`
+	Identifier        string `json:"identifier,omitempty"`
+	SourceFetchStatus string `json:"source_fetch_status,omitempty"`
 }
 
 func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
@@ -1846,12 +2459,12 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Reuse the same workspace-membership / archived / private-agent
+	// Reuse the same workspace-membership / archived / personal-agent
 	// ownership rules as `validateAssigneePair` so a user can't POST a
-	// private agent_id they shouldn't be able to dispatch (the frontend
+	// personal agent_id they shouldn't be able to dispatch (the frontend
 	// filters them out, but the handler is the trust boundary). Squad
 	// picks reach this with the resolved leader agent; the same rules
-	// apply — a private leader behind a squad the user can't reach
+	// apply — a personal leader behind a squad the user can't reach
 	// should still be rejected.
 	if status, msg := h.validateAssigneePair(
 		r.Context(), r, workspaceID,
@@ -1942,7 +2555,92 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		parentIssueUUID = pid
 	}
 
-	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs)
+	status := strings.TrimSpace(req.Status)
+	if status != "" && !slices.Contains(validIssueStatuses, status) {
+		writeError(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	priority := strings.TrimSpace(req.Priority)
+	if priority != "" && !slices.Contains(validIssuePriorities, priority) {
+		writeError(w, http.StatusBadRequest, "invalid priority")
+		return
+	}
+	assigneeType := strings.TrimSpace(req.AssigneeType)
+	assigneeID := strings.TrimSpace(req.AssigneeID)
+	var assigneeUUID pgtype.UUID
+	if assigneeType != "" || assigneeID != "" {
+		if assigneeType == "" || assigneeID == "" {
+			writeError(w, http.StatusBadRequest, "assignee_type and assignee_id must be provided together")
+			return
+		}
+		if !slices.Contains([]string{"member", "agent", "squad"}, assigneeType) {
+			writeError(w, http.StatusBadRequest, "invalid assignee_type")
+			return
+		}
+		parsed, ok := parseUUIDOrBadRequest(w, assigneeID, "assignee_id")
+		if !ok {
+			return
+		}
+		if statusCode, msg := h.validateAssigneePair(r.Context(), r, workspaceID, pgtype.Text{String: assigneeType, Valid: true}, parsed); statusCode != 0 {
+			writeError(w, statusCode, msg)
+			return
+		}
+		assigneeUUID = parsed
+	}
+	startDate := strings.TrimSpace(req.StartDate)
+	if startDate != "" && !isDateOnly(startDate) {
+		writeError(w, http.StatusBadRequest, "invalid start_date")
+		return
+	}
+	dueDate := strings.TrimSpace(req.DueDate)
+	if dueDate != "" && !isDateOnly(dueDate) {
+		writeError(w, http.StatusBadRequest, "invalid due_date")
+		return
+	}
+
+	if ref, ok := parseTAPDSourceURL(prompt); ok {
+		resp, handled := h.quickCreateTAPDSourceIssue(r.Context(), w, quickCreateTAPDSourceIssueParams{
+			Prompt:         prompt,
+			Ref:            ref,
+			WorkspaceID:    wsUUID,
+			RequesterID:    requesterUUID,
+			RequesterIDRaw: requesterID,
+			HasSquad:       hasSquad,
+			AgentID:        agentUUID,
+			SquadID:        squadUUID,
+			ProjectID:      projectUUID,
+			ParentIssueID:  parentIssueUUID,
+			AttachmentIDs:  attachmentIDs,
+			Status:         status,
+			Priority:       priority,
+			AssigneeType:   assigneeType,
+			AssigneeID:     assigneeUUID,
+			StartDate:      startDate,
+			DueDate:        dueDate,
+		})
+		if !handled {
+			return
+		}
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
+	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), service.EnqueueQuickCreateTaskParams{
+		WorkspaceID:   wsUUID,
+		RequesterID:   requesterUUID,
+		AgentID:       agentUUID,
+		SquadID:       squadUUID,
+		Prompt:        prompt,
+		ProjectID:     projectUUID,
+		ParentIssueID: parentIssueUUID,
+		AttachmentIDs: attachmentIDs,
+		Status:        status,
+		Priority:      priority,
+		AssigneeType:  assigneeType,
+		AssigneeID:    assigneeUUID,
+		StartDate:     startDate,
+		DueDate:       dueDate,
+	})
 	if err != nil {
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
@@ -1950,6 +2648,308 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, QuickCreateIssueResponse{TaskID: uuidToString(task.ID)})
+}
+
+type quickCreateTAPDSourceIssueParams struct {
+	Prompt         string
+	Ref            tapdSourceRef
+	WorkspaceID    pgtype.UUID
+	RequesterID    pgtype.UUID
+	RequesterIDRaw string
+	HasSquad       bool
+	AgentID        pgtype.UUID
+	SquadID        pgtype.UUID
+	ProjectID      pgtype.UUID
+	ParentIssueID  pgtype.UUID
+	AttachmentIDs  []pgtype.UUID
+	Status         string
+	Priority       string
+	AssigneeType   string
+	AssigneeID     pgtype.UUID
+	StartDate      string
+	DueDate        string
+}
+
+func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.ResponseWriter, p quickCreateTAPDSourceIssueParams) (QuickCreateIssueResponse, bool) {
+	fetchReq := RecordIssueSourceFetchRequest{
+		Provider:     externalCredentialProviderTAPD,
+		URL:          p.Ref.URL,
+		WorkspaceID:  p.Ref.WorkspaceID,
+		ResourceType: p.Ref.ResourceType,
+		ResourceID:   p.Ref.ResourceID,
+	}
+	fetched, fetchErr := h.autoFetchTAPDSource(ctx, p.RequesterIDRaw, fetchReq, nil)
+	if fetchErr != nil {
+		fetched = fetchReq
+		fetched.Provider = externalCredentialProviderTAPD
+		fetched.FetchProvider = "tapd_mcp"
+		fetched.Status = "fetch_failed"
+		fetched.Error = fetchErr.Error()
+	}
+
+	metadata := map[string]json.RawMessage{}
+	setRawMetadataString(metadata, "source_provider", externalCredentialProviderTAPD)
+	setRawMetadataString(metadata, "source_url", p.Ref.URL)
+	setRawMetadataString(metadata, "tapd_workspace_id", p.Ref.WorkspaceID)
+	setRawMetadataString(metadata, "tapd_resource_type", p.Ref.ResourceType)
+	setRawMetadataString(metadata, "tapd_resource_id", p.Ref.ResourceID)
+	if p.Ref.ResourceType == "markdown_wiki" {
+		setRawMetadataString(metadata, "tapd_wiki_id", p.Ref.ResourceID)
+	}
+	metadata = h.enrichSourceCredentialMetadata(ctx, metadata, p.RequesterIDRaw)
+	for key, value := range sourceFetchMetadata(fetched) {
+		raw, _ := json.Marshal(value)
+		metadata[key] = raw
+	}
+	if fetchErr == nil {
+		setRawMetadataString(metadata, "source_summary_status", "pending")
+		setRawMetadataString(metadata, "source_summary_mode", "agent_task")
+	}
+	validatedMetadata, err := validateIssueMetadataObject(metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return QuickCreateIssueResponse{}, false
+	}
+
+	issueStatus := firstNonEmpty(p.Status, "todo")
+	if fetchErr != nil {
+		issueStatus = "blocked"
+	}
+	priority := firstNonEmpty(p.Priority, "none")
+	title := firstNonEmpty(fetched.Title, tapdSourceReadFailureTitle(p.Ref))
+	description := buildQuickCreateTAPDDescription(fetched, fetchErr)
+
+	assigneeType := p.AssigneeType
+	assigneeID := p.AssigneeID
+	if assigneeType == "" || !assigneeID.Valid {
+		if p.HasSquad {
+			assigneeType = "squad"
+			assigneeID = p.SquadID
+		} else {
+			assigneeType = "agent"
+			assigneeID = p.AgentID
+		}
+	}
+
+	startDate := pgtype.Date{}
+	if p.StartDate != "" {
+		parsed, err := util.ParseCalendarDate(p.StartDate)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid start_date format, expected YYYY-MM-DD")
+			return QuickCreateIssueResponse{}, false
+		}
+		startDate = parsed
+	}
+	dueDate := pgtype.Date{}
+	if p.DueDate != "" {
+		parsed, err := util.ParseCalendarDate(p.DueDate)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid due_date format, expected YYYY-MM-DD")
+			return QuickCreateIssueResponse{}, false
+		}
+		dueDate = parsed
+	}
+
+	prefix := h.getIssuePrefix(ctx, p.WorkspaceID)
+	buildAttachmentResponses := func(atts []db.Attachment) []AttachmentResponse {
+		if len(atts) == 0 {
+			return nil
+		}
+		out := make([]AttachmentResponse, len(atts))
+		for i, a := range atts {
+			out[i] = h.attachmentToResponse(a)
+		}
+		return out
+	}
+	res, err := h.IssueService.Create(ctx, service.IssueCreateParams{
+		WorkspaceID:   p.WorkspaceID,
+		Title:         title,
+		Description:   pgtype.Text{String: description, Valid: true},
+		Status:        issueStatus,
+		Priority:      priority,
+		AssigneeType:  pgtype.Text{String: assigneeType, Valid: assigneeType != ""},
+		AssigneeID:    assigneeID,
+		CreatorType:   "member",
+		CreatorID:     p.RequesterID,
+		ParentIssueID: p.ParentIssueID,
+		ProjectID:     p.ProjectID,
+		StartDate:     startDate,
+		DueDate:       dueDate,
+		AttachmentIDs: p.AttachmentIDs,
+		Metadata:      validatedMetadata,
+	}, service.IssueCreateOpts{
+		ActorID:             p.RequesterIDRaw,
+		Platform:            "web",
+		SuppressAutoEnqueue: true,
+		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
+			payload := issueToResponse(issue, prefix)
+			payload.Attachments = buildAttachmentResponses(atts)
+			return map[string]any{"issue": payload}
+		},
+	})
+	if errors.Is(err, service.ErrParentIssueNotFound) {
+		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
+		return QuickCreateIssueResponse{}, false
+	}
+	if errors.Is(err, service.ErrProjectNotFound) {
+		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return QuickCreateIssueResponse{}, false
+	}
+	if err != nil {
+		slog.Warn("quick-create TAPD issue create failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create TAPD issue: "+err.Error())
+		return QuickCreateIssueResponse{}, false
+	}
+	if fetchErr == nil {
+		if h.TaskService == nil {
+			h.applyQuickCreateTAPDSourceSummaryFallback(ctx, res.Issue, fetched, errors.New("task service unavailable"))
+			h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
+			return QuickCreateIssueResponse{
+				IssueID:           uuidToString(res.Issue.ID),
+				Identifier:        issueToResponse(res.Issue, prefix).Identifier,
+				SourceFetchStatus: fetched.Status,
+			}, true
+		}
+		task, err := h.TaskService.EnqueueIssueSourceSummaryTask(ctx, res.Issue, p.AgentID)
+		if err != nil {
+			slog.Warn("quick-create TAPD source summary task enqueue failed",
+				"issue_id", uuidToString(res.Issue.ID),
+				"agent_id", uuidToString(p.AgentID),
+				"error", err,
+			)
+			h.applyQuickCreateTAPDSourceSummaryFallback(ctx, res.Issue, fetched, err)
+			h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
+		} else if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          res.Issue.ID,
+			WorkspaceID: res.Issue.WorkspaceID,
+			Key:         "source_summary_task_id",
+			Value:       jsonStringBytes(uuidToString(task.ID)),
+		}); err != nil {
+			slog.Warn("quick-create TAPD source summary task metadata write failed",
+				"issue_id", uuidToString(res.Issue.ID),
+				"task_id", uuidToString(task.ID),
+				"error", err,
+			)
+		}
+	}
+
+	return QuickCreateIssueResponse{
+		IssueID:           uuidToString(res.Issue.ID),
+		Identifier:        issueToResponse(res.Issue, prefix).Identifier,
+		SourceFetchStatus: fetched.Status,
+	}, true
+}
+
+func buildQuickCreateTAPDDescription(fetched RecordIssueSourceFetchRequest, fetchErr error) string {
+	if fetchErr != nil {
+		var b strings.Builder
+		b.WriteString("## 来源抓取失败\n")
+		b.WriteString(fetched.Error)
+		b.WriteString("\n")
+		return b.String()
+	}
+	return buildQuickCreateTAPDSummaryPendingDescription()
+}
+
+func buildQuickCreateTAPDSummaryPendingDescription() string {
+	var b strings.Builder
+	b.WriteString("## 需求摘要\n")
+	b.WriteString("摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要。\n")
+	return strings.TrimSpace(b.String())
+}
+
+func buildQuickCreateTAPDLocalSummaryDescription(fetched RecordIssueSourceFetchRequest) string {
+	body := strings.TrimSpace(firstNonEmpty(fetched.BodyExcerpt, fetched.Summary))
+	if len([]rune(body)) > 900 {
+		body = string([]rune(body)[:900]) + "..."
+	}
+	var b strings.Builder
+	b.WriteString("## 需求摘要\n")
+	if fetched.Title != "" {
+		b.WriteString(fetched.Title)
+		if body != "" && body != fetched.Title {
+			b.WriteString("\n\n")
+			b.WriteString(body)
+		}
+	} else if body != "" {
+		b.WriteString(body)
+	} else {
+		b.WriteString("TAPD 来源未返回可用于摘要的正文。")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context, issue db.Issue, fetched RecordIssueSourceFetchRequest, cause error) {
+	description := buildQuickCreateTAPDLocalSummaryDescription(fetched)
+	updated, err := h.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+		ID:            issue.ID,
+		Description:   pgtype.Text{String: description, Valid: true},
+		AssigneeType:  issue.AssigneeType,
+		AssigneeID:    issue.AssigneeID,
+		StartDate:     issue.StartDate,
+		DueDate:       issue.DueDate,
+		ParentIssueID: issue.ParentIssueID,
+		ProjectID:     issue.ProjectID,
+	})
+	if err != nil {
+		slog.Warn("quick-create TAPD source summary fallback update failed",
+			"issue_id", uuidToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Key:         "source_summary_status",
+		Value:       jsonStringBytes("failed"),
+	}); err != nil {
+		slog.Warn("quick-create TAPD source summary fallback metadata failed",
+			"issue_id", uuidToString(issue.ID),
+			"key", "source_summary_status",
+			"error", err,
+		)
+	}
+	if cause != nil {
+		if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         "source_summary_error",
+			Value:       jsonStringBytes(cause.Error()),
+		}); err != nil {
+			slog.Warn("quick-create TAPD source summary fallback metadata failed",
+				"issue_id", uuidToString(issue.ID),
+				"key", "source_summary_error",
+				"error", err,
+			)
+		}
+	}
+	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
+	h.publish(protocol.EventIssueUpdated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
+		"issue":               issueToResponse(updated, prefix),
+		"description_changed": true,
+	})
+}
+
+func tapdSourceReadFailureTitle(ref tapdSourceRef) string {
+	switch ref.ResourceType {
+	case "story":
+		return "TAPD Story 读取失败：" + ref.ResourceID
+	case "task":
+		return "TAPD Task 读取失败：" + ref.ResourceID
+	default:
+		return "TAPD Wiki 读取失败：" + ref.ResourceID
+	}
+}
+
+func setRawMetadataString(metadata map[string]json.RawMessage, key, value string) {
+	raw, _ := json.Marshal(value)
+	metadata[key] = raw
+}
+
+func jsonStringBytes(value string) []byte {
+	raw, _ := json.Marshal(value)
+	return raw
 }
 
 // writeAgentUnavailable returns 422 with a stable error code so the modal
@@ -1961,6 +2961,11 @@ func writeAgentUnavailable(w http.ResponseWriter, reason string) {
 		"code":   "agent_unavailable",
 		"reason": reason,
 	})
+}
+
+func isDateOnly(value string) bool {
+	_, err := time.Parse("2006-01-02", value)
+	return err == nil
 }
 
 // isRuntimeOnline returns true when the given runtime is currently
@@ -2041,17 +3046,18 @@ func readRuntimeCLIVersion(metadata []byte) string {
 }
 
 type CreateIssueRequest struct {
-	Title         string   `json:"title"`
-	Description   *string  `json:"description"`
-	Status        string   `json:"status"`
-	Priority      string   `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
-	StartDate     *string  `json:"start_date"`
-	DueDate       *string  `json:"due_date"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	Title         string                     `json:"title"`
+	Description   *string                    `json:"description"`
+	Status        string                     `json:"status"`
+	Priority      string                     `json:"priority"`
+	AssigneeType  *string                    `json:"assignee_type"`
+	AssigneeID    *string                    `json:"assignee_id"`
+	ParentIssueID *string                    `json:"parent_issue_id"`
+	ProjectID     *string                    `json:"project_id"`
+	StartDate     *string                    `json:"start_date"`
+	DueDate       *string                    `json:"due_date"`
+	AttachmentIDs []string                   `json:"attachment_ids,omitempty"`
+	Metadata      map[string]json.RawMessage `json:"metadata,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -2059,12 +3065,6 @@ type CreateIssueRequest struct {
 	// origin_id=agent_task_queue.id).
 	OriginType *string `json:"origin_type,omitempty"`
 	OriginID   *string `json:"origin_id,omitempty"`
-
-	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
-}
-
-func duplicateIssueMessage(issue IssueResponse) string {
-	return issueguard.DuplicateMessage(issue.Identifier, issue.Title, issue.Status)
 }
 
 func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
@@ -2103,6 +3103,16 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateIssueEnum(w, "priority", priority, validIssuePriorities) {
+		return
+	}
+	descriptionText := ""
+	if req.Description != nil {
+		descriptionText = *req.Description
+	}
+	req.Metadata = h.enrichIssueSourceMetadata(r.Context(), req.Metadata, creatorID, req.Title, descriptionText)
+	metadata, err := validateIssueMetadataObject(req.Metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -2203,6 +3213,29 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// payload builder and the HTTP response share the same value.
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
 
+	if originType.Valid && originID.Valid {
+		existing, err := h.Queries.GetIssueByOrigin(r.Context(), db.GetIssueByOriginParams{
+			WorkspaceID: wsUUID,
+			OriginType:  originType,
+			OriginID:    originID,
+		})
+		if err == nil {
+			slog.Info("origin-stamped issue create reused existing issue",
+				"issue_id", uuidToString(existing.ID),
+				"origin_type", originType.String,
+				"origin_id", uuidToString(originID),
+				"workspace_id", workspaceID,
+			)
+			writeJSON(w, http.StatusOK, issueToResponse(existing, prefix))
+			return
+		}
+		if !isNotFound(err) {
+			slog.Warn("origin-stamped issue lookup failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to check issue origin")
+			return
+		}
+	}
+
 	// Analytics agent ID: assignee agent when the issue is being assigned
 	// to an agent, otherwise the creator agent for agent-authored issues.
 	// Resolved here (not in the service) because creator identity is HTTP-side.
@@ -2226,23 +3259,23 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		AttachmentIDs:  attachmentIDs,
-		AllowDuplicate: req.AllowDuplicate,
+		WorkspaceID:   wsUUID,
+		Title:         req.Title,
+		Description:   ptrToText(req.Description),
+		Status:        status,
+		Priority:      priority,
+		AssigneeType:  assigneeType,
+		AssigneeID:    assigneeID,
+		CreatorType:   creatorType,
+		CreatorID:     parseUUID(actualCreatorID),
+		ParentIssueID: parentIssueID,
+		ProjectID:     projectID,
+		StartDate:     startDate,
+		DueDate:       dueDate,
+		OriginType:    originType,
+		OriginID:      originID,
+		AttachmentIDs: attachmentIDs,
+		Metadata:      metadata,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
@@ -2254,22 +3287,16 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	if errors.Is(err, service.ErrActiveDuplicate) {
-		dup := *res.DuplicateIssue
-		existing := issueToResponse(dup, h.getIssuePrefix(r.Context(), dup.WorkspaceID))
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"code":  "active_duplicate_issue",
-			"error": duplicateIssueMessage(existing),
-			"issue": existing,
-		})
-		return
-	}
 	if errors.Is(err, service.ErrParentIssueNotFound) {
 		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 		return
 	}
 	if errors.Is(err, service.ErrProjectNotFound) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return
+	}
+	if isCheckViolation(err) {
+		writeError(w, http.StatusBadRequest, "metadata exceeds the 8KB size limit")
 		return
 	}
 	if err != nil {
@@ -2284,6 +3311,224 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	resp := issueToResponse(issue, prefix)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) enrichIssueSourceMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string, texts ...string) map[string]json.RawMessage {
+	metadata = enrichTAPDSourceMetadataFromText(metadata, texts...)
+	return h.enrichSourceCredentialMetadata(ctx, metadata, creatorUserID)
+}
+
+func enrichTAPDSourceMetadataFromText(metadata map[string]json.RawMessage, texts ...string) map[string]json.RawMessage {
+	sourceURL := metadataStringPreserve(metadata, "source_url")
+	ref, ok := parseTAPDSourceURL(sourceURL)
+	if !ok && sourceURL != "" {
+		return metadata
+	}
+	if !ok {
+		for _, text := range texts {
+			ref, ok = parseTAPDSourceURL(text)
+			if ok {
+				break
+			}
+		}
+	}
+	if !ok {
+		return metadata
+	}
+	provider, hasProvider := metadataStringPreserve(metadata, "source_provider"), false
+	if provider != "" {
+		hasProvider = true
+	}
+	if hasProvider && !strings.EqualFold(provider, externalCredentialProviderTAPD) {
+		return metadata
+	}
+	out := make(map[string]json.RawMessage, len(metadata)+6)
+	for key, value := range metadata {
+		out[key] = value
+	}
+	setIfMissing := func(key, value string) {
+		if strings.TrimSpace(value) == "" || metadataStringPreserve(out, key) != "" {
+			return
+		}
+		raw, _ := json.Marshal(value)
+		out[key] = raw
+	}
+	setIfMissing("source_provider", externalCredentialProviderTAPD)
+	setIfMissing("source_url", ref.URL)
+	setIfMissing("tapd_workspace_id", ref.WorkspaceID)
+	setIfMissing("tapd_resource_type", ref.ResourceType)
+	setIfMissing("tapd_resource_id", ref.ResourceID)
+	if ref.ResourceType == "markdown_wiki" {
+		setIfMissing("tapd_wiki_id", ref.ResourceID)
+	}
+	return out
+}
+
+func parseTAPDSourceURL(value string) (tapdSourceRef, bool) {
+	if wiki, ok := parseTAPDMarkdownWikiURL(value); ok {
+		return tapdSourceRef{
+			WorkspaceID:  wiki.WorkspaceID,
+			ResourceType: "markdown_wiki",
+			ResourceID:   wiki.WikiID,
+			URL:          wiki.URL,
+		}, true
+	}
+	if ref, ok := parseTAPDStoryURL(value); ok {
+		return ref, true
+	}
+	return tapdSourceRef{}, false
+}
+
+func parseTAPDStoryURL(value string) (tapdSourceRef, bool) {
+	match := tapdProngStoryURLRE.FindStringSubmatch(value)
+	if len(match) == 3 {
+		workspaceID := strings.TrimSpace(match[1])
+		storyID := strings.TrimSpace(match[2])
+		if workspaceID != "" && storyID != "" {
+			return tapdSourceRef{
+				WorkspaceID:  workspaceID,
+				ResourceType: "story",
+				ResourceID:   storyID,
+				URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
+			}, true
+		}
+	}
+	match = tapdStoryListURLRE.FindStringSubmatch(strings.ReplaceAll(value, "&amp;", "&"))
+	if len(match) == 3 {
+		workspaceID := strings.TrimSpace(match[1])
+		storyID := strings.TrimSpace(match[2])
+		if workspaceID != "" && storyID != "" {
+			return tapdSourceRef{
+				WorkspaceID:  workspaceID,
+				ResourceType: "story",
+				ResourceID:   storyID,
+				URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
+			}, true
+		}
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || !strings.HasSuffix(strings.ToLower(parsed.Host), "tapd.cn") {
+		return tapdSourceRef{}, false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "tapd_fe" || parts[2] != "story" {
+		return tapdSourceRef{}, false
+	}
+	workspaceID := strings.TrimSpace(parts[1])
+	previewID := strings.TrimSpace(parsed.Query().Get("dialog_preview_id"))
+	previewMatch := tapdStoryPreviewIDRE.FindStringSubmatch(previewID)
+	if workspaceID == "" || len(previewMatch) != 2 || strings.TrimSpace(previewMatch[1]) == "" {
+		return tapdSourceRef{}, false
+	}
+	storyID := strings.TrimSpace(previewMatch[1])
+	return tapdSourceRef{
+		WorkspaceID:  workspaceID,
+		ResourceType: "story",
+		ResourceID:   storyID,
+		URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
+	}, true
+}
+
+func parseTAPDMarkdownWikiURL(value string) (tapdWikiSourceRef, bool) {
+	match := tapdMarkdownWikiURLRE.FindStringSubmatch(value)
+	if len(match) != 3 {
+		return tapdWikiSourceRef{}, false
+	}
+	workspaceID := strings.TrimSpace(match[1])
+	wikiID := strings.TrimSpace(match[2])
+	if workspaceID == "" || wikiID == "" {
+		return tapdWikiSourceRef{}, false
+	}
+	return tapdWikiSourceRef{
+		WorkspaceID: workspaceID,
+		WikiID:      wikiID,
+		URL:         fmt.Sprintf("https://www.tapd.cn/%s/markdown_wikis/show/#%s", workspaceID, wikiID),
+	}, true
+}
+
+func metadataStringPreserve(metadata map[string]json.RawMessage, key string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func decodeIssueMetadataRaw(raw []byte) map[string]json.RawMessage {
+	if len(raw) == 0 {
+		return map[string]json.RawMessage{}
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metadata); err != nil || metadata == nil {
+		return map[string]json.RawMessage{}
+	}
+	return metadata
+}
+
+func changedIssueMetadataKeys(before, after map[string]json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	for key, next := range after {
+		prev, ok := before[key]
+		if ok && string(prev) == string(next) {
+			continue
+		}
+		out[key] = next
+	}
+	return out
+}
+
+func (h *Handler) enrichSourceCredentialMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string) map[string]json.RawMessage {
+	provider, ok := metadataString(metadata, "source_provider")
+	if !ok || provider != externalCredentialProviderTAPD {
+		return metadata
+	}
+	out := make(map[string]json.RawMessage, len(metadata)+8)
+	for key, value := range metadata {
+		out[key] = value
+	}
+	set := func(key, value string) {
+		raw, _ := json.Marshal(value)
+		out[key] = raw
+	}
+	set("source_fetch_provider", "tapd_mcp")
+	set("source_credential_scope", "account")
+	set("source_credential_inheritance", "task_creator_or_trigger_user")
+	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
+		UserID:   parseUUID(creatorUserID),
+		Provider: externalCredentialProviderTAPD,
+	})
+	if err != nil {
+		set("source_fetch_status", "blocked_missing_profile")
+		set("source_fetch_error", "no account-level TAPD credential profile for task creator")
+		return out
+	}
+	set("source_credential_profile_id", uuidToString(profile.ID))
+	set("source_credential_profile_name", profile.Name)
+	set("source_credential_profile_status", profile.Status)
+	set("source_fetch_status", "pending_mcp_fetch")
+	return out
+}
+
+func metadataString(metadata map[string]json.RawMessage, key string) (string, bool) {
+	if len(metadata) == 0 {
+		return "", false
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(strings.ToLower(value)), true
 }
 
 type UpdateIssueRequest struct {
@@ -2413,33 +3658,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			// Cannot set self as parent. Compare against prevIssue.ID (the
-			// resolved entity), not the raw URL string — `id` may be an
-			// identifier like "MUL-7".
-			if newParentID == prevIssue.ID {
-				writeError(w, http.StatusBadRequest, "an issue cannot be its own parent")
-				return
-			}
-			// Validate parent exists in the same workspace.
-			if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-				ID:          newParentID,
-				WorkspaceID: prevIssue.WorkspaceID,
-			}); err != nil {
+			if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); errors.Is(err, errIssueParentNotFound) {
 				writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 				return
-			}
-			// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
-			cursor := newParentID
-			for depth := 0; depth < 10; depth++ {
-				ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
-				if err != nil || !ancestor.ParentIssueID.Valid {
-					break
-				}
-				if ancestor.ParentIssueID == prevIssue.ID {
-					writeError(w, http.StatusBadRequest, "circular parent relationship detected")
-					return
-				}
-				cursor = ancestor.ParentIssueID
+			} else if err != nil {
+				writeError(w, http.StatusBadRequest, "circular parent relationship detected")
+				return
 			}
 			params.ParentIssueID = newParentID
 		} else {
@@ -2450,6 +3674,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if req.ProjectID != nil {
 			projectUUID, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
 			if !ok {
+				return
+			}
+			if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
+				writeError(w, http.StatusBadRequest, "project not found in this workspace")
 				return
 			}
 			params.ProjectID = projectUUID
@@ -2475,6 +3703,32 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if params.Status.Valid && params.Status.String == "done" {
+		incomplete, err := h.incompleteChildrenBlockingDone(r.Context(), prevIssue)
+		if err != nil {
+			slog.Warn("check child issue done gate failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to check child issues")
+			return
+		}
+		if len(incomplete) > 0 {
+			h.writeIssueDoneBlockedByChildren(w, incomplete)
+			return
+		}
+		actorType, _ := h.resolveActor(r, userID, workspaceID)
+		if actorType == "agent" {
+			blocked, err := h.issueDoneBlockedByMissingGongfengMR(r.Context(), prevIssue)
+			if err != nil {
+				slog.Warn("check issue linked MR gate failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+				writeError(w, http.StatusInternalServerError, "failed to check linked MRs")
+				return
+			}
+			if blocked {
+				h.writeIssueDoneBlockedByMissingMR(w)
+				return
+			}
+		}
+	}
+
 	issue, err := h.Queries.UpdateIssue(r.Context(), params)
 	if err != nil {
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
@@ -2486,6 +3740,41 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.linkAttachmentsByIssueIDs(r.Context(), issue.ID, issue.WorkspaceID, attachmentIDs)
 	}
 
+	// Determine actor identity: agent (via X-Agent-ID header) or member.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+
+	if req.Title != nil || req.Description != nil {
+		nextDescription := ""
+		if issue.Description.Valid {
+			nextDescription = issue.Description.String
+		}
+		metadataBefore := decodeIssueMetadataRaw(issue.Metadata)
+		metadataAfter := h.enrichIssueSourceMetadata(r.Context(), metadataBefore, userID, issue.Title, nextDescription)
+		if _, err := validateIssueMetadataObject(metadataAfter); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		metadataChanges := changedIssueMetadataKeys(metadataBefore, metadataAfter)
+		if len(metadataChanges) > 0 {
+			for key, value := range metadataChanges {
+				issue, err = h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+					ID:          issue.ID,
+					WorkspaceID: issue.WorkspaceID,
+					Key:         key,
+					Value:       value,
+				})
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to update issue source metadata")
+					return
+				}
+			}
+			h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
+				"issue_id": uuidToString(issue.ID),
+				"metadata": parseIssueMetadata(issue.Metadata),
+			})
+		}
+	}
+
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
@@ -2493,6 +3782,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
 	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
+	projectChanged := req.ProjectID != nil && prevIssue.ProjectID != issue.ProjectID
 	priorityChanged := req.Priority != nil && prevIssue.Priority != issue.Priority
 	descriptionChanged := req.Description != nil && textToPtr(prevIssue.Description) != resp.Description
 	titleChanged := req.Title != nil && prevIssue.Title != issue.Title
@@ -2502,9 +3792,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	prevDueDate := dateToPtr(prevIssue.DueDate)
 	dueDateChanged := prevDueDate != resp.DueDate && (prevDueDate == nil) != (resp.DueDate == nil) ||
 		(prevDueDate != nil && resp.DueDate != nil && *prevDueDate != *resp.DueDate)
-
-	// Determine actor identity: agent (via X-Agent-ID header) or member.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
 		"issue":               resp,
@@ -2527,67 +3814,57 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		"creator_id":          uuidToString(prevIssue.CreatorID),
 	})
 
-	// Reconcile task queue when assignee changes.
-	if assigneeChanged {
-		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-
-		if h.shouldEnqueueAgentTask(r.Context(), issue) {
-			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
-		}
-
-		// Squad assign: trigger the squad leader, respecting the backlog
-		// parking-lot rule used by agent assignment.
-		if h.shouldEnqueueSquadLeaderOnAssign(r.Context(), issue) {
-			h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)
-		}
-	}
-
-	// Trigger the assigned agent when an issue moves out of backlog. Backlog
-	// acts as a parking lot — moving to an active status signals the issue is
-	// ready for work. Agent actors are allowed here so the documented
-	// serial sub-task workflow works (parent agent finishes Step 1, then
-	// promotes Step 2 from backlog→todo, regardless of who Step 2 is
-	// assigned to). The only excluded case is the real self-loop: an agent
-	// promoting the same issue its current task is running on. Same-agent,
-	// cross-issue handoff (Agent A finishing one task and promoting another
-	// issue assigned to A) must still fire — that is the documented serial
-	// chain.
-	if statusChanged && !assigneeChanged &&
-		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
-		!h.isAgentRunningOnIssue(r, actorType, issue) {
-		if h.isAgentAssigneeReady(r.Context(), issue) {
-			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
-		}
-		if h.isSquadLeaderReady(r.Context(), issue) {
-			h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)
-		}
-	}
-
-	// Cancel active tasks when the issue is cancelled by a user.
-	// This is distinct from agent-managed status transitions — cancellation
-	// is a user-initiated terminal action that should stop execution.
-	if statusChanged && issue.Status == "cancelled" {
-		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-	}
-
-	// Platform-driven parent notification: when this issue transitions into
-	// `done` and has a parent, post a top-level system comment on the parent
-	// (MUL-2538 — replaces the agent-prompt rule that caused self-mention
-	// loops in PR #2918). The helper guards on transition + parent state and
-	// fails best-effort.
-	if statusChanged {
-		h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
+	h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
+	if issue.Status == "backlog" && (statusChanged || projectChanged || assigneeChanged) {
+		h.IssueService.EnsureProjectOwnerApprovalForBacklog(r.Context(), issue, actorType, actorID)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.Request, prevIssue db.Issue, issue db.Issue, assigneeChanged bool, statusChanged bool, actorType string, actorID string) {
+	// Reconcile task queue when assignee changes.
+	if assigneeChanged {
+		h.TaskService.CancelTasksForIssue(ctx, issue.ID)
+		if h.shouldEnqueueAgentTask(ctx, issue) {
+			h.TaskService.EnqueueTaskForIssue(ctx, issue)
+		}
+		if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
+			h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID)
+		}
+	}
+
+	// Trigger the assigned agent when an issue moves out of backlog. Backlog
+	// acts as a parking lot; the self-loop guard prevents an agent from
+	// re-triggering the same issue its current task is running on.
+	if statusChanged && !assigneeChanged &&
+		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
+		!h.isAssignedAgentRunningOnIssue(ctx, r, actorType, actorID, issue) {
+		if h.isAgentAssigneeReady(ctx, issue) {
+			h.TaskService.EnqueueTaskForIssue(ctx, issue)
+		}
+		if h.isSquadLeaderReady(ctx, issue) {
+			h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID)
+		}
+	}
+
+	// Cancellation is a user-initiated terminal action that should stop execution.
+	if statusChanged && issue.Status == "cancelled" {
+		h.TaskService.CancelTasksForIssue(ctx, issue.ID)
+	}
+
+	// Best-effort parent notification for child done transitions.
+	if statusChanged {
+		h.notifyParentOfChildDone(ctx, prevIssue, issue, actorType, actorID)
+	}
+}
+
 // validateAssigneePair verifies the (assignee_type, assignee_id) pair refers
 // to an existing entity in the workspace. For agent assignees it also rejects
-// archived agents and runs the private-agent gate via canAccessPrivateAgent
+// archived agents and runs the personal-agent gate via canAccessPersonalAgent
 // — assigning an issue is a task-producing surface, so it must use the same
 // predicate as chat / @-mention / history. Agent callers (X-Agent-ID) bypass
-// the gate so A2A flows can still hand work off to private agents.
+// the gate so A2A flows can still hand work off to personal agents.
 //
 // Returns (statusCode, errorMessage). statusCode == 0 means the pair is valid;
 // callers should treat any non-zero status as a rejection and surface it back
@@ -2626,8 +3903,8 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			return http.StatusBadRequest, "cannot assign to archived agent"
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canAccessPrivateAgent(ctx, agent, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to private agent"
+		if !h.canAccessPersonalAgent(ctx, agent, actorType, actorID, workspaceID) {
+			return http.StatusForbidden, "cannot assign to personal agent"
 		}
 		return 0, ""
 	case "squad":
@@ -2641,13 +3918,16 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 		if squad.ArchivedAt.Valid {
 			return http.StatusBadRequest, "cannot assign to an archived squad"
 		}
+		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+		if !h.canUseSquad(ctx, squad, actorType, actorID, workspaceID) {
+			return http.StatusForbidden, "cannot assign to personal squad"
+		}
 		leader, err := h.Queries.GetAgent(ctx, squad.LeaderID)
 		if err != nil || leader.ArchivedAt.Valid {
 			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
 		}
-		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canAccessPrivateAgent(ctx, leader, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to squad with private leader"
+		if !h.canAccessPersonalAgent(ctx, leader, actorType, actorID, workspaceID) {
+			return http.StatusForbidden, "cannot assign to squad with personal leader"
 		}
 		return 0, ""
 	default:
@@ -2672,11 +3952,11 @@ func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bo
 // conversational and can happen at any stage, including after completion
 // (e.g. follow-up questions on a done issue).
 //
-// Mirrors the private-agent gate that computeMentionedAgentCommentTriggers applies on the
-// @mention path: once an owner/admin assigns a private agent to an issue, the
+// Mirrors the personal-agent gate that computeMentionedAgentCommentTriggers applies on the
+// @mention path: once an owner/admin assigns a personal agent to an issue, the
 // agent's UUID is "welded" onto the issue and remains visible to every member
 // who can view it. Without this check any of those members could dispatch a new
-// task to the private agent simply by commenting (#3300).
+// task to the personal agent simply by commenting (#3300).
 func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) bool {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return false
@@ -2685,7 +3965,7 @@ func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, ac
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return false
 	}
-	if !h.canAccessPrivateAgent(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID)) {
+	if !h.canAccessPersonalAgent(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID)) {
 		return false
 	}
 	// Coalescing queue: allow enqueue when a task is running (so the agent
@@ -2698,23 +3978,25 @@ func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, ac
 	return true
 }
 
-// isAgentRunningOnIssue reports whether the calling agent's current task
-// (identified by X-Task-ID) is running for the exact issue being promoted.
-// That is the only true self-loop on backlog→active: the agent flipping
-// the same issue its own task is executing for would immediately re-enqueue
-// itself, complete the run, flip again, and so on.
+// isAssignedAgentRunningOnIssue reports whether the calling agent's current
+// task is running for the exact issue being promoted AND that agent is the
+// issue's current executor (direct assignee or squad leader). That is the true
+// self-loop on backlog→active: the executor flipping its own issue would
+// immediately re-enqueue itself.
 //
-// Same-agent cross-issue handoff (Agent A finishing a task on issue I1 then
-// promoting issue I2 — even when I2 is also assigned to A) is NOT a loop
-// and must fire; that is the documented serial sub-task chain. Member
-// actors never match.
+// Project-owner review tasks can also run on the same issue, but the reviewer
+// is not the issue executor; approving backlog→todo must wake the assigned
+// agent or squad leader. Same-agent cross-issue handoff remains allowed too.
 //
 // X-Task-ID is guaranteed to be present and consistent when actorType is
 // "agent": resolveActor demotes the actor to "member" otherwise (handler.go
 // resolveActor). We still recheck defensively — a future caller could pass
 // agent identity through a different path.
-func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue db.Issue) bool {
+func (h *Handler) isAssignedAgentRunningOnIssue(ctx context.Context, r *http.Request, actorType, actorID string, issue db.Issue) bool {
 	if actorType != "agent" {
+		return false
+	}
+	if !h.actorIsIssueExecutor(ctx, actorID, issue) {
 		return false
 	}
 	taskIDStr := r.Header.Get("X-Task-ID")
@@ -2725,7 +4007,7 @@ func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue
 	if err != nil {
 		return false
 	}
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	task, err := h.Queries.GetAgentTask(ctx, taskUUID)
 	if err != nil {
 		return false
 	}
@@ -2733,6 +4015,27 @@ func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue
 		return false
 	}
 	return uuidToString(task.IssueID) == uuidToString(issue.ID)
+}
+
+func (h *Handler) actorIsIssueExecutor(ctx context.Context, actorID string, issue db.Issue) bool {
+	if actorID == "" || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return false
+	}
+	switch issue.AssigneeType.String {
+	case "agent":
+		return actorID == uuidToString(issue.AssigneeID)
+	case "squad":
+		squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+			ID:          issue.AssigneeID,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			return false
+		}
+		return actorID == uuidToString(squad.LeaderID)
+	default:
+		return false
+	}
 }
 
 // isAgentAssigneeReady checks if an issue is assigned to an active agent
@@ -2867,6 +4170,13 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := 0
+	type batchDoneBlockedIssue struct {
+		IssueID            string                         `json:"issue_id"`
+		Identifier         string                         `json:"identifier"`
+		Title              string                         `json:"title"`
+		IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
+	}
+	blocked := make([]batchDoneBlockedIssue, 0)
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
@@ -2952,32 +4262,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				// Cannot set self as parent.
-				if newParentID == prevIssue.ID {
-					continue
-				}
-				// Validate parent exists in the same workspace.
-				if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-					ID:          newParentID,
-					WorkspaceID: prevIssue.WorkspaceID,
-				}); err != nil {
-					continue
-				}
-				// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
-				cycleDetected := false
-				cursor := newParentID
-				for depth := 0; depth < 10; depth++ {
-					ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
-					if err != nil || !ancestor.ParentIssueID.Valid {
-						break
-					}
-					if ancestor.ParentIssueID == prevIssue.ID {
-						cycleDetected = true
-						break
-					}
-					cursor = ancestor.ParentIssueID
-				}
-				if cycleDetected {
+				if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); err != nil {
 					continue
 				}
 				params.ParentIssueID = newParentID
@@ -2989,6 +4274,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.ProjectID != nil {
 				projectUUID, err := util.ParseUUID(*req.Updates.ProjectID)
 				if err != nil {
+					continue
+				}
+				if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
 					continue
 				}
 				params.ProjectID = projectUUID
@@ -3003,6 +4291,24 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		_, batchTouchedID := rawUpdates["assignee_id"]
 		if batchTouchedType || batchTouchedID {
 			if status, _ := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
+				continue
+			}
+		}
+
+		if params.Status.Valid && params.Status.String == "done" {
+			incomplete, err := h.incompleteChildrenBlockingDone(r.Context(), prevIssue)
+			if err != nil {
+				slog.Warn("batch check child issue done gate failed", "issue_id", issueID, "error", err)
+				continue
+			}
+			if len(incomplete) > 0 {
+				prefix := h.getIssuePrefix(r.Context(), prevIssue.WorkspaceID)
+				blocked = append(blocked, batchDoneBlockedIssue{
+					IssueID:            uuidToString(prevIssue.ID),
+					Identifier:         prefix + "-" + strconv.Itoa(int(prevIssue.Number)),
+					Title:              prevIssue.Title,
+					IncompleteChildren: incomplete,
+				})
 				continue
 			}
 		}
@@ -3029,47 +4335,18 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			"priority_changed": priorityChanged,
 		})
 
-		if assigneeChanged {
-			h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-			if h.shouldEnqueueAgentTask(r.Context(), issue) {
-				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
-			}
-			if h.shouldEnqueueSquadLeaderOnAssign(r.Context(), issue) {
-				h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)
-			}
-		}
-
-		// Trigger agent when moving out of backlog (batch). Mirrors the
-		// single-update path above — agent actors are allowed so serial
-		// sub-task chains work, and the same task-issue self-loop guard
-		// prevents an agent from re-triggering itself on the same issue.
-		if statusChanged && !assigneeChanged &&
-			prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
-			!h.isAgentRunningOnIssue(r, actorType, issue) {
-			if h.isAgentAssigneeReady(r.Context(), issue) {
-				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
-			}
-			if h.isSquadLeaderReady(r.Context(), issue) {
-				h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)
-			}
-		}
-
-		// Cancel active tasks when the issue is cancelled by a user.
-		if statusChanged && issue.Status == "cancelled" {
-			h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-		}
-
-		// Platform-driven parent notification, mirrored from UpdateIssue
-		// (MUL-2538). Best-effort; failure does not abort the batch.
-		if statusChanged {
-			h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
-		}
+		h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
 
 		updated++
 	}
 
 	slog.Info("batch update issues", append(logger.RequestAttrs(r), "count", updated)...)
-	writeJSON(w, http.StatusOK, map[string]any{"updated": updated})
+	resp := map[string]any{"updated": updated}
+	if len(blocked) > 0 {
+		resp["blocked"] = blocked
+		resp["blocked_reason"] = "child_issues_not_done"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type BatchDeleteIssuesRequest struct {

@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -20,8 +18,8 @@ import (
 )
 
 // resolveTextFlag picks between a `--<name>` inline value, a `--<name>-stdin`
-// flag, and a `--<name>-file <path>` flag, mirroring the existing `--content`
-// / `--content-stdin` pattern. It returns the resolved string and an error
+// flag, and a `--<name>-file <path>` flag, mirroring the existing text field
+// input pattern. It returns the resolved string and an error
 // when more than one source is set, or when stdin/file is requested but
 // produces no body. Inline flag values are passed through
 // util.UnescapeBackslashEscapes so bash-double-quoted `\n` becomes a real
@@ -83,6 +81,40 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 	return util.UnescapeBackslashEscapes(inline), true, nil
 }
 
+func resolveFileOrStdinTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
+	stdinFlag := flagName + "-stdin"
+	fileFlag := flagName + "-file"
+	useStdin, _ := cmd.Flags().GetBool(stdinFlag)
+	filePath, _ := cmd.Flags().GetString(fileFlag)
+
+	if useStdin && filePath != "" {
+		return "", false, fmt.Errorf("--%s and --%s are mutually exclusive", stdinFlag, fileFlag)
+	}
+	if useStdin {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", false, fmt.Errorf("read stdin for --%s: %w", stdinFlag, err)
+		}
+		body := strings.TrimSuffix(string(data), "\n")
+		if body == "" {
+			return "", false, fmt.Errorf("stdin content for --%s is empty", stdinFlag)
+		}
+		return body, true, nil
+	}
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", false, fmt.Errorf("read file for --%s: %w", fileFlag, err)
+		}
+		body := strings.TrimSuffix(string(data), "\n")
+		if body == "" {
+			return "", false, fmt.Errorf("file content for --%s is empty", fileFlag)
+		}
+		return body, true, nil
+	}
+	return "", false, nil
+}
+
 var issueCmd = &cobra.Command{
 	Use:   "issue",
 	Short: "Work with issues",
@@ -101,12 +133,26 @@ var issueGetCmd = &cobra.Command{
 	RunE:  runIssueGet,
 }
 
+var issueChildrenCmd = &cobra.Command{
+	Use:   "children <id>",
+	Short: "List child issues for an issue",
+	Args:  exactArgs(1),
+	RunE:  runIssueChildren,
+}
+
 var issuePullRequestsCmd = &cobra.Command{
 	Use:     "pull-requests <id>",
 	Aliases: []string{"prs"},
 	Short:   "List pull requests linked to an issue",
 	Args:    exactArgs(1),
 	RunE:    runIssuePullRequests,
+}
+
+var issueSourceFetchCmd = &cobra.Command{
+	Use:   "source-fetch <id>",
+	Short: "Record external source fetch evidence on an issue",
+	Args:  exactArgs(1),
+	RunE:  runIssueSourceFetch,
 }
 
 var issueCreateCmd = &cobra.Command{
@@ -262,7 +308,9 @@ func validateIssueEnum(field, value string, allowed []string) error {
 func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
+	issueCmd.AddCommand(issueChildrenCmd)
 	issueCmd.AddCommand(issuePullRequestsCmd)
+	issueCmd.AddCommand(issueSourceFetchCmd)
 	issueCmd.AddCommand(issueCreateCmd)
 	issueCmd.AddCommand(issueUpdateCmd)
 	issueCmd.AddCommand(issueAssignCmd)
@@ -298,8 +346,28 @@ func init() {
 	// issue get
 	issueGetCmd.Flags().String("output", "json", "Output format: table or json")
 
+	// issue children
+	issueChildrenCmd.Flags().String("output", "table", "Output format: table or json")
+
 	// issue pull-requests
 	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
+
+	// issue source-fetch
+	issueSourceFetchCmd.Flags().String("provider", "tapd", "Source provider: tapd or gongfeng")
+	issueSourceFetchCmd.Flags().String("fetch-provider", "", "Fetch mechanism, defaults to <provider>_mcp")
+	issueSourceFetchCmd.Flags().String("status", "", "Fetch status: fetched or fetch_failed (required)")
+	issueSourceFetchCmd.Flags().String("url", "", "Fetched source URL")
+	issueSourceFetchCmd.Flags().String("source-workspace-id", "", "External source workspace ID")
+	issueSourceFetchCmd.Flags().String("resource-type", "", "External source resource type")
+	issueSourceFetchCmd.Flags().String("resource-id", "", "External source resource ID")
+	issueSourceFetchCmd.Flags().String("title", "", "Fetched source title")
+	issueSourceFetchCmd.Flags().String("summary", "", "Short fetched source summary")
+	issueSourceFetchCmd.Flags().String("body-excerpt", "", "Short excerpt from the fetched source body or markdown")
+	issueSourceFetchCmd.Flags().String("version", "", "External source version, revision, or modified timestamp")
+	issueSourceFetchCmd.Flags().String("error", "", "Fetch failure reason, required for fetch_failed")
+	issueSourceFetchCmd.Flags().Int64("duration-ms", 0, "Fetch duration in milliseconds")
+	issueSourceFetchCmd.Flags().Bool("auto-fetch", false, "Fetch the source through the server-side account credential profile before recording evidence")
+	issueSourceFetchCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue create
 	issueCreateCmd.Flags().String("title", "", "Issue title (required)")
@@ -314,7 +382,6 @@ func init() {
 	issueCreateCmd.Flags().String("project", "", "Project ID")
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
-	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
@@ -369,7 +436,6 @@ func init() {
 	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
 
 	// issue comment add
-	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
 	issueCommentAddCmd.Flags().Bool("content-stdin", false, "Read comment content from stdin (preserves multi-line content verbatim)")
 	issueCommentAddCmd.Flags().String("content-file", "", "Read comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes)")
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID (reply to a specific comment)")
@@ -588,6 +654,37 @@ func pullRequestURL(pr map[string]any) string {
 	return strVal(pr, "html_url")
 }
 
+func printIssueMutationResult(cmd *cobra.Command, result map[string]any) error {
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
+		rows := [][]string{{
+			issueDisplayKey(result),
+			strVal(result, "title"),
+			strVal(result, "status"),
+			strVal(result, "priority"),
+		}}
+		cli.PrintTable(os.Stdout, headers, rows)
+		return nil
+	}
+
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+func newIssueClientAndRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	issueRef, err := resolveIssueRef(ctx, client, issueArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
+	}
+	return client, ctx, cancel, issueRef, nil
+}
+
 func runIssueGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -635,6 +732,53 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 	}
 
 	return cli.PrintJSON(os.Stdout, issue)
+}
+
+func runIssueChildren(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	var resp struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID)+"/children", &resp); err != nil {
+		return fmt.Errorf("list child issues: %w", err)
+	}
+	children := resp.Issues
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, map[string]any{
+			"parent_issue_id": issueRef.ID,
+			"children":        children,
+			"total":           len(children),
+		})
+	}
+
+	actors := loadActorDisplayLookup(ctx, client)
+	headers := []string{"KEY", "TITLE", "STATUS", "PROJECT", "ASSIGNEE"}
+	rows := make([][]string, 0, len(children))
+	for _, child := range children {
+		rows = append(rows, []string{
+			issueDisplayKey(child),
+			strVal(child, "title"),
+			strVal(child, "status"),
+			strVal(child, "project_title"),
+			formatAssignee(child, actors),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
 }
 
 // isHTTPURL reports whether path is an http:// or https:// URL.
@@ -741,9 +885,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetString("due-date"); v != "" {
 		body["due_date"] = v
 	}
-	if v, _ := cmd.Flags().GetBool("allow-duplicate"); v {
-		body["allow_duplicate"] = true
-	}
 	aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 	if resolveErr != nil {
 		return fmt.Errorf("resolve assignee: %w", resolveErr)
@@ -806,15 +947,12 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues", body, &result); err != nil {
-		if msg, ok := activeDuplicateIssueCreateMessage(err); ok {
-			return errors.New(msg)
-		}
 		return fmt.Errorf("create issue: %w", err)
 	}
 
 	// Upload attachments and link them to the newly created issue.
 	// Failures here are partial-success: the issue exists already, so
-	// turning a non-zero exit on the caller would invite a retry that
+	// turning a non-zero exit on the caller would encourage a retry that
 	// duplicates the issue. Warn on stderr and continue.
 	issueID := strVal(result, "id")
 	for _, att := range pending {
@@ -826,38 +964,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
-}
-
-func activeDuplicateIssueCreateMessage(err error) (string, bool) {
-	var httpErr *cli.HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
-		return "", false
-	}
-	var payload struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
-	}
-	if json.Unmarshal([]byte(httpErr.Body), &payload) != nil {
-		return "", false
-	}
-	if payload.Code != "active_duplicate_issue" || payload.Error == "" {
-		return "", false
-	}
-	return payload.Error, true
+	return printIssueMutationResult(cmd, result)
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
@@ -959,20 +1066,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update issue: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printIssueMutationResult(cmd, result)
 }
 
 func runIssueAssign(cmd *cobra.Command, args []string) error {
@@ -1228,12 +1322,12 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
-	content, hasContent, err := resolveTextFlag(cmd, "content")
+	content, hasContent, err := resolveFileOrStdinTextFlag(cmd, "content")
 	if err != nil {
 		return err
 	}
 	if !hasContent {
-		return fmt.Errorf("--content, --content-stdin, or --content-file is required")
+		return fmt.Errorf("--content-stdin or --content-file is required")
 	}
 
 	client, err := newAPIClient(cmd)
@@ -1557,7 +1651,11 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		matchInfo := strVal(issue, "match_source")
-		if snippet := strVal(issue, "matched_snippet"); snippet != "" {
+		snippet := strVal(issue, "matched_description_snippet")
+		if matchInfo == "comment" {
+			snippet = strVal(issue, "matched_comment_snippet")
+		}
+		if snippet != "" {
 			if utf8.RuneCountInString(snippet) > 50 {
 				runes := []rune(snippet)
 				snippet = string(runes[:47]) + "..."

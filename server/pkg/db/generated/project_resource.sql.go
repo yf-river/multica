@@ -74,28 +74,6 @@ func (q *Queries) DeleteProjectResource(ctx context.Context, id pgtype.UUID) err
 	return err
 }
 
-const getProjectResource = `-- name: GetProjectResource :one
-SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
-WHERE id = $1
-`
-
-func (q *Queries) GetProjectResource(ctx context.Context, id pgtype.UUID) (ProjectResource, error) {
-	row := q.db.QueryRow(ctx, getProjectResource, id)
-	var i ProjectResource
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.WorkspaceID,
-		&i.ResourceType,
-		&i.ResourceRef,
-		&i.Label,
-		&i.Position,
-		&i.CreatedAt,
-		&i.CreatedBy,
-	)
-	return i, err
-}
-
 const getProjectResourceCounts = `-- name: GetProjectResourceCounts :many
 SELECT project_id, count(*)::bigint AS resource_count
 FROM project_resource
@@ -155,14 +133,15 @@ func (q *Queries) GetProjectResourceInWorkspace(ctx context.Context, arg GetProj
 	return i, err
 }
 
-const listProjectResources = `-- name: ListProjectResources :many
+const listGongfengProjectResourcesInWorkspace = `-- name: ListGongfengProjectResourcesInWorkspace :many
 SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
-WHERE project_id = $1
-ORDER BY position ASC, created_at ASC
+WHERE workspace_id = $1
+  AND resource_type = 'gongfeng_repo'
+ORDER BY project_id, position ASC, created_at ASC
 `
 
-func (q *Queries) ListProjectResources(ctx context.Context, projectID pgtype.UUID) ([]ProjectResource, error) {
-	rows, err := q.db.Query(ctx, listProjectResources, projectID)
+func (q *Queries) ListGongfengProjectResourcesInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ProjectResource, error) {
+	rows, err := q.db.Query(ctx, listGongfengProjectResourcesInWorkspace, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -191,14 +170,14 @@ func (q *Queries) ListProjectResources(ctx context.Context, projectID pgtype.UUI
 	return items, nil
 }
 
-const listProjectResourcesForProjects = `-- name: ListProjectResourcesForProjects :many
+const listProjectResources = `-- name: ListProjectResources :many
 SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
-WHERE project_id = ANY($1::uuid[])
-ORDER BY project_id, position ASC, created_at ASC
+WHERE project_id = $1
+ORDER BY position ASC, created_at ASC
 `
 
-func (q *Queries) ListProjectResourcesForProjects(ctx context.Context, projectIds []pgtype.UUID) ([]ProjectResource, error) {
-	rows, err := q.db.Query(ctx, listProjectResourcesForProjects, projectIds)
+func (q *Queries) ListProjectResources(ctx context.Context, projectID pgtype.UUID) ([]ProjectResource, error) {
+	rows, err := q.db.Query(ctx, listProjectResources, projectID)
 	if err != nil {
 		return nil, err
 	}

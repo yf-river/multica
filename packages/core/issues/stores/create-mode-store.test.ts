@@ -6,14 +6,11 @@ import {
 import { useModalStore } from "../../modals";
 
 describe("openCreateIssueWithPreference", () => {
-  const initialMode = useCreateModeStore.getState().lastMode;
-
   beforeEach(() => {
     useModalStore.getState().close();
   });
 
   afterEach(() => {
-    useCreateModeStore.getState().setLastMode(initialMode);
     useModalStore.getState().close();
   });
 
@@ -24,21 +21,16 @@ describe("openCreateIssueWithPreference", () => {
     expect(useModalStore.getState().data).toBeNull();
   });
 
-  it("opens create-issue when last mode is manual", () => {
+  it("always opens quick-create-issue even when last mode is manual", () => {
     useCreateModeStore.getState().setLastMode("manual");
     openCreateIssueWithPreference();
-    expect(useModalStore.getState().modal).toBe("create-issue");
+    expect(useModalStore.getState().modal).toBe("quick-create-issue");
   });
 
-  it("forwards seed data to whichever modal is opened", () => {
+  it("forwards seed data to quick-create-issue", () => {
     useCreateModeStore.getState().setLastMode("manual");
     openCreateIssueWithPreference({ project_id: "p1" });
-    expect(useModalStore.getState().modal).toBe("create-issue");
-    expect(useModalStore.getState().data).toEqual({ project_id: "p1" });
-
-    useCreateModeStore.getState().setLastMode("agent");
-    openCreateIssueWithPreference({ project_id: "p2" });
     expect(useModalStore.getState().modal).toBe("quick-create-issue");
-    expect(useModalStore.getState().data).toEqual({ project_id: "p2" });
+    expect(useModalStore.getState().data).toEqual({ project_id: "p1" });
   });
 });

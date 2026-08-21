@@ -1,11 +1,10 @@
 packages:
   - "apps/web"
-  - "apps/desktop"
   - "apps/docs"
   - "packages/*"
 
 catalog:
-  # Core React
+  # 核心 React
   react: "19.2.3"
   react-dom: "19.2.3"
   "@types/react": "^19.2.0"
@@ -15,19 +14,18 @@ catalog:
   typescript: "^5.9.3"
   "@types/node": "^25.0.10"
 
-  # State Management
+  # 状态管理
   zustand: "^5.0.0"
   "@tanstack/react-query": "^5.96.2"
   "@tanstack/react-table": "^8.21.3"
 
-  # Runtime schema validation (defensive boundary against API drift —
-  # see CLAUDE.md "API Response Compatibility")
+  # 运行时 schema 校验（对抗 API 漂移的防御边界——
+  # 见 CLAUDE.md 「API 响应兼容」）
   zod: "^4.1.5"
 
-  # UI & Styling
+  # UI 与样式
   tailwindcss: "^4"
   "@tailwindcss/postcss": "^4"
-  "@tailwindcss/vite": "^4"
   tailwind-merge: "^3.4.0"
   class-variance-authority: "^0.7.1"
   clsx: "^2.1.1"
@@ -36,34 +34,33 @@ catalog:
   remark-math: "^6.0.0"
   mermaid: "^11.14.0"
 
-  # Icons
+  # 图标
   lucide-react: "^1.0.1"
 
   # i18n
   i18next: "^26.0.8"
   react-i18next: "^17.0.6"
-  "@formatjs/intl-localematcher": "^0.8.4"
   eslint-plugin-i18next: "^6.1.4"
 
-  # Loading animations (chat StatusPill)
+  # 加载动画（chat StatusPill）
   unicode-animations: "^1.0.3"
 
-  # QR rendering — Lark device-flow scan-to-install dialog renders the
-  # verification_uri_complete as a QR so users can scan it from their
-  # phone instead of typing the URL.
+  # QR 渲染——飞书 device-flow 扫码安装对话框把
+  # verification_uri_complete 渲染成 QR，让用户从手机扫码而非输 URL。
   "react-qr-code": "^2.0.18"
 
-  # Virtualized timeline (issue detail comments)
+  # 虚拟化时间线（issue 详情评论）
   react-virtuoso: "^4.14.0"
   "@tanstack/react-virtual": "^3.13.0"
 
-  # Product analytics
+  # 产品分析
   posthog-js: "^1.176.1"
 
-  # YAML parsing (skill frontmatter)
+  # YAML 解析（skill frontmatter）
   yaml: "^2.6.0"
+  xlsx: "^0.18.5"
 
-  # Testing
+  # 测试
   vitest: "^4.1.0"
   jsdom: "^29.0.1"
   "@vitejs/plugin-react": "^6.0.1"

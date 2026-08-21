@@ -62,19 +62,3 @@ func ClientMetadataFromContext(ctx context.Context) (platform, version, os strin
 	os, _ = ctx.Value(ctxKeyClientOS).(string)
 	return platform, version, os
 }
-
-// SetClientMetadata explicitly attaches client metadata to a context. Used
-// by the realtime hub, where metadata arrives via WS query parameters
-// (`client_platform`, `client_version`, `client_os`) instead of headers.
-func SetClientMetadata(ctx context.Context, platform, version, os string) context.Context {
-	if platform != "" {
-		ctx = context.WithValue(ctx, ctxKeyClientPlatform, platform)
-	}
-	if version != "" {
-		ctx = context.WithValue(ctx, ctxKeyClientVersion, version)
-	}
-	if os != "" {
-		ctx = context.WithValue(ctx, ctxKeyClientOS, os)
-	}
-	return ctx
-}

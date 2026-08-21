@@ -7,7 +7,8 @@
 -- "Assigned to me"), and the two filters must produce disjoint result sets.
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata
+       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at,
+       i.number, i.project_id, i.metadata, i.scope, i.owner_id
 FROM issue i
 WHERE i.workspace_id = $1
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
@@ -73,9 +74,13 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
-    parent_issue_id, position, start_date, due_date, number, project_id
+    parent_issue_id, position, start_date, due_date, number, project_id,
+    scope, owner_id, work_started_at, work_completed_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+    COALESCE(sqlc.narg('scope'), 'workspace'), sqlc.narg('owner_id'),
+    CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
+    CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING *;
 
 -- name: GetIssueByNumber :one
@@ -86,6 +91,18 @@ WHERE workspace_id = $1 AND number = $2;
 UPDATE issue SET
     title = COALESCE(sqlc.narg('title'), title),
     description = COALESCE(sqlc.narg('description'), description),
+    work_started_at = CASE
+        WHEN sqlc.narg('status')::text = 'in_progress' AND status IN ('done', 'cancelled') THEN now()
+        WHEN sqlc.narg('status')::text NOT IN ('done', 'cancelled', 'in_progress') AND status IN ('done', 'cancelled') THEN NULL
+        WHEN sqlc.narg('status')::text = 'in_progress' AND status <> 'in_progress' AND work_started_at IS NULL THEN now()
+        ELSE work_started_at
+    END,
+    work_completed_at = CASE
+        WHEN sqlc.narg('status')::text = 'in_progress' AND status IN ('done', 'cancelled') THEN NULL
+        WHEN sqlc.narg('status')::text NOT IN ('done', 'cancelled') AND status IN ('done', 'cancelled') THEN NULL
+        WHEN sqlc.narg('status')::text = 'done' AND status <> 'done' THEN now()
+        ELSE work_completed_at
+    END,
     status = COALESCE(sqlc.narg('status'), status),
     priority = COALESCE(sqlc.narg('priority'), priority),
     assignee_type = sqlc.narg('assignee_type'),
@@ -95,6 +112,8 @@ UPDATE issue SET
     due_date = sqlc.narg('due_date'),
     parent_issue_id = sqlc.narg('parent_issue_id'),
     project_id = sqlc.narg('project_id'),
+    scope = COALESCE(sqlc.narg('scope'), scope),
+    owner_id = COALESCE(sqlc.narg('owner_id'), owner_id),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -102,6 +121,18 @@ RETURNING *;
 -- name: UpdateIssueStatus :one
 -- Workspace_id in the WHERE clause is a SQL-layer tenant guard; see DeleteIssue.
 UPDATE issue SET
+    work_started_at = CASE
+        WHEN $2 = 'in_progress' AND status IN ('done', 'cancelled') THEN now()
+        WHEN $2 NOT IN ('done', 'cancelled', 'in_progress') AND status IN ('done', 'cancelled') THEN NULL
+        WHEN $2 = 'in_progress' AND status <> 'in_progress' AND work_started_at IS NULL THEN now()
+        ELSE work_started_at
+    END,
+    work_completed_at = CASE
+        WHEN $2 = 'in_progress' AND status IN ('done', 'cancelled') THEN NULL
+        WHEN $2 NOT IN ('done', 'cancelled') AND status IN ('done', 'cancelled') THEN NULL
+        WHEN $2 = 'done' AND status <> 'done' THEN now()
+        ELSE work_completed_at
+    END,
     status = $2,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $3
@@ -112,24 +143,14 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id
+    origin_type, origin_id, scope, owner_id, work_started_at, work_completed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('origin_type'), sqlc.narg('origin_id')
+    sqlc.narg('origin_type'), sqlc.narg('origin_id'),
+    COALESCE(sqlc.narg('scope'), 'workspace'), sqlc.narg('owner_id'),
+    CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
+    CASE WHEN $4 = 'done' THEN now() ELSE NULL END
 ) RETURNING *;
-
--- name: LockIssueDuplicateKey :exec
-SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0));
-
--- name: FindActiveDuplicateIssue :one
-SELECT * FROM issue
-WHERE workspace_id = $1
-  AND status NOT IN ('done', 'cancelled')
-  AND project_id IS NOT DISTINCT FROM sqlc.arg('project_id')::uuid
-  AND parent_issue_id IS NOT DISTINCT FROM sqlc.arg('parent_issue_id')::uuid
-  AND lower(btrim(regexp_replace(title, '[[:space:]]+', ' ', 'g'))) = sqlc.arg('normalized_title')
-ORDER BY created_at ASC
-LIMIT 1;
 
 -- name: DeleteIssue :exec
 -- Defense-in-depth: the workspace_id predicate makes the tenant invariant a
@@ -144,7 +165,8 @@ DELETE FROM issue WHERE id = $1 AND workspace_id = $2;
 -- filter; member-direct assignment is intentionally excluded).
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
        i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata
+       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at,
+       i.number, i.project_id, i.metadata, i.scope, i.owner_id
 FROM issue i
 WHERE i.workspace_id = $1
   AND i.status NOT IN ('done', 'cancelled')

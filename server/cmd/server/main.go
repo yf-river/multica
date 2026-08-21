@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +20,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
+	"github.com/multica-ai/multica/server/internal/schema"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/redis/go-redis/v9"
@@ -64,21 +65,6 @@ func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
 	return cfg
 }
 
-func realtimeRelayModeFromEnv() string {
-	const defaultMode = "sharded"
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("REALTIME_RELAY_MODE")))
-	if raw == "" {
-		return defaultMode
-	}
-	switch raw {
-	case "sharded", "dual", "legacy":
-		return raw
-	default:
-		slog.Warn("invalid env var, using default", "name", "REALTIME_RELAY_MODE", "value", raw, "default", defaultMode)
-		return defaultMode
-	}
-}
-
 func envPositiveInt(name string, def int) int {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -121,19 +107,12 @@ func envDuration(name string, def time.Duration) time.Duration {
 func main() {
 	logger.Init()
 
+	initSchemaOnly := flag.Bool("init-schema-only", false, "initialize or verify the database schema, then exit")
+	flag.Parse()
+
 	// Warn about missing configuration
 	if os.Getenv("JWT_SECRET") == "" {
 		slog.Warn("JWT_SECRET is not set — using insecure default. Set JWT_SECRET for production use.")
-	}
-	if os.Getenv("RESEND_API_KEY") == "" && strings.TrimSpace(os.Getenv("SMTP_HOST")) == "" {
-		slog.Warn("no email backend configured (RESEND_API_KEY and SMTP_HOST both empty) — verification codes will be printed to the log instead of emailed.")
-	}
-	if os.Getenv("MULTICA_DEV_VERIFICATION_CODE") != "" {
-		if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
-			slog.Warn("MULTICA_DEV_VERIFICATION_CODE is set but ignored because APP_ENV=production.")
-		} else {
-			slog.Warn("MULTICA_DEV_VERIFICATION_CODE is enabled. Use it only for local development or private test instances.")
-		}
 	}
 
 	port := os.Getenv("PORT")
@@ -162,15 +141,24 @@ func main() {
 	slog.Info("connected to database")
 	logPoolConfig(pool)
 
+	if err := schema.EnsureCurrent(ctx, pool); err != nil {
+		slog.Error("database schema is not usable; reset the database before starting this server", "error", err)
+		os.Exit(1)
+	}
+	if *initSchemaOnly {
+		slog.Info("database schema is current")
+		return
+	}
+
 	bus := events.New()
 	hub := realtime.NewHub()
 	go hub.Run()
 	daemonHub := daemonws.NewHub()
 	var daemonWakeup service.TaskWakeupNotifier = daemonHub
 
-	// MUL-1138: when REDIS_URL is set, route fanout through a Redis relay so
-	// multiple API nodes can deliver each other's events. Without it the hub
-	// is the sole broadcaster and the server stays single-node (legacy).
+	// When REDIS_URL is set, route fanout through a Redis relay so multiple
+	// API nodes can deliver each other's events. Without it the server runs
+	// explicitly in single-node mode.
 	// Runtime local-skill stores and realtime relay traffic use separate Redis
 	// clients so blocking stream consumers cannot starve request-path Redis
 	// operations.
@@ -179,8 +167,6 @@ func main() {
 	var storeRedis *redis.Client
 	var relayWriteRedis *redis.Client
 	var relayReadRedis *redis.Client
-	var shardedReadRedis *redis.Client
-	var legacyReadRedis *redis.Client
 	var relay realtime.ManagedRelay
 	defer func() {
 		if relay != nil {
@@ -190,8 +176,6 @@ func main() {
 		if relay != nil {
 			relay.Wait()
 		}
-		closeRedisClient("realtime-read-legacy", legacyReadRedis)
-		closeRedisClient("realtime-read-sharded", shardedReadRedis)
 		closeRedisClient("realtime-read", relayReadRedis)
 		closeRedisClient("realtime-write", relayWriteRedis)
 		closeRedisClient("store", storeRedis)
@@ -199,48 +183,31 @@ func main() {
 	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
 		opts, err := redis.ParseURL(redisURL)
 		if err != nil {
-			slog.Error("invalid REDIS_URL — falling back to in-memory hub", "error", err)
-		} else {
-			storeRedis = newNamedRedisClient(opts, "store")
-			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
-
-			relayMode := realtimeRelayModeFromEnv()
-			relayConfig := shardedRelayConfigFromEnv()
-			switch relayMode {
-			case "legacy":
-				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				relay = realtime.NewRedisRelayWithClients(hub, relayWriteRedis, relayReadRedis)
-				slog.Info("daemon websocket wakeup: Redis fanout disabled in legacy realtime relay mode")
-			case "dual":
-				shardedReadRedis = newNamedRedisClient(opts, "realtime-read-sharded")
-				legacyReadRedis = newNamedRedisClient(opts, "realtime-read-legacy")
-				sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, shardedReadRedis, relayConfig)
-				sharded.SetDaemonRuntimeDeliverer(daemonHub)
-				legacy := realtime.NewRedisRelayWithClients(hub, relayWriteRedis, legacyReadRedis)
-				relay = realtime.NewMirroredRelay(sharded, legacy)
-				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-			default:
-				relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-				sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
-				sharded.SetDaemonRuntimeDeliverer(daemonHub)
-				relay = sharded
-				daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-			}
-			relay.Start(relayCtx)
-			broadcaster = realtime.NewDualWriteBroadcaster(hub, relay)
-			slog.Info(
-				"realtime: Redis relay enabled",
-				"node_id", relay.NodeID(),
-				"mode", relayMode,
-				"shards", relayConfig.Shards,
-				"stream_max_len", relayConfig.StreamMaxLen,
-				"xread_count", relayConfig.ReadCount,
-				"xread_block", relayConfig.ReadBlock.String(),
-				"store_pool_size", opts.PoolSize,
-				"realtime_write_pool_size", opts.PoolSize,
-				"realtime_read_pool_size", opts.PoolSize,
-			)
+			slog.Error("invalid REDIS_URL", "error", err)
+			os.Exit(1)
 		}
+		storeRedis = newNamedRedisClient(opts, "store")
+		relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
+
+		relayConfig := shardedRelayConfigFromEnv()
+		relayReadRedis = newNamedRedisClient(opts, "realtime-read")
+		sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
+		sharded.SetDaemonRuntimeDeliverer(daemonHub)
+		relay = sharded
+		daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
+		relay.Start(relayCtx)
+		broadcaster = realtime.NewRelayBroadcaster(hub, relay)
+		slog.Info(
+			"realtime: Redis relay enabled",
+			"node_id", relay.NodeID(),
+			"shards", relayConfig.Shards,
+			"stream_max_len", relayConfig.StreamMaxLen,
+			"xread_count", relayConfig.ReadCount,
+			"xread_block", relayConfig.ReadBlock.String(),
+			"store_pool_size", opts.PoolSize,
+			"realtime_write_pool_size", opts.PoolSize,
+			"realtime_read_pool_size", opts.PoolSize,
+		)
 	} else {
 		slog.Info("realtime: REDIS_URL not set — using in-memory hub (single-node mode)")
 	}
@@ -364,17 +331,15 @@ func main() {
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
 	// `sys_cron_executions` table into the distributed lease + audit
 	// log for internal periodic jobs. The first job is
-	// `rollup_task_usage_hourly`, which replaces the previously
-	// operator-registered `pg_cron` entry (still safe to run
-	// concurrently — the SQL function holds advisory lock 4246).
+	// `rollup_task_usage_hourly`; the SQL function holds advisory lock
+	// 4246 so multiple server replicas cannot process the same window.
 	//
 	// A failure to register the job is treated as fatal here only at
 	// the registration step (a duplicate name is the only realistic
 	// cause and indicates a code bug). Once running, the manager
-	// surfaces transient errors — DB unreachable, sys_cron_executions
-	// missing because of an unusual partial-migration state — by
-	// logging them on the tick that fails and retrying on the next
-	// cycle, so a temporary outage does not crash the server.
+	// surfaces transient errors such as a temporarily unreachable DB by
+	// logging them on the tick that fails and retrying on the next cycle,
+	// so a temporary outage does not crash the server.
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
 	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
 		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)

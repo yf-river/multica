@@ -41,7 +41,7 @@ const (
 // separate clouds with distinct hosts; a single Multica deployment serves
 // both by resolving the host per installation from this value rather than
 // from a deployment-wide env var. Mirrors the lark_installation.region
-// CHECK constraint (migration 116) — keep the two in lockstep.
+// CHECK constraint; keep the two in lockstep.
 type Region string
 
 const (
@@ -58,26 +58,16 @@ const larkInternationalOpenBaseURL = "https://open.larksuite.com"
 
 // OpenPlatformBaseURL maps a region to its open-platform host — the base
 // URL for both the REST API (http_client.go) and the WebSocket
-// /callback/ws/endpoint bootstrap (ws_endpoint.go). An unset or unknown
-// region falls back to Feishu (mainland), which is the default every
-// pre-region installation row carries.
+// /callback/ws/endpoint bootstrap (ws_endpoint.go).
 func (r Region) OpenPlatformBaseURL() string {
-	if r == RegionLark {
+	switch r {
+	case RegionFeishu:
+		return defaultLarkBaseURL
+	case RegionLark:
 		return larkInternationalOpenBaseURL
+	default:
+		return ""
 	}
-	return defaultLarkBaseURL
-}
-
-// RegionOrDefault normalizes a stored region string (originating from the
-// lark_installation.region column) to a Region, defaulting to Feishu for
-// empty or unrecognized values so a malformed row never resolves to an
-// empty host (or a CHECK-violating write). Exported because the router's
-// WS credentials provider (package main) hydrates creds from the raw row.
-func RegionOrDefault(s string) Region {
-	if Region(s) == RegionLark {
-		return RegionLark
-	}
-	return RegionFeishu
 }
 
 // DropReason enumerates the categories the inbound pipeline writes

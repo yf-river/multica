@@ -19,28 +19,32 @@ import { canAssignAgentToIssue } from "../permissions";
  *
  *   "loading"   — agent or member list still in flight (be neutral in UI)
  *   "none"      — both queries resolved, user has zero assignable agents
- *   "available" — at least one agent passes archive + visibility filters
+ *   "available" — at least one agent passes archive + scope filters
  */
 export type WorkspaceAgentAvailability = "loading" | "none" | "available";
 
 /**
- * Mirrors the per-agent visibility/archived filter used by AssigneePicker
+ * Mirrors the per-agent scope/archived filter used by AssigneePicker
  * and the chat agent dropdown, so the three pickers can never disagree on
  * "is this agent reachable?".
  *
  * Members are queried because `canAssignAgentToIssue` reads the caller's
- * role to decide visibility for `private` agents — without member data,
+ * role to decide access for personal agents — without member data,
  * a freshly-loaded agent list could still produce wrong answers.
  */
-export function useWorkspaceAgentAvailability(): WorkspaceAgentAvailability {
+export function useWorkspaceAgentAvailability(enabled = true): WorkspaceAgentAvailability {
   const wsId = useWorkspaceId();
   const userId = useAuthStore((s) => s.user?.id);
-  const { data: agents, isFetched: agentsFetched } = useQuery(
-    agentListOptions(wsId),
-  );
-  const { data: members, isFetched: membersFetched } = useQuery(
-    memberListOptions(wsId),
-  );
+  const { data: agents, isFetched: agentsFetched } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+  const { data: members, isFetched: membersFetched } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+
+  if (!enabled) return "loading";
 
   if (!agentsFetched || !membersFetched) return "loading";
 

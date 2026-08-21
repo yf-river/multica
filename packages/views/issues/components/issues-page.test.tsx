@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
@@ -16,7 +16,7 @@ vi.mock("@multica/core/hooks", () => ({
 // ---------------------------------------------------------------------------
 
 // Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
+const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector?: any) => {
@@ -61,6 +61,7 @@ vi.mock("../../workspace/workspace-avatar", () => ({
 
 // Mock api (queries use api internally)
 const mockListIssues = vi.hoisted(() => vi.fn().mockResolvedValue({ issues: [], total: 0 }));
+const mockListIssueBuckets = vi.hoisted(() => vi.fn().mockResolvedValue({ by_status: {} }));
 const mockListGroupedIssues = vi.hoisted(() => vi.fn().mockResolvedValue({ groups: [] }));
 const mockListMembers = vi.hoisted(() =>
   vi.fn().mockResolvedValue([
@@ -71,7 +72,7 @@ const mockListMembers = vi.hoisted(() =>
       role: "member",
       created_at: "2026-01-01T00:00:00Z",
       name: "Test User",
-      email: "test@test.com",
+      account: "test",
       avatar_url: null,
     },
   ]),
@@ -88,7 +89,7 @@ const mockListAgents = vi.hoisted(() =>
       runtime_id: null,
       owner_id: "user-1",
       avatar_url: null,
-      visibility: "workspace",
+      scope: "workspace",
       archived_at: null,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -113,26 +114,36 @@ const mockListSquads = vi.hoisted(() =>
     },
   ]),
 );
-vi.mock("@multica/core/api", () => ({
-  api: {
-    getBaseUrl: () => "http://127.0.0.1:8080",
+const mockGetAssigneeFrequency = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockGetChildIssueProgress = vi.hoisted(() => vi.fn().mockResolvedValue({ progress: [] }));
+const mockGetAgentTaskSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockListProjects = vi.hoisted(() => vi.fn().mockResolvedValue({ projects: [], total: 0 }));
+const mockListLabels = vi.hoisted(() => vi.fn().mockResolvedValue({ labels: [] }));
+vi.mock("@multica/core/api", () => {
+  const createMockApiMethods = () => ({
     listIssues: (...args: any[]) => mockListIssues(...args),
+    listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
     listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
     updateIssue: vi.fn(),
     listMembers: (...args: any[]) => mockListMembers(...args),
     listAgents: (...args: any[]) => mockListAgents(...args),
     listSquads: (...args: any[]) => mockListSquads(...args),
-  },
-  getApi: () => ({
-    listIssues: (...args: any[]) => mockListIssues(...args),
-    listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
-    updateIssue: vi.fn(),
-    listMembers: (...args: any[]) => mockListMembers(...args),
-    listAgents: (...args: any[]) => mockListAgents(...args),
-    listSquads: (...args: any[]) => mockListSquads(...args),
-  }),
-  setApiInstance: vi.fn(),
-}));
+    getAssigneeFrequency: (...args: any[]) => mockGetAssigneeFrequency(...args),
+    getChildIssueProgress: (...args: any[]) => mockGetChildIssueProgress(...args),
+    getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
+    listProjects: (...args: any[]) => mockListProjects(...args),
+    listLabels: (...args: any[]) => mockListLabels(...args),
+  });
+
+  return {
+    api: {
+      getBaseUrl: () => "http://127.0.0.1:8080",
+      ...createMockApiMethods(),
+    },
+    getApi: createMockApiMethods,
+    setApiInstance: vi.fn(),
+  };
+});
 
 // Mock issue config
 vi.mock("@multica/core/issues/config", () => ({
@@ -140,13 +151,13 @@ vi.mock("@multica/core/issues/config", () => ({
   BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
   STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
   STATUS_CONFIG: {
-    backlog: { label: "Backlog", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "Todo", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "In Progress", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "In Review", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "Done", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    backlog: { label: "待办池", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    todo: { label: "待处理", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
+    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
+    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
+    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
+    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
   PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
   PRIORITY_CONFIG: {
@@ -170,6 +181,7 @@ const mockViewState = {
   projectFilters: [] as string[],
   includeNoProject: false,
   labelFilters: [] as string[],
+  agentRunningFilter: false,
   sortBy: "position" as const,
   sortDirection: "asc" as const,
   cardProperties: { priority: true, description: true, assignee: true, dueDate: true, project: true, childProgress: true, labels: true },
@@ -209,22 +221,22 @@ vi.mock("@multica/core/issues/stores/view-store", () => ({
   }),
   SORT_OPTIONS: [
     { value: "position", label: "Manual" },
-    { value: "priority", label: "Priority" },
-    { value: "due_date", label: "Due date" },
+    { value: "priority", label: "优先级" },
+    { value: "due_date", label: "截止日期" },
     { value: "created_at", label: "Created date" },
     { value: "title", label: "Title" },
   ],
   GROUPING_OPTIONS: [
-    { value: "status", label: "Status" },
-    { value: "assignee", label: "Assignee" },
+    { value: "status", label: "状态" },
+    { value: "assignee", label: "负责人" },
   ],
   CARD_PROPERTY_OPTIONS: [
-    { key: "priority", label: "Priority" },
+    { key: "priority", label: "优先级" },
     { key: "description", label: "Description" },
-    { key: "assignee", label: "Assignee" },
-    { key: "dueDate", label: "Due date" },
+    { key: "assignee", label: "负责人" },
+    { key: "dueDate", label: "截止日期" },
     { key: "project", label: "Project" },
-    { key: "labels", label: "Labels" },
+    { key: "labels", label: "标签" },
     { key: "childProgress", label: "Sub-issue progress" },
   ],
 }));
@@ -420,6 +432,44 @@ const mockIssues: Issue[] = [
   },
 ];
 
+function mockIssueBuckets(issues: Issue[]) {
+  const by_status: Record<string, { issues: Issue[]; total: number }> = {};
+  for (const issue of issues) {
+    const bucket = by_status[issue.status] ?? { issues: [], total: 0 };
+    bucket.issues.push(issue);
+    bucket.total = bucket.issues.length;
+    by_status[issue.status] = bucket;
+  }
+  return { by_status };
+}
+
+function withIssueSummaries(issues: Issue[]): Issue[] {
+  const names: Record<string, string> = {
+    "user-1": "成员摘要",
+    "agent-1": "智能体摘要",
+    "squad-1": "小队摘要",
+  };
+  return issues.map((issue, index) => ({
+    ...issue,
+    child_progress: index === 0 ? { done: 1, total: 2 } : { done: 0, total: 0 },
+    agent_activity: { running_count: 0, queued_count: 0, agent_ids: [] },
+    project_id: index === 0 ? "project-1" : issue.project_id,
+    project:
+      index === 0
+        ? { id: "project-1", title: "项目摘要", icon: "项" }
+        : issue.project,
+    assignee:
+      issue.assignee_type && issue.assignee_id
+        ? {
+            type: issue.assignee_type,
+            id: issue.assignee_id,
+            name: names[issue.assignee_id] ?? "负责人摘要",
+            avatar_url: null,
+          }
+        : issue.assignee,
+  }));
+}
+
 function mockAssigneeGroups(issues: Issue[]) {
   const groups = new Map<string, { assignee_type: Issue["assignee_type"]; assignee_id: string | null; issues: Issue[] }>();
   for (const issue of issues) {
@@ -465,7 +515,7 @@ function renderWithQuery(ui: React.ReactElement) {
     },
   });
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         {ui}
       </QueryClientProvider>
@@ -481,11 +531,18 @@ describe("IssuesPage (shared)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListIssues.mockResolvedValue({ issues: [], total: 0 });
+    mockListIssueBuckets.mockResolvedValue({ by_status: {} });
     mockListGroupedIssues.mockResolvedValue({ groups: [] });
+    mockGetAssigneeFrequency.mockResolvedValue([]);
+    mockGetChildIssueProgress.mockResolvedValue({ progress: [] });
+    mockGetAgentTaskSnapshot.mockResolvedValue([]);
+    mockListProjects.mockResolvedValue({ projects: [], total: 0 });
+    mockListLabels.mockResolvedValue({ labels: [] });
     mockViewState.viewMode = "board";
     mockViewState.grouping = "status";
     mockViewState.statusFilters = [];
     mockViewState.priorityFilters = [];
+    mockViewState.agentRunningFilter = false;
     mockScope = "all";
   });
 
@@ -497,12 +554,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("renders issue titles after data loads", async () => {
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
 
     renderWithQuery(<IssuesPage />);
 
@@ -511,19 +563,86 @@ describe("IssuesPage (shared)", () => {
     expect(screen.getByText("Write tests")).toBeInTheDocument();
   });
 
-  it("renders board column headers", async () => {
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+  it("shows development acceptance issues as normal data", async () => {
+    const fixtureIssue: Issue = {
+      ...mockIssues[0]!,
+      id: "issue-fixture",
+      number: 99,
+      identifier: "TES-99",
+      title: "curl user-center 小队真实端到端验收",
+      project: { id: "project-fixture", title: "curl gateway 1782316918018", icon: null },
+    };
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets([...mockIssues, fixtureIssue]));
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("Backlog");
-    expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
+    await screen.findByText("Implement auth");
+    expect(await screen.findByText(fixtureIssue.title)).toBeInTheDocument();
+  });
+
+  it("does not load assignee frequency before an assignee picker opens", async () => {
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Implement auth");
+    expect(mockGetAssigneeFrequency).not.toHaveBeenCalled();
+  });
+
+  it("does not load filter directory data before the filter menu opens", async () => {
+    mockListIssueBuckets.mockResolvedValue({ by_status: {} });
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("还没有任务");
+    expect(mockListMembers).not.toHaveBeenCalled();
+    expect(mockListAgents).not.toHaveBeenCalled();
+    expect(mockListSquads).not.toHaveBeenCalled();
+    expect(mockListProjects).not.toHaveBeenCalled();
+    expect(mockListLabels).not.toHaveBeenCalled();
+  });
+
+  it("renders issue summaries without loading workspace directories", async () => {
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(withIssueSummaries(mockIssues)));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("成员摘要");
+    expect(screen.getByText("项目摘要")).toBeInTheDocument();
+    expect(mockListMembers).not.toHaveBeenCalled();
+    expect(mockListAgents).not.toHaveBeenCalled();
+    expect(mockListSquads).not.toHaveBeenCalled();
+    expect(mockListProjects).not.toHaveBeenCalled();
+    expect(mockGetChildIssueProgress).not.toHaveBeenCalled();
+    expect(mockGetAgentTaskSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("uses issue agent activity summaries for the working filter without loading the workspace snapshot", async () => {
+    mockViewState.agentRunningFilter = true;
+    const issues = withIssueSummaries(mockIssues).map((issue) =>
+      issue.id === "issue-2"
+        ? { ...issue, agent_activity: { running_count: 1, queued_count: 0, agent_ids: ["agent-1"] } }
+        : issue,
+    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(issues));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Design landing page");
+    await waitFor(() => {
+      expect(screen.queryByText("Implement auth")).not.toBeInTheDocument();
+    });
+    expect(mockGetAgentTaskSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("renders board column headers", async () => {
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("待规划");
+    expect(screen.getAllByText("待办").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("进行中").length).toBeGreaterThanOrEqual(1);
   });
 
   it("groups board columns by assignee", async () => {
@@ -538,7 +657,7 @@ describe("IssuesPage (shared)", () => {
     await screen.findAllByText("Test User");
     expect(screen.getAllByText("Agent One").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Squad One").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("No assignee")).toBeInTheDocument();
+    expect(screen.getByText("未分配")).toBeInTheDocument();
   });
 
   it("uses grouped assignee endpoint instead of status page sweep", async () => {
@@ -556,51 +675,60 @@ describe("IssuesPage (shared)", () => {
         statuses: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
       }),
     );
-    expect(mockListIssues).not.toHaveBeenCalled();
+    expect(mockListIssueBuckets).not.toHaveBeenCalled();
   });
 
-  it("shows the 'Issues' section header without a workspace prefix", async () => {
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+  it("shows the issue section header without a workspace prefix", async () => {
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("Issues");
+    await screen.findByText("任务");
     // The list header is now `icon + title`, matching the other list pages.
     // The workspace/org name is no longer rendered as a breadcrumb prefix.
     expect(screen.queryByText("Test WS")).not.toBeInTheDocument();
   });
 
   it("shows empty state when there are no issues", async () => {
-    mockListIssues.mockResolvedValue({ issues: [], total: 0 });
+    mockListIssueBuckets.mockResolvedValue({ by_status: {} });
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("No issues yet");
-    expect(screen.getByText("Create an issue to get started.")).toBeInTheDocument();
+    await screen.findByText("还没有任务");
+    expect(screen.getByText("创建一个任务开始使用。")).toBeInTheDocument();
   });
 
   it("shows scope tab buttons", async () => {
     renderWithQuery(<IssuesPage />);
 
-    expect(await screen.findAllByText("All")).not.toHaveLength(0);
-    expect(screen.getByText("Members")).toBeInTheDocument();
-    expect(screen.getByText("Agents")).toBeInTheDocument();
+    expect(await screen.findAllByText("全部")).not.toHaveLength(0);
+    expect(screen.getByText("成员")).toBeInTheDocument();
+    expect(screen.getByText("智能体")).toBeInTheDocument();
+  });
+
+  it("marks TAPD-sourced issues in the list title", async () => {
+    mockViewState.viewMode = "list";
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets([
+      {
+        ...mockIssues[0]!,
+        metadata: {
+          source_provider: "tapd",
+          source_url: "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+        },
+      },
+      mockIssues[1]!,
+    ]));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Implement auth");
+    expect(screen.getAllByTestId("tapd-source-badge")).toHaveLength(1);
   });
 
   it("agents scope includes squad-assigned issues", async () => {
     mockScope = "agents";
     mockViewState.viewMode = "list";
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
 
     // Squad task and agent task should be visible
@@ -613,12 +741,7 @@ describe("IssuesPage (shared)", () => {
   it("members scope excludes squad-assigned issues", async () => {
     mockScope = "members";
     mockViewState.viewMode = "list";
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
 
     await screen.findByText("Implement auth");

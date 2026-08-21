@@ -1,13 +1,9 @@
 "use client";
 
-// Native system notification bridge for the WEB app.
-//
-// The desktop app renders OS banners through its Electron main process
-// (`window.desktopAPI.showNotification`); the web app has no such bridge, so it
-// uses the browser Notification API here. `handleInboxNew` (realtime sync) is
-// the single decision point — it already gates on focus + the source
-// workspace's mute preference — and calls `showWebNotification` as the web path
-// when no `desktopAPI` is present.
+// Native system notification bridge for the WEB app. The web app uses the
+// browser Notification API here. `handleInboxNew` (realtime sync) is the
+// single decision point — it already gates on focus + the source workspace's
+// mute preference — and calls `showWebNotification` as the web path.
 //
 // Lives in `packages/core` (not `packages/views`) because the caller
 // (`handleInboxNew`) lives in core and `views` cannot be imported from core
@@ -31,16 +27,14 @@ export interface SystemNotificationPayload {
 
 type ClickHandler = (payload: SystemNotificationPayload) => void;
 
-// Module-level singleton — mirrors how the desktop preload registers its
-// behavior once at boot. The web shell registers a router-aware handler; while
-// unregistered (SSR, tests, pre-mount) a click is a silent no-op.
+// Module-level singleton. The web shell registers a router-aware handler;
+// while unregistered (SSR, tests, pre-mount) a click is a silent no-op.
 let clickHandler: ClickHandler | null = null;
 
 /**
  * Register how a clicked web notification routes (focus + navigate to the
  * source workspace's inbox, focused on the item). Called once by the web app
- * shell; pass `null` to unregister. Desktop does NOT use this — it routes
- * through its own Electron IPC bridge (`onInboxOpen`).
+ * shell; pass `null` to unregister.
  */
 export function registerSystemNotificationClickHandler(
   handler: ClickHandler | null,

@@ -193,8 +193,44 @@ function ids(cache: ListIssuesCache | undefined) {
   return cache?.byStatus.todo?.issues.map((issue) => issue.id);
 }
 
+function childIds(qc: QueryClient, parentIssueId = PARENT_ISSUE_ID) {
+  return qc
+    .getQueryData<Issue[]>(issueKeys.children(WS_ID, parentIssueId))
+    ?.map((issue) => issue.id);
+}
+
 function expectInvalidated(qc: QueryClient, queryKey: readonly unknown[]) {
   expect(qc.getQueryState(queryKey)?.isInvalidated).toBe(true);
+}
+
+function expectOnlyOtherIssueRemains(
+  qc: QueryClient,
+  assignedFilter: { assignee_id: string },
+  createdFilter: { creator_id: string },
+) {
+  expect(ids(qc.getQueryData(issueKeys.list(WS_ID)))).toEqual([
+    OTHER_ISSUE_ID,
+  ]);
+  expect(
+    ids(qc.getQueryData(issueKeys.myList(WS_ID, "assigned", assignedFilter))),
+  ).toEqual([OTHER_ISSUE_ID]);
+  expect(
+    ids(qc.getQueryData(issueKeys.myList(WS_ID, "created", createdFilter))),
+  ).toEqual([]);
+  expect(childIds(qc)).toEqual([OTHER_ISSUE_ID]);
+}
+
+function seedParentIssueWithChildProgress(qc: QueryClient) {
+  const parentIssue = { ...baseIssue, parent_issue_id: null };
+  const childIssue = { ...otherIssue, parent_issue_id: ISSUE_ID };
+  qc.setQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID), parentIssue);
+  qc.setQueryData<Issue[]>(issueKeys.children(WS_ID, ISSUE_ID), [
+    childIssue,
+  ]);
+  qc.setQueryData(
+    issueKeys.childProgress(WS_ID),
+    new Map([[ISSUE_ID, { done: 0, total: 1 }]]),
+  );
 }
 
 describe("useDeleteIssue", () => {
@@ -238,22 +274,9 @@ describe("useDeleteIssue", () => {
     });
 
     expect(deleteIssue).toHaveBeenCalledWith(ISSUE_ID);
-    expect(ids(qc.getQueryData(issueKeys.list(WS_ID)))).toEqual([
-      OTHER_ISSUE_ID,
-    ]);
-    expect(
-      ids(qc.getQueryData(issueKeys.myList(WS_ID, "assigned", assignedFilter))),
-    ).toEqual([OTHER_ISSUE_ID]);
-    expect(
-      ids(qc.getQueryData(issueKeys.myList(WS_ID, "created", createdFilter))),
-    ).toEqual([]);
+    expectOnlyOtherIssueRemains(qc, assignedFilter, createdFilter);
     expect(qc.getQueryData(issueKeys.detail(WS_ID, ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.usage(ISSUE_ID))).toBeUndefined();
-    expect(
-      qc
-        .getQueryData<Issue[]>(issueKeys.children(WS_ID, PARENT_ISSUE_ID))
-        ?.map((issue) => issue.id),
-    ).toEqual([OTHER_ISSUE_ID]);
     expectInvalidated(qc, agentTaskSnapshotKeys.list(WS_ID));
     expectInvalidated(qc, agentTasksKeys.detail(WS_ID, AGENT_ID));
   });
@@ -275,11 +298,7 @@ describe("useDeleteIssue", () => {
       await Promise.resolve();
     });
 
-    expect(
-      qc
-        .getQueryData<Issue[]>(issueKeys.children(WS_ID, PARENT_ISSUE_ID))
-        ?.map((issue) => issue.id),
-    ).toEqual([OTHER_ISSUE_ID]);
+    expect(childIds(qc)).toEqual([OTHER_ISSUE_ID]);
     expect(
       qc.getQueryState(issueKeys.children(WS_ID, PARENT_ISSUE_ID))
         ?.isInvalidated,
@@ -295,16 +314,7 @@ describe("useDeleteIssue", () => {
 
   it("invalidates child progress when a single delete removes a parent issue", async () => {
     const { qc, wrapper } = setup();
-    const parentIssue = { ...baseIssue, parent_issue_id: null };
-    const childIssue = { ...otherIssue, parent_issue_id: ISSUE_ID };
-    qc.setQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID), parentIssue);
-    qc.setQueryData<Issue[]>(issueKeys.children(WS_ID, ISSUE_ID), [
-      childIssue,
-    ]);
-    qc.setQueryData(
-      issueKeys.childProgress(WS_ID),
-      new Map([[ISSUE_ID, { done: 0, total: 1 }]]),
-    );
+    seedParentIssueWithChildProgress(qc);
 
     const { result } = renderHook(() => useDeleteIssue(), { wrapper });
 
@@ -438,16 +448,7 @@ describe("useBatchDeleteIssues", () => {
   it("invalidates child progress when a full batch delete removes a parent issue", async () => {
     const batchDeleteIssues = vi.fn().mockResolvedValue({ deleted: 1 });
     const { qc, wrapper } = setup(undefined, batchDeleteIssues);
-    const parentIssue = { ...baseIssue, parent_issue_id: null };
-    const childIssue = { ...otherIssue, parent_issue_id: ISSUE_ID };
-    qc.setQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID), parentIssue);
-    qc.setQueryData<Issue[]>(issueKeys.children(WS_ID, ISSUE_ID), [
-      childIssue,
-    ]);
-    qc.setQueryData(
-      issueKeys.childProgress(WS_ID),
-      new Map([[ISSUE_ID, { done: 0, total: 1 }]]),
-    );
+    seedParentIssueWithChildProgress(qc);
 
     const { result } = renderHook(() => useBatchDeleteIssues(), { wrapper });
 
@@ -618,20 +619,7 @@ describe("useBatchDeleteIssues", () => {
       await Promise.resolve();
     });
 
-    expect(ids(qc.getQueryData(issueKeys.list(WS_ID)))).toEqual([
-      OTHER_ISSUE_ID,
-    ]);
-    expect(
-      ids(qc.getQueryData(issueKeys.myList(WS_ID, "assigned", assignedFilter))),
-    ).toEqual([OTHER_ISSUE_ID]);
-    expect(
-      ids(qc.getQueryData(issueKeys.myList(WS_ID, "created", createdFilter))),
-    ).toEqual([]);
-    expect(
-      qc
-        .getQueryData<Issue[]>(issueKeys.children(WS_ID, PARENT_ISSUE_ID))
-        ?.map((issue) => issue.id),
-    ).toEqual([OTHER_ISSUE_ID]);
+    expectOnlyOtherIssueRemains(qc, assignedFilter, createdFilter);
 
     await expect(
       act(async () => {

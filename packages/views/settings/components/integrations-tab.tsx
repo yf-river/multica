@@ -12,7 +12,7 @@ import { useT } from "../../i18n";
 export function IntegrationsTab() {
   const { t } = useT("settings");
   return (
-    <div className="space-y-10">
+    <div className="space-y-4">
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
         <LarkTab />

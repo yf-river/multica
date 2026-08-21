@@ -2,14 +2,12 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -80,8 +78,8 @@ const modelCacheTTL = 60 * time.Second
 
 // ListModels returns the models supported by the given agent provider.
 // For providers with a known static catalog it returns the baked-in
-// list; for providers with a CLI discovery mechanism (opencode, pi,
-// openclaw) it shells out with caching and falls back to the static
+// list; for providers with a CLI discovery mechanism (opencode, pi)
+// it shells out with caching and falls back to the static
 // list on failure.
 //
 // For claude, codex, and opencode, the catalog is augmented with per-model
@@ -138,10 +136,6 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverPiModels(ctx, executablePath)
 		})
-	case "openclaw":
-		return cachedDiscovery(providerType, func() ([]Model, error) {
-			return discoverOpenclawAgents(ctx, executablePath)
-		})
 	case "codebuddy":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			models, err := discoverCodebuddyModels(ctx, executablePath)
@@ -160,7 +154,7 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 // any effect for the given provider. Every built-in provider now honours
 // `opts.Model` end-to-end — Hermes routes it through the ACP
 // `session/set_model` RPC before each prompt; Claude / Codex / Cursor /
-// Gemini / Copilot / Kimi / Kiro / OpenCode / OpenClaw / Pi / Antigravity
+// Gemini / Copilot / Kimi / Kiro / OpenCode / Pi / Antigravity
 // pass it via flag or session config (Antigravity gained `--model` in agy
 // 1.0.6 — MUL-3125).
 //
@@ -297,6 +291,7 @@ func codexStaticModels() []Model {
 		{ID: "gpt-5.5-mini", Label: "GPT-5.5 mini", Provider: "openai"},
 		{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai"},
 		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
+		{ID: "gpt-5.3-codex-spark", Label: "GPT-5.3 Codex Spark", Provider: "openai"},
 		{ID: "gpt-5.3-codex", Label: "GPT-5.3 Codex", Provider: "openai"},
 		{ID: "gpt-5", Label: "GPT-5", Provider: "openai"},
 		{ID: "o3", Label: "o3", Provider: "openai"},
@@ -357,6 +352,7 @@ func copilotStaticModels() []Model {
 		{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai"},
 		{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai"},
 		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
+		{ID: "gpt-5.3-codex-spark", Label: "GPT-5.3-Codex-Spark", Provider: "openai"},
 		{ID: "gpt-5.3-codex", Label: "GPT-5.3-Codex", Provider: "openai"},
 		{ID: "gpt-5.2-codex", Label: "GPT-5.2-Codex", Provider: "openai"},
 		{ID: "gpt-5.2", Label: "GPT-5.2", Provider: "openai"},
@@ -633,8 +629,6 @@ func openCodeThinkingLevelsFromVariants(variants map[string]opencodeModelVariant
 }
 
 // discoverPiModels runs `pi --list-models` and parses its output.
-// Older pi versions print the list to stderr; newer versions use
-// stdout. We capture both and parse whichever is non-empty.
 func discoverPiModels(ctx context.Context, executablePath string) ([]Model, error) {
 	if executablePath == "" {
 		executablePath = "pi"
@@ -652,24 +646,15 @@ func discoverPiModels(ctx context.Context, executablePath string) ([]Model, erro
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, executablePath, "--list-models")
 	hideAgentWindow(cmd)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
 	stdout, err := cmd.Output()
-	if err != nil && len(stdout) == 0 && stderr.Len() == 0 {
+	if err != nil && len(stdout) == 0 {
 		return []Model{}, nil
 	}
-	text := string(stdout)
-	if strings.TrimSpace(text) == "" {
-		text = stderr.String()
-	}
-	return parsePiModels(text), nil
+	return parsePiModels(string(stdout)), nil
 }
 
-// parsePiModels accepts the `pi --list-models` output. Pi historically
-// emitted `provider:model` per line and now emits a multi-column table
-// (`provider  model  context …`); both shapes are normalized to
-// `provider/model` to match opencode/UI conventions. The case-insensitive
-// `provider` token in column 0 is treated as the table header and skipped.
+// parsePiModels accepts the current multi-column `pi --list-models` output
+// (`provider  model  context …`) and normalizes IDs to `provider/model`.
 func parsePiModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -696,17 +681,10 @@ func parsePiModels(output string) []Model {
 		if strings.EqualFold(first, "provider") {
 			continue
 		}
-		var id string
-		if strings.ContainsAny(first, ":/") {
-			// Legacy `provider:model` format — normalize colon to slash.
-			// Restricted to this branch so a model name with a `:` in
-			// the table format's column 1 is not silently rewritten.
-			id = strings.Replace(first, ":", "/", 1)
-		} else if len(fields) >= 2 {
-			id = first + "/" + fields[1]
-		} else {
+		if len(fields) < 2 {
 			continue
 		}
+		id := first + "/" + fields[1]
 		// A real id has a non-empty provider and model on both sides of the
 		// slash. Drop anything that doesn't (e.g. a stray `something:` token),
 		// a cheap structural backstop on top of the diagnostic filter above.
@@ -1168,10 +1146,9 @@ func parseCursorModels(output string) []Model {
 		}
 		id := strings.TrimSpace(line[:idx])
 		label := strings.TrimSpace(line[idx+3:])
-		if !isOpenclawIdentifier(id) {
-			// Reuse the identifier guard — cursor IDs are in the
-			// same character set (alnum + `-./_`), so anything
-			// that fails it is either malformed or a header line.
+		if !isSafeModelIdentifier(id) {
+			// Cursor IDs use the safe model identifier character set
+			// (alphanumeric plus `-./_`); reject malformed headers.
 			continue
 		}
 		if seen[id] {
@@ -1197,168 +1174,9 @@ func parseCursorModels(output string) []Model {
 	return models
 }
 
-// discoverOpenclawAgents enumerates the pre-registered OpenClaw
-// agents (which is where model selection actually lives in the
-// OpenClaw world — each agent is bound to a model at `agents add`
-// time). It tries structured JSON output first, falling back to a
-// conservative text parser that rejects TUI decoration and section
-// headers. On any ambiguity we return an empty list and let the
-// creatable dropdown handle manual entry — a silently-wrong
-// enumeration would be worse than none.
-func discoverOpenclawAgents(ctx context.Context, executablePath string) ([]Model, error) {
-	if executablePath == "" {
-		executablePath = "openclaw"
-	}
-	if _, err := exec.LookPath(executablePath); err != nil {
-		return []Model{}, nil
-	}
-	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// Try JSON modes first. Different openclaw builds expose the
-	// flag under different names; trying a couple is cheap.
-	for _, jsonArgs := range [][]string{
-		{"agents", "list", "--json"},
-		{"agents", "list", "--output", "json"},
-		{"agents", "list", "-o", "json"},
-	} {
-		cmd := exec.CommandContext(runCtx, executablePath, jsonArgs...)
-		hideAgentWindow(cmd)
-		out, err := cmd.Output()
-		if err != nil && len(out) == 0 {
-			continue
-		}
-		if models, ok := parseOpenclawAgentsJSON(out); ok {
-			return models, nil
-		}
-	}
-
-	// Text fallback. Be strict — the default output is a decorated
-	// banner with box-drawing and section headers, and picking up
-	// the wrong tokens produces nonsense entries like "Identity:".
-	cmd := exec.CommandContext(runCtx, executablePath, "agents", "list")
-	hideAgentWindow(cmd)
-	out, err := cmd.Output()
-	if err != nil && len(out) == 0 {
-		return []Model{}, nil
-	}
-	return parseOpenclawAgents(string(out)), nil
-}
-
-// openclawAgentEntry is the shape parseOpenclawAgentsJSON expects
-// from `openclaw agents list --json`. `id` is the routing key
-// passed to `openclaw agent --agent <id>`; `name` is the human
-// display label set via `openclaw agents set-identity --name` and
-// is only used to enrich the dropdown label. The two are not
-// interchangeable — see openclawEntriesToModels for the mapping.
-// Older openclaw versions may emit only `name`; in that case we
-// fall back to using it as the id for backward compatibility.
-// `model` is optional and only used to enrich the dropdown label.
-type openclawAgentEntry struct {
-	Name  string `json:"name"`
-	ID    string `json:"id"`
-	Model string `json:"model"`
-}
-
-// parseOpenclawAgentsJSON accepts `openclaw agents list --json`-style
-// output. It handles two common shapes: a top-level array, or an
-// object with an `agents` key whose value is an array. Returns
-// ok=false if the input isn't valid JSON in either shape.
-func parseOpenclawAgentsJSON(raw []byte) ([]Model, bool) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return nil, false
-	}
-
-	var flat []openclawAgentEntry
-	if err := json.Unmarshal(raw, &flat); err == nil {
-		return openclawEntriesToModels(flat), true
-	}
-
-	var wrapped struct {
-		Agents []openclawAgentEntry `json:"agents"`
-	}
-	if err := json.Unmarshal(raw, &wrapped); err == nil && wrapped.Agents != nil {
-		return openclawEntriesToModels(wrapped.Agents), true
-	}
-
-	return nil, false
-}
-
-func openclawEntriesToModels(entries []openclawAgentEntry) []Model {
-	models := make([]Model, 0, len(entries))
-	seen := map[string]bool{}
-	for _, e := range entries {
-		// Use ID as the model identifier because openclaw resolves
-		// --agent by id, not by display name. Names may contain spaces
-		// (e.g. "Sub2API OPS") which openclaw's normalizeAgentId would
-		// mangle into a different string ("sub2api-ops"), causing a
-		// lookup miss and "no parseable output" errors.
-		id := e.ID
-		if id == "" {
-			id = e.Name
-		}
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		displayName := e.Name
-		if displayName == "" {
-			displayName = id
-		}
-		label := displayName
-		if e.Model != "" {
-			label = displayName + " (" + e.Model + ")"
-		}
-		models = append(models, Model{ID: id, Label: label, Provider: "openclaw"})
-	}
-	return models
-}
-
-// parseOpenclawAgents extracts agent names from the text output of
-// `openclaw agents list`. The default CLI output is a decorated
-// banner — section headers ending in `:`, box-drawing characters,
-// and single-character icons — so we only accept lines that look
-// like a proper `<name> <model>` row: at least two whitespace-
-// separated tokens, both made of safe identifier characters, and
-// neither ending in `:`. Anything else is discarded to avoid
-// surfacing "Identity:" or `◇` as selectable models.
-func parseOpenclawAgents(output string) []Model {
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var models []Model
-	seen := map[string]bool{}
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		name, model := fields[0], fields[1]
-		if !isOpenclawIdentifier(name) || !isOpenclawIdentifier(model) {
-			continue
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		models = append(models, Model{
-			ID:       name,
-			Label:    name + " (" + model + ")",
-			Provider: "openclaw",
-		})
-	}
-	return models
-}
-
-// isOpenclawIdentifier reports whether s looks like a valid
-// agent-name or model-id token: starts with a letter, contains only
-// identifier-safe characters, and isn't a section header
-// (trailing colon). Rejects TUI decoration like `│`, `╭`, `◇`, `|`.
-func isOpenclawIdentifier(s string) bool {
+// isSafeModelIdentifier reports whether s starts with a letter and contains
+// only identifier-safe characters.
+func isSafeModelIdentifier(s string) bool {
 	if s == "" || strings.HasSuffix(s, ":") {
 		return false
 	}
@@ -1381,49 +1199,65 @@ func isOpenclawIdentifier(s string) bool {
 
 // ── CodeBuddy model discovery ──
 
-// codebuddyModelRe matches the `--model <model> ... Currently supported: (m1, m2, ...)`
-// line in `codebuddy --help` output.
-var codebuddyModelRe = regexp.MustCompile(`--model\s*<[^>]+>\s*.*?Currently supported:\s*\(([^)]+)\)`)
-
-// discoverCodebuddyModels runs `codebuddy --help` and extracts the
-// supported model list from its output. Falls back to a static list
-// when the binary is missing or the output cannot be parsed.
+// discoverCodebuddyModels returns the CodeBuddy model catalog. An
+// operator-provided catalog takes precedence, followed by ACP discovery and
+// the static catalog.
 func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
+	if models := codebuddyModelsFromEnv(); len(models) > 0 {
+		return models, nil
+	}
 	if executablePath == "" {
 		executablePath = "codebuddy"
 	}
 	if _, err := exec.LookPath(executablePath); err != nil {
 		return codebuddyStaticModels(), nil
 	}
-	helpOut := codebuddyHelpOutput(ctx, executablePath)
-	if helpOut == "" {
-		return codebuddyStaticModels(), nil
+	models, err := discoverCodebuddyACPModels(ctx, executablePath)
+	if err == nil && len(models) > 0 {
+		return models, nil
 	}
-	models := parseCodebuddyModels(helpOut)
-	if len(models) == 0 {
-		return codebuddyStaticModels(), nil
+	return codebuddyStaticModels(), nil
+}
+
+func discoverCodebuddyACPModels(ctx context.Context, executablePath string) ([]Model, error) {
+	models, err := discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+		defaultBin:   "codebuddy",
+		clientName:   "multica-model-discovery",
+		tmpdirPrefix: "multica-codebuddy-discovery-",
+		acpArgs:      []string{"--acp"},
+	})
+	if err != nil || len(models) == 0 {
+		return models, err
+	}
+	for i := range models {
+		if models[i].Provider == "" {
+			models[i].Provider = codebuddyModelProvider(models[i].ID)
+		}
 	}
 	return models, nil
 }
 
-// parseCodebuddyModels extracts model IDs from codebuddy --help output.
-// The help text contains a line like:
-//
-//	--model <model>  ... Currently supported: (model1, model2, ...)
-//
-// The first model in the list is marked as default.
-func parseCodebuddyModels(helpOutput string) []Model {
-	match := codebuddyModelRe.FindStringSubmatch(helpOutput)
-	if len(match) < 2 {
-		return nil
+func codebuddyModelsFromEnv() []Model {
+	for _, name := range []string{"MULTICA_CODEBUDDY_MODELS", "CODEBUDDY_MODELS"} {
+		if models := parseCodebuddyModelList(os.Getenv(name)); len(models) > 0 {
+			return models
+		}
 	}
-	raw := strings.Split(match[1], ",")
+	return nil
+}
+
+func parseCodebuddyModelList(rawList string) []Model {
+	raw := strings.FieldsFunc(rawList, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
 	var models []Model
+	seen := map[string]bool{}
 	for _, s := range raw {
 		id := strings.TrimSpace(s)
-		if id == "" {
+		if id == "" || seen[id] {
 			continue
 		}
+		seen[id] = true
 		models = append(models, Model{
 			ID:       id,
 			Label:    codebuddyModelLabel(id),
@@ -1478,11 +1312,37 @@ func codebuddyModelLabel(id string) string {
 // codebuddyStaticModels is the fallback catalog when dynamic discovery
 // fails (binary missing, parse error, timeout).
 func codebuddyStaticModels() []Model {
-	return []Model{
-		{ID: "claude-sonnet-4.6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
-		{ID: "claude-opus-4.7", Label: "Claude Opus 4.7", Provider: "anthropic"},
-		{ID: "gemini-3.1-pro", Label: "Gemini 3.1 Pro", Provider: "google"},
-		{ID: "gpt-5.5", Label: "GPT 5.5", Provider: "openai"},
-		{ID: "deepseek-v3-2-volc-ioa", Label: "Deepseek V3 2 Volc IOA", Provider: "deepseek"},
-	}
+	return parseCodebuddyModelList(strings.Join([]string{
+		"claude-sonnet-4.6",
+		"claude-sonnet-4.6-1m",
+		"claude-opus-4.8",
+		"claude-opus-4.8-1m",
+		"claude-opus-4.7",
+		"claude-opus-4.7-1m",
+		"claude-opus-4.6",
+		"claude-opus-4.6-1m",
+		"claude-haiku-4.5",
+		"gemini-3.1-pro",
+		"gemini-3.5-flash",
+		"gemini-2.5-pro",
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.3-codex",
+		"gpt-5.1-codex",
+		"gpt-5.1-codex-mini",
+		"glm-5.2-ioa",
+		"glm-5v-turbo-ioa",
+		"glm-5.0-ioa",
+		"glm-4.7-ioa",
+		"minimax-m3-ioa",
+		"minimax-m2.7-ioa",
+		"minimax-m2.5-ioa",
+		"kimi-k2.6-ioa",
+		"kimi-k2.7-ioa",
+		"hy3-preview-agent-ioa",
+		"echo",
+		"deepseek-v4-pro-ioa",
+		"deepseek-v4-flash-ioa",
+		"deepseek-v3-2-volc-ioa",
+	}, ","))
 }

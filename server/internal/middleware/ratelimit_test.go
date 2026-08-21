@@ -17,7 +17,7 @@ func TestRateLimit_NilRedis(t *testing.T) {
 	mw := RateLimit(nil, 5, time.Minute, nil)
 	handler := mw(okHandler)
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "1.2.3.4:12345"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -33,7 +33,7 @@ func TestRateLimit_AllowsUnderLimit(t *testing.T) {
 	handler := mw(okHandler)
 
 	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 		req.RemoteAddr = "10.0.0.1:9000"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -49,7 +49,7 @@ func TestRateLimit_BlocksOverLimit(t *testing.T) {
 	handler := mw(okHandler)
 
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 		req.RemoteAddr = "10.0.0.2:9000"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -58,7 +58,7 @@ func TestRateLimit_BlocksOverLimit(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.0.2:9000"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -81,12 +81,12 @@ func TestRateLimit_RetryAfterHeader(t *testing.T) {
 	mw := RateLimit(rdb, 1, 2*time.Minute, nil)
 	handler := mw(okHandler)
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.0.3:9000"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	req = httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req = httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.0.3:9000"
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -107,7 +107,7 @@ func TestRateLimit_DifferentIPs(t *testing.T) {
 
 	ips := []string{"10.0.1.1:9000", "10.0.1.2:9000", "10.0.1.3:9000"}
 	for _, addr := range ips {
-		req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 		req.RemoteAddr = addr
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -116,7 +116,7 @@ func TestRateLimit_DifferentIPs(t *testing.T) {
 		}
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.1.1:9000"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -124,7 +124,7 @@ func TestRateLimit_DifferentIPs(t *testing.T) {
 		t.Fatalf("expected 429 for repeated IP, got %d", rec.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req = httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.1.3:9000"
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -146,7 +146,7 @@ func mustParseCIDR(cidr string) *net.IPNet {
 }
 
 func TestExtractIP_NoTrustedProxies_IgnoresXFF(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "203.0.113.1:9000"
 	req.Header.Set("X-Forwarded-For", "198.51.100.1, 203.0.113.1")
 
@@ -159,7 +159,7 @@ func TestExtractIP_NoTrustedProxies_IgnoresXFF(t *testing.T) {
 func TestExtractIP_TrustedProxy_HonorsXFF(t *testing.T) {
 	trusted := []*net.IPNet{mustParseCIDR("10.0.0.0/8")}
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.0.1:9000"
 	req.Header.Set("X-Forwarded-For", "198.51.100.42, 10.0.0.5")
 
@@ -173,7 +173,7 @@ func TestExtractIP_TrustedProxy_HonorsXFF(t *testing.T) {
 func TestExtractIP_UntrustedSource_IgnoresXFF(t *testing.T) {
 	trusted := []*net.IPNet{mustParseCIDR("10.0.0.0/8")}
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "203.0.113.99:9000" // Not in trusted CIDR
 	req.Header.Set("X-Forwarded-For", "198.51.100.1")
 
@@ -184,10 +184,10 @@ func TestExtractIP_UntrustedSource_IgnoresXFF(t *testing.T) {
 }
 
 func TestExtractIP_IPv6Normalization(t *testing.T) {
-	req1 := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req1 := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req1.RemoteAddr = "[::1]:9000"
 
-	req2 := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req2 := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req2.RemoteAddr = "[0:0:0:0:0:0:0:1]:9000"
 
 	ip1 := extractIP(req1, nil)
@@ -202,7 +202,7 @@ func TestRateLimit_LuaScript_SetsTTL(t *testing.T) {
 	mw := RateLimit(rdb, 10, 30*time.Second, nil)
 	handler := mw(okHandler)
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/send-code", nil)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	req.RemoteAddr = "10.0.99.1:9000"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -211,7 +211,7 @@ func TestRateLimit_LuaScript_SetsTTL(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	key := rateLimitKey("/auth/send-code", "10.0.99.1")
+	key := rateLimitKey("/auth/login", "10.0.99.1")
 	ttl, err := rdb.TTL(req.Context(), key).Result()
 	if err != nil {
 		t.Fatalf("TTL: %v", err)

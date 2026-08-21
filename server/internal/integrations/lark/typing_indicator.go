@@ -17,7 +17,7 @@ const typingEmoji = "Typing"
 
 // typingIndicatorMaxAge is how old a message can be before we skip the
 // typing indicator. This prevents stale reactions when a WebSocket
-// reconnect replays old events. Aligned with OpenClaw's 2-minute bound.
+// reconnect replays old events.
 const typingIndicatorMaxAge = 2 * time.Minute
 
 // TypingIndicatorState holds the identifiers needed to remove a reaction.
@@ -211,7 +211,7 @@ func (m *TypingIndicatorManager) resolveCredentials(inst db.LarkInstallation) (I
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
 		AppSecret: secret,
-		Region:    RegionOrDefault(inst.Region),
+		Region:    Region(inst.Region),
 	}
 	if inst.TenantKey.Valid {
 		creds.TenantKey = inst.TenantKey.String

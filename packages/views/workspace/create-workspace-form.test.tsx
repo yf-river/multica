@@ -4,12 +4,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { configStore } from "@multica/core/config";
-import enCommon from "../locales/en/common.json";
-import enWorkspace from "../locales/en/workspace.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enWorkspace from "../locales/zh-Hans/workspace.json";
 import { CreateWorkspaceForm } from "./create-workspace-form";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, workspace: enWorkspace },
+  "zh-Hans": { common: enCommon, workspace: enWorkspace },
 };
 
 const mockMutate = vi.fn();
@@ -19,7 +19,7 @@ vi.mock("@multica/core/workspace/mutations", () => ({
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -55,7 +55,7 @@ describe("CreateWorkspaceForm", () => {
 
   it("auto-generates slug from name until user edits slug", () => {
     renderForm();
-    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+    fireEvent.change(screen.getByLabelText(/工作区名称/i), {
       target: { value: "Acme Corp" },
     });
     expect(screen.getByDisplayValue("acme-corp")).toBeInTheDocument();
@@ -63,10 +63,10 @@ describe("CreateWorkspaceForm", () => {
 
   it("stops auto-generating slug once user edits slug directly", () => {
     renderForm();
-    fireEvent.change(screen.getByLabelText(/workspace url/i), {
+    fireEvent.change(screen.getByLabelText(/工作区 URL/i), {
       target: { value: "custom" },
     });
-    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+    fireEvent.change(screen.getByLabelText(/工作区名称/i), {
       target: { value: "Different Name" },
     });
     expect(screen.getByDisplayValue("custom")).toBeInTheDocument();
@@ -78,10 +78,10 @@ describe("CreateWorkspaceForm", () => {
       opts?.onSuccess?.({ id: "ws-1", slug: "acme", name: "Acme" });
     });
     renderForm(onSuccess);
-    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+    fireEvent.change(screen.getByLabelText(/工作区名称/i), {
       target: { value: "Acme" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    fireEvent.click(screen.getByRole("button", { name: /创建工作区/i }));
     await waitFor(() =>
       expect(onSuccess).toHaveBeenCalledWith(
         expect.objectContaining({ slug: "acme" }),
@@ -94,39 +94,39 @@ describe("CreateWorkspaceForm", () => {
       opts?.onError?.({ status: 409 });
     });
     renderForm();
-    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+    fireEvent.change(screen.getByLabelText(/工作区名称/i), {
       target: { value: "Taken" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /create workspace/i }));
+    fireEvent.click(screen.getByRole("button", { name: /创建工作区/i }));
     await waitFor(() =>
-      expect(screen.getByText(/already taken/i)).toBeInTheDocument(),
+      expect(screen.getByText(/该工作区 URL 已被占用/i)).toBeInTheDocument(),
     );
   });
 
   it("disables submit when slug has invalid format", () => {
     renderForm();
-    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+    fireEvent.change(screen.getByLabelText(/工作区名称/i), {
       target: { value: "Valid Name" },
     });
-    fireEvent.change(screen.getByLabelText(/workspace url/i), {
+    fireEvent.change(screen.getByLabelText(/工作区 URL/i), {
       target: { value: "Invalid Slug!" },
     });
     expect(
-      screen.getByRole("button", { name: /create workspace/i }),
+      screen.getByRole("button", { name: /创建工作区/i }),
     ).toBeDisabled();
   });
 
   it("disables submit when slug is reserved", () => {
     renderForm();
-    fireEvent.change(screen.getByLabelText(/workspace name/i), {
+    fireEvent.change(screen.getByLabelText(/工作区名称/i), {
       target: { value: "Valid Name" },
     });
-    fireEvent.change(screen.getByLabelText(/workspace url/i), {
+    fireEvent.change(screen.getByLabelText(/工作区 URL/i), {
       target: { value: "admin" },
     });
     expect(
-      screen.getByRole("button", { name: /create workspace/i }),
+      screen.getByRole("button", { name: /创建工作区/i }),
     ).toBeDisabled();
-    expect(screen.getByText(/reserved and cannot be used/i)).toBeInTheDocument();
+    expect(screen.getByText(/系统保留/i)).toBeInTheDocument();
   });
 });

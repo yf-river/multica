@@ -211,16 +211,6 @@ func TestHTTPClient_IsConfigured(t *testing.T) {
 	}
 }
 
-// TestHTTPClient_StubReportsNotConfigured pins that the stub never
-// claims wired outbound — handlers gate install / management UI on
-// this signal.
-func TestHTTPClient_StubReportsNotConfigured(t *testing.T) {
-	s := NewStubAPIClient(nil)
-	if s.IsConfigured() {
-		t.Errorf("stub IsConfigured must be false")
-	}
-}
-
 // TestHTTPClient_SendInteractiveCard_DefaultRendererBodyHasUpdateMulti
 // is the send-side half of the must-fix wire check: when the Patcher
 // uses NewDefaultRenderer to produce a card and ships it via
@@ -960,8 +950,8 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 			"code": 0,
 			"msg":  "ok",
 			"bot": map[string]any{
-				"open_id":   "ou_bot_42",
-				"app_name":  "PersonalAgent",
+				"open_id":    "ou_bot_42",
+				"app_name":   "PersonalAgent",
 				"avatar_url": "https://example/avatar.png",
 			},
 		})
@@ -1000,13 +990,7 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails covers the case
-// where /contact/v3/users returns a non-zero code (e.g. the app's
-// contact scope was never approved). The install must still succeed
-// with an empty UnionID so the operator can backfill later instead
-// of the QR flow failing outright. The decoder transitional fallback
-// keeps single-bot installs working in the gap.
-func TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails(t *testing.T) {
+func TestHTTPClient_GetBotInfo_UnionIDLookupFailure(t *testing.T) {
 	fake := newLarkFake(t)
 	fake.stubToken("tok_bi_softfail", 7200)
 	fake.mux.HandleFunc("/open-apis/bot/v3/info", func(w http.ResponseWriter, r *http.Request) {
@@ -1020,15 +1004,9 @@ func TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails(t *testing.T) {
 		writeJSON(w, map[string]any{"code": 99991002, "msg": "no permission"})
 	})
 	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()})
-	info, err := c.GetBotInfo(context.Background(), testCreds())
-	if err != nil {
-		t.Fatalf("GetBotInfo unexpectedly errored on soft-fail: %v", err)
-	}
-	if string(info.OpenID) != "ou_bot_softfail" {
-		t.Errorf("OpenID: got %q want ou_bot_softfail", info.OpenID)
-	}
-	if info.UnionID != "" {
-		t.Errorf("UnionID: got %q want empty (soft-fail leaves backfill to operator)", info.UnionID)
+	_, err := c.GetBotInfo(context.Background(), testCreds())
+	if err == nil || !strings.Contains(err.Error(), "bot union_id") {
+		t.Fatalf("GetBotInfo error = %v, want bot union_id failure", err)
 	}
 }
 

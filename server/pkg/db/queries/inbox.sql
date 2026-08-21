@@ -6,10 +6,6 @@ LEFT JOIN issue iss ON iss.id = i.issue_id
 WHERE i.workspace_id = $1 AND i.recipient_type = $2 AND i.recipient_id = $3 AND i.archived = false
 ORDER BY i.created_at DESC;
 
--- name: GetInboxItem :one
-SELECT * FROM inbox_item
-WHERE id = $1;
-
 -- name: GetInboxItemInWorkspace :one
 SELECT * FROM inbox_item
 WHERE id = $1 AND workspace_id = $2;

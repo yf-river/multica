@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -74,6 +78,8 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 	switch resourceType {
 	case "github_repo":
 		return validateGithubRepoRef(ref)
+	case "gongfeng_repo":
+		return validateGongfengRepoRef(ref)
 	case "local_directory":
 		return validateLocalDirectoryRef(ref)
 	default:
@@ -84,6 +90,32 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 type githubRepoRef struct {
 	URL               string `json:"url"`
 	DefaultBranchHint string `json:"default_branch_hint,omitempty"`
+}
+
+type gongfengRepoRef struct {
+	Provider                        string `json:"provider"`
+	URL                             string `json:"url"`
+	ProjectPath                     string `json:"project_path"`
+	ResourceKind                    string `json:"resource_kind"`
+	Ref                             string `json:"ref,omitempty"`
+	HeadCommit                      string `json:"head_commit,omitempty"`
+	Branch                          string `json:"branch,omitempty"`
+	CommitSHA                       string `json:"commit_sha,omitempty"`
+	ConnectionStatus                string `json:"connection_status,omitempty"`
+	SyncStatus                      string `json:"sync_status,omitempty"`
+	TestStatus                      string `json:"test_status,omitempty"`
+	LastTestedAt                    string `json:"last_tested_at,omitempty"`
+	LastSyncedAt                    string `json:"last_synced_at,omitempty"`
+	CredentialStatus                string `json:"credential_status,omitempty"`
+	CredentialProfileID             string `json:"credential_profile_id,omitempty"`
+	CredentialProfileStatus         string `json:"credential_profile_status,omitempty"`
+	CredentialSecretHint            string `json:"credential_secret_hint,omitempty"`
+	CredentialLastVerifiedAt        string `json:"credential_last_verified_at,omitempty"`
+	CredentialProbeStatus           string `json:"credential_probe_status,omitempty"`
+	CredentialProbeHTTPStatus       string `json:"credential_probe_http_status,omitempty"`
+	CredentialProbeTarget           string `json:"credential_probe_target,omitempty"`
+	UnauthenticatedConnectionStatus string `json:"unauthenticated_connection_status,omitempty"`
+	Title                           string `json:"title,omitempty"`
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -104,6 +136,245 @@ func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload gongfengRepoRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid gongfeng_repo payload: %w", err)
+	}
+	payload.URL = strings.TrimSpace(payload.URL)
+	if payload.URL == "" {
+		return nil, errors.New("gongfeng_repo: url is required")
+	}
+	parsed, err := parseGongfengURL(payload.URL)
+	if err != nil {
+		return nil, err
+	}
+	payload.Provider = "gongfeng"
+	payload.ProjectPath = strings.Trim(strings.TrimSpace(payload.ProjectPath), "/")
+	if payload.ProjectPath == "" {
+		payload.ProjectPath = parsed.ProjectPath
+	}
+	if payload.ProjectPath == "" {
+		return nil, errors.New("gongfeng_repo: project_path is required")
+	}
+	payload.ResourceKind = strings.TrimSpace(payload.ResourceKind)
+	if payload.ResourceKind == "" {
+		payload.ResourceKind = parsed.ResourceKind
+	}
+	if !isValidGongfengResourceKind(payload.ResourceKind) {
+		return nil, errors.New("gongfeng_repo: resource_kind must be project, branch, commits, commit, tag, file, or merge_request")
+	}
+	payload.Ref = strings.TrimSpace(payload.Ref)
+	if payload.Ref == "" {
+		payload.Ref = parsed.Ref
+	}
+	payload.HeadCommit = strings.TrimSpace(payload.HeadCommit)
+	payload.Branch = strings.TrimSpace(payload.Branch)
+	payload.CommitSHA = strings.TrimSpace(payload.CommitSHA)
+	payload.ConnectionStatus = normalizeRemovedProjectResourceDisabledStatus(payload.ConnectionStatus)
+	payload.SyncStatus = normalizeRemovedProjectResourceDisabledStatus(payload.SyncStatus)
+	payload.TestStatus = normalizeRemovedProjectResourceDisabledStatus(payload.TestStatus)
+	payload.LastTestedAt = strings.TrimSpace(payload.LastTestedAt)
+	payload.LastSyncedAt = strings.TrimSpace(payload.LastSyncedAt)
+	payload.CredentialStatus = strings.TrimSpace(payload.CredentialStatus)
+	payload.CredentialProfileID = strings.TrimSpace(payload.CredentialProfileID)
+	payload.CredentialProfileStatus = strings.TrimSpace(payload.CredentialProfileStatus)
+	payload.CredentialSecretHint = strings.TrimSpace(payload.CredentialSecretHint)
+	payload.CredentialLastVerifiedAt = strings.TrimSpace(payload.CredentialLastVerifiedAt)
+	payload.CredentialProbeStatus = strings.TrimSpace(payload.CredentialProbeStatus)
+	payload.CredentialProbeHTTPStatus = strings.TrimSpace(payload.CredentialProbeHTTPStatus)
+	payload.CredentialProbeTarget = strings.TrimSpace(payload.CredentialProbeTarget)
+	payload.UnauthenticatedConnectionStatus = strings.TrimSpace(payload.UnauthenticatedConnectionStatus)
+	payload.Title = strings.TrimSpace(payload.Title)
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func normalizeRemovedProjectResourceDisabledStatus(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "disabled" {
+		return ""
+	}
+	return value
+}
+
+func normalizeGongfengProjectPath(value string) string {
+	return strings.Trim(strings.TrimSpace(value), "/")
+}
+
+func gongfengProjectPathFromResourceRef(ref json.RawMessage) string {
+	var payload gongfengRepoRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return ""
+	}
+	if projectPath := normalizeGongfengProjectPath(payload.ProjectPath); projectPath != "" {
+		return projectPath
+	}
+	parsed, err := parseGongfengURL(payload.URL)
+	if err != nil {
+		return ""
+	}
+	return normalizeGongfengProjectPath(parsed.ProjectPath)
+}
+
+func gongfengProjectPathFromWorkspaceRepo(repo workspaceRepoRef) string {
+	if projectPath := normalizeGongfengProjectPath(repo.ProjectPath); projectPath != "" {
+		return projectPath
+	}
+	parsed, err := parseGongfengURL(repo.URL)
+	if err != nil {
+		return ""
+	}
+	return normalizeGongfengProjectPath(parsed.ProjectPath)
+}
+
+func workspaceGongfengProjectPathCounts(raw []byte) map[string]int {
+	counts := map[string]int{}
+	if len(raw) == 0 {
+		return counts
+	}
+	var repos []workspaceRepoRef
+	if err := json.Unmarshal(raw, &repos); err != nil {
+		return counts
+	}
+	for _, repo := range repos {
+		projectPath := gongfengProjectPathFromWorkspaceRepo(repo)
+		if projectPath == "" {
+			continue
+		}
+		counts[projectPath]++
+	}
+	return counts
+}
+
+func (h *Handler) ensureGongfengProjectPathRegistered(ctx context.Context, workspaceID pgtype.UUID, resourceType string, ref json.RawMessage) error {
+	if resourceType != "gongfeng_repo" {
+		return nil
+	}
+	projectPath := gongfengProjectPathFromResourceRef(ref)
+	if projectPath == "" {
+		return errors.New("gongfeng_repo: project_path is required")
+	}
+	workspace, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("load workspace repos: %w", err)
+	}
+	if workspaceGongfengProjectPathCounts(workspace.Repos)[projectPath] <= 0 {
+		return fmt.Errorf("gongfeng_repo: project_path %q is not registered in workspace repository inventory", projectPath)
+	}
+	return nil
+}
+
+func (h *Handler) ensureWorkspaceReposKeepGongfengProjectResources(ctx context.Context, workspaceID pgtype.UUID, nextRepos []byte) error {
+	nextCounts := workspaceGongfengProjectPathCounts(nextRepos)
+	resources, err := h.Queries.ListGongfengProjectResourcesInWorkspace(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("load gongfeng project resources: %w", err)
+	}
+	for _, resource := range resources {
+		projectPath := gongfengProjectPathFromResourceRef(json.RawMessage(resource.ResourceRef))
+		if projectPath == "" {
+			continue
+		}
+		if nextCounts[projectPath] <= 0 {
+			return fmt.Errorf("workspace repos cannot remove the last Gongfeng repository for project_path %q while project resources still use it", projectPath)
+		}
+	}
+	return nil
+}
+
+type parsedGongfengURL struct {
+	ProjectPath  string
+	ResourceKind string
+	Ref          string
+}
+
+func parseGongfengURL(raw string) (parsedGongfengURL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: url must be a valid https URL")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: url must be a valid http(s) URL")
+	}
+	if !strings.EqualFold(u.Host, "git.code.tencent.com") {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: host must be git.code.tencent.com")
+	}
+	segments := splitCleanPath(u.Path)
+	if len(segments) == 0 {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: project_path is required")
+	}
+	if i := indexSegment(segments, "-"); i >= 0 {
+		segments = append(segments[:i], segments[i+1:]...)
+	}
+	marker := len(segments)
+	kind := "project"
+	ref := ""
+	for i, segment := range segments {
+		switch segment {
+		case "commits":
+			marker, kind = i, "commits"
+		case "commit":
+			marker, kind = i, "commit"
+		case "tree", "branches", "branch":
+			marker, kind = i, "branch"
+		case "tags", "tag":
+			marker, kind = i, "tag"
+		case "blob", "file", "files":
+			marker, kind = i, "file"
+		case "merge_requests", "merge_request":
+			marker, kind = i, "merge_request"
+		default:
+			continue
+		}
+		if marker+1 < len(segments) {
+			ref = strings.Join(segments[marker+1:], "/")
+		}
+		break
+	}
+	projectSegments := segments[:marker]
+	if len(projectSegments) == 0 {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: project_path is required")
+	}
+	projectPath := strings.TrimSuffix(strings.Join(projectSegments, "/"), ".git")
+	if projectPath == "" {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: project_path is required")
+	}
+	return parsedGongfengURL{ProjectPath: projectPath, ResourceKind: kind, Ref: ref}, nil
+}
+
+func splitCleanPath(path string) []string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func indexSegment(segments []string, needle string) int {
+	for i, segment := range segments {
+		if segment == needle {
+			return i
+		}
+	}
+	return -1
+}
+
+func isValidGongfengResourceKind(kind string) bool {
+	switch kind {
+	case "project", "branch", "commits", "commit", "tag", "file", "merge_request":
+		return true
+	default:
+		return false
+	}
 }
 
 // localDirectoryRef is the JSONB shape stored for resource_type=local_directory.
@@ -275,6 +546,10 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, req.ResourceType, normalizedRef); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if conflict, err := h.findLocalDirectoryConflict(r.Context(), project.ID, req.ResourceType, normalizedRef, pgtype.UUID{}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check existing resources")
@@ -375,6 +650,10 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, existing.ResourceType, normalized); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		nextRef = normalized
 	}
 
@@ -438,12 +717,492 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// SyncProjectResource refreshes locally known branch/sync metadata. Full
+// commit discovery requires a bound Gongfeng profile; until then this action
+// records that the resource was refreshed without inventing a commit SHA.
+func (h *Handler) SyncProjectResource(w http.ResponseWriter, r *http.Request) {
+	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	existing, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
+		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
+	})
+	if err != nil || uuidToString(existing.ProjectID) != uuidToString(project.ID) {
+		writeError(w, http.StatusNotFound, "project resource not found")
+		return
+	}
+	if existing.ResourceType != "gongfeng_repo" {
+		writeError(w, http.StatusBadRequest, "project resource is not a gongfeng_repo")
+		return
+	}
+	var ref gongfengRepoRef
+	if err := json.Unmarshal(existing.ResourceRef, &ref); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid gongfeng_repo resource_ref")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if ref.Branch == "" {
+		ref.Branch = ref.Ref
+	}
+	if ref.CommitSHA == "" {
+		ref.CommitSHA = ref.HeadCommit
+	}
+	ref.SyncStatus = "synced"
+	ref.LastSyncedAt = now
+	nextRef, err := validateAndNormalizeResourceRef(existing.ResourceType, mustMarshalRaw(ref))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := h.Queries.UpdateProjectResource(r.Context(), db.UpdateProjectResourceParams{
+		ID:          existing.ID,
+		ResourceRef: nextRef,
+		Label:       existing.Label,
+		Position:    existing.Position,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update project resource")
+		return
+	}
+	resp := projectResourceToResponse(updated)
+	h.publish(
+		protocol.EventProjectResourceUpdated,
+		uuidToString(project.WorkspaceID),
+		"member",
+		userID,
+		map[string]any{"resource": resp, "project_id": uuidToString(project.ID), "action": "sync"},
+	)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) loadUsableGongfengCredentialProfile(ctx context.Context, userID string) (db.ExternalCredentialProfile, bool, error) {
+	userUUID, ok := h.parseUserUUIDOrZero(userID)
+	if !ok {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
+		UserID:   userUUID,
+		Provider: externalCredentialProviderGongfeng,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	if err != nil {
+		return db.ExternalCredentialProfile{}, false, err
+	}
+	if !isUsableGongfengCredentialProfile(profile) {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	return profile, true, nil
+}
+
+func isUsableGongfengCredentialProfile(profile db.ExternalCredentialProfile) bool {
+	if profile.Provider != externalCredentialProviderGongfeng {
+		return false
+	}
+	if profile.Status == "disabled" || profile.Status == "failed" {
+		return false
+	}
+	return profile.SecretRef != "" || len(profile.EncryptedSecret) > 0
+}
+
+func applyGongfengCredentialProbeResult(ref gongfengRepoRef, result gongfengProbeResult, credentialProbe gongfengCredentialProbeResult, profile db.ExternalCredentialProfile, hasProfile bool) gongfengRepoRef {
+	ref.ConnectionStatus = result.ConnectionStatus
+	ref.TestStatus = result.TestStatus
+	ref.CredentialStatus = "not_configured"
+	ref.CredentialProfileID = ""
+	ref.CredentialProfileStatus = ""
+	ref.CredentialSecretHint = ""
+	ref.CredentialLastVerifiedAt = ""
+	ref.CredentialProbeStatus = ""
+	ref.CredentialProbeHTTPStatus = ""
+	ref.CredentialProbeTarget = ""
+	ref.UnauthenticatedConnectionStatus = ""
+	if !hasProfile {
+		return ref
+	}
+
+	ref.CredentialStatus = "account_profile_configured"
+	ref.CredentialProfileID = uuidToString(profile.ID)
+	ref.CredentialProfileStatus = profile.Status
+	if profile.SecretRef != "" {
+		ref.CredentialSecretHint = "secret_ref"
+	} else {
+		ref.CredentialSecretHint = profile.SecretHint
+	}
+	ref.CredentialLastVerifiedAt = timestampToString(profile.LastVerifiedAt)
+	ref.CredentialProbeStatus = credentialProbe.ConnectionStatus
+	ref.CredentialProbeHTTPStatus = credentialProbe.HTTPStatus
+	ref.CredentialProbeTarget = credentialProbe.Target
+	if credentialProbe.ConnectionStatus == "credential_backed" && credentialProbe.TestStatus == "passed" {
+		ref.UnauthenticatedConnectionStatus = result.ConnectionStatus
+		ref.ConnectionStatus = "credential_backed"
+		ref.TestStatus = "passed"
+	}
+	return ref
+}
+
+type gongfengProbeResult struct {
+	ConnectionStatus string
+	TestStatus       string
+}
+
+type gongfengCredentialProbeResult struct {
+	ConnectionStatus string
+	TestStatus       string
+	HTTPStatus       string
+	Target           string
+}
+
+func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return gongfengProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed"}
+	}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"}
+	}
+	defer resp.Body.Close()
+	location := resp.Header.Get("Location")
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
+		(resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.Contains(location, "/users/sign_in")) {
+		return gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"}
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return gongfengProbeResult{ConnectionStatus: "reachable", TestStatus: "passed"}
+	}
+	return gongfengProbeResult{ConnectionStatus: fmt.Sprintf("http_%d", resp.StatusCode), TestStatus: "failed"}
+}
+
+func probeGongfengWithCredential(ctx context.Context, ref gongfengRepoRef, token string) gongfengCredentialProbeResult {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_token_unavailable", TestStatus: "failed"}
+	}
+	target := gongfengAPIProjectURL(ref.ProjectPath)
+	if target == "" {
+		target = ref.URL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return gongfengCredentialProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed", Target: target}
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_probe_unreachable", TestStatus: "failed", Target: target}
+	}
+	defer resp.Body.Close()
+	status := fmt.Sprintf("%d", resp.StatusCode)
+	location := resp.Header.Get("Location")
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_unauthorized", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_forbidden", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_not_found_or_no_access", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.Contains(location, "/users/sign_in") {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_redirected_to_login", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	return gongfengCredentialProbeResult{ConnectionStatus: fmt.Sprintf("credential_http_%d", resp.StatusCode), TestStatus: "failed", HTTPStatus: status, Target: target}
+}
+
+func gongfengAPIProjectURL(projectPath string) string {
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		return ""
+	}
+	return gongfengAPIBase() + "/projects/" + url.PathEscape(projectPath)
+}
+
+func gongfengAPIBase() string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GONGFENG_API_BASE")), "/")
+	if base == "" {
+		return "https://git.code.tencent.com/api/v3"
+	}
+	parsed, err := url.Parse(base)
+	if err == nil && strings.EqualFold(parsed.Host, "git.code.tencent.com") && strings.Trim(parsed.Path, "/") == "" {
+		return base + "/api/v3"
+	}
+	return base
+}
+
+func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("gongfeng credential token is unavailable")
+	}
+	target := gongfengAPIProjectURL(projectPath)
+	if target == "" {
+		return "", errors.New("gongfeng project_path is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gongfeng default branch lookup failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", errors.New("gongfeng credential cannot access this repository")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errors.New("gongfeng repository not found or no access")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gongfeng default branch lookup returned HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("invalid gongfeng project response: %w", err)
+	}
+	branch := strings.TrimSpace(payload.DefaultBranch)
+	if branch == "" {
+		return "", errors.New("gongfeng project response did not include default_branch")
+	}
+	return branch, nil
+}
+
+func fetchGongfengBranches(ctx context.Context, projectPath string, token string) ([]string, error) {
+	const (
+		gongfengBranchesPageSize = 100
+		gongfengBranchesMaxPages = 50
+	)
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errors.New("gongfeng credential token is unavailable")
+	}
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		return nil, errors.New("gongfeng project_path is required")
+	}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	type gongfengBranchListItem struct {
+		Name   string `json:"name"`
+		Commit struct {
+			CommittedDate string `json:"committed_date"`
+			AuthoredDate  string `json:"authored_date"`
+			CreatedAt     string `json:"created_at"`
+		} `json:"commit"`
+		index     int
+		updatedAt time.Time
+	}
+	branches := []gongfengBranchListItem{}
+	seen := map[string]struct{}{}
+	for page := 1; page <= gongfengBranchesMaxPages; page++ {
+		target := fmt.Sprintf("%s/projects/%s/repository/branches?per_page=%d&page=%d", gongfengAPIBase(), url.PathEscape(projectPath), gongfengBranchesPageSize, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("PRIVATE-TOKEN", token)
+		req.Header.Set("Private-Token", token)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("gongfeng branch list lookup failed: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return nil, errors.New("gongfeng credential cannot access this repository")
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return nil, errors.New("gongfeng repository not found or no access")
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			status := resp.StatusCode
+			resp.Body.Close()
+			return nil, fmt.Errorf("gongfeng branch list lookup returned HTTP %d", status)
+		}
+		var payload []gongfengBranchListItem
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("invalid gongfeng branch list response: %w", err)
+		}
+		nextPage := strings.TrimSpace(resp.Header.Get("X-Next-Page"))
+		resp.Body.Close()
+		for _, item := range payload {
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			item.Name = name
+			item.index = len(branches)
+			item.updatedAt = firstParsedTime(item.Commit.CommittedDate, item.Commit.AuthoredDate, item.Commit.CreatedAt)
+			branches = append(branches, item)
+		}
+		if nextPage == "" && len(payload) < gongfengBranchesPageSize {
+			break
+		}
+		if page == gongfengBranchesMaxPages {
+			return nil, fmt.Errorf("gongfeng branch list exceeded %d pages; narrow the repository branch list or increase the server safety limit", gongfengBranchesMaxPages)
+		}
+	}
+	if len(branches) == 0 {
+		return nil, errors.New("gongfeng branch list response did not include branches")
+	}
+	sort.SliceStable(branches, func(i, j int) bool {
+		left := branches[i]
+		right := branches[j]
+		if !left.updatedAt.IsZero() && !right.updatedAt.IsZero() && !left.updatedAt.Equal(right.updatedAt) {
+			return left.updatedAt.After(right.updatedAt)
+		}
+		if !left.updatedAt.IsZero() && right.updatedAt.IsZero() {
+			return true
+		}
+		if left.updatedAt.IsZero() && !right.updatedAt.IsZero() {
+			return false
+		}
+		return left.index < right.index
+	})
+	out := make([]string, 0, len(branches))
+	for _, branch := range branches {
+		out = append(out, branch.Name)
+	}
+	return out, nil
+}
+
+func firstParsedTime(values ...string) time.Time {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse("2006-01-02 15:04:05", value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
+}
+
+func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, branch string, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("gongfeng credential token is unavailable")
+	}
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	branch = strings.TrimSpace(branch)
+	if projectPath == "" {
+		return "", errors.New("gongfeng project_path is required")
+	}
+	if branch == "" {
+		return "", errors.New("gongfeng branch is required")
+	}
+	target := gongfengAPIBase() + "/projects/" + url.PathEscape(projectPath) + "/repository/branches/" + url.PathEscape(branch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gongfeng branch head lookup failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", errors.New("gongfeng credential cannot access this branch")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errors.New("gongfeng branch not found or no access")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gongfeng branch head lookup returned HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("invalid gongfeng branch response: %w", err)
+	}
+	commit := strings.TrimSpace(payload.Commit.ID)
+	if commit == "" {
+		return "", errors.New("gongfeng branch response did not include commit id")
+	}
+	return commit, nil
+}
+
+func mustMarshalRaw(v any) json.RawMessage {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return out
+}
+
 // findLocalDirectoryConflict enforces "at most one local_directory resource
-// per (project, daemon)". The daemon picks the first matching daemon_id row
-// out of a task's resources (findLocalDirectoryAssignment), so letting a
-// project carry two rows for the same daemon would mean the agent silently
-// writes into whichever happens to come back first — a safety hazard for a
-// feature that operates directly on the user's real working directory.
+// per (project, daemon)". Letting a project carry two rows for the same
+// daemon would mean the agent silently writes into whichever row the daemon
+// happens to pick first — a safety hazard for a feature that operates
+// directly on the user's real working directory.
 //
 // The DB-level UNIQUE(project_id, resource_type, resource_ref) constraint
 // alone is not enough here: it only fires on full ref-JSON equality, so a

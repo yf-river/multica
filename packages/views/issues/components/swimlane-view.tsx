@@ -27,7 +27,6 @@ import type {
   UpdateIssueRequest,
 } from "@multica/core/types";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { filterIssues, type IssueFilters } from "../utils/filter";
 import type { SwimlaneGrouping } from "@multica/core/issues/stores/view-store";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -464,7 +463,7 @@ export function SwimLaneView({
    * a parent in a hidden status still surfaces its label correctly.
    */
   unfilteredIssues?: Issue[];
-  activeFilters?: Omit<IssueFilters, "statusFilters" | "runningIssueIds">;
+  activeFilters?: Omit<IssueFilters, "statusFilters">;
   visibleStatuses?: IssueStatus[];
   hiddenStatuses?: IssueStatus[];
   onMoveIssue: (issueId: string, updates: SwimLaneMoveUpdates) => void;
@@ -487,15 +486,6 @@ export function SwimLaneView({
 
   const wsId = useWorkspaceId();
 
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const runningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of snapshot) {
-      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
-    }
-    return ids;
-  }, [snapshot]);
-
   const activeFilters = useMemo(() => ({
     // Status is enforced by visible-column rendering, not by filterIssues
     statusFilters: [],
@@ -507,8 +497,8 @@ export function SwimLaneView({
     includeNoProject: activeFiltersProp?.includeNoProject ?? false,
     labelFilters: activeFiltersProp?.labelFilters ?? [],
     agentRunningFilter: activeFiltersProp?.agentRunningFilter ?? false,
-    runningIssueIds,
-  }), [activeFiltersProp, runningIssueIds]);
+    runningIssueIds: activeFiltersProp?.runningIssueIds ?? new Set<string>(),
+  }), [activeFiltersProp]);
   const { data: projects = EMPTY_PROJECTS } = useQuery({
     ...projectListOptions(wsId),
     enabled: swimlaneGrouping === "project",
@@ -637,6 +627,19 @@ export function SwimLaneView({
     return filteredExtra.length === 0 ? issues : [...issues, ...filteredExtra];
   }, [swimlaneGrouping, issues, perParentChildrenLists, subscribedParentIds, batchChildrenMap, activeFilters]);
 
+  const displayIssues = useMemo(() => {
+    const runningIssueIds = activeFiltersProp?.runningIssueIds;
+    return mergedIssues.map((issue) => {
+      if (issue.agent_activity !== undefined) return issue;
+      return {
+        ...issue,
+        agent_activity: runningIssueIds?.has(issue.id)
+          ? { running_count: 1, queued_count: 0, agent_ids: [] }
+          : { running_count: 0, queued_count: 0, agent_ids: [] },
+      };
+    });
+  }, [activeFiltersProp?.runningIssueIds, mergedIssues]);
+
   const laneGroups = useMemo<LaneGroup[]>(() => {
     if (swimlaneGrouping === "project") {
       return buildProjectLanes(issues, projects, swimlaneOrder, laneLabels);
@@ -688,7 +691,7 @@ export function SwimLaneView({
         ? laneGroups.find((g) => g.isOrphan) ?? null
         : null;
 
-    const issueSource = swimlaneGrouping === "parent" ? mergedIssues : issues;
+    const issueSource = swimlaneGrouping === "parent" ? displayIssues : issues;
     const sorted = sortIssues(issueSource, sortBy, sortDirection);
     for (const issue of sorted) {
       let placed = false;
@@ -724,7 +727,7 @@ export function SwimLaneView({
       }
     }
     return result;
-  }, [issues, mergedIssues, laneGroups, sortedStatuses, sortBy, sortDirection, headerIssueIds, swimlaneGrouping]);
+  }, [issues, displayIssues, laneGroups, sortedStatuses, sortBy, sortDirection, headerIssueIds, swimlaneGrouping]);
 
   const laneByKey = useMemo(() => {
     const map = new Map<string, LaneGroup>();
@@ -785,9 +788,9 @@ export function SwimLaneView({
 
   const issueMap = useMemo(() => {
     const map = new Map<string, Issue>();
-    for (const issue of mergedIssues) map.set(issue.id, issue);
+    for (const issue of displayIssues) map.set(issue.id, issue);
     return map;
-  }, [mergedIssues]);
+  }, [displayIssues]);
 
   const issueMapRef = useRef(issueMap);
   if (!isDraggingRef.current) {
@@ -1082,6 +1085,48 @@ export function SwimLaneView({
     }) as const,
     [sortedStatuses.length, trackWidth],
   );
+  const pinnedLanes = useMemo(
+    () => laneGroups.filter((group) => group.isPinned),
+    [laneGroups],
+  );
+  const sortableLanes = useMemo(
+    () => laneGroups.filter((group) => !group.isPinned),
+    [laneGroups],
+  );
+  const sortableLaneIds = useMemo(
+    () => sortableLanes.map((group) => laneIdFor(swimlaneGrouping, group.rawId)),
+    [sortableLanes, swimlaneGrouping],
+  );
+  const renderLane = useCallback(
+    (lane: LaneGroup) => (
+      <DraggableSwimLane
+        key={lane.key}
+        lane={lane}
+        grouping={swimlaneGrouping}
+        isCollapsed={collapsedLanes.has(lane.key)}
+        onToggleCollapse={() => toggleLane(lane.key)}
+        localCells={localCells}
+        sortedStatuses={sortedStatuses}
+        issueMap={issueMapRef.current}
+        childProgressMap={childProgressMap}
+        gridStyle={gridStyle}
+        paths={paths}
+        projectId={projectId}
+      />
+    ),
+    [
+      childProgressMap,
+      collapsedLanes,
+      gridStyle,
+      issueMapRef,
+      localCells,
+      paths,
+      projectId,
+      sortedStatuses,
+      swimlaneGrouping,
+      toggleLane,
+    ],
+  );
 
   return (
     <DndContext
@@ -1139,48 +1184,12 @@ export function SwimLaneView({
             are wrapped in a SortableContext so users can reorder lanes by
             dragging the grip handle. */}
         <div className="flex flex-col gap-4">
-          {laneGroups
-            .filter((g) => g.isPinned)
-            .map((lane) => (
-              <DraggableSwimLane
-                key={lane.key}
-                lane={lane}
-                grouping={swimlaneGrouping}
-                isCollapsed={collapsedLanes.has(lane.key)}
-                onToggleCollapse={() => toggleLane(lane.key)}
-                localCells={localCells}
-                sortedStatuses={sortedStatuses}
-                issueMap={issueMapRef.current}
-                childProgressMap={childProgressMap}
-                gridStyle={gridStyle}
-                paths={paths}
-                projectId={projectId}
-              />
-            ))}
+          {pinnedLanes.map(renderLane)}
           <SortableContext
-            items={laneGroups
-              .filter((g) => !g.isPinned)
-              .map((g) => laneIdFor(swimlaneGrouping, g.rawId))}
+            items={sortableLaneIds}
             strategy={verticalListSortingStrategy}
           >
-            {laneGroups
-              .filter((g) => !g.isPinned)
-              .map((lane) => (
-                <DraggableSwimLane
-                  key={lane.key}
-                  lane={lane}
-                  grouping={swimlaneGrouping}
-                  isCollapsed={collapsedLanes.has(lane.key)}
-                  onToggleCollapse={() => toggleLane(lane.key)}
-                  localCells={localCells}
-                  sortedStatuses={sortedStatuses}
-                  issueMap={issueMapRef.current}
-                  childProgressMap={childProgressMap}
-                  gridStyle={gridStyle}
-                  paths={paths}
-                  projectId={projectId}
-                />
-              ))}
+            {sortableLanes.map(renderLane)}
           </SortableContext>
 
           {/* Per-status load-more sentinels — same bucketed cache as Board. */}

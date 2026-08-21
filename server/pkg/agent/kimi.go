@@ -347,50 +347,24 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			}
 		}
 
-		duration := time.Since(startTime)
-		b.cfg.Logger.Info("kimi finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		stdin.Close()
-		cancel()
-
-		<-readerDone
-		// Ensure the stderr copier has drained before consulting the
-		// provider-error sniffer; see hermes.go for the failure mode.
-		<-stderrDone
-
-		outputMu.Lock()
-		finalOutput := output.String()
-		outputMu.Unlock()
-
-		// Promote completed→failed when stderr or the agent text
-		// stream show a terminal upstream-LLM failure (HTTP 4xx /
-		// rate-limit / expired token). See the helper docs for the
-		// full signal set; the key safety property is that transient
-		// per-attempt warnings followed by a successful retry stay
-		// "completed".
-		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, finalOutput, providerErr)
-
-		c.usageMu.Lock()
-		u := c.usage
-		c.usageMu.Unlock()
-
-		var usageMap map[string]TokenUsage
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 {
-			model := opts.Model
-			if model == "" {
-				model = "unknown"
-			}
-			usageMap = map[string]TokenUsage{model: u}
-		}
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      usageMap,
-		}
+		resCh <- finishACPBackendResult(acpBackendResultParams{
+			Provider:    "kimi",
+			Logger:      b.cfg.Logger,
+			PID:         cmd.Process.Pid,
+			StartTime:   startTime,
+			Status:      finalStatus,
+			Error:       finalError,
+			SessionID:   sessionID,
+			Model:       opts.Model,
+			Stdin:       stdin,
+			Cancel:      cancel,
+			ReaderDone:  readerDone,
+			StderrDone:  stderrDone,
+			OutputMu:    &outputMu,
+			Output:      &output,
+			Client:      c,
+			ProviderErr: providerErr,
+		})
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
@@ -406,39 +380,5 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 // format — so we get called on the already-mapped name from hermes
 // and fix up anything that slipped through. Empty input returns "".
 func kimiToolNameFromTitle(title string) string {
-	t := strings.TrimSpace(title)
-	if t == "" {
-		return ""
-	}
-
-	// Strip everything after the first colon — ACP titles often look like
-	// "Tool Name: argument detail" and we want only the tool name.
-	if idx := strings.Index(t, ":"); idx > 0 {
-		t = strings.TrimSpace(t[:idx])
-	}
-
-	lower := strings.ToLower(t)
-	switch lower {
-	case "read", "read file":
-		return "read_file"
-	case "write", "write file":
-		return "write_file"
-	case "edit", "patch":
-		return "edit_file"
-	case "shell", "bash", "terminal", "run command", "run shell command":
-		return "terminal"
-	case "search", "grep", "find":
-		return "search_files"
-	case "glob":
-		return "glob"
-	case "web search":
-		return "web_search"
-	case "fetch", "web fetch":
-		return "web_fetch"
-	case "todo", "todo write":
-		return "todo_write"
-	}
-
-	// Fallback: snake_case the title so the UI gets a stable identifier.
-	return strings.ReplaceAll(lower, " ", "_")
+	return acpToolNameFromTitle(title, false)
 }

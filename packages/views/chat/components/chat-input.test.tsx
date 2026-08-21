@@ -3,8 +3,8 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import enCommon from "../../locales/en/common.json";
-import enChat from "../../locales/en/chat.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enChat from "../../locales/zh-Hans/chat.json";
 
 function makeUpload(overrides: Partial<UploadResult> & { id: string; link: string; filename: string }): UploadResult {
   return {
@@ -30,7 +30,7 @@ function makeUpload(overrides: Partial<UploadResult> & { id: string; link: strin
   };
 }
 
-const TEST_RESOURCES = { en: { common: enCommon, chat: enChat } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, chat: enChat } };
 
 // Track drop-zone callbacks so the test can simulate a real drop.
 const dropHandlers = vi.hoisted(() => ({
@@ -195,11 +195,37 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
       makeUpload({ id: "att-1", link: "https://cdn.example/att-1.png", filename: "img.png" }),
     );
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <ChatInput onSend={onSend} onUploadFile={onUploadFile} agentName="Multica" {...props} />
     </I18nProvider>,
   );
   return { onSend, onUploadFile };
+}
+
+async function dropFile(
+  file: File,
+  settle: "upload-started" | "upload-finished" = "upload-finished",
+) {
+  await act(async () => {
+    dropHandlers.onDrop?.([file]);
+    await Promise.resolve();
+    if (settle === "upload-finished") await Promise.resolve();
+  });
+}
+
+function getSendButton() {
+  const buttons = screen.getAllByRole("button");
+  return buttons[buttons.length - 1]!;
+}
+
+async function waitForSendButton(state: "enabled" | "disabled") {
+  let sendButton: HTMLElement;
+  await waitFor(() => {
+    sendButton = getSendButton();
+    if (state === "enabled") expect(sendButton).not.toBeDisabled();
+    else expect(sendButton).toBeDisabled();
+  });
+  return sendButton!;
 }
 
 describe("ChatInput @ context wiring", () => {
@@ -220,12 +246,8 @@ describe("ChatInput attachment wiring", () => {
     const { onUploadFile } = renderInput();
     expect(dropHandlers.onDrop).not.toBeNull();
     const file = new File(["x"], "drop.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      // Microtask: the mock editor awaits onUploadFile before mutating its value.
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    // Microtask: the mock editor awaits onUploadFile before mutating its value.
+    await dropFile(file);
     expect(onUploadFile).toHaveBeenCalledWith(file);
   });
 
@@ -240,22 +262,12 @@ describe("ChatInput attachment wiring", () => {
     // mock editor appends the markdown link into its value and calls
     // onUpdate so the input flips out of the empty state.
     const file = new File(["x"], "drop.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await dropFile(file);
 
     // Wait for the submit button to become enabled (onUpdate has fired and
     // React has re-rendered). SubmitButton has no aria-label, so we pick
     // the last action button on the bar (FileUploadButton, SubmitButton).
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
@@ -289,19 +301,9 @@ describe("ChatInput attachment wiring", () => {
     renderInput({ onSend, onUploadFile });
 
     const file = new File(["x"], "foo.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await dropFile(file);
 
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [content, ids] = onSend.mock.calls[0]!;
@@ -330,32 +332,19 @@ describe("ChatInput attachment wiring", () => {
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "preview text" } });
 
     const file = new File(["x"], "slow.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      await Promise.resolve();
-    });
+    await dropFile(file, "upload-started");
 
     // While the upload is pending the SubmitButton must be disabled.
     // Bypassing this would send the message with the attachment id
     // missing from the body.
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      const sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).toBeDisabled();
-    });
+    await waitForSendButton("disabled");
 
     await act(async () => {
       resolveUpload!(makeUpload({ id: "att-slow", link: "https://cdn.example/att-slow.png", filename: "slow.png" }));
       await Promise.resolve();
     });
 
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
     expect(ids).toEqual(["att-slow"]);
@@ -528,7 +517,7 @@ describe("ChatInput async send", () => {
 describe("ChatInput session-aware restore", () => {
   function element(props: Partial<React.ComponentProps<typeof ChatInput>>) {
     return (
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <ChatInput onSend={vi.fn()} onUploadFile={vi.fn()} agentName="Multica" {...props} />
       </I18nProvider>
     );

@@ -85,8 +85,6 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
 - **`workspace_id`** — added to every event as a property when present. v1
   uses event property filtering (free tier) rather than PostHog Groups
   Analytics (paid) to compute workspace-level metrics.
-- **PII** — events carry `email_domain` (e.g. `gmail.com`), not the full
-  email. Full email is stored once in person properties via `$set_once` so
   it's available for individual debugging but not broadcast with every
   event.
 - **Person properties (`$set`)** — use for mutable cohort signals
@@ -94,7 +92,6 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
   legitimately change during onboarding. `Event.Set` on the backend
   maps to `$set`; the frontend helper is
   `setPersonProperties()` in `@multica/core/analytics`. Use
-  `$set_once` only for values that must never be overwritten (email,
   initial attribution, first-completion timestamp).
 
 ## Taxonomy
@@ -148,21 +145,15 @@ registration path had a measured duration.
 
 ### `signup`
 
-Fires when a new user is created. Covers both verification-code and Google
-OAuth entry points (`findOrCreateUser` is the single emission site).
-
-| Property | Type | Description |
-|---|---|---|
-| `email_domain` | string | Lower-cased domain portion of the user's email. |
-| `signup_source` | string | Opaque attribution bundle from the frontend cookie `multica_signup_source` (UTM + referrer). Empty when the cookie is absent. |
-| `auth_method` | string | Optional. `"google"` for Google OAuth signups. Absent for verification-code signups. |
+Fires when a new user is created through the internal account/password model.
+The internal-team build intentionally does not collect marketing attribution
+or external-source fields.
 
 Person properties set with `$set_once`:
 
 | Property | Type | Description |
 |---|---|---|
-| `email` | string | Full email. Never broadcast per-event. |
-| `signup_source` | string | Same as above; kept on the person for later segmentation. |
+| `account` | string | Internal account name used for login. |
 
 ### `workspace_created`
 
@@ -377,29 +368,6 @@ now Prometheus-only). Per-task completion counts live in Grafana via
 `BusinessMetrics.RecordTaskTerminal`; use `issue_executed` for the
 PostHog-side activation funnel and filter by `source` as needed.
 
-### `team_invite_sent`
-
-Fires from `CreateInvitation` after the DB row is written.
-
-| Property | Type | Description |
-|---|---|---|
-| `invited_email_domain` | string | Lower-cased domain; full email lives in the invitation row, not the event. |
-| `invite_method` | string | Currently always `"email"`. Future non-email invite flows (share link, SCIM) should pass their own value. |
-
-`distinct_id` is the inviter's user id.
-
-### `team_invite_accepted`
-
-Fires from `AcceptInvitation` after both the invitation row is marked
-accepted and the member row is inserted in the same transaction.
-
-| Property | Type | Description |
-|---|---|---|
-| `days_since_invite` | int64 | Whole days from invitation creation to acceptance. Lets us segment "accepted same day" (warm) from "dug out of email weeks later" (cold). |
-
-`distinct_id` is the invitee's user id — this is the event that closes the
-expansion funnel.
-
 ### `onboarding_started`
 
 Fires once when the onboarding shell mounts and the initial workspace list has
@@ -466,7 +434,7 @@ which exit the user took.
 | Property | Type | Description |
 |---|---|---|
 | `workspace_id` | string (UUID) | Present for workspace-linked onboarding completions. |
-| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `invite_accept` / `unknown`. See below. |
+| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `unknown`. See below. |
 
 Person properties set with `$set_once`:
 
@@ -479,7 +447,6 @@ Person properties set with `$set_once`:
 - `full` — Reached Step 5 (first_issue) with a runtime connected.
 - `runtime_skipped` — Completed without connecting a runtime (user hit Skip in Step 3).
 - `skip_existing` — "I've done this before" from Welcome. The user already had a workspace.
-- `invite_accept` — Accepted at least one workspace invitation.
 - `unknown` — Legacy fallback when the client didn't send a path. Should stay near zero after rollout.
 
 | Property | Type | Description |
@@ -512,70 +479,17 @@ sent from a pre-workspace surface.
 
 - `$pageview` — fired by the web tracker
   (`apps/web/components/pageview-tracker.tsx`) on Next.js App Router
-  **pathname** changes, and by the desktop tracker
-  (`apps/desktop/.../pageview-tracker.tsx`) on visible-surface changes.
-  Both mount once at the root and drive the acquisition funnel's
-  `/ → signup` step. posthog-js's automatic pageview capture is
-  disabled in `initAnalytics` so we own the event shape.
-  `capturePageview` (`packages/core/analytics`) **section-normalizes** the
-  path before emitting: query string / hash are stripped and resource-id
-  segments are collapsed, so `/acme/issues/8d5c…` and `/acme/issues/MUL-12`
-  both report as `/acme/issues`, and consecutive views of the same section
-  are deduplicated. This keeps PostHog at section granularity rather than
-  billing a `$pageview` per resource or per filter/sort/search change. The
-  tracker is deliberately NOT keyed on the query string.
-- `onboarding_runtime_path_selected` — fired from
-  `packages/views/onboarding/steps/step-platform-fork.tsx` when the web
-  user clicks one of the Step 3 fork cards (before any server
-  call happens, so it's frontend-only). Properties: `path`
-  (`download_desktop` / `cli`), `source`
-  (`onboarding`), `surface` (`step3`), `workspace_id`, and `is_mac`.
-  Also writes `platform_preference` (`web` / `desktop`) to person
-  properties so every subsequent event on the user can be broken down
-  by chosen platform. **Note**: semantic "download
-  intent" is now better served by `download_intent_expressed` below —
-  `path: "download_desktop"` signals Step 3 path choice specifically,
-  not actual download start.
-
-- `onboarding_runtime_detected` — fired from
-  `packages/views/onboarding/steps/step-runtime-connect.tsx` (desktop
-  Step 3) once per mount, when the scanning phase resolves — either
-  immediately on first runtime registration, or after the 5 s empty
-  timeout. Answers the question "did the user have any AI CLI
-  installed on this machine when they hit Step 3" — currently
-  unanswerable from the existing funnel because the bundled daemon
-  fails to register at all when zero CLIs are on PATH, so
-  `runtime_registered` is silent on that cohort. Splits
-  `completion_path=runtime_skipped` into "had CLIs, skipped anyway"
-  vs "no CLIs available, had no choice". Properties:
-  - `source`: `onboarding`.
-  - `surface`: `step3_desktop`.
-  - `workspace_id`: current onboarding workspace.
-  - `outcome`: `found` (at least one runtime registered before the
-    5 s grace window expired) or `empty` (none registered by then).
-  - `runtime_count`: number of runtimes visible to this user at
-    resolution time.
-  - `online_count`: subset of `runtime_count` whose `status` is
-    `online`.
-  - `providers`: sorted array of distinct provider names (e.g.
-    `["claude", "codex"]`).
-  - `has_claude` / `has_codex` / `has_cursor`: convenience booleans
-    derived from `providers` for funnel breakdowns without array
-    filtering in HogQL.
-  - `detect_ms`: wall-clock ms from component mount to resolution.
-    Surfaces daemon boot latency — `found` events with a high
-    `detect_ms` approach the timeout threshold and inform whether
-    to lengthen the grace period.
-
-  Person properties set with `$set`:
-  - `has_any_cli`: boolean — cohort signal for "user has at least
-    one local AI CLI detected on this machine".
-  - `detected_cli_count`: number — granular cohort signal.
-
-  Not emitted from the web Step 3 (`step-platform-fork.tsx`) — web
-  users don't run the bundled daemon, so their runtime list reflects
-  daemons from other machines and would corrupt the
-  "CLI installed locally" signal.
+  **pathname** changes. Mounts once at the root and drives the
+  acquisition funnel's `/ → signup` step. posthog-js's automatic
+  pageview capture is disabled in `initAnalytics` so we own the event
+  shape. `capturePageview` (`packages/core/analytics`)
+  **section-normalizes** the path before emitting: query string / hash
+  are stripped and resource-id segments are collapsed, so
+  `/acme/issues/8d5c…` and `/acme/issues/MUL-12` both report as
+  `/acme/issues`, and consecutive views of the same section are
+  deduplicated. This keeps PostHog at section granularity rather than
+  billing a `$pageview` per resource or per filter/sort/search change.
+  The tracker is deliberately NOT keyed on the query string.
 
 - `feedback_opened` — fired when the in-app Feedback modal mounts
   (user clicked "Feedback" in the Help launcher). Paired with the
@@ -587,14 +501,9 @@ sent from a pre-workspace surface.
   - `workspace_id`: string (UUID) when the modal opens inside a
     workspace. Omitted on pre-workspace surfaces.
 
-- Attribution is NOT a separate event; UTM + referrer origin are written
-  to the `multica_signup_source` cookie on the first anonymous pageview
-  and read by the backend's `signup` emission. The cookie carries a JSON
-  payload URL-encoded at write time (`encodeURIComponent`) and
-  URL-decoded at read time (`url.QueryUnescape`) — the JSON is never
-  mid-truncated; individual values are capped at 96 chars before
-  `JSON.stringify`, and the entire payload is dropped if it still exceeds
-  512 chars. That way PostHog sees either intact JSON or nothing at all.
+- Marketing attribution is not collected in the internal-team build. Anonymous
+  external-source cookies and "how did you hear about us" prompts are
+  intentionally absent from the active product surface.
 
 ## Reconciliation
 

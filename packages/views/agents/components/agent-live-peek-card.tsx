@@ -1,12 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import {
   agentTaskSnapshotOptions,
   useAgentPresenceDetail,
@@ -17,6 +15,11 @@ import { AlertTriangle } from "lucide-react";
 import { AppLink } from "../../navigation";
 import { useT, useTimeAgo } from "../../i18n";
 import { availabilityConfig, workloadConfig } from "../presence";
+import {
+  AgentCardAvatar,
+  AgentCardLoadingState,
+  AgentCardUnavailable,
+} from "./agent-card-shared";
 
 interface AgentLivePeekCardProps {
   agentId: string;
@@ -40,22 +43,12 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
   const agent = agents.find((a) => a.id === agentId);
 
   if (agentsLoading && !agent) {
-    return (
-      <div className="flex items-center gap-3">
-        <Skeleton className="h-10 w-10 rounded-full" />
-        <div className="flex-1 space-y-1.5">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="h-3 w-20" />
-        </div>
-      </div>
-    );
+    return <AgentCardLoadingState />;
   }
 
   if (!agent) {
     return (
-      <div className="text-xs text-muted-foreground">
-        {t(($) => $.profile_card.unavailable)}
-      </div>
+      <AgentCardUnavailable label={t(($) => $.profile_card.unavailable)} />
     );
   }
 
@@ -65,13 +58,6 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
   );
   const currentIssueId = runningTask?.issue_id ?? null;
   const lastTerminal = pickLatestTerminal(agentTasks);
-
-  const initials = agent.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
 
   // Archived wins over workload — a retired agent reads "Archived", never
   // "Idle"/"Working". availability is the unified signal (see
@@ -86,14 +72,7 @@ export function AgentLivePeekCard({ agentId }: AgentLivePeekCardProps) {
     <div className="flex flex-col gap-3 text-left">
       {/* Header — avatar + name. */}
       <div className="flex items-start gap-3">
-        <ActorAvatarBase
-          name={agent.name}
-          initials={initials}
-          avatarUrl={resolvePublicFileUrl(agent.avatar_url)}
-          isAgent
-          size={40}
-          className="rounded-md"
-        />
+        <AgentCardAvatar name={agent.name} avatarUrl={agent.avatar_url} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{agent.name}</p>
           <div className="mt-0.5 inline-flex items-center gap-1.5">

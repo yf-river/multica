@@ -10,14 +10,14 @@ import (
 
 // TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked verifies that a
 // plain member cannot create an issue assigned to a squad whose leader is
-// a private agent.
+// a personal agent.
 func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	agentID, _, memberID := privateAgentTestFixture(t)
+	agentID, _, memberID := personalAgentTestFixture(t)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -44,14 +44,14 @@ func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 }
 
 // TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked verifies that a
-// plain member cannot update an issue's assignee to a private-leader squad.
+// plain member cannot update an issue's assignee to a personal-leader squad.
 func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	agentID, _, memberID := privateAgentTestFixture(t)
+	agentID, _, memberID := personalAgentTestFixture(t)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -91,14 +91,14 @@ func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 }
 
 // TestCreateIssue_SquadPrivateLeader_OwnerAllowed verifies that a workspace
-// owner CAN assign an issue to a squad with a private leader.
+// owner CAN assign an issue to a squad with a personal leader.
 func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	agentID, _, _ := privateAgentTestFixture(t)
+	agentID, _, _ := personalAgentTestFixture(t)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -115,7 +115,7 @@ func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 	// testUserID is workspace owner — should succeed.
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":         "Owner assigns private-leader squad",
+		"title":         "Owner assigns personal-leader squad",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
@@ -135,7 +135,7 @@ func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 }
 
 // TestComment_SquadPrivateLeader_PlainMemberNoEnqueue verifies that a plain
-// member posting a comment on an issue assigned to a private-leader squad
+// member posting a comment on an issue assigned to a personal-leader squad
 // does NOT trigger the leader.
 func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	if testHandler == nil || testPool == nil {
@@ -143,7 +143,7 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	agentID, _, memberID := privateAgentTestFixture(t)
+	agentID, _, memberID := personalAgentTestFixture(t)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -161,7 +161,7 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, 'private leader comment test', 'squad', $3)
+		VALUES ($1, 'member', $2, 'personal leader comment test', 'squad', $3)
 		RETURNING id
 	`, testWorkspaceID, testUserID, squadID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -183,7 +183,7 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The private leader must NOT have a queued task.
+	// The personal leader must NOT have a queued task.
 	var count int
 	if err := testPool.QueryRow(ctx,
 		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
@@ -192,20 +192,20 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("count tasks: %v", err)
 	}
 	if count != 0 {
-		t.Fatalf("private leader got %d queued tasks from plain member comment; want 0", count)
+		t.Fatalf("personal leader got %d queued tasks from plain member comment; want 0", count)
 	}
 }
 
 // TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue verifies that when
 // a plain member completes a child issue whose parent is assigned to a
-// private-leader squad, the leader is NOT enqueued.
+// personal-leader squad, the leader is NOT enqueued.
 func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	agentID, _, memberID := privateAgentTestFixture(t)
+	agentID, _, memberID := personalAgentTestFixture(t)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -222,7 +222,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 	// Create parent issue assigned to the squad (as workspace owner).
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":         "parent with private-leader squad",
+		"title":         "parent with personal-leader squad",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
@@ -276,7 +276,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("UpdateIssue (child done): expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The private leader must NOT have a queued task on the parent.
+	// The personal leader must NOT have a queued task on the parent.
 	var count int
 	if err := testPool.QueryRow(ctx,
 		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
@@ -285,20 +285,20 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("count tasks: %v", err)
 	}
 	if count != 0 {
-		t.Fatalf("private leader got %d queued tasks from plain member child-done; want 0", count)
+		t.Fatalf("personal leader got %d queued tasks from plain member child-done; want 0", count)
 	}
 }
 
 // TestComment_SquadPrivateLeader_AgentActorAllowed verifies that an agent
-// actor CAN trigger the private leader via comment on a squad-assigned issue.
+// actor CAN trigger the personal leader via comment on a squad-assigned issue.
 func TestComment_SquadPrivateLeader_AgentActorAllowed(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	agentID, _, _ := privateAgentTestFixture(t)
-	otherAgentID := createHandlerTestAgent(t, "squad-private-leader-agent-actor", nil)
+	agentID, _, _ := personalAgentTestFixture(t)
+	otherAgentID := createHandlerTestAgent(t, "squad-personal-leader-agent-actor", nil)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -316,7 +316,7 @@ func TestComment_SquadPrivateLeader_AgentActorAllowed(t *testing.T) {
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, 'private leader agent actor test', 'squad', $3)
+		VALUES ($1, 'member', $2, 'personal leader agent actor test', 'squad', $3)
 		RETURNING id
 	`, testWorkspaceID, testUserID, squadID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -353,7 +353,7 @@ func TestComment_SquadPrivateLeader_AgentActorAllowed(t *testing.T) {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The private leader SHOULD have a queued task — agents bypass private gate.
+	// The personal leader SHOULD have a queued task — agents bypass personal gate.
 	var count int
 	if err := testPool.QueryRow(ctx,
 		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
@@ -362,6 +362,6 @@ func TestComment_SquadPrivateLeader_AgentActorAllowed(t *testing.T) {
 		t.Fatalf("count tasks: %v", err)
 	}
 	if count == 0 {
-		t.Fatalf("private leader got 0 queued tasks from agent actor comment; want ≥1 (agents bypass private gate)")
+		t.Fatalf("personal leader got 0 queued tasks from agent actor comment; want ≥1 (agents bypass personal gate)")
 	}
 }

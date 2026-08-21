@@ -44,7 +44,7 @@ func setupInvolvesFixture(t *testing.T) *involvesFixture {
 	// --- second user inside the primary workspace ---
 	var otherUserID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
+		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
 	`, "Involves Other User", fmt.Sprintf("involves-other-%d@multica.ai", suffix)).Scan(&otherUserID); err != nil {
 		t.Fatalf("create other user: %v", err)
 	}
@@ -164,7 +164,7 @@ func insertAgent(t *testing.T, ctx context.Context, workspaceID, runtimeID, owne
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks, owner_id
+			runtime_id, scope, max_concurrent_tasks, owner_id
 		)
 		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 1, $4)
 		RETURNING id

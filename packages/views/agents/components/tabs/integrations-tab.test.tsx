@@ -5,9 +5,9 @@ import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
-import enSettings from "../../../locales/en/settings.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enAgents from "../../../locales/zh-Hans/agents.json";
+import enSettings from "../../../locales/zh-Hans/settings.json";
 
 // IntegrationsTab's job is to pick which copy sits beside the bind entry
 // based on (configured / install_supported / role). The bind entry itself
@@ -71,7 +71,7 @@ vi.mock("../../../settings/components/lark-tab", () => ({
 import { IntegrationsTab } from "./integrations-tab";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, agents: enAgents, settings: enSettings },
+  "zh-Hans": { common: enCommon, agents: enAgents, settings: enSettings },
 };
 
 const agent: Agent = {
@@ -85,7 +85,7 @@ const agent: Agent = {
   runtime_mode: "local",
   runtime_config: {},
   custom_args: [],
-  visibility: "workspace",
+  scope: "workspace",
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",
@@ -99,7 +99,7 @@ const agent: Agent = {
 
 function renderTab(children: ReactNode) {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>,
   );
@@ -120,7 +120,7 @@ describe("IntegrationsTab", () => {
 
   it("renders the shared bind entry for an owner when Lark is configured and supported", () => {
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(screen.getByText("Lark")).toBeTruthy();
+    expect(screen.getByText("飞书")).toBeTruthy();
     const button = screen.getByTestId("lark-bind-button");
     expect(button.getAttribute("data-agent-id")).toBe("agent-1");
   });
@@ -132,7 +132,7 @@ describe("IntegrationsTab", () => {
       install_supported: false,
     };
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(screen.getByText(/installation coming soon/i)).toBeTruthy();
+    expect(screen.getByText(/飞书 Bot 安装即将上线/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
   });
 
@@ -143,7 +143,7 @@ describe("IntegrationsTab", () => {
       install_supported: false,
     };
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(screen.getByText(/Lark integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/未启用飞书集成/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
   });
 
@@ -151,7 +151,7 @@ describe("IntegrationsTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={agent} />);
     expect(
-      screen.getByText(/Only workspace owners and admins can bind a Lark Bot/i),
+      screen.getByText(/只有工作区的所有者和管理员才能为智能体绑定飞书 Bot/i),
     ).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
   });
@@ -167,6 +167,6 @@ describe("IntegrationsTab", () => {
     };
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByTestId("lark-bind-button")).toBeTruthy();
-    expect(screen.queryByText(/installation coming soon/i)).toBeNull();
+    expect(screen.queryByText(/飞书 Bot 安装即将上线/i)).toBeNull();
   });
 });

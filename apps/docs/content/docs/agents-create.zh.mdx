@@ -9,7 +9,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 ## 创建一个智能体
 
-前置条件：你本机已经装好至少一款受支持的 [AI 编程工具](/providers)（Claude Code、Codex 等），并跑着 [守护进程](/daemon-runtimes)。如果还没走到这一步，先看 [Cloud 快速开始](/cloud-quickstart) 或 [自部署快速开始](/self-host-quickstart)。
+前置条件：你本机已经装好至少一款受支持的 [AI 编程工具](/providers)（Claude Code、Codex 等），并跑着 [守护进程](/daemon-runtimes)。如果还没走到这一步，先看 [团队快速上手](/cloud-quickstart) 或 [自部署快速上手](/self-host-quickstart)。
 
 满足之后，在工作区的**智能体**页点 **+ 新建**，或者用命令行：
 
@@ -21,7 +21,7 @@ multica agent create
 
 ## 选一款 AI 编程工具
 
-运行时背后是一款具体的 AI 编程工具。Multica 支持 12 款，最常用的几款：
+运行时背后是一款具体的 AI 编程工具。Multica 支持 11 款，最常用的几款：
 
 | 工具 | 适合 |
 |---|---|
@@ -31,7 +31,7 @@ multica agent create
 | **Copilot** | 用 GitHub 账号权益的团队 |
 | **Gemini** | Google 生态用户 |
 
-另外 7 款（Antigravity、Hermes、Kimi、Kiro CLI、OpenCode、Pi、OpenClaw）以及每款工具的完整能力差别（会话恢复、MCP、skill 注入路径、模型选择）见 [AI 编程工具对照](/providers)。
+另外 6 款（Antigravity、Hermes、Kimi、Kiro CLI、OpenCode、Pi）以及每款工具的完整能力差别（会话恢复、MCP、skill 注入路径、模型选择）见 [AI 编程工具对照](/providers)。
 
 ## 写系统指令
 
@@ -100,7 +100,7 @@ claude --model <model> --max-turns 100 --append-system-prompt "always respond in
 
 ## 并发上限
 
-**并发上限**（`max_concurrent_tasks`）决定这个智能体同一时间最多同时跑几个任务，默认 **6**。达到上限的新任务留在队列排队，不会被拒绝。
+**并发上限**（`max_concurrent_tasks`）决定这个智能体同一时间最多同时跑几个任务，默认 **20**。达到上限的新任务留在队列排队，不会被拒绝。
 
 这只是两层限额里的"智能体层"——守护进程本身还有一层更粗的限额（默认 20），两层中更紧的那层生效。详见 [守护进程与运行时 → 一次能并发跑多少任务](/daemon-runtimes#一次能并发跑多少任务)。
 
@@ -123,5 +123,5 @@ claude --model <model> --max-turns 100 --append-system-prompt "always respond in
 ## 下一步
 
 - [Skills](/skills) —— 给智能体挂专业知识包
-- [AI 编程工具对照](/providers) —— 12 款工具的完整能力差别
+- [AI 编程工具对照](/providers) —— 11 款工具的完整能力差别
 - [把 issue 分配给智能体](/assigning-issues) —— 创建完之后怎么用起来

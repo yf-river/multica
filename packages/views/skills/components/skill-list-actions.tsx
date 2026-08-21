@@ -217,7 +217,7 @@ function AgentGroup({
   );
 }
 
-export function AddToAgentDialog({
+function AddToAgentDialog({
   skills,
   ctx,
   open,
@@ -363,7 +363,7 @@ export function AddToAgentDialog({
 // Delete confirmation (single row and batch share one dialog)
 // ---------------------------------------------------------------------------
 
-export function DeleteSkillsDialog({
+function DeleteSkillsDialog({
   rows,
   ctx,
   open,

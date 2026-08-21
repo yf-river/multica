@@ -102,7 +102,7 @@ export function AvatarPicker({ value, onChange, size = 56 }: AvatarPickerProps) 
         )}
 
         {/* Hover overlay only when there's already an image — otherwise the
-            placeholder icon already invites the click. */}
+            placeholder icon already suggests the click. */}
         {hasValue && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
             {uploading ? (

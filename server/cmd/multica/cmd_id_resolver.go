@@ -361,6 +361,9 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 		return nil, err
 	}
 	projectsRaw, _ := result["projects"].([]any)
+	if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
+		return nil, err
+	}
 	candidates := make([]idCandidate, 0, len(projectsRaw))
 	for _, raw := range projectsRaw {
 		p, ok := raw.(map[string]any)
@@ -370,7 +373,7 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 		candidates = append(candidates, idCandidate{
 			ID:      strVal(p, "id"),
 			Display: strVal(p, "title"),
-			Detail:  strVal(p, "status"),
+			Detail:  projectCandidateDetail(p),
 		})
 	}
 	return candidates, nil

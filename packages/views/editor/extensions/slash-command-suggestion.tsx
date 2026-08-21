@@ -24,7 +24,7 @@ import { createSuggestionPopupRender } from "./suggestion-popup";
 const MAX_ITEMS = 20;
 
 /** Known built-in command ids — the keys under editor `slash_command.commands`. */
-export type BuiltinCommandKey = "note";
+type BuiltinCommandKey = "note";
 
 export interface SlashCommandItem {
   id: string;

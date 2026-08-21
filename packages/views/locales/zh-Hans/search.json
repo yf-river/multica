@@ -1,30 +1,38 @@
 {
   "title": "搜索",
-  "description": "搜索页面、issue、项目和成员",
+  "description": "搜索页面、任务、项目和成员",
   "placeholder": "输入命令或关键词搜索...",
   "groups": {
     "pages": "页面",
     "commands": "命令",
     "members": "成员",
     "projects": "项目",
-    "issues": "Issues",
+    "issues": "任务",
     "recent": "最近"
   },
   "pages": {
     "inbox": "收件箱",
-    "my_issues": "我的 issue",
-    "issues": "Issues",
+    "my_issues": "我的任务",
+    "issues": "任务",
     "projects": "项目",
     "agents": "智能体",
     "runtimes": "运行时",
-    "skills": "Skills",
+    "debug": "调试",
+    "evaluation": "评估",
+    "training": "训练与评估",
+    "skills": "技能",
     "settings": "设置"
   },
   "commands": {
     "current_theme_aria": "当前主题",
-    "new_issue": "新建 issue",
+    "new_issue": "新建任务",
     "new_project": "新建项目",
-    "copy_issue_link": "复制 issue 链接",
+    "open_prompt_library": "打开提示词库",
+    "open_agent_playground": "打开智能体调试场",
+    "open_datasets": "打开用例库",
+    "open_test_suites": "打开测试套件",
+    "open_run_history": "打开评测记录",
+    "copy_issue_link": "复制任务链接",
     "copy_identifier": "复制标识符 ({{identifier}})",
     "switch_to_light": "切换到浅色主题",
     "switch_to_dark": "切换到深色主题",
@@ -36,7 +44,7 @@
   },
   "empty": {
     "no_results": "未找到结果。",
-    "type_to_search": "输入关键词搜索 issue 和项目"
+    "type_to_search": "输入关键词搜索任务和项目"
   },
   "trigger": {
     "label": "搜索..."

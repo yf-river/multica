@@ -29,11 +29,13 @@ import { useNavigation } from "../navigation";
  *
  * Has no effect for non-agent actors (members always render the member card).
  */
-export type AgentHoverCardVariant = "profile" | "live";
+type AgentHoverCardVariant = "profile" | "live";
 
 interface ActorAvatarProps {
   actorType: string;
   actorId: string;
+  actorName?: string | null;
+  actorAvatarUrl?: string | null;
   size?: number;
   className?: string;
   /**
@@ -71,6 +73,8 @@ const PROFILE_LINK_CONTROL_SELECTOR =
 export function ActorAvatar({
   actorType,
   actorId,
+  actorName,
+  actorAvatarUrl,
   size,
   className,
   enableHoverCard,
@@ -78,13 +82,23 @@ export function ActorAvatar({
   hoverCardVariant = "profile",
   profileLink,
 }: ActorAvatarProps) {
-  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName();
+  const shouldResolveIdentity = actorName === undefined || actorAvatarUrl === undefined;
+  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName({
+    members: shouldResolveIdentity && actorType === "member",
+    agents: shouldResolveIdentity && actorType === "agent",
+    squads: shouldResolveIdentity && actorType === "squad",
+  });
+  const resolvedName = actorName ?? getActorName(actorType, actorId);
+  const resolvedAvatarUrl =
+    actorAvatarUrl === undefined ? getActorAvatarUrl(actorType, actorId) : actorAvatarUrl;
+  const resolvedInitials =
+    actorName === undefined ? getActorInitials(actorType, actorId) : initialsFromName(resolvedName);
   const paths = useWorkspacePaths();
   const avatar = (
     <ActorAvatarBase
-      name={getActorName(actorType, actorId)}
-      initials={getActorInitials(actorType, actorId)}
-      avatarUrl={getActorAvatarUrl(actorType, actorId)}
+      name={resolvedName}
+      initials={resolvedInitials}
+      avatarUrl={resolvedAvatarUrl}
       isAgent={actorType === "agent"}
       isSystem={actorType === "system"}
       isSquad={actorType === "squad"}
@@ -141,6 +155,15 @@ export function ActorAvatar({
     return <SquadAvatarHoverCard squadId={actorId}>{content}</SquadAvatarHoverCard>;
   }
   return content;
+}
+
+function initialsFromName(name: string) {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 function ActorAvatarProfileLink({
@@ -280,6 +303,7 @@ function ActorAvatarHoverCardShell({
 }) {
   const triggerRef = useRef<HTMLSpanElement>(null);
   const [standalone, setStandalone] = useState(false);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const el = triggerRef.current;
@@ -289,7 +313,7 @@ function ActorAvatarHoverCardShell({
   }, []);
 
   return (
-    <HoverCard>
+    <HoverCard open={open} onOpenChange={setOpen}>
       <HoverCardTrigger
         render={<span ref={triggerRef} />}
         tabIndex={standalone ? 0 : -1}
@@ -302,7 +326,7 @@ function ActorAvatarHoverCardShell({
         {children}
       </HoverCardTrigger>
       <HoverCardContent align="start" className="w-72">
-        {content}
+        {open ? content : null}
       </HoverCardContent>
     </HoverCard>
   );

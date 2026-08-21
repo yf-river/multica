@@ -502,6 +502,121 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	params := WorktreeParams{
+		WorkspaceID:        "ws-1",
+		RepoURL:            sourceRepo,
+		WorkDir:            workDir,
+		AgentName:          "PM",
+		TaskID:             "task-1",
+		BranchNameOverride: "agent/issue/issue123",
+		PreserveExisting:   true,
+	}
+	result, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree first call failed: %v", err)
+	}
+	if result.BranchName != "agent/issue/issue123" {
+		t.Fatalf("branch name = %q, want stable issue branch", result.BranchName)
+	}
+	changedPath := filepath.Join(result.Path, "stage-change.txt")
+	if err := os.WriteFile(changedPath, []byte("kept\n"), 0o644); err != nil {
+		t.Fatalf("write change: %v", err)
+	}
+
+	second, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree preserve call failed: %v", err)
+	}
+	if second.Path != result.Path {
+		t.Fatalf("preserved worktree path = %q, want %q", second.Path, result.Path)
+	}
+	if data, err := os.ReadFile(changedPath); err != nil || string(data) != "kept\n" {
+		t.Fatalf("preserved change = %q, %v; want kept", string(data), err)
+	}
+}
+
+func TestCreateWorktreePreserveExistingRestoresIssueBranch(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	params := WorktreeParams{
+		WorkspaceID:        "ws-1",
+		RepoURL:            sourceRepo,
+		WorkDir:            workDir,
+		AgentName:          "PM",
+		TaskID:             "task-1",
+		BranchNameOverride: "agent/issue/issue123",
+		PreserveExisting:   true,
+	}
+	result, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree first call failed: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", result.Path, "checkout", "-b", "v5.0.0_dev_sop").CombinedOutput(); err != nil {
+		t.Fatalf("checkout target branch: %s: %v", string(out), err)
+	}
+	if got := currentBranch(result.Path); got != "v5.0.0_dev_sop" {
+		t.Fatalf("setup branch = %q, want target branch", got)
+	}
+
+	second, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree preserve call failed: %v", err)
+	}
+	if second.Path != result.Path {
+		t.Fatalf("preserved worktree path = %q, want %q", second.Path, result.Path)
+	}
+	if second.BranchName != "agent/issue/issue123" {
+		t.Fatalf("branch name = %q, want restored issue branch", second.BranchName)
+	}
+	if got := currentBranch(result.Path); got != "agent/issue/issue123" {
+		t.Fatalf("current branch = %q, want restored issue branch", got)
+	}
+}
+
+func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     t.TempDir(),
+		AgentName:   "agent",
+		TaskID:      "",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+	if result.BranchName != "agent/agent/manual" {
+		t.Fatalf("branch name = %q, want agent/agent/manual", result.BranchName)
+	}
+}
+
 func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
@@ -832,58 +947,6 @@ func currentBranchName(t *testing.T, repoPath string) string {
 	return name
 }
 
-// TestEnsureRemoteTrackingLayoutMigratesLegacyCache verifies that a cache
-// created with the legacy mirror refspec is migrated in place on next use:
-// the refspec is rewritten to the modern remote-tracking layout and
-// refs/remotes/origin/* gets backfilled so getRemoteDefaultBranch can resolve
-// the remote default.
-func TestEnsureRemoteTrackingLayoutMigratesLegacyCache(t *testing.T) {
-	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-	barePath := cache.Lookup("ws-1", sourceRepo)
-
-	// Reset to the legacy mirror refspec to simulate a cache created by an
-	// older version of the daemon.
-	if err := setFetchRefspec(barePath, "+refs/heads/*:refs/heads/*"); err != nil {
-		t.Fatalf("set legacy refspec: %v", err)
-	}
-	// Wipe any refs/remotes/origin/* that may have been populated by the initial clone.
-	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/HEAD").Run()
-	if err := exec.Command("sh", "-c", "rm -rf '"+filepath.Join(barePath, "refs", "remotes")+"'").Run(); err != nil {
-		t.Fatalf("wipe refs/remotes: %v", err)
-	}
-
-	// Sanity check: we've successfully forced the cache into legacy state.
-	if cur, _ := readFetchRefspec(barePath); cur != "+refs/heads/*:refs/heads/*" {
-		t.Fatalf("precondition failed: refspec is %q, want legacy mirror", cur)
-	}
-
-	// ensureRemoteTrackingLayout should migrate: rewrite refspec, backfill
-	// refs/remotes/origin/*, and set origin HEAD.
-	if err := ensureRemoteTrackingLayout(barePath); err != nil {
-		t.Fatalf("ensureRemoteTrackingLayout failed: %v", err)
-	}
-
-	cur, err := readFetchRefspec(barePath)
-	if err != nil {
-		t.Fatalf("read refspec after migration: %v", err)
-	}
-	if cur != modernFetchRefspec {
-		t.Errorf("refspec = %q, want %q", cur, modernFetchRefspec)
-	}
-
-	// getRemoteDefaultBranch should now return a refs/remotes/origin/<branch>.
-	ref := getRemoteDefaultBranch(barePath)
-	if !strings.HasPrefix(ref, "refs/remotes/origin/") {
-		t.Errorf("getRemoteDefaultBranch = %q, want refs/remotes/origin/*", ref)
-	}
-}
-
 // TestCreateWorktreePathCollisionDoesNotLeakBranch verifies the secondary bug
 // fix: when the worktree path already exists as a non-worktree (e.g. a plain
 // directory), createWorktree must fail cleanly without leaking a branch into
@@ -968,49 +1031,6 @@ func TestGetRemoteDefaultBranchScansForCustomDefault(t *testing.T) {
 	got := getRemoteDefaultBranch(barePath)
 	if got != "refs/remotes/origin/develop" {
 		t.Fatalf("getRemoteDefaultBranch = %q, want refs/remotes/origin/develop", got)
-	}
-}
-
-// TestGetRemoteDefaultBranchFallsBackToBareHead verifies fallback (5):
-// a legacy / migration-pending cache that has no refs/remotes/origin/* at all
-// but still has its bare HEAD pointing at refs/heads/<branch> (the snapshot
-// from the original mirror clone) should resolve to that local head instead
-// of failing. This protects against transient backfill-fetch failures during
-// the legacy → modern refspec migration. Gated on refs/remotes/origin/* being
-// completely empty — with any modern remote-tracking refs present, the
-// resolver refuses to reach back into the stale bare heads.
-func TestGetRemoteDefaultBranchFallsBackToBareHead(t *testing.T) {
-	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-	barePath := cache.Lookup("ws-1", sourceRepo)
-
-	// Force the cache into a state that mimics "legacy mirror clone whose
-	// post-migration backfill fetch failed":
-	//   - bare HEAD still points at refs/heads/<default>
-	//   - refs/remotes/origin/* is empty
-	if err := exec.Command("sh", "-c", "rm -rf '"+filepath.Join(barePath, "refs", "remotes")+"'").Run(); err != nil {
-		t.Fatalf("wipe refs/remotes: %v", err)
-	}
-
-	// Sanity: origin/* is gone, HEAD is still a symbolic ref to refs/heads/*.
-	if out, err := exec.Command("git", "-C", barePath, "for-each-ref", "refs/remotes/origin/").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
-		t.Fatalf("precondition failed: refs/remotes/origin/* should be empty, got %s", out)
-	}
-
-	got := getRemoteDefaultBranch(barePath)
-	if !strings.HasPrefix(got, "refs/heads/") {
-		t.Fatalf("getRemoteDefaultBranch = %q, want refs/heads/* fallback", got)
-	}
-
-	// And the resolved ref must actually exist — verifying bareHeadBranch's
-	// rev-parse guard kicked in correctly.
-	if err := exec.Command("git", "-C", barePath, "rev-parse", "--verify", got).Run(); err != nil {
-		t.Fatalf("resolved ref %q does not exist: %v", got, err)
 	}
 }
 
@@ -1276,92 +1296,6 @@ func TestCreateWorktreeRemovesCoAuthoredByHookWhenDisabled(t *testing.T) {
 	commitMsg := string(out)
 	if strings.Contains(commitMsg, "Co-authored-by: multica-agent") {
 		t.Errorf("commit unexpectedly carries the Co-authored-by trailer with setting disabled.\ngot:\n%s", commitMsg)
-	}
-}
-
-// TestCreateWorktreeRemovesLegacyCoAuthoredByHook verifies the migration
-// path: bare clones already on disk from previous daemon versions carry a
-// prepare-commit-msg hook that does NOT include the multicaHookMarker
-// sentinel — only the older `# Installed by the Multica daemon.` comment.
-// Toggling the workspace setting off must still remove those legacy hooks,
-// otherwise users who flip the toggle in production keep seeing the trailer
-// indefinitely (the exact bug reported in MUL-1704).
-func TestCreateWorktreeRemovesLegacyCoAuthoredByHook(t *testing.T) {
-	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-
-	// Seed the bare cache with the exact hook content shipped by the
-	// previous daemon release (no multicaHookMarker line). Keeping a
-	// verbatim copy here means the test fails if recognition logic ever
-	// drifts away from what production hosts actually have on disk.
-	const legacyHook = `#!/bin/sh
-# Multica: add Co-authored-by trailer for the Multica Agent.
-# Installed by the Multica daemon. Do not edit — it will be overwritten.
-
-COMMIT_MSG_FILE="$1"
-COMMIT_SOURCE="$2"
-
-# Skip merge and squash commits.
-case "$COMMIT_SOURCE" in
-  merge|squash) exit 0 ;;
-esac
-
-TRAILER="Co-authored-by: multica-agent <github@multica.ai>"
-
-# Don't add if already present.
-if grep -qF "$TRAILER" "$COMMIT_MSG_FILE"; then
-  exit 0
-fi
-
-# Use git interpret-trailers for proper formatting.
-git interpret-trailers --in-place --trailer "$TRAILER" "$COMMIT_MSG_FILE"
-`
-
-	barePath := cache.Lookup("ws-1", sourceRepo)
-	hooksDir := filepath.Join(barePath, "hooks")
-	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
-		t.Fatalf("create hooks dir: %v", err)
-	}
-	hookPath := filepath.Join(hooksDir, "prepare-commit-msg")
-	if err := os.WriteFile(hookPath, []byte(legacyHook), 0o755); err != nil {
-		t.Fatalf("seed legacy hook: %v", err)
-	}
-
-	workDir := t.TempDir()
-	result, err := cache.CreateWorktree(WorktreeParams{
-		WorkspaceID:         "ws-1",
-		RepoURL:             sourceRepo,
-		WorkDir:             workDir,
-		AgentName:           "Test Agent",
-		TaskID:              "44444444-0000-0000-0000-000000000000",
-		CoAuthoredByEnabled: false,
-	})
-	if err != nil {
-		t.Fatalf("CreateWorktree (disabled) failed: %v", err)
-	}
-
-	if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
-		t.Errorf("expected legacy hook to be removed at %s, stat err=%v", hookPath, err)
-	}
-
-	if err := os.WriteFile(filepath.Join(result.Path, "test.txt"), []byte("hello\n"), 0o644); err != nil {
-		t.Fatalf("write test file: %v", err)
-	}
-	runGitAuthored(t, result.Path, "add", ".")
-	runGitAuthored(t, result.Path, "commit", "-m", "test commit")
-
-	out, err := exec.Command("git", "-C", result.Path, "log", "-1", "--format=%B").Output()
-	if err != nil {
-		t.Fatalf("git log failed: %v", err)
-	}
-	if commitMsg := string(out); strings.Contains(commitMsg, "Co-authored-by: multica-agent") {
-		t.Errorf("commit unexpectedly carries the Co-authored-by trailer after legacy hook removal.\ngot:\n%s", commitMsg)
 	}
 }
 

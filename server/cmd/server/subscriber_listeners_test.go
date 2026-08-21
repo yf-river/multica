@@ -34,16 +34,16 @@ func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	return issueID
 }
 
-// createTestUser inserts a user with the given email and returns the UUID string.
-func createTestUser(t *testing.T, email string) string {
+// createTestUser inserts a user with the given account and returns the UUID string.
+func createTestUser(t *testing.T, account string) string {
 	t.Helper()
 	ctx := context.Background()
 	var userID string
 	err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
-	`, "Subscriber Test User", email).Scan(&userID)
+	`, "Subscriber Test User", account).Scan(&userID)
 	if err != nil {
 		t.Fatalf("createTestUser: %v", err)
 	}
@@ -55,20 +55,22 @@ func cleanupTestIssue(t *testing.T, issueID string) {
 	testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
-func cleanupTestUser(t *testing.T, email string) {
+func cleanupTestUser(t *testing.T, account string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE email = $1`, email)
+	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
 }
 
-func isSubscribed(t *testing.T, queries *db.Queries, issueID, userType, userID string) bool {
+func isSubscribed(t *testing.T, issueID, userType, userID string) bool {
 	t.Helper()
-	subscribed, err := queries.IsIssueSubscriber(context.Background(), db.IsIssueSubscriberParams{
-		IssueID:  util.MustParseUUID(issueID),
-		UserType: userType,
-		UserID:   util.MustParseUUID(userID),
-	})
-	if err != nil {
-		t.Fatalf("IsIssueSubscriber: %v", err)
+	var subscribed bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT EXISTS (
+			SELECT 1
+			FROM issue_subscriber
+			WHERE issue_id = $1 AND user_type = $2 AND user_id = $3
+		)
+	`, issueID, userType, userID).Scan(&subscribed); err != nil {
+		t.Fatalf("check issue subscriber: %v", err)
 	}
 	return subscribed
 }
@@ -109,7 +111,7 @@ func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed after issue:created")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
@@ -122,9 +124,9 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 
-	assigneeEmail := "subscriber-assignee-test@multica.ai"
-	assigneeID := createTestUser(t, assigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeEmail) })
+	assigneeAccount := "subscriber-assignee-test@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -150,14 +152,54 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed")
 	}
-	if !isSubscribed(t, queries, issueID, "member", assigneeID) {
+	if !isSubscribed(t, issueID, "member", assigneeID) {
 		t.Fatal("expected assignee to be subscribed")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 2 {
 		t.Fatalf("expected 2 subscribers, got %d", count)
+	}
+}
+
+func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+	registerSubscriberListeners(bus, queries)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+
+	squadType := "squad"
+	squadID := "11111111-2222-3333-4444-555555555555"
+	description := "[GOA-1](mention://issue/22222222-3333-4444-5555-666666666666) blocks this work"
+	bus.Publish(events.Event{
+		Type:        protocol.EventIssueCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID:           issueID,
+				WorkspaceID:  testWorkspaceID,
+				Title:        "test issue",
+				Status:       "todo",
+				Priority:     "medium",
+				CreatorType:  "member",
+				CreatorID:    testUserID,
+				AssigneeType: &squadType,
+				AssigneeID:   &squadID,
+				Description:  &description,
+			},
+		},
+	})
+
+	if !isSubscribed(t, issueID, "member", testUserID) {
+		t.Fatal("expected creator to remain subscribed")
+	}
+	if count := subscriberCount(t, queries, issueID); count != 1 {
+		t.Fatalf("expected only creator subscriber, got %d", count)
 	}
 }
 
@@ -196,7 +238,7 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	if count := subscriberCount(t, queries, issueID); count != 1 {
 		t.Fatalf("expected 1 subscriber for self-assign, got %d", count)
 	}
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator/assignee to be subscribed")
 	}
 }
@@ -206,9 +248,9 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 
-	assigneeEmail := "subscriber-new-assignee-test@multica.ai"
-	assigneeID := createTestUser(t, assigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeEmail) })
+	assigneeAccount := "subscriber-new-assignee-test@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -235,7 +277,7 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", assigneeID) {
+	if !isSubscribed(t, issueID, "member", assigneeID) {
 		t.Fatal("expected new assignee to be subscribed after assignee change")
 	}
 }
@@ -280,9 +322,9 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 
-	commenterEmail := "subscriber-commenter-test@multica.ai"
-	commenterID := createTestUser(t, commenterEmail)
-	t.Cleanup(func() { cleanupTestUser(t, commenterEmail) })
+	commenterAccount := "subscriber-commenter-test@multica"
+	commenterID := createTestUser(t, commenterAccount)
+	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -304,7 +346,7 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", commenterID) {
+	if !isSubscribed(t, issueID, "member", commenterID) {
 		t.Fatal("expected commenter to be subscribed after comment:created")
 	}
 }
@@ -388,7 +430,7 @@ func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+	if !isSubscribed(t, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed when autopilot publishes map payload")
 	}
 }

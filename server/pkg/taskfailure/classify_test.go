@@ -1,6 +1,9 @@
 package taskfailure
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestClassifyEmptyAndWhitespace pins the empty/whitespace contract.
 // Daemon callers should never hand us empty error text — but if they
@@ -79,6 +82,7 @@ func TestClassifyRules(t *testing.T) {
 		{"rate limit", "rate limit exceeded for tier 3", ReasonAgentProviderCapacityOrRateLimit},
 		{"overloaded", "overloaded_error: please retry", ReasonAgentProviderCapacityOrRateLimit},
 		{"no capacity available", "no capacity available; try again later", ReasonAgentProviderCapacityOrRateLimit},
+		{"selected model at capacity", "Selected model is at capacity. Please try a different model.", ReasonAgentProviderCapacityOrRateLimit},
 
 		// 6. Provider 5xx / server error.
 		{"server had an error", "the server had an error processing your request", ReasonAgentProviderServerError},
@@ -100,6 +104,9 @@ func TestClassifyRules(t *testing.T) {
 		{"connectionrefused single", "ConnectionRefused", ReasonAgentProviderNetwork},
 		{"dns", "dns lookup failed", ReasonAgentProviderNetwork},
 		{"i/o timeout", "read tcp 1.2.3.4:443: i/o timeout", ReasonAgentProviderNetwork},
+		{"codex tls handshake eof", "failed to connect to websocket: IO error: tls handshake eof", ReasonAgentProviderNetwork},
+		{"codex responses websocket", "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket", ReasonAgentProviderNetwork},
+		{"codex responses endpoint", "error sending request for url (https://chatgpt.com/backend-api/codex/responses)", ReasonAgentProviderNetwork},
 
 		// 8. Model not found / unavailable.
 		{"model not found", "Error: model claude-3-opus-99 not found", ReasonAgentModelNotFoundOrUnavailable},
@@ -110,7 +117,7 @@ func TestClassifyRules(t *testing.T) {
 		{"404 page not found", "404 page not found", ReasonAgentModelNotFoundOrUnavailable},
 
 		// 9. Empty / unparseable output.
-		{"returned empty output", "openclaw returned empty output", ReasonAgentEmptyOrUnparseableOutput},
+		{"returned empty output", "agent returned empty output", ReasonAgentEmptyOrUnparseableOutput},
 		{"returned no parseable output", "kimi returned no parseable output", ReasonAgentEmptyOrUnparseableOutput},
 
 		// 10. Agent timeout.
@@ -243,7 +250,7 @@ func TestClassifyAlwaysReturnsAgentSide(t *testing.T) {
 	}
 	for _, s := range samples {
 		got := Classify(s)
-		if !got.IsAgentError() {
+		if !strings.HasPrefix(string(got), agentErrorPrefix) {
 			t.Errorf("Classify(%q) = %q, must be agent_error.* (in-flight classifier never returns platform-side reasons)", s, got)
 		}
 	}

@@ -12,12 +12,11 @@ import { defaultStorage } from "../../platform/storage";
 // Persisted per workspace, per user/device. No filters (the set is tiny);
 // no search (scope-bearing list). Mirrors the agents/skills view stores.
 
-// Scope is the ownership lens (creator-based). No "archived" scope: the
-// list endpoint hard-filters archived squads and there is no restore
-// endpoint, so archived squads can't be surfaced or managed.
-export type SquadsScope = "mine" | "all";
+// Scope mixes the ownership lens (creator-based) with the archived lifecycle
+// stage, matching the agents list.
+export type SquadsScope = "mine" | "all" | "archived";
 
-export const SQUAD_SCOPES: SquadsScope[] = ["mine", "all"];
+export const SQUAD_SCOPES: SquadsScope[] = ["mine", "all", "archived"];
 
 export type SquadSortField = "name" | "members" | "created";
 

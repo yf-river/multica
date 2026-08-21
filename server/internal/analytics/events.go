@@ -16,8 +16,6 @@ const (
 	EventAutopilotRunStarted           = "autopilot_run_started"
 	EventAutopilotRunCompleted         = "autopilot_run_completed"
 	EventAutopilotRunFailed            = "autopilot_run_failed"
-	EventTeamInviteSent                = "team_invite_sent"
-	EventTeamInviteAccepted            = "team_invite_accepted"
 	EventOnboardingStarted             = "onboarding_started"
 	EventOnboardingQuestionnaireSubmit = "onboarding_questionnaire_submitted"
 	EventAgentCreated                  = "agent_created"
@@ -91,35 +89,28 @@ const (
 	OnboardingPathFull           = "full"            // reached first_issue end of flow
 	OnboardingPathRuntimeSkipped = "runtime_skipped" // completed without connecting a runtime
 	OnboardingPathSkipExisting   = "skip_existing"   // "I've done this before" from welcome
-	OnboardingPathInviteAccept   = "invite_accept"   // accepted at least one invitation from /invitations
 	OnboardingPathUnknown        = "unknown"         // fallback when the server can't derive the path
 )
 
 // Platform is used as the "platform" event property so funnels can split by
-// web / desktop / cli. Request-path events use PlatformServer as a fallback
+// web / cli / server. Request-path events use PlatformServer as a fallback
 // when the caller is a server-originating action (e.g. auto-created user);
-// otherwise the frontend passes the real platform via a header / body field
-// in later iterations.
+// otherwise the frontend passes the real platform via a header / body field.
 const (
-	PlatformServer  = "server"
-	PlatformWeb     = "web"
-	PlatformDesktop = "desktop"
-	PlatformCLI     = "cli"
+	PlatformServer = "server"
+	PlatformWeb    = "web"
+	PlatformCLI    = "cli"
 )
 
-// Signup builds the signup event. signupSource is populated from the
-// frontend's stored UTM/referrer cookie if present; leave empty otherwise.
-func Signup(userID, email, signupSource string) Event {
+// Signup builds the account-created event used by the internal login flow.
+// Marketing acquisition attribution is intentionally not collected in this
+// build; keep the event free of external-source fields.
+func Signup(userID, account string) Event {
 	return Event{
 		Name:       EventSignup,
 		DistinctID: userID,
-		Properties: map[string]any{
-			"email_domain":  emailDomain(email),
-			"signup_source": signupSource,
-		},
 		SetOnce: map[string]any{
-			"email":         email,
-			"signup_source": signupSource,
+			"account": account,
 		},
 	}
 }
@@ -354,35 +345,6 @@ func AutopilotRunFailed(actorID, workspaceID, autopilotID, runID, cadence string
 		"error_type":     errorType,
 		"will_retry":     willRetry,
 	})
-}
-
-// TeamInviteSent fires when a workspace admin creates an invitation.
-// inviteMethod is "email" for now; future non-email invite flows can pass
-// their own value to keep this stable.
-func TeamInviteSent(inviterID, workspaceID, invitedEmail, inviteMethod string) Event {
-	return Event{
-		Name:        EventTeamInviteSent,
-		DistinctID:  inviterID,
-		WorkspaceID: workspaceID,
-		Properties: map[string]any{
-			"invited_email_domain": emailDomain(invitedEmail),
-			"invite_method":        inviteMethod,
-		},
-	}
-}
-
-// TeamInviteAccepted fires when the invitee accepts and joins the workspace.
-// daysSinceInvite lets us segment fast-acceptance (warm) from long-tail
-// acceptance (someone dug through old email).
-func TeamInviteAccepted(inviteeID, workspaceID string, daysSinceInvite int64) Event {
-	return Event{
-		Name:        EventTeamInviteAccepted,
-		DistinctID:  inviteeID,
-		WorkspaceID: workspaceID,
-		Properties: map[string]any{
-			"days_since_invite": daysSinceInvite,
-		},
-	}
 }
 
 // OnboardingQuestionnaireSubmitted fires the first time a user's
@@ -676,12 +638,4 @@ func feedbackLengthBucket(n int) string {
 	default:
 		return "2000+"
 	}
-}
-
-func emailDomain(email string) string {
-	at := strings.LastIndex(email, "@")
-	if at < 0 || at == len(email)-1 {
-		return ""
-	}
-	return strings.ToLower(email[at+1:])
 }

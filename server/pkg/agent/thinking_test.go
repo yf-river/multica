@@ -708,3 +708,11 @@ func argIndexOf(slice []string, target string) int {
 	}
 	return -1
 }
+
+// resetThinkingCacheForTests is exposed for tests only; production code
+// must rely on the TTL or process restart for invalidation.
+func resetThinkingCacheForTests() {
+	thinkingCacheMu.Lock()
+	thinkingCache = map[thinkingCacheKey]thinkingCacheEntry{}
+	thinkingCacheMu.Unlock()
+}

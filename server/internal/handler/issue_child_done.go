@@ -66,6 +66,9 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if parent.Status == "done" || parent.Status == "cancelled" {
 		return
 	}
+	if !h.allSiblingChildrenResolved(ctx, parent.ID, issue.ID) {
+		return
+	}
 	// Human-assigned parents read their own timeline; an automated system
 	// comment is just noise and there is no agent task to trigger. Skip the
 	// whole notification (comment + mention + inbox row) — MUL-2538.
@@ -84,7 +87,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	mentionPrefix := h.buildParentAssigneeMention(ctx, parent)
 
 	content := fmt.Sprintf(
-		"%sSub-issue [%s](mention://issue/%s) — \"%s\" — is done. Before promoting any waiting `backlog` sub-issue, read each sibling's description and only promote items whose stated dependencies are already satisfied — do not rely on this parent's higher-level breakdown alone. If a sibling's description conflicts with that breakdown (e.g. it lists a prerequisite the parent treats as parallel), do NOT change its status — leave it `backlog` and post a comment to confirm first.",
+		"%s子任务 [%s](mention://issue/%s)「%s」已完成，且同一父任务下所有子任务均已结束。请汇总子任务结果后再推进父任务验收；如果子任务结论之间存在冲突，先评论确认，不要直接收口。",
 		mentionPrefix, identifier, childID, title,
 	)
 
@@ -123,6 +126,24 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	// title inert and gives the platform a single place to apply the loop
 	// and idempotency guards.
 	h.dispatchParentAssigneeTrigger(ctx, parent, issue, comment, actorType, actorID)
+}
+
+func (h *Handler) allSiblingChildrenResolved(ctx context.Context, parentID, completedChildID pgtype.UUID) bool {
+	var openSiblings int
+	if err := h.DB.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM issue
+		WHERE parent_issue_id = $1
+		  AND id <> $2
+		  AND status NOT IN ('done', 'cancelled')
+	`, parentID, completedChildID).Scan(&openSiblings); err != nil {
+		slog.Warn("child done: failed to count sibling children",
+			"error", err,
+			"parent_id", uuidToString(parentID),
+			"child_id", uuidToString(completedChildID))
+		return false
+	}
+	return openSiblings == 0
 }
 
 // sanitizeChildTitleForSystemComment removes mention-style markdown from a
@@ -295,12 +316,12 @@ func (h *Handler) triggerChildDoneAgent(ctx context.Context, parent db.Issue, tr
 }
 
 // triggerChildDoneSquad enqueues a leader-role task for the parent's squad
-// assignee, applying the self-trigger guard against:
-//   - same squad on both sides (the leader already observed the child via
-//     its own coordination cycle), and
-//   - same effective leader on both sides — child agent == leader, or
-//     child squad's leader == this squad's leader (the cross-squad shared
-//     leader loop).
+// assignee. A child finishing and waking its parent is a serial sub-task
+// handoff between two different issues, so same-squad children must wake the
+// parent leader; without that, canonical squad-owned parent/child plans strand
+// the parent after all children finish. The loop guard remains for distinct
+// child owners with the same effective leader — child agent == leader, or a
+// different child squad's leader == this squad's leader.
 func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent, child db.Issue, triggerCommentID pgtype.UUID, actorType, actorID string) {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          parent.AssigneeID,
@@ -315,17 +336,16 @@ func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent, child db.Is
 		return
 	}
 
-	// Same-squad child → the leader has already observed the work via its
-	// own coordination cycle on the child; firing again on the parent would
-	// just re-trigger the same leader run with no new signal.
-	if childAssigneeIsSquad(child, parent.AssigneeID) {
-		return
-	}
+	sameSquadChild := childAssigneeIsSquad(child, parent.AssigneeID)
 	// Shared-leader loop: child driven directly by the parent squad's leader,
-	// or by another squad whose leader is the same agent.
-	if owner := h.effectiveChildAgentOwner(ctx, child); owner.Valid &&
-		uuidToString(owner) == uuidToString(squad.LeaderID) {
-		return
+	// or by another squad whose leader is the same agent. Same-squad children
+	// are allowed because the signal is a cross-issue handoff back to the
+	// parent, mirroring the same-agent parent path above.
+	if !sameSquadChild {
+		if owner := h.effectiveChildAgentOwner(ctx, child); owner.Valid &&
+			uuidToString(owner) == uuidToString(squad.LeaderID) {
+			return
+		}
 	}
 
 	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)

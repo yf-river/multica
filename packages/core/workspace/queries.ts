@@ -6,8 +6,6 @@ export const workspaceKeys = {
   all: (wsId: string) => ["workspaces", wsId] as const,
   list: () => ["workspaces", "list"] as const,
   members: (wsId: string) => ["workspaces", wsId, "members"] as const,
-  invitations: (wsId: string) => ["workspaces", wsId, "invitations"] as const,
-  myInvitations: () => ["invitations", "mine"] as const,
   agents: (wsId: string) => ["workspaces", wsId, "agents"] as const,
   squads: (wsId: string) => ["workspaces", wsId, "squads"] as const,
   // Per-squad member status. Lives under the workspace key tree so
@@ -49,10 +47,16 @@ export function agentListOptions(wsId: string) {
   });
 }
 
-export function squadListOptions(wsId: string) {
+export function squadListOptions(
+  wsId: string,
+  params?: { includeArchived?: boolean },
+) {
   return queryOptions<Squad[]>({
-    queryKey: workspaceKeys.squads(wsId),
-    queryFn: () => api.listSquads(),
+    queryKey: params?.includeArchived
+      ? [...workspaceKeys.squads(wsId), { includeArchived: true }]
+      : workspaceKeys.squads(wsId),
+    queryFn: () =>
+      api.listSquads({ include_archived: params?.includeArchived }),
     enabled: !!wsId,
   });
 }
@@ -112,20 +116,6 @@ export function selectSkillAssignments(
     }
   }
   return map;
-}
-
-export function invitationListOptions(wsId: string) {
-  return queryOptions({
-    queryKey: workspaceKeys.invitations(wsId),
-    queryFn: () => api.listWorkspaceInvitations(wsId),
-  });
-}
-
-export function myInvitationListOptions() {
-  return queryOptions({
-    queryKey: workspaceKeys.myInvitations(),
-    queryFn: () => api.listMyInvitations(),
-  });
 }
 
 export function assigneeFrequencyOptions(wsId: string) {

@@ -61,24 +61,11 @@ func TestParseCalendarDate_DateOnly(t *testing.T) {
 	}
 }
 
-func TestParseCalendarDate_AcceptsUTCMidnight(t *testing.T) {
-	// A UTC-midnight instant unambiguously denotes that calendar day.
-	d, err := ParseCalendarDate("2026-03-01T00:00:00Z")
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-	if got := DateToPtr(d); got == nil || *got != "2026-03-01" {
-		t.Fatalf("got %v want 2026-03-01", got)
-	}
-}
-
-func TestParseCalendarDate_RejectsNonMidnightInstant(t *testing.T) {
-	// The legacy bug: UTC+8 picking 2026-03-01 sent 2026-02-28T16:00:00Z. Its
-	// intended calendar day is unrecoverable, so reject instead of silently
-	// storing the wrong day (2026-02-28).
+func TestParseCalendarDate_RejectsTimestamp(t *testing.T) {
 	cases := []string{
-		"2026-02-28T16:00:00Z", // UTC+8 local midnight
-		"2026-03-01T05:00:00Z", // UTC-5 local midnight
+		"2026-03-01T00:00:00Z",
+		"2026-02-28T16:00:00Z",
+		"2026-03-01T05:00:00Z",
 		"2026-03-01T00:00:00+08:00",
 	}
 	for _, s := range cases {

@@ -27,18 +27,6 @@ func (e *requestError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
-// isWorkspaceNotFoundError returns true if the error is a 404 with "workspace not found" body.
-func isWorkspaceNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "workspace not found")
-}
-
 // isTaskNotFoundError returns true if the error is a 404 with "task not found"
 // body. The daemon uses this to detect that a task was deleted server-side
 // (issue removed, agent reassigned, ...) while the local agent was still
@@ -53,6 +41,17 @@ func isTaskNotFoundError(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(reqErr.Body), "task not found")
+}
+
+func isTaskStartConflictError(err error) bool {
+	var reqErr *requestError
+	if !errors.As(err, &reqErr) {
+		return false
+	}
+	if reqErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	return strings.Contains(strings.ToLower(reqErr.Body), "task is no longer startable")
 }
 
 // isUnauthorizedError returns true if the error is a 401 from the server.
@@ -167,21 +166,6 @@ func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
 }
 
-// MarkTaskWaitingLocalDirectory parks a freshly-dispatched task in the
-// waiting_local_directory state on the server. The daemon calls this after
-// it has claimed a task whose project carries a local_directory resource
-// but the path mutex is held by another in-flight task. reason is a short
-// human-readable hint (e.g. "<path>") surfaced by the UI alongside the
-// status. Idempotent on the daemon's side — calling twice with the same
-// reason is a no-op once the row is already waiting_local_directory (the
-// underlying SQL filters on status='dispatched', so the second call is a
-// 400 the daemon swallows and proceeds to wait).
-func (c *Client) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID, reason string) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/wait-local-directory", taskID), map[string]any{
-		"reason": reason,
-	}, nil)
-}
-
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), map[string]any{
 		"summary": summary,
@@ -279,31 +263,27 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 	return resp.Status, nil
 }
 
-// HeartbeatResponse, PendingUpdate, etc. alias the wire types so HTTP and WS
-// heartbeat paths share a single type and a single decoder shape. Aliases
-// (rather than wrappers) keep call sites unchanged.
+// HeartbeatResponse and pending request types alias the wire types so HTTP and
+// WS heartbeat paths share a single decoder shape.
 type (
 	HeartbeatResponse       = protocol.DaemonHeartbeatAckPayload
-	PendingUpdate           = protocol.DaemonHeartbeatPendingUpdate
 	PendingModelList        = protocol.DaemonHeartbeatPendingModelList
 	PendingLocalSkills      = protocol.DaemonHeartbeatPendingLocalSkills
 	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
 )
 
-func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string) (*HeartbeatResponse, error) {
+func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*HeartbeatResponse, error) {
 	var resp HeartbeatResponse
-	if err := c.postJSON(ctx, "/api/daemon/heartbeat", map[string]any{
-		"runtime_id":             runtimeID,
-		"supports_batch_import":  true,
-	}, &resp); err != nil {
+	body := map[string]any{
+		"runtime_id": runtimeID,
+	}
+	if len(metadata) > 0 {
+		body["metadata"] = metadata
+	}
+	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
-}
-
-// ReportUpdateResult sends the CLI update result back to the server.
-func (c *Client) ReportUpdateResult(ctx context.Context, runtimeID, updateID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/update/%s/result", runtimeID, updateID), result, nil)
 }
 
 // ReportModelListResult sends the model-discovery result back to the server.

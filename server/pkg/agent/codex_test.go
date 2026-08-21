@@ -234,113 +234,10 @@ func TestCodexHandleServerRequestUnknownReturnsError(t *testing.T) {
 	}
 }
 
-func TestCodexLegacyEventTaskStarted(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var gotStatus bool
-	c.onMessage = func(msg Message) {
-		if msg.Type == MessageStatus && msg.Status == "running" {
-			gotStatus = true
-		}
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_started"}}}`)
-
-	if !gotStatus {
-		t.Fatal("expected status=running message")
-	}
-	if !c.turnStarted {
-		t.Fatal("expected turnStarted=true")
-	}
-	if c.notificationProtocol != "legacy" {
-		t.Fatalf("expected protocol=legacy, got %q", c.notificationProtocol)
-	}
-}
-
-func TestCodexLegacyEventAgentMessage(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var gotText string
-	c.onMessage = func(msg Message) {
-		if msg.Type == MessageText {
-			gotText = msg.Content
-		}
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"agent_message","message":"I found the bug"}}}`)
-
-	if gotText != "I found the bug" {
-		t.Fatalf("expected text 'I found the bug', got %q", gotText)
-	}
-}
-
-func TestCodexLegacyEventExecCommand(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var messages []Message
-	c.onMessage = func(msg Message) {
-		messages = append(messages, msg)
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"exec_command_begin","call_id":"c1","command":"ls -la"}}}`)
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"exec_command_end","call_id":"c1","output":"total 42"}}}`)
-
-	if len(messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(messages))
-	}
-	if messages[0].Type != MessageToolUse || messages[0].Tool != "exec_command" || messages[0].CallID != "c1" {
-		t.Fatalf("unexpected begin message: %+v", messages[0])
-	}
-	if messages[1].Type != MessageToolResult || messages[1].CallID != "c1" || messages[1].Output != "total 42" {
-		t.Fatalf("unexpected end message: %+v", messages[1])
-	}
-}
-
-func TestCodexLegacyEventTaskComplete(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var done bool
-	c.onTurnDone = func(aborted bool) {
-		done = true
-		if aborted {
-			t.Fatal("expected aborted=false")
-		}
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_complete"}}}`)
-
-	if !done {
-		t.Fatal("expected onTurnDone to be called")
-	}
-}
-
-func TestCodexLegacyEventTurnAborted(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-	var abortedResult bool
-	c.onTurnDone = func(aborted bool) {
-		abortedResult = aborted
-	}
-
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"turn_aborted"}}}`)
-
-	if !abortedResult {
-		t.Fatal("expected aborted=true")
-	}
-}
-
 func TestCodexRawTurnStarted(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	// The zero value "" doesn't match "unknown", so protocol auto-detection
-	// won't trigger. Set it explicitly as production code would.
-	c.notificationProtocol = "unknown"
 
 	var gotStatus bool
 	c.onMessage = func(msg Message) {
@@ -354,9 +251,6 @@ func TestCodexRawTurnStarted(t *testing.T) {
 	if !gotStatus {
 		t.Fatal("expected status=running message")
 	}
-	if c.notificationProtocol != "raw" {
-		t.Fatalf("expected protocol=raw, got %q", c.notificationProtocol)
-	}
 	if c.turnID != "turn-1" {
 		t.Fatalf("expected turnID=turn-1, got %q", c.turnID)
 	}
@@ -366,7 +260,6 @@ func TestCodexRawTurnCompleted(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var doneCount int
 	c.onTurnDone = func(aborted bool) {
@@ -387,7 +280,6 @@ func TestCodexRawTurnCompletedSubtractsCachedInput(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.onTurnDone = func(aborted bool) {}
 
 	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-usage","status":"completed","usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50}}}}`)
@@ -409,7 +301,6 @@ func TestCodexRawTurnCompletedDeduplication(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var doneCount int
 	c.onTurnDone = func(aborted bool) {
@@ -428,7 +319,6 @@ func TestCodexRawTurnCompletedAborted(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var wasAborted bool
 	c.onTurnDone = func(aborted bool) {
@@ -446,7 +336,6 @@ func TestCodexRawTurnCompletedFailedCapturesError(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var wasAborted bool
 	c.onTurnDone = func(aborted bool) {
@@ -467,7 +356,6 @@ func TestCodexRawTurnCompletedFailedWithoutMessageFallsBack(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.onTurnDone = func(aborted bool) {}
 
 	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-f","status":"failed"}}}`)
@@ -481,7 +369,6 @@ func TestCodexRawErrorNotificationTerminal(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	done := false
 	var activities []string
 	c.onSemanticActivity = func(activity string) {
@@ -511,7 +398,6 @@ func TestCodexRawErrorNotificationRetryingIgnored(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	var activities []string
 	c.onSemanticActivity = func(activity string) {
 		activities = append(activities, activity)
@@ -603,11 +489,41 @@ func TestParseCodexSessionFileSubtractsCachedInput(t *testing.T) {
 	}
 }
 
+func TestParseCodexLogFileExtractsResponseCompletedUsage(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "logs_2.sqlite")
+	content := strings.Join([]string{
+		`sqlite page noise`,
+		`Received message {"type":"response.completed","response":{"model":"gpt-5.3-codex-spark","usage":{"input_tokens":7737,"input_tokens_details":{"cached_tokens":2000},"output_tokens":0,"total_tokens":7737}}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	got := parseCodexLogFile(path)
+	if got == nil {
+		t.Fatal("expected usage")
+	}
+	if got.model != "gpt-5.3-codex-spark" {
+		t.Fatalf("model = %q, want gpt-5.3-codex-spark", got.model)
+	}
+	if got.usage.InputTokens != 5737 {
+		t.Fatalf("input tokens = %d, want uncached 5737", got.usage.InputTokens)
+	}
+	if got.usage.CacheReadTokens != 2000 {
+		t.Fatalf("cache read tokens = %d, want 2000", got.usage.CacheReadTokens)
+	}
+	if got.usage.OutputTokens != 0 {
+		t.Fatalf("output tokens = %d, want 0", got.usage.OutputTokens)
+	}
+}
+
 func TestCodexRawItemCommandExecution(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 
 	var messages []Message
 	c.onMessage = func(msg Message) {
@@ -632,7 +548,6 @@ func TestCodexRawItemAgentMessageFinalAnswer(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.turnStarted = true
 
 	var gotText string
@@ -660,7 +575,6 @@ func TestCodexRawThreadStatusIdle(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.turnStarted = true
 
 	var turnDone bool
@@ -685,7 +599,6 @@ func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.threadID = "thr_main"
 
 	var doneCount int
@@ -712,7 +625,6 @@ func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
 	c, _, _ := newTestCodexClient(t)
-	c.notificationProtocol = "raw"
 	c.threadID = "thr_main"
 	c.turnStarted = true
 
@@ -732,36 +644,6 @@ func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	}
 	if doneCount != 0 {
 		t.Fatalf("subagent final_answer must not trigger onTurnDone, got %d calls", doneCount)
-	}
-}
-
-func TestCodexCloseAllPending(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-
-	pr1 := &pendingRPC{ch: make(chan rpcResult, 1), method: "m1"}
-	pr2 := &pendingRPC{ch: make(chan rpcResult, 1), method: "m2"}
-	c.mu.Lock()
-	c.pending[1] = pr1
-	c.pending[2] = pr2
-	c.mu.Unlock()
-
-	c.closeAllPending(fmt.Errorf("test error"))
-
-	r1 := <-pr1.ch
-	if r1.err == nil {
-		t.Fatal("expected error for pending 1")
-	}
-	r2 := <-pr2.ch
-	if r2.err == nil {
-		t.Fatal("expected error for pending 2")
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.pending) != 0 {
-		t.Fatalf("expected empty pending map, got %d", len(c.pending))
 	}
 }
 
@@ -1242,32 +1124,6 @@ func TestCodexStartOrResumeThreadStartFailureSurfaces(t *testing.T) {
 	}
 }
 
-func TestCodexProtocolDetectionLegacyBlocksRaw(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-
-	var messages []Message
-	c.onMessage = func(msg Message) {
-		messages = append(messages, msg)
-	}
-
-	// First: receive a legacy event -> locks to "legacy"
-	c.handleLine(`{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_started"}}}`)
-
-	if c.notificationProtocol != "legacy" {
-		t.Fatalf("expected legacy, got %q", c.notificationProtocol)
-	}
-
-	// Now send a raw notification -> should be ignored
-	messagesBefore := len(messages)
-	c.handleLine(`{"jsonrpc":"2.0","method":"turn/started","params":{"turn":{"id":"turn-1"}}}`)
-
-	if len(messages) != messagesBefore {
-		t.Fatal("raw notification should be ignored in legacy mode")
-	}
-}
-
 func TestStderrTailForwardsAndCapturesTail(t *testing.T) {
 	t.Parallel()
 
@@ -1541,38 +1397,6 @@ func TestCodexExecuteFirstTurnRetryErrorDoesNotSatisfyProgress(t *testing.T) {
 	}
 }
 
-func TestCodexExecuteLegacyFirstTurnMessageSatisfiesProgress(t *testing.T) {
-	t.Parallel()
-	if runtime.GOOS == "windows" {
-		t.Skip("shell-script fixture is POSIX-only")
-	}
-
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-legacy"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_started"}}}'`+"\n"+
-		`sleep 0.05`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"agent_message","message":"legacy alive"}}}'`+"\n"+
-		`sleep 0.07`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"codex/event","params":{"msg":{"type":"task_complete"}}}'`+"\n")
-
-	result := executeFakeCodex(t, fakePath, ExecOptions{
-		Timeout:                   5 * time.Second,
-		SemanticInactivityTimeout: 100 * time.Millisecond,
-	})
-	if result.Status != "completed" {
-		t.Fatalf("expected completed, got status=%q error=%q", result.Status, result.Error)
-	}
-	if result.Output != "legacy alive" {
-		t.Fatalf("expected legacy output, got %q", result.Output)
-	}
-}
-
 func TestCodexExecuteSemanticInactivityAllowsContinuousMessages(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -1726,7 +1550,7 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		ExtraArgs:  []string{"--listen", "tcp://evil", "--sandbox", "read-only"},
 		CustomArgs: []string{"--sandbox", "workspace-write", "--listen=bad"},
-	}, slog.Default())
+	}, slog.Default(), false)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "tcp://evil") || strings.Contains(joined, "--listen=bad") {
 		t.Fatalf("blocked args should be filtered from both layers: %v", args)
@@ -1745,6 +1569,114 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	}
 }
 
+func TestBuildCodexArgsDisablesImageGenerationWhenRequested(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		Model: "some-model",
+	}, slog.Default(), true)
+
+	if !containsArgPair(args, "--disable", "image_generation") {
+		t.Fatalf("expected image_generation to be disabled, got %v", args)
+	}
+}
+
+func TestBuildCodexArgsLeavesImageGenerationWhenAllowed(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		Model: "some-model",
+	}, slog.Default(), false)
+
+	if containsArgPair(args, "--disable", "image_generation") {
+		t.Fatalf("did not expect image_generation to be disabled, got %v", args)
+	}
+}
+
+func TestShouldDisableCodexImageGenerationForCatalog(t *testing.T) {
+	t.Parallel()
+
+	catalog := map[string]codexModelCapability{
+		"text-only": {
+			InputModalities: []string{"text"},
+		},
+		"text-image": {
+			InputModalities: []string{"text", "image"},
+		},
+		"tool-explicit": {
+			ExperimentalSupportedTools: []string{"image_generation"},
+		},
+	}
+	tests := []struct {
+		name      string
+		policy    codexImageGenerationPolicy
+		model     string
+		catalogOK bool
+		want      bool
+	}{
+		{name: "off disables regardless of catalog", policy: codexImageGenerationOff, model: "text-image", catalogOK: true, want: true},
+		{name: "on allows regardless of catalog", policy: codexImageGenerationOn, model: "text-only", catalogOK: true, want: false},
+		{name: "text only disables", policy: codexImageGenerationAuto, model: "text-only", catalogOK: true, want: true},
+		{name: "text image input still disables generation tool", policy: codexImageGenerationAuto, model: "text-image", catalogOK: true, want: true},
+		{name: "explicit tool allows", policy: codexImageGenerationAuto, model: "tool-explicit", catalogOK: true, want: false},
+		{name: "unknown model disables", policy: codexImageGenerationAuto, model: "unknown-model", catalogOK: true, want: true},
+		{name: "catalog failure disables", policy: codexImageGenerationAuto, model: "text-image", catalogOK: false, want: true},
+		{name: "empty model disables", policy: codexImageGenerationAuto, model: "", catalogOK: true, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := shouldDisableCodexImageGenerationForCatalog(tc.policy, tc.model, catalog, tc.catalogOK)
+			if got != tc.want {
+				t.Fatalf("disable image_generation = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCodexModelCapabilities(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"models": [
+			{
+				"slug": "gpt-5.5",
+				"input_modalities": ["text", "image"],
+				"experimental_supported_tools": [],
+				"supports_image_detail_original": true
+			},
+			{
+				"slug": "gpt-5.3-codex-spark",
+				"input_modalities": ["text"]
+			},
+			{
+				"slug": "image-tool",
+				"experimental_supported_tools": ["image_generation"]
+			}
+		]
+	}`)
+	got := parseCodexModelCapabilities(raw)
+
+	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.5"]) {
+		t.Fatalf("expected image input alone not to support image_generation: %+v", got["gpt-5.5"])
+	}
+	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.3-codex-spark"]) {
+		t.Fatalf("expected spark fixture to disable image_generation: %+v", got["gpt-5.3-codex-spark"])
+	}
+	if !codexModelCapabilitySupportsImageGeneration(got["image-tool"]) {
+		t.Fatalf("expected explicit tool fixture to support image_generation: %+v", got["image-tool"])
+	}
+}
+
+func containsArgPair(args []string, first, second string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == first && args[i+1] == second {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	t.Parallel()
 
@@ -1757,7 +1689,7 @@ func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `model="o3"`},
-	}, slog.Default())
+	}, slog.Default(), false)
 
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "mcp_servers") {
@@ -1865,7 +1797,7 @@ func TestBuildCodexArgsPreservesCustomMcpOverridesWhenUnmanaged(t *testing.T) {
 	// namespace once an admin opts in via the MCP Tab.
 	args := buildCodexArgs(ExecOptions{
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "uvx" }`, "-c", `model="o3"`},
-	}, slog.Default())
+	}, slog.Default(), false)
 	foundMcp := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
@@ -1888,7 +1820,7 @@ func TestBuildCodexArgsDropsCustomMcpOverridesWhenManaged(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "evil" }`, "-c", `model="o3"`},
-	}, slog.Default())
+	}, slog.Default(), false)
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
 			t.Fatalf("custom_args mcp_servers must be filtered when managed mcp_config is present, got %v", args)

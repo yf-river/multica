@@ -7,8 +7,10 @@ import LinkifyIt from 'linkify-it'
  * plus custom regex for local file paths.
  */
 
-// Initialize linkify-it with default settings (fuzzy URLs, emails enabled)
-const linkify = new LinkifyIt()
+// Initialize linkify-it with URL matching only. Email/mailto auto-linking is
+// intentionally disabled because account/contact email handling is no longer a
+// markdown concern.
+const linkify = new LinkifyIt({ fuzzyEmail: false }).add('mailto:', null)
 
 // Common source/config file extensions. Shared between the file-path detector
 // and the bare-filename guard below so the two never drift.
@@ -39,7 +41,7 @@ const CJK_URL_TERMINATOR_REGEX =
   /[！-／：-＠［-｀｛-～、。「-】]/
 
 interface DetectedLink {
-  type: 'url' | 'email' | 'file'
+  type: 'url' | 'file'
   text: string
   url: string
   start: number
@@ -245,13 +247,13 @@ function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]
     // dead external site. Only schemeless (fuzzy) matches are suppressed; an
     // explicit "https://plan.md" the author typed is still honored.
     if (!(match.schema === '' && BARE_FILENAME_REGEX.test(matchText))) {
-      // linkify-it may prepend a scheme (e.g. "http://" or "mailto:") to url
+      // linkify-it may prepend a scheme (e.g. "http://") to url
       // while leaving text as the raw substring. Preserve that prefix.
       const schemePrefix = match.url.slice(0, match.url.length - match.text.length)
       const matchUrl = truncate ? schemePrefix + matchText : match.url
 
       out.push({
-        type: match.schema === 'mailto:' ? 'email' : 'url',
+        type: 'url',
         text: matchText,
         url: matchUrl,
         start: match.index + offset,
@@ -270,12 +272,12 @@ function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]
 }
 
 /**
- * Detect all links (URLs, emails, file paths) in text
+ * Detect all links (URLs and file paths) in text
  */
 export function detectLinks(text: string): DetectedLink[] {
   const links: DetectedLink[] = []
 
-  // 1. Detect URLs and emails with linkify-it, applying CJK boundary handling.
+  // 1. Detect URLs with linkify-it, applying CJK boundary handling.
   collectLinkifyMatches(text, 0, links)
 
   // 2. Detect file paths with custom regex

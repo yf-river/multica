@@ -6,12 +6,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestSubscriberAPI(t *testing.T) {
 	ctx := context.Background()
+	isSubscribed := func(t *testing.T, issueID, userType, userID string) bool {
+		t.Helper()
+		var subscribed bool
+		if err := testPool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM issue_subscriber
+				WHERE issue_id = $1 AND user_type = $2 AND user_id = $3
+			)
+		`, issueID, userType, userID).Scan(&subscribed); err != nil {
+			t.Fatalf("check issue subscriber: %v", err)
+		}
+		return subscribed
+	}
 
 	// Helper: create an issue for subscriber tests
 	createIssue := func(t *testing.T) string {
@@ -57,15 +69,7 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 
 		// Verify in DB
-		subscribed, err := testHandler.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
-			IssueID:  parseUUID(issueID),
-			UserType: "member",
-			UserID:   parseUUID(testUserID),
-		})
-		if err != nil {
-			t.Fatalf("IsIssueSubscriber: %v", err)
-		}
-		if !subscribed {
+		if !isSubscribed(t, issueID, "member", testUserID) {
 			t.Fatal("expected user to be subscribed in DB")
 		}
 	})
@@ -161,15 +165,7 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 
 		// Verify in DB
-		subscribed, err := testHandler.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
-			IssueID:  parseUUID(issueID),
-			UserType: "member",
-			UserID:   parseUUID(testUserID),
-		})
-		if err != nil {
-			t.Fatalf("IsIssueSubscriber: %v", err)
-		}
-		if subscribed {
+		if isSubscribed(t, issueID, "member", testUserID) {
 			t.Fatal("expected user to NOT be subscribed in DB")
 		}
 	})
@@ -190,15 +186,7 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatalf("SubscribeToIssue with cross-workspace user: expected 403, got %d: %s", w.Code, w.Body.String())
 		}
 
-		subscribed, err := testHandler.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
-			IssueID:  parseUUID(issueID),
-			UserType: "member",
-			UserID:   parseUUID(foreignUserID),
-		})
-		if err != nil {
-			t.Fatalf("IsIssueSubscriber: %v", err)
-		}
-		if subscribed {
+		if isSubscribed(t, issueID, "member", foreignUserID) {
 			t.Fatal("cross-workspace user should NOT be subscribed in DB")
 		}
 	})
@@ -249,27 +237,11 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatalf("SubscribeToIssue (agent caller): expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		agentSubscribed, err := testHandler.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
-			IssueID:  parseUUID(issueID),
-			UserType: "agent",
-			UserID:   parseUUID(agentID),
-		})
-		if err != nil {
-			t.Fatalf("IsIssueSubscriber (agent): %v", err)
-		}
-		if !agentSubscribed {
+		if !isSubscribed(t, issueID, "agent", agentID) {
 			t.Fatal("expected agent to be subscribed in DB when X-Agent-ID is set")
 		}
 
-		memberSubscribed, err := testHandler.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
-			IssueID:  parseUUID(issueID),
-			UserType: "member",
-			UserID:   parseUUID(testUserID),
-		})
-		if err != nil {
-			t.Fatalf("IsIssueSubscriber (member): %v", err)
-		}
-		if memberSubscribed {
+		if isSubscribed(t, issueID, "member", testUserID) {
 			t.Fatal("member must not be auto-subscribed when caller is an agent")
 		}
 
@@ -286,15 +258,7 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatalf("UnsubscribeFromIssue (agent caller): expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		agentSubscribed, err = testHandler.Queries.IsIssueSubscriber(ctx, db.IsIssueSubscriberParams{
-			IssueID:  parseUUID(issueID),
-			UserType: "agent",
-			UserID:   parseUUID(agentID),
-		})
-		if err != nil {
-			t.Fatalf("IsIssueSubscriber (agent, after unsubscribe): %v", err)
-		}
-		if agentSubscribed {
+		if isSubscribed(t, issueID, "agent", agentID) {
 			t.Fatal("expected agent to be unsubscribed in DB when X-Agent-ID is set")
 		}
 	})

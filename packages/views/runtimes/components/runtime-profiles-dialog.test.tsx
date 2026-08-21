@@ -4,8 +4,8 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { RuntimeProfile } from "@multica/core/types";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
 
 const queryState = vi.hoisted(() => ({
   profiles: [] as RuntimeProfile[],
@@ -40,7 +40,7 @@ vi.mock("./provider-logo", () => ({
 
 import { RuntimeProfilesDialog } from "./runtime-profiles-dialog";
 
-const TEST_RESOURCES = { en: { common: enCommon, runtimes: enRuntimes } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } };
 
 function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
@@ -62,7 +62,7 @@ function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
 
 function renderDialog() {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <RuntimeProfilesDialog wsId="ws-1" onClose={vi.fn()} />
     </I18nProvider>,
   );
@@ -75,35 +75,35 @@ describe("RuntimeProfilesDialog", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the custom empty state and keeps built-in protocols collapsed", () => {
+  it("显示自定义空态，并保持内置协议折叠", () => {
     renderDialog();
 
     expect(
-      screen.getByText("Create your first custom runtime"),
+      screen.getByText("创建第一个自定义运行时"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Pick a base protocol family/),
+      screen.getByText(/选择一个基础协议族/),
     ).toBeInTheDocument();
 
     const builtinsToggle = screen.getByRole("button", {
-      name: /Supported base protocols/,
+      name: /支持的基础协议/,
     });
     expect(builtinsToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("claude")).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: "New custom runtime" }),
+      screen.getAllByRole("button", { name: "新建自定义运行时" }),
     ).toHaveLength(2);
   });
 
-  it("renders custom profiles before the collapsed built-in reference section", () => {
+  it("在折叠的内置参考区之前渲染自定义 profile", () => {
     queryState.profiles = [profile()];
 
     renderDialog();
 
-    const customTitle = screen.getByText("Custom runtimes (1)");
+    const customTitle = screen.getByText("自定义运行时（1）");
     const customRow = screen.getByText("Team Codex");
     const builtinsToggle = screen.getByRole("button", {
-      name: /Supported base protocols/,
+      name: /支持的基础协议/,
     });
 
     expect(customRow).toBeInTheDocument();
@@ -120,26 +120,26 @@ describe("RuntimeProfilesDialog", () => {
     expect(screen.getByText("claude")).toBeInTheDocument();
   });
 
-  it("clears built-in detail when the built-in reference section collapses", () => {
+  it("内置参考区折叠时清空内置详情", () => {
     queryState.profiles = [profile()];
 
     renderDialog();
 
     const builtinsToggle = screen.getByRole("button", {
-      name: /Supported base protocols/,
+      name: /支持的基础协议/,
     });
     fireEvent.click(builtinsToggle);
     fireEvent.click(screen.getByRole("option", { name: /claude/i }));
 
     expect(
-      screen.getByText(/claude is a built-in protocol family/),
+      screen.getByText(/claude 是内置协议类型/),
     ).toBeInTheDocument();
 
     fireEvent.click(builtinsToggle);
 
-    expect(screen.getByText("Select a runtime")).toBeInTheDocument();
+    expect(screen.getByText("选择一个运行时")).toBeInTheDocument();
     expect(
-      screen.queryByText(/claude is a built-in protocol family/),
+      screen.queryByText(/claude 是内置协议类型/),
     ).not.toBeInTheDocument();
   });
 });

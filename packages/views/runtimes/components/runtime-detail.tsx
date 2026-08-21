@@ -28,13 +28,15 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  resourceSegmentedOptionClass,
+} from "../../common/resource-scope";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { formatLastSeen } from "../utils";
-import { HealthBadge } from "./shared";
+import { HealthBadge, RuntimeVisibilityBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
-import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { useT } from "../../i18n";
@@ -46,17 +48,6 @@ function getCliVersion(metadata: Record<string, unknown>): string | null {
     metadata.cli_version
   ) {
     return metadata.cli_version;
-  }
-  return null;
-}
-
-function getLaunchedBy(metadata: Record<string, unknown>): string | null {
-  if (
-    metadata &&
-    typeof metadata.launched_by === "string" &&
-    metadata.launched_by
-  ) {
-    return metadata.launched_by;
   }
   return null;
 }
@@ -85,8 +76,6 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const cliVersion =
     runtime.runtime_mode === "local" ? getCliVersion(runtime.metadata) : null;
-  const launchedBy =
-    runtime.runtime_mode === "local" ? getLaunchedBy(runtime.metadata) : null;
 
   const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
@@ -177,7 +166,6 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
             <DiagnosticsCard
               runtime={runtime}
               cliVersion={cliVersion}
-              launchedBy={launchedBy}
               canDelete={!!canDelete}
               onDelete={() => setDeleteOpen(true)}
             />
@@ -253,11 +241,11 @@ function HeroCard({
         </div>
       </div>
 
-      {/* User-visible facts — Owner / Device / Runtime, each labelled.
+      {/* User-visible facts — owner / device / runtime, each labelled.
           Replaces the older dense `·`-separated meta strip that mixed
           everything (including dev-only IDs) at the same visual weight. */}
       <dl className="grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <Fact label="Owner">
+        <Fact label="拥有者">
           {ownerMember ? (
             <span className="inline-flex min-w-0 items-center gap-1.5">
               <ActorAvatar
@@ -272,7 +260,7 @@ function HeroCard({
             <span className="text-sm text-muted-foreground">—</span>
           )}
         </Fact>
-        <Fact label="Device">
+        <Fact label="设备">
           {device?.hostname ? (
             <Tooltip>
               <TooltipTrigger
@@ -288,7 +276,7 @@ function HeroCard({
             <span className="text-sm text-muted-foreground">—</span>
           )}
         </Fact>
-        <Fact label="Runtime">
+        <Fact label="运行时">
           <span className="block truncate text-sm">
             {device?.runtime ?? (
               <span className="capitalize">{runtime.provider}</span>
@@ -317,12 +305,12 @@ function HeroCard({
           {showDetails && (
             <dl className="grid grid-cols-1 gap-y-2 border-t bg-muted/30 px-4 py-3 sm:grid-cols-2">
               {cliVersion && (
-                <Fact label="Daemon CLI" mono compact>
+                <Fact label="守护进程 CLI" mono compact>
                   {cliVersion}
                 </Fact>
               )}
               {daemonShort && (
-                <Fact label="Daemon ID" mono compact>
+                <Fact label="守护进程 ID" mono compact>
                   {daemonShort}
                 </Fact>
               )}
@@ -438,13 +426,11 @@ function ServingAgentsCard({
 function DiagnosticsCard({
   runtime,
   cliVersion,
-  launchedBy,
   canDelete,
   onDelete,
 }: {
   runtime: AgentRuntime;
   cliVersion: string | null;
-  launchedBy: string | null;
   canDelete: boolean;
   onDelete: () => void;
 }) {
@@ -466,7 +452,7 @@ function DiagnosticsCard({
           {canDelete ? (
             <VisibilityEditor runtime={runtime} />
           ) : (
-            <VisibilityReadout runtime={runtime} />
+            <RuntimeVisibilityBadge runtime={runtime} />
           )}
         </div>
         {isLocal && (
@@ -474,12 +460,9 @@ function DiagnosticsCard({
             <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
               {t(($) => $.detail.diagnostics_cli)}
             </div>
-            <UpdateSection
-              runtimeId={runtime.id}
-              currentVersion={cliVersion}
-              isOnline={runtime.status === "online"}
-              launchedBy={launchedBy}
-            />
+            <span className="text-xs font-mono">
+              {cliVersion ?? t(($) => $.update.version_unknown)}
+            </span>
           </div>
         )}
         {canDelete && (
@@ -506,36 +489,8 @@ function DiagnosticsCard({
   );
 }
 
-// VisibilityReadout renders a static "Private" / "Public" pill for users
-// who can't edit the runtime. The description used to sit under the chip;
-// it now lives in the hover tooltip so the Diagnostics column stays compact
-// and matches the surrounding sections. Older backends that omit the field
-// render as "Private" to match the strict default.
-function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
-  const { t } = useT("runtimes");
-  const visibility = runtime.visibility === "public" ? "public" : "private";
-  const Icon = visibility === "public" ? Globe : Lock;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1.5 text-xs">
-            <Icon className="h-3 w-3 text-muted-foreground" />
-            <span className="font-medium">
-              {t(($) => $.detail.visibility_label[visibility])}
-            </span>
-          </span>
-        }
-      />
-      <TooltipContent>
-        {t(($) => $.detail.visibility_hint[visibility])}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
 // VisibilityEditor lets the runtime owner (or workspace admin) flip
-// public↔private. The PATCH endpoint also re-checks; this is a UI gate, not
+// personal↔workspace. The PATCH endpoint also re-checks; this is a UI gate, not
 // a security boundary. Per-choice description text lives in the hover
 // tooltip so the two buttons stay a tight icon+label pair instead of the
 // previous two-line block that competed with the surrounding cards.
@@ -543,17 +498,17 @@ function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const updateRuntime = useUpdateRuntime(wsId);
-  const current = runtime.visibility === "public" ? "public" : "private";
+  const current = runtime.scope === "workspace" ? "workspace" : "personal";
 
-  const flip = (next: "private" | "public") => {
+  const flip = (next: "personal" | "workspace") => {
     if (next === current) return;
     updateRuntime.mutate(
-      { runtimeId: runtime.id, patch: { visibility: next } },
+      { runtimeId: runtime.id, patch: { scope: next } },
       {
         onSuccess: () =>
           toast.success(
             t(($) => $.detail.visibility_toast_updated, {
-              visibility: t(($) => $.detail.visibility_label[next]),
+              scope: t(($) => $.detail.visibility_label[next]),
             }),
           ),
         onError: (err) =>
@@ -567,22 +522,22 @@ function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   };
 
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+    <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
       <VisibilityChoice
-        active={current === "private"}
+        active={current === "personal"}
         icon={<Lock className="h-3 w-3" />}
-        label={t(($) => $.detail.visibility_label.private)}
-        tooltip={t(($) => $.detail.visibility_hint.private)}
+        label={t(($) => $.detail.visibility_label.personal)}
+        tooltip={t(($) => $.detail.visibility_hint.personal)}
         disabled={updateRuntime.isPending}
-        onClick={() => flip("private")}
+        onClick={() => flip("personal")}
       />
       <VisibilityChoice
-        active={current === "public"}
+        active={current === "workspace"}
         icon={<Globe className="h-3 w-3" />}
-        label={t(($) => $.detail.visibility_label.public)}
-        tooltip={t(($) => $.detail.visibility_hint.public)}
+        label={t(($) => $.detail.visibility_label.workspace)}
+        tooltip={t(($) => $.detail.visibility_hint.workspace)}
         disabled={updateRuntime.isPending}
-        onClick={() => flip("public")}
+        onClick={() => flip("workspace")}
       />
     </div>
   );
@@ -611,11 +566,9 @@ function VisibilityChoice({
             type="button"
             onClick={onClick}
             disabled={disabled}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
-              active
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`inline-flex items-center justify-center gap-1.5 ${resourceSegmentedOptionClass(active)} ${
+              disabled ? "cursor-not-allowed opacity-60" : ""
+            }`}
           >
             <span className="shrink-0">{icon}</span>
             <span>{label}</span>

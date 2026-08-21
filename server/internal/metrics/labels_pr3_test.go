@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/metrics"
 )
@@ -26,10 +29,6 @@ func TestNormalizePR3LabelsCollapseUnknownValues(t *testing.T) {
 	}{
 		{"platform_unknown", metrics.NormalizePlatform, "iphone-internal-build-9", "unknown", "unknown"},
 		{"platform_known_web", metrics.NormalizePlatform, "web", "web", "unknown"},
-		{"signup_source_unknown", metrics.NormalizeSignupSource, "rakuten-affiliate-program", "other", "other"},
-		{"signup_source_empty", metrics.NormalizeSignupSource, "", "direct", "direct"},
-		{"signup_source_json_utm", metrics.NormalizeSignupSource, `{"utm_source":"twitter","utm_medium":"social"}`, "twitter", "other"},
-		{"signup_source_url_host", metrics.NormalizeSignupSource, "https://news.ycombinator.com/item?id=42", "hacker_news", "other"},
 		{"onboarding_path_unknown", metrics.NormalizeOnboardingPath, "ab-experiment-123", "unknown", "unknown"},
 		{"autopilot_cadence_unknown", metrics.NormalizeAutopilotCadence, "every_5_min", "unknown", "unknown"},
 		{"autopilot_trigger_unknown", metrics.NormalizeAutopilotTrigger, "future_kind", "unknown", "unknown"},
@@ -78,7 +77,7 @@ func TestOnboardingStartedUnknownPlatformCollapses(t *testing.T) {
 	// Read /metrics-style output and assert exactly two label values are
 	// present: web and unknown. Anything else means the raw header
 	// leaked into the label.
-	families := metrics.GatherForTest(t, m)
+	families := gatherForTest(t, m)
 	famName := "multica_onboarding_started_total"
 	fam, ok := families[famName]
 	if !ok {
@@ -111,4 +110,29 @@ func TestOnboardingStartedUnknownPlatformCollapses(t *testing.T) {
 			t.Errorf("platform label %q is suspiciously long — likely raw header bleed", v)
 		}
 	}
+}
+
+// gatherForTest registers every collector on a fresh registry and returns
+// the resulting metric families keyed by name. Test-only — the production
+// /metrics endpoint reads from the shared registry constructed in
+// NewRegistry. Any Gather error is reported via t.Fatalf so callers can
+// dereference the result without nil checks.
+func gatherForTest(t *testing.T, m *metrics.BusinessMetrics) map[string]*dto.MetricFamily {
+	t.Helper()
+	if m == nil {
+		t.Fatalf("gatherForTest: nil BusinessMetrics")
+	}
+	reg := prometheus.NewPedanticRegistry()
+	for _, c := range m.Collectors() {
+		reg.MustRegister(c)
+	}
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gatherForTest: gather failed: %v", err)
+	}
+	out := make(map[string]*dto.MetricFamily, len(families))
+	for _, fam := range families {
+		out[fam.GetName()] = fam
+	}
+	return out
 }

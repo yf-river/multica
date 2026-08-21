@@ -17,20 +17,19 @@ const (
 	labelModel          = "model"
 	labelModelAlias     = "model_alias"
 
-	// PR3 labels (funnel / community / commercial).
-	labelSignupSource = "signup_source"
-	labelPlatform     = "platform"
-	labelPath         = "path"
-	labelCadence      = "cadence"
-	labelTriggerKind  = "trigger_kind"
-	labelReason       = "reason"
-	labelRecoverable  = "recoverable"
-	labelKind         = "kind"
-	labelStatus       = "status"
-	labelEventKind    = "event_kind"
-	labelAction       = "action"
-	labelResult       = "result"
-	labelOp           = "op"
+	// PR3 labels (team usage and runtime observability).
+	labelPlatform    = "platform"
+	labelPath        = "path"
+	labelCadence     = "cadence"
+	labelTriggerKind = "trigger_kind"
+	labelReason      = "reason"
+	labelRecoverable = "recoverable"
+	labelKind        = "kind"
+	labelStatus      = "status"
+	labelEventKind   = "event_kind"
+	labelAction      = "action"
+	labelResult      = "result"
+	labelOp          = "op"
 )
 
 var businessMetricLabels = map[string][]string{
@@ -52,10 +51,8 @@ var businessMetricLabels = map[string][]string{
 	"multica_task_lease_expired_total":      {labelSource},
 
 	// PR3 funnel / community / commercial.
-	"multica_signup_total":                             {labelSignupSource},
+	"multica_signup_total":                             {},
 	"multica_workspace_created_total":                  {labelSource},
-	"multica_team_invite_sent_total":                   {},
-	"multica_team_invite_accepted_total":               {},
 	"multica_onboarding_started_total":                 {labelPlatform},
 	"multica_onboarding_questionnaire_submitted_total": {},
 	"multica_onboarding_completed_total":               {labelPath},
@@ -119,7 +116,6 @@ var (
 		"kiro":          "kiro",
 		"kimi":          "kimi",
 		"multica_agent": "multica_agent",
-		"openclaw":      "openclaw",
 		"opencode":      "opencode",
 		"pi":            "pi",
 		"other":         "other",

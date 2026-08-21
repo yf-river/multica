@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { redactText, redactExceptionProperties } from "./redact-exception";
 
 describe("redactText", () => {
-  it("redacts email addresses", () => {
+  it("does not apply email-specific business redaction", () => {
     expect(redactText("Invalid email: alice@example.com")).toBe(
-      "Invalid email: [redacted]",
+      "Invalid email: alice@example.com",
     );
   });
 
@@ -35,7 +35,7 @@ describe("redactText", () => {
 describe("redactExceptionProperties", () => {
   it("scrubs the message and each $exception_list value, leaving frames untouched", () => {
     const props = {
-      $exception_message: "Bad email bob@corp.com",
+      $exception_message: "Bad input bob@corp.com",
       $exception_list: [
         {
           type: "TypeError",
@@ -48,7 +48,7 @@ describe("redactExceptionProperties", () => {
     redactExceptionProperties(props);
 
     const entry = props.$exception_list[0]!;
-    expect(props.$exception_message).toBe("Bad email [redacted]");
+    expect(props.$exception_message).toBe("Bad input bob@corp.com");
     expect(entry.value).toBe("Token leaked: [redacted]");
     // Frames are code locations, not user data — left intact.
     expect(entry.stacktrace.frames[0]).toEqual({

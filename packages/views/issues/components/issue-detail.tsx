@@ -14,6 +14,8 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleCheck,
+  ExternalLink,
+  Loader2,
   MoreHorizontal,
   PanelRight,
   Pin,
@@ -36,13 +38,12 @@ import {
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "@multica/ui/components/ui/popover";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@multica/ui/components/ui/command";
 import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
-import type { Attachment, Issue, IssueStatus, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
+import type { Attachment, Issue, IssueStatus, IssuePriority, ListIssuesCache, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
@@ -51,22 +52,22 @@ import { toast } from "sonner";
 import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
 import { IssueActionsDropdown, useIssueActions } from "../actions";
 import { ProjectPicker } from "../../projects/components/project-picker";
-import { LocalDirectoryHint } from "../../projects/components/local-directory-hint";
 import { CommentCard } from "./comment-card";
 import { CommentInput } from "./comment-input";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
-import { ExecutionLogSection } from "./execution-log-section";
+import { ExecutionLogSection, IssueRunReviewSummaryCard } from "./execution-log-section";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { flattenIssueBuckets, issueDetailOptions, issueKeys, childIssuesOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -177,10 +178,169 @@ function SubscriberPopoverContent({
 
 function shortDate(date: string | null): string {
   if (!date) return "—";
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 type ActivityT = ReturnType<typeof useT<"issues">>["t"];
+
+type IssueSourceReference = {
+  url: string;
+  title: string;
+  summary: string | null;
+  sourceId: string | null;
+  resourceType: string | null;
+  status: string | null;
+};
+
+function metadataText(issue: Issue, key: string): string {
+  const value = issue.metadata?.[key];
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+function firstMetadataText(issue: Issue, keys: string[]): string {
+  for (const key of keys) {
+    const value = metadataText(issue, key);
+    if (value) return value;
+  }
+  return "";
+}
+
+function tapdResourceTypeLabel(resourceType: string | null, t: ActivityT): string {
+  switch (resourceType) {
+    case "markdown_wiki":
+      return t(($) => $.detail.tapd_source_type_markdown_wiki);
+    case "story":
+    case "stories":
+      return t(($) => $.detail.tapd_source_type_story);
+    default:
+      return t(($) => $.detail.tapd_source_type_default);
+  }
+}
+
+function sourceFetchStatusLabel(status: string | null, t: ActivityT): string | null {
+  switch (status) {
+    case "fetched":
+      return t(($) => $.detail.tapd_source_status_fetched);
+    case "pending_mcp_fetch":
+      return t(($) => $.detail.tapd_source_status_pending);
+    case "blocked_missing_profile":
+      return t(($) => $.detail.tapd_source_status_blocked);
+    case "fetch_failed":
+      return t(($) => $.detail.tapd_source_status_failed);
+    default:
+      return null;
+  }
+}
+
+function getTAPDSourceReference(issue: Issue, t: ActivityT): IssueSourceReference | null {
+  const provider = metadataText(issue, "source_provider").toLowerCase();
+  if (provider !== "tapd") return null;
+
+  const url = firstMetadataText(issue, ["source_url", "source_fetch_url"]);
+  if (!url) return null;
+
+  const resourceType = firstMetadataText(issue, [
+    "tapd_resource_type",
+    "source_fetch_resource_type",
+    "tapd_type",
+  ]);
+  const sourceId = firstMetadataText(issue, [
+    "tapd_resource_id",
+    "source_fetch_resource_id",
+    "tapd_wiki_id",
+  ]);
+  const title = firstMetadataText(issue, [
+    "source_fetch_title",
+    "tapd_title",
+    "source_title",
+  ]) || t(($) => $.detail.tapd_source_title_fallback);
+  const summary = firstMetadataText(issue, [
+    "source_fetch_summary",
+    "source_fetch_body_excerpt",
+    "source_fetch_error",
+  ]);
+  const status = metadataText(issue, "source_fetch_status");
+
+  return {
+    url,
+    title,
+    summary: summary || null,
+    sourceId: sourceId || null,
+    resourceType: resourceType || null,
+    status: status || null,
+  };
+}
+
+function TAPDSourceReference({ issue, t }: { issue: Issue; t: ActivityT }) {
+  const source = getTAPDSourceReference(issue, t);
+  if (!source) return null;
+
+  const statusLabel = sourceFetchStatusLabel(source.status, t);
+
+  return (
+    <section
+      aria-label={t(($) => $.detail.tapd_source_aria)}
+      data-testid="tapd-source-card"
+      className="mt-4 rounded-md border border-border/70 bg-muted/20 px-3 py-2.5"
+    >
+      <div className="flex min-w-0 items-start gap-2.5">
+        <TAPDSourceBadge issue={issue} className="mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground/80">{t(($) => $.detail.tapd_source_label)}</span>
+            <span>{tapdResourceTypeLabel(source.resourceType, t)}</span>
+            {source.sourceId && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="tabular-nums">
+                  {t(($) => $.detail.tapd_source_id, { id: source.sourceId })}
+                </span>
+              </>
+            )}
+            {statusLabel && (
+              <>
+                <span aria-hidden>·</span>
+                <span>{statusLabel}</span>
+              </>
+            )}
+          </div>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-flex max-w-full items-center gap-1.5 text-sm font-medium text-foreground hover:underline"
+          >
+            <span className="truncate" data-testid="tapd-source-title">{source.title}</span>
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </a>
+          {source.summary && (
+            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+              {source.summary}
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SourceSummaryLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-h-28 items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground"
+      data-testid="source-summary-loading"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
 
 function statusLabel(status: string, t: ActivityT): string {
   if (status in STATUS_CONFIG) {
@@ -227,12 +387,12 @@ function formatActivity(
     }
     case "start_date_changed": {
       if (!details.to) return t(($) => $.activity.start_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "en-US");
+      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "zh-CN");
       return t(($) => $.activity.start_date_set, { date: formatted });
     }
     case "due_date_changed": {
       if (!details.to) return t(($) => $.activity.due_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "en-US");
+      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "zh-CN");
       return t(($) => $.activity.due_date_set, { date: formatted });
     }
     case "title_changed":
@@ -274,12 +434,6 @@ function formatActivity(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
 
 // Stable reference for threads with no replies. Inline `[]` would create a
 // new array on every render and bust React.memo on CommentCard / ResolvedThreadBar.
@@ -671,6 +825,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // Issue navigation — read from TQ list cache
   const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   // Workspace owners and admins moderate any comment authored by anyone
@@ -680,7 +835,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const findCachedListIssue = useCallback(
+    (targetId: string | null | undefined) => {
+      if (!targetId) return undefined;
+      const cachedLists = queryClient.getQueriesData<ListIssuesCache>({
+        queryKey: issueKeys.list(wsId),
+      });
+      for (const [, cached] of cachedLists) {
+        const match = cached ? flattenIssueBuckets(cached).find((item) => item.id === targetId) : undefined;
+        if (match) return match;
+      }
+      return undefined;
+    },
+    [queryClient, wsId],
+  );
   const { getActorName } = useActorName();
   const { uploadWithToast } = useFileUpload(api);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -703,11 +871,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [isMobile]);
   const sidebarOpen = isMobile ? mobileSidebarOpen : desktopSidebarOpen;
   const [propertiesOpen, setPropertiesOpen] = useState(true);
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
-  const [metadataOpen, setMetadataOpen] = useState(false);
-  const [tokenUsageOpen, setTokenUsageOpen] = useState(true);
   const githubSettings = useGitHubSettings();
 
   // Per-issue, per-session set of optional properties currently visible in
@@ -820,7 +986,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: issue = null, isLoading: issueLoading } = useQuery({
     ...issueDetailOptions(wsId, id),
     initialData: () => {
-      const cached = allIssues.find((i) => i.id === id);
+      const cached = findCachedListIssue(id);
       return cached?.description != null ? cached : undefined;
     },
   });
@@ -1031,9 +1197,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     subscribers, isSubscribed, toggleSubscribe: handleToggleSubscribe, toggleSubscriber,
   } = useIssueSubscribers(id, user?.id);
 
-  // Token usage
-  const { data: usage } = useQuery(issueUsageOptions(id));
-
   // Attachments uploaded against this issue. Drives the description
   // editor's click-time fresh-sign download: NodeViews match
   // `src`/`href` against this list to resolve an attachment id before
@@ -1045,7 +1208,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: parentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, parentIssueId ?? ""),
     enabled: !!parentIssueId,
-    initialData: () => allIssues.find((i) => i.id === parentIssueId),
+    initialData: () => findCachedListIssue(parentIssueId),
   });
 
   // Project segment in the breadcrumb. The issue's project_id is the source of
@@ -1383,6 +1546,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     );
   }
 
+  const sourceSummaryPending = metadataText(issue, "source_summary_status") === "pending";
+
   const sidebarContent = (
     <div className="space-y-5">
       {/* Properties */}
@@ -1571,76 +1736,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>}
       </div>
 
-      {/* Execution log — active runs + collapsed past runs. Self-contained;
-          owns its own collapse state and WS subscriptions. Hides itself
-          when there are no runs to show. */}
+      {/* Run review — compact entry point for completed/historical execution
+          evidence. Detailed timelines, execution trees, SOP details and token
+          breakdowns live on the run review page. */}
+      <IssueRunReviewSummaryCard issueId={id} />
+
+      {/* Execution log — active run status only; historical evidence lives in run review. */}
       <ExecutionLogSection issueId={id} />
-
-      {/* Token usage */}
-      {usage && usage.task_count > 0 && (
-        <div>
-          <button
-            type="button"
-            className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors mb-2 hover:bg-accent/70 ${tokenUsageOpen ? "" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setTokenUsageOpen(!tokenUsageOpen)}
-          >
-            {t(($) => $.detail.section_token_usage)}
-            <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${tokenUsageOpen ? "rotate-90" : ""}`} />
-          </button>
-          {tokenUsageOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
-            <PropRow label={t(($) => $.detail.prop_input)}>
-              <span className="text-muted-foreground">{formatTokenCount(usage.total_input_tokens)}</span>
-            </PropRow>
-            <PropRow label={t(($) => $.detail.prop_output)}>
-              <span className="text-muted-foreground">{formatTokenCount(usage.total_output_tokens)}</span>
-            </PropRow>
-            {(usage.total_cache_read_tokens > 0 || usage.total_cache_write_tokens > 0) && (
-              <PropRow label={t(($) => $.detail.prop_cache)}>
-                <span className="text-muted-foreground">
-                  {t(($) => $.detail.prop_cache_value, {
-                    read: formatTokenCount(usage.total_cache_read_tokens),
-                    write: formatTokenCount(usage.total_cache_write_tokens),
-                  })}
-                </span>
-              </PropRow>
-            )}
-            <PropRow label={t(($) => $.detail.prop_runs)}>
-              <span className="text-muted-foreground">{usage.task_count}</span>
-            </PropRow>
-          </div>}
-        </div>
-      )}
-
-      {/* Metadata — agent-facing free-form KV bag. The values almost
-          never mean anything to humans, so the trigger row matches the
-          sibling section headers (Pull requests / Details / Parent issue)
-          but clicking opens a dialog with the raw JSON instead of expanding
-          inline — the payload can be large and pushing the rest of the
-          sidebar down was noisy. */}
-      {Object.keys(issue.metadata ?? {}).length > 0 && (
-        <>
-          <button
-            type="button"
-            className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-            onClick={() => setMetadataOpen(true)}
-          >
-            {t(($) => $.detail.section_metadata)}
-            <span className="tabular-nums">
-              · {Object.keys(issue.metadata ?? {}).length}
-            </span>
-          </button>
-          <Dialog open={metadataOpen} onOpenChange={setMetadataOpen}>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>{t(($) => $.detail.section_metadata)}</DialogTitle>
-              </DialogHeader>
-              <pre className="max-h-[60vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
-                {JSON.stringify(issue.metadata ?? {}, null, 2)}
-              </pre>
-            </DialogContent>
-          </Dialog>
-        </>
-      )}
     </div>
   );
 
@@ -1871,43 +1973,47 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
 
           <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
-            <ContentEditor
-              ref={descEditorRef}
-              key={id}
-              defaultValue={issue.description || ""}
-              placeholder={t(($) => $.detail.desc_placeholder)}
-              onUpdate={(md) => {
-                // Bind any pending uploads still referenced in the markdown
-                // so they appear in `issueAttachments` after refresh and the
-                // editor's text/code preview keeps working past reload.
-                //
-                // Match with `contentReferencesAttachment`, NOT `md.includes(a.url)`:
-                // the editor persists the durable `markdownLink`
-                // (`/api/attachments/<id>/download` / `markdown_url`) into the
-                // body, never the raw storage `a.url`. A bare `md.includes(a.url)`
-                // therefore never matches, so the upload is never linked via
-                // `attachment_ids`. After reload it's absent from
-                // `issueAttachments`, the renderer can't resolve it to a
-                // freshly-signed `download_url`, and the persisted auth-gated
-                // download endpoint fails to load as a native <img> on clients
-                // whose origin isn't the API host (Desktop/Electron, mobile
-                // webview) — while still working on web via the cookie/proxy.
-                // This mirrors the comment/reply/chat composers, which already
-                // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
-                const ids = descPendingAttachmentsRef.current
-                  .filter((a) => contentReferencesAttachment(md, a))
-                  .map((a) => a.id);
-                handleUpdateField({ description: md, attachment_ids: ids.length > 0 ? ids : undefined });
-              }}
-              onUploadFile={handleDescriptionUpload}
-              debounceMs={1500}
-              // Closing the issue modal must save what the user last saw —
-              // without the flush, a paste followed by a quick close loses
-              // the image markdown and its attachment_ids bind (MUL-3254).
-              flushPendingOnUnmount
-              currentIssueId={id}
-              attachments={descEditorAttachments}
-            />
+            {sourceSummaryPending ? (
+              <SourceSummaryLoading label={t(($) => $.detail.source_summary_generating)} />
+            ) : (
+              <ContentEditor
+                ref={descEditorRef}
+                key={id}
+                defaultValue={issue.description || ""}
+                placeholder={t(($) => $.detail.desc_placeholder)}
+                onUpdate={(md) => {
+                  // Bind any pending uploads still referenced in the markdown
+                  // so they appear in `issueAttachments` after refresh and the
+                  // editor's text/code preview keeps working past reload.
+                  //
+                  // Match with `contentReferencesAttachment`, NOT `md.includes(a.url)`:
+                  // the editor persists the durable `markdownLink`
+                  // (`/api/attachments/<id>/download` / `markdown_url`) into the
+                  // body, never the raw storage `a.url`. A bare `md.includes(a.url)`
+                  // therefore never matches, so the upload is never linked via
+                  // `attachment_ids`. After reload it's absent from
+                  // `issueAttachments`, the renderer can't resolve it to a
+                  // freshly-signed `download_url`, and the persisted auth-gated
+                  // download endpoint fails to load as a native <img> on clients
+                  // whose origin isn't the API host (Desktop/Electron, mobile
+                  // webview) — while still working on web via the cookie/proxy.
+                  // This mirrors the comment/reply/chat composers, which already
+                  // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
+                  const ids = descPendingAttachmentsRef.current
+                    .filter((a) => contentReferencesAttachment(md, a))
+                    .map((a) => a.id);
+                  handleUpdateField({ description: md, attachment_ids: ids.length > 0 ? ids : undefined });
+                }}
+                onUploadFile={handleDescriptionUpload}
+                debounceMs={1500}
+                // Closing the issue modal must save what the user last saw —
+                // without the flush, a paste followed by a quick close loses
+                // the image markdown and its attachment_ids bind (MUL-3254).
+                flushPendingOnUnmount
+                currentIssueId={id}
+                attachments={descEditorAttachments}
+              />
+            )}
 
             <div className="flex items-center gap-1 mt-3">
               <ReactionBar
@@ -1916,13 +2022,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 onToggle={handleToggleIssueReaction}
                 getActorName={getActorName}
               />
-              <FileUploadButton
-                size="sm"
-                onSelect={(file) => descEditorRef.current?.uploadFile(file)}
-              />
+              {!sourceSummaryPending && (
+                <FileUploadButton
+                  size="sm"
+                  onSelect={(file) => descEditorRef.current?.uploadFile(file)}
+                />
+              )}
             </div>
             {descDragOver && <FileDropOverlay />}
           </div>
+
+          <TAPDSourceReference issue={issue} t={t} />
 
           {/* Sub-issues — Linear-style */}
           {childIssues.length === 0 && (
@@ -1940,7 +2050,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           {childIssues.length > 0 && (() => {
             const doneCount = childIssues.filter((c) => c.status === "done").length;
             return (
-              <div className="mt-10 group/sub-issues">
+              <div className="mt-10 group/sub-issues" data-testid="issue-sub-issues-section">
                 {/* Header */}
                 <div className="flex items-center gap-2 mb-2">
                   <button
@@ -1969,7 +2079,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
                     }}
                     onChange={handleToggleSelectAllChildren}
-                    aria-label="Select all sub-issues"
+                    aria-label="全选子 issue"
                     className={cn(
                       "ml-1 cursor-pointer accent-primary transition-opacity",
                       someChildrenSelected
@@ -2000,7 +2110,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
                 {/* List */}
                 {!subIssuesCollapsed && (
-                  <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
+                  <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60" data-testid="issue-sub-issues-list">
                     {childIssues.map((child) => (
                       <SubIssueRow key={child.id} child={child} />
                     ))}
@@ -2059,8 +2169,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 </Popover>
               </div>
             </div>
-
-            <LocalDirectoryHint projectId={issue?.project_id} />
 
             {/* The "agent is working" live signal now lives in the header
                 (IssueAgentHeaderChip) so it stays in one fixed place and

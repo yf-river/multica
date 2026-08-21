@@ -254,99 +254,29 @@ func wrapTransport(req *http.Request, err error) error {
 	return &NetworkError{Kind: classifyNetworkError(err), Op: op, Err: err}
 }
 
-// Language is the language FormatError renders messages in.
-type Language int
-
-const (
-	LangEN Language = iota
-	LangZH
-)
-
-// DetectLanguage chooses the output language from the environment. English is
-// the default (matching the CLI's help output); a Chinese locale in LC_ALL,
-// LC_MESSAGES, or LANG (in that precedence order) switches to Chinese.
-func DetectLanguage() Language {
-	for _, key := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-		v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-		if v == "" {
-			continue
-		}
-		if strings.HasPrefix(v, "zh") {
-			return LangZH
-		}
-		// First locale variable that is set wins; if it is not Chinese we
-		// fall through to English without consulting lower-precedence vars.
-		return LangEN
-	}
-	return LangEN
+// kindMessages holds the Chinese user-facing message for each kind.
+var kindMessages = map[ErrorKind]string{
+	KindNetworkTimeout: "请求超时：服务器未在规定时间内响应。请检查网络连接或稍后重试。可通过 MULTICA_HTTP_TIMEOUT 调高超时时间。",
+	KindNetworkDNS:     "无法解析 Multica 服务器地址。请检查网络连接或 --server-url 配置。",
+	KindNetworkRefused: "无法连接到 Multica 服务器。请确认服务器地址正确且网络可达。",
+	KindNetworkTLS:     "无法与 Multica 服务器建立安全连接（TLS/证书错误）。请检查系统时间和 CA 证书。",
+	KindNetworkOffline: "无法访问 Multica 服务器。请检查网络连接。",
+	KindAuthRequired:   "登录已过期或尚未登录。请运行 `multica login` 重新登录。请联系管理员获取有效账号密码。",
+	KindForbidden:      "无权访问该资源。请确认当前 workspace 是否正确，或联系管理员授予权限。",
+	KindNotFound:       "未找到请求的资源。请核对 ID，或运行对应的 list 命令查看当前 workspace 中已有的内容。",
+	KindConflict:       "请求与资源的当前状态冲突（可能已存在，或自上次获取后已被修改）。请重新获取最新状态后再试。",
+	KindValidation:     "请求无效。请检查所填写的参数；可用 --help 查看期望的格式。",
+	KindRateLimited:    "请求过于频繁。请稍候重试；若持续出现，请降低 API 调用频率。",
+	KindServerError:    "Multica 服务暂时不可用（服务器错误）。请稍后重试；若持续出现请联系支持。可加 --debug 查看服务器原始响应。",
+	KindUnknown:        "发生未知错误。",
 }
 
-// kindMessages holds the {English, Chinese} user-facing message for each kind.
-var kindMessages = map[ErrorKind][2]string{
-	KindNetworkTimeout: {
-		"Request timed out: the server did not respond in time. Check your network connection or try again later. You can raise the limit with MULTICA_HTTP_TIMEOUT.",
-		"请求超时：服务器未在规定时间内响应。请检查网络连接或稍后重试。可通过 MULTICA_HTTP_TIMEOUT 调高超时时间。",
-	},
-	KindNetworkDNS: {
-		"Could not resolve the Multica server address. Check your network connection or the --server-url setting.",
-		"无法解析 Multica 服务器地址。请检查网络连接或 --server-url 配置。",
-	},
-	KindNetworkRefused: {
-		"Could not connect to the Multica server. Make sure the server address is correct and reachable.",
-		"无法连接到 Multica 服务器。请确认服务器地址正确且网络可达。",
-	},
-	KindNetworkTLS: {
-		"Could not establish a secure connection to the Multica server (TLS/certificate error). Check your system clock and CA certificates.",
-		"无法与 Multica 服务器建立安全连接（TLS/证书错误）。请检查系统时间和 CA 证书。",
-	},
-	KindNetworkOffline: {
-		"Could not reach the Multica server. Check your network connection.",
-		"无法访问 Multica 服务器。请检查网络连接。",
-	},
-	KindAuthRequired: {
-		"Your session has expired or you are not signed in. Run `multica login` to sign in again. On a self-hosted or non-OAuth setup, ask your administrator for valid credentials.",
-		"登录已过期或尚未登录。请运行 `multica login` 重新登录。自托管或非 OAuth 场景请联系管理员获取有效凭证。",
-	},
-	KindForbidden: {
-		"You do not have permission to access this resource. Check that you are in the right workspace, or ask an administrator to grant access.",
-		"无权访问该资源。请确认当前 workspace 是否正确，或联系管理员授予权限。",
-	},
-	KindNotFound: {
-		"The requested resource was not found. Check the ID, or run the matching `list` command to see what exists in this workspace.",
-		"未找到请求的资源。请核对 ID，或运行对应的 list 命令查看当前 workspace 中已有的内容。",
-	},
-	KindConflict: {
-		"The request conflicts with the current state of the resource (it may already exist or have changed since you last fetched it). Re-fetch the latest state and try again.",
-		"请求与资源的当前状态冲突（可能已存在，或自上次获取后已被修改）。请重新获取最新状态后再试。",
-	},
-	KindValidation: {
-		"The request was invalid. Check the values you provided; run the command with --help to see the expected format.",
-		"请求无效。请检查所填写的参数；可用 --help 查看期望的格式。",
-	},
-	KindRateLimited: {
-		"Too many requests. Please wait a moment and try again; if this keeps happening, reduce how frequently you call the API.",
-		"请求过于频繁。请稍候重试；若持续出现，请降低 API 调用频率。",
-	},
-	KindServerError: {
-		"The Multica service is temporarily unavailable (server error). Please try again later; if it persists, contact support. Re-run with --debug to see the raw server response.",
-		"Multica 服务暂时不可用（服务器错误）。请稍后重试；若持续出现请联系支持。可加 --debug 查看服务器原始响应。",
-	},
-	KindUnknown: {
-		"An unexpected error occurred.",
-		"发生未知错误。",
-	},
-}
-
-// messageFor returns the localized message for a kind.
-func messageFor(kind ErrorKind, lang Language) string {
+func messageFor(kind ErrorKind) string {
 	m, ok := kindMessages[kind]
 	if !ok {
 		m = kindMessages[KindUnknown]
 	}
-	if lang == LangZH {
-		return m[1]
-	}
-	return m[0]
+	return m
 }
 
 // FormatError translates an error into a single user-facing line (or a
@@ -362,8 +292,7 @@ func FormatError(err error, debug bool) string {
 	if err == nil {
 		return ""
 	}
-	lang := DetectLanguage()
-	base := userMessage(err, lang)
+	base := userMessage(err)
 	if debug || debugEnabled() {
 		return base + "\n\n" + debugDetail(err)
 	}
@@ -371,7 +300,7 @@ func FormatError(err error, debug bool) string {
 }
 
 // userMessage produces the friendly message for the root cause of err.
-func userMessage(err error, lang Language) string {
+func userMessage(err error) string {
 	// A command-supplied user-facing message takes precedence over the generic
 	// kind-based copy, so command-specific guidance (e.g. sign-in failures) is
 	// visible by default. Unwrap() is preserved, so ExitCodeFor and --debug
@@ -384,7 +313,7 @@ func userMessage(err error, lang Language) string {
 	// Transport-layer failure.
 	var netErr *NetworkError
 	if errors.As(err, &netErr) {
-		return messageFor(netErr.Kind, lang)
+		return messageFor(netErr.Kind)
 	}
 
 	// HTTP status failure.
@@ -395,13 +324,10 @@ func userMessage(err error, lang Language) string {
 		// surface it instead of the generic line.
 		if kind == KindValidation {
 			if serverMsg := extractServerMessage(httpErr.Body); serverMsg != "" {
-				if lang == LangZH {
-					return "请求无效：" + serverMsg
-				}
-				return "Invalid request: " + serverMsg
+				return "请求无效：" + serverMsg
 			}
 		}
-		return messageFor(kind, lang)
+		return messageFor(kind)
 	}
 
 	// Not a recognized typed error: this is typically a local/business error

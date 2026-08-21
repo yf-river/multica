@@ -5,10 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enAgents from "../../../locales/zh-Hans/agents.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 const mockListSkills = vi.hoisted(() => vi.fn());
 
@@ -43,7 +43,7 @@ const agent: Agent = {
   runtime_mode: "local",
   runtime_config: {},
   custom_args: [],
-  visibility: "workspace",
+  scope: "workspace",
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",
@@ -65,7 +65,7 @@ function renderSkillsTab() {
   });
 
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <SkillsTab agent={agent} />
       </QueryClientProvider>
@@ -90,13 +90,13 @@ describe("SkillsTab", () => {
     // Top informational callout should still render; that's how we know
     // the tab body itself rendered (not stuck in a loading state).
     expect(
-      await screen.findByText(/Local runtime skills are always available/i),
+      await screen.findByText(/本地运行时 skill 会自动可用/i),
     ).toBeInTheDocument();
 
     // The removed section's heading and its trigger button must be gone.
     expect(screen.queryByText("Local Runtime Skills")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /Import to Workspace/i }),
+      screen.queryByRole("button", { name: /导入到工作区/i }),
     ).not.toBeInTheDocument();
 
     // No runtime list / local-skills query should be wired up either —

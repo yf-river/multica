@@ -319,13 +319,7 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create skill: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Skill created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Skill", "created", "name", result)
 }
 
 func runSkillUpdate(cmd *cobra.Command, args []string) error {
@@ -371,13 +365,7 @@ func runSkillUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update skill: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Skill updated: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Skill", "updated", "name", result)
 }
 
 func runSkillDelete(cmd *cobra.Command, args []string) error {
@@ -462,10 +450,7 @@ func handleSkillImportError(cmd *cobra.Command, err error) error {
 		return nil
 	}
 	if _, ok := body["status"]; !ok {
-		if _, hasExisting := body["existing_skill"]; !hasExisting {
-			return nil
-		}
-		body = normalizeLegacySkillImportConflict(body)
+		return nil
 	}
 
 	if err := printSkillImportResult(cmd, body); err != nil {
@@ -479,19 +464,6 @@ func handleSkillImportError(cmd *cobra.Command, err error) error {
 		reason = "skill import conflict"
 	}
 	return errors.New(reason)
-}
-
-func normalizeLegacySkillImportConflict(body map[string]any) map[string]any {
-	reason := strVal(body, "error")
-	if reason == "" {
-		reason = "a skill with this name already exists"
-	}
-	reason += "; use --on-conflict overwrite to replace it or --on-conflict rename to import a copy"
-	return map[string]any{
-		"status":         "conflict",
-		"reason":         reason,
-		"existing_skill": body["existing_skill"],
-	}
 }
 
 func printSkillImportResult(cmd *cobra.Command, result map[string]any) error {

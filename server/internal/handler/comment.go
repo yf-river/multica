@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -190,12 +191,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
-			// Fall back to RFC3339 for backwards-compat with the original CLI.
-			t, err = time.Parse(time.RFC3339, v)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
-				return
-			}
+			writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
+			return
 		}
 		sinceTime = pgtype.Timestamptz{Time: t, Valid: true}
 	}
@@ -291,11 +288,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	if beforeTimeStr != "" {
 		t, err := time.Parse(time.RFC3339Nano, beforeTimeStr)
 		if err != nil {
-			t, err = time.Parse(time.RFC3339, beforeTimeStr)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid before parameter; expected RFC3339 format")
-				return
-			}
+			writeError(w, http.StatusBadRequest, "invalid before parameter; expected RFC3339 format")
+			return
 		}
 		beforeCursor = pgtype.Timestamptz{Time: t, Valid: true}
 		uuid, perr := util.ParseUUID(beforeIDStr)
@@ -802,14 +796,24 @@ const (
 	commentTriggerSourceMentionSquadLeader commentAgentTriggerSource = "mention_squad_leader"
 )
 
+var sopRoleKeyMentionRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9-]{0,48})(?:\b|$)`)
+
 type commentAgentTrigger struct {
 	Agent  db.Agent
 	Source commentAgentTriggerSource
 	Squad  *db.Squad
 }
 
+type commentSOPProfile struct {
+	Mode  string `json:"mode"`
+	Steps []struct {
+		RoleKey string `json:"role_key"`
+	} `json:"steps"`
+}
+
 type commentTriggerComputeOptions struct {
-	ExcludeTriggerCommentID pgtype.UUID
+	ExcludeTriggerCommentID     pgtype.UUID
+	SuppressAssignedSquadLeader bool
 }
 
 func commentAgentTriggerReason(trigger commentAgentTrigger) string {
@@ -977,14 +981,16 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// request, so an agent legitimately commenting on a different issue must
 	// not be blocked by its current task's trigger. Assignment-triggered
 	// tasks (no TriggerCommentID) are also unaffected.
+	var sourceTaskID pgtype.UUID
 	if authorType == "agent" {
 		if taskIDHeader := r.Header.Get("X-Task-ID"); taskIDHeader != "" {
 			taskUUID, parseErr := util.ParseUUID(taskIDHeader)
 			if parseErr == nil {
+				sourceTaskID = taskUUID
 				task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 				if err == nil && task.IssueID.Valid && uuidToString(task.IssueID) == uuidToString(issue.ID) {
 					if task.TriggerCommentID.Valid {
-						if uuidToString(parentID) != uuidToString(task.TriggerCommentID) {
+						if parentID.Valid && uuidToString(parentID) != uuidToString(task.TriggerCommentID) {
 							writeError(w, http.StatusConflict,
 								"parent_id must equal this task's trigger comment id ("+uuidToString(task.TriggerCommentID)+")")
 							return
@@ -997,7 +1003,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 							"task_id", taskIDHeader,
 							"issue_id", issueID,
 						)...)
-					} else if noAction {
+					} else if noAction && isNoActionOnlyComment(req.Content) {
 						writeError(w, http.StatusConflict, "squad leader recorded no_action; comments are not allowed for this task")
 						return
 					}
@@ -1027,13 +1033,14 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	comment, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		AuthorType:  authorType,
-		AuthorID:    parseUUID(authorID),
-		Content:     req.Content,
-		Type:        req.Type,
-		ParentID:    parentID,
+		IssueID:      issue.ID,
+		WorkspaceID:  issue.WorkspaceID,
+		AuthorType:   authorType,
+		AuthorID:     parseUUID(authorID),
+		Content:      req.Content,
+		Type:         req.Type,
+		ParentID:     parentID,
+		SourceTaskID: sourceTaskID,
 	})
 	if err != nil {
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
@@ -1087,13 +1094,69 @@ func isNoteComment(content string) bool {
 	return strings.EqualFold(firstToken, noteCommentPrefix)
 }
 
+func isNoActionOnlyComment(content string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(content))
+	if trimmed == "" || len(util.ParseMentions(content)) > 0 {
+		return false
+	}
+	return strings.Contains(trimmed, "no action") ||
+		strings.Contains(trimmed, "无需行动") ||
+		strings.Contains(trimmed, "不需要行动") ||
+		strings.Contains(trimmed, "静默退出")
+}
+
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID string, suppressAgentIDs []pgtype.UUID) {
 	if isNoteComment(comment.Content) {
 		return
 	}
-	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{})
+	opts := commentTriggerComputeOptions{
+		SuppressAssignedSquadLeader: h.isSquadSOPWorkerStageComment(ctx, issue, comment),
+	}
+	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
 	h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
+}
+
+func (h *Handler) triggerTasksForAgentServiceComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment) {
+	h.triggerTasksForComment(ctx, issue, comment, parentComment, comment.AuthorType, uuidToString(comment.AuthorID), nil)
+}
+
+func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Issue, comment db.Comment) bool {
+	if !comment.SourceTaskID.Valid || comment.AuthorType != "agent" {
+		return false
+	}
+	task, err := h.Queries.GetAgentTask(ctx, comment.SourceTaskID)
+	if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
+		return false
+	}
+	if task.IsLeaderTask {
+		return false
+	}
+	if isActiveTaskStatus(task.Status) {
+		return true
+	}
+	events, err := h.Queries.ListIssueSquadSOPStepEvents(ctx, db.ListIssueSquadSOPStepEventsParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return false
+	}
+	for _, event := range events {
+		if event.TaskID.Valid && uuidToString(event.TaskID) == uuidToString(comment.SourceTaskID) {
+			return true
+		}
+	}
+	return false
+}
+
+func isActiveTaskStatus(status string) bool {
+	switch status {
+	case "queued", "dispatched", "running", "waiting_local_directory":
+		return true
+	default:
+		return false
+	}
 }
 
 func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppressAgentIDs []pgtype.UUID) []commentAgentTrigger {
@@ -1121,6 +1184,10 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 
 func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, triggers []commentAgentTrigger) {
 	for _, trigger := range triggers {
+		if h.shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx, issue, triggerCommentID, trigger) {
+			h.recordBlockedParentSOPStageTriggerComment(ctx, issue, trigger.Agent.Name)
+			continue
+		}
 		switch trigger.Source {
 		case commentTriggerSourceIssueAssignee:
 			if trigger.Squad != nil {
@@ -1152,6 +1219,227 @@ func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issu
 			}
 		}
 	}
+}
+
+func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger) bool {
+	roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(trigger.Agent))
+	if roleKey == "" {
+		switch trigger.Agent.Name {
+		case projectSOPAgent04:
+			roleKey = "04-implement"
+		case projectSOPAgent05:
+			roleKey = "05-verify"
+		}
+	}
+	if roleKey != "04-implement" && roleKey != "05-verify" {
+		return false
+	}
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return false
+	}
+	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil || !isStageChainSOPProfile(squad.SopProfile) {
+		return false
+	}
+	if !h.latestTaskSplitRequiresCrossProjectChildren(ctx, issue) {
+		return false
+	}
+	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
+	if err != nil {
+		slog.Warn("sop cross-project child gate skipped: list children failed",
+			"issue_id", uuidToString(issue.ID),
+			"error", err)
+		return false
+	}
+	if len(children) == 0 {
+		return true
+	}
+	for _, child := range children {
+		if child.Status != "done" {
+			return true
+		}
+	}
+	return false
+}
+
+func isStageChainSOPProfile(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var profile commentSOPProfile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return false
+	}
+	if strings.EqualFold(profile.Mode, "stage_chain") {
+		return true
+	}
+	required := map[string]bool{
+		"pm": true, "01-clarify": true, "02-design": true,
+		"03-task-split": true, "04-implement": true, "05-verify": true,
+	}
+	for _, step := range profile.Steps {
+		key := normalizeSOPRoleMentionKey(step.RoleKey)
+		delete(required, key)
+	}
+	return len(required) == 0
+}
+
+func (h *Handler) latestTaskSplitRequiresCrossProjectChildren(ctx context.Context, issue db.Issue) bool {
+	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       commentHardCap,
+	})
+	if err != nil {
+		slog.Warn("sop cross-project child gate skipped: list task-split comments failed",
+			"issue_id", uuidToString(issue.ID),
+			"error", err)
+		return false
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		if isTaskSplitCrossProjectEvidenceComment(comments[i].Content) {
+			return containsRequiredCrossProjectDependency(comments[i].Content)
+		}
+	}
+	return false
+}
+
+func isTaskSplitCrossProjectEvidenceComment(content string) bool {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if !strings.Contains(lower, "03-task-split") && !strings.Contains(lower, "03-任务拆分") {
+		return false
+	}
+	evidenceMarkers := []string{
+		"## 03",
+		"阶段产物",
+		"已输出",
+		"已闭环",
+		"required cross-project dependencies",
+		"not required projects",
+		"跨项目依赖",
+		"无跨项目",
+		"child issue",
+		"子 issue",
+		"子任务",
+		"handoff-",
+	}
+	for _, marker := range evidenceMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRequiredCrossProjectDependency(content string) bool {
+	text := strings.ToLower(content)
+	if taskSplitDeclaresNoRequiredCrossProjectChildren(text) {
+		return false
+	}
+	requiredMarkers := []string{
+		"待 pm 创建 child issue",
+		"pm 下一步先创建/复用对应 child issue",
+		"创建/复用对应目标项目 child issue",
+		"必须创建 child issue",
+		"需要创建 child issue",
+		"需创建 child issue",
+	}
+	for _, marker := range requiredMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return requiredCrossProjectSectionHasEntries(text)
+}
+
+func taskSplitDeclaresNoRequiredCrossProjectChildren(text string) bool {
+	noRequirementMarkers := []string{
+		"无跨项目依赖",
+		"无 required cross-project dependencies",
+		"required cross-project dependencies: none",
+		"required cross-project dependencies：none",
+		"required cross-project dependencies: 无",
+		"required cross-project dependencies：无",
+		"无需创建 child issue",
+		"不需要创建 child issue",
+		"无跨项目 child issue",
+		"无 child issue",
+		"不创建 child issue",
+		"无子任务",
+	}
+	for _, marker := range noRequirementMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func requiredCrossProjectSectionHasEntries(text string) bool {
+	inSection := false
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "required cross-project dependencies") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(lower, "#") ||
+			strings.Contains(lower, "not required projects") ||
+			strings.Contains(lower, "v1/v2/v3") ||
+			strings.Contains(lower, "sandbox_plan") {
+			return false
+		}
+		if strings.Contains(lower, "none") ||
+			strings.Contains(lower, "not required") ||
+			strings.Contains(line, "无") ||
+			strings.Contains(line, "不需要") {
+			continue
+		}
+		if strings.Contains(lower, "待 pm") ||
+			strings.Contains(lower, "child issue") ||
+			strings.Contains(lower, "handoff-") ||
+			strings.Contains(line, "子任务") ||
+			strings.Contains(line, "分发") {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context, issue db.Issue, stageName string) {
+	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请 PM 先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
+	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		AuthorType:  "system",
+		AuthorID:    util.MustParseUUID("00000000-0000-0000-0000-000000000000"),
+		Content:     content,
+		Type:        "comment",
+	})
+	if err != nil {
+		slog.Warn("create sop cross-project child gate comment failed",
+			"issue_id", uuidToString(issue.ID),
+			"stage", stageName,
+			"error", err)
+		return
+	}
+	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
+		"comment":             commentToResponse(comment, nil, nil),
+		"issue_title":         issue.Title,
+		"issue_assignee_type": textToPtr(issue.AssigneeType),
+		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
+		"issue_status":        issue.Status,
+	})
 }
 
 func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) []commentAgentTrigger {
@@ -1193,6 +1481,9 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 }
 
 func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, issue db.Issue, content, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
+	if opts.SuppressAssignedSquadLeader {
+		return commentAgentTrigger{}, false
+	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
 		return commentAgentTrigger{}, false
 	}
@@ -1201,6 +1492,9 @@ func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, 
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
+		return commentAgentTrigger{}, false
+	}
+	if !h.canUseSquad(ctx, squad, authorType, authorID, uuidToString(issue.WorkspaceID)) {
 		return commentAgentTrigger{}, false
 	}
 	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) &&
@@ -1217,7 +1511,7 @@ func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, 
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canAccessPrivateAgent(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID)) {
+	if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID)) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, squad.LeaderID, opts)
@@ -1367,9 +1661,9 @@ func shouldInheritParentMentions(parentComment *db.Comment, replyMentions []util
 // are re-triggered by subsequent replies in the same thread — unless the reply
 // explicitly @mentions only non-agent entities (members, issues), which
 // signals the user is talking to other people and not the agent.
-// Skips agents with on_mention trigger disabled, and private agents mentioned
+// Skips agents with on_mention trigger disabled, and personal agents mentioned
 // by non-owner members (only the agent owner or workspace admin/owner can
-// mention a private agent). Self-mentions are intentionally allowed so an
+// mention a personal agent). Self-mentions are intentionally allowed so an
 // agent running in one issue can explicitly enqueue itself on another (e.g.
 // a child-issue run notifying the parent issue whose assignee is the same
 // agent); runaway loops are prevented by HasPendingTaskForIssueAndAgent
@@ -1382,6 +1676,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 	if shouldInheritParentMentions(parentComment, mentions, authorType) {
 		mentions = util.ParseMentions(parentComment.Content)
 	}
+	mentions = append(mentions, h.parseSquadSOPRoleKeyMentions(ctx, issue, content)...)
 	triggers := make([]commentAgentTrigger, 0, len(mentions))
 	seen := make(map[string]struct{}, len(mentions))
 	add := func(trigger commentAgentTrigger) {
@@ -1403,6 +1698,9 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 			if err != nil {
 				continue
 			}
+			if !h.canUseSquad(ctx, squad, authorType, authorID, wsID) {
+				continue
+			}
 			leaderID := squad.LeaderID
 			// Prevent self-trigger only when the agent's last activity on this
 			// issue was itself a leader task. An agent that holds both the
@@ -1420,8 +1718,8 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 			if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 				continue
 			}
-			// Private-agent gate: prevent triggering a private leader via squad mention.
-			if !h.canAccessPrivateAgent(ctx, agent, authorType, authorID, wsID) {
+			// Private-agent gate: prevent triggering a personal leader via squad mention.
+			if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, wsID) {
 				continue
 			}
 			// Dedup: skip if leader already has a pending task for this issue.
@@ -1440,7 +1738,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		// bare GetAgent here would let a mention resolve to an agent in a
 		// different workspace, and the visibility check below would then be
 		// applied against the wrong workspace's roles (a workspace owner in
-		// THIS workspace would pass the gate for a private agent that lives
+		// THIS workspace would pass the gate for a personal agent that lives
 		// in someone else's workspace).
 		agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          agentUUID,
@@ -1451,7 +1749,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		}
 		// Private-agent gate (member→private requires allowed_principals;
 		// agent→agent always passes).
-		if !h.canAccessPrivateAgent(ctx, agent, authorType, authorID, wsID) {
+		if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, wsID) {
 			continue
 		}
 		// Dedup: skip if this agent already has a pending task for this issue.
@@ -1459,9 +1757,105 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		if err != nil || hasPending {
 			continue
 		}
+		if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid {
+			squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+				ID:          issue.AssigneeID,
+				WorkspaceID: issue.WorkspaceID,
+			})
+			if err == nil && uuidToString(squad.LeaderID) == uuidToString(agentUUID) {
+				add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionSquadLeader, Squad: &squad})
+				continue
+			}
+		}
 		add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionAgent})
 	}
 	return triggers
+}
+
+func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Issue, content string) []util.Mention {
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return nil
+	}
+	matches := sopRoleKeyMentionRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	wantedRoles := map[string]struct{}{}
+	for _, match := range matches {
+		if len(match) != 2 {
+			continue
+		}
+		if roleKey, ok := normalizeSOPRoleAlias(match[1]); ok {
+			wantedRoles[roleKey] = struct{}{}
+		}
+	}
+	if len(wantedRoles) == 0 {
+		return nil
+	}
+	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return nil
+	}
+	members, err := h.Queries.ListSquadMembers(ctx, squad.ID)
+	if err != nil {
+		return nil
+	}
+	memberIDs := map[string]struct{}{uuidToString(squad.LeaderID): {}}
+	for _, member := range members {
+		if member.MemberType == "agent" && member.MemberID.Valid {
+			memberIDs[uuidToString(member.MemberID)] = struct{}{}
+		}
+	}
+	agents, err := h.Queries.ListAgents(ctx, issue.WorkspaceID)
+	if err != nil {
+		return nil
+	}
+	out := make([]util.Mention, 0, len(wantedRoles))
+	seen := map[string]struct{}{}
+	for _, agent := range agents {
+		id := uuidToString(agent.ID)
+		if _, ok := memberIDs[id]; !ok {
+			continue
+		}
+		roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agent))
+		if _, ok := wantedRoles[roleKey]; !ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, util.Mention{Type: "agent", ID: id})
+	}
+	return out
+}
+
+func normalizeSOPRoleAlias(value string) (string, bool) {
+	switch normalizeSOPRoleMentionKey(value) {
+	case "pm":
+		return "pm", true
+	case "01", "01-clarify":
+		return "01-clarify", true
+	case "02", "02-design":
+		return "02-design", true
+	case "03", "03-task-split":
+		return "03-task-split", true
+	case "04", "04-implement":
+		return "04-implement", true
+	case "05", "05-verify":
+		return "05-verify", true
+	default:
+		return "", false
+	}
+}
+
+func normalizeSOPRoleMentionKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "_", "-")
+	return strings.Trim(value, "-")
 }
 
 func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {

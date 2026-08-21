@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent } from "@multica/core/types";
-import enChat from "../../locales/en/chat.json";
-import enIssues from "../../locales/en/issues.json";
+import enChat from "../../locales/zh-Hans/chat.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: ({ actorId }: { actorId: string }) => (
@@ -11,9 +11,9 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 
-import { AgentDropdown } from "./chat-window";
+import { AgentDropdown, getVisibleChatAgents } from "./chat-window";
 
-const TEST_RESOURCES = { en: { chat: enChat, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { chat: enChat, issues: enIssues } };
 
 function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id" | "name" | "owner_id">): Agent {
   return {
@@ -25,7 +25,7 @@ function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id" | "name" | "owne
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    visibility: "workspace",
+    scope: "workspace",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "sonnet",
@@ -50,7 +50,7 @@ const agents = [
 
 function renderDropdown(onSelect = vi.fn()) {
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <AgentDropdown
         agents={agents}
         activeAgent={agents[0]!}
@@ -64,17 +64,42 @@ function renderDropdown(onSelect = vi.fn()) {
 }
 
 describe("AgentDropdown", () => {
-  it("opens the shared picker upward from the chat input", async () => {
+  it("聊天可选智能体把开发验收智能体作为正常数据展示", () => {
+    const visible = getVisibleChatAgents(
+      [
+        ...agents,
+        makeAgent({
+          id: "fixture-curl-codex",
+          name: "curl Codex 验收 Agent 1782145202049",
+          owner_id: "user-1",
+          description: "端到端验收造数",
+        }),
+        makeAgent({
+          id: "multica-coding",
+          name: "Multica 训练评估智能体",
+          owner_id: "user-1",
+          description: "正式内置智能体",
+        }),
+      ],
+      "user-1",
+      "owner",
+    );
+
+    expect(visible.map((agent) => agent.id)).toContain("fixture-curl-codex");
+    expect(visible.map((agent) => agent.id)).toContain("multica-coding");
+  });
+
+  it("从聊天输入区向上打开共享选择器", async () => {
     renderDropdown();
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveAttribute("data-side", "top");
   });
 
-  it("filters both My agents and Others by agent name", async () => {
+  it("按智能体名称同时过滤我的智能体和其他分组", async () => {
     renderDropdown();
 
-    const input = await screen.findByRole("textbox", { name: "Filter options" });
+    const input = await screen.findByRole("textbox", { name: "筛选选项" });
     fireEvent.change(input, { target: { value: "ta" } });
     const dialog = screen.getByRole("dialog");
 
@@ -82,34 +107,34 @@ describe("AgentDropdown", () => {
     expect(within(dialog).queryByText("张三")).not.toBeInTheDocument();
     expect(within(dialog).getByText("Beta")).toBeInTheDocument();
     expect(within(dialog).queryByText("Gamma")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Others")).toBeInTheDocument();
+    expect(within(dialog).getByText("其他")).toBeInTheDocument();
   });
 
-  it("matches My agents by pinyin", async () => {
+  it("通过拼音匹配我的智能体", async () => {
     renderDropdown();
 
-    const input = await screen.findByRole("textbox", { name: "Filter options" });
+    const input = await screen.findByRole("textbox", { name: "筛选选项" });
     fireEvent.change(input, { target: { value: "zhang" } });
     const dialog = screen.getByRole("dialog");
 
     expect(within(dialog).getByText("张三")).toBeInTheDocument();
-    expect(within(dialog).getByText("My agents")).toBeInTheDocument();
+    expect(within(dialog).getByText("我的智能体")).toBeInTheDocument();
     expect(within(dialog).queryByText("Alpha")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("Beta")).not.toBeInTheDocument();
   });
 
-  it("shows the shared empty state when no agents match", async () => {
+  it("没有智能体匹配时显示共享空态", async () => {
     renderDropdown();
 
-    const input = await screen.findByRole("textbox", { name: "Filter options" });
+    const input = await screen.findByRole("textbox", { name: "筛选选项" });
     fireEvent.change(input, { target: { value: "missing" } });
 
-    expect(screen.getByText("No results")).toBeInTheDocument();
-    expect(screen.queryByText("My agents")).not.toBeInTheDocument();
-    expect(screen.queryByText("Others")).not.toBeInTheDocument();
+    expect(screen.getByText("无结果")).toBeInTheDocument();
+    expect(screen.queryByText("我的智能体")).not.toBeInTheDocument();
+    expect(screen.queryByText("其他")).not.toBeInTheDocument();
   });
 
-  it("left-aligns agent picker rows", async () => {
+  it("智能体选择器行左对齐", async () => {
     renderDropdown();
 
     const dialog = await screen.findByRole("dialog");
@@ -121,7 +146,7 @@ describe("AgentDropdown", () => {
     expect(alphaRow).toHaveClass("text-left");
   });
 
-  it("keeps the current agent marked and selects another agent", async () => {
+  it("保留当前智能体标记，并可选择另一个智能体", async () => {
     const { onSelect } = renderDropdown();
 
     const dialog = screen.getByRole("dialog");
@@ -133,7 +158,7 @@ describe("AgentDropdown", () => {
 
     expect(onSelect).toHaveBeenCalledWith(agents[2]);
     await waitFor(() => {
-      expect(screen.queryByRole("textbox", { name: "Filter options" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("textbox", { name: "筛选选项" })).not.toBeInTheDocument();
     });
   });
 });

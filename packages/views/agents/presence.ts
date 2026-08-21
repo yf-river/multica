@@ -74,14 +74,6 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
   },
 };
 
-// Order used by availability filter chips so colours read in a natural
-// progression rather than alphabetical.
-export const availabilityOrder: AgentAvailability[] = [
-  "online",
-  "unstable",
-  "offline",
-];
-
 export interface WorkloadVisual {
   label: string;
   // Foreground colour for icon + label text.
@@ -110,6 +102,3 @@ export const workloadConfig: Record<Workload, WorkloadVisual> = {
     icon: AlertCircle,
   },
 };
-
-// Order used in any future workload chip group; actionable signals first.
-export const workloadOrder: Workload[] = ["working", "queued", "idle"];

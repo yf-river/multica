@@ -5,6 +5,246 @@ import (
 	"testing"
 )
 
+func assertPromptOrder(t *testing.T, out, before, after string) {
+	t.Helper()
+	beforeIndex := strings.Index(out, before)
+	if beforeIndex < 0 {
+		t.Fatalf("BuildPrompt missing order anchor %q\n--- output ---\n%s", before, out)
+	}
+	afterIndex := strings.Index(out, after)
+	if afterIndex < 0 {
+		t.Fatalf("BuildPrompt missing order anchor %q\n--- output ---\n%s", after, out)
+	}
+	if beforeIndex >= afterIndex {
+		t.Fatalf("BuildPrompt should place %q before %q\n--- output ---\n%s", before, after, out)
+	}
+}
+
+func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "pending_mcp_fetch",
+			},
+			ExternalCredentials: map[string]TaskExternalCredentialContext{
+				"tapd": {
+					Provider:      "tapd",
+					Scope:         "account",
+					Inheritance:   "task_creator_or_trigger_user",
+					ProfileID:     "profile-1",
+					ProfileStatus: "unverified",
+					MCPServer:     "mcp-server-tapd",
+					Configured:    true,
+				},
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"Source context:",
+		"provider: tapd",
+		"workspace_id=47654106",
+		"resource_type=markdown_wiki",
+		"resource_id=1147654106001004154",
+		"fetch_status=pending_mcp_fetch",
+		"configured `mcp-server-tapd` MCP tool",
+		"using `get_wiki` with workspace_id=47654106 and resource_id=1147654106001004154",
+		"Do not open the TAPD web page directly",
+		"multica issue source-fetch issue-1 --provider tapd --status fetched --source-workspace-id 47654106 --resource-type markdown_wiki --resource-id 1147654106001004154",
+		"Use `--auto-fetch` only as a fallback",
+		"profile_id=profile-1",
+		"inheritance=task_creator_or_trigger_user",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	assertPromptOrder(t, out, "Start by running `multica issue get issue-1 --output json`", "Source context:")
+}
+
+func TestBuildPromptUsesSourceSummaryPrompt(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID:             "issue-summary-1",
+		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "fetched",
+				Title:         "获取租户初始化用户信息",
+				BodyExcerpt:   "租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"requirement summarization agent",
+		"Return only Markdown",
+		"Do not call `multica issue update`",
+		"## 需求摘要",
+		"## 验收要点",
+		"TAPD fetched body excerpt: 租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("source summary prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, unexpected := range []string{
+		"Start by running `multica issue get issue-summary-1 --output json`",
+		"Complete the task within your Agent Identity boundaries",
+		"run `multica issue status issue-summary-1 in_review`",
+	} {
+		if strings.Contains(out, unexpected) {
+			t.Fatalf("source summary prompt should not include assignment workflow %q\n--- output ---\n%s", unexpected, out)
+		}
+	}
+}
+
+func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID:               "issue-comment-1",
+		TriggerCommentID:      "comment-1",
+		TriggerThreadID:       "thread-1",
+		TriggerAuthorType:     "member",
+		TriggerAuthorName:     "Alice",
+		TriggerCommentContent: "继续看 TAPD 来源",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "pending_mcp_fetch",
+			},
+		},
+	}, "codex")
+
+	assertPromptOrder(t, out, "Start by running `multica issue get issue-comment-1 --output json`", "Source context:")
+}
+
+func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "blocked_missing_profile",
+				FetchError:    "no account-level TAPD credential profile",
+			},
+			ExternalCredentials: map[string]TaskExternalCredentialContext{
+				"tapd": {
+					Provider:    "tapd",
+					Scope:       "account",
+					Inheritance: "task_creator_or_trigger_user",
+					MCPServer:   "mcp-server-tapd",
+				},
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"fetch_status=blocked_missing_profile",
+		"TAPD fetch error: no account-level TAPD credential profile",
+		"stop and report that the requester must configure an account-level TAPD credential profile",
+		"Do not claim the document was read",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "configured `mcp-server-tapd` MCP tool") {
+		t.Fatalf("blocked prompt must not tell the agent to fetch anyway\n--- output ---\n%s", out)
+	}
+}
+
+func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004223",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "fetched",
+				Title:         "用户快捷入口需求",
+				Summary:       "支持用户维护快捷入口。",
+				BodyExcerpt:   "快捷入口属于当前登录用户，不同用户之间互不影响。",
+				Version:       "2026-07-02 10:00:00",
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"fetch_status=fetched",
+		"platform already fetched this source through TAPD MCP",
+		"TAPD fetched title: 用户快捷入口需求",
+		"TAPD fetched summary: 支持用户维护快捷入口。",
+		"TAPD fetched body excerpt: 快捷入口属于当前登录用户",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "using `get_wiki`") || strings.Contains(out, "Use `--auto-fetch` only as a fallback") {
+		t.Fatalf("fetched prompt must not instruct a duplicate TAPD fetch\n--- output ---\n%s", out)
+	}
+}
+
+func TestBuildPromptUsesHumanRecoveryWhenTapdFetchFailed(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004223",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "fetch_failed",
+				FetchError:    "TAPD MCP returned 401 unauthorized",
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"fetch_status=fetch_failed",
+		"TAPD fetch error: TAPD MCP returned 401 unauthorized",
+		"Do not invent or copy the login page as the requirement",
+		"read the issue description and full comment history for human-supplied TAPD title, summary, or body",
+		"treat that comment as manual source recovery",
+		"cite it in your stage comment and markdown artifacts",
+		"Retry source-fetch only after credentials or environment have changed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "using `get_wiki`") || strings.Contains(out, "Use `--auto-fetch` only as a fallback") {
+		t.Fatalf("fetch_failed prompt must not blindly retry TAPD fetch\n--- output ---\n%s", out)
+	}
+}
+
 // TestBuildQuickCreatePromptRules locks in the rules that govern how the
 // quick-create agent is allowed to translate raw user input into the issue
 // description body. Each substring corresponds to a concrete failure mode
@@ -203,6 +443,33 @@ func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
 	}
 }
 
+func TestBuildQuickCreatePromptPinnedFields(t *testing.T) {
+	const assigneeID = "44444444-2222-1111-3333-555555555555"
+	out := buildQuickCreatePrompt(Task{
+		QuickCreatePrompt:       "fix the login button color and assign it to someone else",
+		QuickCreateStatus:       "in_progress",
+		QuickCreatePriority:     "high",
+		QuickCreateAssigneeType: "agent",
+		QuickCreateAssigneeID:   assigneeID,
+		QuickCreateStartDate:    "2026-07-02",
+		QuickCreateDueDate:      "2026-07-10",
+	})
+	mustContain := []string{
+		"--status \"in_progress\"",
+		"--priority \"high\"",
+		"--assignee-id \"" + assigneeID + "\"",
+		"--start-date \"2026-07-02\"",
+		"--due-date \"2026-07-10\"",
+		"selected in the create modal and is authoritative",
+		"Do not infer or replace it from names in the user input",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("buildQuickCreatePrompt with pinned fields missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+}
+
 // TestBuildPromptSquadLeaderNoActionForMemberTrigger verifies that the
 // squad leader no_action prohibition is injected in the per-turn prompt
 // regardless of whether the triggering comment was posted by an agent or
@@ -218,15 +485,89 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
 		Agent: &AgentData{
-			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nYou are the LEADER...",
+			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
 	out := BuildPrompt(task, "claude")
-	if !strings.Contains(out, "Squad leader no_action rule") {
+	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for member-triggered comments, got:\n%s", out)
 	}
-	if !strings.Contains(out, "DO NOT post any comment") {
+	if !strings.Contains(out, "不要发布任何评论") {
 		t.Errorf("buildCommentPrompt must contain DO NOT post prohibition for member-triggered squad leader, got:\n%s", out)
+	}
+	if !strings.Contains(out, "需要用户补充") || !strings.Contains(out, "不是 no_action") {
+		t.Errorf("buildCommentPrompt must distinguish wait/block states from true no_action, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptCoordinatorCommentUsesFinalOutput(t *testing.T) {
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "确认按建议推进",
+		TriggerAuthorType:     "member",
+		TriggerAuthorName:     "Bohan",
+		ExecutionPolicy: &TaskExecutionPolicy{
+			RoleKind:      "coordinator",
+			CanAccessRepo: false,
+		},
+	}
+	out := BuildPrompt(task, "codebuddy")
+	for _, want := range []string{
+		"Do not call `multica issue comment add`",
+		"do not create `reply.md` or local `.md` files",
+		"final assistant output",
+		"the platform will automatically post it as a reply under the triggering comment",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("coordinator comment prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"Write the reply body to a UTF-8 file",
+		"--content \"...\"",
+		"multica issue comment add issue-123 --parent comment-456",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("coordinator comment prompt should use final output, found %q\n--- output ---\n%s", banned, out)
+		}
+	}
+}
+
+func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "请产出 03-task-split",
+		TriggerAuthorType:     "agent",
+		TriggerAuthorName:     "PM-项目经理",
+		ExecutionPolicy: &TaskExecutionPolicy{
+			RoleKey:       "03-task-split",
+			RoleKind:      "planning_stage",
+			CanAccessRepo: true,
+			CanEditRepo:   false,
+		},
+	}
+	out := BuildPrompt(task, "codebuddy")
+	for _, want := range []string{
+		"Write the complete stage result as your final assistant output",
+		"the platform will automatically post it as a reply under the triggering comment",
+		"Do not call `multica issue comment add`",
+		"do not create `reply.md` or local `.md` files",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repo read-only stage prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"Write the reply body to a UTF-8 file",
+		"multica issue comment add issue-123 --parent comment-456",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("repo read-only stage prompt must not use manual reply path %q\n--- output ---\n%s", banned, out)
+		}
 	}
 }
 
@@ -240,11 +581,11 @@ func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "deploy-boy",
 		Agent: &AgentData{
-			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nYou are the LEADER...",
+			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
 	out := BuildPrompt(task, "claude")
-	if !strings.Contains(out, "Squad leader no_action rule") {
+	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for agent-triggered comments, got:\n%s", out)
 	}
 }
@@ -418,7 +759,7 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 		},
 	}
 	out := BuildPrompt(task, "claude")
-	if strings.Contains(out, "Squad leader no_action rule") {
+	if strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
 	}
 }

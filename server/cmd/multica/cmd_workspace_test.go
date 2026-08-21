@@ -49,7 +49,7 @@ func TestRunWorkspaceSwitch(t *testing.T) {
 		if err := runWorkspaceSwitch(cmd, []string{"beta"}); err != nil {
 			t.Fatalf("runWorkspaceSwitch: %v", err)
 		}
-		cfg, err := cli.LoadCLIConfig()
+		cfg, err := cli.LoadCLIConfigForProfile("")
 		if err != nil {
 			t.Fatalf("LoadCLIConfig: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestRunWorkspaceSwitch(t *testing.T) {
 	t.Run("rejects unknown workspace and leaves config untouched", func(t *testing.T) {
 		// Seed a known workspace_id so we can verify it is NOT clobbered on
 		// failure — the issue's acceptance criteria explicitly call this out.
-		if err := cli.SaveCLIConfig(cli.CLIConfig{WorkspaceID: "11111111-1111-1111-1111-111111111111"}); err != nil {
+		if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{WorkspaceID: "11111111-1111-1111-1111-111111111111"}, ""); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
 
@@ -71,7 +71,7 @@ func TestRunWorkspaceSwitch(t *testing.T) {
 			t.Fatal("expected error for unknown workspace")
 		}
 
-		cfg, _ := cli.LoadCLIConfig()
+		cfg, _ := cli.LoadCLIConfigForProfile("")
 		if cfg.WorkspaceID != "11111111-1111-1111-1111-111111111111" {
 			t.Errorf("workspace_id = %q, expected it to stay on Alpha's id when switch fails", cfg.WorkspaceID)
 		}

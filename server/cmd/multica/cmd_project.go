@@ -221,6 +221,9 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
+		if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
+			return fmt.Errorf("load project resources: %w", err)
+		}
 		return cli.PrintJSON(os.Stdout, projectsRaw)
 	}
 
@@ -358,19 +361,7 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create project: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TITLE", "STATUS"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "title"),
-			strVal(result, "status"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printProjectMutationResult(cmd, result)
 }
 
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
@@ -426,6 +417,10 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update project: %w", err)
 	}
 
+	return printProjectMutationResult(cmd, result)
+}
+
+func printProjectMutationResult(cmd *cobra.Command, result map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		headers := []string{"ID", "TITLE", "STATUS"}
@@ -633,22 +628,11 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, resourceRef, err := newProjectResourceClientAndRefs(cmd, args[0], args[1])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve project resource: %w", err)
-	}
 
 	// Fetch the existing row so per-type shortcuts know which schema to
 	// emit and which fields to preserve. The server treats resource_ref as
@@ -730,6 +714,26 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return cli.PrintJSON(os.Stdout, result)
+}
+
+func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, resolvedID, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, resolvedID{}, err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	projectRef, err := resolveProjectID(ctx, client, projectArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, resolvedID{}, fmt.Errorf("resolve project: %w", err)
+	}
+	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, resourceArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, resolvedID{}, fmt.Errorf("resolve project resource: %w", err)
+	}
+	return client, ctx, cancel, projectRef, resourceRef, nil
 }
 
 // buildResourceRefFromFlags collects the per-type shortcut flags into a
@@ -844,22 +848,11 @@ func mustString(cmd *cobra.Command, name string) string {
 }
 
 func runProjectResourceRemove(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, resourceRef, err := newProjectResourceClientAndRefs(cmd, args[0], args[1])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve project resource: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/projects/"+projectRef.ID+"/resources/"+resourceRef.ID); err != nil {
 		return fmt.Errorf("remove project resource: %w", err)
@@ -887,6 +880,100 @@ func summarizeResourceRef(raw any) string {
 		return string(data)
 	}
 	return ""
+}
+
+func enrichProjectsWithResources(ctx context.Context, client *cli.APIClient, projectsRaw []any) error {
+	for _, raw := range projectsRaw {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if resourceCount(p) == 0 {
+			continue
+		}
+		projectID := strVal(p, "id")
+		if projectID == "" {
+			continue
+		}
+		var result map[string]any
+		if err := client.GetJSON(ctx, "/api/projects/"+url.PathEscape(projectID)+"/resources", &result); err != nil {
+			return err
+		}
+		resourcesRaw, _ := result["resources"].([]any)
+		p["resources"] = resourcesRaw
+		p["resource_summaries"] = summarizeProjectResources(resourcesRaw)
+	}
+	return nil
+}
+
+func resourceCount(project map[string]any) int64 {
+	switch v := project["resource_count"].(type) {
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	default:
+		return 0
+	}
+}
+
+func summarizeProjectResources(resourcesRaw []any) []map[string]any {
+	summaries := make([]map[string]any, 0, len(resourcesRaw))
+	for _, raw := range resourcesRaw {
+		r, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		summary := map[string]any{
+			"resource_type": strVal(r, "resource_type"),
+			"summary":       summarizeResourceRef(r["resource_ref"]),
+		}
+		if ref, ok := r["resource_ref"].(map[string]any); ok {
+			for _, key := range []string{"provider", "project_path", "url", "branch", "ref", "resource_kind"} {
+				if value, ok := ref[key].(string); ok && value != "" {
+					summary[key] = value
+				}
+			}
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries
+}
+
+func projectCandidateDetail(project map[string]any) string {
+	detail := strVal(project, "status")
+	resources, _ := project["resource_summaries"].([]map[string]any)
+	if len(resources) == 0 {
+		if raw, ok := project["resource_summaries"].([]any); ok {
+			for _, item := range raw {
+				if summary, ok := item.(map[string]any); ok {
+					resources = append(resources, summary)
+				}
+			}
+		}
+	}
+	parts := make([]string, 0, len(resources))
+	for _, r := range resources {
+		if projectPath, _ := r["project_path"].(string); projectPath != "" {
+			parts = append(parts, projectPath)
+			continue
+		}
+		if summary, _ := r["summary"].(string); summary != "" {
+			parts = append(parts, summary)
+		}
+	}
+	if len(parts) == 0 {
+		return detail
+	}
+	if detail == "" {
+		return strings.Join(parts, ", ")
+	}
+	return detail + " | " + strings.Join(parts, ", ")
 }
 
 // ---------------------------------------------------------------------------

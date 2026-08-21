@@ -5,12 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, runtimes: enRuntimes, agents: enAgents },
+  "zh-Hans": { common: enCommon, runtimes: enRuntimes, agents: enAgents },
 };
 
 // ApiError mirrors the production export. The dialog's parseActiveAgentsConflict
@@ -124,7 +124,7 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     device_info: "",
     metadata: {},
     owner_id: "user-me",
-    visibility: "private",
+    scope: "personal",
     last_seen_at: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -144,7 +144,7 @@ function makeAgent(id: string, overrides: Partial<Agent> = {}): Agent {
     runtime_mode: "cloud",
     runtime_config: {},
     custom_args: [],
-    visibility: "private",
+    scope: "personal",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "claude-sonnet-4-5",
@@ -180,7 +180,7 @@ function renderDialog(opts: {
   }) as unknown as typeof useQuery);
 
   const utils = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         <DeleteRuntimeDialog
           open
@@ -203,11 +203,11 @@ describe("DeleteRuntimeDialog", () => {
   it("renders the light-mode prompt when no agents are bound", () => {
     renderDialog({ cachedAgents: [] });
 
-    expect(screen.getByText("Delete Runtime?")).toBeInTheDocument();
-    expect(screen.getByText("Delete runtime")).toBeInTheDocument();
+    expect(screen.getByText("删除运行时？")).toBeInTheDocument();
+    expect(screen.getByText("删除运行时")).toBeInTheDocument();
     // No checkbox, no agent table in light mode.
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Archive .* and delete this Runtime/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/归档 .* 个智能体并删除这个运行时/)).not.toBeInTheDocument();
   });
 
   it("opens directly in cascade mode when local cache shows bound agents, with the destructive button gated by the checkbox", async () => {
@@ -219,11 +219,11 @@ describe("DeleteRuntimeDialog", () => {
     });
 
     expect(
-      screen.getByText(/Archive 2 agents and delete this Runtime/),
+      screen.getByText(/归档 2 个智能体并删除该运行时/),
     ).toBeInTheDocument();
     // Destructive confirm starts disabled until the user ticks the checkbox.
     const confirm = screen.getByRole("button", {
-      name: /Archive 2 agents and delete runtime/,
+      name: /归档 2 个智能体并删除运行时/,
     }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
 
@@ -258,18 +258,18 @@ describe("DeleteRuntimeDialog", () => {
 
     // We open in light mode, hit Delete, and expect the dialog to pivot to
     // cascade mode using the server-supplied agent list.
-    const lightConfirm = screen.getByRole("button", { name: "Delete runtime" });
+    const lightConfirm = screen.getByRole("button", { name: "删除运行时" });
     fireEvent.click(lightConfirm);
 
     await waitFor(() =>
       expect(
-        screen.getByText(/Archive 1 agent and delete this Runtime/),
+        screen.getByText(/归档 1 个智能体并删除该运行时/),
       ).toBeInTheDocument(),
     );
     expect(screen.getByText("FreshAgent")).toBeInTheDocument();
     // Notice should be visible explaining the pivot.
     expect(
-      screen.getByText(/Active agents were added since you opened this dialog/),
+      screen.getByText(/自打开此弹窗后，又有新的活动智能体加入/),
     ).toBeInTheDocument();
   });
 
@@ -296,13 +296,13 @@ describe("DeleteRuntimeDialog", () => {
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(
       screen.getByRole("button", {
-        name: /Archive 2 agents and delete runtime/,
+        name: /归档 2 个智能体并删除运行时/,
       }),
     );
 
     await waitFor(() =>
       expect(
-        screen.getByText(/Archive 3 agents and delete this Runtime/),
+        screen.getByText(/归档 3 个智能体并删除该运行时/),
       ).toBeInTheDocument(),
     );
     // The new third agent shows in the plan.
@@ -315,7 +315,7 @@ describe("DeleteRuntimeDialog", () => {
     );
     // Notice copy explains why the dialog re-prompted.
     expect(
-      screen.getByText(/active agent set changed/i),
+      screen.getByText(/活动智能体集合发生了变化/i),
     ).toBeInTheDocument();
   });
 
@@ -330,7 +330,7 @@ describe("DeleteRuntimeDialog", () => {
       cachedAgents: [],
     });
     expect(
-      screen.getByText(/managed by a running local daemon/i),
+      screen.getByText(/由正在运行的本地守护进程托管/i),
     ).toBeInTheDocument();
   });
 
@@ -343,10 +343,10 @@ describe("DeleteRuntimeDialog", () => {
     // self-heal sits above the destructive one so the user sees the
     // daemon-will-respawn warning before scanning the agent table.
     expect(
-      screen.getByText(/managed by a running local daemon/i),
+      screen.getByText(/由正在运行的本地守护进程托管/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Archive 1 agent and delete this Runtime/),
+      screen.getByText(/归档 1 个智能体并删除该运行时/),
     ).toBeInTheDocument();
   });
 
@@ -357,7 +357,7 @@ describe("DeleteRuntimeDialog", () => {
       cachedAgents: [],
     });
     expect(
-      screen.queryByText(/managed by a running local daemon/i),
+      screen.queryByText(/由正在运行的本地守护进程托管/i),
     ).not.toBeInTheDocument();
   });
 
@@ -374,7 +374,7 @@ describe("DeleteRuntimeDialog", () => {
       onDeleted,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete runtime" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除运行时" }));
     await waitFor(() =>
       expect(apiDeleteRuntime).toHaveBeenCalledWith("rt-1"),
     );

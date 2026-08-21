@@ -2,15 +2,13 @@ export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
 export type AgentRuntimeMode = "local" | "cloud";
 
-export type AgentVisibility = "workspace" | "private";
+export type ResourceScope = "personal" | "workspace";
+export type AgentScope = ResourceScope;
 
-// Runtime visibility is a separate axis from agent visibility — different
-// vocabulary because it gates a different action. "private" (default) means
-// only the runtime owner and workspace admins can bind agents to it;
-// "public" opens binding to any workspace member. Older backends that
-// haven't shipped MUL-2062 omit the field; the consumer must default to
-// "private" so the strictest behavior is the fallback.
-export type RuntimeVisibility = "private" | "public";
+// Runtime scope uses the same product vocabulary as agents and squads.
+// "personal" means same-owner personal agents only; "workspace" opens the
+// runtime for workspace-scoped agents.
+export type RuntimeScope = ResourceScope;
 
 export interface RuntimeDevice {
   id: string;
@@ -24,8 +22,8 @@ export interface RuntimeDevice {
   device_info: string;
   metadata: Record<string, unknown>;
   owner_id: string | null;
-  /** Defaults to "private" when the backend predates the visibility flag. */
-  visibility: RuntimeVisibility;
+  /** Defaults to "workspace" when omitted. */
+  scope: RuntimeScope;
   /**
    * The custom runtime profile this registered runtime was launched from,
    * or `null` for a built-in protocol family. The UI uses this to stamp a
@@ -61,7 +59,6 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "codex",
   "copilot",
   "opencode",
-  "openclaw",
   "hermes",
   "gemini",
   "pi",
@@ -74,7 +71,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
 export type RuntimeProtocolFamily =
   (typeof RUNTIME_PROFILE_PROTOCOL_FAMILIES)[number];
 
-// Profile visibility mirrors RuntimeVisibility's vocabulary but uses the
+// Profile visibility mirrors RuntimeScope's vocabulary but uses the
 // workspace/private axis the server documents for profiles.
 export type RuntimeProfileVisibility = "workspace" | "private";
 
@@ -183,6 +180,8 @@ export interface AgentTask {
   autopilot_run_id?: string;
   /** Set when this task was created as an auto-retry of a parent task. */
   parent_task_id?: string;
+  /** True when the task was created for a squad leader rather than a plain agent assignment. */
+  is_leader_task?: boolean;
   /** 1-based attempt counter; >1 means this is a retry. */
   attempt?: number;
   /** Set when an issue comment triggered this task (@mention or assignee comment). */
@@ -256,8 +255,8 @@ export interface Agent {
    * MCP server configuration forwarded to runtimes that consume
    * `agent.mcp_config` (see providerSupportsMcpConfig). Each backend
    * materialises it in the runtime-native place: Claude flags, Codex
-   * config.toml, ACP session params, OpenCode env config, OpenClaw
-   * wrapper config, etc. `null` (or the field omitted on legacy backends)
+   * config.toml, ACP session params, or OpenCode env config. `null` (or the
+   * field omitted on legacy backends)
    * means no managed config; the daemon falls back to the CLI's own
    * default. MUL-2764.
    *
@@ -275,7 +274,7 @@ export interface Agent {
    * Older backends omit this field; treat `undefined` as false.
    */
   mcp_config_redacted?: boolean;
-  visibility: AgentVisibility;
+  scope: AgentScope;
   status: AgentStatus;
   max_concurrent_tasks: number;
   model: string;
@@ -320,7 +319,7 @@ export interface CreateAgentRequest {
   runtime_config?: Record<string, unknown>;
   custom_env?: Record<string, string>;
   custom_args?: string[];
-  visibility?: AgentVisibility;
+  scope?: AgentScope;
   max_concurrent_tasks?: number;
   model?: string;
   /** Optional runtime-native reasoning/effort token. See `Agent.thinking_level`. */
@@ -328,76 +327,6 @@ export interface CreateAgentRequest {
   /** Optional template slug used by the onboarding agent picker. Surfaced
    *  as the `template` property on the `agent_created` PostHog event. */
   template?: string;
-}
-
-/** Agent template summary — fields needed by the picker grid. Does NOT
- *  include `instructions` to keep the list payload small; the detail
- *  endpoint or the create flow returns the full template body. */
-export interface AgentTemplateSummary {
-  slug: string;
-  name: string;
-  description: string;
-  /** Optional grouping for the picker UI ("Engineering" / "Writing" / …). */
-  category?: string;
-  /** Optional lucide-react icon name (e.g. "Search"). Frontend falls back
-   *  to a generic icon when empty. */
-  icon?: string;
-  /** Optional semantic color token for the icon badge — one of "info" /
-   *  "success" / "warning" / "primary" / "secondary". Frontend has a
-   *  static class map so Tailwind can JIT-scan all variants. */
-  accent?: string;
-  skills: AgentTemplateSkillRef[];
-}
-
-/** Full agent template — same as `AgentTemplateSummary` plus the
- *  instructions block. Returned by `GET /api/agent-templates/:slug`. */
-export interface AgentTemplate extends AgentTemplateSummary {
-  instructions: string;
-}
-
-/** Skill reference inside an agent template. `source_url` is the upstream
- *  GitHub / skills.sh URL fetched on create; `cached_*` mirror the upstream
- *  frontmatter at template-author time and let the picker render without
- *  HTTP fetches. */
-export interface AgentTemplateSkillRef {
-  source_url: string;
-  cached_name: string;
-  cached_description: string;
-}
-
-export interface CreateAgentFromTemplateRequest {
-  template_slug: string;
-  name: string;
-  runtime_id: string;
-  model?: string;
-  visibility?: AgentVisibility;
-  max_concurrent_tasks?: number;
-  /** Optional overrides applied to the template before creation. nil/omit
-   *  uses the template's own value. */
-  description?: string;
-  instructions?: string;
-  avatar_url?: string;
-  /** Workspace skill IDs attached **in addition to** the template's
-   *  skills. Server dedupes against template skills automatically. */
-  extra_skill_ids?: string[];
-}
-
-export interface CreateAgentFromTemplateResponse {
-  agent: Agent;
-  /** Skill IDs that were newly created in the workspace from upstream URLs. */
-  imported_skill_ids: string[];
-  /** Skill IDs that already existed in the workspace (same name) and were
-   *  reused rather than re-imported. The UI can surface this as a toast so
-   *  the user knows their pre-existing skill wasn't overwritten. */
-  reused_skill_ids: string[];
-}
-
-/** 422 body returned by `POST /api/agents/from-template` when one or more
- *  template skill URLs cannot be reached. The transaction is rolled back —
- *  no partial workspace state. */
-export interface CreateAgentFromTemplateFailure {
-  error: string;
-  failed_urls: string[];
 }
 
 export interface UpdateAgentRequest {
@@ -426,7 +355,7 @@ export interface UpdateAgentRequest {
    *     validate / translate it according to their own MCP integration
    */
   mcp_config?: unknown | null;
-  visibility?: AgentVisibility;
+  scope?: AgentScope;
   status?: AgentStatus;
   max_concurrent_tasks?: number;
   model?: string;
@@ -526,6 +455,43 @@ export interface IssueUsageSummary {
   task_count: number;
 }
 
+export interface TaskTraceEvent {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  issue_id: string | null;
+  agent_id: string;
+  runtime_id: string | null;
+  squad_id: string | null;
+  project_id: string | null;
+  source: string;
+  event_type: string;
+  event_name: string;
+  status: string;
+  attempt: number;
+  duration_ms?: number | null;
+  queue_wait_ms?: number | null;
+  run_ms?: number | null;
+  total_ms?: number | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  failure_reason: string;
+  error_type: string;
+  trigger_comment_id: string | null;
+  autopilot_run_id: string | null;
+  chat_session_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface IssueTaskTraceResponse {
+  events: TaskTraceEvent[];
+}
+
 export interface RuntimeUsage {
   runtime_id: string;
   date: string;
@@ -535,6 +501,13 @@ export interface RuntimeUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
 export interface RuntimeHourlyActivity {
@@ -543,10 +516,8 @@ export interface RuntimeHourlyActivity {
 }
 
 // One (agent, provider, model) row of the "Cost by agent" tab on the runtime
-// detail page. provider + model stay on the wire because cost is computed
-// client-side from a per-model pricing table (provider disambiguates bare
-// model ids that collide across providers) — the client groups these rows by
-// agent_id and sums cost per agent across models.
+// detail page. The backend computes cost per row; the client groups these rows
+// by agent_id and sums cost per agent across models.
 export interface RuntimeUsageByAgent {
   agent_id: string;
   provider: string;
@@ -556,29 +527,46 @@ export interface RuntimeUsageByAgent {
   cache_read_tokens: number;
   cache_write_tokens: number;
   task_count: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
-// One (hour, model) row for the "By hour" tab; hour ∈ 0..23. Hours with
-// zero activity are omitted by the server; the client fills the gap to
-// render a continuous axis. Model preserved for client-side cost math.
+// One (task, provider, model) row for the "Cost by task" tab on the runtime
+// detail page. The client folds rows by task_id after pricing each model row.
+export interface RuntimeUsageByTask {
+  task_id: string;
+  issue_id: string | null;
+  issue_number: number;
+  issue_title: string;
+  agent_id: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
+}
+
+// One (hour, provider, model) row for the "By hour" tab; hour ∈ 0..23. Hours
+// with zero activity are omitted by the server; the client fills the gap to
+// render a continuous axis.
 export interface RuntimeUsageByHour {
   hour: number;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-}
-
-// One (date, provider, model) bucket of token usage for the workspace
-// dashboard. Workspace-scoped (no runtime_id) and optionally narrowed to a
-// single project on the server side. `provider` is kept on the wire so the
-// client can disambiguate bare model ids that collide across providers
-// (e.g. Cursor's `auto` vs another provider's `auto`) when pricing. Cost
-// stays client-side via the model pricing table.
-export interface DashboardUsageDaily {
-  date: string;
   provider: string;
   model: string;
   input_tokens: number;
@@ -586,60 +574,13 @@ export interface DashboardUsageDaily {
   cache_read_tokens: number;
   cache_write_tokens: number;
   task_count: number;
-}
-
-// Per-(agent, model) token totals for the workspace dashboard. Identical
-// wire shape to RuntimeUsageByAgent — the client folds by agent_id and
-// sums cost.
-export interface DashboardUsageByAgent {
-  agent_id: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-}
-
-// Per-agent total terminal-task run-time + counts. Powers the workspace
-// dashboard's "time by agent" list. failed_count is a subset of
-// task_count (failed tasks still contribute to total_seconds because
-// they consumed runtime to fail).
-export interface DashboardAgentRunTime {
-  agent_id: string;
-  total_seconds: number;
-  task_count: number;
-  failed_count: number;
-}
-
-// One (date) bucket of terminal-task run-time + counts for the workspace
-// dashboard. Powers the Time and Tasks metrics on the daily-trend toggle
-// — same toggle as Tokens / Cost, anchored on completed_at so day buckets
-// line up with the per-agent run-time card.
-export interface DashboardRunTimeDaily {
-  date: string;
-  total_seconds: number;
-  task_count: number;
-  failed_count: number;
-}
-
-export type RuntimeUpdateStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "timeout";
-
-export interface RuntimeUpdate {
-  id: string;
-  runtime_id: string;
-  status: RuntimeUpdateStatus;
-  target_version: string;
-  output?: string;
-  error?: string;
-  created_at: string;
-  updated_at: string;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
 export interface RuntimeModel {

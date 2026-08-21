@@ -46,8 +46,8 @@ if (typeof window.matchMedia !== "function") {
     }) as MediaQueryList;
 }
 
-// jsdom doesn't provide ResizeObserver; stub it so components that rely on it
-// (e.g. input-otp) can render in tests.
+// jsdom doesn't provide ResizeObserver; stub it so layout-aware components can
+// render in tests.
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class ResizeObserver {
     observe() {}
@@ -56,7 +56,7 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
-// jsdom doesn't implement elementFromPoint; input-otp uses it internally.
+// jsdom doesn't implement elementFromPoint; some interaction helpers expect it.
 if (typeof document.elementFromPoint !== "function") {
   document.elementFromPoint = () => null;
 }

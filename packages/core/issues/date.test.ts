@@ -19,9 +19,9 @@ describe("issue date-only helpers", () => {
   it("formats a date-only string timezone-safely (no day shift)", () => {
     // The bug: a calendar day must render as the same day in every timezone.
     expect(
-      formatDateOnly("2026-03-01", { month: "short", day: "numeric" }, "en-US"),
-    ).toBe("Mar 1");
-    expect(formatDateOnly("2026-03-01", undefined, "en-US")).toBe("Mar 1");
+      formatDateOnly("2026-03-01", { month: "short", day: "numeric" }, "zh-CN"),
+    ).toBe("3月1日");
+    expect(formatDateOnly("2026-03-01", undefined, "zh-CN")).toBe("3月1日");
     expect(formatDateOnly(null)).toBe("");
     expect(formatDateOnly("")).toBe("");
   });
@@ -30,8 +30,8 @@ describe("issue date-only helpers", () => {
     const picked = new Date(2026, 2, 1); // user clicks March 1 locally
     const stored = toDateOnly(picked);
     expect(stored).toBe("2026-03-01");
-    expect(formatDateOnly(stored, { month: "short", day: "numeric" }, "en-US")).toBe(
-      "Mar 1",
+    expect(formatDateOnly(stored, { month: "short", day: "numeric" }, "zh-CN")).toBe(
+      "3月1日",
     );
   });
 

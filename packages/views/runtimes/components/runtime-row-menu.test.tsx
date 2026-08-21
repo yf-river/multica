@@ -5,12 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, runtimes: enRuntimes, agents: enAgents },
+  "zh-Hans": { common: enCommon, runtimes: enRuntimes, agents: enAgents },
 };
 
 // Stub the workspace queries the columns reach into. None of them feed the
@@ -91,7 +91,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     device_info: "",
     metadata: {},
     owner_id: "user-1",
-    visibility: "private",
+    scope: "personal",
     last_seen_at: null,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
@@ -114,7 +114,7 @@ function renderActionsCell(row: RuntimeRow) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         <RuntimeRowMenu
           runtime={row.runtime}
@@ -136,21 +136,21 @@ describe("runtime list row menu", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "local", status: "online" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
   });
 
   it("renders the kebab menu for an offline local runtime", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "local", status: "offline" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
   });
 
   it("renders the kebab menu for a cloud runtime regardless of status", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "cloud", status: "online" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
   });
 
   it("hides the kebab menu when the caller lacks delete permission", () => {
@@ -163,7 +163,7 @@ describe("runtime list row menu", () => {
         /* canDelete */ false,
       ),
     );
-    expect(screen.queryByLabelText("Row actions")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("行操作")).not.toBeInTheDocument();
   });
 });
 
@@ -173,7 +173,7 @@ function renderCliCell(row: RuntimeRow) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         <CliCell runtime={row.runtime} />
       </QueryClientProvider>

@@ -22,11 +22,11 @@ import "fmt"
 // there are no new comments (newCommentCount <= 0) or issueID is empty. In those
 // cases the caller falls back to BuildResumedCommentsHint (when a prior session
 // is active) or BuildColdCommentsHint.
-func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
+func BuildNewCommentsHint(issueID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
 	if newCommentCount <= 0 || newCommentsSince == "" || issueID == "" {
 		return ""
 	}
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+	threadID := triggerThreadID
 	// When we know the triggering thread, steer the agent to read THAT thread
 	// first rather than blindly pulling every new comment issue-wide. The
 	// issue-wide --since catch-up is demoted to an only-if-needed fallback.
@@ -60,7 +60,7 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 // replies should refresh the triggering conversation rather than trusting
 // resumed memory alone.
 func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+	threadID := triggerThreadID
 	if issueID == "" || threadID == "" {
 		return ""
 	}
@@ -88,8 +88,8 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 // single-source rule as BuildNewCommentsHint, PR #2816). Returns "" when there
 // is no triggering comment to thread from, so the caller can keep a final plain
 // fallback.
-func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
+func BuildColdCommentsHint(issueID, triggerThreadID string) string {
+	threadID := triggerThreadID
 	if issueID == "" || threadID == "" {
 		return ""
 	}
@@ -100,13 +100,6 @@ func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) st
 			"Need cross-thread background? `multica issue comment list %s --recent 20 --output json`.\n\n",
 		issueID, threadID, issueID,
 	)
-}
-
-func activeThreadID(triggerThreadID, triggerCommentID string) string {
-	if triggerThreadID != "" {
-		return triggerThreadID
-	}
-	return triggerCommentID
 }
 
 // BuildCommentReplyInstructions returns the canonical block telling an agent
@@ -123,12 +116,12 @@ func activeThreadID(triggerThreadID, triggerCommentID string) string {
 // guards against lives at the shell layer, so it cannot be scoped to one
 // provider or one OS:
 //
-//   - Inline `--content "..."` lets the shell rewrite the body BEFORE the CLI
-//     receives it: a backtick-wrapped token becomes a failed command
+//   - Shell-inline comment bodies let the shell rewrite the body BEFORE the
+//     CLI receives it: a backtick-wrapped token becomes a failed command
 //     substitution that is silently deleted, the stored comment no longer
 //     matches what the model intended, and a model that notices the mismatch
-//     can retry forever (MUL-2904 / OKK-497). It also lets Codex emit literal
-//     `\n` escapes inside `--content` (MUL-1467).
+//     can retry forever (MUL-2904 / OKK-497). They also let Codex emit literal
+//     `\n` escapes instead of real Markdown line breaks (MUL-1467).
 //   - `--content-stdin` with a HEREDOC has TWO failure modes the model cannot
 //     see:
 //     1. On Windows, PowerShell 5.1's `$OutputEncoding` defaults to
@@ -162,11 +155,10 @@ func BuildCommentReplyInstructions(provider, issueID, triggerCommentID string) s
 			"If you decide to reply, post it as a comment — always use the trigger comment ID below, "+
 				"do NOT reuse --parent values from previous turns in this session.\n\n"+
 				"On Windows, write the reply body to a UTF-8 file with your file-write tool, then post it with `--content-file`. "+
-				"Do NOT pipe via `--content-stdin` — Windows PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping to native commands and silently drops non-ASCII (Chinese, Japanese, Cyrillic, accents, emoji) as `?` before the bytes reach `multica.exe`. "+
-				"Do NOT use inline `--content`; it is easy to lose formatting or accidentally compress a structured reply into one line.\n\n"+
+				"Do NOT pipe via `--content-stdin` — Windows PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping to native commands and silently drops non-ASCII (Chinese, Japanese, Cyrillic, accents, emoji) as `?` before the bytes reach `multica.exe`.\n\n"+
 				"Use this form, preserving the same issue ID and --parent value:\n\n"+
 				"    # 1. Write the reply body to a UTF-8 file (e.g. reply.md) with your file-write tool.\n"+
-				"    # 2. Post the comment:\n"+
+				"    # 2. Post the comment. Do not add --attachment for markdown artifacts saved under the managed artifact directory; the daemon uploads those automatically.\n"+
 				"    multica issue comment add %s --parent %s --content-file ./reply.md\n"+
 				"    # 3. Remove the temp file so a later run does not pick up stale content:\n"+
 				"    Remove-Item ./reply.md\n\n"+
@@ -187,12 +179,11 @@ func BuildCommentReplyInstructions(provider, issueID, triggerCommentID string) s
 		"If you decide to reply, post it as a comment — always use the trigger comment ID below, "+
 			"do NOT reuse --parent values from previous turns in this session.\n\n"+
 			"Write the reply body to a UTF-8 file with your file-write tool first, then post it with `--content-file`. "+
-			"Do NOT use inline `--content`; the shell rewrites unescaped backticks, `$()`, `$VAR`, or quotes in the body before the CLI receives them. "+
 			"Do NOT use `--content-stdin` with a HEREDOC either — when extra flags (e.g. `--assignee`, `--project` on `multica issue create`) accompany the command, the bash heredoc/flag boundary is fragile and flags can be silently swallowed into the stdin stream while the command still exits 0 (see GitHub #4182, OXY-78 / OXY-76). "+
-			"It is also easy to lose formatting or compress a structured reply into one line with inline forms.\n\n"+
+			"The file preserves Markdown structure without forcing the reply into one shell argument.\n\n"+
 			"Use this form, preserving the same issue ID and --parent value:\n\n"+
 			"    # 1. Write the reply body to a UTF-8 file (e.g. reply.md) with your file-write tool.\n"+
-			"    # 2. Post the comment:\n"+
+			"    # 2. Post the comment. Do not add --attachment for markdown artifacts saved under the managed artifact directory; the daemon uploads those automatically.\n"+
 			"    multica issue comment add %s --parent %s --content-file ./reply.md\n"+
 			"    # 3. Remove the temp file so a later run does not pick up stale content:\n"+
 			"    rm ./reply.md\n\n"+

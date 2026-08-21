@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+const agentErrorPrefix = "agent_error."
+
 // TestReasonStringWireValues pins the on-the-wire string for every
 // canonical reason. These strings are persisted into
 // agent_task_queue.failure_reason and surfaced as Prometheus labels —
@@ -56,53 +58,6 @@ func TestReasonStringWireValues(t *testing.T) {
 	}
 }
 
-// TestIsAgentError pins the platform-side vs agent-side split so a
-// future Prometheus collector / retry policy can rely on the prefix
-// rather than maintaining a parallel allow-list.
-func TestIsAgentError(t *testing.T) {
-	t.Parallel()
-
-	platformSide := []Reason{
-		ReasonQueuedExpired,
-		ReasonRuntimeOffline,
-		ReasonRuntimeRecovery,
-		ReasonTimeout,
-		ReasonIterationLimit,
-		ReasonAgentBlocked,
-		ReasonAPIInvalidRequest,
-	}
-	for _, r := range platformSide {
-		if r.IsAgentError() {
-			t.Errorf("%q.IsAgentError() = true, want false (platform-side)", r)
-		}
-	}
-
-	agentSide := []Reason{
-		ReasonAgentProviderAuthOrAccess,
-		ReasonAgentProviderQuotaLimit,
-		ReasonAgentProviderCapacityOrRateLimit,
-		ReasonAgentProviderServerError,
-		ReasonAgentProviderNetwork,
-		ReasonAgentProcessFailure,
-		ReasonAgentEmptyOrUnparseableOutput,
-		ReasonAgentTimeout,
-		ReasonAgentContextOverflow,
-		ReasonAgentMissingConfig,
-		ReasonAgentModelNotFoundOrUnavailable,
-		ReasonAgentRuntimeVersionUnsupported,
-		ReasonAgentRuntimeMissingExecutable,
-		ReasonAgentUnknown,
-	}
-	for _, r := range agentSide {
-		if !r.IsAgentError() {
-			t.Errorf("%q.IsAgentError() = false, want true (agent-side)", r)
-		}
-		if !strings.HasPrefix(r.String(), "agent_error.") {
-			t.Errorf("%q missing required agent_error. prefix", r)
-		}
-	}
-}
-
 // TestAllReasonsContents verifies that AllReasons() returns the
 // complete canonical taxonomy with no duplicates and no surprise
 // values. Prometheus pre-warming relies on this fixture being stable.
@@ -121,7 +76,7 @@ func TestAllReasonsContents(t *testing.T) {
 			t.Errorf("AllReasons() returned duplicate %q", r)
 		}
 		seen[r] = true
-		if r.IsAgentError() {
+		if strings.HasPrefix(r.String(), agentErrorPrefix) {
 			agentCount++
 		} else {
 			platformCount++

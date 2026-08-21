@@ -43,3 +43,13 @@ WITH deleted_pending_check_suites AS (
     DELETE FROM github_pending_check_suite WHERE workspace_id = $1
 )
 DELETE FROM workspace WHERE id = $1;
+
+-- name: GetInitialOwnerByWorkspace :one
+SELECT m.id AS member_id, m.workspace_id, m.user_id, m.role, m.created_at AS member_created_at,
+       u.name AS user_name, u.account AS user_account
+FROM member m
+JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = $1
+  AND m.role = 'owner'
+ORDER BY m.created_at ASC
+LIMIT 1;

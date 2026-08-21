@@ -3,6 +3,29 @@ export type MemberRole = "owner" | "admin" | "member";
 export interface WorkspaceRepo {
   url: string;
   description?: string;
+  provider?: "gongfeng" | string;
+  project_path?: string;
+  default_branch?: string;
+  head_commit?: string;
+  commit_sha?: string;
+  connection_status?: string;
+  sync_status?: string;
+  test_status?: string;
+  last_tested_at?: string;
+  last_synced_at?: string;
+  resolve_status?: string;
+  resolve_error?: string;
+  last_resolved_at?: string;
+}
+
+export interface WorkspaceRepoProbeResponse {
+  url: string;
+  provider: "gongfeng" | string;
+  project_path: string;
+  default_branch: string;
+  branches: string[];
+  connection_status: string;
+  test_status: string;
 }
 
 export interface Workspace {
@@ -30,7 +53,7 @@ export interface Member {
 export interface User {
   id: string;
   name: string;
-  email: string;
+  account: string;
   avatar_url: string | null;
   onboarded_at: string | null;
   /**
@@ -48,8 +71,6 @@ export interface User {
    * Kept as `string | null` for forward compatibility.
    */
   starter_content_state: string | null;
-  /** Preferred UI language. null means "follow client/system". */
-  language: string | null;
   /**
    * Free-form self-description (role, stack, preferences). Injected into
    * the agent brief so coding agents have cheap, durable context about
@@ -70,22 +91,6 @@ export interface MemberWithUser {
   role: MemberRole;
   created_at: string;
   name: string;
-  email: string;
+  account: string;
   avatar_url: string | null;
-}
-
-export interface Invitation {
-  id: string;
-  workspace_id: string;
-  inviter_id: string;
-  invitee_email: string;
-  invitee_user_id: string | null;
-  role: MemberRole;
-  status: "pending" | "accepted" | "declined" | "expired";
-  created_at: string;
-  updated_at: string;
-  expires_at: string;
-  inviter_name?: string;
-  inviter_email?: string;
-  workspace_name?: string;
 }

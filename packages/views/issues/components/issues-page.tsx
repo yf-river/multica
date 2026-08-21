@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { ListTodo } from "lucide-react";
-import type { UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useIssueViewStore, useClearFiltersOnWorkspaceChange, type IssueDateFilter } from "@multica/core/issues/stores/view-store";
@@ -27,6 +27,31 @@ import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
+
+function childProgressMapFromIssues(issues: Issue[]): Map<string, ChildProgress> {
+  const map = new Map<string, ChildProgress>();
+  for (const issue of issues) {
+    if (!issue.child_progress || issue.child_progress.total <= 0) continue;
+    map.set(issue.id, issue.child_progress);
+  }
+  return map;
+}
+
+function hasCompleteChildProgressSummaries(issues: Issue[]) {
+  return issues.every((issue) => issue.child_progress !== undefined);
+}
+
+function runningIssueIdsFromAgentActivitySummaries(issues: Issue[]): Set<string> {
+  const ids = new Set<string>();
+  for (const issue of issues) {
+    if ((issue.agent_activity?.running_count ?? 0) > 0) ids.add(issue.id);
+  }
+  return ids;
+}
+
+function hasCompleteAgentActivitySummaries(issues: Issue[]) {
+  return issues.every((issue) => issue.agent_activity !== undefined);
+}
 
 function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
   if (!filter) return {};
@@ -85,21 +110,6 @@ export function IssuesPage() {
     [dateParams, sort],
   );
 
-  // Derive the set of issue ids that currently have at least one
-  // `running` agent task. Used by the workspace agents-working filter
-  // chip. Subscribing the page here (not deep in filter.ts) keeps the
-  // filter pure and lets the snapshot stay cached at one workspace-
-  // scoped place — every issue card already subscribes for its own
-  // indicator, so this is a no-op extra fetch.
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const runningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of snapshot) {
-      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
-    }
-    return ids;
-  }, [snapshot]);
-
   const assigneeGroupFilter = useMemo<AssigneeGroupedIssuesFilter>(() => {
     const filter: AssigneeGroupedIssuesFilter = {
       statuses: statusFilters.length > 0 ? statusFilters : [...BOARD_STATUSES],
@@ -129,13 +139,17 @@ export function IssuesPage() {
     () => statusIssuesQuery.data ?? [],
     [statusIssuesQuery.data],
   );
-  const assigneeIssues = useMemo(
-    () => assigneeGroupsQuery.data?.groups.flatMap((group) => group.issues) ?? [],
-    [assigneeGroupsQuery.data],
-  );
   const loading = usesAssigneeBoard
     ? assigneeGroupsQuery.isLoading
     : statusIssuesQuery.isLoading;
+  const visibleAllIssues = allIssues;
+  const visibleAssigneeGroups = useMemo(() => {
+    return assigneeGroupsQuery.data?.groups ?? [];
+  }, [assigneeGroupsQuery.data]);
+  const visibleAssigneeIssues = useMemo(
+    () => visibleAssigneeGroups.flatMap((group) => group.issues),
+    [visibleAssigneeGroups],
+  );
 
   // Clear filter state when switching between workspaces (URL-driven).
   useClearFiltersOnWorkspaceChange(useIssueViewStore, wsId);
@@ -147,13 +161,32 @@ export function IssuesPage() {
   // Scope pre-filter: narrow by assignee type
   const scopedIssues = useMemo(() => {
     if (scope === "members")
-      return allIssues.filter((i) => i.assignee_type === "member");
+      return visibleAllIssues.filter((i) => i.assignee_type === "member");
     if (scope === "agents")
-      return allIssues.filter((i) => i.assignee_type === "agent" || i.assignee_type === "squad");
-    return allIssues;
-  }, [allIssues, scope]);
+      return visibleAllIssues.filter((i) => i.assignee_type === "agent" || i.assignee_type === "squad");
+    return visibleAllIssues;
+  }, [visibleAllIssues, scope]);
 
-  const headerIssues = usesAssigneeBoard ? assigneeIssues : scopedIssues;
+  const headerIssues = usesAssigneeBoard ? visibleAssigneeIssues : scopedIssues;
+
+  const agentActivitySourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
+  const hasListAgentActivity = hasCompleteAgentActivitySummaries(agentActivitySourceIssues);
+  const listRunningIssueIds = useMemo(
+    () => runningIssueIdsFromAgentActivitySummaries(agentActivitySourceIssues),
+    [agentActivitySourceIssues],
+  );
+  const { data: fallbackSnapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId),
+    enabled: !hasListAgentActivity,
+  });
+  const fallbackRunningIssueIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of fallbackSnapshot) {
+      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
+    }
+    return ids;
+  }, [fallbackSnapshot]);
+  const runningIssueIds = hasListAgentActivity ? listRunningIssueIds : fallbackRunningIssueIds;
 
   const issues = useMemo(
     () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds }),
@@ -187,9 +220,17 @@ export function IssuesPage() {
     agentRunningFilter,
   ]);
 
-  // Fetch sub-issue progress from the backend so counts are accurate
-  // regardless of client-side pagination or filtering of done issues.
-  const { data: childProgressMap = EMPTY_CHILD_PROGRESS } = useQuery(childIssueProgressOptions(wsId));
+  const childProgressSourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
+  const hasListChildProgress = hasCompleteChildProgressSummaries(childProgressSourceIssues);
+  const listChildProgressMap = useMemo(
+    () => childProgressMapFromIssues(childProgressSourceIssues),
+    [childProgressSourceIssues],
+  );
+  const { data: fallbackChildProgressMap = EMPTY_CHILD_PROGRESS } = useQuery({
+    ...childIssueProgressOptions(wsId),
+    enabled: !hasListChildProgress,
+  });
+  const childProgressMap = hasListChildProgress ? listChildProgressMap : fallbackChildProgressMap;
 
   const visibleStatuses = useMemo(() => {
     if (statusFilters.length > 0)
@@ -262,8 +303,8 @@ export function IssuesPage() {
           <div className="flex flex-col flex-1 min-h-0">
             {viewMode === "board" ? (
               <BoardView
-                issues={usesAssigneeBoard ? assigneeIssues : issues}
-                assigneeGroups={usesAssigneeBoard ? assigneeGroupsQuery.data?.groups : undefined}
+                issues={usesAssigneeBoard ? visibleAssigneeIssues : issues}
+                assigneeGroups={usesAssigneeBoard ? visibleAssigneeGroups : undefined}
                 assigneeGroupQueryKey={usesAssigneeBoard ? assigneeGroupsOptions.queryKey : undefined}
                 assigneeGroupFilter={usesAssigneeBoard ? assigneeGroupFilter : undefined}
                 visibleStatuses={visibleStatuses}

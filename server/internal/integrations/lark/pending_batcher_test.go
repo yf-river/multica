@@ -79,6 +79,12 @@ func newTestBatcher(f *fakeTimerFactory) *pendingBatcher {
 	}
 }
 
+func pendingBatchCount(b *pendingBatcher) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.pending)
+}
+
 func TestPendingBatcher_DebounceCoalesces(t *testing.T) {
 	f := &fakeTimerFactory{}
 	b := newTestBatcher(f)
@@ -89,7 +95,7 @@ func TestPendingBatcher_DebounceCoalesces(t *testing.T) {
 	b.Schedule("s", flush)
 	b.Schedule("s", flush)
 
-	if got := b.pendingCount(); got != 1 {
+	if got := pendingBatchCount(b); got != 1 {
 		t.Fatalf("three Schedules on one session must keep a single pending entry; got %d", got)
 	}
 	if got := f.armedCount(); got != 1 {
@@ -100,7 +106,7 @@ func TestPendingBatcher_DebounceCoalesces(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("a debounced burst must flush exactly once; got %d", calls)
 	}
-	if got := b.pendingCount(); got != 0 {
+	if got := pendingBatchCount(b); got != 0 {
 		t.Fatalf("the session entry must be cleaned up after flush; pending=%d", got)
 	}
 }
@@ -113,7 +119,7 @@ func TestPendingBatcher_MultiSessionIndependent(t *testing.T) {
 	b.Schedule("a", func() { a++ })
 	b.Schedule("c", func() { c++ })
 
-	if got := b.pendingCount(); got != 2 {
+	if got := pendingBatchCount(b); got != 2 {
 		t.Fatalf("two distinct sessions must hold two windows; got %d", got)
 	}
 	f.fireArmed()
@@ -160,7 +166,7 @@ func TestPendingBatcher_FlushAllDrainsPending(t *testing.T) {
 	if a != 1 || c != 1 {
 		t.Fatalf("FlushAll must flush every pending session once; a=%d c=%d", a, c)
 	}
-	if got := b.pendingCount(); got != 0 {
+	if got := pendingBatchCount(b); got != 0 {
 		t.Fatalf("FlushAll must clear pending state; got %d", got)
 	}
 

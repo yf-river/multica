@@ -73,8 +73,181 @@ func updateChildStatus(t *testing.T, childID, status string) {
 	}
 }
 
+func getIssueStatus(t *testing.T, issueID string) string {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/issues/"+issueID, nil)
+	req = withURLParam(req, "id", issueID)
+	testHandler.GetIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssue %s: expected 200, got %d: %s", issueID, w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue %s: %v", issueID, err)
+	}
+	return issue.Status
+}
+
+func TestAgentCannotMarkGongfengIssueDoneWithoutLinkedMR(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "agent done MR gate " + time.Now().Format(time.RFC3339Nano),
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, created_by)
+		VALUES ($1, $2, 'gongfeng_repo', $3, 'user-center', $4)
+	`, project.ID, testWorkspaceID, `{"project_path":"ChainWeaver/ida/user-center","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/user-center"}`, testUserID); err != nil {
+		t.Fatalf("insert project resource: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "agent done requires MR " + time.Now().Format(time.RFC3339Nano),
+		"status":     "in_progress",
+		"project_id": project.ID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	agentID := createHandlerTestAgent(t, "Agent Done MR Gate "+randomID()[:8], nil)
+	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issue.ID)
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "done"})
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	req = withURLParam(req, "id", issue.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateIssue agent done without MR: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode conflict response: %v", err)
+	}
+	if resp.Code != "missing_linked_mr" {
+		t.Fatalf("conflict code = %q, want missing_linked_mr", resp.Code)
+	}
+	if got := getIssueStatus(t, issue.ID); got != "in_progress" {
+		t.Fatalf("issue status changed despite missing MR gate: got %q", got)
+	}
+}
+
+func TestParentDoneBlockedWhenChildNotDone(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+fx.parent.ID, map[string]any{"status": "done"})
+	req = withURLParam(req, "id", fx.parent.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateIssue parent done: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code               string                         `json:"code"`
+		IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode blocked response: %v", err)
+	}
+	if resp.Code != "child_issues_not_done" {
+		t.Fatalf("blocked code = %q, want child_issues_not_done", resp.Code)
+	}
+	if len(resp.IncompleteChildren) != 1 || resp.IncompleteChildren[0].ID != fx.child.ID || resp.IncompleteChildren[0].Status != "in_progress" {
+		t.Fatalf("incomplete children = %#v, want child %s in_progress", resp.IncompleteChildren, fx.child.ID)
+	}
+	if got := getIssueStatus(t, fx.parent.ID); got != "in_progress" {
+		t.Fatalf("parent status changed despite blocked done: got %q", got)
+	}
+}
+
+func TestParentDoneAllowedWhenAllChildrenDone(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+	updateChildStatus(t, fx.child.ID, "done")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+fx.parent.ID, map[string]any{"status": "done"})
+	req = withURLParam(req, "id", fx.parent.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue parent done: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := getIssueStatus(t, fx.parent.ID); got != "done" {
+		t.Fatalf("parent status = %q, want done", got)
+	}
+}
+
+func TestBatchUpdateIssuesReportsParentDoneBlockedByChildren(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+		"issue_ids": []string{fx.parent.ID},
+		"updates":   map[string]any{"status": "done"},
+	})
+	testHandler.BatchUpdateIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("BatchUpdateIssues parent done: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Updated       int    `json:"updated"`
+		BlockedReason string `json:"blocked_reason"`
+		Blocked       []struct {
+			IssueID            string                         `json:"issue_id"`
+			IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
+		} `json:"blocked"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
+	if resp.Updated != 0 {
+		t.Fatalf("updated = %d, want 0", resp.Updated)
+	}
+	if resp.BlockedReason != "child_issues_not_done" {
+		t.Fatalf("blocked_reason = %q, want child_issues_not_done", resp.BlockedReason)
+	}
+	if len(resp.Blocked) != 1 || resp.Blocked[0].IssueID != fx.parent.ID {
+		t.Fatalf("blocked = %#v, want parent %s", resp.Blocked, fx.parent.ID)
+	}
+	if len(resp.Blocked[0].IncompleteChildren) != 1 || resp.Blocked[0].IncompleteChildren[0].ID != fx.child.ID {
+		t.Fatalf("incomplete children = %#v, want child %s", resp.Blocked[0].IncompleteChildren, fx.child.ID)
+	}
+	if got := getIssueStatus(t, fx.parent.ID); got != "in_progress" {
+		t.Fatalf("parent status changed despite blocked batch done: got %q", got)
+	}
+}
+
 // countSystemCommentsOn returns the number of platform-generated comments on
-// the given issue. The schema CHECK was widened in migration 107 to allow
+// the given issue. The schema CHECK allows
 // author_type='system'; this query is the canary that the migration applied
 // and the helper inserts with the right author identity.
 func countSystemCommentsOn(t *testing.T, issueID string) int {
@@ -138,6 +311,12 @@ func TestChildDoneNotifiesParent(t *testing.T) {
 	if !strings.Contains(content, fx.child.Identifier) {
 		t.Errorf("expected comment to contain child identifier %q, got: %s", fx.child.Identifier, content)
 	}
+	if !strings.Contains(content, "子任务") || !strings.Contains(content, "已完成") {
+		t.Errorf("system comment should use Chinese child-done wording, got: %s", content)
+	}
+	if strings.Contains(content, "Sub-issue") || strings.Contains(content, "is done") {
+		t.Errorf("system comment must not use English child-done wording, got: %s", content)
+	}
 	if strings.Contains(content, "MUL-") {
 		t.Errorf("comment must not hardcode MUL- prefix, got: %s", content)
 	}
@@ -170,6 +349,38 @@ func TestChildDoneNotificationIsIdempotent(t *testing.T) {
 	updateChildStatus(t, fx.child.ID, "done")
 	if got := countSystemCommentsOn(t, fx.parent.ID); got != 1 {
 		t.Fatalf("after second done: expected still 1 comment (idempotent), got %d", got)
+	}
+}
+
+func TestChildDoneWaitsForAllSiblingChildren(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":           "child-done sibling " + time.Now().Format(time.RFC3339Nano),
+		"status":          "in_progress",
+		"parent_issue_id": fx.parent.ID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create sibling child: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var sibling IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&sibling); err != nil {
+		t.Fatalf("decode sibling: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, sibling.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+	if got := countSystemCommentsOn(t, fx.parent.ID); got != 0 {
+		t.Fatalf("after first child done: expected parent to wait for sibling, got %d comments", got)
+	}
+
+	updateChildStatus(t, sibling.ID, "done")
+	if got := countSystemCommentsOn(t, fx.parent.ID); got != 1 {
+		t.Fatalf("after all children done: expected exactly 1 parent notification, got %d", got)
 	}
 }
 
@@ -385,6 +596,165 @@ func TestChildDoneMentionsParentAssignee_Squad(t *testing.T) {
 	}
 	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 1 {
 		t.Errorf("expected 1 pending leader task for parent squad, got %d", got)
+	}
+}
+
+// TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild proves the canonical
+// SOP shape: a squad-owned parent may create squad-owned child issues, and
+// once all child work is done the parent leader must be woken to summarize and
+// close the parent. The guard for shared-leader loops must not suppress this
+// same-squad cross-issue handoff.
+func TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+
+	setIssueAssigneeDirect(t, fx.parent.ID, "squad", sq.SquadID)
+	setIssueAssigneeDirect(t, fx.child.ID, "squad", sq.SquadID)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(),
+			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
+			fx.parent.ID, fx.child.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	content := parentSystemCommentContent(t, fx.parent.ID)
+	if !strings.Contains(content, "mention://squad/"+sq.SquadID) {
+		t.Errorf("expected parent-squad mention in system comment, got: %s", content)
+	}
+	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 1 {
+		t.Errorf("expected 1 pending parent leader task for same-squad child handoff, got %d", got)
+	}
+}
+
+// TestCrossProjectChildrenWakeUserCenterParentSquad proves the microservice
+// orchestration shape users expect from the user-center SOP: a parent issue
+// stays in the usercenter project and is owned by a squad, while gateway and
+// config child issues live in their own projects. Completing the children
+// must write parent comments and wake the parent squad leader.
+func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
+	sq := newSquadCommentTriggerFixture(t)
+	ctx := context.Background()
+	var usercenterProjectID, gatewayProjectID, configProjectID string
+	var parentID, gatewayChildID, configChildID string
+	defer func() {
+		for _, issueID := range []string{gatewayChildID, configChildID, parentID} {
+			if issueID != "" {
+				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+			}
+		}
+		for _, projectID := range []string{configProjectID, gatewayProjectID, usercenterProjectID} {
+			if projectID != "" {
+				testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+			}
+		}
+	}()
+
+	createProject := func(title string) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+			"title": title,
+		})
+		testHandler.CreateProject(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateProject %q: expected 201, got %d: %s", title, w.Code, w.Body.String())
+		}
+		var project ProjectResponse
+		if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+			t.Fatalf("decode project %q: %v", title, err)
+		}
+		return project.ID
+	}
+	createIssue := func(title, projectID string, parentIssueID *string, assigneeType *string, assigneeID *string) IssueResponse {
+		t.Helper()
+		body := map[string]any{
+			"title":      title,
+			"status":     "todo",
+			"project_id": projectID,
+		}
+		if parentIssueID != nil {
+			body["parent_issue_id"] = *parentIssueID
+			body["status"] = "in_progress"
+		}
+		if assigneeType != nil && assigneeID != nil {
+			body["assignee_type"] = *assigneeType
+			body["assignee_id"] = *assigneeID
+		}
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+		testHandler.CreateIssue(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateIssue %q: expected 201, got %d: %s", title, w.Code, w.Body.String())
+		}
+		var issue IssueResponse
+		if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+			t.Fatalf("decode issue %q: %v", title, err)
+		}
+		return issue
+	}
+
+	usercenterProjectID = createProject("usercenter")
+	gatewayProjectID = createProject("gateway")
+	configProjectID = createProject("config")
+
+	squadAssigneeType := "squad"
+	parent := createIssue("usercenter 添加内部 API", usercenterProjectID, nil, &squadAssigneeType, &sq.SquadID)
+	parentID = parent.ID
+	if parent.ProjectID == nil || *parent.ProjectID != usercenterProjectID {
+		t.Fatalf("parent project_id = %v, want usercenter %s", parent.ProjectID, usercenterProjectID)
+	}
+	if parent.AssigneeType == nil || *parent.AssigneeType != "squad" || parent.AssigneeID == nil || *parent.AssigneeID != sq.SquadID {
+		t.Fatalf("parent assignee = %v/%v, want squad %s", parent.AssigneeType, parent.AssigneeID, sq.SquadID)
+	}
+
+	gatewayChild := createIssue("gateway 注册 usercenter API 路由", gatewayProjectID, &parentID, nil, nil)
+	gatewayChildID = gatewayChild.ID
+	configChild := createIssue("config 下发 usercenter API 配置", configProjectID, &parentID, nil, nil)
+	configChildID = configChild.ID
+
+	if gatewayChild.ParentIssueID == nil || *gatewayChild.ParentIssueID != parentID || gatewayChild.ProjectID == nil || *gatewayChild.ProjectID != gatewayProjectID {
+		t.Fatalf("gateway child parent/project = %v/%v, want %s/%s", gatewayChild.ParentIssueID, gatewayChild.ProjectID, parentID, gatewayProjectID)
+	}
+	if configChild.ParentIssueID == nil || *configChild.ParentIssueID != parentID || configChild.ProjectID == nil || *configChild.ProjectID != configProjectID {
+		t.Fatalf("config child parent/project = %v/%v, want %s/%s", configChild.ParentIssueID, configChild.ProjectID, parentID, configProjectID)
+	}
+
+	updateChildStatus(t, gatewayChildID, "done")
+	updateChildStatus(t, configChildID, "done")
+
+	if got := countSystemCommentsOn(t, parentID); got != 1 {
+		t.Fatalf("expected 1 all-sibling child-completion comment on usercenter parent, got %d", got)
+	}
+	var comments []string
+	rows, err := testPool.Query(ctx, `
+		SELECT content
+		FROM comment
+		WHERE issue_id = $1 AND author_type = 'system'
+		ORDER BY created_at ASC
+	`, parentID)
+	if err != nil {
+		t.Fatalf("list parent comments: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			t.Fatalf("scan parent comment: %v", err)
+		}
+		comments = append(comments, content)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 loaded comment, got %d", len(comments))
+	}
+	for _, want := range []string{configChild.Identifier, "mention://squad/" + sq.SquadID} {
+		joined := strings.Join(comments, "\n")
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected parent comments to contain %q, got: %s", want, joined)
+		}
+	}
+	if got := countPendingTasksForAgent(t, parentID, sq.LeaderID); got != 1 {
+		t.Errorf("expected one pending parent leader task after child completion wake, got %d", got)
 	}
 }
 

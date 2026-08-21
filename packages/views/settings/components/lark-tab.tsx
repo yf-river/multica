@@ -179,33 +179,14 @@ export function LarkTab() {
         </section>
       )}
 
-      <AlertDialog
+      <LarkDisconnectConfirmDialog
         open={!!disconnectTarget}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setDisconnectTarget(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t(($) => $.lark.disconnect_confirm_title)}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.lark.disconnect_confirm_description)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
-              {t(($) => $.lark.disconnect_confirm_cancel)}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDisconnect} disabled={disconnecting}>
-              {disconnecting
-                ? t(($) => $.lark.disconnecting)
-                : t(($) => $.lark.disconnect)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        disconnecting={disconnecting}
+        onConfirm={handleDisconnect}
+      />
     </div>
   );
 }
@@ -470,6 +451,44 @@ function LarkAgentBotStatusRow({
   );
 }
 
+function LarkDisconnectConfirmDialog({
+  open,
+  onOpenChange,
+  disconnecting,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  disconnecting: boolean;
+  onConfirm: () => void;
+}) {
+  const { t } = useT("settings");
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {t(($) => $.lark.disconnect_confirm_title)}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(($) => $.lark.disconnect_confirm_description)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={disconnecting}>
+            {t(($) => $.lark.disconnect_confirm_cancel)}
+          </AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm} disabled={disconnecting}>
+            {disconnecting
+              ? t(($) => $.lark.disconnecting)
+              : t(($) => $.lark.disconnect)}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 // LarkAgentBotConnectedBadge is the full "already connected" affordance the
 // Integrations tab renders in place of the Bind button when this agent has
 // an active Lark installation. (The inspector's left column uses the compact
@@ -594,36 +613,14 @@ function LarkAgentBotConnectedBadge({
           : t(($) => $.lark.agent_bot_manage_link_feishu)}
       </a>
 
-      <AlertDialog
+      <LarkDisconnectConfirmDialog
         open={confirmOpen}
         onOpenChange={(v) => {
           if (!v && !disconnecting) setConfirmOpen(false);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t(($) => $.lark.disconnect_confirm_title)}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(($) => $.lark.disconnect_confirm_description)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={disconnecting}>
-              {t(($) => $.lark.disconnect_confirm_cancel)}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-            >
-              {disconnecting
-                ? t(($) => $.lark.disconnecting)
-                : t(($) => $.lark.disconnect)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        disconnecting={disconnecting}
+        onConfirm={handleDisconnect}
+      />
     </div>
   );
 }

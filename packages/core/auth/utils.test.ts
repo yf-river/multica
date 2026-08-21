@@ -4,7 +4,6 @@ import { sanitizeNextUrl } from "./utils";
 describe("sanitizeNextUrl", () => {
   it("accepts single-slash relative paths", () => {
     expect(sanitizeNextUrl("/issues")).toBe("/issues");
-    expect(sanitizeNextUrl("/invite/123")).toBe("/invite/123");
     expect(sanitizeNextUrl("/issues?tab=assigned#top")).toBe(
       "/issues?tab=assigned#top",
     );

@@ -103,10 +103,6 @@ WHERE chat_session_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $2;
 
--- name: GetChatMessage :one
-SELECT * FROM chat_message
-WHERE id = $1;
-
 -- name: CreateChatTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id, initiator_user_id)
 VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
@@ -126,8 +122,7 @@ WHERE chat_session_id = $1
     status = 'completed'
     OR (
       status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
-      AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
+      AND failure_reason NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
     )
   )
   AND session_id IS NOT NULL

@@ -126,13 +126,6 @@ type AutopilotRunResponse struct {
 // ── Converters ──────────────────────────────────────────────────────────────
 
 func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) AutopilotResponse {
-	assigneeType := a.AssigneeType
-	if assigneeType == "" {
-		// Older rows pre-MUL-2429 may surface as "" against an out-of-date
-		// schema view; default to "agent" so the API contract stays
-		// non-null.
-		assigneeType = "agent"
-	}
 	subResp := make([]AutopilotSubscriberEntry, len(subscribers))
 	for i, s := range subscribers {
 		subResp[i] = AutopilotSubscriberEntry{
@@ -147,7 +140,7 @@ func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) A
 		Title:              a.Title,
 		Description:        textToPtr(a.Description),
 		ProjectID:          uuidToPtr(a.ProjectID),
-		AssigneeType:       assigneeType,
+		AssigneeType:       a.AssigneeType,
 		AssigneeID:         uuidToString(a.AssigneeID),
 		Status:             a.Status,
 		ExecutionMode:      a.ExecutionMode,
@@ -265,12 +258,10 @@ func runToResponseSlim(r db.AutopilotRun) AutopilotRunResponse {
 // ── Request types ───────────────────────────────────────────────────────────
 
 type CreateAutopilotRequest struct {
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	ProjectID   *string `json:"project_id"`
-	// AssigneeType is optional and defaults to "agent" — preserves backward
-	// compatibility with desktop clients shipped before MUL-2429.
-	AssigneeType       *string           `json:"assignee_type"`
+	Title              string            `json:"title"`
+	Description        *string           `json:"description"`
+	ProjectID          *string           `json:"project_id"`
+	AssigneeType       string            `json:"assignee_type"`
 	AssigneeID         string            `json:"assignee_id"`
 	ExecutionMode      string            `json:"execution_mode"`
 	IssueTitleTemplate *string           `json:"issue_title_template"`
@@ -476,15 +467,11 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assigneeType := "agent"
-	if req.AssigneeType != nil && *req.AssigneeType != "" {
-		assigneeType = *req.AssigneeType
-	}
-	if !isValidAutopilotAssigneeType(assigneeType) {
+	if !isValidAutopilotAssigneeType(req.AssigneeType) {
 		writeError(w, http.StatusBadRequest, "assignee_type must be agent or squad")
 		return
 	}
-	if !h.validateAutopilotAssignee(w, r, assigneeType, assigneeUUID, wsUUID) {
+	if !h.validateAutopilotAssignee(w, r, req.AssigneeType, assigneeUUID, wsUUID) {
 		return
 	}
 	projectID, ok := h.parseAutopilotProjectID(w, r, req.ProjectID, wsUUID)
@@ -509,7 +496,7 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	autopilot, err := qtx.CreateAutopilot(r.Context(), db.CreateAutopilotParams{
 		WorkspaceID:        wsUUID,
 		Title:              req.Title,
-		AssigneeType:       assigneeType,
+		AssigneeType:       req.AssigneeType,
 		AssigneeID:         assigneeUUID,
 		Status:             "active",
 		ExecutionMode:      req.ExecutionMode,
@@ -1085,6 +1072,11 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusUnprocessableEntity, "squad is archived; pick a different squad")
 			return false
 		}
+		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
+		if !h.canUseSquad(r.Context(), squad, actorType, actorID, util.UUIDToString(workspaceID)) {
+			writeError(w, http.StatusForbidden, "cannot assign autopilot to personal squad")
+			return false
+		}
 		leader, err := h.Queries.GetAgent(r.Context(), squad.LeaderID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "squad leader agent not found")
@@ -1095,10 +1087,9 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 			return false
 		}
 		// Private-leader gate: the member configuring the autopilot must have
-		// access to the private leader, same as validateAssigneePair.
-		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
-		if !h.canAccessPrivateAgent(r.Context(), leader, actorType, actorID, util.UUIDToString(workspaceID)) {
-			writeError(w, http.StatusForbidden, "cannot assign autopilot to squad with private leader")
+		// access to the personal leader, same as validateAssigneePair.
+		if !h.canAccessPersonalAgent(r.Context(), leader, actorType, actorID, util.UUIDToString(workspaceID)) {
+			writeError(w, http.StatusForbidden, "cannot assign autopilot to squad with personal leader")
 			return false
 		}
 		return true

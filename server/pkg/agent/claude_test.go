@@ -331,6 +331,44 @@ func TestBuildClaudeArgsIncludesStrictMCPConfig(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgs_AppliesToolEnvelope(t *testing.T) {
+	t.Parallel()
+
+	args := buildClaudeArgs(ExecOptions{
+		AllowedBuiltinTools: []string{"Bash"},
+		AllowedTools:        []string{"Bash(multica:*)"},
+		DisallowedTools:     []string{"Task", "Read", "Grep", "Task"},
+		CustomArgs:          []string{"--tools", "default", "--allowed-tools", "Read,Edit"},
+	}, slog.Default())
+
+	if got := valueAfterArg(args, "--tools"); got != "Bash" {
+		t.Fatalf("expected --tools Bash, got %q in %v", got, args)
+	}
+	if got := valueAfterArg(args, "--permission-mode"); got != "bypassPermissions" {
+		t.Fatalf("expected default --permission-mode bypassPermissions, got %q in %v", got, args)
+	}
+	if got := valueAfterArg(args, "--disallowedTools"); got != "AskUserQuestion,Task,Read,Grep" {
+		t.Fatalf("unexpected --disallowedTools %q in %v", got, args)
+	}
+	if got := valueAfterArg(args, "--allowedTools"); got != "Bash(multica:*)" {
+		t.Fatalf("unexpected --allowedTools %q in %v", got, args)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--tools default") || strings.Contains(joined, "--allowed-tools Read,Edit") {
+		t.Fatalf("custom tool envelope args should be filtered: %v", args)
+	}
+}
+
+func TestBuildClaudeArgs_AppliesPermissionMode(t *testing.T) {
+	t.Parallel()
+
+	args := buildClaudeArgs(ExecOptions{PermissionMode: "default"}, slog.Default())
+
+	if got := valueAfterArg(args, "--permission-mode"); got != "default" {
+		t.Fatalf("expected --permission-mode default, got %q in %v", got, args)
+	}
+}
+
 func TestFilterCustomArgsBlocksProtocolFlags(t *testing.T) {
 	t.Parallel()
 

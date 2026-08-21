@@ -6,17 +6,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
-// Directories to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// The shared directory is created if it doesn't exist, ensuring Codex session
-// logs are always written to the global home where users can find them.
-var codexSymlinkedDirs = []string{
-	"sessions",
-}
-
 // Files to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// Symlinks share state (e.g. auth tokens) so changes propagate automatically.
+// The daemon points CODEX_HOME at a runtime profile before tasks are prepared,
+// so this links to the runtime profile, not the user's interactive Codex home.
+// Auth stays shared at the runtime level so token refreshes propagate across
+// task-local homes without pushing session/log/state writes into the user home.
 var codexSymlinkedFiles = []string{
 	"auth.json",
 }
@@ -37,38 +35,26 @@ type CodexHomeOptions struct {
 	// daemon falls back to danger-full-access for network access. See
 	// codex_sandbox.go for details.
 	CodexVersion string
+	// WorkDir is the daemon-managed task workdir. It is written as a trusted
+	// project in the per-task config so headless Codex runs do not emit
+	// project-local-config trust errors for each dynamic task directory.
+	WorkDir string
 	// GOOS overrides the target platform when deciding the sandbox policy.
 	// Empty means use runtime.GOOS. Primarily exists so tests can exercise
 	// both macOS and Linux paths deterministically.
 	GOOS string
 }
 
-// prepareCodexHome is a thin wrapper around prepareCodexHomeWithOpts kept for
-// tests that don't care about platform-aware sandbox configuration. It
-// assumes a Linux-like environment where workspace-write + network_access
-// works correctly.
-func prepareCodexHome(codexHome string, logger *slog.Logger) error {
-	return prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, logger)
-}
-
 // prepareCodexHomeWithOpts creates a per-task CODEX_HOME directory and seeds
-// it with config from the shared ~/.codex/ home. Auth is symlinked (shared),
-// config files are copied (isolated). The per-task config.toml gets a
-// daemon-managed sandbox block picked by codexSandboxPolicyFor.
+// it from the daemon's shared runtime Codex home. Auth is symlinked to the
+// runtime profile; config files are copied; session/log/state files stay local
+// to the task home. The per-task config.toml gets a daemon-managed sandbox
+// block picked by codexSandboxPolicyFor.
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
 	sharedHome := resolveSharedCodexHome()
 
 	if err := os.MkdirAll(codexHome, 0o755); err != nil {
 		return fmt.Errorf("create codex-home dir: %w", err)
-	}
-
-	// Symlink shared directories (sessions) so logs stay in the global home.
-	for _, name := range codexSymlinkedDirs {
-		src := filepath.Join(sharedHome, name)
-		dst := filepath.Join(codexHome, name)
-		if err := ensureDirSymlink(src, dst); err != nil {
-			logger.Warn("execenv: codex-home dir symlink failed", "dir", name, "error", err)
-		}
 	}
 
 	// Symlink shared files (auth).
@@ -133,7 +119,55 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		logger.Warn("execenv: codex-home ensure memory config failed", "error", err)
 	}
 
+	if err := ensureCodexTrustedProject(filepath.Join(codexHome, "config.toml"), opts.WorkDir); err != nil {
+		logger.Warn("execenv: codex-home ensure trusted project failed", "error", err)
+	}
+
 	return nil
+}
+
+func ensureCodexTrustedProject(configPath, workDir string) error {
+	if strings.TrimSpace(workDir) == "" {
+		return nil
+	}
+	absWorkDir, err := filepath.Abs(workDir)
+	if err != nil {
+		absWorkDir = workDir
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read config.toml: %w", err)
+	}
+
+	header := "[projects." + strconv.Quote(absWorkDir) + "]"
+	content := stripTomlTable(string(data), header)
+	content = strings.TrimRight(content, "\n")
+	if content != "" {
+		content += "\n\n"
+	}
+	content += header + "\ntrust_level = \"trusted\"\n"
+	return os.WriteFile(configPath, []byte(content), 0o600)
+}
+
+func stripTomlTable(content, header string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	skipping := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == header {
+			skipping = true
+			continue
+		}
+		if skipping && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			skipping = false
+		}
+		if !skipping {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // resolveSharedCodexHome returns the path to the user's shared Codex home.
@@ -184,30 +218,6 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 	return nil
 }
 
-// ensureDirSymlink creates a symlink dst → src for a directory.
-// Unlike ensureSymlink, it creates the source directory if it doesn't exist,
-// so Codex can write to it immediately.
-func ensureDirSymlink(src, dst string) error {
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		return fmt.Errorf("create shared dir %s: %w", src, err)
-	}
-
-	// Check if dst already exists.
-	if fi, err := os.Lstat(dst); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(dst)
-			if err == nil && target == src {
-				return nil // already correct
-			}
-			os.Remove(dst)
-		} else {
-			// Regular file/dir exists — don't overwrite.
-			return nil
-		}
-	}
-
-	return createDirLink(src, dst)
-}
 
 // ensureSymlink ensures dst tracks src. If src doesn't exist, it's a no-op.
 // If dst is already a symlink pointing at src, it's a no-op. Otherwise — a

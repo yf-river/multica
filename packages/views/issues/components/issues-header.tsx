@@ -176,6 +176,79 @@ function useIssueCounts(allIssues: Issue[]) {
 
 const SCOPE_VALUES: IssuesScope[] = ["all", "members", "agents"];
 
+export type IssueScopeOption<T extends string> = {
+  value: T;
+  label: string;
+  description: string;
+};
+
+export function IssueScopeSelector<T extends string>({
+  options,
+  value,
+  activeLabel,
+  onChange,
+}: {
+  options: IssueScopeOption<T>[];
+  value: T;
+  activeLabel: string;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <>
+      <div className="hidden shrink-0 items-center gap-1 md:flex">
+        {options.map((option) => (
+          <Tooltip key={option.value}>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={
+                    value === option.value
+                      ? "bg-accent text-accent-foreground hover:bg-accent/80"
+                      : "text-muted-foreground"
+                  }
+                  onClick={() => onChange(option.value)}
+                >
+                  {option.label}
+                </Button>
+              }
+            />
+            <TooltipContent side="bottom">{option.description}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 gap-1 text-muted-foreground md:hidden"
+            >
+              <span className="truncate">{activeLabel}</span>
+              <ChevronDown className="size-3 text-muted-foreground" />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="start" className="w-auto">
+          <DropdownMenuRadioGroup
+            value={value}
+            onValueChange={(next) => onChange(next as T)}
+          >
+            {options.map((option) => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Actor sub-menu content (shared between Assignee and Creator)
 // ---------------------------------------------------------------------------
@@ -184,6 +257,7 @@ function ActorSubContent({
   counts,
   selected,
   onToggle,
+  enabled,
   showNoAssignee,
   includeNoAssignee,
   onToggleNoAssignee,
@@ -193,6 +267,7 @@ function ActorSubContent({
   counts: Map<string, number>;
   selected: ActorFilterValue[];
   onToggle: (value: ActorFilterValue) => void;
+  enabled: boolean;
   showNoAssignee?: boolean;
   includeNoAssignee?: boolean;
   onToggleNoAssignee?: () => void;
@@ -202,9 +277,18 @@ function ActorSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+  const { data: squads = [] } = useQuery({
+    ...squadListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
   const query = search.trim().toLowerCase();
   const filteredMembers = members.filter((m) =>
     m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query),
@@ -356,6 +440,7 @@ function ProjectSubContent({
   counts,
   selected,
   onToggle,
+  enabled,
   includeNoProject,
   onToggleNoProject,
   noProjectCount,
@@ -363,6 +448,7 @@ function ProjectSubContent({
   counts: Map<string, number>;
   selected: string[];
   onToggle: (projectId: string) => void;
+  enabled: boolean;
   includeNoProject: boolean;
   onToggleNoProject: () => void;
   noProjectCount: number;
@@ -370,7 +456,10 @@ function ProjectSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const { data: projects = [] } = useQuery({
+    ...projectListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
   const query = search.trim().toLowerCase();
   const filtered = projects.filter((p) =>
     p.title.toLowerCase().includes(query),
@@ -447,15 +536,20 @@ function LabelSubContent({
   counts,
   selected,
   onToggle,
+  enabled,
 }: {
   counts: Map<string, number>;
   selected: string[];
   onToggle: (labelId: string) => void;
+  enabled: boolean;
 }) {
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: labels = [] } = useQuery(labelListOptions(wsId));
+  const { data: labels = [] } = useQuery({
+    ...labelListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
   const query = search.trim().toLowerCase();
   const filtered = labels.filter((l) => l.name.toLowerCase().includes(query));
 
@@ -662,59 +756,25 @@ export function IssuesHeader({
     agents: "agents_description",
   };
 
-  const scopeLabel = t(($) => $.scope[SCOPE_LABEL_KEY[scope]]);
+  const scopeOptions: IssueScopeOption<IssuesScope>[] = SCOPE_VALUES.map((s) => ({
+    value: s,
+    label: t(($) => $.scope[SCOPE_LABEL_KEY[s]]),
+    description: t(($) => $.scope[SCOPE_DESC_KEY[s]]),
+  }));
+  const scopeLabel =
+    scopeOptions.find((option) => option.value === scope)?.label ??
+    scopeOptions[0]?.label ??
+    "";
 
   return (
     <div className="h-12 shrink-0 overflow-x-auto px-4 [-webkit-overflow-scrolling:touch]">
       <div className="flex h-full w-max min-w-full items-center justify-between gap-2">
-        {/* Left: scope buttons */}
-        <div className="hidden shrink-0 items-center gap-1 md:flex">
-          {SCOPE_VALUES.map((s) => (
-            <Tooltip key={s}>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={
-                      scope === s
-                        ? "bg-accent text-accent-foreground hover:bg-accent/80"
-                        : "text-muted-foreground"
-                    }
-                    onClick={() => setScope(s)}
-                  >
-                    {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
-                  </Button>
-                }
-              />
-              <TooltipContent side="bottom">{t(($) => $.scope[SCOPE_DESC_KEY[s]])}</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1 text-muted-foreground md:hidden"
-              >
-                <span className="truncate">{scopeLabel}</span>
-                <ChevronDown className="size-3 text-muted-foreground" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="w-auto">
-            <DropdownMenuRadioGroup value={scope} onValueChange={(value) => setScope(value as IssuesScope)}>
-              {SCOPE_VALUES.map((s) => (
-                <DropdownMenuRadioItem key={s} value={s}>
-                  {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <IssueScopeSelector
+          options={scopeOptions}
+          value={scope}
+          activeLabel={scopeLabel}
+          onChange={setScope}
+        />
 
         <div className="flex shrink-0 items-center gap-1">
           {agentRunningFilter && (
@@ -726,6 +786,7 @@ export function IssuesHeader({
             value={agentRunningFilter}
             onToggle={toggleAgentRunningFilter}
             scopedIssueIds={scopedIssueIds}
+            scopedIssues={scopedIssues}
           />
           <IssueDisplayControls
             scopedIssues={scopedIssues}
@@ -771,6 +832,7 @@ export function IssueDisplayControls({
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
   const cardProperties = useViewStore((s) => s.cardProperties);
   const act = useViewStoreApi().getState();
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const counts = useIssueCounts(scopedIssues);
   const showDateFilter = !!onDateFilterChange;
@@ -830,7 +892,7 @@ export function IssueDisplayControls({
   return (
     <div className="flex shrink-0 items-center gap-1">
         {/* Filter */}
-        <DropdownMenu>
+        <DropdownMenu open={filterOpen} onOpenChange={setFilterOpen}>
           <Tooltip>
             <DropdownMenuTrigger
               render={
@@ -986,6 +1048,7 @@ export function IssueDisplayControls({
                   counts={counts.assignee}
                   selected={assigneeFilters}
                   onToggle={act.toggleAssigneeFilter}
+                  enabled={filterOpen}
                   showNoAssignee
                   includeNoAssignee={includeNoAssignee}
                   onToggleNoAssignee={act.toggleNoAssignee}
@@ -1010,6 +1073,7 @@ export function IssueDisplayControls({
                   counts={counts.creator}
                   selected={creatorFilters}
                   onToggle={act.toggleCreatorFilter}
+                  enabled={filterOpen}
                   showSquads={false}
                 />
               </DropdownMenuSubContent>
@@ -1031,6 +1095,7 @@ export function IssueDisplayControls({
                   counts={counts.project}
                   selected={projectFilters}
                   onToggle={act.toggleProjectFilter}
+                  enabled={filterOpen}
                   includeNoProject={includeNoProject}
                   onToggleNoProject={act.toggleNoProject}
                   noProjectCount={counts.noProject}
@@ -1054,6 +1119,7 @@ export function IssueDisplayControls({
                   counts={counts.label}
                   selected={labelFilters}
                   onToggle={act.toggleLabelFilter}
+                  enabled={filterOpen}
                 />
               </DropdownMenuSubContent>
             </DropdownMenuSub>

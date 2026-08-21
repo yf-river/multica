@@ -132,7 +132,7 @@ describe("ContentEditor", () => {
   });
 
   it("focuses the editor when clicking the empty container area", () => {
-    render(<ContentEditor placeholder="Add description..." />);
+    render(<ContentEditor placeholder="添加描述..." />);
 
     const shell = screen.getByTestId("editor-content").parentElement;
     expect(shell).not.toBeNull();
@@ -143,7 +143,7 @@ describe("ContentEditor", () => {
   });
 
   it("does not hijack clicks that land inside the ProseMirror node", () => {
-    render(<ContentEditor placeholder="Add description..." />);
+    render(<ContentEditor placeholder="添加描述..." />);
 
     fireEvent.mouseDown(screen.getByTestId("prosemirror"));
 

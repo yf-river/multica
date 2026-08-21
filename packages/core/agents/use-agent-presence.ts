@@ -19,12 +19,13 @@ import type { AgentPresenceDetail } from "./types";
 // became sticky; this one re-introduces ticking with a different motivation.
 const PRESENCE_TICK_MS = 30_000;
 
-function usePresenceTick(): number {
+function usePresenceTick(enabled = true): number {
   const [tick, setTick] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     const id = setInterval(() => setTick((t) => t + 1), PRESENCE_TICK_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [enabled]);
   return tick;
 }
 
@@ -119,23 +120,24 @@ const MISSING_AGENT_DETAIL: AgentPresenceDetail = {
 export function useAgentPresenceDetail(
   wsId: string | undefined,
   agentId: string | undefined,
+  enabled = true,
 ): AgentPresenceDetail | "loading" {
   const { data: agents, isError: agentsErr } = useQuery({
     ...agentListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
   const { data: runtimes, isError: runtimesErr } = useQuery({
     ...runtimeListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
   const { data: snapshot, isError: snapshotErr } = useQuery({
     ...agentTaskSnapshotOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
-  const tick = usePresenceTick();
+  const tick = usePresenceTick(enabled);
 
   return useMemo<AgentPresenceDetail | "loading">(() => {
-    if (!wsId || !agentId) return "loading";
+    if (!enabled || !wsId || !agentId) return "loading";
 
     // Treat query errors as "no data" rather than "still loading". A 404 /
     // 5xx on the snapshot endpoint (e.g. backend hasn't deployed the new

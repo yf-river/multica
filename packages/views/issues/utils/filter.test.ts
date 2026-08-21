@@ -72,7 +72,7 @@ describe("filterIssues", () => {
     expect(result.map((i) => i.id)).toEqual(["1"]);
   });
 
-  it("filters by 'No assignee' only", () => {
+  it("仅按未分配过滤", () => {
     const result = filterIssues(issues, { ...NO_FILTER, includeNoAssignee: true });
     expect(result.map((i) => i.id)).toEqual(["3"]);
   });
@@ -86,7 +86,7 @@ describe("filterIssues", () => {
     expect(result.map((i) => i.id)).toEqual(["2", "3"]);
   });
 
-  it("hides assigned issues when only 'No assignee' is selected", () => {
+  it("仅选择未分配时隐藏已分配 issue", () => {
     const result = filterIssues(issues, { ...NO_FILTER, includeNoAssignee: true });
     expect(result.every((i) => !i.assignee_id)).toBe(true);
   });

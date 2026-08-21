@@ -8,8 +8,7 @@
  *   - image : <img className="object-contain"> centered in the modal frame.
  *             Replaces the previous standalone ImageLightbox.
  *   - pdf   : <iframe src={download_url}> — relies on Chromium's PDFium
- *             plugin. On desktop, requires webPreferences.plugins=true
- *             (see apps/desktop/src/main/index.ts).
+ *             plugin.
  *   - video : <video controls src={download_url}>
  *   - audio : <audio controls src={download_url}>
  *

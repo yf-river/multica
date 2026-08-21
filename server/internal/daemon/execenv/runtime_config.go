@@ -90,25 +90,22 @@ func sanitizeNameForBriefMarkdown(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// sanitizeEmailForBrief returns the email verbatim when it is safe to embed
-// inline in the brief, or "" when it carries a character a real address never
-// has (whitespace, control chars, or a markdown-break risk). Unlike
-// sanitizeNameForBriefMarkdown it does NOT backslash-escape markdown specials:
-// an agent may want to match the initiator's address exactly, and escaping
-// `_`/`+` would corrupt it, while a valid email can't contain a newline to
-// inject a heading anyway. Emails are validated at signup, so this is
+// sanitizeAccountForBrief returns the account verbatim when it is safe to embed
+// inline in the brief, or "" when it carries whitespace, control chars, or a
+// markdown-break risk. Accounts are validated at signup, so this is
 // defense-in-depth, not the primary guard. See MUL-2645.
-func sanitizeEmailForBrief(email string) string {
-	email = strings.TrimSpace(email)
-	if email == "" || !strings.Contains(email, "@") {
+func sanitizeAccountForBrief(account string) string {
+	raw := account
+	account = strings.TrimSpace(raw)
+	if account == "" || account != raw {
 		return ""
 	}
-	for _, r := range email {
+	for _, r := range account {
 		if r < 0x20 || r == 0x7f || r == ' ' || r == '\\' || r == '`' || r == '*' || r == '<' || r == '>' || r == '[' || r == ']' {
 			return ""
 		}
 	}
-	return email
+	return account
 }
 
 // formatProjectResource renders a single resource as a human-readable bullet.
@@ -132,6 +129,38 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 			out += " — " + label
 		}
 		return out
+	case "gongfeng_repo":
+		var payload struct {
+			URL          string `json:"url"`
+			ProjectPath  string `json:"project_path"`
+			ResourceKind string `json:"resource_kind"`
+			Ref          string `json:"ref,omitempty"`
+			HeadCommit   string `json:"head_commit,omitempty"`
+			Title        string `json:"title,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**Gongfeng repo**: %s", payload.ProjectPath)
+		if payload.ResourceKind != "" {
+			out += fmt.Sprintf(" (%s", payload.ResourceKind)
+			if payload.Ref != "" {
+				out += fmt.Sprintf(": `%s`", payload.Ref)
+			}
+			out += ")"
+		}
+		if payload.HeadCommit != "" {
+			out += fmt.Sprintf(" head `%s`", payload.HeadCommit)
+		}
+		if payload.URL != "" {
+			out += fmt.Sprintf(" — %s", payload.URL)
+		}
+		if payload.Title != "" {
+			out += " — " + payload.Title
+		}
+		if label != "" {
+			out += " — " + label
+		}
+		out += ". Use the `gongfeng` MCP server for branch/file/MR resolution; do not treat this as a GitHub resource."
+		return out
 	default:
 		ref := string(r.ResourceRef)
 		if ref == "" {
@@ -152,7 +181,6 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 // For Codex:    writes {workDir}/AGENTS.md  (skills discovered natively via CODEX_HOME)
 // For Copilot:  writes {workDir}/AGENTS.md  (skills discovered natively from .github/skills/)
 // For OpenCode: writes {workDir}/AGENTS.md  (skills discovered natively from .opencode/skills/)
-// For OpenClaw: writes {workDir}/AGENTS.md  (skills discovered natively from {workDir}/skills/ via per-task openclaw-config.json that pins agents.defaults.workspace)
 // For Hermes:   writes {workDir}/AGENTS.md  (skills fall back to .agent_context/skills/; AGENTS.md points there)
 // For Gemini:   writes {workDir}/GEMINI.md  (discovered natively by the Gemini CLI)
 // For Pi:       writes {workDir}/AGENTS.md  (skills discovered natively from .pi/skills/)
@@ -179,7 +207,7 @@ func runtimeConfigPath(workDir, provider string) string {
 	switch provider {
 	case "claude", "codebuddy":
 		return filepath.Join(workDir, "CLAUDE.md")
-	case "codex", "copilot", "opencode", "openclaw", "hermes", "pi", "cursor", "kimi", "kiro", "antigravity":
+	case "codex", "copilot", "opencode", "hermes", "pi", "cursor", "kimi", "kiro", "antigravity":
 		return filepath.Join(workDir, "AGENTS.md")
 	case "gemini":
 		return filepath.Join(workDir, "GEMINI.md")
@@ -365,8 +393,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 
 	b.WriteString("# Multica Agent Runtime\n\n")
-	b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
+	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		b.WriteString("You are a planning/review agent in the Multica platform. This no-repository stage must not call tools or CLI commands; return the stage result as final assistant output so the platform can post it automatically.\n\n")
+	} else {
+		b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
+	}
 	writeBackgroundTaskSafetyInstructions(&b)
+	b.WriteString("## Output Language\n\n")
+	b.WriteString("Default to Simplified Chinese for user-facing natural language: progress updates, stage summaries, issue comments, chat replies, and final delivery notes. Keep commands, code, file paths, API fields, repository names, product names, logs, and quoted error text in their original language when precision matters.\n\n")
 
 	// Always emit agent identity so the agent knows who it is, even when
 	// dispatched via @mention on an issue assigned to a different agent.
@@ -439,14 +473,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// like the owner. Emitted only when an initiator name resolved — on-assign
 	// / autopilot / quick-create tasks have no attributable human initiator and
 	// skip the heading. The name is sanitized like Requesting User (it is
-	// user-supplied and could otherwise inject a heading); the email goes
-	// through sanitizeEmailForBrief so it stays literal. See MUL-2645.
+	// user-supplied and could otherwise inject a heading); the account goes
+	// through sanitizeAccountForBrief so it stays literal. See MUL-2645.
 	if safeInitiator := sanitizeNameForBriefMarkdown(ctx.InitiatorName); safeInitiator != "" {
 		b.WriteString("## Task Initiator\n\n")
 		if ctx.InitiatorType == "agent" {
 			fmt.Fprintf(&b, "This task was initiated by **%s**, another agent in this workspace.\n\n", safeInitiator)
-		} else if email := sanitizeEmailForBrief(ctx.InitiatorEmail); email != "" {
-			fmt.Fprintf(&b, "This task was initiated by **%s** (%s), a member of this workspace.\n\n", safeInitiator, email)
+		} else if account := sanitizeAccountForBrief(ctx.InitiatorAccount); account != "" {
+			fmt.Fprintf(&b, "This task was initiated by **%s** (%s), a member of this workspace.\n\n", safeInitiator, account)
 		} else {
 			fmt.Fprintf(&b, "This task was initiated by **%s**, a member of this workspace.\n\n", safeInitiator)
 		}
@@ -468,49 +502,55 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("\n\n")
 	}
 
+	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		b.WriteString("## Critical No-Repo Planning Tool Boundary\n\n")
+		b.WriteString("This is a no-repository planning stage. Do not call tools. Produce the stage result in your final assistant output; the platform will automatically post that final output as the issue comment when the task completes.\n\n")
+		b.WriteString("- Do not call provider-native `Agent`, `Task`, `TaskCreate`, `TaskUpdate`, subagent, plan/todo, Bash, Read, Edit, Write, Grep, Glob, LS, or equivalent tools.\n")
+		b.WriteString("- Do not run `multica issue comment add`, `pwd`, `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`, `multica agent`, `multica --help`, shell pipes, redirects, `&&`, `||`, `head`, or command wrappers.\n")
+		b.WriteString("- Do not inspect the current directory, repository structure, local context files, agent roster, or CLI capabilities. If you think you need those facts, write them as handoff questions for a later repo-enabled stage.\n\n")
+	}
+
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("**Use `--output json` for structured data.** Human table output now prints routable issue keys (for example `MUL-123`) and short UUID prefixes for workspace resources; use `--full-id` on list commands when you need canonical UUIDs.\n\n")
-	b.WriteString("The default brief includes the commands needed for the core agent loop and common issue create/update tasks. For everything else, run `multica --help`, `multica <command> --help`, or `multica <command> <subcommand> --help`; prefer `--output json` when the command supports it.\n\n")
+	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		b.WriteString("The default brief includes the issue commands needed for this bounded planning stage. Do not inspect CLI help or discover extra commands in this task; use only the explicit `multica issue ...` commands allowed by the task capability policy.\n\n")
+	} else {
+		b.WriteString("The default brief includes the commands needed for the core agent loop and common issue create/update tasks. For everything else, run `multica --help`, `multica <command> --help`, or `multica <command> <subcommand> --help`; prefer `--output json` when the command supports it.\n\n")
+	}
 	b.WriteString("### Core\n")
 	b.WriteString("- `multica issue get <id> --output json` — Get full issue details.\n")
 	b.WriteString("- `multica issue comment list <issue-id> [--thread <comment-id> [--tail N] | --recent N] [--before <ts> --before-id <uuid>] [--since <RFC3339>] --output json` — List comments on an issue. Default returns the full flat timeline (server cap 2000). On busy issues prefer the thread-aware reads: `--thread <comment-id>` returns one conversation (root + every reply); `--thread <id> --tail N` caps replies to the N most recent (root is always included, even at `--tail 0`); `--recent N` returns the N most recently active threads. `--before` / `--before-id` walks older replies under `--thread --tail` (stderr label: `Next reply cursor`) or older threads under `--recent` (stderr label: `Next thread cursor`). `--since` is for incremental polling and may combine with `--thread` (with or without `--tail`) or `--recent`.\n")
+	b.WriteString("- `multica issue children <issue-id> --output json` — List existing child issues for a parent. Before creating cross-project or duplicate-prone sub-issues, use this to dedupe by target project, title, and work intent.\n")
 	b.WriteString("- `multica issue create --title \"...\" [--description \"...\" | --description-file <path> | --description-stdin] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--project <project-id>] [--due-date <RFC3339>] [--attachment <path>]` — Create a new issue; `--attachment` may be repeated. For agent-authored long descriptions, prefer `--description-file <path>` — flags after a HEREDOC terminator can be silently swallowed (#4182).\n")
 	b.WriteString("- `multica issue update <id> [--title X] [--description X | --description-file <path> | --description-stdin] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--project <project-id>] [--due-date <RFC3339>]` — Update issue fields; use `--parent \"\"` to clear parent. For agent-authored long descriptions, prefer `--description-file <path>` over stdin (#4182).\n")
-	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — Check out a repository into the working directory (creates a git worktree with a dedicated branch; use `--ref` for review/QA on a specific branch, tag, or commit)\n")
+	if canShowRepoCheckoutCommand(ctx.ExecutionPolicy) {
+		b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — Check out a repository into the working directory (creates a git worktree with a dedicated branch; use `--ref` for review/QA on a specific branch, tag, or commit)\n")
+	}
 	b.WriteString("- `multica issue status <id> <status>` — Shortcut for `issue update --status` when you only need to flip status (todo, in_progress, in_review, done, blocked, backlog, cancelled)\n")
-	// Available Commands lists `multica issue comment add` with all three input
-	// modes, but the menu entry now actively steers agents away from inlining
-	// `--content` for agent-authored bodies. The prescriptive form-by-platform
-	// guidance lives in the "## Comment Formatting" section below.
+	// Available Commands lists `multica issue comment add` only with Markdown-
+	// preserving input modes. Inline `--content` was removed from comment add
+	// because it pushed agents toward shell-safe one-line comments and let the
+	// shell rewrite structured Markdown before the CLI saw it.
 	//
-	// Two distinct shell-layer hazards motivate this, and both bite an inlined
-	// body before the CLI ever runs:
-	//   - Backtick / `$()` command substitution, `$VAR` expansion, and quote /
-	//     newline mangling on Linux/macOS shells. A backtick-wrapped token in
-	//     the body is executed and silently deleted, corrupting the stored
-	//     comment and triggering a retry loop (MUL-2904 / OKK-497).
-	//   - Non-ASCII bytes dropped as `?` on Windows, where the shell layer
-	//     (typically PowerShell) re-encodes a stdin pipe through an ASCII /
-	//     non-UTF-8 codepage (issues #2198 / #2236 / #2376) — which is why
-	//     Windows uses `--content-file`, not stdin.
-	// Because the corruption is shell-driven, the guardrail is provider-agnostic.
-	b.WriteString("- `multica issue comment add <issue-id> [--content \"...\" | --content-file <path> | --content-stdin] [--parent <comment-id>] [--attachment <path>]` — Post a comment. For agent-authored bodies, **write the body to a UTF-8 file and use `--content-file <path>`** — do NOT inline `--content` (the shell rewrites backticks, `$()`, quotes, or newlines before the CLI sees them) and do NOT use `--content-stdin` with a HEREDOC (extra flags around the heredoc can be silently swallowed, #4182). See ## Comment Formatting below. Run `multica issue comment add --help` for details.\n")
+	if noNativeFileWriteForComments(ctx) {
+		b.WriteString("- No comment command is available in this task because native file-write tools are unavailable. Put the visible Markdown reply or stage result in the final assistant output; the platform will automatically post your final output as the issue comment.\n")
+	} else {
+		b.WriteString("- `multica issue comment add <issue-id> [--content-file <path> | --content-stdin] [--parent <comment-id>] [--attachment <path>]` — Post a comment. For agent-authored bodies, **write the body to a UTF-8 file and use `--content-file <path>`**. Do NOT use `--content-stdin` with a HEREDOC (extra flags around the heredoc can be silently swallowed, #4182). See ## Comment Formatting below. Run `multica issue comment add --help` for details.\n")
+	}
 	b.WriteString("- `multica issue metadata list <issue-id> [--output json]` — List every metadata key pinned to an issue. Empty `{}` is normal.\n")
 	b.WriteString("- `multica issue metadata set <issue-id> --key <k> --value <v> [--type string|number|bool]` — Pin (or overwrite) a single metadata key. The CLI auto-infers JSON primitives, so URLs and plain text are stored as strings — pass `--type number` or `--type bool` only when the semantic type matters.\n")
 	b.WriteString("- `multica issue metadata delete <issue-id> --key <k>` — Remove a metadata key.\n\n")
+	b.WriteString("- `multica issue source-fetch <issue-id> --provider tapd|gongfeng --status fetched|fetch_failed ... --output json` — Record external source fetch evidence after an MCP call. Use it instead of hand-writing `source_fetch_*` metadata so the platform can attach trace to this task.\n\n")
+	b.WriteString("- `multica issue mr create <issue-id> --provider gongfeng --project-path <path> --source-branch <branch> --target-branch <branch> --title <title> [--description-file <path>] --output json` — Create a Gongfeng MR through the platform and synchronously link it to the issue.\n")
+	b.WriteString("- `multica issue mr list <issue-id> --output json` — Confirm which MR records are linked to the issue.\n")
+	b.WriteString("- `multica issue mr link <issue-id> --provider gongfeng --html-url <mr-url> [--project-path <path>] [--iid <iid>] [--title <title>] [--source-branch <branch>] [--target-branch <branch>] --output json` — Register an already-created MR as a fallback when platform MR creation was not used.\n\n")
 	b.WriteString("### Squad maintenance\n")
 	b.WriteString("- `multica squad member set-role <squad-id> --member-id <id> --member-type <agent|member> --role <role> [--output json]` — Change a squad member role in place; use this instead of remove+add when only the role changes.\n\n")
 
 	// Comment Formatting guardrail for ALL providers and ALL hosts. Two
 	// shell-layer hazards motivate a single, uniform "write a file, post with
-	// `--content-file`" rule rather than a per-OS split:
-	//
-	//   1. Inline `--content "..."`: backtick / `$()` substitution, `$VAR`
-	//      expansion, and quote / newline mangling on Linux/macOS. A
-	//      backtick-wrapped token in the body is executed and silently deleted,
-	//      corrupting the stored comment and triggering a retry loop
-	//      (MUL-2904 / OKK-497).
-	//   2. `--content-stdin` with a HEREDOC: TWO failure modes the model cannot
+	// `--content-file`" rule rather than a per-OS split. `--content-stdin`
+	// with a HEREDOC has TWO failure modes the model cannot
 	//      see — (a) on Windows, PowerShell 5.1's `$OutputEncoding` defaults to
 	//      ASCIIEncoding when piping to a native command and silently drops
 	//      non-ASCII as `?` before the bytes reach `multica.exe` (#2198 /
@@ -528,17 +568,37 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// flags to leak across. This is identical to the long-standing Windows
 	// path, so the cross-platform guidance is now one shape.
 	b.WriteString("## Comment Formatting\n\n")
-	if runtimeGOOS == "windows" {
-		b.WriteString("On Windows, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`** — do NOT pipe via `--content-stdin`. PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping to a native command, silently dropping non-ASCII characters as `?` before they reach `multica.exe`. Never use inline `--content` for agent-authored comments. ")
+	if noNativeFileWriteForComments(ctx) {
+		b.WriteString("This task has no native file-write tool for composing a Markdown comment file. No comment command is available in this task. Do not call `multica issue comment add`; write the visible reply or stage result as your final assistant output. The platform will automatically post your final output as the issue comment. Preserve Markdown structure in that final output: headings, blank lines, numbered lists, and code blocks are allowed.\n\n")
+	} else if runtimeGOOS == "windows" {
+		b.WriteString("On Windows, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`** — do NOT pipe via `--content-stdin`. PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping to a native command, silently dropping non-ASCII characters as `?` before they reach `multica.exe`. ")
 		b.WriteString("Keep the same `--parent` value from the trigger comment when replying. ")
 		b.WriteString("After posting, remove the temp file with `Remove-Item ./reply.md` (or your chosen path) so a later run does not pick up stale content. ")
 		b.WriteString("Do not compress a multi-paragraph answer into one line and do not rely on `\\n` escapes.\n\n")
 	} else {
-		b.WriteString("For issue comments, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`**. Never use inline `--content` for agent-authored comments — the shell rewrites backticks, `$()`, `$VAR`, or quotes in the body before the CLI receives them (MUL-2904). Do NOT use `--content-stdin` with a HEREDOC either: when extra flags accompany the command (e.g. `--assignee`, `--project` on `multica issue create`), the bash heredoc/flag boundary is fragile and flags can be silently swallowed into the stdin stream while the command still exits 0 (GitHub #4182). ")
+		b.WriteString("For issue comments, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`**. Do NOT use `--content-stdin` with a HEREDOC: when extra flags accompany the command (e.g. `--assignee`, `--project` on `multica issue create`), the bash heredoc/flag boundary is fragile and flags can be silently swallowed into the stdin stream while the command still exits 0 (GitHub #4182). ")
 		b.WriteString("Keep the same `--parent` value from the trigger comment when replying. ")
 		b.WriteString("After posting, remove the temp file with `rm ./reply.md` (or your chosen path) so a later run does not pick up stale content. ")
 		b.WriteString("Do not compress a multi-paragraph answer into one line and do not rely on `\\n` escapes.\n\n")
 	}
+
+	b.WriteString("## Stage Markdown Artifacts\n\n")
+	if finalOutputAutoCommentStage(ctx) {
+		b.WriteString("This read-only planning/verification task has no native file-write tool. Produce the Markdown stage artifact directly in your final assistant output; when the result is a durable multi-section artifact, the platform will store it as a Markdown attachment and post only a compact summary plus the file card to the issue. Do not attempt to create local `.md` files, `reply.md`, or attachments in this task.\n\n")
+	} else {
+		b.WriteString("When this run produces a durable stage artifact (for example a requirements note, design proposal, task handoff, implementation summary, or verification report), save only this run's own stage artifact as a UTF-8 `.md` file under `$MULTICA_ARTIFACT_DIR` when that environment variable is set; otherwise use `artifacts/multica/` in the current working directory. Treat this managed directory as the only stage-artifact handoff path: do not save stage artifacts only under project-local paths such as `runs/current/projects/...`, because the platform cannot reliably upload or show those in the node table. Do not recopy earlier stage markdown files into the current run's artifact directory; cite their titles or issue links in prose instead. The daemon automatically uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/` to the issue before marking the task terminal, links them to an agent-authored issue comment, and the platform renders them for download or preview. Do not also pass those managed markdown files with `multica issue comment add --attachment`; that creates duplicate node artifacts. If you also post a result comment for the same run, keep it to a compact outcome summary and evidence pointers only; do not paste the full artifact body or duplicate long sections from the Markdown file into the comment. Mention the artifact titles in your stage summary, but do not rely on local paths in prose. Temporary scratch files that are not useful to a future reader should not be saved there.\n\n")
+	}
+	b.WriteString("Put the information the user most needs near the top of each stage artifact under clear Markdown headings such as `摘要`, `待确认`, `验收口径`, `测试列表`, or `下一步`. For clarification stages, list open questions or user decisions explicitly. For verification stages, list concrete test or acceptance cases explicitly. The platform uses these headings to build the short issue comment that accompanies the attachment.\n\n")
+
+	b.WriteString("## Verification Output Contract\n\n")
+	b.WriteString("When you report that verification, tests, lint, build, render, MR checks, or an acceptance review completed, include a Markdown list or table of the concrete cases you ran. Do not only say \"all passed\", \"4 checks passed\", or similar. For each case include the case/command name, what it covered, the result, and a short evidence pointer such as the command, file, MR head, log excerpt, or artifact name. If a check was skipped or out of scope, list it separately with the reason. This applies to dedicated verification roles and to simple one-task flows.\n\n")
+
+	b.WriteString("## MR and Human CodeReview Handoff\n\n")
+	b.WriteString("For code-changing issue work, after verification passes and before the final delivery comment, create the provider MR through the platform unless the user explicitly requested local-only work or no MR. For Gongfeng resources, push your source branch first, then run `multica issue mr create <issue-id> --provider gongfeng --project-path <project-path> --source-branch <branch> --target-branch <target-branch> --title <title> --description-file <path> --output json`. If MR creation is blocked by auth, failing tests, or missing remote branch state, report that blocker instead of marking the work complete. After creating the MR, run `multica issue mr list <issue-id> --output json` to confirm the platform sees the association. Include the MR URL in the final issue comment for the human CodeReview step.\n\n")
+
+	b.WriteString("## Repository Worktree Contract\n\n")
+	b.WriteString("When the daemon starts you inside an existing git worktree for an issue, that directory is the authoritative source branch for this issue. Run `git rev-parse --show-toplevel` and `git status --short --branch` first; if the current worktree is already the requested repository, continue there. Do not run `multica repo checkout` for the same repository from inside that repo, because it creates a nested clean checkout and hides earlier stage changes from this issue. Do not `git checkout` or `git switch` to the target/base branch such as `main`, `master`, or a handoff-named release branch; those branches are MR bases only. Code changes, commits, pushes, verification, and MR source branch selection must stay on the current issue branch (usually `agent/issue/<issue-short-id>`). Verification stages must validate the current issue source branch and its diff against the target branch; the target branch is the MR base, not the place where the unmerged change is expected to already exist.\n\n")
+	b.WriteString("Before claiming implementation, verification, or CodeReview follow-up is complete, run `git status --short --branch` again. If intentional source, test, config, or harness files are still uncommitted or untracked, commit them to the current issue branch first; exclude only runtime scaffolding such as `AGENTS.md`, `CLAUDE.md`, `.agent_context/`, `.claude/`, `.multica/`, `reply.md`, and non-required artifacts. Push the current issue branch before creating or updating the MR. For 05 verification and human CodeReview follow-up, compare the platform MR source branch/head with the current issue branch; if the MR points at a different branch, the branch head was not pushed, or the same MR did not receive a newer commit/diff for the requested follow-up, report the blocker instead of saying the MR is updated.\n\n")
 
 	// Inject available repositories section.
 	if len(ctx.Repos) > 0 {
@@ -569,17 +629,54 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 				fmt.Fprintf(&b, "- %s\n", formatProjectResource(r))
 			}
 			b.WriteString("\nResources are pointers — open them only when relevant to the task. ")
-			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
+			b.WriteString("For `github_repo` and `gongfeng_repo` resources, use `multica repo checkout <url>` to fetch the code. Gongfeng page URLs such as `/commits/<branch>` are normalized automatically; add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
 		} else {
 			b.WriteString("This project has no resources attached yet.\n\n")
 		}
+	}
+
+	if ctx.ExecutionPolicy.RoleKind != "" || ctx.ExecutionPolicy.RoleKey != "" || ctx.ExecutionPolicy.ProjectSkillMode != "" {
+		b.WriteString("## Task Capability Policy\n\n")
+		if ctx.ExecutionPolicy.RoleKey != "" {
+			fmt.Fprintf(&b, "- Role key: `%s`\n", ctx.ExecutionPolicy.RoleKey)
+		}
+		if ctx.ExecutionPolicy.RoleKind != "" {
+			fmt.Fprintf(&b, "- Role kind: `%s`\n", ctx.ExecutionPolicy.RoleKind)
+		}
+		if strings.EqualFold(strings.TrimSpace(ctx.ExecutionPolicy.RoleKind), "coordinator") && !ctx.ExecutionPolicy.CanAccessRepo {
+			b.WriteString("- Coordinator native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS. These tools are unavailable for this task and using them is a workflow failure. Bash is restricted to `multica ...` platform coordination commands only; do not run shell inspection commands through Bash.\n")
+		}
+		if isBoundedReviewStage(ctx.ExecutionPolicy) {
+			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Bash, Read, Edit, Write, MultiEdit, Grep, Glob, LS, or equivalent internal delegation/repo-inspection tools. Native file-write and shell tools are unavailable; write the stage result as your final assistant output and do not attempt to create `reply.md`, local artifact files, or issue comments yourself. Planning stages must produce their own bounded stage result in this platform task; do not spawn internal agents or parallel subtasks.\n")
+			} else {
+				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage result in this platform task as final assistant output; do not spawn internal agents or parallel subtasks, and do not attempt to create `reply.md` or local artifact files.\n")
+			}
+		}
+		if ctx.ExecutionPolicy.CanAccessRepo {
+			b.WriteString("- Repository access: allowed when `$MULTICA_PRIMARY_REPO_DIR` is set.\n")
+		} else {
+			b.WriteString("- Repository access: not allowed for this task. Do not inspect, checkout, edit, build, or test project repositories. Do not read host absolute paths, check the current working directory, or inspect project code through shell commands such as `pwd`, `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`, or equivalent tools. If shell is available, use it only for platform coordination commands permitted by this task's role.\n")
+			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+				b.WriteString("- No-repo planning override: if Agent Identity, squad instructions, or prior comments ask you to explore code, inspect project files, identify schema from source, check the working directory, or check repository structure, do not attempt it in this task. Record the missing code facts as assumptions or handoff questions for a later repo-enabled stage.\n")
+			}
+		}
+		if ctx.ExecutionPolicy.CanEditRepo {
+			b.WriteString("- Repository edits: allowed when required by the task.\n")
+		} else {
+			b.WriteString("- Repository edits: not allowed. The daemon will block this task if the repository git status changes.\n")
+		}
+		if ctx.ExecutionPolicy.ProjectSkillMode != "" {
+			fmt.Fprintf(&b, "- Project skill visibility: `%s`.\n", ctx.ExecutionPolicy.ProjectSkillMode)
+		}
+		b.WriteString("\n")
 	}
 
 	// Issue Metadata semantics — emitted only for tasks that operate on a real
 	// issue (comment-triggered or assignment-triggered). Chat / quick-create /
 	// run-only autopilot don't carry an issue id and would just generate a
 	// failed `metadata list` call on every entry.
-	hasIssueContext := ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == ""
+	hasIssueContext := ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == "" && ctx.SourceSummaryPrompt == ""
 	if hasIssueContext {
 		b.WriteString("## Issue Metadata\n\n")
 		b.WriteString("Each issue carries a small KV `metadata` bag — a high-signal scratchpad where agents pin the handful of facts that future runs on this same issue will look up over and over (the PR URL, the deploy URL, what we're blocked on). It is NOT a place to record every fact you discover — that's what comments and the description are for. Most runs write **zero** new keys; that's the expected case, not a failure.\n\n")
@@ -590,7 +687,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- **Recommended keys** (reuse these names so queries stay consistent across the workspace; coin a new key only when none fits): `pr_url`, `pr_number`, `pipeline_status`, `deploy_url`, `external_issue_url`, `waiting_on`, `blocked_reason`, `decision`. Use snake_case ASCII. The list is short on purpose — most issues only need 1-2 of these pinned, not the full set.\n\n")
 	}
 
-	isAssignmentTriggered := ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == "" && ctx.TriggerCommentID == ""
+	isAssignmentTriggered := ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == "" && ctx.SourceSummaryPrompt == "" && ctx.TriggerCommentID == ""
 	if isAssignmentTriggered {
 		b.WriteString("## Instruction Precedence\n\n")
 		b.WriteString("Agent Identity instructions have priority over the assignment workflow below. ")
@@ -600,7 +697,11 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 
 	b.WriteString("### Workflow\n\n")
 
-	if ctx.ChatSessionID != "" {
+	if ctx.SourceSummaryPrompt != "" {
+		b.WriteString("**This task is a source-summary generation task.** Follow the user message exactly and return only the requested Markdown summary in your final output.\n\n")
+		b.WriteString("- Do NOT run `multica issue update`, `multica issue comment add`, `multica issue status`, or implementation commands.\n")
+		b.WriteString("- The platform will write your final Markdown output back to the issue description automatically.\n\n")
+	} else if ctx.ChatSessionID != "" {
 		// Chat task: interactive assistant mode
 		b.WriteString("**You are in chat mode.** A user is messaging you directly in a chat window.\n\n")
 		b.WriteString("- Respond conversationally and helpfully to the user's message\n")
@@ -654,45 +755,81 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	} else if ctx.TriggerCommentID != "" {
 		// Comment-triggered: focus on reading and replying
 		b.WriteString("**This task was triggered by a NEW comment.** Your primary job is to respond to THIS specific comment, even if you have handled similar requests before in this session.\n\n")
-		fmt.Fprintf(&b, "1. Run `multica issue get %s --output json` to understand the issue context\n", ctx.IssueID)
-		fmt.Fprintf(&b, "2. Run `multica issue metadata list %s --output json` to see what prior agents pinned — best-effort, empty `{}` and CLI failures are normal. See the `## Issue Metadata` section above for what to look for.\n", ctx.IssueID)
-		if hint := BuildNewCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID, ctx.NewCommentsSince, ctx.NewCommentCount); hint != "" {
-			b.WriteString("3. " + hint)
-		} else if ctx.PriorSessionResumed {
-			b.WriteString("3. " + BuildResumedCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID))
-		} else if cold := BuildColdCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID); cold != "" {
-			b.WriteString("3. " + cold)
+		if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) && !ctx.IsSquadLeader {
+			b.WriteString("1. Do not call tools or CLI commands in this no-repository planning task. Use the issue/source/trigger context already supplied in this task prompt and your Agent Identity.\n")
+			fmt.Fprintf(&b, "2. Treat the triggering comment ID `%s` as the PM dispatch context. Do not query it with `multica issue comment list`; if a needed fact is absent from the prompt, record it as a handoff question or assumption.\n", ctx.TriggerCommentID)
+			b.WriteString("3. Produce the bounded stage result directly as final assistant output. The platform will automatically publish it under the triggering comment when this task completes; long multi-section artifacts are uploaded as Markdown attachments with a compact summary comment.\n")
+			b.WriteString("4. Do not change issue status, inspect repositories, inspect the working directory, query agent rosters, or create child issues.\n\n")
 		} else {
-			fmt.Fprintf(&b, "3. Catch up on comments — read with `multica issue comment list %s --output json` (long issue? `--recent 20`).\n", ctx.IssueID)
+			fmt.Fprintf(&b, "1. Run `multica issue get %s --output json` to understand the issue context\n", ctx.IssueID)
+			fmt.Fprintf(&b, "2. Run `multica issue metadata list %s --output json` to see what prior agents pinned — best-effort, empty `{}` and CLI failures are normal. See the `## Issue Metadata` section above for what to look for.\n", ctx.IssueID)
+			if hint := BuildNewCommentsHint(ctx.IssueID, ctx.TriggerThreadID, ctx.NewCommentsSince, ctx.NewCommentCount); hint != "" {
+				b.WriteString("3. " + hint)
+			} else if ctx.PriorSessionResumed {
+				b.WriteString("3. " + BuildResumedCommentsHint(ctx.IssueID, ctx.TriggerCommentID, ctx.TriggerThreadID))
+			} else if cold := BuildColdCommentsHint(ctx.IssueID, ctx.TriggerThreadID); cold != "" {
+				b.WriteString("3. " + cold)
+			} else {
+				fmt.Fprintf(&b, "3. Catch up on comments — read with `multica issue comment list %s --output json` (long issue? `--recent 20`).\n", ctx.IssueID)
+			}
+			fmt.Fprintf(&b, "4. Find the triggering comment (ID: `%s`) and understand what is being asked — do NOT confuse it with previous comments\n", ctx.TriggerCommentID)
+			if ctx.IsSquadLeader {
+				b.WriteString("5. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 7 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
+				fmt.Fprintf(&b, "   - **小队负责人规则：** 如果你的评估结果是 `no_action`，调用 `multica squad activity %s no_action --reason \"...\"` 后立刻退出。不要发布任何只用于声明你不采取行动、静默退出或确认其他 agent 消息的评论。类似“无需行动”或“静默退出”的评论都是噪声；`squad activity` 调用已经把你的决策记录到时间线。阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action；这些都必须发布用户可见评论，并按 action/failed 记录 activity。\n", ctx.IssueID)
+				b.WriteString("   - If your squad instructions require dispatching or delegating to another stage, the reply is warranted and the same visible comment must contain exactly one real `mention://agent/...` link for the target agent. A comment that says a stage is being dispatched but lacks that mention is only a summary, not a dispatch. If native file-write tools are unavailable, put that dispatch comment in your final assistant output; the platform will post it automatically.\n")
+				b.WriteString("   - If you already wrote a dispatch comment with a real `mention://agent/...` link in this task, your final assistant output must repeat that exact dispatch comment. Do not replace it with a summary such as \"dispatch completed\" or \"waiting for the next stage\"; the platform only posts the final visible output when no explicit comment tool was used.\n")
+				if isStageChainPMCoordinator(ctx) {
+					b.WriteString("   - Stage-chain PM rule from your squad instructions: on comment-triggered runs, only review the latest stage output or human reply, then choose exactly one of wait, block, dispatch one next stage by `mention://agent/...`, or close after 05. Do not implement, inspect repositories, create MRs, run tests, or simulate 01-05 inside this PM task.\n")
+					b.WriteString("   - Stage-chain PM transition rule: when the latest stage output is complete and unblocked, advance exactly one step in the chain: 01→02, 02→03, 03→04, 04→05, and 05→done. Do not repeat or paraphrase the completed stage handoff as your own final output; that leaves the next stage untriggered. If the completed stage is 03 or 04, your visible PM output must be a dispatch comment for 04 or 05 with exactly one real target `mention://agent/...` link, unless a cross-project gate or failed verification explicitly blocks it.\n")
+					b.WriteString("   - Stage-chain dispatch verification rule: do not treat a previous comment that says a stage was dispatched as sufficient evidence by itself. A stage is actually dispatched only when the platform has a real queued, dispatched, running, or completed task for that target agent. If the visible comment contains a `mention://agent/...` dispatch but no matching task exists, re-dispatch with exactly one real mention instead of recording `no_action`.\n")
+					b.WriteString("   - Stage-chain PM wait/block rule: if a stage output contains unresolved questions, blockers, failed gates, missing child issues, or unmet next-stage conditions, post a visible wait/block/return comment with the exact items the user or next stage must resolve. Do not record only `no_action`; silence leaves the issue stuck with no user-readable state. When the block is specifically waiting for user confirmation or user-supplied answers, record the action with `multica squad activity <issue-id> action --reason \"...\" --wait-kind human_confirmation --wait-summary \"...\"` so the run review can show the active human-confirmation wait.\n")
+					b.WriteString("   - If the triggering comment mentions SOP stages, 01/02/03/04/05, child issues, MR, V1/V2/V3, sandbox, verification, blockers, or issue closeout, treat it as workflow control for this issue. Do not answer or summarize TAPD/Wiki/source_context content unless the triggering comment explicitly asks for source-content explanation.\n")
+					b.WriteString("   - Stage-chain clarification closure rule: if the latest human reply answers the 01 open questions or says “按建议推进”, “剩下按你的建议走”, “有问题再讨论”, or equivalent, treat non-high-risk open questions as closed with documented assumptions and dispatch `02-方案设计`. Do not record `no_action` in that case; only wait or re-dispatch 01 when a safety, permission, data-destructive, external-release, or irreversible decision is still explicitly unresolved.\n")
+					b.WriteString("   - Stage-chain cross-project gate: after `03-任务拆分` identifies any required cross-project dependency, create or reuse the required child issue with `--parent`, target `--project`, executable assignee, and `--status todo`, then wait. If any required child issue is not `done`, do not dispatch the parent issue to `04-开发` or `05-验证测试`; child creation only starts dependency work and is not completion evidence.\n")
+					b.WriteString("   - Stage-chain verification dispatch rule: when dispatching `05-验证测试` for a user-center password/login/change-password requirement and V2/V3 or sandbox validation is required, explicitly tell 05 to read the project harness and run `harness/sandbox/run-password-e2e.sh` before claiming BLOCKED. A basic gRPC service-list or `GetPrivateBuiltinSuperAdminTenantId` smoke is not enough for password business E2E; if 05 later reports BLOCKED, require the failed command, exit code, key output, and next action.\n")
+				}
+			} else {
+				b.WriteString("5. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 7 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
+			}
+			b.WriteString("6. If a reply IS warranted: do any requested work first, then **decide whether to include any `@mention` link.** The default is NO mention. Only mention when you are escalating to a human owner who is not yet involved, delegating a concrete new sub-task to another agent for the first time, or the user explicitly asked you to loop someone in. Never @mention the agent you are replying to as a thank-you or sign-off.\n")
+			b.WriteString("7. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
+			b.WriteString(buildRuntimeCommentReplyInstructions(provider, ctx))
+			b.WriteString("8. Before exiting: only if this run produced a fact that clears the high bar (important AND likely to be re-read by future runs on this same issue, e.g. a new PR URL or deploy URL), or you noticed a metadata key from entry that is now stale, pin or clear it via `multica issue metadata set`/`delete`. Most runs write nothing here — that is the expected outcome, not a gap. When in doubt, do not write. See the `## Issue Metadata` section above for the full bar.\n")
+			b.WriteString("9. Do NOT change the issue status unless the comment explicitly asks for it\n\n")
 		}
-		fmt.Fprintf(&b, "4. Find the triggering comment (ID: `%s`) and understand what is being asked — do NOT confuse it with previous comments\n", ctx.TriggerCommentID)
-		if ctx.IsSquadLeader {
-			b.WriteString("5. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 7 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
-			fmt.Fprintf(&b, "   - **Squad leader rule:** If your evaluation outcome is `no_action`, call `multica squad activity %s no_action --reason \"...\"` and then EXIT IMMEDIATELY. DO NOT post any comment whose only purpose is to announce that you are taking no action, exiting silently, or acknowledging another agent. A comment like \"No action needed\" or \"Exiting silently\" is noise — the `squad activity` call already records your decision in the timeline.\n", ctx.IssueID)
-		} else {
-			b.WriteString("5. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 7 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
-		}
-		b.WriteString("6. If a reply IS warranted: do any requested work first, then **decide whether to include any `@mention` link.** The default is NO mention. Only mention when you are escalating to a human owner who is not yet involved, delegating a concrete new sub-task to another agent for the first time, or the user explicitly asked you to loop someone in. Never @mention the agent you are replying to as a thank-you or sign-off.\n")
-		b.WriteString("7. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
-		b.WriteString(BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID))
-		b.WriteString("8. Before exiting: only if this run produced a fact that clears the high bar (important AND likely to be re-read by future runs on this same issue, e.g. a new PR URL or deploy URL), or you noticed a metadata key from entry that is now stale, pin or clear it via `multica issue metadata set`/`delete`. Most runs write nothing here — that is the expected outcome, not a gap. When in doubt, do not write. See the `## Issue Metadata` section above for the full bar.\n")
-		b.WriteString("9. Do NOT change the issue status unless the comment explicitly asks for it\n\n")
 	} else {
 		// Assignment-triggered: defer to agent Skills for workflow specifics.
-		b.WriteString("You are responsible for managing the issue status throughout your work, unless your Agent Identity forbids issue status changes.\n\n")
-		fmt.Fprintf(&b, "1. Run `multica issue get %s --output json` to understand your task\n", ctx.IssueID)
-		fmt.Fprintf(&b, "2. Run `multica issue metadata list %s --output json` to see what prior agents pinned — best-effort, empty `{}` and CLI failures are normal. See the `## Issue Metadata` section above for what to look for.\n", ctx.IssueID)
-		fmt.Fprintf(&b, "3. Run `multica issue comment list %s --output json` to read the full comment history (returns all comments, capped server-side at 2000) — this is mandatory, not optional. Earlier comments often carry context the issue body lacks (e.g. which repo to work in, the prior agent's findings, the reason the issue was reassigned to you). Skipping this step is the most common cause of agents acting on stale or incomplete instructions. When the flat dump is too large to ingest in one shot, treat `--recent 20 --output json` plus the `--before` / `--before-id` cursor (from the stderr `Next thread cursor:` line) as a paging strategy: keep walking older threads until you have read enough history to satisfy this mandatory step. `--recent` is a way to read the full history page-by-page, not a shortcut that replaces it.\n", ctx.IssueID)
-		fmt.Fprintf(&b, "4. Run `multica issue status %s in_progress` unless your Agent Identity forbids issue status changes; if it does, skip this step.\n", ctx.IssueID)
-		b.WriteString("5. Complete the task within your Agent Identity boundaries. Do not investigate, implement, create issues, update issues, or delegate if your Agent Identity forbids that action; if your role is delegation-only, perform the allowed delegation work and stop once that outcome is delivered.\n")
+		b.WriteString("The platform automatically moves ordinary assignment tasks from `todo` to `in_progress` when your task starts, and from `in_progress` to `in_review` after an ordinary implementation task completes. Only change issue status yourself when the user, Agent Identity, or workflow outcome explicitly requires a different state.\n\n")
 		if ctx.IsSquadLeader {
-			fmt.Fprintf(&b, "6. **Post your final results as a comment** (unless your outcome is `no_action` — in that case, calling `multica squad activity %s no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment announcing no_action or saying you are exiting silently): post it with `multica issue comment add %s` using the platform-correct non-inline mode from ## Comment Formatting (never inline `--content`). Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID, ctx.IssueID)
-		} else {
-			fmt.Fprintf(&b, "6. **Post your final results as a comment — this step is mandatory**: post it with `multica issue comment add %s` using the platform-correct non-inline mode from ## Comment Formatting (never inline `--content`). Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID)
+			b.WriteString("Squad-leader / coordinator guardrail: treat Agent Identity as the source of truth for whether you are a coordinator or an implementer. If your Agent Identity says PM, coordinator, dispatcher, reviewer, or stage owner rather than developer, do not check out repositories, edit files, run implementation tests, or claim implementation is complete. A coordinator must not run repo-inspection, build, test, or wait/poll commands such as `cd <repo>`, `git`, `rg`, `cat`, `find`, `sed`, `ls`, `go test`, `pnpm`, `npm`, `make`, `sleep`, `watch`, `multica issue runs`, or `multica issue activity` unless the issue explicitly says this coordinator task is also the implementer. Do not call provider-native task delegation or repo tools such as TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS to simulate delegated work; use platform comments and `multica` CLI only. Follow the squad's own instructions for whether to delegate, ask a clarifying question, report a blocker, or complete a coordination-only result; platform runtime does not define squad-specific stages. When you delegate through a platform mention, the same visible comment must contain exactly one real `mention://agent/...` link for the target agent; a comment that says a stage is being dispatched but lacks the mention is not a dispatch. If native file-write tools are unavailable, return that dispatch or blocker comment as final assistant output so the platform posts it automatically. Then record `multica squad activity ... action` when required and stop so the delegated member receives an independent task.\n\n")
+			if isStageChainPMCoordinator(ctx) {
+				b.WriteString("Stage-chain PM entry rule from your squad instructions: this assignment-triggered PM turn is never an implementation turn. Do not inspect code or start development. Your first PM turn must dispatch `01-需求澄清` with exactly one `mention://agent/...` link and then stop; only block instead if the source requirement is unavailable or the 01 agent id cannot be resolved.\n\n")
+				fmt.Fprintf(&b, "For this first PM turn, the complete successful outcome is only: read `multica issue get %s --output json`, read comments, run `multica squad activity %s action --reason \"dispatch 01\"`, and return a short Markdown final output that dispatches `01-需求澄清` using the real mention link from the squad roster. Example final output shape: `调度 01-需求澄清：请补齐需求边界、验收口径和进入 02 条件。 [@01-需求澄清](mention://agent/<id>)`. Do not call `multica issue comment add`, and do not run any other tools after the activity call.\n\n", ctx.IssueID, ctx.IssueID)
+			}
 		}
-		b.WriteString("7. Before exiting: only if this run produced a fact that clears the high bar (important AND likely to be re-read by future runs on this same issue, e.g. a new PR URL or deploy URL), or you noticed a metadata key from entry that is now stale, pin or clear it via `multica issue metadata set`/`delete`. Most runs write nothing here — that is the expected outcome, not a gap. When in doubt, do not write. See the `## Issue Metadata` section above for the full bar.\n")
-		fmt.Fprintf(&b, "8. When done, run `multica issue status %s in_review` unless your Agent Identity forbids issue status changes; if it does, skip this step.\n", ctx.IssueID)
-		fmt.Fprintf(&b, "9. If blocked, run `multica issue status %s blocked` unless your Agent Identity forbids issue status changes. Post a comment explaining the blocker unless your Agent Identity forbids issue comments.\n\n", ctx.IssueID)
+		if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) && !ctx.IsSquadLeader {
+			b.WriteString("1. Do not call tools or CLI commands in this no-repository planning task. Use the issue/source context already supplied in this task prompt and your Agent Identity.\n")
+			b.WriteString("2. Complete the bounded stage task within your Agent Identity boundaries. If a needed fact is absent from the prompt, record it as a handoff question or assumption for a later repo-enabled stage.\n")
+			b.WriteString("3. Return the stage result as final assistant output. The platform will automatically post it to the issue when this task completes.\n")
+		} else {
+			fmt.Fprintf(&b, "1. Run `multica issue get %s --output json` to understand your task\n", ctx.IssueID)
+			fmt.Fprintf(&b, "2. Run `multica issue metadata list %s --output json` to see what prior agents pinned — best-effort, empty `{}` and CLI failures are normal. See the `## Issue Metadata` section above for what to look for.\n", ctx.IssueID)
+			fmt.Fprintf(&b, "3. Run `multica issue comment list %s --output json` to read the full comment history (returns all comments, capped server-side at 2000) — this is mandatory, not optional. Earlier comments often carry context the issue body lacks (e.g. which repo to work in, the prior agent's findings, the reason the issue was reassigned to you). Skipping this step is the most common cause of agents acting on stale or incomplete instructions. When the flat dump is too large to ingest in one shot, treat `--recent 20 --output json` plus the `--before` / `--before-id` cursor (from the stderr `Next thread cursor:` line) as a paging strategy: keep walking older threads until you have read enough history to satisfy this mandatory step. `--recent` is a way to read the full history page-by-page, not a shortcut that replaces it.\n", ctx.IssueID)
+			b.WriteString("4. Complete the task within your Agent Identity boundaries. Do not investigate, implement, create issues, update issues, change issue status, or delegate if your Agent Identity forbids that action; if your role is delegation-only, perform the allowed delegation work and stop once that outcome is delivered.\n")
+		}
+		if ctx.IsSquadLeader && noNativeFileWriteForComments(ctx) {
+			fmt.Fprintf(&b, "5. **Return your final results as final assistant output** (unless your outcome is a true `no_action` — in that case, calling `multica squad activity %s no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT use no_action for wait/block/return/user-confirmation states): include the user-visible Markdown comment body in final output. The platform will post it to the issue automatically. If dispatching, include exactly one real `mention://agent/...` link in that final output. If you are waiting for user confirmation, record `multica squad activity %s action --reason \"...\" --wait-kind human_confirmation --wait-summary \"...\"` before stopping.\n", ctx.IssueID, ctx.IssueID)
+		} else if ctx.IsSquadLeader {
+			fmt.Fprintf(&b, "5. **Post your final results as a comment** (unless your outcome is a true `no_action` — in that case, calling `multica squad activity %s no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT use no_action for wait/block/return/user-confirmation states): post it with `multica issue comment add %s` using the Markdown file mode from ## Comment Formatting. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered. If you are waiting for user confirmation, record `multica squad activity %s action --reason \"...\" --wait-kind human_confirmation --wait-summary \"...\"` after posting the comment and before stopping.\n", ctx.IssueID, ctx.IssueID, ctx.IssueID)
+		} else if finalOutputAutoCommentStage(ctx) {
+			b.WriteString("5. **Return your stage result as final assistant output — this step is mandatory**: do not call `multica issue comment add`. The platform will automatically publish your output when this task completes; long multi-section artifacts are uploaded as Markdown attachments with a compact summary comment, provided you did not already post a comment.\n")
+		} else if noNativeFileWriteForComments(ctx) {
+			b.WriteString("5. **Return your final results as final assistant output — this step is mandatory**: the platform will automatically post that Markdown output to the issue because native file-write tools are unavailable in this task. Do not call `multica issue comment add`.\n")
+		} else {
+			fmt.Fprintf(&b, "5. **Post your final results as a comment — this step is mandatory**: post it with `multica issue comment add %s` using the Markdown file mode from ## Comment Formatting. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID)
+		}
+		b.WriteString("6. Before exiting: only if this run produced a fact that clears the high bar (important AND likely to be re-read by future runs on this same issue, e.g. a new PR URL or deploy URL), or you noticed a metadata key from entry that is now stale, pin or clear it via `multica issue metadata set`/`delete`. Most runs write nothing here — that is the expected outcome, not a gap. When in doubt, do not write. See the `## Issue Metadata` section above for the full bar.\n")
+		fmt.Fprintf(&b, "7. If blocked, run `multica issue status %s blocked` unless your Agent Identity forbids issue status changes. Post a comment explaining the blocker unless your Agent Identity forbids issue comments. If you completed normally, do not manually set `in_review` just to close the workflow; the platform handles that for ordinary implementation tasks.\n\n", ctx.IssueID)
 	}
 
 	// Sub-issue creation semantics — the only piece of the old Parent /
@@ -704,6 +841,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// runs (no parent/child semantics there).
 	if ctx.IssueID != "" && ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == "" {
 		b.WriteString("## Sub-issue Creation\n\n")
+		b.WriteString("**Child issues are independent work items, not generic workflow steps.** Create a same-project child only when the user explicitly asks for a subtask or the work is an independent deliverable; otherwise continue on the current issue. For cross-project work, read `multica issue get <current>` and `multica issue children <current> --output json` first, then create at most one backlog child per target project/work intent with an explicit `--parent` and `--project`. If a matching child already exists for the same parent, target project, and work intent, reuse that child instead of creating another one; if duplicates already exist, report a blocker and ask for cleanup rather than creating more children.\n\n")
 		b.WriteString("**Choosing `--status` when creating sub-issues.** `--status todo` = **start now** (the default — an agent assignee fires immediately). `--status backlog` = **wait** (assignee is set but no trigger fires; promote later with `multica issue status <child-id> todo`). Parallel children: all `--status todo`. Strict serial Step 1→2→3: only Step 1 is `todo`; Steps 2/3 are `--status backlog` from the start, promoted in turn.\n\n")
 	}
 
@@ -713,12 +851,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		case "claude", "codebuddy":
 			// Claude/CodeBuddy discovers skills natively from .claude/skills/ — just list names.
 			b.WriteString("You have the following skills installed (discovered automatically):\n\n")
-		case "codex", "copilot", "opencode", "openclaw", "pi", "cursor", "kimi", "kiro", "antigravity":
-			// Codex, Copilot, OpenCode, OpenClaw, Pi, Cursor, Kimi, Kiro, and
+		case "codex", "copilot", "opencode", "pi", "cursor", "kimi", "kiro", "antigravity":
+			// Codex, Copilot, OpenCode, Pi, Cursor, Kimi, Kiro, and
 			// Antigravity discover skills natively from their respective paths.
-			// For OpenClaw, the daemon also writes a per-task openclaw-config.json
-			// (exported via OPENCLAW_CONFIG_PATH) that pins agents.defaults.workspace
-			// to the task workdir so the CLI's scanner picks up {workDir}/skills/.
 			// Antigravity inherits Gemini CLI's workspace skill layout —
 			// {workDir}/.agents/skills/ — see resolveSkillsDir.
 			b.WriteString("You have the following skills installed (discovered automatically):\n\n")
@@ -765,12 +900,17 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("Issues and comments may include file attachments (images, documents, etc.).\n")
 	b.WriteString("When a task includes attachment IDs and you need the files, inspect `multica attachment --help` and use the authenticated CLI path. Do not open Multica resource URLs directly.\n\n")
 
-	b.WriteString("## Important: Always Use the `multica` CLI\n\n")
-	b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
-	b.WriteString("Do NOT use `curl`, `wget`, or any other HTTP client to access Multica URLs or APIs directly. ")
-	b.WriteString("Multica resource URLs require authenticated access that only the `multica` CLI can provide.\n\n")
-	b.WriteString("If you need to perform an operation that is not covered by any existing `multica` command, ")
-	b.WriteString("do NOT attempt to work around it. Instead, post a comment mentioning the workspace owner to request the missing functionality.\n\n")
+	if finalOutputAutoCommentStage(ctx) {
+		b.WriteString("## Important: Platform Output Is Automatic\n\n")
+		b.WriteString("Do not call `multica issue comment add` or use HTTP clients to write platform output in this read-only stage. Use allowed read/search tools only as needed, then put the stage result in your final assistant output. The platform publishes that output automatically; long multi-section artifacts are uploaded as Markdown attachments with a compact summary comment.\n\n")
+	} else {
+		b.WriteString("## Important: Always Use the `multica` CLI\n\n")
+		b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
+		b.WriteString("Do NOT use `curl`, `wget`, or any other HTTP client to access Multica URLs or APIs directly. ")
+		b.WriteString("Multica resource URLs require authenticated access that only the `multica` CLI can provide.\n\n")
+		b.WriteString("If you need to perform an operation that is not covered by any existing `multica` command, ")
+		b.WriteString("do NOT attempt to work around it. Instead, post a comment mentioning the workspace owner to request the missing functionality.\n\n")
+	}
 
 	b.WriteString("## Output\n\n")
 	switch {
@@ -782,8 +922,10 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Print exactly one final line: `Created <identifier-or-id>: <title>` after a successful `multica issue create`. Use the created issue's `identifier` from JSON output when available; otherwise use its `id`. Do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
 	default:
-		if ctx.IsSquadLeader {
-			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
+		if finalOutputAutoCommentStage(ctx) {
+			b.WriteString("Return the complete stage result as final assistant output. The platform will publish it automatically and upload long multi-section artifacts as Markdown attachments, so do not call `multica issue comment add` and do not create a local reply file.\n\n")
+		} else if ctx.IsSquadLeader {
+			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is a true `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. Stage waits, blockers, returns, user-confirmation requests, child-issue waits, and dispatches are not no_action; for those outcomes (`action`, `failed`), a comment is mandatory. If the outcome is waiting for user confirmation, record `--wait-kind human_confirmation --wait-summary \"...\"` on the `multica squad activity` call.\n\n")
 		} else {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`.** The user does NOT see your terminal output, assistant chat text, or run logs — only comments on the issue. A task that finishes without a result comment is invisible to the user, even if the work itself was correct.\n\n")
 		}
@@ -794,6 +936,64 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	}
 
 	return b.String()
+}
+
+func isStageChainPMCoordinator(ctx TaskContextForEnv) bool {
+	if !ctx.IsSquadLeader || !strings.EqualFold(strings.TrimSpace(ctx.ExecutionPolicy.RoleKind), "coordinator") {
+		return false
+	}
+	instructions := ctx.AgentInstructions
+	return strings.Contains(ctx.AgentName, "PM") &&
+		(strings.Contains(instructions, "PM -> 01") ||
+			strings.Contains(instructions, "01-需求澄清") ||
+			strings.Contains(instructions, "stage_chain"))
+}
+
+func coordinatorWithoutFileWrite(ctx TaskContextForEnv) bool {
+	return strings.EqualFold(strings.TrimSpace(ctx.ExecutionPolicy.RoleKind), "coordinator") && !ctx.ExecutionPolicy.CanAccessRepo
+}
+
+func noNativeFileWriteForComments(ctx TaskContextForEnv) bool {
+	return coordinatorWithoutFileWrite(ctx) ||
+		(isBoundedReviewStage(ctx.ExecutionPolicy) && !ctx.ExecutionPolicy.CanEditRepo)
+}
+
+func finalOutputAutoCommentStage(ctx TaskContextForEnv) bool {
+	return coordinatorWithoutFileWrite(ctx) ||
+		(isBoundedReviewStage(ctx.ExecutionPolicy) && !ctx.ExecutionPolicy.CanEditRepo)
+}
+
+func canShowRepoCheckoutCommand(policy TaskExecutionPolicyForEnv) bool {
+	if policy.RoleKind == "" && policy.RoleKey == "" && policy.ProjectSkillMode == "" {
+		return true
+	}
+	return policy.CanAccessRepo
+}
+
+func isBoundedReviewStage(policy TaskExecutionPolicyForEnv) bool {
+	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNoRepoBoundedReviewStage(policy TaskExecutionPolicyForEnv) bool {
+	return isBoundedReviewStage(policy) && !policy.CanAccessRepo
+}
+
+func buildRuntimeCommentReplyInstructions(provider string, ctx TaskContextForEnv) string {
+	if ctx.TriggerCommentID == "" {
+		return ""
+	}
+	if finalOutputAutoCommentStage(ctx) {
+		return "Do not call `multica issue comment add`. Write your reply/stage result as the final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
+	}
+	if !noNativeFileWriteForComments(ctx) {
+		return BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID)
+	}
+	return "Do not call `multica issue comment add`. Write your reply/stage result as the final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 }
 
 func writeBackgroundTaskSafetyInstructions(b *strings.Builder) {

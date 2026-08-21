@@ -479,15 +479,15 @@ function Start-DefaultInstall {
 
     Write-Host ""
     Write-Host "  ============================================" -ForegroundColor Green
-    Write-Host "  [OK] Multica CLI is ready!" -ForegroundColor Green
+    Write-Host "  [OK] Multica CLI 已就绪！" -ForegroundColor Green
     Write-Host "  ============================================" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Next: configure your environment"
+    Write-Host "  下一步：连接团队内部环境"
     Write-Host ""
-    Write-Host "     multica setup               " -NoNewline; Write-Host "# Connect to Multica Cloud (multica.ai)" -ForegroundColor DarkGray
-    Write-Host "     multica setup self-host      " -NoNewline; Write-Host "# Connect to a self-hosted server" -ForegroundColor DarkGray
+    Write-Host "     multica setup self-host      " -NoNewline; Write-Host "# 连接团队内部或自部署服务" -ForegroundColor DarkGray
+    Write-Host "     multica setup self-host --server-url https://api.example.internal --app-url https://multica.example.internal"
     Write-Host ""
-    Write-Host "  Self-hosting? Install the server first:"
+    Write-Host "  需要先部署服务端？执行："
     Write-Host '     $env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex'
     Write-Host ""
 }
@@ -520,8 +520,7 @@ function Start-LocalInstall {
     Write-Host ""
     Write-Host "     multica setup self-host  " -NoNewline; Write-Host "# Configure + authenticate + start daemon" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  Login: configure RESEND_API_KEY in .env for email codes,"
-    Write-Host "  or read the generated code from backend logs when Resend is unset."
+    Write-Host "  Login: use an account name and password in the web UI."
     Write-Host ""
     Write-Host "  To stop all services:"
     Write-Host '     $env:MULTICA_MODE="stop"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex'

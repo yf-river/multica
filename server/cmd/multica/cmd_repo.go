@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -333,15 +334,22 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 
 func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	repoURL := args[0]
+	ref := strings.TrimSpace(repoCheckoutRef)
+	if normalizedURL, normalizedRef := normalizeRepoCheckoutURL(repoURL); normalizedURL != "" {
+		repoURL = normalizedURL
+		if ref == "" {
+			ref = normalizedRef
+		}
+	}
 
-	daemonPort := os.Getenv("MULTICA_DAEMON_PORT")
+	daemonPort := envOrTaskContext("MULTICA_DAEMON_PORT")
 	if daemonPort == "" {
 		return fmt.Errorf("MULTICA_DAEMON_PORT not set (this command is intended to be run by an agent inside a daemon task)")
 	}
 
-	workspaceID := os.Getenv("MULTICA_WORKSPACE_ID")
-	agentName := os.Getenv("MULTICA_AGENT_NAME")
-	taskID := os.Getenv("MULTICA_TASK_ID")
+	workspaceID := envOrTaskContext("MULTICA_WORKSPACE_ID")
+	agentName := envOrTaskContext("MULTICA_AGENT_NAME")
+	taskID := envOrTaskContext("MULTICA_TASK_ID")
 
 	// Use current working directory as the checkout target.
 	workDir, err := os.Getwd()
@@ -353,7 +361,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		"url":          repoURL,
 		"workspace_id": workspaceID,
 		"workdir":      workDir,
-		"ref":          repoCheckoutRef,
+		"ref":          ref,
 		"agent_name":   agentName,
 		"task_id":      taskID,
 	}
@@ -392,4 +400,58 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Checked out %s → %s (branch: %s)\n", repoURL, result.Path, result.BranchName)
 
 	return nil
+}
+
+func normalizeRepoCheckoutURL(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || !strings.EqualFold(u.Host, "git.code.tencent.com") {
+		return raw, ""
+	}
+	segments := splitCleanURLPath(u.Path)
+	if len(segments) == 0 {
+		return raw, ""
+	}
+	if i := indexURLSegment(segments, "-"); i >= 0 {
+		segments = append(segments[:i], segments[i+1:]...)
+	}
+	marker := len(segments)
+	ref := ""
+	for i, segment := range segments {
+		switch segment {
+		case "commits", "commit", "tree", "branches", "branch", "tags", "tag", "blob", "file", "files", "merge_requests", "merge_request":
+			marker = i
+			if marker+1 < len(segments) {
+				ref = strings.Join(segments[marker+1:], "/")
+			}
+		default:
+			continue
+		}
+		break
+	}
+	projectPath := strings.TrimSuffix(strings.Join(segments[:marker], "/"), ".git")
+	if projectPath == "" {
+		return raw, ""
+	}
+	return "https://git.code.tencent.com/" + projectPath + ".git", ref
+}
+
+func splitCleanURLPath(path string) []string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func indexURLSegment(segments []string, needle string) int {
+	for i, segment := range segments {
+		if segment == needle {
+			return i
+		}
+	}
+	return -1
 }

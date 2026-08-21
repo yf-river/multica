@@ -1,4 +1,5 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop
+.PHONY: help makehelp dev server daemon cli multica build test schema-init sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -19,7 +20,6 @@ MULTICA_APP_URL ?= $(FRONTEND_ORIGIN)
 DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 NEXT_PUBLIC_API_URL ?= http://localhost:$(PORT)
 NEXT_PUBLIC_WS_URL ?= ws://localhost:$(PORT)/ws
-GOOGLE_REDIRECT_URI ?= $(FRONTEND_ORIGIN)/auth/callback
 MULTICA_SERVER_URL ?= ws://localhost:$(PORT)/ws
 LOCAL_UPLOAD_BASE_URL ?= http://localhost:$(PORT)
 
@@ -28,34 +28,43 @@ export
 MULTICA_ARGS ?= $(ARGS)
 
 COMPOSE := docker compose
+GOAL_TEST_TMPDIR ?= /data/tmp/goal-test
+GOAL_TEST_GOCACHE ?= /data/tmp/goal-test-gocache
+GOAL_TEST_REAL_AGENT_PROVIDER ?= codebuddy
+GOAL_TEST_REAL_AGENT_MODEL ?= deepseek-v4-pro-ioa
+GOAL_TEST_REAL_AGENT_FALLBACK_MODEL ?= deepseek-v4-pro-ioa
+GOAL_TEST_INT_API_URL ?= http://127.0.0.1:18762
+GOAL_TEST_INT_WORKSPACE ?= ai-studio
+GOAL_TEST_INT_ACCOUNT ?= develop
+GOAL_TEST_INT_PASSWORD ?= develop123
 
 define REQUIRE_ENV
 	@if [ ! -f "$(ENV_FILE)" ]; then \
-		echo "Missing env file: $(ENV_FILE)"; \
-		echo "Create .env from .env.example, or run 'make worktree-env' and use .env.worktree."; \
+		echo "缺少 env 文件：$(ENV_FILE)"; \
+		echo "请从 .env.example 创建 .env，或运行 'make worktree-env' 使用 .env.worktree。"; \
 		exit 1; \
 	fi
 endef
 
-# Default target changed from selfhost to help: bare `make` now prints this help
-# instead of launching a full Docker Compose build, which is safer for onboarding.
+# 默认 target 从 selfhost 改为 help：裸 `make` 现在会打印这份帮助，
+# 而非启动一次完整 Docker Compose 构建，对新人更安全。
 .DEFAULT_GOAL := help
 
-##@ Help
+##@ 帮助
 
-help: ## Show available make targets and common local workflows
-	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nQuick start:\n  \033[36mmake dev\033[0m          Bootstrap the current checkout and start everything\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
+help: ## 显示可用 make target 与常用本地工作流
+	@awk 'BEGIN {FS = ":.*## "; printf "\n用法:\n  make \033[36m<target>\033[0m\n\n快速开始:\n  \033[36mmake dev\033[0m          引导当前 checkout 并启动一切\n  \033[36mmake check\033[0m        跑完整本地验证流水线\n\nCheckout 模式:\n  主 checkout 用 \033[36m.env\033[0m\n  Worktree 用 \033[36m.env.worktree\033[0m（用 \033[36mmake worktree-env\033[0m 生成）\n\n"} \
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
 		/^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-makehelp: help ## Alias for `make help`
+makehelp: help ## `make help` 的别名
 
-# ---------- Self-hosting (Docker Compose) ----------
-##@ Self-hosting
+# ---------- 自部署（Docker Compose）----------
+##@ 自部署
 
-selfhost: ## Create .env if needed, then pull and start the official self-hosted images
+selfhost: ## 若需要则创建 .env，然后拉取并启动官方自部署镜像
 	@if [ ! -f .env ]; then \
-		echo "==> Creating .env from .env.example..."; \
+		echo "==> 从 .env.example 创建 .env..."; \
 		cp .env.example .env; \
 		JWT=$$(openssl rand -hex 32); \
 		PGPASS=$$(openssl rand -hex 24); \
@@ -68,19 +77,19 @@ selfhost: ## Create .env if needed, then pull and start the official self-hosted
 			sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$PGPASS/" .env; \
 			sed -i -E "s#^(DATABASE_URL=postgres://[^:]+:)[^@]*(@.*)#\1$$PGPASS\2#" .env; \
 		fi; \
-		echo "==> Generated random JWT_SECRET and POSTGRES_PASSWORD"; \
+		echo "==> 已生成随机 JWT_SECRET 与 POSTGRES_PASSWORD"; \
 	fi
-	@echo "==> Pulling official Multica images..."
+	@echo "==> 拉取官方 Multica 镜像..."
 	@if ! docker compose -f docker-compose.selfhost.yml pull; then \
 		echo ""; \
-		echo "Official images for tag '$${MULTICA_IMAGE_TAG:-latest}' are not published yet."; \
-		echo "If this is before the first GHCR release, build from the current checkout:"; \
+		echo "tag '$${MULTICA_IMAGE_TAG:-latest}' 的官方镜像尚未发布。"; \
+		echo "若这是首次 GHCR release 之前，从当前 checkout 构建："; \
 		echo "  make selfhost-build"; \
 		exit 1; \
 	fi
-	@echo "==> Starting Multica via Docker Compose..."
+	@echo "==> 通过 Docker Compose 启动 Multica..."
 	docker compose -f docker-compose.selfhost.yml up -d
-	@echo "==> Waiting for backend to be ready..."
+	@echo "==> 等待后端就绪..."
 	@for i in $$(seq 1 30); do \
 		if curl -sf http://localhost:$${PORT:-8080}/health > /dev/null 2>&1; then \
 			break; \
@@ -89,28 +98,27 @@ selfhost: ## Create .env if needed, then pull and start the official self-hosted
 	done
 	@if curl -sf http://localhost:$${PORT:-8080}/health > /dev/null 2>&1; then \
 		echo ""; \
-		echo "✓ Multica is running!"; \
-		echo "  Frontend: http://localhost:$${FRONTEND_PORT:-3000}"; \
-		echo "  Backend:  http://localhost:$${PORT:-8080}"; \
+		echo "✓ Multica 已启动！"; \
+		echo "  前端：http://localhost:$${FRONTEND_PORT:-3000}"; \
+		echo "  后端：http://localhost:$${PORT:-8080}"; \
 		echo ""; \
-		echo "Images: $${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:$${MULTICA_IMAGE_TAG:-latest}"; \
-		echo "        $${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:$${MULTICA_IMAGE_TAG:-latest}"; \
+		echo "镜像：$${MULTICA_BACKEND_IMAGE:-ghcr.io/multica-ai/multica-backend}:$${MULTICA_IMAGE_TAG:-latest}"; \
+		echo "      $${MULTICA_WEB_IMAGE:-ghcr.io/multica-ai/multica-web}:$${MULTICA_IMAGE_TAG:-latest}"; \
 		echo ""; \
-		echo "Log in: configure RESEND_API_KEY in .env for email codes,"; \
-		echo "        or read the generated code from backend logs when Resend is unset."; \
+		echo "在前端用账号名与密码登录。"; \
 		echo ""; \
-		echo "Next — install the CLI and connect your machine:"; \
+		echo "下一步——装 CLI 并连接你的机器："; \
 		echo "  brew install multica-ai/tap/multica"; \
 		echo "  multica setup self-host"; \
 	else \
 		echo ""; \
-		echo "Services are still starting. Check logs:"; \
+		echo "服务仍在启动中。查看日志："; \
 		echo "  docker compose -f docker-compose.selfhost.yml logs"; \
 	fi
 
-selfhost-build: ## Build backend/web from the current checkout and start the self-hosted stack
+selfhost-build: ## 从当前 checkout 构建后端/web 镜像并启动自部署 stack
 	@if [ ! -f .env ]; then \
-		echo "==> Creating .env from .env.example..."; \
+		echo "==> 从 .env.example 创建 .env..."; \
 		cp .env.example .env; \
 		JWT=$$(openssl rand -hex 32); \
 		PGPASS=$$(openssl rand -hex 24); \
@@ -123,11 +131,11 @@ selfhost-build: ## Build backend/web from the current checkout and start the sel
 			sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$PGPASS/" .env; \
 			sed -i -E "s#^(DATABASE_URL=postgres://[^:]+:)[^@]*(@.*)#\1$$PGPASS\2#" .env; \
 		fi; \
-		echo "==> Generated random JWT_SECRET and POSTGRES_PASSWORD"; \
+		echo "==> 已生成随机 JWT_SECRET 与 POSTGRES_PASSWORD"; \
 	fi
-	@echo "==> Building Multica from the current checkout..."
+	@echo "==> 从当前 checkout 构建 Multica..."
 	docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build
-	@echo "==> Waiting for backend to be ready..."
+	@echo "==> 等待后端就绪..."
 	@for i in $$(seq 1 30); do \
 		if curl -sf http://localhost:$${PORT:-8080}/health > /dev/null 2>&1; then \
 			break; \
@@ -136,186 +144,311 @@ selfhost-build: ## Build backend/web from the current checkout and start the sel
 	done
 	@if curl -sf http://localhost:$${PORT:-8080}/health > /dev/null 2>&1; then \
 		echo ""; \
-		echo "✓ Multica is running!"; \
-		echo "  Frontend: http://localhost:$${FRONTEND_PORT:-3000}"; \
-		echo "  Backend:  http://localhost:$${PORT:-8080}"; \
+		echo "✓ Multica 已启动！"; \
+		echo "  前端：http://localhost:$${FRONTEND_PORT:-3000}"; \
+		echo "  后端：http://localhost:$${PORT:-8080}"; \
 		echo ""; \
-		echo "Log in: configure RESEND_API_KEY in .env for email codes,"; \
-		echo "        or read the generated code from backend logs when Resend is unset."; \
+		echo "在前端用账号名与密码登录。"; \
 		echo ""; \
-		echo "Built images locally via docker-compose.selfhost.build.yml."; \
-		echo "Local tags: multica-backend:dev and multica-web:dev."; \
+		echo "已通过 docker-compose.selfhost.build.yml 本地构建镜像。"; \
+		echo "本地 tag：multica-backend:dev 与 multica-web:dev。"; \
 		echo ""; \
-		echo "Next — install the CLI and connect your machine:"; \
+		echo "下一步——装 CLI 并连接你的机器："; \
 		echo "  brew install multica-ai/tap/multica"; \
 		echo "  multica setup self-host"; \
 	else \
 		echo ""; \
-		echo "Services are still starting. Check logs:"; \
+		echo "服务仍在启动中。查看日志："; \
 		echo "  docker compose -f docker-compose.selfhost.yml logs"; \
 	fi
 
-selfhost-stop: ## Stop the self-hosted Docker Compose stack
-	@echo "==> Stopping Multica services..."
+selfhost-stop: ## 停止自部署 Docker Compose stack
+	@echo "==> 停止 Multica 服务..."
 	docker compose -f docker-compose.selfhost.yml down
-	@echo "✓ All services stopped."
+	@echo "✓ 所有服务已停止。"
 
-# ---------- One-click commands ----------
-##@ One-click
+# ---------- 一键命令 ----------
+##@ 一键
 
-setup: ## Prepare the current checkout from its env file: install deps, ensure DB, run migrations
+setup: ## 从 env 文件配置当前 checkout：装依赖、确保 DB、初始化 schema
 	$(REQUIRE_ENV)
-	@echo "==> Using env file: $(ENV_FILE)"
-	@echo "==> Installing dependencies..."
+	@echo "==> 使用 env 文件：$(ENV_FILE)"
+	@echo "==> 安装依赖..."
 	pnpm install
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	@echo "==> Running migrations..."
-	cd server && go run ./cmd/migrate up
+	@echo "==> 初始化数据库 schema..."
+	cd server && go run ./cmd/server --init-schema-only
 	@echo ""
-	@echo "✓ Setup complete! Run 'make start' to launch the app."
+	@echo "✓ 配置完成！跑 'make start' 启动应用。"
 
-start: ## Start backend and frontend for the current checkout and run migrations first
+start: ## 启动当前 checkout 的后端与前端；后端自动初始化空数据库
 	$(REQUIRE_ENV)
-	@echo "Using env file: $(ENV_FILE)"
-	@echo "Backend: http://localhost:$(PORT)"
-	@echo "Frontend: http://localhost:$(FRONTEND_PORT)"
+	@echo "使用 env 文件：$(ENV_FILE)"
+	@echo "后端：http://localhost:$(PORT)"
+	@echo "前端：http://localhost:$(FRONTEND_PORT)"
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	@echo "Running migrations..."
-	cd server && go run ./cmd/migrate up
-	@echo "Starting backend and frontend..."
+	@echo "启动后端与前端..."
 	@trap 'kill 0' EXIT; \
 		(cd server && go run ./cmd/server) & \
 		pnpm dev:web & \
 		wait
 
-stop: ## Stop backend and frontend processes for the current checkout
+stop: ## 停止当前 checkout 的后端与前端进程
 	$(REQUIRE_ENV)
-	@echo "Stopping services..."
+	@echo "停止服务..."
 	@-lsof -ti:$(PORT) | xargs kill -9 2>/dev/null
 	@-lsof -ti:$(FRONTEND_PORT) | xargs kill -9 2>/dev/null
 	@case "$(DATABASE_URL)" in \
 		""|*@localhost:*|*@localhost/*|*@127.0.0.1:*|*@127.0.0.1/*|*@\[::1\]:*|*@\[::1\]/*) \
-			echo "✓ App processes stopped. Shared PostgreSQL is still running on localhost:$(POSTGRES_PORT)." ;; \
+			echo "✓ 应用进程已停止。共享 PostgreSQL 仍在 localhost:$(POSTGRES_PORT) 运行。" ;; \
 		*) \
-			echo "✓ App processes stopped. Remote PostgreSQL was not affected." ;; \
+			echo "✓ 应用进程已停止。远程 PostgreSQL 未受影响。" ;; \
 	esac
 
-check: ## Run typecheck, TS tests, Go tests, and Playwright E2E for the current checkout
+check: ## 为当前 checkout 跑 typecheck、TS 测试、Go 测试、Playwright E2E
 	$(REQUIRE_ENV)
 	@ENV_FILE="$(ENV_FILE)" bash scripts/check.sh
 
-db-up: ## Start the shared PostgreSQL container used by main and worktrees
+# ---------- goal-test 部署 ----------
+##@ goal-test 部署
+
+goal-test-build: ## 构建后端/CLI 二进制与 web 生产 bundle，用于 goal-test
+	$(MAKE) build
+	pnpm --filter @multica/web build
+
+goal-test-deploy-dev: ## 构建一次、部署 goal-test 联调开发环境、然后验证
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy int --build --frontend-mode next-start
+	GOWORK=off node scripts/goal-test-environments.mjs verify int
+	GOWORK=off node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-deploy-dev-hot: ## 构建一次、用 web 热重载部署 goal-test 联调开发环境
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy int --build --frontend-mode next-dev
+	GOWORK=off node scripts/goal-test-environments.mjs verify int
+	GOWORK=off node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-dev-ui: ## 确保 goal-test 联调 web 热重载在跑，不重建后端或守护进程
+	node scripts/goal-test-environments.mjs dev-ui int
+
+goal-test-dev-ui-prewarm: ## 不重启服务预热 goal-test 联调 web 热重载路由
+	node scripts/goal-test-environments.mjs dev-ui-prewarm int
+
+goal-test-dev-ui-prewarm-full: ## 不重启服务预热所有已知 goal-test 联调 web 热重载路由
+	GOAL_TEST_WEB_PREWARM_SCOPE=full node scripts/goal-test-environments.mjs dev-ui-prewarm int
+
+goal-test-dev-ui-start: ## 确保 goal-test 联调 web 生产启动在跑，不重建后端或守护进程
+	node scripts/goal-test-environments.mjs dev-ui-start int
+
+goal-test-dev-server: ## 仅重建并重启 goal-test 联调后端 server
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-server int
+
+goal-test-dev-daemon: ## 仅重建并重启 goal-test 联调守护进程
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-daemon int
+
+goal-test-dev-check: ## 跑最小 goal-test 设置/UI 检查，快速反馈
+	node scripts/goal-test-environments.mjs dev-check int
+
+goal-test-sync-prod: ## 把已构建的 goal-test 产物同步到生产，然后验证
+	node scripts/goal-test-environments.mjs deploy prod
+	node scripts/goal-test-environments.mjs verify prod
+	node scripts/goal-test-environments.mjs verify-logs prod
+
+goal-test-promote-prod: goal-test-sync-prod ## 别名：把当前构建产物提升到生产
+
+goal-test-deploy-prod: ## 直接构建并部署 goal-test 生产稳定环境
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy prod --build
+	node scripts/goal-test-environments.mjs verify prod
+	node scripts/goal-test-environments.mjs verify-logs prod
+
+goal-test-deploy-int: goal-test-deploy-dev ## 别名：构建并部署 goal-test 联调开发环境
+
+goal-test-deploy-all: ## 先部署 dev，再把同一产物同步到生产
+	$(MAKE) goal-test-deploy-dev
+	$(MAKE) goal-test-sync-prod
+
+goal-test-verify-env: ## 验证 goal-test 生产与联调环境
+	node scripts/goal-test-environments.mjs verify all
+
+goal-test-verify-int-env: ## 仅验证 goal-test 联调环境
+	node scripts/goal-test-environments.mjs verify int
+
+goal-test-verify-logs: ## 验证当前部署的 goal-test 日志，不扫描旧的追加历史
+	node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-e2e-preflight: ## 浏览器 E2E 前检查 goal-test Playwright/API/DB 前置
+	PLAYWRIGHT_BASE_URL=$${PLAYWRIGHT_BASE_URL:-http://9.134.129.162:13682} node scripts/goal-test-e2e-preflight.mjs
+
+goal-test-e2e: goal-test-e2e-preflight ## 用固定联调 env 跑 goal-test Playwright；传 SPEC="e2e/file.spec.ts" 与 ARGS="--project=chromium"
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs
+
+goal-test-e2e-all: goal-test-e2e-preflight ## 用固定联调 env 跑全部 goal-test Playwright spec
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs --project=chromium
+
+goal-test-real-agent-e2e: goal-test-e2e-preflight ## 为 user-center squad 与训练/评估跑慢的真实 Codex Agent E2E
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	RUN_REAL_AGENT_E2E=1 \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts e2e/prompt-library-real-agent.spec.ts --project=chromium
+
+goal-test-smoke: ## 快速 goal-test 门禁：E2E preflight、环境验证、当前日志窗口验证
+	$(MAKE) goal-test-e2e-preflight
+	node scripts/goal-test-environments.mjs verify int
+	node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-fast-check: ## changed-aware 开发门禁；除非 smart verifier 要求，避免部署/审计
+	node scripts/goal-test-smart-verify.mjs --mode dev
+
+goal-test-smart-verify: ## changed-aware goal-test 门禁；传 MODE=dev|precommit|final 与 DRY_RUN=1 预览
+	node scripts/goal-test-smart-verify.mjs --mode $${MODE:-dev} $${DRY_RUN:+--dry-run}
+
+goal-test-ui-acceptance: goal-test-smoke ## 为当前 goal-test dev 部署跑固定的浏览器/UI/性能/日志验收
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts e2e/production-acceptance.spec.ts --project=chromium
+	node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-ui-audit: goal-test-smoke ## 跑真实浏览器 goal-test 联调 UI、性能、console、中文语义、日志窗口审计
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
+
+goal-test-dashboard-click-audit: goal-test-smoke ## 跑真实浏览器 dashboard sidebar/导航点击延迟审计
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
+
+goal-test-training-performance-audit: goal-test-smoke ## 跑真实浏览器训练/评估路由请求、性能、日志窗口审计
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
+
+goal-test-public-training-performance-audit: goal-test-smoke ## 通过公开前端 URL 跑训练/评估性能审计
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	GOAL_TEST_BROWSER_URL="$${GOAL_TEST_BROWSER_URL:-http://9.134.129.162:13682}" \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
+
+goal-test-prune-dev-data: goal-test-smoke ## 通过公开 API 清理旧 goal-test 联调数据；传 APPLY=1 执行
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-prune-dev-data.mjs $${APPLY:+--apply} $${KEEP:+--keep=$${KEEP}}
+
+goal-test-prune-prod-data: ## 通过公开 API 清理旧 goal-test 生产稳定测试数据；dry-run 审查后才能传 APPLY=1
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	node scripts/goal-test-environments.mjs verify prod
+	TMPDIR="$(GOAL_TEST_TMPDIR)" GOAL_TEST_PRUNE_ENV=prod node scripts/goal-test-prune-dev-data.mjs $${APPLY:+--apply} $${KEEP:+--keep=$${KEEP}} $${CANONICAL_SOP_ONLY:+--canonical-sop-only}
+	node scripts/goal-test-environments.mjs verify-logs prod
+
+db-up: ## 启动主 checkout 与 worktree 共用的 PostgreSQL 容器
 	@$(COMPOSE) up -d postgres
 
-db-down: ## Stop the shared PostgreSQL container without removing its Docker volume
+db-down: ## 停止共享 PostgreSQL 容器，不删除其 Docker volume
 	@$(COMPOSE) down
 
-# Drop + recreate the current env's database, then run all migrations.
-# Use for a clean slate in local dev. Only affects the DB named in
-# ENV_FILE (POSTGRES_DB); the shared postgres container and other
-# worktree DBs are untouched. Refuses to run against a remote host.
-db-reset: ## Drop and recreate the current env's database, then re-run all migrations
+# 删除 + 重建当前 env 的数据库，再初始化当前 schema。
+# 用于本地开发重置干净状态。只影响 ENV_FILE 中的 POSTGRES_DB；
+# 共享 postgres 容器与其他 worktree DB 不受影响。远程主机拒绝运行。
+db-reset: ## 删除并重建当前 env 的数据库，再初始化当前 schema
 	$(REQUIRE_ENV)
 	@case "$(DATABASE_URL)" in \
 		""|*@localhost:*|*@localhost/*|*@127.0.0.1:*|*@127.0.0.1/*|*@\[::1\]:*|*@\[::1\]/*) ;; \
-		*) echo "Refusing to reset: DATABASE_URL points at a remote host."; exit 1 ;; \
+		*) echo "拒绝重置：DATABASE_URL 指向远程主机。"; exit 1 ;; \
 	esac
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	@echo "==> Dropping and recreating database '$(POSTGRES_DB)'..."
+	@echo "==> 删除并重建数据库 '$(POSTGRES_DB)'..."
 	@$(COMPOSE) exec -T postgres psql -U $(POSTGRES_USER) -d postgres -v ON_ERROR_STOP=1 \
 		-c "DROP DATABASE IF EXISTS \"$(POSTGRES_DB)\" WITH (FORCE);" \
 		-c "CREATE DATABASE \"$(POSTGRES_DB)\";"
-	@echo "==> Running migrations..."
-	cd server && go run ./cmd/migrate up
+	@echo "==> 初始化数据库 schema..."
+	cd server && go run ./cmd/server --init-schema-only
 	@echo ""
-	@echo "✓ Database '$(POSTGRES_DB)' reset. Run 'make start' to launch the app."
+	@echo "✓ 数据库 '$(POSTGRES_DB)' 已重置。跑 'make start' 启动应用。"
 
-worktree-env: ## Generate .env.worktree with a unique DB name and app ports for this worktree
+worktree-env: ## 为当前 worktree 生成带唯一 DB 名与应用端口的 .env.worktree
 	@bash scripts/init-worktree-env.sh .env.worktree
 
-setup-main: ## Prepare the main checkout using .env
+setup-main: ## 用 .env 配置主 checkout
 	@$(MAKE) setup ENV_FILE=$(MAIN_ENV_FILE)
 
-start-main: ## Start the main checkout using .env
+start-main: ## 用 .env 启动主 checkout
 	@$(MAKE) start ENV_FILE=$(MAIN_ENV_FILE)
 
-stop-main: ## Stop the main checkout processes defined by .env
+stop-main: ## 停止 .env 定义的主 checkout 进程
 	@$(MAKE) stop ENV_FILE=$(MAIN_ENV_FILE)
 
-check-main: ## Run the full verification pipeline for the main checkout
+check-main: ## 为主 checkout 跑完整验证流水线
 	@ENV_FILE=$(MAIN_ENV_FILE) bash scripts/check.sh
 
-setup-worktree: ## Ensure .env.worktree exists, then prepare this worktree
+setup-worktree: ## 确保 .env.worktree 存在，然后配置当前 worktree
 	@if [ ! -f "$(WORKTREE_ENV_FILE)" ]; then \
-		echo "==> Generating $(WORKTREE_ENV_FILE) with unique ports..."; \
+		echo "==> 生成带唯一端口的 $(WORKTREE_ENV_FILE)..."; \
 		bash scripts/init-worktree-env.sh $(WORKTREE_ENV_FILE); \
 	else \
-		echo "==> Using existing $(WORKTREE_ENV_FILE)"; \
+		echo "==> 使用既有 $(WORKTREE_ENV_FILE)"; \
 	fi
 	@$(MAKE) setup ENV_FILE=$(WORKTREE_ENV_FILE)
 
-start-worktree: ## Start this worktree using .env.worktree
+start-worktree: ## 用 .env.worktree 启动当前 worktree
 	@$(MAKE) start ENV_FILE=$(WORKTREE_ENV_FILE)
 
-stop-worktree: ## Stop this worktree's backend and frontend processes
+stop-worktree: ## 停止当前 worktree 的后端与前端进程
 	@$(MAKE) stop ENV_FILE=$(WORKTREE_ENV_FILE)
 
-check-worktree: ## Run the full verification pipeline for this worktree
+check-worktree: ## 为当前 worktree 跑完整验证流水线
 	@ENV_FILE=$(WORKTREE_ENV_FILE) bash scripts/check.sh
 
-# ---------- Individual commands ----------
-##@ Individual commands
+# ---------- 单项命令 ----------
+##@ 单项命令
 
-dev: ## Bootstrap this checkout end-to-end: create env if needed, ensure DB, migrate, start services
+dev: ## 端到端引导当前 checkout：创建 env、确保 DB、启动服务
 	@bash scripts/dev.sh
 
-server: ## Run only the Go server for the current checkout
+server: ## 仅跑当前 checkout 的 Go server
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/server
 
-daemon: ## Restart the local agent daemon using the CLI's stored auth/session
+daemon: ## 用 CLI 存储的 auth/session 重启本地智能体守护进程
 	@$(MAKE) multica MULTICA_ARGS="daemon restart --profile local"
 
-cli: ## Run the multica CLI with ARGS or MULTICA_ARGS from source
+cli: ## 用 ARGS 或 MULTICA_ARGS 从源码跑 multica CLI
 	@$(MAKE) multica MULTICA_ARGS="$(MULTICA_ARGS)"
 
-multica: ## Run the multica CLI entrypoint directly from the Go source tree
+multica: ## 直接从 Go 源码树跑 multica CLI 入口
 	cd server && go run ./cmd/multica $(MULTICA_ARGS)
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-build: ## Build the server, CLI, and migrate binaries into server/bin
+build: ## 构建 server、CLI 二进制到 server/bin
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/server ./cmd/server
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" -o bin/multica ./cmd/multica
-	cd server && go build -o bin/migrate ./cmd/migrate
 
-test: ## Run Go tests after ensuring the target DB exists and migrations are applied
+test: ## 确保目标 DB 存在并初始化 schema 后跑 Go 测试
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate up
+	cd server && go run ./cmd/server --init-schema-only
 	cd server && go test -race ./...
 
-# Database
-##@ Database
+# 数据库
+##@ 数据库
 
-migrate-up: ## Create the target DB if needed, then apply database migrations
+schema-init: ## 需要时创建目标 DB，然后初始化或验证当前 schema
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate up
+	cd server && go run ./cmd/server --init-schema-only
 
-migrate-down: ## Create the target DB if needed, then roll back database migrations
-	$(REQUIRE_ENV)
-	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate down
-
-sqlc: ## Regenerate sqlc code
+sqlc: ## 重新生成 sqlc 代码
 	cd server && sqlc generate
 
-# Cleanup
-##@ Cleanup
+# 清理
+##@ 清理
 
-clean: ## Remove generated server binaries and temp files
+clean: ## 删除生成的 server 二进制与临时文件
 	rm -rf server/bin server/tmp

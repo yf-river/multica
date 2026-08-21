@@ -3,11 +3,11 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enWorkspace from "../locales/en/workspace.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enWorkspace from "../locales/zh-Hans/workspace.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, workspace: enWorkspace },
+  "zh-Hans": { common: enCommon, workspace: enWorkspace },
 };
 
 const mockPush = vi.hoisted(() => vi.fn());
@@ -44,7 +44,7 @@ import { CreateWorkspaceModal } from "./create-workspace";
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -63,7 +63,7 @@ describe("CreateWorkspaceModal", () => {
     const user = userEvent.setup();
     renderModal({ onClose: vi.fn() });
 
-    const nameInput = screen.getByPlaceholderText("My Workspace");
+    const nameInput = screen.getByPlaceholderText("我的工作区");
     const slugInput = screen.getByPlaceholderText("my-workspace");
 
     await user.type(nameInput, "My Team");
@@ -90,17 +90,17 @@ describe("CreateWorkspaceModal", () => {
 
     renderModal({ onClose: vi.fn() });
 
-    await user.type(screen.getByPlaceholderText("My Workspace"), "My Team");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.type(screen.getByPlaceholderText("我的工作区"), "My Team");
+    await user.click(screen.getByRole("button", { name: "创建工作区" }));
 
     await waitFor(() => {
       expect(
-        screen.getByText("That workspace URL is already taken."),
+        screen.getByText("该工作区 URL 已被占用。"),
       ).toBeInTheDocument();
     });
 
     expect(mockToastError).toHaveBeenCalledWith(
-      "Choose a different workspace URL",
+      "请换一个工作区 URL",
     );
     expect(mockCreateWorkspaceMutate).toHaveBeenCalledWith(
       { name: "My Team", slug: "my-team" },
@@ -122,8 +122,8 @@ describe("CreateWorkspaceModal", () => {
 
     renderModal({ onClose });
 
-    await user.type(screen.getByPlaceholderText("My Workspace"), "My Team");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.type(screen.getByPlaceholderText("我的工作区"), "My Team");
+    await user.click(screen.getByRole("button", { name: "创建工作区" }));
 
     expect(onClose).toHaveBeenCalled();
     expect(mockPush).toHaveBeenCalledWith("/my-team/issues");

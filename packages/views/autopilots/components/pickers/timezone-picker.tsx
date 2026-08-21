@@ -19,7 +19,7 @@ export interface TimezonePickerProps {
 
 function offsetFor(tz: string): string {
   try {
-    const parts = new Intl.DateTimeFormat("en-US", {
+    const parts = new Intl.DateTimeFormat("zh-CN", {
       timeZone: tz,
       timeZoneName: "shortOffset",
     }).formatToParts(new Date());

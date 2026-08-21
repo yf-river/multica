@@ -1,0 +1,520 @@
+import { chromium } from "@playwright/test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
+import {
+  attachBrowserAuditEvents,
+  browserRequestPath as requestPath,
+} from "./lib/browser-audit-events.mjs";
+import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./lib/goal-test-audit-env.mjs";
+
+const env = loadGoalTestIntEnv();
+const { frontendURL, browserURL, backendURL } = resolveGoalTestAuditUrls(env);
+const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
+const account = process.env.GOAL_TEST_ACCOUNT || "develop";
+const password = process.env.GOAL_TEST_PASSWORD || "develop123";
+const warmupEnabled = process.env.GOAL_TEST_UI_AUDIT_WARMUP !== "0";
+const maxRouteMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_ROUTE_MS || "3000");
+const maxApiMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_MS || "1000");
+const maxApiRequests = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_REQUESTS || "20");
+const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_UI_AUDIT_DIR);
+const screenshotDir = path.join(artifactRoot, "ui-audit-screenshots");
+const generatedAt = new Date().toISOString();
+const stamp = generatedAt.replace(/[:.]/g, "-");
+
+mkdirSync(screenshotDir, { recursive: true });
+
+const forbiddenAcceptanceTexts = [
+  "GOAL_TEST_ACCEPTANCE",
+];
+
+const routes = [
+  { id: "login", label: "登录页", path: "/login", auth: false, expect: ["登录 Multica"] },
+  {
+    id: "issues",
+    label: "任务",
+    path: `/${workspaceSlug}/issues`,
+    expect: ["新建任务"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "inbox",
+    label: "收件箱",
+    path: `/${workspaceSlug}/inbox`,
+    expect: ["收件箱"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "projects",
+    label: "项目",
+    path: `/${workspaceSlug}/projects`,
+    expect: ["项目"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "agents",
+    label: "智能体",
+    path: `/${workspaceSlug}/agents`,
+    expect: ["智能体"],
+    uiContract: { forbiddenText: ["GOAL_TEST_ACCEPTANCE"] },
+  },
+  {
+    id: "squads",
+    label: "小队",
+    path: `/${workspaceSlug}/squads`,
+    expect: ["小队"],
+    uiContract: { forbiddenText: ["GOAL_TEST_ACCEPTANCE"] },
+  },
+  {
+    id: "run-reviews",
+    label: "运行复盘",
+    path: `/${workspaceSlug}/run-reviews`,
+    expect: ["运行复盘"],
+  },
+  { id: "runtimes", label: "运行时", path: `/${workspaceSlug}/runtimes`, expect: ["运行时"] },
+  { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
+  {
+    id: "training-prompts",
+    label: "训练与评估/提示词库",
+    path: `/${workspaceSlug}/debug/prompts`,
+    expect: ["提示词库"],
+    uiContract: {
+      requiredTestIds: ["training-route-prompts"],
+      forbiddenText: ["浏览器验收提示词"],
+      forbiddenTestIds: ["training-tab-strip"],
+    },
+  },
+  {
+    id: "training-datasets",
+    label: "训练与评估/数据集",
+    path: `/${workspaceSlug}/evaluation/datasets`,
+    expect: ["数据集"],
+    uiContract: {
+      requiredText: ["数据集工作台", "样本入库、版本快照、下游复用", "trace 导入或手工样本", "生成数据集版本快照"],
+      forbiddenText: ["测试套件工作台", "实验工作台", "优化运行工作台", "页面验收数据集"],
+      requiredTestIds: ["training-route-datasets", "training-route-operating-model-datasets", "training-route-operating-step-datasets-1", "training-route-operating-step-datasets-2", "training-route-operating-step-datasets-3"],
+      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-test-suites", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
+    },
+  },
+  {
+    id: "training-test-suites",
+    label: "训练与评估/测试套件",
+    path: `/${workspaceSlug}/evaluation/test-suites`,
+    expect: ["测试套件"],
+    uiContract: {
+      requiredText: ["测试套件工作台", "固定试卷、断言回归、失败定位", "用例组成套件", "断言级复盘"],
+      forbiddenText: ["数据集工作台", "实验工作台", "优化运行工作台", "页面验收测试套件"],
+      requiredTestIds: ["training-route-test-suites", "training-route-operating-model-test-suites", "training-route-operating-step-test-suites-1", "training-route-operating-step-test-suites-2", "training-route-operating-step-test-suites-3"],
+      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
+    },
+  },
+  {
+    id: "training-evaluation-runs",
+    label: "训练与评估/评测记录",
+    path: `/${workspaceSlug}/evaluation/runs`,
+    expect: ["评测记录"],
+    uiContract: {
+      requiredText: ["评测记录工作台", "运行检索、证据展开、人工复核", "按运行状态定位", "任务和 Trace 展开"],
+      requiredTestIds: ["training-route-intro-evaluation-runs", "training-route-operating-model-evaluation-runs", "training-route-operating-step-evaluation-runs-1", "training-route-operating-step-evaluation-runs-2", "training-route-operating-step-evaluation-runs-3"],
+      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites"],
+    },
+  },
+];
+
+const forbiddenText = [
+  "AI Studio Developer",
+  "Issues",
+  "Sign up",
+  "Sign in",
+  "Cloud computer",
+  "ACME-123",
+  "HTML preview",
+  "Contact sales",
+  "Agent 调试场",
+  "Agent运行数",
+  "Agent执行",
+  "Agent 最终交付",
+  "创建 user-center 需求澄清提示词",
+  "user-center 模板",
+  "查看当前 Workspace",
+  "API Token",
+  "Token ·",
+  "每日 Token",
+  "每周 Token",
+  "它们了解你的工作区",
+  "任务、项目、skill",
+  "waitlist",
+  "newsletter",
+];
+
+const token = await login();
+const warmup = warmupEnabled ? await warmupRoutes(token) : { enabled: false, results: [] };
+const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
+await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
+await context.addInitScript((authToken) => {
+  localStorage.setItem("multica_token", authToken);
+  localStorage.setItem("multica:chat:isOpen", "false");
+}, token);
+
+const results = [];
+const events = [];
+
+for (const route of routes) {
+  const page = await context.newPage();
+  const step = await auditRoute(page, route);
+  events.push(...step.events);
+  await page.close().catch(() => {});
+  results.push(step);
+}
+
+await browser.close();
+
+const deploymentLogs = runDeploymentLogVerification();
+const summary = summarize(results, events, deploymentLogs);
+const payload = {
+  schema: "multica.goal_test.ui_audit.v1",
+  generated_at: generatedAt,
+  frontend_url: frontendURL,
+  browser_url: browserURL,
+  backend_url: backendURL,
+  workspace_slug: workspaceSlug,
+  account,
+  thresholds: {
+    max_route_ms: maxRouteMs,
+    max_api_ms: maxApiMs,
+    max_api_requests: maxApiRequests,
+    post_load_wait_ms: 1_500,
+  },
+  warmup,
+  deployment_logs: deploymentLogs,
+  summary,
+  routes: results,
+  events,
+};
+
+const jsonPath = path.join(artifactRoot, `ui-audit-${stamp}.json`);
+const markdownPath = path.join(artifactRoot, `ui-audit-summary-${stamp}.md`);
+writeFileSync(jsonPath, `${JSON.stringify(payload, null, 2)}\n`);
+writeFileSync(markdownPath, renderMarkdown(payload));
+writeFileSync(path.join(artifactRoot, "ui-audit-latest.json"), `${JSON.stringify(payload, null, 2)}\n`);
+writeFileSync(path.join(artifactRoot, "ui-audit-summary.md"), renderMarkdown(payload));
+
+console.log(JSON.stringify({ ok: summary.ok, json: jsonPath, markdown: markdownPath, failures: summary.failures }, null, 2));
+if (!summary.ok) process.exitCode = 1;
+
+async function auditRoute(page, route) {
+  const responses = [];
+  const auditEvents = attachBrowserAuditEvents(page, {
+    isAuditedRequest,
+    requestPath,
+    formatFailedRequest: (request, failure) => ({ url: request.url(), method: request.method(), failure }),
+    formatConsoleError: (text) => ({ route: route.id, type: "console-error", text: text.slice(0, 500) }),
+    formatPageError: (error) => ({ route: route.id, type: "pageerror", text: error.message.slice(0, 500) }),
+    onAuditedResponse: (response, request) => {
+      responses.push({
+        url: response.url(),
+        method: request.method(),
+        status: response.status(),
+        resource_type: request.resourceType(),
+      });
+    },
+  });
+
+  const startedAt = Date.now();
+  let navigationError = "";
+  let bodyText = "";
+  let title = "";
+  let screenshot = "";
+  try {
+    await page.goto(`${browserURL}${route.path}`, { waitUntil: "domcontentloaded", timeout: 10_000 });
+    if (route.auth !== false) {
+      await page.evaluate((authToken) => {
+        localStorage.setItem("multica_token", authToken);
+        localStorage.setItem("multica:chat:isOpen", "false");
+      }, token);
+    }
+    if (route.finalPathIncludes) {
+      await page.waitForURL((url) => url.href.includes(route.finalPathIncludes), { timeout: 8_000 }).catch(() => {});
+    }
+    await waitForRouteText(page, route.expect);
+    bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
+    title = await page.title().catch(() => "");
+    screenshot = path.join(screenshotDir, `${route.id}-${stamp}.png`);
+    await page.screenshot({ path: screenshot, fullPage: false, timeout: 5_000 }).catch(() => {});
+  } catch (error) {
+    navigationError = error instanceof Error ? error.message : String(error);
+  } finally {
+    auditEvents.detach();
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  const { requests, failedRequests } = auditEvents;
+  const routeEvents = auditEvents.errors;
+  const badStatuses = responses
+    .filter((item) => item.status >= 400)
+    .map((item) => ({ status: item.status, path: requestPath(item.url), resource_type: item.resource_type }))
+    .slice(0, 20);
+  const apiRequests = requests.filter((item) => item.url.includes("/api/"));
+  const apiPathCounts = countByPath(apiRequests);
+  const apiBudget = buildApiRequestBudget(apiRequests);
+  const slowRequests = requests
+    .filter((item) => (item.ms ?? 0) > maxApiMs)
+    .map((item) => ({ status: item.status, ms: item.ms, path: requestPath(item.url) }))
+    .slice(0, 20);
+  const missingExpectedText = route.expect.filter((text) => !bodyText.includes(text));
+  const finalURL = page.url();
+  const finalPathFailures = route.finalPathIncludes && !finalURL.includes(route.finalPathIncludes)
+    ? [`最终路径不符合预期：期望包含 ${route.finalPathIncludes}，实际 ${finalURL}`]
+    : [];
+  const forbiddenMatches = forbiddenText.filter((text) => bodyText.includes(text));
+  const uiContract = await auditRouteUiContract(page, route, bodyText);
+  const loadingResidue = ["Rendering", "Compiling", "Loading", "加载中", "渲染中"].filter((text) => bodyText.includes(text));
+  const failures = [
+    ...(navigationError ? [`导航失败：${navigationError.split("\n")[0]}`] : []),
+    ...(elapsedMs > maxRouteMs ? [`页面耗时 ${elapsedMs}ms 超过 ${maxRouteMs}ms`] : []),
+    ...(bodyText.trim().length === 0 ? ["页面 body 为空"] : []),
+    ...missingExpectedText.map((text) => `缺少期望文本：${text}`),
+    ...finalPathFailures,
+    ...badStatuses.map((item) => `请求状态异常：${item.status} ${item.path}`),
+    ...failedRequests.map((item) => `请求失败：${requestPath(item.url)} ${item.failure}`),
+    ...(apiBudget.count > maxApiRequests ? [`API 预算请求数 ${apiBudget.count} 超过 ${maxApiRequests}（实际 ${apiRequests.length}）`] : []),
+    ...slowRequests.map((item) => `慢请求：${item.ms}ms ${item.path}`),
+    ...uiContract.failures,
+    ...loadingResidue.map((text) => `加载残留：${text}`),
+    ...forbiddenMatches.map((text) => `中文语义/营销残留：${text}`),
+  ];
+
+  return {
+    id: route.id,
+    label: route.label,
+    url: `${browserURL}${route.path}`,
+    final_url: finalURL,
+    title,
+    elapsed_ms: elapsedMs,
+    ok: failures.length === 0,
+    failures,
+    api_request_count: apiRequests.length,
+    api_request_budget_count: apiBudget.count,
+    api_request_budget: apiBudget,
+    api_path_counts: apiPathCounts,
+    slow_requests: slowRequests,
+    bad_statuses: badStatuses,
+    failed_requests: failedRequests.map((item) => ({ path: requestPath(item.url), failure: item.failure })),
+    events: routeEvents,
+    missing_expected_text: missingExpectedText,
+    ui_contract: uiContract,
+    forbidden_text: forbiddenMatches,
+    loading_residue: loadingResidue,
+    screenshot,
+    body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 40),
+  };
+}
+
+function buildApiRequestBudget(requests) {
+  const projectResourceRequests = requests.filter((item) => /^\/api\/projects\/[^/]+\/resources$/.test(requestPath(item.url)));
+  const projectResourcePathCounts = countByPath(projectResourceRequests);
+  const uniqueProjectResourcePaths = projectResourcePathCounts.length;
+  const duplicateProjectResourceRequests = projectResourceRequests.length - uniqueProjectResourcePaths;
+  const projectResourceBudget = Math.min(uniqueProjectResourcePaths, 3) + duplicateProjectResourceRequests;
+  return {
+    count: requests.length - projectResourceRequests.length + projectResourceBudget,
+    actual_count: requests.length,
+    project_resource_actual_count: projectResourceRequests.length,
+    project_resource_unique_paths: uniqueProjectResourcePaths,
+    project_resource_budget: projectResourceBudget,
+  };
+}
+
+async function auditRouteUiContract(page, route, bodyText) {
+  const contract = route.uiContract;
+  if (!contract) return { checked: false, failures: [] };
+
+  const missingRequiredText = (contract.requiredText ?? []).filter((text) => !bodyText.includes(text));
+  const forbiddenText = (contract.forbiddenText ?? []).filter((text) => bodyText.includes(text));
+  const requiredTestIds = [];
+  for (const testId of contract.requiredTestIds ?? []) {
+    const count = await testIdCount(page, testId);
+    requiredTestIds.push({ testid: testId, count });
+  }
+  const forbiddenTestIds = [];
+  for (const testId of contract.forbiddenTestIds ?? []) {
+    const count = await testIdCount(page, testId);
+    forbiddenTestIds.push({ testid: testId, count });
+  }
+
+  const failures = [
+    ...missingRequiredText.map((text) => `页面契约缺少文本：${text}`),
+    ...forbiddenText.map((text) => `页面契约出现互斥文本：${text}`),
+    ...requiredTestIds.filter((item) => item.count === 0).map((item) => `页面契约缺少 testid：${item.testid}`),
+    ...forbiddenTestIds.filter((item) => item.count > 0).map((item) => `页面契约出现互斥 testid：${item.testid}`),
+  ];
+
+  return {
+    checked: true,
+    required_text: contract.requiredText ?? [],
+    forbidden_text: contract.forbiddenText ?? [],
+    missing_required_text: missingRequiredText,
+    matched_forbidden_text: forbiddenText,
+    required_testids: requiredTestIds,
+    forbidden_testids: forbiddenTestIds,
+    failures,
+  };
+}
+
+async function testIdCount(page, testId) {
+  return page.locator(`[data-testid="${testId}"]`).count().catch(() => 0);
+}
+
+async function warmupRoutes(authToken) {
+  const results = [];
+  for (const route of routes) {
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(`${browserURL}${route.path}`, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          cookie: "multica_logged_in=1",
+          authorization: `Bearer ${authToken}`,
+        },
+      });
+      results.push({ route: route.id, status: response.status, ms: Date.now() - startedAt });
+    } catch (error) {
+      results.push({
+        route: route.id,
+        status: "failed",
+        ms: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return { enabled: true, results };
+}
+
+async function login() {
+  const response = await fetch(`${backendURL}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ account, password }),
+  });
+  if (!response.ok) {
+    throw new Error(`login failed: ${response.status} ${await response.text()}`);
+  }
+  const data = await response.json();
+  if (!data.token) throw new Error("login response did not include token");
+  return data.token;
+}
+
+function summarize(routeResults, browserEvents, logEvidence) {
+  const routeFailures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
+  const eventFailures = browserEvents.map((event) => `${event.route}: ${event.type} ${event.text}`);
+  const logFailures = logEvidence.ok ? [] : [`当前部署日志窗口未通过：${logEvidence.error || "verify-logs failed"}`];
+  const failures = [...routeFailures, ...eventFailures, ...logFailures];
+  return {
+    ok: failures.length === 0,
+    route_count: routeResults.length,
+    passed_routes: routeResults.filter((route) => route.ok).length,
+    failed_routes: routeResults.filter((route) => !route.ok).length,
+    browser_event_count: browserEvents.length,
+    deployment_logs_ok: logEvidence.ok,
+    failures,
+  };
+}
+
+function runDeploymentLogVerification() {
+  const target = env.GOAL_TEST_ENV || "int";
+  const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  const raw = result.stdout || result.stderr || "";
+  let evidence = null;
+  try {
+    evidence = raw ? JSON.parse(raw) : null;
+  } catch {
+    evidence = null;
+  }
+  return {
+    ok: result.status === 0 && evidence?.ok === true,
+    target,
+    exit_code: result.status,
+    evidence,
+    error: result.status === 0 ? "" : (result.stderr || result.stdout || "").slice(0, 2000),
+  };
+}
+
+function renderMarkdown(payload) {
+  const lines = [
+    "# goal-test UI 巡检报告",
+    "",
+    `生成时间：${payload.generated_at}`,
+    `公开前端：${payload.frontend_url}`,
+    `浏览器巡检入口：${payload.browser_url}`,
+    `后端：${payload.backend_url}`,
+    `结论：${payload.summary.ok ? "通过" : "未通过"}`,
+    "",
+    "## 汇总",
+    "",
+    `- 页面数：${payload.summary.route_count}`,
+    `- 通过：${payload.summary.passed_routes}`,
+    `- 失败：${payload.summary.failed_routes}`,
+    `- 浏览器错误事件：${payload.summary.browser_event_count}`,
+    `- 当前部署日志窗口：${payload.summary.deployment_logs_ok ? "通过" : "未通过"}`,
+    `- 预热：${payload.warmup.enabled ? "已执行" : "未执行"}`,
+    "",
+  ];
+  if (payload.summary.failures.length > 0) {
+    lines.push("## 阻断项", "");
+    for (const failure of payload.summary.failures.slice(0, 80)) lines.push(`- ${failure}`);
+    lines.push("");
+  }
+  lines.push("## 页面明细", "");
+  for (const route of payload.routes) {
+    lines.push(`### ${route.ok ? "通过" : "失败"}：${route.label}`);
+    lines.push(`- URL：${route.final_url || route.url}`);
+    lines.push(`- 耗时：${route.elapsed_ms}ms`);
+    lines.push(`- API 请求：${route.api_request_count}`);
+    lines.push(`- 截图：${route.screenshot}`);
+    if (route.failures.length > 0) {
+      for (const failure of route.failures) lines.push(`- 问题：${failure}`);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function waitForRouteText(page, expectedTexts) {
+  if (!expectedTexts || expectedTexts.length === 0) return;
+  await page
+    .waitForFunction(
+      (expected) => {
+        const text = document.body?.innerText || "";
+        return expected.every((item) => text.includes(item));
+      },
+      expectedTexts,
+      { timeout: 8_000 },
+    )
+    .catch(() => {});
+}
+
+function isAuditedRequest(url) {
+  return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
+}
+
+function countByPath(requests) {
+  const counts = new Map();
+  for (const request of requests) {
+    const path = requestPath(request.url);
+    counts.set(path, (counts.get(path) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([path, count]) => ({ path, count }));
+}

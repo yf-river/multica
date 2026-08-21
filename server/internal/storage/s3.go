@@ -123,10 +123,8 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 		}
 	}
 
-	// Strip known "https://host/" prefixes. Order matters: the more specific
-	// region-qualified hosts come first so they win over the legacy bucket-only
-	// prefix that we used to write before the suffix bug was fixed.
-	prefixes := make([]string, 0, 5)
+	// Strip known "https://host/" prefixes.
+	prefixes := make([]string, 0, 4)
 	if s.cdnDomain != "" {
 		prefixes = append(prefixes, "https://"+s.cdnDomain+"/")
 	}
@@ -138,20 +136,12 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 			"https://s3."+s.region+".amazonaws.com/"+s.bucket+"/",
 		)
 	}
-	// Legacy / fallback: the buggy "https://<bucket>/<key>" form that older
-	// records may still hold, plus a generic bucket-host prefix.
-	prefixes = append(prefixes, "https://"+s.bucket+"/")
-
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(rawURL, prefix) {
 			return strings.TrimPrefix(rawURL, prefix)
 		}
 	}
-	// Fallback: take everything after the last "/".
-	if i := strings.LastIndex(rawURL, "/"); i >= 0 {
-		return rawURL[i+1:]
-	}
-	return rawURL
+	return ""
 }
 
 // GetReader streams the object body back to the caller. The returned

@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enIssues from "../../../locales/en/issues.json";
-
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+import { mockIssue, wrapIssueActionsMenu } from "./issue-actions-test-helpers";
 
 // ---------------------------------------------------------------------------
 // Mocks — same pattern as the issue-detail test suite.
@@ -41,7 +35,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
     queryKey: ["workspaces", "ws-1", "members"],
     queryFn: () =>
       Promise.resolve([
-        { user_id: "user-1", name: "Test User", email: "t@t.com", role: "admin" },
+        { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
       ]),
   }),
   agentListOptions: () => ({
@@ -108,38 +102,6 @@ vi.mock("../../../common/actor-avatar", () => ({
 import { IssueActionsDropdown } from "../issue-actions-dropdown";
 import { IssueActionsContextMenu } from "../issue-actions-context-menu";
 
-const mockIssue: Issue = {
-  id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
-  identifier: "TES-1",
-  title: "Example",
-  description: null,
-  status: "todo",
-  priority: "medium",
-  assignee_type: null,
-  assignee_id: null,
-  creator_type: "member",
-  creator_id: "user-1",
-  parent_issue_id: null,
-  start_date: null,
-  due_date: null,
-  project_id: null,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-} as Issue;
-
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
-    </I18nProvider>
-  );
-}
-
 beforeEach(() => {
   mockOpenModal.mockReset();
 });
@@ -147,7 +109,7 @@ beforeEach(() => {
 describe("IssueActionsDropdown", () => {
   it("renders the top-level items when the trigger is clicked", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsDropdown
           issue={mockIssue}
           trigger={<button data-testid="trigger">Menu</button>}
@@ -158,22 +120,22 @@ describe("IssueActionsDropdown", () => {
     fireEvent.click(screen.getByTestId("trigger"));
 
     // Base UI portals the popup; role=menu lands on the popup wrapper.
-    expect(await screen.findByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Priority")).toBeInTheDocument();
-    expect(screen.getByText("Assignee")).toBeInTheDocument();
-    expect(screen.getByText("Due date")).toBeInTheDocument();
-    expect(screen.getByText("Copy link")).toBeInTheDocument();
-    expect(screen.getByText("More")).toBeInTheDocument();
-    expect(screen.getByText("Delete issue")).toBeInTheDocument();
-    // Relationship actions are hidden inside the "More" submenu by default.
-    expect(screen.queryByText("Create sub-issue")).not.toBeInTheDocument();
-    expect(screen.queryByText("Set parent issue...")).not.toBeInTheDocument();
-    expect(screen.queryByText("Add sub-issue...")).not.toBeInTheDocument();
+    expect(await screen.findByText("状态")).toBeInTheDocument();
+    expect(screen.getByText("优先级")).toBeInTheDocument();
+    expect(screen.getByText("负责人")).toBeInTheDocument();
+    expect(screen.getByText("截止日期")).toBeInTheDocument();
+    expect(screen.getByText("复制链接")).toBeInTheDocument();
+    expect(screen.getByText("更多")).toBeInTheDocument();
+    expect(screen.getByText("删除任务")).toBeInTheDocument();
+    // Relationship actions are hidden inside the "更多" submenu by default.
+    expect(screen.queryByText("创建子任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("设置父任务...")).not.toBeInTheDocument();
+    expect(screen.queryByText("添加子任务...")).not.toBeInTheDocument();
   });
 
   it("clicking the Assignee item opens the shared AssigneePicker popover", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsDropdown
           issue={mockIssue}
           trigger={<button data-testid="trigger">Menu</button>}
@@ -182,21 +144,21 @@ describe("IssueActionsDropdown", () => {
     );
 
     fireEvent.click(screen.getByTestId("trigger"));
-    fireEvent.click(await screen.findByText("Assignee"));
+    fireEvent.click(await screen.findByText("负责人"));
 
     // The shared picker exposes a search input and renders the workspace
-    // member under a "Members" group — both come from `AssigneePicker`, not
+    // member under a "成员" group — both come from `AssigneePicker`, not
     // the legacy submenu (which had neither).
     expect(
-      await screen.findByPlaceholderText("Assign to..."),
+      await screen.findByPlaceholderText("分配给..."),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Members")).toBeInTheDocument();
+    expect(await screen.findByText("成员")).toBeInTheDocument();
     expect(await screen.findByText("Test User")).toBeInTheDocument();
   });
 
-  it("clicking Delete issue opens the delete-confirm modal", async () => {
+  it("clicking Delete task opens the delete-confirm modal", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsDropdown
           issue={mockIssue}
           trigger={<button data-testid="trigger">Menu</button>}
@@ -206,7 +168,7 @@ describe("IssueActionsDropdown", () => {
     );
 
     fireEvent.click(screen.getByTestId("trigger"));
-    const del = await screen.findByText("Delete issue");
+    const del = await screen.findByText("删除任务");
     fireEvent.click(del);
 
     expect(mockOpenModal).toHaveBeenCalledWith("issue-delete-confirm", {
@@ -220,7 +182,7 @@ describe("IssueActionsDropdown", () => {
 describe("IssueActionsContextMenu", () => {
   it("renders the menu when the wrapped element receives a contextmenu event", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsContextMenu issue={mockIssue}>
           <div data-testid="row">Row</div>
         </IssueActionsContextMenu>,
@@ -229,7 +191,7 @@ describe("IssueActionsContextMenu", () => {
 
     fireEvent.contextMenu(screen.getByTestId("row"));
 
-    expect(await screen.findByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Delete issue")).toBeInTheDocument();
+    expect(await screen.findByText("状态")).toBeInTheDocument();
+    expect(screen.getByText("删除任务")).toBeInTheDocument();
   });
 });

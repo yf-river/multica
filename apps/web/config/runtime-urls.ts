@@ -1,6 +1,9 @@
 type RuntimeEnv = Record<string, string | undefined>;
 
 export function resolveRemoteApiUrl(env: RuntimeEnv): string {
+  const goalTestRemote = env.GOAL_TEST_REMOTE_API_URL?.trim();
+  if (goalTestRemote) return goalTestRemote;
+
   const explicitRemote = env.REMOTE_API_URL?.trim();
   if (explicitRemote) return explicitRemote;
 

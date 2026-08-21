@@ -121,6 +121,9 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		Priority:    priorityFilter,
 	})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list projects")
 		return
 	}
@@ -184,8 +187,8 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 }
 
 // validProjectStatuses / validProjectPriorities mirror the CHECK constraints on
-// the project table (migrations 034, 035). CreateProject / UpdateProject
-// pre-validate against these so an unknown enum value returns a clean 400 with
+// the project table. CreateProject / UpdateProject pre-validate against these
+// so an unknown enum value returns a clean 400 with
 // the allowed list instead of surfacing the DB CHECK violation as a 500 — the
 // exact mismatch reported in #3925 (`--status active`).
 var validProjectStatuses = []string{"planned", "in_progress", "paused", "completed", "cancelled"}
@@ -282,6 +285,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		ref, err := validateAndNormalizeResourceRef(res.ResourceType, res.ResourceRef)
 		if err != nil {
+			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
+			return
+		}
+		if err := h.ensureGongfengProjectPathRegistered(r.Context(), wsUUID, res.ResourceType, ref); err != nil {
 			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
 			return
 		}

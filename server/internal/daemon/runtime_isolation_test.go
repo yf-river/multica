@@ -63,6 +63,27 @@ func TestRuntimeSetWatcherFanOut(t *testing.T) {
 	}
 }
 
+func newClaimCountingRuntimeDaemon(t *testing.T, pollInterval time.Duration) (*Daemon, *atomic.Int64) {
+	t.Helper()
+	var claimAttempts atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/tasks/claim") {
+			claimAttempts.Add(1)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"task":null}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	d := New(Config{
+		ServerBaseURL:      srv.URL,
+		HeartbeatInterval:  time.Hour,
+		PollInterval:       pollInterval,
+		MaxConcurrentTasks: 1,
+	}, slog.New(slog.NewTextHandler(noopWriter{}, nil)))
+	return d, &claimAttempts
+}
+
 // TestRunRuntimePollerIsolatesSlowRuntime is the regression test for
 // MUL-1744's main symptom: a slow ClaimTask on one runtime must not delay
 // claims on any other runtime. The pre-refactor pollLoop's serial round-
@@ -155,23 +176,7 @@ func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 func TestRunRuntimePollerSkipsClaimWhenAtCapacity(t *testing.T) {
 	t.Parallel()
 
-	var claimAttempts atomic.Int64
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/tasks/claim") {
-			claimAttempts.Add(1)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"task":null}`))
-	}))
-	defer srv.Close()
-
-	d := New(Config{
-		ServerBaseURL:      srv.URL,
-		HeartbeatInterval:  time.Hour,
-		PollInterval:       20 * time.Millisecond,
-		MaxConcurrentTasks: 1,
-	}, slog.New(slog.NewTextHandler(noopWriter{}, nil)))
+	d, claimAttempts := newClaimCountingRuntimeDaemon(t, 20*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -197,23 +202,7 @@ func TestRunRuntimePollerSkipsClaimWhenAtCapacity(t *testing.T) {
 func TestRunRuntimePollerClaimsWhenSlotBecomesAvailable(t *testing.T) {
 	t.Parallel()
 
-	var claimAttempts atomic.Int64
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/tasks/claim") {
-			claimAttempts.Add(1)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"task":null}`))
-	}))
-	defer srv.Close()
-
-	d := New(Config{
-		ServerBaseURL:      srv.URL,
-		HeartbeatInterval:  time.Hour,
-		PollInterval:       time.Hour,
-		MaxConcurrentTasks: 1,
-	}, slog.New(slog.NewTextHandler(noopWriter{}, nil)))
+	d, claimAttempts := newClaimCountingRuntimeDaemon(t, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -15,22 +15,58 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func TestNotifyTaskAvailable(t *testing.T) {
-	M.Reset()
-	defer M.Reset()
-
-	hub := NewHub()
+func newTestHubConnection(t *testing.T, hub *Hub, identity ClientIdentity) *websocket.Conn {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
+		hub.HandleWebSocket(w, r, identity)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func readHubMessageForTest(t *testing.T, conn *websocket.Conn, timeout time.Duration) protocol.Message {
+	t.Helper()
+
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	_, raw, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+
+	var msg protocol.Message
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+
+	return msg
+}
+
+func decodeHubMessagePayloadForTest[T any](t *testing.T, msg protocol.Message) T {
+	t.Helper()
+
+	var payload T
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	return payload
+}
+
+func TestNotifyTaskAvailable(t *testing.T) {
+	M.Reset()
+	defer M.Reset()
+
+	hub := NewHub()
+	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.RuntimeConnectionCount("runtime-1") == 0 {
@@ -42,26 +78,12 @@ func TestNotifyTaskAvailable(t *testing.T) {
 
 	hub.NotifyTaskAvailable("runtime-1", "task-1")
 
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal message: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonTaskAvailable {
 		t.Fatalf("message type = %q, want %q", msg.Type, protocol.EventDaemonTaskAvailable)
 	}
 
-	var payload protocol.TaskAvailablePayload
-	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
+	payload := decodeHubMessagePayloadForTest[protocol.TaskAvailablePayload](t, msg)
 	if payload.RuntimeID != "runtime-1" || payload.TaskID != "task-1" {
 		t.Fatalf("payload = %+v, want runtime/task IDs", payload)
 	}
@@ -72,20 +94,10 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 	defer M.Reset()
 
 	hub := NewHub()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{
-			WorkspaceID: "ws-1",
-			RuntimeIDs:  []string{"runtime-1"},
-		})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.WorkspaceConnectionCount("ws-1") == 0 {
@@ -97,26 +109,12 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 
 	hub.NotifyRuntimeProfilesChanged("ws-1", "profile-1")
 
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal message: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonRuntimeProfilesChanged {
 		t.Fatalf("message type = %q, want %q", msg.Type, protocol.EventDaemonRuntimeProfilesChanged)
 	}
 
-	var payload protocol.RuntimeProfilesChangedPayload
-	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
+	payload := decodeHubMessagePayloadForTest[protocol.RuntimeProfilesChangedPayload](t, msg)
 	if payload.WorkspaceID != "ws-1" || payload.RuntimeProfileID != "profile-1" {
 		t.Fatalf("payload = %+v, want workspace/profile IDs", payload)
 	}
@@ -127,20 +125,10 @@ func TestNotifyRuntimeProfilesChangedIndexesAllAuthorizedWorkspaces(t *testing.T
 	defer M.Reset()
 
 	hub := NewHub()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{
-			WorkspaceIDs: []string{"ws-1", "ws-2"},
-			RuntimeIDs:   []string{"runtime-1", "runtime-2"},
-		})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1", "ws-2"},
+		RuntimeIDs:   []string{"runtime-1", "runtime-2"},
+	})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.WorkspaceConnectionCount("ws-1") == 0 || hub.WorkspaceConnectionCount("ws-2") == 0 {
@@ -159,25 +147,12 @@ func TestNotifyRuntimeProfilesChangedIndexesAllAuthorizedWorkspaces(t *testing.T
 	hub.NotifyRuntimeProfilesChanged("ws-2", "profile-2")
 
 	got := map[string]string{}
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
 	for len(got) < 2 {
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			t.Fatalf("ReadMessage: %v", err)
-		}
-		var msg protocol.Message
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			t.Fatalf("unmarshal message: %v", err)
-		}
+		msg := readHubMessageForTest(t, conn, time.Second)
 		if msg.Type != protocol.EventDaemonRuntimeProfilesChanged {
 			t.Fatalf("message type = %q, want %q", msg.Type, protocol.EventDaemonRuntimeProfilesChanged)
 		}
-		var payload protocol.RuntimeProfilesChangedPayload
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			t.Fatalf("unmarshal payload: %v", err)
-		}
+		payload := decodeHubMessagePayloadForTest[protocol.RuntimeProfilesChangedPayload](t, msg)
 		got[payload.WorkspaceID] = payload.RuntimeProfileID
 	}
 	if got["ws-1"] != "profile-1" || got["ws-2"] != "profile-2" {
@@ -342,35 +317,21 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 
 	hub := NewHub()
 	var calls atomic.Int32
-	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string, _ bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		calls.Add(1)
-		if identity.WorkspaceID != "ws-1" {
-			t.Errorf("identity workspace = %q, want ws-1", identity.WorkspaceID)
+		if identity.PrimaryWorkspaceID() != "ws-1" {
+			t.Errorf("identity workspace = %q, want ws-1", identity.PrimaryWorkspaceID())
 		}
 		return &protocol.DaemonHeartbeatAckPayload{
 			RuntimeID: runtimeID,
 			Status:    "ok",
-			PendingUpdate: &protocol.DaemonHeartbeatPendingUpdate{
-				ID:            "update-1",
-				TargetVersion: "0.1.99",
-			},
 		}, nil
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{
-			WorkspaceID: "ws-1",
-			RuntimeIDs:  []string{"runtime-1"},
-		})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,
@@ -383,30 +344,13 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal ack envelope: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonHeartbeatAck {
 		t.Fatalf("ack type = %q, want %q", msg.Type, protocol.EventDaemonHeartbeatAck)
 	}
-	var ack protocol.DaemonHeartbeatAckPayload
-	if err := json.Unmarshal(msg.Payload, &ack); err != nil {
-		t.Fatalf("unmarshal ack payload: %v", err)
-	}
+	ack := decodeHubMessagePayloadForTest[protocol.DaemonHeartbeatAckPayload](t, msg)
 	if ack.RuntimeID != "runtime-1" {
 		t.Fatalf("ack runtime_id = %q, want runtime-1", ack.RuntimeID)
-	}
-	if ack.PendingUpdate == nil || ack.PendingUpdate.ID != "update-1" {
-		t.Fatalf("ack pending_update = %+v, want update-1", ack.PendingUpdate)
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("HeartbeatHandler invocations = %d, want 1", got)
@@ -424,7 +368,7 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 
 	hub := NewHub()
 	const stall = 250 * time.Millisecond
-	hub.SetHeartbeatHandler(func(ctx context.Context, _ ClientIdentity, runtimeID string, _ bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(ctx context.Context, _ ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		select {
 		case <-time.After(stall):
 		case <-ctx.Done():
@@ -437,17 +381,7 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{RuntimeID: runtimeID, Status: "ok"}, nil
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,
@@ -460,17 +394,7 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	if err := conn.SetReadDeadline(time.Now().Add(stall + 2*time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal ack: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, stall+2*time.Second)
 	if msg.Type != protocol.EventDaemonHeartbeatAck {
 		t.Fatalf("ack type = %q, want %q", msg.Type, protocol.EventDaemonHeartbeatAck)
 	}
@@ -485,22 +409,12 @@ func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 
 	hub := NewHub()
 	var called atomic.Bool
-	hub.SetHeartbeatHandler(func(context.Context, ClientIdentity, string, bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+	hub.SetHeartbeatHandler(func(context.Context, ClientIdentity, string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		called.Store(true)
 		return &protocol.DaemonHeartbeatAckPayload{Status: "ok"}, nil
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,

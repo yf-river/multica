@@ -75,9 +75,6 @@ func newFleetServer(t *testing.T, opts fleetServerOpts) *httptest.Server {
 // of a nil-deref panic.
 func TestCloudPATVerifier_NilSafe(t *testing.T) {
 	var v *CloudPATVerifier
-	if v.Configured() {
-		t.Fatal("nil verifier reported Configured()=true")
-	}
 	_, err := v.Verify(context.Background(), "mcn_anything", nil)
 	if !errors.Is(err, ErrCloudPATNotConfigured) {
 		t.Fatalf("expected ErrCloudPATNotConfigured, got %v", err)

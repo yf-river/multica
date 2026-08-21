@@ -25,6 +25,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
+var errTaskStartConflict = errors.New("task start skipped because task is no longer startable")
+
 // ErrRepoNotConfigured is returned by ensureRepoReady when the requested repo
 // URL is not present in the workspace's repo configuration after a fresh
 // server refresh.
@@ -74,10 +76,6 @@ func (f taskRunnerFunc) run(ctx context.Context, task Task, provider string, slo
 }
 
 var (
-	isBrewInstall        = cli.IsBrewInstall
-	getBrewPrefix        = cli.GetBrewPrefix
-	matchKnownBrewPrefix = cli.MatchKnownBrewPrefix
-
 	// detectAgentVersion / checkAgentMinVersion are indirections over the
 	// real agent helpers so tests can run the registration path without
 	// shelling out to a real CLI. Mirrors the pattern used for the brew
@@ -155,8 +153,8 @@ type Daemon struct {
 	// command resolves; read by runTask via customCommandPathForRuntime to
 	// launch the custom command for a claimed task. Guarded by mu.
 	profileCommandPaths map[string]string
-	reloading    sync.Mutex         // prevents concurrent workspace syncs
-	runtimeSet   *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
+	reloading           sync.Mutex         // prevents concurrent workspace syncs
+	runtimeSet          *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
 
 	versionsMu    sync.RWMutex      // guards agentVersions
 	agentVersions map[string]string // provider -> detected CLI version (set during registration)
@@ -174,38 +172,15 @@ type Daemon struct {
 	reregisterNextAttempt     map[string]time.Time // workspace_id -> earliest time the next re-register attempt may run
 	reregisterLastCompletedAt map[string]time.Time // workspace_id -> wall-clock at which the last SUCCESSFUL re-register call returned (failures intentionally not stamped — see recordRegisterCompletion)
 
-	cancelFunc    context.CancelFunc // set by Run(); called by triggerRestart
-	rootCtx       context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
-	restartBinary string             // non-empty after a successful update; path to the new binary
-	updating      atomic.Bool        // prevents concurrent update attempts
-	activeTasks   atomic.Int64       // number of tasks currently in handleTask; exposed via /health
-	ready         atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
-
-	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
-	// microseconds it takes to make a decision; ClaimTask itself runs without
-	// the lock so a slow per-runtime claim cannot stall auto-update or any
-	// other poller.
-	//
-	// The pair is the auto-update path's barrier against the issue's
-	// requirement that "升级过程中如果有 task 进来，会延后升级而不是中断 task":
-	// runRuntimePoller refuses to call ClaimTask while pauseClaims is set, and
-	// tryAutoUpdate refuses to flip pauseClaims while any poller is mid-claim
-	// or any task is in handleTask. Together that closes the fetch-then-claim
-	// race where a new task slipping in during the release-metadata fetch
-	// would be cancelled by triggerRestart's root-ctx cancel.
-	claimMu        sync.Mutex
-	pauseClaims    bool // when true, runRuntimePoller skips ClaimTask
-	claimsInFlight int  // pollers that have decided to claim but haven't yet handed the task off to handleTask
+	cancelFunc  context.CancelFunc // set by Run(); used by Shutdown and health handling
+	rootCtx     context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
+	activeTasks atomic.Int64       // number of tasks currently in handleTask; exposed via /health
+	ready       atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
 
 	activeEnvRootsMu sync.Mutex
 	activeEnvRoots   map[string]int // env root path -> reference count (handles reuse paths marked twice)
 
-	// localPathLocks serialises agent tasks whose project resource is a
-	// local_directory pinned to this daemon. Two tasks targeting the same
-	// on-disk path run sequentially; the second blocks on the lock and is
-	// surfaced via the server-side waiting_local_directory status while it
-	// waits. See MUL-2663.
-	localPathLocks *LocalPathLocker
+	runtimeLastTaskStart map[string]time.Time
 
 	// bgSyncs tracks background goroutines started by registerTaskRepos so
 	// callers (notably tests using t.TempDir-backed cache roots) can wait for
@@ -216,10 +191,7 @@ type Daemon struct {
 
 	runner             taskRunner    // executes agent tasks; set to d.runTask by New(), overridable in tests
 	cancelPollInterval time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
-	// runUpdateFn executes the brew-or-download upgrade. Set to d.runUpdate by
-	// New() and overridable in tests so the auto-update poller can be exercised
-	// without touching the real network or the brew CLI.
-	runUpdateFn func(targetVersion string) (string, error)
+	codexBrokers       map[string]*agent.CodexBrokerBackend
 }
 
 // New creates a new Daemon instance.
@@ -241,15 +213,31 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		agentVersions:             make(map[string]string),
 		wsHBLastAck:               make(map[string]time.Time),
 		activeEnvRoots:            make(map[string]int),
-		localPathLocks:            NewLocalPathLocker(),
+		runtimeLastTaskStart:      make(map[string]time.Time),
 		runtimeGoneInflight:       make(map[string]struct{}),
 		reregisterNextAttempt:     make(map[string]time.Time),
 		reregisterLastCompletedAt: make(map[string]time.Time),
 		cancelPollInterval:        5 * time.Second,
+		codexBrokers:              make(map[string]*agent.CodexBrokerBackend),
 	}
 	d.runner = taskRunnerFunc(d.runTask)
-	d.runUpdateFn = d.runUpdate
 	return d
+}
+
+func (d *Daemon) codexBrokerBackend(runtimeID string, cfg agent.Config) agent.Backend {
+	key := strings.TrimSpace(runtimeID)
+	if key == "" {
+		key = "default"
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if backend := d.codexBrokers[key]; backend != nil {
+		backend.UpdateConfig(cfg)
+		return backend
+	}
+	backend := agent.NewCodexBrokerBackend(cfg)
+	d.codexBrokers[key] = backend
+	return backend
 }
 
 // setAgentVersion records the detected CLI version for an agent provider so
@@ -649,18 +637,6 @@ func (w *runtimeSetWatcher) notify() {
 	}
 }
 
-// wsHeartbeatFreshness defines how long a WS heartbeat ack is considered
-// "fresh enough" to suppress the HTTP heartbeat for that runtime. The window
-// is 2× HeartbeatInterval so a single dropped WS ack still keeps HTTP
-// suppressed, but two missed acks (~30s of WS silence) re-enable HTTP — well
-// inside the server-side 45s offline threshold.
-func (d *Daemon) wsHeartbeatFreshness() time.Duration {
-	if d.cfg.HeartbeatInterval <= 0 {
-		return 30 * time.Second
-	}
-	return 2 * d.cfg.HeartbeatInterval
-}
-
 // recordWSHeartbeatAck stamps the runtime as having received a fresh WS
 // heartbeat ack from the server. Called by the WS read pump.
 func (d *Daemon) recordWSHeartbeatAck(runtimeID string) {
@@ -670,19 +646,6 @@ func (d *Daemon) recordWSHeartbeatAck(runtimeID string) {
 	d.wsHBMu.Lock()
 	d.wsHBLastAck[runtimeID] = time.Now()
 	d.wsHBMu.Unlock()
-}
-
-// wsHeartbeatRecentlyAcked reports whether the runtime received a WS
-// heartbeat ack inside the freshness window. The HTTP heartbeat loop uses
-// this to skip duplicate work when WS is already keeping the runtime alive.
-func (d *Daemon) wsHeartbeatRecentlyAcked(runtimeID string) bool {
-	d.wsHBMu.RLock()
-	last, ok := d.wsHBLastAck[runtimeID]
-	d.wsHBMu.RUnlock()
-	if !ok {
-		return false
-	}
-	return time.Since(last) < d.wsHeartbeatFreshness()
 }
 
 // clearWSHeartbeatAcks drops all WS heartbeat freshness records. Called on
@@ -697,7 +660,6 @@ func (d *Daemon) clearWSHeartbeatAcks() {
 
 // Run starts the daemon: resolves auth, registers runtimes, then polls for tasks.
 func (d *Daemon) Run(ctx context.Context) error {
-	// Wrap context so handleUpdate can cancel the daemon for restart.
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel
 	d.rootCtx = ctx
@@ -728,8 +690,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 		"idle_watchdog", d.cfg.AgentIdleWatchdog,
 		"max_concurrent_tasks", d.cfg.MaxConcurrentTasks,
 		"gc_enabled", d.cfg.GCEnabled,
-		"auto_update", d.cfg.AutoUpdateEnabled,
-		"launched_by", d.cfg.LaunchedBy,
 	)
 
 	// Load auth token from CLI config.
@@ -767,7 +727,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.taskWakeupLoop(ctx, taskWakeups)
 	go d.heartbeatLoop(ctx)
 	go d.gcLoop(ctx)
-	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
@@ -776,16 +735,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// readiness wait blocks on, so success is reported only after startup
 	// actually completed, not merely because the health port came up.
 	d.ready.Store(true)
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
+	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, token-renewal); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err
-}
-
-// RestartBinary returns the path to the new binary if the daemon needs to restart
-// after a successful update, or empty string if no restart is needed.
-func (d *Daemon) RestartBinary() string {
-	return d.restartBinary
 }
 
 // deregisterRuntimes notifies the server that all runtimes are going offline.
@@ -889,7 +842,7 @@ func (d *Daemon) customCommandPathForRuntime(runtimeID string) (string, bool) {
 
 func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID string) (*RegisterResponse, string, error) {
 	d.logger.Debug("registering runtimes for workspace", "workspace_id", workspaceID, "agent_count", len(d.cfg.Agents))
-	var runtimes []map[string]string
+	var runtimes []map[string]any
 	for name, entry := range d.cfg.Agents {
 		version, err := detectAgentVersion(ctx, entry.Path)
 		if err != nil {
@@ -906,7 +859,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		if d.cfg.DeviceName != "" {
 			displayName = fmt.Sprintf("%s (%s)", displayName, d.cfg.DeviceName)
 		}
-		runtimes = append(runtimes, map[string]string{
+		runtimes = append(runtimes, map[string]any{
 			"name":    displayName,
 			"type":    name,
 			"version": version,
@@ -937,13 +890,11 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 	}
 
 	req := map[string]any{
-		"workspace_id":      workspaceID,
-		"daemon_id":         d.cfg.DaemonID,
-		"legacy_daemon_ids": d.cfg.LegacyDaemonIDs,
-		"device_name":       d.cfg.DeviceName,
-		"cli_version":       d.cfg.CLIVersion,
-		"launched_by":       d.cfg.LaunchedBy,
-		"runtimes":          runtimes,
+		"workspace_id": workspaceID,
+		"daemon_id":    d.cfg.DaemonID,
+		"device_name":  d.cfg.DeviceName,
+		"cli_version":  d.cfg.CLIVersion,
+		"runtimes":     runtimes,
 	}
 
 	resp, err := d.client.Register(ctx, req)
@@ -981,7 +932,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 // treat that as "unknown, do not overwrite a previously-stored signature"
 // (otherwise a transient 5xx would silently flip the daemon into thinking the
 // workspace has zero profiles).
-func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]map[string]string) string {
+func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]map[string]any) string {
 	resp, err := d.client.GetRuntimeProfiles(ctx, workspaceID)
 	if err != nil {
 		// Best-effort: never fail registration because profiles couldn't be
@@ -1056,7 +1007,7 @@ func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, 
 		// done here — it's an optional, best-effort enhancement (see MUL-3284
 		// PR2 task notes). TODO(MUL-3284): plumb FixedArgs into the agent
 		// launch command if/when the agent backend exposes a hook for it.
-		*runtimes = append(*runtimes, map[string]string{
+		*runtimes = append(*runtimes, map[string]any{
 			"name":       displayName,
 			"type":       profile.ProtocolFamily,
 			"version":    version,
@@ -1256,15 +1207,6 @@ func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
 			d.syncWorkspaceRepos(workspaceID, toSync)
 		}()
 	}
-}
-
-// waitBackgroundSyncs blocks until every background sync started by
-// registerTaskRepos has finished. Intended for test teardown: tests that
-// hand the daemon a t.TempDir-backed repo cache must call this before
-// returning, otherwise an in-flight clone/fetch can race against TempDir
-// cleanup and surface as an unrelated "directory not empty" failure.
-func (d *Daemon) waitBackgroundSyncs() {
-	d.bgSyncs.Wait()
 }
 
 func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []RepoData) {
@@ -1842,18 +1784,15 @@ func (d *Daemon) runRuntimeHeartbeat(ctx context.Context, rid string) {
 }
 
 func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
-	// Skip HTTP heartbeat for runtimes that successfully acked a recent
-	// WebSocket heartbeat. The WS path keeps last_seen_at fresh and delivers
-	// actions, so the HTTP write would be a duplicate DB update. If the WS
-	// heartbeat goes silent the freshness window expires and HTTP resumes
-	// automatically on the next tick — that is the fallback the WS path
-	// relies on.
-	if d.wsHeartbeatRecentlyAcked(rid) {
-		d.logger.Debug("heartbeat: skipping HTTP tick, WS recently acked", "runtime_id", rid)
-		return
-	}
+	// Keep the HTTP heartbeat even when the WebSocket heartbeat is healthy.
+	// The heartbeat response is also the delivery lane for async runtime
+	// actions such as model-list and local-skill discovery. Suppressing HTTP
+	// after a WS ack made those UI-triggered requests dependent on the next WS
+	// heartbeat and, when the wakeup stream missed a pending action, left them
+	// pending until the frontend timed out. Duplicate liveness writes are less
+	// costly than wedging those request/response flows.
 	d.logger.Debug("heartbeat: HTTP tick", "runtime_id", rid)
-	resp, err := d.client.SendHeartbeat(ctx, rid)
+	resp, err := d.client.SendHeartbeat(ctx, rid, nil)
 	if err != nil {
 		if ctx.Err() == nil {
 			if isRuntimeNotFoundError(err) {
@@ -1887,17 +1826,13 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
-	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
+	if resp.PendingModelList != nil || resp.PendingLocalSkills != nil || len(resp.PendingLocalSkillImports) > 0 {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
-			"update", resp.PendingUpdate != nil,
 			"model_list", resp.PendingModelList != nil,
 			"local_skills", resp.PendingLocalSkills != nil,
-			"local_skill_import", resp.PendingLocalSkillImport != nil,
+			"local_skill_imports", len(resp.PendingLocalSkillImports),
 		)
-	}
-	if resp.PendingUpdate != nil {
-		go d.handleUpdate(ctx, runtimeID, resp.PendingUpdate)
 	}
 	if resp.PendingModelList != nil {
 		if rt := d.findRuntime(runtimeID); rt != nil {
@@ -1909,16 +1844,9 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 			go d.handleLocalSkillList(ctx, *rt, resp.PendingLocalSkills.ID)
 		}
 	}
-	// Prefer the batch field (new backend); fall back to singular (old backend).
-	if len(resp.PendingLocalSkillImports) > 0 {
-		if rt := d.findRuntime(runtimeID); rt != nil {
-			for _, imp := range resp.PendingLocalSkillImports {
-				go d.handleLocalSkillImport(ctx, *rt, imp)
-			}
-		}
-	} else if resp.PendingLocalSkillImport != nil {
-		if rt := d.findRuntime(runtimeID); rt != nil {
-			go d.handleLocalSkillImport(ctx, *rt, *resp.PendingLocalSkillImport)
+	if rt := d.findRuntime(runtimeID); rt != nil {
+		for _, imp := range resp.PendingLocalSkillImports {
+			go d.handleLocalSkillImport(ctx, *rt, imp)
 		}
 	}
 }
@@ -2134,221 +2062,6 @@ func (d *Daemon) reportRuntimeResultWithRetry(ctx context.Context, kind, runtime
 		"kind", kind, "runtime_id", runtimeID, "request_id", requestID, "error", lastErr)
 }
 
-// handleUpdate performs the CLI update when triggered by the server via heartbeat.
-func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *PendingUpdate) {
-	// Desktop-managed daemons share their CLI binary with the Electron app,
-	// which is responsible for shipping and replacing it. Letting the daemon
-	// self-update would just get overwritten on the next Desktop launch and
-	// could brick the embedded binary mid-update. Refuse cleanly.
-	if d.cfg.LaunchedBy == "desktop" {
-		d.logger.Info("refusing CLI self-update: daemon is managed by Desktop", "runtime_id", runtimeID, "update_id", update.ID)
-		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-			"status": "failed",
-			"error":  "CLI is managed by Multica Desktop — update the Desktop app to upgrade the CLI",
-		})
-		return
-	}
-
-	// Prevent concurrent update attempts.
-	if !d.updating.CompareAndSwap(false, true) {
-		d.logger.Warn("update already in progress, ignoring", "runtime_id", runtimeID, "update_id", update.ID)
-		return
-	}
-	defer d.updating.Store(false)
-
-	d.logger.Info("CLI update requested", "runtime_id", runtimeID, "update_id", update.ID, "target_version", update.TargetVersion)
-
-	// Report running status.
-	d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-		"status": "running",
-	})
-
-	output, err := d.runUpdateFn(update.TargetVersion)
-	if err != nil {
-		d.logger.Error("CLI update failed", "error", err, "output", output)
-		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-			"status": "failed",
-			"error":  err.Error(),
-		})
-		return
-	}
-
-	d.logger.Info("CLI update completed successfully", "output", output)
-	d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-		"status": "completed",
-		"output": fmt.Sprintf("Updated to %s", update.TargetVersion),
-	})
-
-	// Trigger daemon restart with the new binary.
-	d.triggerRestart()
-}
-
-// runUpdate executes the brew-or-download upgrade against targetVersion and
-// returns the human-readable output (always populated, even on failure when
-// brew gives us a useful diagnostic). The caller is responsible for the
-// `updating` CAS guard and for reporting status back to the server / triggering
-// the restart — extracted so the server-triggered path (handleUpdate) and the
-// auto-update poller (autoUpdateLoop) share the exact same execution body.
-func (d *Daemon) runUpdate(targetVersion string) (string, error) {
-	if cli.IsBrewInstall() {
-		d.logger.Info("updating CLI via Homebrew...")
-		out, err := cli.UpdateViaBrew()
-		if err != nil {
-			return out, fmt.Errorf("brew upgrade failed: %w", err)
-		}
-		return out, nil
-	}
-	d.logger.Info("updating CLI via direct download...", "target_version", targetVersion)
-	out, err := cli.UpdateViaDownload(targetVersion)
-	if err != nil {
-		return out, fmt.Errorf("download update failed: %w", err)
-	}
-	return out, nil
-}
-
-// updateReportBackoffs defines the retry schedule for delivering CLI update
-// status back to the server. This mirrors localSkillReportBackoffs because
-// both features have the same user-visible failure mode: the daemon completed
-// work locally, but a transient report failure leaves the UI waiting until the
-// server-side request times out.
-//
-// Overridable for tests to avoid real sleeps.
-var updateReportBackoffs = []time.Duration{0, 500 * time.Millisecond, 2 * time.Second, 4 * time.Second}
-
-func (d *Daemon) reportUpdateResult(ctx context.Context, runtimeID, updateID string, payload map[string]any) {
-	d.reportUpdateResultWithRetry(ctx, runtimeID, updateID, func(ctx context.Context) error {
-		return d.client.ReportUpdateResult(ctx, runtimeID, updateID, payload)
-	})
-}
-
-func (d *Daemon) reportUpdateResultWithRetry(ctx context.Context, runtimeID, updateID string, fn func(context.Context) error) {
-	var lastErr error
-	for attempt, wait := range updateReportBackoffs {
-		if wait > 0 {
-			select {
-			case <-ctx.Done():
-				d.logger.Error("CLI update report cancelled",
-					"runtime_id", runtimeID, "update_id", updateID,
-					"attempt", attempt, "error", ctx.Err())
-				return
-			case <-time.After(wait):
-			}
-		}
-
-		err := fn(ctx)
-		if err == nil {
-			if attempt > 0 {
-				d.logger.Info("CLI update report succeeded after retry",
-					"runtime_id", runtimeID, "update_id", updateID,
-					"attempt", attempt+1)
-			}
-			return
-		}
-		lastErr = err
-
-		var reqErr *requestError
-		if errors.As(err, &reqErr) && reqErr.StatusCode >= 400 && reqErr.StatusCode < 500 {
-			d.logger.Error("CLI update report rejected — not retrying",
-				"runtime_id", runtimeID, "update_id", updateID,
-				"status", reqErr.StatusCode, "error", err)
-			return
-		}
-
-		d.logger.Warn("CLI update report failed — will retry",
-			"runtime_id", runtimeID, "update_id", updateID,
-			"attempt", attempt+1, "error", err)
-	}
-	d.logger.Error("CLI update report exhausted retries",
-		"runtime_id", runtimeID, "update_id", updateID, "error", lastErr)
-}
-
-// tryEnterClaim records the intent to call ClaimTask. Returns true if the
-// caller may proceed, false if the auto-update barrier is in effect. Every
-// successful call MUST be paired with an exitClaim() on every exit path —
-// either right after a failed/empty claim, or via the handleTask goroutine's
-// defer once the task is handed off.
-func (d *Daemon) tryEnterClaim() bool {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	if d.pauseClaims {
-		return false
-	}
-	d.claimsInFlight++
-	return true
-}
-
-// exitClaim releases the in-flight claim recorded by tryEnterClaim.
-func (d *Daemon) exitClaim() {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	d.claimsInFlight--
-}
-
-// trySetClaimBarrier atomically pauses new ClaimTask calls if the daemon is
-// fully idle (no claims in flight, no tasks running). Returns true if the
-// caller now holds the barrier and must release it with releaseClaimBarrier
-// on every non-restart exit path; false if the daemon is busy and the caller
-// should defer to the next tick. Used by tryAutoUpdate to close the race
-// where a task slips in between the cheap pre-fetch idle check and the
-// actual upgrade kick-off.
-func (d *Daemon) trySetClaimBarrier() bool {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	if d.claimsInFlight > 0 || d.activeTasks.Load() > 0 {
-		return false
-	}
-	d.pauseClaims = true
-	return true
-}
-
-// releaseClaimBarrier clears the auto-update claim barrier so pollers may
-// resume claiming. Called on failure paths only — a successful upgrade leaves
-// the barrier set because triggerRestart is about to take the process down
-// and clearing it would open a window for new claims during shutdown.
-func (d *Daemon) releaseClaimBarrier() {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	d.pauseClaims = false
-}
-
-// triggerRestart initiates a graceful daemon restart after a successful CLI update.
-// For brew installs, it keeps the symlink path (e.g. /opt/homebrew/bin/multica)
-// so the restarted daemon picks up the new Cellar version automatically.
-// For non-brew installs, it resolves to the absolute path of the replaced binary.
-// The caller (cmd_daemon.go) checks RestartBinary() and launches the new process.
-func (d *Daemon) triggerRestart() {
-	newBin, err := os.Executable()
-	if err != nil {
-		d.logger.Error("could not resolve executable path for restart", "error", err)
-		return
-	}
-	// On Linux, os.Executable() reads /proc/self/exe, which the kernel resolves
-	// to the Cellar path. brew cleanup deletes that path after upgrade, so we
-	// must use the stable <brew-prefix>/bin/multica symlink instead.
-	if isBrewInstall() {
-		if brewPrefix := getBrewPrefix(); brewPrefix != "" {
-			newBin = filepath.Join(brewPrefix, "bin", "multica")
-		} else if prefix := matchKnownBrewPrefix(newBin); prefix != "" {
-			newBin = filepath.Join(prefix, "bin", "multica")
-		} else {
-			d.logger.Warn("brew install detected but prefix could not be resolved; restart may fail",
-				"executable", newBin)
-		}
-	} else {
-		if resolved, err := filepath.EvalSymlinks(newBin); err == nil {
-			newBin = resolved
-		}
-	}
-
-	d.logger.Info("scheduling daemon restart", "new_binary", newBin)
-	d.restartBinary = newBin
-
-	// Cancel the main context to trigger graceful shutdown.
-	if d.cancelFunc != nil {
-		d.cancelFunc()
-	}
-}
-
 // pollLoop supervises one runtimePoller goroutine per registered runtime,
 // fans wake-up signals out to all of them, and waits for in-flight tasks to
 // drain on shutdown. Per-runtime workers replace the previous round-robin
@@ -2490,6 +2203,12 @@ func (d *Daemon) runRuntimePoller(
 			return
 		}
 
+		if delayed, err := d.waitForRuntimeTaskSpacing(pollerCtx, rid, wakeup); err != nil {
+			return
+		} else if delayed {
+			continue
+		}
+
 		// Acquire an execution slot before claiming. If at capacity, sleep
 		// without claiming so we don't push a task into `dispatched` and
 		// then race the 5-min server-side dispatch timeout while waiting.
@@ -2508,22 +2227,8 @@ func (d *Daemon) runRuntimePoller(
 			continue
 		}
 
-		// Refuse new claims while an auto-update is preparing to roll the
-		// process. The barrier is paired with a re-check of claimsInFlight +
-		// activeTasks inside tryAutoUpdate, so once we get past tryEnterClaim
-		// the auto-update path is guaranteed to defer until this poller has
-		// handed the task off (or given up).
-		if !d.tryEnterClaim() {
-			sem <- slot
-			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
-				return
-			}
-			continue
-		}
-
 		task, err := d.client.ClaimTask(pollerCtx, rid)
 		if err != nil {
-			d.exitClaim()
 			sem <- slot
 			if pollerCtx.Err() == nil {
 				if isRuntimeNotFoundError(err) {
@@ -2543,13 +2248,13 @@ func (d *Daemon) runRuntimePoller(
 		}
 
 		if task == nil {
-			d.exitClaim()
 			sem <- slot
 			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
 				return
 			}
 			continue
 		}
+		d.recordRuntimeTaskStart(rid)
 
 		taskTarget := task.IssueID
 		if taskTarget == "" && task.ChatSessionID != "" {
@@ -2560,13 +2265,46 @@ func (d *Daemon) runRuntimePoller(
 		d.activeTasks.Add(1)
 		go func(t Task, slot int) {
 			defer taskWG.Done()
-			defer d.exitClaim()
 			defer d.activeTasks.Add(-1)
 			defer func() { sem <- slot }()
 			d.handleTask(parentCtx, t, slot)
 		}(*task, slot)
 		// Loop immediately: more tasks may already be queued for this runtime.
 	}
+}
+
+func (d *Daemon) waitForRuntimeTaskSpacing(ctx context.Context, runtimeID string, wakeup <-chan struct{}) (bool, error) {
+	if d.cfg.CodexMinTaskInterval <= 0 {
+		return false, nil
+	}
+	d.mu.Lock()
+	rt := d.runtimeIndex[runtimeID]
+	last := d.runtimeLastTaskStart[runtimeID]
+	d.mu.Unlock()
+	if rt.Provider != "codex" || last.IsZero() {
+		return false, nil
+	}
+	wait := d.cfg.CodexMinTaskInterval - time.Since(last)
+	if wait <= 0 {
+		return false, nil
+	}
+	d.logger.Debug("poll: codex runtime spacing active", "runtime_id", runtimeID, "wait", wait)
+	if err := sleepWithContextOrWakeup(ctx, wait, wakeup); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *Daemon) recordRuntimeTaskStart(runtimeID string) {
+	if d.cfg.CodexMinTaskInterval <= 0 || runtimeID == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.runtimeLastTaskStart == nil {
+		d.runtimeLastTaskStart = make(map[string]time.Time)
+	}
+	d.runtimeLastTaskStart[runtimeID] = time.Now()
 }
 
 func runtimePollOffset(runtimeID string, interval time.Duration) time.Duration {
@@ -2713,25 +2451,6 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		"reuse_workdir", task.PriorWorkDir != "",
 	)
 
-	// If the task targets a project_resource of type local_directory that
-	// is pinned to this daemon, acquire the path mutex before runner.run
-	// so the server-side state machine is dispatched →
-	// waiting_local_directory → running rather than backwards-transitioning
-	// from running into the wait state. The release is deferred so a panic
-	// or early return always frees the lock for the next waiter.
-	//
-	// StartTask itself now lives in runTask (see issue #3999 race A) and
-	// fires only after execenv.Prepare/Reuse has put env.WorkDir on disk,
-	// so consumers that read status==running can resolve the workdir path
-	// without racing the daemon's os.MkdirAll.
-	localRelease, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, taskLog)
-	if abort {
-		return
-	}
-	if localRelease != nil {
-		defer localRelease()
-	}
-
 	// Hold a process-wide active-root guard for the rest of this task so
 	// the GC loop never sees a window where the env root has neither the
 	// in-process guard nor .gc_meta.json (issue #3999 race B). runTask
@@ -2776,6 +2495,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 	}()
 
+	artifactCollectionCutoff := time.Now().Add(-1 * time.Second)
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 
 	// Report usage before any early return — the agent accumulates tokens
@@ -2798,6 +2518,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}
 
 	if err != nil {
+		if errors.Is(err, errTaskStartConflict) {
+			taskLog.Info("task skipped before start", "error", err)
+			return
+		}
 		taskLog.Error("task failed", "error", err)
 		// runTask returned without a TaskResult, so we don't have a SessionID
 		// to forward — best we can do is record the failure.
@@ -2805,7 +2529,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		// classifier so the failure_reason column reflects the actual
 		// shape of the failure (provider 5xx, network, process crash,
 		// …) rather than the coarse legacy "agent_error" bucket.
-		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", taskfailure.Classify(err.Error()).String()); failErr != nil {
+		reason := taskfailure.Classify(err.Error())
+		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", reason.String()); failErr != nil {
 			taskLog.Error("fail task callback failed", "error", failErr)
 		}
 		return
@@ -2823,6 +2548,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	artifactCommentOptions := d.persistFinalOutputArtifactIfNeeded(task, result, result.WorkDir, result.ArtifactDir, taskLog)
+	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, artifactCollectionCutoff, taskLog, artifactCommentOptions)
+
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
@@ -2831,136 +2559,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// crash leaves the directory as an orphan (cleaned up by GCOrphanTTL).
 	if result.EnvRoot != "" {
 		if meta, ok := gcMetaForTask(task); ok {
-			// A local_directory project_resource matched this daemon
-			// means the agent ran in the user's own tree. Stamp the
-			// meta so the GC loop never tries to RemoveAll envRoot's
-			// sibling workdir (which is the user's path) or the envRoot
-			// itself (we want output/ and logs/ to linger for forensic
-			// access).
-			if assignment, _ := findLocalDirectoryAssignment(task.ProjectResources, d.cfg.DaemonID); assignment != nil {
-				meta.LocalDirectory = true
-			}
 			if err := execenv.WriteGCMeta(result.EnvRoot, meta, taskLog); err != nil {
 				taskLog.Warn("write gc meta failed (non-fatal)", "error", err)
 			}
 		}
 	}
-}
-
-// acquireLocalDirectoryLockIfNeeded inspects the task's project resources for
-// a local_directory pinned to this daemon, validates the path, and takes the
-// path mutex. Returns a release callback (nil when no local_directory
-// resource applies) and abort=true when the caller must bail without
-// starting the task (the helper has already reported the failure to the
-// server).
-//
-// The helper covers four distinct failure modes:
-//
-//  1. The project_resource JSON is structurally broken — fail the task fast.
-//  2. The path fails validation (missing, not a directory, no R/W, system
-//     blacklist) — fail the task fast with a user-facing reason.
-//  3. The mutex is held by another task — call MarkTaskWaitingLocalDirectory
-//     so the row flips to waiting_local_directory while we block on the
-//     lock, then return the release callback once we win.
-//  4. The blocking wait is cancelled (daemon shutdown, server-side cancel)
-//     — fail the task with the ctx error.
-func (d *Daemon) acquireLocalDirectoryLockIfNeeded(ctx context.Context, task Task, taskLog *slog.Logger) (release func(), abort bool) {
-	if len(task.ProjectResources) == 0 || d.cfg.DaemonID == "" {
-		return nil, false
-	}
-	assignment, err := findLocalDirectoryAssignment(task.ProjectResources, d.cfg.DaemonID)
-	if err != nil {
-		taskLog.Error("local_directory: resolve resource failed", "error", err)
-		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", "local_directory_error"); failErr != nil {
-			taskLog.Error("fail task after local_directory resolve error", "error", failErr)
-		}
-		return nil, true
-	}
-	if assignment == nil {
-		return nil, false
-	}
-	taskLog = taskLog.With("local_directory", assignment.AbsPath)
-	if err := validateLocalPath(assignment.AbsPath); err != nil {
-		taskLog.Error("local_directory: path validation failed", "error", err)
-		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", "local_directory_error"); failErr != nil {
-			taskLog.Error("fail task after local_directory validation error", "error", failErr)
-		}
-		return nil, true
-	}
-
-	// While the lock is contended the daemon would otherwise sit blocked on
-	// the path mutex with no signal back from the server — the main
-	// per-task watcher only starts after the lock is acquired. If the user
-	// cancels the issue or it gets reassigned during the wait, we need to
-	// notice promptly so the daemon slot isn't pinned by a phantom waiter.
-	// We spin up the cancellation watcher lazily inside onWait so the
-	// no-contention fast path still costs nothing.
-	waitCtx, waitCancel := context.WithCancel(ctx)
-	defer waitCancel()
-	pollInterval := d.cancelPollInterval
-	if pollInterval == 0 {
-		pollInterval = 5 * time.Second
-	}
-	var (
-		watcherOnce     sync.Once
-		cancelledByPoll <-chan struct{}
-	)
-
-	onWait := func(holder string) {
-		reason := fmt.Sprintf("local_directory %s", assignment.AbsPath)
-		if holder != "" {
-			reason = fmt.Sprintf("%s (held by task %s)", reason, shortID(holder))
-		}
-		taskLog.Info("local_directory: waiting on path mutex", "holder", shortID(holder))
-		if waitErr := d.client.MarkTaskWaitingLocalDirectory(ctx, task.ID, reason); waitErr != nil {
-			// Non-fatal: even if the server-side flag fails to update,
-			// we still want to block on the lock and proceed when free.
-			// The UI just won't see the explicit "waiting" badge.
-			taskLog.Warn("local_directory: mark waiting status failed", "error", waitErr)
-		}
-		// Start polling once we actually park. shouldInterruptAgent inside
-		// watchTaskCancellation already handles both server-side terminal
-		// states (completed/failed/cancelled) and the row-deleted
-		// reassignment case (404), which is the full set of "this task
-		// shouldn't run anymore" signals we need to react to during the wait.
-		watcherOnce.Do(func() {
-			cancelledByPoll = d.watchTaskCancellation(waitCtx, task.ID, pollInterval, taskLog)
-			go func() {
-				select {
-				case <-cancelledByPoll:
-					waitCancel()
-				case <-waitCtx.Done():
-				}
-			}()
-		})
-	}
-	release, err = d.localPathLocks.Acquire(waitCtx, assignment.RealPath, task.ID, onWait)
-	if err != nil {
-		// If the wait was cut short because the server finalized the task
-		// (terminal state) or deleted the row, the row is already in a
-		// terminal state — return silently the same way the run-phase poller
-		// does at lines ~2104. Issuing FailTask here would be a no-op at best
-		// and a confusing redundant log line at worst.
-		if cancelledByPoll != nil {
-			select {
-			case <-cancelledByPoll:
-				taskLog.Info("local_directory: wait aborted by server-side terminal state")
-				return nil, true
-			default:
-			}
-		}
-		taskLog.Error("local_directory: lock acquire failed", "error", err)
-		failureReason := "local_directory_error"
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			failureReason = "cancelled"
-		}
-		if failErr := d.client.FailTask(ctx, task.ID, fmt.Sprintf("local_directory wait cancelled: %s", err.Error()), "", "", failureReason); failErr != nil {
-			taskLog.Error("fail task after local_directory lock cancel", "error", failErr)
-		}
-		return nil, true
-	}
-	taskLog.Info("local_directory: lock acquired")
-	return release, false
 }
 
 // reportTaskResult writes the final task disposition back to the server.
@@ -3070,11 +2673,15 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 
 func providerNeedsInlineSystemPrompt(provider string) bool {
 	switch provider {
-	case "openclaw", "kiro", "kimi":
+	case "kiro", "kimi":
 		return true
 	default:
 		return false
 	}
+}
+
+func coordinatorNeedsInlineSystemPrompt(provider string, policy TaskExecutionPolicy) bool {
+	return supportsClaudeFamilyToolEnvelope(provider) && isCoordinatorWithoutRepoAccess(policy)
 }
 
 // gateResumeToReusedWorkdir clears the task's prior session unless the task
@@ -3099,6 +2706,101 @@ func gateResumeToReusedWorkdir(task *Task, taskCtx *execenv.TaskContextForEnv, e
 		taskCtx.PriorSessionResumed = false
 	}
 	return reused
+}
+
+type preparedIssueExecutionSpace struct {
+	RootDir        string
+	ReposDir       string
+	PrimaryRepoDir string
+	ArtifactDir    string
+	BranchName     string
+}
+
+func managedWorkDirForIssueSpace(issueSpace *preparedIssueExecutionSpace) string {
+	if issueSpace == nil {
+		return ""
+	}
+	return issueSpace.PrimaryRepoDir
+}
+
+func issueExecutionSpaceEnabled(task Task) bool {
+	return task.IssueExecutionSpace != nil &&
+		task.IssueExecutionSpace.Enabled &&
+		strings.TrimSpace(task.IssueExecutionSpace.IssueID) != "" &&
+		strings.TrimSpace(task.IssueExecutionSpace.PrimaryRepoURL) != ""
+}
+
+func (d *Daemon) prepareIssueExecutionSpace(ctx context.Context, task Task, agentName string) (*preparedIssueExecutionSpace, error) {
+	if !issueExecutionSpaceEnabled(task) {
+		return nil, nil
+	}
+	if d.repoCache == nil {
+		return nil, fmt.Errorf("issue execution space requires repo cache")
+	}
+	space := task.IssueExecutionSpace
+	issueID := strings.TrimSpace(space.IssueID)
+	repoURL := strings.TrimSpace(space.PrimaryRepoURL)
+	rootDir := filepath.Join(d.cfg.WorkspacesRoot, task.WorkspaceID, "issues", shortID(issueID))
+	reposDir := filepath.Join(rootDir, "repos")
+	artifactDir := filepath.Join(rootDir, "artifacts", "multica")
+	if err := os.MkdirAll(reposDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create issue repos dir: %w", err)
+	}
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create issue artifact dir: %w", err)
+	}
+
+	if err := d.repoCache.Sync(task.WorkspaceID, []repocache.RepoInfo{{URL: repoURL}}); err != nil {
+		return nil, fmt.Errorf("sync issue repo: %w", err)
+	}
+
+	branchName := fmt.Sprintf("agent/issue/%s", shortID(issueID))
+	result, err := d.repoCache.CreateWorktree(repocache.WorktreeParams{
+		WorkspaceID:         task.WorkspaceID,
+		RepoURL:             repoURL,
+		WorkDir:             reposDir,
+		Ref:                 space.Ref,
+		AgentName:           agentName,
+		TaskID:              task.ID,
+		BranchNameOverride:  branchName,
+		PreserveExisting:    true,
+		CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(task.WorkspaceID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("checkout issue worktree: %w", err)
+	}
+	if err := linkIssueArtifactDir(result.Path, artifactDir); err != nil {
+		d.logger.Warn("issue execution space: link artifact dir failed", "error", err, "workdir", result.Path, "artifact_dir", artifactDir)
+	}
+	return &preparedIssueExecutionSpace{
+		RootDir:        rootDir,
+		ReposDir:       reposDir,
+		PrimaryRepoDir: result.Path,
+		ArtifactDir:    artifactDir,
+		BranchName:     result.BranchName,
+	}, nil
+}
+
+func linkIssueArtifactDir(repoDir, artifactDir string) error {
+	parent := filepath.Join(repoDir, "artifacts")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	linkPath := filepath.Join(parent, "multica")
+	if st, err := os.Lstat(linkPath); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			target, readErr := os.Readlink(linkPath)
+			if readErr == nil && target == artifactDir {
+				return nil
+			}
+			_ = os.Remove(linkPath)
+		} else {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(artifactDir, linkPath)
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (TaskResult, error) {
@@ -3148,6 +2850,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		skills = task.Agent.Skills
 		instructions = task.Agent.Instructions
 	}
+	executionPolicy := effectiveTaskExecutionPolicy(task)
 
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
@@ -3167,6 +2870,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ProjectID:                        task.ProjectID,
 		ProjectTitle:                     task.ProjectTitle,
 		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),
+		ExecutionPolicy:                  convertExecutionPolicyForEnv(executionPolicy),
 		ChatSessionID:                    task.ChatSessionID,
 		AutopilotRunID:                   task.AutopilotRunID,
 		AutopilotID:                      task.AutopilotID,
@@ -3175,13 +2879,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AutopilotSource:                  task.AutopilotSource,
 		AutopilotTriggerPayload:          strings.TrimSpace(string(task.AutopilotTriggerPayload)),
 		QuickCreatePrompt:                task.QuickCreatePrompt,
-		IsSquadLeader:                    strings.Contains(instructions, "## Squad Operating Protocol"),
+		SourceSummaryPrompt:              task.SourceSummaryPrompt,
+		IsSquadLeader:                    hasSquadLeaderBriefing(instructions),
 		RequestingUserName:               task.RequestingUserName,
 		RequestingUserProfileDescription: task.RequestingUserProfileDescription,
 		InitiatorType:                    task.InitiatorType,
 		InitiatorID:                      task.InitiatorID,
 		InitiatorName:                    task.InitiatorName,
-		InitiatorEmail:                   task.InitiatorEmail,
+		InitiatorAccount:                 task.InitiatorAccount,
 		WorkspaceContext:                 task.WorkspaceContext,
 	}
 
@@ -3203,58 +2908,52 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Try to reuse the workdir from a previous task on the same (agent, issue) pair.
 	var env *execenv.Environment
 	codexVersion := d.agentVersion("codex")
-	openclawBin := ""
-	if provider == "openclaw" {
-		openclawBin = entry.Path
-	}
-	// Resolve any local_directory assignment again here so runTask can plumb
-	// LocalWorkDir into execenv. handleTask already validated + locked the
-	// path; this call is a pure JSON parse over the same task payload.
-	localAssignment, _ := findLocalDirectoryAssignment(task.ProjectResources, d.cfg.DaemonID)
-	// Reuse intentionally skipped for local_directory tasks: the prior
-	// WorkDir is the user's own path (always present) but the reuse path
-	// loses the envRoot association the GC loop needs, and re-running
-	// Prepare against a stable user path is cheap (no clone, no copy).
 	var agentMcpConfig json.RawMessage
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
 	}
-	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
-	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
-	// failures fail soft to local mode — a broken JSON blob must never block
-	// task dispatch.
-	var openclawMode string
-	var openclawGateway execenv.OpenclawGatewayPin
-	if task.Agent != nil && provider == "openclaw" {
-		openclawMode, openclawGateway = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig, d.logger)
+	var issueSpace *preparedIssueExecutionSpace
+	if issueExecutionSpaceEnabled(task) && executionPolicy.CanAccessRepo {
+		var err error
+		issueSpace, err = d.prepareIssueExecutionSpace(ctx, task, agentName)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("prepare issue execution space: %w", err)
+		}
+		projectSkills, err := loadProjectSkillsForPolicy(issueSpace.PrimaryRepoDir, executionPolicy)
+		if err != nil {
+			taskLog.Warn("project skills overlay failed", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
+		} else if len(projectSkills) > 0 {
+			taskCtx.AgentSkills = mergeSkillContexts(taskCtx.AgentSkills, projectSkills)
+			taskLog.Info("project skills overlay loaded",
+				"repo_dir", issueSpace.PrimaryRepoDir,
+				"mode", executionPolicy.ProjectSkillMode,
+				"skills", len(projectSkills),
+			)
+		}
 	}
-	if task.PriorWorkDir != "" && localAssignment == nil {
+	if task.PriorWorkDir != "" && issueSpace == nil {
 		env = execenv.Reuse(execenv.ReuseParams{
-			WorkDir:         task.PriorWorkDir,
-			Provider:        provider,
-			CodexVersion:    codexVersion,
-			OpenclawBin:     openclawBin,
-			McpConfig:       agentMcpConfig,
-			OpenclawGateway: openclawGateway,
-			Task:            taskCtx,
+			WorkDir:      task.PriorWorkDir,
+			Provider:     provider,
+			CodexVersion: codexVersion,
+			McpConfig:    agentMcpConfig,
+			Task:         taskCtx,
 		}, d.logger)
 	}
 	if env == nil {
 		var err error
 		prepParams := execenv.PrepareParams{
-			WorkspacesRoot:  d.cfg.WorkspacesRoot,
-			WorkspaceID:     task.WorkspaceID,
-			TaskID:          task.ID,
-			AgentName:       agentName,
-			Provider:        provider,
-			CodexVersion:    codexVersion,
-			OpenclawBin:     openclawBin,
-			McpConfig:       agentMcpConfig,
-			OpenclawGateway: openclawGateway,
-			Task:            taskCtx,
+			WorkspacesRoot: d.cfg.WorkspacesRoot,
+			WorkspaceID:    task.WorkspaceID,
+			TaskID:         task.ID,
+			AgentName:      agentName,
+			Provider:       provider,
+			CodexVersion:   codexVersion,
+			McpConfig:      agentMcpConfig,
+			Task:           taskCtx,
 		}
-		if localAssignment != nil {
-			prepParams.LocalWorkDir = localAssignment.AbsPath
+		if issueSpace != nil {
+			prepParams.ManagedWorkDir = managedWorkDirForIssueSpace(issueSpace)
 		}
 		env, err = execenv.Prepare(prepParams, d.logger)
 		if err != nil {
@@ -3266,6 +2965,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.RootDir != predictedRoot && env.RootDir != "" {
 		d.markActiveEnvRoot(env.RootDir)
 		defer d.unmarkActiveEnvRoot(env.RootDir)
+	}
+	if issueSpace != nil {
+		d.markActiveEnvRoot(issueSpace.RootDir)
+		defer d.unmarkActiveEnvRoot(issueSpace.RootDir)
 	}
 
 	// Issue #3999 race A: now that env.WorkDir is on disk, transition the
@@ -3280,6 +2983,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// "start task failed: <…>" string and the same failure_reason
 	// taxonomy as before — see MUL-2946 for the classifier contract.
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
+		if isTaskStartConflictError(err) {
+			return TaskResult{}, errTaskStartConflict
+		}
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
@@ -3291,19 +2997,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
-	// Workdir is preserved for reuse by future tasks on the same (agent,
-	// issue) pair in cloud mode; the work_dir path is stored in DB on task
-	// completion and passed back via PriorWorkDir on the next claim, so
-	// rewriting the marker block in place is the right behavior.
+	// Workdir is preserved for reuse by future cloud tasks on the same
+	// (agent, issue) pair only when the server does not provide an
+	// issue-scoped managed worktree. The work_dir path is stored in DB on
+	// task completion and passed back via PriorWorkDir on the next claim.
 	//
-	// In local_directory mode the workdir is the user's own repo, reuse is
-	// already disabled above (see localAssignment == nil), and the brief
-	// would otherwise live on inside the user's repository — a subsequent
-	// manual `claude` / `codex` / `gemini` run in that directory would pick
-	// up stale Multica instructions (issue id, trigger comment id, reply
-	// rules) and start acting on the previous task's context. Excise the
-	// marker block on the way out instead.
-	if env.LocalDirectory {
+	// Managed worktrees and legacy local_directory paths are cleaned on exit
+	// so the runtime config marker does not leak into repository files.
+	if env.LocalDirectory || env.ManagedWorktree {
 		defer func() {
 			if cerr := execenv.CleanupRuntimeConfig(env.WorkDir, provider); cerr != nil {
 				d.logger.Warn("execenv: cleanup runtime config failed (non-fatal)", "error", cerr)
@@ -3347,6 +3048,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"MULTICA_TASK_ID":      task.ID,
 		"MULTICA_TASK_SLOT":    strconv.Itoa(slot),
 	}
+	if issueSpace != nil {
+		agentEnv["MULTICA_ISSUE_SPACE_ROOT"] = issueSpace.RootDir
+		agentEnv["MULTICA_ARTIFACT_DIR"] = issueSpace.ArtifactDir
+		if executionPolicy.CanAccessRepo {
+			agentEnv["MULTICA_PRIMARY_REPO_DIR"] = issueSpace.PrimaryRepoDir
+		}
+	}
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID
 	}
@@ -3387,22 +3095,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.CursorDataDir != "" {
 		agentEnv["CURSOR_DATA_DIR"] = env.CursorDataDir
 	}
-	// Point OpenClaw at the per-task synthesized config. The config pins
-	// agents.defaults.workspace (and any agents.list[].workspace) to the
-	// task workdir, so the CLI's native skill scanner picks up the per-task
-	// skills written under {workDir}/skills/. Falls back silently when the
-	// preparer didn't run (non-openclaw provider, or write failure).
-	if env.OpenclawConfigPath != "" {
-		agentEnv["OPENCLAW_CONFIG_PATH"] = env.OpenclawConfigPath
-	}
-	// Grant the wrapper config permission to $include the user's active
-	// config across directories. OpenClaw's $include defaults to confining
-	// resolution to the wrapper's own directory; without this, the
-	// wrapper-out-of-envRoot $include into ~/.openclaw/openclaw.json is
-	// rejected and the run boots with no user-registered agents.
-	if rootsValue, ok := composeOpenclawIncludeRoots(env.OpenclawIncludeRoot, os.Getenv("OPENCLAW_INCLUDE_ROOTS")); ok {
-		agentEnv["OPENCLAW_INCLUDE_ROOTS"] = rootsValue
-	}
 	// Inject user-configured custom environment variables (e.g. ANTHROPIC_API_KEY,
 	// ANTHROPIC_BASE_URL for router/proxy mode, or CLAUDE_CODE_USE_BEDROCK for
 	// Bedrock). These are set per-agent via the agent settings UI.
@@ -3417,13 +3109,31 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			agentEnv[k] = v
 		}
 	}
-	backend, err := agent.New(provider, agent.Config{
+	if provider == "codex" {
+		cleanupTaskEnv, err := writeTaskContextEnv(env.WorkDir, agentEnv)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("write codex task context env: %w", err)
+		}
+		defer cleanupTaskEnv()
+		agentEnv, err = prepareCodexBrokerProcessEnv(agentEnv, env.CodexHome, d.logger)
+		if err != nil {
+			return TaskResult{}, err
+		}
+	}
+	agentCfg := agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
 		Logger:         d.logger,
-	})
-	if err != nil {
-		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
+	}
+	var backend agent.Backend
+	if provider == "codex" {
+		backend = d.codexBrokerBackend(task.RuntimeID, agentCfg)
+	} else {
+		var err error
+		backend, err = agent.New(provider, agentCfg)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
+		}
 	}
 
 	taskLog.Info("starting agent",
@@ -3437,6 +3147,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	taskStart := time.Now()
+	repoStatusBefore := ""
+	if issueSpace != nil && !executionPolicy.CanEditRepo {
+		if status, err := gitPorcelainStatus(ctx, issueSpace.PrimaryRepoDir); err == nil {
+			repoStatusBefore = status
+		} else {
+			taskLog.Warn("repo edit guard: before status unavailable", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
+		}
+	}
 
 	var customArgs []string
 	extraArgs := defaultArgsForProvider(d.cfg, provider)
@@ -3493,27 +3211,26 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			thinkingLevel = ""
 		}
 	}
+	toolPolicy := executionPolicyForToolEnvelope(task, executionPolicy)
 	execOpts := agent.ExecOptions{
 		Cwd:                       env.WorkDir,
 		Model:                     model,
 		ThreadName:                deriveTaskThreadName(task),
+		MaxTurns:                  maxTurnsForExecutionPolicy(0, toolPolicy),
 		Timeout:                   d.cfg.AgentTimeout,
 		SemanticInactivityTimeout: d.cfg.CodexSemanticInactivityTimeout,
 		ResumeSessionID:           task.PriorSessionID,
 		ExtraArgs:                 extraArgs,
 		CustomArgs:                customArgs,
+		AllowedBuiltinTools:       allowedBuiltinToolsForExecutionPolicy(provider, toolPolicy),
+		AllowedTools:              allowedToolsForExecutionPolicy(provider, toolPolicy),
+		DisallowedTools:           disallowedToolsForExecutionPolicy(provider, toolPolicy),
+		PermissionMode:            permissionModeForExecutionPolicy(provider, toolPolicy),
 		McpConfig:                 mcpConfig,
 		ThinkingLevel:             thinkingLevel,
-		OpenclawMode:              openclawMode,
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
-	//   - openclaw is pinned to the task workdir via the per-task config we
-	//     synthesize (see prepareOpenclawConfig), so AGENTS.md / .agent_context/
-	//     in the workdir ARE picked up by the CLI. Inline injection is retained
-	//     as a belt-and-suspenders for older openclaw releases until that load
-	//     path stabilises in production; remove this once a release tracks the
-	//     workdir bootstrap reliably end-to-end.
 	//   - kiro and kimi are wrapped through their own CLIs whose cwd handling
 	//     is opaque enough that we can't trust the file-based path either.
 	// Pass the full runtime brief inline (CLI catalog + workflow steps + agent
@@ -3527,7 +3244,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Hermes loads AGENTS.md / .agent_context itself. Prepending the full runtime
 	// brief into the ACP user prompt duplicates that context, bloats every turn,
 	// and has triggered upstream safety filters on harmless tasks.
-	if providerNeedsInlineSystemPrompt(provider) {
+	if coordinatorNeedsInlineSystemPrompt(provider, toolPolicy) {
+		execOpts.SystemPrompt = runtimeBrief
+	} else if providerNeedsInlineSystemPrompt(provider) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
 
@@ -3537,6 +3256,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"prompt_bytes", len(prompt),
 		"custom_args", len(customArgs),
 		"extra_args", len(extraArgs),
+		"allowed_builtin_tools", execOpts.AllowedBuiltinTools,
+		"allowed_tools", execOpts.AllowedTools,
+		"disallowed_tools", execOpts.DisallowedTools,
+		"permission_mode", execOpts.PermissionMode,
 		"mcp_config", len(mcpConfig) > 0,
 		"inline_system_prompt", execOpts.SystemPrompt != "",
 		"resume_session", execOpts.ResumeSessionID != "",
@@ -3562,6 +3285,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			result = retryResult
 			result.Usage = mergeUsage(firstUsage, result.Usage)
 			tools = retryTools
+		}
+	}
+	repoEditViolation := ""
+	if issueSpace != nil && !executionPolicy.CanEditRepo && repoStatusBefore != "" {
+		if status, err := gitPorcelainStatus(ctx, issueSpace.PrimaryRepoDir); err != nil {
+			taskLog.Warn("repo edit guard: after status unavailable", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
+		} else if status != repoStatusBefore {
+			repoEditViolation = fmt.Sprintf("角色 %s 不允许修改仓库，但本次运行改变了 %s 的 git 工作区状态。请由 04-开发等允许编辑的角色执行代码改动。", firstNonEmptyString(executionPolicy.RoleKey, executionPolicy.RoleKind, "current"), issueSpace.PrimaryRepoDir)
+			taskLog.Warn("repo edit guard blocked non-editing role",
+				"role_key", executionPolicy.RoleKey,
+				"role_kind", executionPolicy.RoleKind,
+				"repo_dir", issueSpace.PrimaryRepoDir,
+			)
 		}
 	}
 
@@ -3595,6 +3331,26 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		})
 	}
 
+	resultBranchName := ""
+	resultArtifactDir := ""
+	if issueSpace != nil {
+		resultBranchName = issueSpace.BranchName
+		resultArtifactDir = issueSpace.ArtifactDir
+	}
+	if repoEditViolation != "" {
+		return TaskResult{
+			Status:        "blocked",
+			Comment:       repoEditViolation,
+			BranchName:    resultBranchName,
+			SessionID:     result.SessionID,
+			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
+			EnvRoot:       env.RootDir,
+			FailureReason: "role_policy_violation",
+			Usage:         usageEntries,
+		}, nil
+	}
+
 	switch result.Status {
 	case "completed":
 		if result.Output == "" {
@@ -3604,12 +3360,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// a normal completion so the task is not incorrectly marked as
 			// blocked.
 			return TaskResult{
-				Status:    "completed",
-				Comment:   "",
-				SessionID: result.SessionID,
-				WorkDir:   env.WorkDir,
-				EnvRoot:   env.RootDir,
-				Usage:     usageEntries,
+				Status:      "completed",
+				Comment:     "",
+				BranchName:  resultBranchName,
+				SessionID:   result.SessionID,
+				WorkDir:     env.WorkDir,
+				ArtifactDir: resultArtifactDir,
+				EnvRoot:     env.RootDir,
+				Usage:       usageEntries,
 			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
@@ -3626,20 +3384,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			return TaskResult{
 				Status:        "blocked",
 				Comment:       result.Output,
+				BranchName:    resultBranchName,
 				SessionID:     result.SessionID,
 				WorkDir:       env.WorkDir,
+				ArtifactDir:   resultArtifactDir,
 				EnvRoot:       env.RootDir,
 				Usage:         usageEntries,
 				FailureReason: reason,
 			}, nil
 		}
 		return TaskResult{
-			Status:    "completed",
-			Comment:   result.Output,
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:      "completed",
+			Comment:     result.Output,
+			BranchName:  resultBranchName,
+			SessionID:   result.SessionID,
+			WorkDir:     env.WorkDir,
+			ArtifactDir: resultArtifactDir,
+			EnvRoot:     env.RootDir,
+			Usage:       usageEntries,
 		}, nil
 	case "timeout":
 		// Surface session_id/work_dir so the chat resume pointer is kept
@@ -3660,8 +3422,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       comment,
+			BranchName:    resultBranchName,
 			SessionID:     result.SessionID,
 			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
 			EnvRoot:       env.RootDir,
 			FailureReason: failureReason,
 			Usage:         usageEntries,
@@ -3679,8 +3443,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       comment,
+			BranchName:    resultBranchName,
 			SessionID:     result.SessionID,
 			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
 			EnvRoot:       env.RootDir,
 			FailureReason: "idle_watchdog",
 			Usage:         usageEntries,
@@ -3692,18 +3458,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// status string for the "agent finished" log line so operators can
 		// distinguish "task cancelled by server" from a real timeout.
 		return TaskResult{
-			Status:    "cancelled",
-			Comment:   "task cancelled by server",
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:      "cancelled",
+			Comment:     "task cancelled by server",
+			BranchName:  resultBranchName,
+			SessionID:   result.SessionID,
+			WorkDir:     env.WorkDir,
+			ArtifactDir: resultArtifactDir,
+			EnvRoot:     env.RootDir,
+			Usage:       usageEntries,
 		}, nil
 	default:
-		errMsg := result.Error
-		if errMsg == "" {
-			errMsg = fmt.Sprintf("%s execution %s", provider, result.Status)
-		}
+		errMsg := agentFailureMessage(provider, result)
 		// Forward SessionID/WorkDir on the blocked path: backends commonly
 		// emit a real session_id before failing (rate-limit, tool error,
 		// model reject, …). Without this the chat_session resume pointer
@@ -3737,13 +3502,25 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       errMsg,
+			BranchName:    resultBranchName,
 			SessionID:     result.SessionID,
 			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
 			EnvRoot:       env.RootDir,
 			Usage:         usageEntries,
 			FailureReason: failureReason,
 		}, nil
 	}
+}
+
+func agentFailureMessage(provider string, result agent.Result) string {
+	if result.Error != "" {
+		return result.Error
+	}
+	if result.Output != "" {
+		return result.Output
+	}
+	return fmt.Sprintf("%s execution %s", provider, result.Status)
 }
 
 // executeAndDrain runs a backend, drains its message stream (forwarding to the
@@ -4147,6 +3924,171 @@ func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
 	return result
 }
 
+func effectiveTaskExecutionPolicy(task Task) TaskExecutionPolicy {
+	if task.ExecutionPolicy == nil {
+		return TaskExecutionPolicy{
+			RoleKind:         "agent",
+			CanAccessRepo:    true,
+			CanEditRepo:      true,
+			ProjectSkillMode: "all",
+		}
+	}
+	policy := *task.ExecutionPolicy
+	if strings.TrimSpace(policy.RoleKind) == "" {
+		policy.RoleKind = "agent"
+	}
+	if strings.TrimSpace(policy.ProjectSkillMode) == "" {
+		policy.ProjectSkillMode = "all"
+	}
+	return policy
+}
+
+func convertExecutionPolicyForEnv(policy TaskExecutionPolicy) execenv.TaskExecutionPolicyForEnv {
+	return execenv.TaskExecutionPolicyForEnv{
+		RoleKey:          policy.RoleKey,
+		RoleKind:         policy.RoleKind,
+		CanAccessRepo:    policy.CanAccessRepo,
+		CanEditRepo:      policy.CanEditRepo,
+		ProjectSkillMode: policy.ProjectSkillMode,
+	}
+}
+
+func mergeSkillContexts(base []execenv.SkillContextForEnv, extra []execenv.SkillContextForEnv) []execenv.SkillContextForEnv {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	for _, skill := range base {
+		seen[strings.ToLower(strings.TrimSpace(skill.Name))] = struct{}{}
+	}
+	out := append([]execenv.SkillContextForEnv(nil), base...)
+	for _, skill := range extra {
+		key := strings.ToLower(strings.TrimSpace(skill.Name))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, skill)
+	}
+	return out
+}
+
+func loadProjectSkillsForPolicy(repoDir string, policy TaskExecutionPolicy) ([]execenv.SkillContextForEnv, error) {
+	if strings.TrimSpace(repoDir) == "" || policy.ProjectSkillMode == "none" {
+		return nil, nil
+	}
+	var result []execenv.SkillContextForEnv
+	for _, root := range []string{
+		filepath.Join(repoDir, ".codebuddy", "skills"),
+		filepath.Join(repoDir, ".codex", "skills"),
+		filepath.Join(repoDir, ".claude", "skills"),
+	} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !projectSkillAllowedByPolicy(name, policy) {
+				continue
+			}
+			skill, ok, err := readProjectSkill(filepath.Join(root, name), name)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				result = append(result, skill)
+			}
+		}
+	}
+	return result, nil
+}
+
+func projectSkillAllowedByPolicy(name string, policy TaskExecutionPolicy) bool {
+	key := strings.ToLower(strings.TrimSpace(name))
+	switch policy.ProjectSkillMode {
+	case "none":
+		return false
+	case "all":
+		return true
+	case "stage":
+		for _, allowed := range policy.AllowedProjectSkills {
+			if key == strings.ToLower(strings.TrimSpace(allowed)) {
+				return true
+			}
+		}
+		return false
+	case "implementation":
+		return key == "04-implement" || !isSOPStageSkillName(key)
+	case "verification":
+		return key == "05-verify" || !isSOPStageSkillName(key)
+	default:
+		return true
+	}
+}
+
+func isSOPStageSkillName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify":
+		return true
+	default:
+		return false
+	}
+}
+
+func readProjectSkill(dir string, name string) (execenv.SkillContextForEnv, bool, error) {
+	content, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return execenv.SkillContextForEnv{}, false, nil
+		}
+		return execenv.SkillContextForEnv{}, false, err
+	}
+	skill := execenv.SkillContextForEnv{Name: name, Content: string(content)}
+	err = filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "SKILL.md" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		skill.Files = append(skill.Files, execenv.SkillFileContextForEnv{Path: rel, Content: string(data)})
+		return nil
+	})
+	if err != nil {
+		return execenv.SkillContextForEnv{}, false, err
+	}
+	return skill, true, nil
+}
+
+func gitPorcelainStatus(ctx context.Context, repoDir string) (string, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(checkCtx, "git", "-C", repoDir, "status", "--porcelain=v1", "--untracked-files=all")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.ProjectResourceForEnv {
 	if len(resources) == 0 {
 		return nil
@@ -4235,40 +4177,6 @@ func convertSkillsForEnv(skills []SkillData) []execenv.SkillContextForEnv {
 	return result
 }
 
-// composeOpenclawIncludeRoots returns the value the daemon should set for
-// OPENCLAW_INCLUDE_ROOTS on the child openclaw process so its `$include`
-// loader will follow the wrapper's reference out of envRoot into the
-// user's active config directory.
-//
-// addRoot is the directory we must grant (typically dirname of the user's
-// active openclaw.json). userValue is whatever the daemon's own
-// environment already has under OPENCLAW_INCLUDE_ROOTS — the user's own
-// cross-directory layout. We prepend addRoot, dedupe by string equality,
-// drop empty path segments, and return ok=false when there's nothing to
-// grant (addRoot is empty — fresh install case), so callers can leave the
-// env var alone in that case.
-//
-// Path separator is the OS-native list separator (`:` on Unix, `;` on
-// Windows) to match how OpenClaw splits the env var.
-func composeOpenclawIncludeRoots(addRoot, userValue string) (string, bool) {
-	if addRoot == "" {
-		return "", false
-	}
-	parts := []string{addRoot}
-	seen := map[string]struct{}{addRoot: {}}
-	for _, p := range strings.Split(userValue, string(os.PathListSeparator)) {
-		if p == "" {
-			continue
-		}
-		if _, dup := seen[p]; dup {
-			continue
-		}
-		seen[p] = struct{}{}
-		parts = append(parts, p)
-	}
-	return strings.Join(parts, string(os.PathListSeparator)), true
-}
-
 // isBlockedEnvKey returns true if the key must not be overridden by user-
 // configured custom_env. This prevents accidental or malicious override of
 // daemon-internal variables and critical system paths.
@@ -4278,7 +4186,7 @@ func isBlockedEnvKey(key string) bool {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "CODEX_HOME", "CURSOR_DATA_DIR", "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "CODEX_HOME", "CURSOR_DATA_DIR":
 		return true
 	}
 	return false
@@ -4297,4 +4205,144 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+func executionPolicyForToolEnvelope(task Task, policy TaskExecutionPolicy) TaskExecutionPolicy {
+	if strings.TrimSpace(task.SourceSummaryPrompt) != "" {
+		return TaskExecutionPolicy{RoleKind: "agent", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none"}
+	}
+	return policy
+}
+
+func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return nil
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return []string{"Bash"}
+	}
+	if isNoRepoBoundedStage(policy) {
+		return nil
+	}
+	if isBoundedReviewStage(policy) {
+		return []string{"Bash", "Read", "Grep", "Glob", "LS"}
+	}
+	if isImplementationStage(policy) {
+		return []string{"Bash", "Read", "Grep", "Glob", "LS", "Edit", "Write", "MultiEdit", "NotebookRead", "NotebookEdit"}
+	}
+	return nil
+}
+
+func allowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return nil
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return []string{"Bash(multica *)"}
+	}
+	if isNoRepoBoundedStage(policy) {
+		return nil
+	}
+	return nil
+}
+
+func permissionModeForExecutionPolicy(provider string, policy TaskExecutionPolicy) string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return ""
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return "bypassPermissions"
+	}
+	if isNoRepoBoundedStage(policy) {
+		return "default"
+	}
+	return ""
+}
+
+func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return nil
+	}
+	nativeDelegationTools := []string{
+		"Task",
+		"TaskCreate",
+		"TaskUpdate",
+		"Agent",
+		"TodoRead",
+		"TodoWrite",
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return append(append([]string{}, nativeDelegationTools...),
+			"Read",
+			"Edit",
+			"Write",
+			"MultiEdit",
+			"Grep",
+			"Glob",
+			"LS",
+			"NotebookRead",
+			"NotebookEdit",
+		)
+	}
+	if isNoRepoBoundedStage(policy) {
+		return append(append([]string{}, nativeDelegationTools...),
+			"Bash",
+			"Read",
+			"Edit",
+			"Write",
+			"MultiEdit",
+			"Grep",
+			"Glob",
+			"LS",
+			"NotebookRead",
+			"NotebookEdit",
+		)
+	}
+	if isBoundedReviewStage(policy) {
+		return append(append([]string{}, nativeDelegationTools...),
+			"Edit",
+			"Write",
+			"MultiEdit",
+			"NotebookEdit",
+		)
+	}
+	if isImplementationStage(policy) {
+		return nativeDelegationTools
+	}
+	return nil
+}
+
+func maxTurnsForExecutionPolicy(configured int, policy TaskExecutionPolicy) int {
+	if configured > 0 {
+		return configured
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return 12
+	}
+	return 0
+}
+
+func supportsClaudeFamilyToolEnvelope(provider string) bool {
+	return provider == "claude" || provider == "codebuddy"
+}
+
+func isCoordinatorWithoutRepoAccess(policy TaskExecutionPolicy) bool {
+	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "coordinator") && !policy.CanAccessRepo
+}
+
+func isNoRepoBoundedStage(policy TaskExecutionPolicy) bool {
+	return isBoundedReviewStage(policy) && !policy.CanAccessRepo
+}
+
+func isBoundedReviewStage(policy TaskExecutionPolicy) bool {
+	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return true
+	default:
+		return false
+	}
+}
+
+func isImplementationStage(policy TaskExecutionPolicy) bool {
+	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "implementation_stage") && policy.CanAccessRepo && policy.CanEditRepo
 }

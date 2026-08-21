@@ -124,7 +124,7 @@ func TestCodexStaticModelsExposesGPT55(t *testing.T) {
 	for _, want := range []string{
 		"gpt-5.5", "gpt-5.5-mini",
 		"gpt-5.4", "gpt-5.4-mini",
-		"gpt-5.3-codex", "gpt-5",
+		"gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5",
 		"o3", "o3-mini",
 	} {
 		if _, ok := ids[want]; !ok {
@@ -223,23 +223,24 @@ func TestModelKnownIncompatibleWithProvider(t *testing.T) {
 
 func TestInferCopilotProvider(t *testing.T) {
 	cases := map[string]string{
-		"gpt-5.5":           "openai",
-		"gpt-5.4-mini":      "openai",
-		"gpt-5.3-codex":     "openai",
-		"gpt-4.1":           "openai",
-		"o1":                "openai",
-		"o3":                "openai",
-		"o3-mini":           "openai",
-		"o4-mini":           "openai",
-		"o5":                "openai", // future-proof: any o<digit>+
-		"o6-mini-high":      "openai",
-		"claude-opus-4.7":   "anthropic",
-		"claude-sonnet-4.6": "anthropic",
-		"claude-haiku-4.5":  "anthropic",
-		"gemini-3-pro":      "google",
-		"grok-code-fast-1":  "xai",
-		"auto":              "",
-		"raptor-mini":       "",
+		"gpt-5.5":             "openai",
+		"gpt-5.4-mini":        "openai",
+		"gpt-5.3-codex-spark": "openai",
+		"gpt-5.3-codex":       "openai",
+		"gpt-4.1":             "openai",
+		"o1":                  "openai",
+		"o3":                  "openai",
+		"o3-mini":             "openai",
+		"o4-mini":             "openai",
+		"o5":                  "openai", // future-proof: any o<digit>+
+		"o6-mini-high":        "openai",
+		"claude-opus-4.7":     "anthropic",
+		"claude-sonnet-4.6":   "anthropic",
+		"claude-haiku-4.5":    "anthropic",
+		"gemini-3-pro":        "google",
+		"grok-code-fast-1":    "xai",
+		"auto":                "",
+		"raptor-mini":         "",
 		// negative cases: must not be misidentified as OpenAI
 		// reasoning series even though they start with `o`.
 		"opus-fake": "",
@@ -268,7 +269,7 @@ func TestCopilotStaticModelsExposesFullCatalog(t *testing.T) {
 	}
 	for _, want := range []string{
 		"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
-		"gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2",
+		"gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2",
 		"gpt-5-mini", "gpt-4.1",
 		"claude-opus-4.7", "claude-sonnet-4.6",
 		"claude-sonnet-4.5", "claude-haiku-4.5",
@@ -553,21 +554,6 @@ func TestCachedDiscoveryDoesNotCacheEmpty(t *testing.T) {
 	}
 }
 
-func TestParsePiModels(t *testing.T) {
-	input := `openai:gpt-4o
-anthropic:claude-opus-4-7
-openai:gpt-4o
-bareword
-`
-	models := parsePiModels(input)
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %d: %+v", len(models), models)
-	}
-	if models[0].ID != "openai/gpt-4o" {
-		t.Errorf("expected colon normalized to slash: %+v", models[0])
-	}
-}
-
 func TestParsePiModelsTableFormat(t *testing.T) {
 	input := `provider             model                   context  max-out  thinking  images
 bailian-coding-plan  glm-4.7                 202.8K   16.4K    no        no
@@ -590,8 +576,7 @@ bareword-only-line
 	if models[2].ID != "opencode/claude-sonnet-4-6" || models[2].Provider != "opencode" {
 		t.Errorf("unexpected third model: %+v", models[2])
 	}
-	// Colon inside a model name in column 1 must be preserved — only
-	// the legacy `provider:model` form gets colon→slash normalization.
+	// Colons inside a model name are part of the current table's model column.
 	if models[3].ID != "opencode/claude-sonnet-4-6:exp" || models[3].Provider != "opencode" {
 		t.Errorf("expected ':' inside table-format model name to be preserved: %+v", models[3])
 	}
@@ -611,58 +596,22 @@ func TestDiscoverPiModelsNonZeroExit(t *testing.T) {
 
 	const table = "provider         model        context  max-out  thinking  images\n" +
 		"glm-coding-plan  glm-4.7      202.8K   16.4K    no        no"
-	// The unmatched-pattern warning, with and without the `Warning:` prefix —
-	// the prefix is not guaranteed across pi versions, and the bare form is
-	// what slips past a naive guard into a bogus `No/models` model.
+	// The unmatched-pattern warning is emitted on stderr and the valid current
+	// catalog remains on stdout.
 	const prefixed = `Warning: No models match pattern "opencode-go/mimo-v2-omni"`
-	const bare = `No models match pattern "opencode-go/mimo-v2-pro"`
+	script := "#!/bin/sh\n" +
+		"cat <<'EOF'\n" + table + "\nEOF\n" +
+		"echo " + strconv.Quote(prefixed) + " >&2\n" +
+		"exit 1\n"
+	fakePath := filepath.Join(t.TempDir(), "pi")
+	writeTestExecutable(t, fakePath, []byte(script))
 
-	cases := []struct {
-		name   string
-		script string
-	}{
-		{
-			// Newer pi prints the catalog to stdout; the stale-pattern
-			// warning goes to stderr and the process exits non-zero.
-			name: "catalog on stdout",
-			script: "#!/bin/sh\n" +
-				"cat <<'EOF'\n" + table + "\nEOF\n" +
-				"echo " + strconv.Quote(prefixed) + " >&2\n" +
-				"exit 1\n",
-		},
-		{
-			// Older pi prints the catalog (and the warning) to stderr; same
-			// non-zero exit. The stderr fallback must still parse the catalog.
-			name: "catalog and prefixed warning on stderr",
-			script: "#!/bin/sh\n" +
-				"cat >&2 <<'EOF'\n" + table + "\n" + prefixed + "\nEOF\n" +
-				"exit 1\n",
-		},
-		{
-			// Same, but the warning has no `Warning:` prefix — must not leak in
-			// as a `No/models` row.
-			name: "catalog and bare warning on stderr",
-			script: "#!/bin/sh\n" +
-				"cat >&2 <<'EOF'\n" + table + "\n" + bare + "\nEOF\n" +
-				"exit 1\n",
-		},
+	models, err := discoverPiModels(context.Background(), fakePath)
+	if err != nil {
+		t.Fatalf("discoverPiModels: %v", err)
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fakePath := filepath.Join(t.TempDir(), "pi")
-			writeTestExecutable(t, fakePath, []byte(tc.script))
-
-			models, err := discoverPiModels(context.Background(), fakePath)
-			if err != nil {
-				t.Fatalf("discoverPiModels: %v", err)
-			}
-			// Exactly the resolvable model — no warning line coined into a
-			// bogus entry, no header row.
-			if len(models) != 1 || models[0].ID != "glm-coding-plan/glm-4.7" {
-				t.Fatalf("expected exactly [glm-coding-plan/glm-4.7] despite non-zero exit, got %+v", models)
-			}
-		})
+	if len(models) != 1 || models[0].ID != "glm-coding-plan/glm-4.7" {
+		t.Fatalf("expected exactly [glm-coding-plan/glm-4.7] despite non-zero exit, got %+v", models)
 	}
 }
 
@@ -694,111 +643,6 @@ func TestDiscoverOpenCodeModelsFallsBackOnVerboseNoise(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].ID != "openai/gpt-4o" {
 		t.Fatalf("expected fallback to plain `opencode models` to yield [openai/gpt-4o], got %+v", models)
-	}
-}
-
-func TestParseOpenclawAgents(t *testing.T) {
-	input := `deepseek-v4   deepseek-v4
-claude-sonnet claude-sonnet-4-6
-deepseek-v4   deepseek-v4
-`
-	models := parseOpenclawAgents(input)
-	// duplicate deduped; label includes model name.
-	if len(models) != 2 {
-		t.Fatalf("expected 2 agents, got %d: %+v", len(models), models)
-	}
-	if models[0].ID != "deepseek-v4" {
-		t.Errorf("unexpected first agent: %+v", models[0])
-	}
-	if models[0].Label != "deepseek-v4 (deepseek-v4)" {
-		t.Errorf("unexpected label: %+v", models[0])
-	}
-	if models[0].Provider != "openclaw" {
-		t.Errorf("expected provider openclaw, got %q", models[0].Provider)
-	}
-}
-
-func TestParseOpenclawAgentsRejectsDecoratedTUI(t *testing.T) {
-	// Reproduces the shape of real `openclaw agents list` output
-	// that leaked header tokens like "Identity:" / "Workspace:"
-	// and single-character box-drawing icons into the dropdown.
-	input := `╭───────────────────────────────╮
-│                               │
-│  ◇  Agents:                   │
-│  │                            │
-│  │    Identity:               │
-│  │    Workspace:              │
-│  │    Agent                   │
-│  │                            │
-╰───────────────────────────────╯
-deepseek-v4   deepseek-v4
-claude-sonnet claude-sonnet-4-6
-`
-	models := parseOpenclawAgents(input)
-	if len(models) != 2 {
-		t.Fatalf("expected 2 agents (decoration skipped), got %d: %+v", len(models), models)
-	}
-	for _, m := range models {
-		if strings.HasSuffix(m.ID, ":") {
-			t.Errorf("section header leaked into result: %+v", m)
-		}
-	}
-	if models[0].ID != "deepseek-v4" || models[1].ID != "claude-sonnet" {
-		t.Errorf("unexpected agents: %+v", models)
-	}
-}
-
-func TestParseOpenclawAgentsJSONArray(t *testing.T) {
-	input := []byte(`[
-    {"name": "deepseek-v4", "model": "deepseek-v4"},
-    {"name": "claude-sonnet", "model": "claude-sonnet-4-6"}
-]`)
-	models, ok := parseOpenclawAgentsJSON(input)
-	if !ok {
-		t.Fatal("expected parseOpenclawAgentsJSON to accept an array")
-	}
-	if len(models) != 2 {
-		t.Fatalf("got %d, want 2: %+v", len(models), models)
-	}
-	if models[0].ID != "deepseek-v4" || models[0].Label != "deepseek-v4 (deepseek-v4)" {
-		t.Errorf("unexpected first entry: %+v", models[0])
-	}
-}
-
-func TestParseOpenclawAgentsJSONWrapped(t *testing.T) {
-	input := []byte(`{"agents": [{"name": "foo", "model": "bar"}]}`)
-	models, ok := parseOpenclawAgentsJSON(input)
-	if !ok {
-		t.Fatal("expected parseOpenclawAgentsJSON to accept wrapped object")
-	}
-	if len(models) != 1 || models[0].ID != "foo" {
-		t.Errorf("unexpected: %+v", models)
-	}
-}
-
-func TestOpenclawEntriesToModelsUsesIDOverName(t *testing.T) {
-	// When both id and name are present, Model.ID should use the id field
-	// because openclaw resolves --agent by id. Names with spaces (e.g.
-	// "Sub2API OPS") would be mangled by openclaw's normalizeAgentId.
-	input := []byte(`[{"id": "sub2api", "name": "Sub2API OPS", "model": "gpt-4o"}]`)
-	models, ok := parseOpenclawAgentsJSON(input)
-	if !ok {
-		t.Fatal("expected parseOpenclawAgentsJSON to accept array")
-	}
-	if len(models) != 1 {
-		t.Fatalf("got %d models, want 1", len(models))
-	}
-	if models[0].ID != "sub2api" {
-		t.Errorf("Model.ID = %q, want %q (should use id, not name)", models[0].ID, "sub2api")
-	}
-	if models[0].Label != "Sub2API OPS (gpt-4o)" {
-		t.Errorf("Model.Label = %q, want %q (should use name for display)", models[0].Label, "Sub2API OPS (gpt-4o)")
-	}
-}
-
-func TestParseOpenclawAgentsJSONRejectsGarbage(t *testing.T) {
-	if _, ok := parseOpenclawAgentsJSON([]byte("not json")); ok {
-		t.Error("expected ok=false for non-JSON")
 	}
 }
 
@@ -936,7 +780,7 @@ func TestParseHermesSessionNewModelsMissingField(t *testing.T) {
 	// failed _build_model_state — should yield nil so the caller
 	// can distinguish "no catalog" from "empty catalog".
 	raw := []byte(`{"sessionId": "ses_123"}`)
-	if got := parseACPSessionNewModels(raw); got != nil && len(got) != 0 {
+	if got := parseACPSessionNewModels(raw); len(got) != 0 {
 		t.Errorf("expected nil/empty, got %+v", got)
 	}
 }

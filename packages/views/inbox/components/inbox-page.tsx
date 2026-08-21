@@ -72,8 +72,10 @@ export function InboxPage() {
   const wsId = useWorkspaceId();
   const { data: rawItems = [], isLoading: loading } = useQuery(inboxListOptions(wsId));
   const items = useMemo(() => deduplicateInboxItems(rawItems), [rawItems]);
+  const visibleItems = items;
 
-  const selected = items.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
+  const selected =
+    visibleItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
 
   // Track the last key we actually resolved against the inbox list. Lets the
   // fallback effect distinguish "shared-link to a notification not in our
@@ -113,7 +115,11 @@ export function InboxPage() {
   });
 
   const isMobile = useIsMobile();
-  const unreadCount = useInboxUnreadCount(wsId);
+  useInboxUnreadCount(wsId);
+  const unreadCount = useMemo(
+    () => visibleItems.filter((item) => !item.read).length,
+    [visibleItems],
+  );
 
   const markReadMutation = useMarkInboxRead();
   const archiveMutation = useArchiveInbox();
@@ -150,15 +156,15 @@ export function InboxPage() {
   };
 
   const handleArchive = (id: string) => {
-    const idx = items.findIndex((i) => i.id === id);
-    const archived = idx >= 0 ? items[idx] : null;
+    const idx = visibleItems.findIndex((i) => i.id === id);
+    const archived = idx >= 0 ? visibleItems[idx] : null;
     const wasSelected =
       !!archived && (archived.issue_id ?? archived.id) === selectedKey;
     if (wasSelected) {
       // List is sorted newest-first; prefer the next (older) item, fall back
       // to the previous (newer) one when archiving at the bottom, and only
       // clear the selection when nothing else is left.
-      const next = items[idx + 1] ?? items[idx - 1] ?? null;
+      const next = visibleItems[idx + 1] ?? visibleItems[idx - 1] ?? null;
       setSelectedKey(next ? (next.issue_id ?? next.id) : "");
     }
     archiveMutation.mutate(id, {
@@ -196,7 +202,7 @@ export function InboxPage() {
   };
 
   const handleArchiveAllRead = () => {
-    const readKeys = items.filter((i) => i.read).map((i) => i.issue_id ?? i.id);
+    const readKeys = visibleItems.filter((i) => i.read).map((i) => i.issue_id ?? i.id);
     if (readKeys.includes(selectedKey)) setSelectedKey("");
     archiveAllReadMutation.mutate(undefined, {
       onError: (err) =>
@@ -267,14 +273,14 @@ export function InboxPage() {
     </PageHeader>
   );
 
-  const listBody = items.length === 0 ? (
+  const listBody = visibleItems.length === 0 ? (
     <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
       <Inbox className="mb-3 h-8 w-8 text-muted-foreground/50" />
       <p className="text-sm">{t(($) => $.list.empty)}</p>
     </div>
   ) : (
     <div>
-      {items.map((item) => (
+      {visibleItems.map((item) => (
         <InboxListItem
           key={item.id}
           item={item}
@@ -472,7 +478,7 @@ export function InboxPage() {
           <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
             <Inbox className="mb-3 h-10 w-10 text-muted-foreground/30" />
             <p className="text-sm">
-              {items.length === 0
+              {visibleItems.length === 0
                 ? t(($) => $.detail.empty)
                 : t(($) => $.detail.select_prompt)}
             </p>

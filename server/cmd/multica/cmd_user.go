@@ -138,7 +138,7 @@ func printUserProfileTable(out *os.File, me map[string]any) {
 
 	fmt.Fprintf(w, "ID\t%s\n", strVal(me, "id"))
 	fmt.Fprintf(w, "NAME\t%s\n", strVal(me, "name"))
-	fmt.Fprintf(w, "EMAIL\t%s\n", strVal(me, "email"))
+	fmt.Fprintf(w, "ACCOUNT\t%s\n", strVal(me, "account"))
 	desc := strVal(me, "profile_description")
 	if desc == "" {
 		desc = "(not set)"

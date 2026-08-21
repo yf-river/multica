@@ -58,6 +58,18 @@ const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
+export function getVisibleChatAgents(
+  agents: Agent[],
+  userId: string | undefined,
+  memberRole: string | undefined,
+): Agent[] {
+  return agents.filter(
+    (agent) =>
+      !agent.archived_at &&
+      canAssignAgent(agent, userId, memberRole),
+  );
+}
+
 function appendChatMessageToLatestPageCache(
   qc: ReturnType<typeof useQueryClient>,
   sessionId: string,
@@ -168,18 +180,30 @@ export function ChatWindow() {
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
   const user = useAuthStore((s) => s.user);
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: isOpen,
+  });
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: isOpen,
+  });
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
-  const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
+  const { data: sessions = [] } = useQuery({
+    ...chatSessionsOptions(wsId),
+    enabled: isOpen,
+  });
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
-  } = useInfiniteQuery(chatMessagesPageOptions(activeSessionId ?? ""));
+  } = useInfiniteQuery({
+    ...chatMessagesPageOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   // When no active session, always show empty — don't use stale cache.
   // Page 0 contains the latest chronological window; later cursor pages are
   // older chronological windows. Reverse pages so older fetched pages render
@@ -202,9 +226,10 @@ export function ChatWindow() {
   // (chat:message / chat:done / task:*) keep it invalidated in real time.
   //
   // This is the SOLE source for pendingTaskId — no mirror in the store.
-  const { data: pendingTask } = useQuery(
-    pendingChatTaskOptions(activeSessionId ?? ""),
-  );
+  const { data: pendingTask } = useQuery({
+    ...pendingChatTaskOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   const [restoreDraftRequest, setRestoreDraftRequest] = useState<{
@@ -232,8 +257,9 @@ export function ChatWindow() {
 
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;
-  const availableAgents = agents.filter(
-    (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
+  const availableAgents = useMemo(
+    () => getVisibleChatAgents(agents, user?.id, memberRole),
+    [agents, user?.id, memberRole],
   );
 
   // Resolve selected agent: stored preference → first available
@@ -242,11 +268,33 @@ export function ChatWindow() {
     availableAgents[0] ??
     null;
 
+  useEffect(() => {
+    if (!isOpen || !selectedAgentId || agents.length === 0) return;
+    if (availableAgents.some((agent) => agent.id === selectedAgentId)) return;
+    const nextAgent = availableAgents[0];
+    if (!nextAgent) return;
+    uiLogger.info("selectedAgent unavailable; reset to visible agent", {
+      from: selectedAgentId,
+      to: nextAgent.id,
+      previousSessionId: activeSessionId,
+    });
+    setSelectedAgentId(nextAgent.id);
+    setActiveSession(null);
+  }, [
+    activeSessionId,
+    agents.length,
+    availableAgents,
+    isOpen,
+    selectedAgentId,
+    setActiveSession,
+    setSelectedAgentId,
+  ]);
+
   // Three-state availability — "loading" stays neutral (no banner, no
   // disable) so the input doesn't flash a fake "no agent" state in the
   // few hundred ms before the agent list query resolves. Only `"none"`
   // (server confirmed: zero usable agents) drives the disabled UI.
-  const agentAvailability = useWorkspaceAgentAvailability();
+  const agentAvailability = useWorkspaceAgentAvailability(isOpen);
   const noAgent = agentAvailability === "none";
 
   // Presence drives both the avatar status dot (via ActorAvatar) and the
@@ -254,7 +302,7 @@ export function ChatWindow() {
   // returns "loading" while queries are still resolving — pass `undefined`
   // downstream so banners and pill copy stay silent during loading rather
   // than flash speculative offline text.
-  const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id);
+  const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id, isOpen);
   const availability =
     presenceDetail === "loading" ? undefined : presenceDetail.availability;
 
@@ -710,6 +758,7 @@ export function ChatWindow() {
             // Use the full agent list (incl. archived) so historical
             // sessions can still resolve their avatar.
             agents={agents}
+            isOpen={isOpen}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
@@ -959,11 +1008,13 @@ function AgentPickerItem({
 function SessionDropdown({
   sessions,
   agents,
+  isOpen,
   activeSessionId,
   onSelectSession,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
+  isOpen: boolean;
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
 }) {
@@ -1001,7 +1052,10 @@ function SessionDropdown({
   // Aggregate "which sessions have an in-flight task right now". Reuses
   // the same workspace-scoped query the FAB consumes, so toggling the chat
   // window doesn't fire a second request — TanStack dedupes by key.
-  const { data: pending } = useQuery(pendingChatTasksOptions(wsId));
+  const { data: pending } = useQuery({
+    ...pendingChatTasksOptions(wsId),
+    enabled: isOpen,
+  });
   const pendingTaskBySessionId = useMemo(
     () => new Map((pending?.tasks ?? []).map((task) => [task.chat_session_id, task])),
     [pending],

@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Globe,
   Loader2,
   MoreHorizontal,
   Trash2,
@@ -41,16 +40,11 @@ import {
   ListGridHeaderCell,
   ListGridRow,
 } from "@multica/ui/components/ui/list-grid";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { ProviderLogo } from "./provider-logo";
-import { HealthIcon, useHealthLabel } from "./shared";
+import { HealthIcon, RuntimeVisibilityBadge, useHealthLabel } from "./shared";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import {
   computeCostInWindow,
@@ -190,7 +184,7 @@ function RuntimeNameCell({ runtime }: { runtime: AgentRuntime }) {
         </span>
         <RuntimeKindBadge runtime={runtime} />
         <PendingRuntimeBadge runtime={runtime} />
-        <VisibilityBadge runtime={runtime} />
+        <RuntimeVisibilityBadge runtime={runtime} />
       </div>
     </ListGridCell>
   );
@@ -225,28 +219,6 @@ function PendingRuntimeBadge({ runtime }: { runtime: AgentRuntime }) {
     <span className="inline-flex shrink-0 items-center rounded bg-warning/10 px-1 text-[10px] font-medium text-warning">
       {t(($) => $.list.badge_registering)}
     </span>
-  );
-}
-
-// Only public is worth a badge — private is the default and rendering a
-// `🔒 Private` chip on every row turns the whole column into noise.
-function VisibilityBadge({ runtime }: { runtime: AgentRuntime }) {
-  const { t } = useT("runtimes");
-  if (runtime.visibility !== "public") return null;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-info/10 px-1 text-[10px] font-medium text-info">
-            <Globe className="h-2.5 w-2.5" />
-            {t(($) => $.detail.visibility_label.public)}
-          </span>
-        }
-      />
-      <TooltipContent>
-        {t(($) => $.detail.visibility_hint.public)}
-      </TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -321,7 +293,7 @@ function HealthCell({
 // page are large.
 const COST_CELL_DAYS = 14;
 
-export function CostCell({ runtimeId }: { runtimeId: string }) {
+function CostCell({ runtimeId }: { runtimeId: string }) {
   const { t } = useT("runtimes");
   const tz = useViewingTimezone();
   const { data: usage = [] } = useQuery(
@@ -399,9 +371,8 @@ export function CliCell({ runtime }: { runtime: AgentRuntime }) {
   // provider (e.g. "2.1.5 (Claude Code)", "codex-cli 0.118.0", "0.42.0").
   // The separate `cli_version` is the shared multica daemon CLI, identical
   // for every runtime on one machine; surfacing it here made all agents
-  // show the same number (#3838). The daemon CLI version and its update
-  // prompt belong to the machine — they live in the machine meta strip and
-  // the detail page's UpdateSection, not on a per-agent row.
+  // show the same number (#3838). The daemon CLI version belongs to the
+  // machine meta strip, not to a per-agent row.
   const version =
     meta && typeof meta.version === "string" ? meta.version : null;
 
@@ -519,20 +490,11 @@ export function RuntimeRowMenu({
 
 export function RuntimeList({
   runtimes,
-  updatableIds,
   now,
 }: {
   runtimes: AgentRuntime[];
-  // Kept on the API surface for callers, but unused here: the CLI column
-  // shows each agent's own tool version, while the multica daemon CLI
-  // update prompt lives at the machine/detail level (UpdateSection), so the
-  // table no longer derives per-row update state. Left to avoid scope creep
-  // on the page-level wrapper that still computes the set.
-  updatableIds?: Set<string>;
   now: number;
 }) {
-  void updatableIds;
-
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();

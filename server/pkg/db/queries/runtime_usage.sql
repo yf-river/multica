@@ -8,11 +8,9 @@
 -- cast is unambiguous — `bucket_hour` is UTC and the caller picks the
 -- calendar boundary per request.
 --
--- provider is LOWER()-normalized so mixed-case historical rows merge
--- (same reason as ListRuntimeUsageByAgent below).
 SELECT
     DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) AS date,
-    LOWER(provider) AS provider,
+    provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
     SUM(output_tokens)::bigint       AS output_tokens,
@@ -21,8 +19,8 @@ SELECT
 FROM task_usage_hourly
 WHERE runtime_id = $1
   AND bucket_hour >= sqlc.arg('since')::timestamptz
-GROUP BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text), LOWER(provider), model
-ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, LOWER(provider), model;
+GROUP BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text), provider, model
+ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, provider, model;
 
 -- name: GetRuntimeTaskHourlyActivity :many
 -- Hour-of-day distribution for queue starts. Bucketed in the viewer's
@@ -38,18 +36,14 @@ ORDER BY hour;
 -- name: ListRuntimeUsageByAgent :many
 -- Per-(agent, provider, model) token aggregates for a runtime since a cutoff. Powers
 -- the runtime-detail "Cost by agent" tab. task_usage only carries task_id,
--- so we join the queue to expose agent_id. The model dimension is kept on
--- purpose: cost is computed client-side from a per-model pricing table, so
--- collapsing models server-side would erase the information needed to do
--- that arithmetic. The client groups by agent_id and sums cost per agent.
+-- so we join the queue to expose agent_id. The model dimension is kept so the
+-- handler can compute server-side cost before the client folds by agent.
 --
 -- This view doesn't bucket by date, so it doesn't need @tz; only the
 -- @since cutoff is provided in runtime-local terms (computed in Go).
--- provider is LOWER()-normalized so mixed-case historical rows merge with
--- new rows (see ListDashboardUsageDaily in task_usage.sql).
 SELECT
     atq.agent_id,
-    LOWER(tu.provider) AS provider,
+    tu.provider,
     tu.model,
     SUM(tu.input_tokens)::bigint AS input_tokens,
     SUM(tu.output_tokens)::bigint AS output_tokens,
@@ -60,20 +54,49 @@ FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.runtime_id = $1
   AND tu.created_at >= @since::timestamptz
-GROUP BY atq.agent_id, LOWER(tu.provider), tu.model
-ORDER BY atq.agent_id, LOWER(tu.provider), tu.model;
+GROUP BY atq.agent_id, tu.provider, tu.model
+ORDER BY atq.agent_id, tu.provider, tu.model;
+
+-- name: ListRuntimeUsageByTask :many
+-- Per-(task, provider, model) token aggregates for a runtime since a cutoff.
+-- This intentionally reads raw task_usage rather than task_usage_hourly: the
+-- hourly rollup is optimized for trends and no longer carries task_id. The
+-- model dimension is kept so the handler can compute server-side cost before
+-- the client folds rows by task_id.
+SELECT
+    atq.id AS task_id,
+    atq.issue_id,
+    COALESCE(i.number, 0)::int AS issue_number,
+    COALESCE(i.title, '') AS issue_title,
+    atq.agent_id,
+    atq.status,
+    atq.started_at,
+    atq.completed_at,
+    tu.provider,
+    tu.model,
+    SUM(tu.input_tokens)::bigint AS input_tokens,
+    SUM(tu.output_tokens)::bigint AS output_tokens,
+    SUM(tu.cache_read_tokens)::bigint AS cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint AS cache_write_tokens
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+LEFT JOIN issue i ON i.id = atq.issue_id
+WHERE atq.runtime_id = $1
+  AND tu.created_at >= @since::timestamptz
+GROUP BY atq.id, atq.issue_id, i.number, i.title, atq.agent_id, atq.status, atq.started_at, atq.completed_at, tu.provider, tu.model
+ORDER BY atq.id, tu.provider, tu.model;
 
 -- name: GetRuntimeUsageByHour :many
--- Per-(hour, model) token aggregates (hour ∈ 0..23) for a runtime since a
+-- Per-(hour, provider, model) token aggregates (hour ∈ 0..23) for a runtime since a
 -- cutoff. Powers the "By hour" tab — shows when in the day this runtime is
--- doing real work, with model preserved for client-side cost calculation
--- (same reason as ListRuntimeUsageByAgent above). Hours with zero activity
--- are omitted; the client fills the 24-bucket axis.
+-- doing real work. Hours with zero activity are omitted; the client fills the
+-- 24-bucket axis.
 --
 -- Hours are extracted in the viewer's tz via @tz so afternoon
 -- work bucketed at UTC 06:00 lands in 14:00 for a UTC+8 viewer.
 SELECT
     EXTRACT(HOUR FROM tu.created_at AT TIME ZONE @tz::text)::int AS hour,
+    tu.provider,
     tu.model,
     SUM(tu.input_tokens)::bigint AS input_tokens,
     SUM(tu.output_tokens)::bigint AS output_tokens,
@@ -84,5 +107,5 @@ FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.runtime_id = $1
   AND tu.created_at >= @since::timestamptz
-GROUP BY EXTRACT(HOUR FROM tu.created_at AT TIME ZONE @tz::text), tu.model
-ORDER BY hour, tu.model;
+GROUP BY EXTRACT(HOUR FROM tu.created_at AT TIME ZONE @tz::text), tu.provider, tu.model
+ORDER BY hour, tu.provider, tu.model;

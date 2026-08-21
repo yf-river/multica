@@ -77,7 +77,7 @@ import type { WebhookEventFilter } from "@multica/core/types";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AutopilotInitial {
+interface AutopilotInitial {
   title: string;
   description: string;
   project_id: string | null;
@@ -217,7 +217,7 @@ function useFormatCountdown(): (target: Date, now: Date) => string {
 
 function formatNextRunAbsolute(date: Date, timezone: string): string {
   try {
-    return new Intl.DateTimeFormat("en-US", {
+    return new Intl.DateTimeFormat("zh-CN", {
       timeZone: timezone,
       weekday: "short",
       month: "short",

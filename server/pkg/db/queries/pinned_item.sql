@@ -20,7 +20,3 @@ WHERE id = $2 AND workspace_id = $3 AND user_id = $4;
 SELECT COALESCE(MAX(position), 0)::float8 AS max_position
 FROM pinned_item
 WHERE workspace_id = $1 AND user_id = $2;
-
--- name: DeletePinnedItemsByItem :exec
-DELETE FROM pinned_item
-WHERE item_type = $1 AND item_id = $2;

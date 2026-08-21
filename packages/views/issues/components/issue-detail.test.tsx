@@ -1,13 +1,13 @@
 import { forwardRef, useRef, useState, useImperativeHandle } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue, TimelineEntry } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 
@@ -28,7 +28,7 @@ vi.mock("@multica/core/hooks", () => ({
 // ---------------------------------------------------------------------------
 
 // Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
+const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector?: any) => {
@@ -60,7 +60,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({
     queryKey: ["workspaces", "ws-1", "members"],
-    queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
+    queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", account: "test", role: "admin" }]),
   }),
   agentListOptions: () => ({
     queryKey: ["workspaces", "ws-1", "agents"],
@@ -208,6 +208,9 @@ const mockApiObj = vi.hoisted(() => ({
   unsubscribeFromIssue: vi.fn().mockResolvedValue(undefined),
   getActiveTasksForIssue: vi.fn().mockResolvedValue({ tasks: [] }),
   listTasksByIssue: vi.fn().mockResolvedValue([]),
+  listIssueTaskTraceEvents: vi.fn().mockResolvedValue({ events: [] }),
+  getIssueExecutionTree: vi.fn().mockResolvedValue(null),
+  listIssueSOPRuns: vi.fn().mockResolvedValue({ items: [] }),
   rerunIssue: vi.fn(),
   listTaskMessages: vi.fn().mockResolvedValue([]),
   listChildIssues: vi.fn().mockResolvedValue({ issues: [] }),
@@ -219,7 +222,7 @@ const mockApiObj = vi.hoisted(() => ({
   listAttachments: vi.fn().mockResolvedValue([]),
   addCommentReaction: vi.fn(),
   removeCommentReaction: vi.fn(),
-  listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
+  listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", account: "test", role: "admin" }]),
   listAgents: vi.fn().mockResolvedValue([]),
   getProject: vi.fn(),
   listProjects: vi.fn().mockResolvedValue({ projects: [] }),
@@ -237,13 +240,13 @@ vi.mock("@multica/core/issues/config", () => ({
   BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
   STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
   STATUS_CONFIG: {
-    backlog: { label: "Backlog", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "Todo", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "In Progress", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "In Review", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "Done", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    backlog: { label: "待办池", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    todo: { label: "待处理", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
+    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
+    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
+    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
+    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
   PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
   PRIORITY_CONFIG: {
@@ -458,7 +461,7 @@ function createTestQueryClient() {
 function renderIssueDetail(issueId = "issue-1") {
   const queryClient = createTestQueryClient();
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <IssueDetail issueId={issueId} />
       </QueryClientProvider>
@@ -481,7 +484,7 @@ function renderIssueDetailWithHighlight(
     queryClient.setQueryData(["issues", "timeline", issueId], mockTimeline);
   }
   const result = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <IssueDetail issueId={issueId} highlightCommentId={highlightCommentId} />
       </QueryClientProvider>
@@ -508,9 +511,12 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.listIssues.mockResolvedValue({ issues: [], total: 0 });
     mockApiObj.getActiveTasksForIssue.mockResolvedValue({ tasks: [] });
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
+    mockApiObj.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
+    mockApiObj.getIssueExecutionTree.mockResolvedValue(null);
+    mockApiObj.listIssueSOPRuns.mockResolvedValue({ items: [] });
     mockApiObj.rerunIssue.mockResolvedValue({ id: "task-rerun" });
     mockApiObj.listMembers.mockResolvedValue([
-      { user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" },
+      { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
     ]);
     mockApiObj.listAgents.mockResolvedValue([]);
     // Reset project mock — individual tests override per case. Default fixture
@@ -536,6 +542,26 @@ describe("IssueDetail (shared)", () => {
     });
 
     expect(screen.getByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
+  });
+
+  it("shows a loading indicator instead of the TAPD source summary placeholder", async () => {
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      description: "## 需求摘要\n摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要。",
+      metadata: {
+        source_provider: "tapd",
+        source_url: "https://www.tapd.cn/51081496/prong/stories/view/1151081496001028216",
+        tapd_resource_type: "story",
+        tapd_resource_id: "1151081496001028216",
+        source_summary_status: "pending",
+      },
+    });
+
+    renderIssueDetail();
+
+    expect(await screen.findByTestId("source-summary-loading")).toHaveTextContent("正在生成需求摘要");
+    expect(screen.queryByDisplayValue(/摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要/)).not.toBeInTheDocument();
   });
 
   it("opts the description editor into the unmount flush", async () => {
@@ -604,26 +630,26 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Properties")).toBeInTheDocument();
+      expect(screen.getByText("属性")).toBeInTheDocument();
     });
 
     // Core rows — always rendered regardless of whether the issue has a value.
-    expect(screen.getByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Assignee")).toBeInTheDocument();
+    expect(screen.getByText("状态")).toBeInTheDocument();
+    expect(screen.getByText("负责人")).toBeInTheDocument();
     // "Project" appears twice (row label + picker stub), so disambiguate by id.
     expect(screen.getByTestId("project-picker")).toBeInTheDocument();
     // priority="high" + due_date are set in the fixture, so both optional rows show.
-    expect(screen.getByText("Priority")).toBeInTheDocument();
-    expect(screen.getByText("Due date")).toBeInTheDocument();
+    expect(screen.getByText("优先级")).toBeInTheDocument();
+    expect(screen.getByText("截止日期")).toBeInTheDocument();
     // No labels are attached in the fixture — the Labels optional row
     // must stay hidden by default.
-    expect(screen.queryByText("Labels")).not.toBeInTheDocument();
+    expect(screen.queryByText("标签")).not.toBeInTheDocument();
     // Parent issue lives in its own section and only renders when the
     // issue actually has a parent — the fixture has none.
-    expect(screen.queryByText("Parent issue")).not.toBeInTheDocument();
+    expect(screen.queryByText("父 issue")).not.toBeInTheDocument();
     // The "+ Add property" affordance is always offered while any
     // optional field is still hidden.
-    expect(screen.getByText("Add property")).toBeInTheDocument();
+    expect(screen.getByText("添加字段")).toBeInTheDocument();
   });
 
   it("hides every optional property row when none are set", async () => {
@@ -638,17 +664,17 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Properties")).toBeInTheDocument();
+      expect(screen.getByText("属性")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("Priority")).not.toBeInTheDocument();
-    expect(screen.queryByText("Due date")).not.toBeInTheDocument();
-    expect(screen.queryByText("Labels")).not.toBeInTheDocument();
+    expect(screen.queryByText("优先级")).not.toBeInTheDocument();
+    expect(screen.queryByText("截止日期")).not.toBeInTheDocument();
+    expect(screen.queryByText("标签")).not.toBeInTheDocument();
     // Project stays as a core row regardless of value.
     expect(screen.getByTestId("project-picker")).toBeInTheDocument();
-    // No parent → no standalone Parent issue section either.
-    expect(screen.queryByText("Parent issue")).not.toBeInTheDocument();
-    expect(screen.getByText("Add property")).toBeInTheDocument();
+    // 没有父 issue 时，也不显示独立的父 issue 区域。
+    expect(screen.queryByText("父 issue")).not.toBeInTheDocument();
+    expect(screen.getByText("添加字段")).toBeInTheDocument();
   });
 
   it("uses a non-resizable layout with the sidebar sheet closed by default on mobile", async () => {
@@ -661,12 +687,11 @@ describe("IssueDetail (shared)", () => {
     });
 
     expect(screen.queryByTestId("panel-group")).not.toBeInTheDocument();
-    expect(screen.queryByText("Properties")).not.toBeInTheDocument();
+    expect(screen.queryByText("属性")).not.toBeInTheDocument();
   });
 
-  it("hides metadata content from the sidebar and shows a button when the bag has keys", async () => {
-    // Metadata is agent-facing; the sidebar only exposes a button that opens
-    // the raw JSON on demand. Keys are NOT rendered inline anywhere.
+  it("does not render raw metadata controls when the bag has keys", async () => {
+    // Metadata is agent-facing; raw keys stay out of the human-facing sidebar.
     mockApiObj.getIssue.mockResolvedValue({
       ...mockIssue,
       metadata: {
@@ -678,17 +703,71 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      // Trigger label includes a "· N" count so users can see payload size
-      // before clicking — accept any count via regex.
-      expect(screen.getByRole("button", { name: /^Metadata\b/ })).toBeInTheDocument();
+      expect(screen.getByText("详情")).toBeInTheDocument();
     });
 
-    // Key names are not rendered in the sidebar prior to opening the dialog.
+    expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
     expect(screen.queryByText("pr_url")).not.toBeInTheDocument();
     expect(screen.queryByText("pipeline_status")).not.toBeInTheDocument();
   });
 
-  it("opens a dialog with formatted JSON when the Metadata button is clicked", async () => {
+  it("renders TAPD source metadata as a lightweight issue reference", async () => {
+    const tapdURL = "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      metadata: {
+        source_provider: "tapd",
+        source_url: tapdURL,
+        tapd_workspace_id: "47654106",
+        tapd_resource_type: "markdown_wiki",
+        tapd_resource_id: "1147654106001004154",
+        source_fetch_status: "fetched",
+        source_fetch_title: "用户快捷入口需求",
+        source_fetch_summary: "支持用户管理个人快捷入口，并由 SOP 流程推进实现。",
+      },
+    });
+
+    renderIssueDetail();
+
+    const card = await screen.findByTestId("tapd-source-card");
+    const editor = screen.getByDisplayValue("Add JWT auth to the backend");
+    expect(within(card).getByText("TAPD 来源")).toBeInTheDocument();
+    expect(within(card).getByTestId("tapd-source-badge")).toBeInTheDocument();
+    expect(within(card).getByText("TAPD Wiki")).toBeInTheDocument();
+    expect(within(card).getByText("ID 1147654106001004154")).toBeInTheDocument();
+    expect(within(card).getByText("已抓取")).toBeInTheDocument();
+    expect(within(card).getByTestId("tapd-source-title")).toHaveTextContent("用户快捷入口需求");
+    expect(within(card).getByText(/支持用户管理个人快捷入口/)).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: /用户快捷入口需求/ })).toHaveAttribute("href", tapdURL);
+    expect(editor.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("labels TAPD Story source metadata in the issue reference", async () => {
+    const tapdURL = "https://www.tapd.cn/51081496/prong/stories/view/1151081496001028216";
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      metadata: {
+        source_provider: "tapd",
+        source_url: tapdURL,
+        tapd_workspace_id: "51081496",
+        tapd_resource_type: "story",
+        tapd_resource_id: "1151081496001028216",
+        source_fetch_status: "fetched",
+        source_fetch_title: "【DSM】【系统管理】公告管理",
+        source_fetch_summary: "公告列表提供公告管理查询功能。",
+      },
+    });
+
+    renderIssueDetail();
+
+    const card = await screen.findByTestId("tapd-source-card");
+    expect(within(card).getByText("TAPD Story")).toBeInTheDocument();
+    expect(within(card).getByText("ID 1151081496001028216")).toBeInTheDocument();
+    expect(within(card).getByTestId("tapd-source-title")).toHaveTextContent("【DSM】【系统管理】公告管理");
+    expect(within(card).getByRole("link", { name: /公告管理/ })).toHaveAttribute("href", tapdURL);
+  });
+
+  it("does not open a metadata JSON dialog from the sidebar", async () => {
     mockApiObj.getIssue.mockResolvedValue({
       ...mockIssue,
       metadata: {
@@ -699,21 +778,12 @@ describe("IssueDetail (shared)", () => {
 
     renderIssueDetail();
 
-    const button = await screen.findByRole("button", { name: /^Metadata\b/ });
-    fireEvent.click(button);
-
-    // The dialog renders a <pre> containing the formatted JSON; checking the
-    // exact serialized payload also verifies the indent / structure.
-    const expected = JSON.stringify(
-      { pr_url: "https://example.com/pr/1", pipeline_status: "running" },
-      null,
-      2,
-    );
     await waitFor(() => {
-      const pre = document.querySelector("pre");
-      expect(pre).not.toBeNull();
-      expect(pre!.textContent).toBe(expected);
+      expect(screen.getByText("详情")).toBeInTheDocument();
     });
+
+    expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
+    expect(document.querySelector("pre")).toBeNull();
   });
 
   it("hides the Metadata button entirely when the bag is empty", async () => {
@@ -721,55 +791,83 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Details")).toBeInTheDocument();
+      expect(screen.getByText("详情")).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole("button", { name: /^Metadata\b/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
+  });
+
+  it("renders the run review card without keeping the completed execution log", async () => {
+    mockApiObj.listTasksByIssue.mockResolvedValue([
+      {
+        id: "task-1",
+        agent_id: "agent-1",
+        runtime_id: "runtime-1",
+        issue_id: "issue-1",
+        status: "completed",
+        priority: 0,
+        dispatched_at: "2026-06-08T08:01:00Z",
+        started_at: "2026-06-08T08:02:00Z",
+        completed_at: "2026-06-08T08:07:00Z",
+        result: null,
+        error: null,
+        created_at: "2026-06-08T08:00:00Z",
+        trigger_summary: "从评论启动",
+      },
+    ]);
+
+    renderIssueDetail();
+
+    expect(await screen.findByTestId("issue-run-review-summary-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("issue-execution-log-section")).not.toBeInTheDocument();
   });
 
   it("renders Details section with Created by and dates", async () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Details")).toBeInTheDocument();
+      expect(screen.getByText("详情")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Created by")).toBeInTheDocument();
-    expect(screen.getByText("Created")).toBeInTheDocument();
-    expect(screen.getByText("Updated")).toBeInTheDocument();
+    expect(screen.queryByText("创建者")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("详情"));
+
+    expect(screen.getByText("创建者")).toBeInTheDocument();
+    expect(screen.getByText("创建时间")).toBeInTheDocument();
+    expect(screen.getByText("更新时间")).toBeInTheDocument();
   });
 
-  it("shows 'not found' message when issue does not exist", async () => {
+  it("任务不存在时显示未找到信息", async () => {
     mockApiObj.getIssue.mockRejectedValue(new Error("Not found"));
 
     renderIssueDetail("nonexistent-id");
 
     await waitFor(() => {
       expect(
-        screen.getByText("This issue does not exist or has been deleted in this workspace."),
+        screen.getByText("这个任务不存在或已在该工作区被删除。"),
       ).toBeInTheDocument();
     });
   });
 
-  it("shows 'Back to Issues' button when issue is not found and no onDelete prop", async () => {
+  it("issue 未找到且没有 onDelete prop 时显示返回任务列表按钮", async () => {
     mockApiObj.getIssue.mockRejectedValue(new Error("Not found"));
 
     renderIssueDetail("nonexistent-id");
 
     await waitFor(() => {
-      expect(screen.getByText("Back to Issues")).toBeInTheDocument();
+      expect(screen.getByText("返回任务列表")).toBeInTheDocument();
     });
   });
 
-  it("renders Activity section header", async () => {
+  it("渲染动态区标题", async () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getAllByText("Activity").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("动态").length).toBeGreaterThanOrEqual(1);
     });
   });
 
-  it("renders comments from timeline", async () => {
+  it("渲染时间线评论", async () => {
     renderIssueDetail();
 
     await waitFor(() => {
@@ -779,7 +877,7 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText("I can help with this")).toBeInTheDocument();
   });
 
-  it("reruns the source task from an agent failure comment", async () => {
+  it("从智能体失败评论重跑来源 task", async () => {
     mockApiObj.listTimeline.mockResolvedValue([
       ...mockTimeline,
       {
@@ -799,14 +897,14 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("API Error: 500 Internal server error");
-    fireEvent.click(screen.getByRole("button", { name: "Retry task" }));
+    fireEvent.click(screen.getByRole("button", { name: "重试任务" }));
 
     await waitFor(() => {
       expect(mockApiObj.rerunIssue).toHaveBeenCalledWith("issue-1", "task-failed");
     });
   });
 
-  it("does not show retry for child-done system comments", async () => {
+  it("子 issue 完成的系统评论不显示重试", async () => {
     mockApiObj.listTimeline.mockResolvedValue([
       ...mockTimeline,
       {
@@ -814,7 +912,7 @@ describe("IssueDetail (shared)", () => {
         id: "comment-child-done",
         actor_type: "system",
         actor_id: "00000000-0000-0000-0000-000000000000",
-        content: "Sub-issue MUL-123 is done.",
+        content: "子任务 MUL-123 已完成。",
         parent_id: null,
         created_at: "2026-01-18T00:00:00Z",
         updated_at: "2026-01-18T00:00:00Z",
@@ -824,11 +922,11 @@ describe("IssueDetail (shared)", () => {
 
     renderIssueDetail();
 
-    await screen.findByText("Sub-issue MUL-123 is done.");
-    expect(screen.queryByRole("button", { name: "Retry task" })).not.toBeInTheDocument();
+    await screen.findByText("子任务 MUL-123 已完成。");
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 
-  it("does not show retry for successful agent task comments", async () => {
+  it("成功的智能体 task 评论不显示重试", async () => {
     mockApiObj.listTimeline.mockResolvedValue([
       ...mockTimeline,
       {
@@ -848,10 +946,10 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("Finished the requested work.");
-    expect(screen.queryByRole("button", { name: "Retry task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 
-  it("does not show retry for agent system comments without a source task", async () => {
+  it("没有来源 task 的智能体系统评论不显示重试", async () => {
     mockApiObj.listTimeline.mockResolvedValue([
       ...mockTimeline,
       {
@@ -870,10 +968,10 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("System coordination update.");
-    expect(screen.queryByRole("button", { name: "Retry task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 
-  it("collapses non-trailing activity blocks and expands the last one by default", async () => {
+  it("折叠非尾部动态块，并默认展开最后一个动态块", async () => {
     // Timeline shape:
     //   [activities: status_changed, priority_changed] ← block A (older)
     //   [comment-1]
@@ -924,23 +1022,23 @@ describe("IssueDetail (shared)", () => {
 
     // Latest block (single activity) is expanded — its rendered text is visible.
     await waitFor(() => {
-      expect(screen.getByText(/set due date to/i)).toBeInTheDocument();
+      expect(screen.getByText(/截止日期设为/)).toBeInTheDocument();
     });
 
     // Older block is collapsed: shows the summary, hides the individual entries.
-    expect(screen.getByText("2 activities")).toBeInTheDocument();
-    expect(screen.queryByText(/changed status/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/changed priority/i)).not.toBeInTheDocument();
+    expect(screen.getByText("2 条动态")).toBeInTheDocument();
+    expect(screen.queryByText(/状态从/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/优先级从/)).not.toBeInTheDocument();
 
     // Clicking the summary expands the older block.
-    fireEvent.click(screen.getByText("2 activities"));
+    fireEvent.click(screen.getByText("2 条动态"));
     await waitFor(() => {
-      expect(screen.getByText(/changed status/i)).toBeInTheDocument();
+      expect(screen.getByText(/状态从/)).toBeInTheDocument();
     });
-    expect(screen.getByText(/changed priority/i)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从/)).toBeInTheDocument();
   });
 
-  it("renders activity rows with unknown status values without crashing", async () => {
+  it("未知状态值的动态行也能正常渲染", async () => {
     mockApiObj.listTimeline.mockResolvedValue([
       {
         type: "activity",
@@ -956,11 +1054,11 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText(/from Todo to mystery_status/i)).toBeInTheDocument();
+      expect(screen.getByText(/状态从 待办 改为 mystery_status/)).toBeInTheDocument();
     });
   });
 
-  it("truncates the trailing activity block to the most recent 8 entries with a show-more toggle", async () => {
+  it("将尾部动态块截断为最近 8 条，并显示展开更多开关", async () => {
     // 10 activities, all in the trailing block (no comment after them, so it's
     // the trailing block by definition). Alternating action types so the
     // 2-minute coalesce window never merges consecutive entries — we end up
@@ -985,30 +1083,30 @@ describe("IssueDetail (shared)", () => {
     // stays hidden — the "Show N more" link is the only control we want
     // to expose for a glance at recent activity.
     await waitFor(() => {
-      expect(screen.getByText("Show 2 more activities")).toBeInTheDocument();
+      expect(screen.getByText("展开更早 2 条动态")).toBeInTheDocument();
     });
-    expect(screen.queryByText("10 activities")).not.toBeInTheDocument();
+    expect(screen.queryByText("10 条动态")).not.toBeInTheDocument();
 
     // Only the 8 most recent entries (act-3..act-10) are rendered by default.
     // act-1 and act-2 are folded behind the show-more line.
-    expect(screen.getByText(/from In Progress to In Review/i)).toBeInTheDocument(); // act-3
-    expect(screen.getByText(/set due date to/i)).toBeInTheDocument(); // act-10
-    expect(screen.queryByText(/from Todo to In Progress/i)).not.toBeInTheDocument(); // act-1
-    expect(screen.queryByText(/from Low to Medium/i)).not.toBeInTheDocument(); // act-2
+    expect(screen.getByText(/状态从 进行中 改为 验收中/)).toBeInTheDocument(); // act-3
+    expect(screen.getByText(/截止日期设为/)).toBeInTheDocument(); // act-10
+    expect(screen.queryByText(/状态从 待办 改为 进行中/)).not.toBeInTheDocument(); // act-1
+    expect(screen.queryByText(/优先级从 低 改为 中/)).not.toBeInTheDocument(); // act-2
 
     // Clicking the toggle reveals the older entries in place and brings the
     // full "N activities" header back (so the user can fold the block).
-    fireEvent.click(screen.getByText("Show 2 more activities"));
+    fireEvent.click(screen.getByText("展开更早 2 条动态"));
     await waitFor(() => {
-      expect(screen.getByText(/from Todo to In Progress/i)).toBeInTheDocument();
+      expect(screen.getByText(/状态从 待办 改为 进行中/)).toBeInTheDocument();
     });
-    expect(screen.getByText(/from Low to Medium/i)).toBeInTheDocument();
-    expect(screen.getByText(/set due date to/i)).toBeInTheDocument();
-    expect(screen.getByText("10 activities")).toBeInTheDocument();
-    expect(screen.queryByText(/Show \d+ more activit/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/优先级从 低 改为 中/)).toBeInTheDocument();
+    expect(screen.getByText(/截止日期设为/)).toBeInTheDocument();
+    expect(screen.getByText("10 条动态")).toBeInTheDocument();
+    expect(screen.queryByText(/展开更早 \d+ 条动态/)).not.toBeInTheDocument();
   });
 
-  it("does not show the show-more toggle when the trailing block has 8 or fewer entries", async () => {
+  it("尾部动态块不超过 8 条时不显示展开更多开关", async () => {
     const trailingBlock: TimelineEntry[] = [
       { type: "activity", id: "act-1", actor_type: "member", actor_id: "user-1", action: "status_changed", details: { from: "todo", to: "in_progress" }, created_at: "2026-01-18T00:00:00Z" },
       { type: "activity", id: "act-2", actor_type: "member", actor_id: "user-1", action: "priority_changed", details: { from: "low", to: "high" }, created_at: "2026-01-18T00:01:00Z" },
@@ -1024,22 +1122,22 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("8 activities")).toBeInTheDocument();
+      expect(screen.getByText("8 条动态")).toBeInTheDocument();
     });
     // Every one of the 8 entries should be visible — the trailing block fits
     // exactly within the limit, so no "Show N more activities" line appears.
-    expect(screen.getByText(/from Todo to In Progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Low to High/i)).toBeInTheDocument();
-    expect(screen.getByText(/from In Progress to In Review/i)).toBeInTheDocument();
-    expect(screen.getByText(/from High to Urgent/i)).toBeInTheDocument();
-    expect(screen.getByText(/from In Review to Done/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Urgent to Low/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Done to Blocked/i)).toBeInTheDocument();
-    expect(screen.getByText(/set due date to/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Show \d+ more activit/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/状态从 待办 改为 进行中/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 低 改为 高/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 进行中 改为 验收中/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 高 改为 紧急/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 验收中 改为 已完成/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 紧急 改为 低/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 已完成 改为 已阻塞/)).toBeInTheDocument();
+    expect(screen.getByText(/截止日期设为/)).toBeInTheDocument();
+    expect(screen.queryByText(/展开更早 \d+ 条动态/)).not.toBeInTheDocument();
   });
 
-  it("expanding a non-trailing block shows every entry — only the trailing block truncates older ones", async () => {
+  it("展开非尾部动态块显示全部条目，只有尾部动态块会截断旧条目", async () => {
     // Non-trailing block (10 activities) + comment + trailing block (1 activity).
     // Manually expanding the older block must reveal all 10 entries — the
     // truncate-to-8 rule applies only to the trailing block.
@@ -1068,34 +1166,34 @@ describe("IssueDetail (shared)", () => {
 
     // The older block defaults to collapsed; its summary reports 10.
     await waitFor(() => {
-      expect(screen.getByText("10 activities")).toBeInTheDocument();
+      expect(screen.getByText("10 条动态")).toBeInTheDocument();
     });
     // None of the older entries are rendered before expansion.
-    expect(screen.queryByText(/from Backlog to Todo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/状态从 待规划 改为 待办/)).not.toBeInTheDocument();
 
     // Expand the older block by clicking its summary line.
-    fireEvent.click(screen.getByText("10 activities"));
+    fireEvent.click(screen.getByText("10 条动态"));
 
     // Every one of the 10 entries should now be visible — even though the
     // block has more than 8 entries, the truncate-to-8 rule does not apply
     // to non-trailing blocks, so no "Show N more activities" line appears.
     await waitFor(() => {
-      expect(screen.getByText(/from Backlog to Todo/i)).toBeInTheDocument();
+      expect(screen.getByText(/状态从 待规划 改为 待办/)).toBeInTheDocument();
     });
-    expect(screen.getByText(/from No priority to Low/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Todo to In Progress/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Low to Medium/i)).toBeInTheDocument();
-    expect(screen.getByText(/from In Progress to In Review/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Medium to High/i)).toBeInTheDocument();
-    expect(screen.getByText(/from In Review to Done/i)).toBeInTheDocument();
-    expect(screen.getByText(/from High to Urgent/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Done to Blocked/i)).toBeInTheDocument();
-    expect(screen.getByText(/from Urgent to Low/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Show \d+ more activit/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/优先级从 无优先级 改为 低/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 待办 改为 进行中/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 低 改为 中/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 进行中 改为 验收中/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 中 改为 高/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 验收中 改为 已完成/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 高 改为 紧急/)).toBeInTheDocument();
+    expect(screen.getByText(/状态从 已完成 改为 已阻塞/)).toBeInTheDocument();
+    expect(screen.getByText(/优先级从 紧急 改为 低/)).toBeInTheDocument();
+    expect(screen.queryByText(/展开更早 \d+ 条动态/)).not.toBeInTheDocument();
   });
 
   describe("highlightCommentId scroll-to-comment", () => {
-    it("scrolls to the highlighted comment after both issue and timeline finish loading", async () => {
+    it("issue 和时间线都加载完成后滚动到高亮评论", async () => {
       renderIssueDetailWithHighlight("comment-2");
 
       // Wait for the comment row to mount. With initialItemCount in
@@ -1119,7 +1217,7 @@ describe("IssueDetail (shared)", () => {
       });
     });
 
-    it("still scrolls when the timeline is ready before the issue (regression for inbox click)", async () => {
+    it("时间线早于 issue 准备好时仍会滚动", async () => {
       // Reproduces the inbox-click race: timeline data is in the cache
       // before the issue resolves. While loading is true, IssueDetail
       // renders the loading skeleton (the timeline never mounts), so no
@@ -1153,7 +1251,7 @@ describe("IssueDetail (shared)", () => {
       });
     });
 
-    it("auto-expands a folded resolved thread when deep-link target is a reply inside it", async () => {
+    it("深链目标在已折叠已解决线程的回复中时自动展开", async () => {
       // Seed a timeline where comment-3 is resolved (so it renders as a
       // resolved-bar by default) and has a reply, reply-1, whose id is the
       // deep-link target. The reply is not in the flat items array — only
@@ -1189,7 +1287,7 @@ describe("IssueDetail (shared)", () => {
 
       const queryClient = createTestQueryClient();
       render(
-        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
           <QueryClientProvider client={queryClient}>
             <IssueDetail issueId="issue-1" highlightCommentId="reply-1" />
           </QueryClientProvider>
@@ -1213,14 +1311,14 @@ describe("IssueDetail (shared)", () => {
     });
   });
 
-  it("sends empty description when editor is cleared", async () => {
+  it("编辑器清空后发送空描述", async () => {
     renderIssueDetail();
 
     await waitFor(() => {
       expect(screen.getByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
     });
 
-    const editor = screen.getByPlaceholderText("Add description...");
+    const editor = screen.getByPlaceholderText("添加描述...");
     fireEvent.change(editor, { target: { value: "" } });
 
     await waitFor(() => {

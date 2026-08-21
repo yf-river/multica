@@ -34,8 +34,11 @@ import (
 
 var defaultOrigins = []string{
 	"http://localhost:3000", // Next.js dev
+	"http://127.0.0.1:3000", // Next.js dev via loopback IP
 	"http://localhost:5173", // electron-vite dev
+	"http://127.0.0.1:5173", // electron-vite dev via loopback IP
 	"http://localhost:5174", // electron-vite dev (fallback port)
+	"http://127.0.0.1:5174", // electron-vite dev (fallback port) via loopback IP
 }
 
 func allowedOrigins() []string {
@@ -44,7 +47,7 @@ func allowedOrigins() []string {
 		raw = strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
 	}
 	if raw == "" {
-		return defaultOrigins
+		return defaultAllowedOrigins()
 	}
 
 	parts := strings.Split(raw, ",")
@@ -55,8 +58,31 @@ func allowedOrigins() []string {
 			origins = append(origins, origin)
 		}
 	}
+	origins = appendLoopbackFrontendOrigins(origins)
 	if len(origins) == 0 {
-		return defaultOrigins
+		return defaultAllowedOrigins()
+	}
+	return origins
+}
+
+func defaultAllowedOrigins() []string {
+	return appendLoopbackFrontendOrigins(append([]string{}, defaultOrigins...))
+}
+
+func appendLoopbackFrontendOrigins(origins []string) []string {
+	port := strings.TrimSpace(os.Getenv("FRONTEND_PORT"))
+	if port == "" {
+		return origins
+	}
+	seen := make(map[string]bool, len(origins)+2)
+	for _, origin := range origins {
+		seen[origin] = true
+	}
+	for _, origin := range []string{"http://localhost:" + port, "http://127.0.0.1:" + port} {
+		if !seen[origin] {
+			origins = append(origins, origin)
+			seen[origin] = true
+		}
 	}
 	return origins
 }
@@ -88,18 +114,6 @@ func parseTrustedProxies(raw string) []netip.Prefix {
 	return out
 }
 
-// NewRouter creates the fully-configured Chi router with all middleware and routes.
-// rdb is optional: when non-nil the runtime local-skill request stores are
-// swapped for Redis-backed implementations so multiple API nodes share the
-// same pending queue (required for multi-node prod). This should be a request
-// path Redis client, not the realtime relay's blocking read client. A nil rdb
-// keeps the default in-memory stores which are fine for single-node dev and
-// tests.
-func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client) chi.Router {
-	r, _ := NewRouterWithOptions(pool, hub, bus, analyticsClient, rdb, RouterOptions{})
-	return r
-}
-
 type RouterOptions struct {
 	HTTPMetrics     *obsmetrics.HTTPMetrics
 	BusinessMetrics *obsmetrics.BusinessMetrics
@@ -117,11 +131,9 @@ type RouterOptions struct {
 // need to drive background lifecycle on services attached to the
 // handler (e.g. starting the Lark inbound Hub under a long-running
 // context, calling Wait on shutdown) use the returned handler;
-// callers that only need the HTTP handler (tests, the simple
-// NewRouter shim) discard the second value.
+// callers that only need the HTTP handler discard the second value.
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler) {
 	queries := db.New(pool)
-	emailSvc := service.NewEmailService()
 	daemonHub := opts.DaemonHub
 	if daemonHub == nil {
 		daemonHub = daemonws.NewHub()
@@ -144,18 +156,28 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	cloudFleetURL := cloudFleetURLFromEnv()
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
-		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
-		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		AllowedAccounts:          splitAndTrim(os.Getenv("ALLOWED_ACCOUNTS")),
 		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
 		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 	}
-	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h := handler.New(queries, pool, hub, bus, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
+	if externalKey, err := secretbox.LoadKey("MULTICA_EXTERNAL_CREDENTIAL_KEY"); err == nil {
+		box, err := secretbox.New(externalKey)
+		if err != nil {
+			slog.Error("external credentials: secretbox.New failed; raw token writes disabled", "error", err)
+		} else {
+			h.ExternalCredentialBox = box
+			slog.Info("external credential profile encryption enabled")
+		}
+	} else {
+		slog.Info("external credential profile encryption disabled (MULTICA_EXTERNAL_CREDENTIAL_KEY not set); secret_ref bindings still supported")
+	}
 	if opts.DaemonWakeup != nil {
 		h.TaskService.Wakeup = opts.DaemonWakeup
 		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeProfileRefreshNotifier); ok {
@@ -163,7 +185,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	if rdb != nil {
-		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
 		h.ModelListStore = handler.NewRedisModelListStore(rdb)
 		h.LocalSkillListStore = handler.NewRedisLocalSkillListStore(rdb)
 		h.LocalSkillImportStore = handler.NewRedisLocalSkillImportStore(rdb)
@@ -267,9 +288,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// OutcomeReplier wires the outbound side of the
 				// EventEmitter contract: NeedsBinding / AgentOffline /
 				// AgentArchived translate to a Lark-side reply card.
-				// Requires the real APIClient (the stub returns
-				// ErrAPIClientNotConfigured on every send) and the
-				// binding token service. When either is missing, the
+				// Requires the real APIClient and the binding token
+				// service. When either is missing, the
 				// Hub falls back to the noop replier and the outcomes
 				// get logged but not delivered — clearly visible in
 				// boot output so operators understand the gap.
@@ -288,28 +308,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// the same replier. MUL-2968.
 				dispatcher.FlushReply = replier.Reply
 				slog.Info("lark inbound pipeline wired", "connector", connectorLabel)
-
-				// One-shot union_id backfill for installations created
-				// before migration 112 added bot_union_id. Runs off the
-				// hot startup path so a slow Lark round-trip cannot block
-				// HTTP listener boot. New installs already write
-				// bot_union_id during the device-flow finalize, so this
-				// is bridge code — it will simply find no rows to update
-				// on a fresh deployment and exit. MUL-2671.
-				go lark.BackfillBotUnionIDs(context.Background(), queries, larkClient, installSvc, slog.Default())
-
-				// Upgrade repair for deployments that ran the whole
-				// integration against Lark international via the deployment-
-				// wide base-URL override before per-installation region
-				// existed: migration 116 backfilled their rows to 'feishu',
-				// so relabel them to 'lark' (their true cloud) before the
-				// operator clears the override. No-op on mainland / fresh
-				// deployments. Off the hot startup path like the union_id
-				// backfill. MUL-3083.
-				go lark.BackfillRegionFromLegacyOverride(context.Background(), queries,
-					strings.TrimSpace(os.Getenv("MULTICA_LARK_HTTP_BASE_URL")),
-					strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
-					slog.Default())
 
 				// Device-flow registration service: end-to-end install
 				// pipeline that talks to accounts.feishu.cn (RFC 8628)
@@ -452,11 +450,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Warn("rate limiting disabled: REDIS_URL not configured")
 	}
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
-	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
-	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
-	r.With(authRL).Post("/auth/send-code", h.SendCode)
-	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
-	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	authLoginRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_LOGIN", 20), time.Minute, trustedProxies)
+	r.With(authLoginRL).Post("/auth/login", h.AccountPasswordLogin)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API
@@ -484,7 +479,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/tasks/claim", h.ClaimTaskByRuntime)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
-		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
@@ -518,17 +512,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
-		// DEPRECATED — shim routes for desktop < v3 during the rollout
-		// window. v3 frontend creates the Helper agent + starter issue
-		// via generic CreateAgent / CreateIssue and only calls /complete
-		// here. Remove once X-Client-Version telemetry confirms zero
-		// pre-v3 desktops are still calling these. Handlers live in
-		// server/internal/handler/onboarding_shim.go.
-		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
-		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Get("/api/workspaces/{workspaceId}/initial-admin-status", h.GetTenantInitialAdminStatus)
 
 		// Attachment download — user-scoped (auth-only), NOT
 		// workspace-scoped. The handler self-resolves the workspace
@@ -552,7 +539,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
-					r.Get("/invitations", h.ListWorkspaceInvitations)
 					// Listing GitHub installations is member-visible so the
 					// integrations tab no longer renders blank for non-admins;
 					// the handler strips the management handle and adds a
@@ -563,18 +549,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					r.Get("/observability/summary", h.GetWorkspaceObservabilitySummary)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
-					r.Post("/members", h.CreateInvitation)
+					r.Post("/repos/probe", h.ProbeWorkspaceRepo)
+					r.Post("/repos/resolve", h.ResolveWorkspaceRepo)
+					r.Post("/members", h.CreateMember)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)
 					})
-					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
 					// Custom runtime profile mutations (admin-only).
 					r.Post("/runtime-profiles", h.CreateRuntimeProfile)
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
@@ -625,17 +613,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// is combined with the logged-in user to create the mapping.
 		r.Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
 
-		// User-scoped invitation routes (no workspace context required)
-		r.Get("/api/invitations", h.ListMyInvitations)
-		r.Get("/api/invitations/{id}", h.GetMyInvitation)
-		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
-		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
-
 		r.Route("/api/tokens", func(r chi.Router) {
 			r.Get("/", h.ListPersonalAccessTokens)
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
 			r.Delete("/{id}", h.RevokePersonalAccessToken)
+		})
+
+		r.Route("/api/external-credential-profiles", func(r chi.Router) {
+			r.Get("/", h.ListExternalCredentialProfiles)
+			r.Post("/", h.CreateExternalCredentialProfile)
+			r.Post("/test", h.TestExternalCredentialProfile)
+			r.Get("/{id}", h.GetExternalCredentialProfile)
+			r.Patch("/{id}", h.UpdateExternalCredentialProfile)
+			r.Put("/{id}", h.UpdateExternalCredentialProfile)
+			r.Delete("/{id}", h.DeleteExternalCredentialProfile)
 		})
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
@@ -651,6 +643,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/child-progress", h.ChildIssueProgress)
 				r.Get("/children", h.ListChildrenByParents)
 				r.Get("/grouped", h.ListGroupedIssues)
+				r.Get("/buckets", h.ListIssueBuckets)
 				r.Get("/", h.ListIssues)
 				r.Post("/", h.CreateIssue)
 				r.Post("/quick-create", h.QuickCreateIssue)
@@ -672,6 +665,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/rerun", h.RerunIssue)
 					r.Get("/task-runs", h.ListTasksByIssue)
 					r.Get("/usage", h.GetIssueUsage)
+					r.Get("/trace", h.ListIssueTaskTraceEvents)
+					r.Get("/execution-tree", h.GetIssueExecutionTree)
+					r.Get("/sop-runs", h.ListIssueSOPRuns)
+					r.Post("/sop-runs", h.CreateIssueSOPRun)
 					r.Post("/reactions", h.AddIssueReaction)
 					r.Delete("/reactions", h.RemoveIssueReaction)
 					r.Get("/attachments", h.ListAttachments)
@@ -682,7 +679,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/metadata", h.ListIssueMetadata)
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
+					r.Post("/source-fetch", h.RecordIssueSourceFetch)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
+					r.Post("/pull-requests", h.LinkPullRequestToIssue)
+					r.Post("/merge-requests/create", h.CreateMergeRequestForIssue)
 				})
 			})
 
@@ -712,6 +712,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)
+					r.Post("/resources/{resourceId}/sync", h.SyncProjectResource)
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
 			})
@@ -720,10 +721,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/squads", func(r chi.Router) {
 				r.Get("/", h.ListSquads)
 				r.Post("/", h.CreateSquad)
+				r.Post("/internal-template", h.EnsureInternalSquadTemplate)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetSquad)
 					r.Put("/", h.UpdateSquad)
 					r.Delete("/", h.DeleteSquad)
+					r.Post("/restore", h.RestoreSquad)
 					r.Get("/members", h.ListSquadMembers)
 					r.Get("/members/status", h.ListSquadMemberStatus)
 					r.Post("/members", h.AddSquadMember)
@@ -732,8 +735,110 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Prompt library
+			r.Route("/api/prompt-library", func(r chi.Router) {
+				r.Get("/", h.ListPromptLibraryItems)
+				r.Post("/", h.CreatePromptLibraryItem)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetPromptLibraryItem)
+					r.Put("/", h.UpdatePromptLibraryItem)
+					r.Delete("/", h.DeletePromptLibraryItem)
+					r.Get("/versions", h.ListPromptLibraryVersions)
+					r.Post("/versions", h.CreatePromptLibraryVersion)
+					r.Get("/trials", h.ListPromptLibraryTrials)
+					r.Post("/versions/{versionId}/trials", h.CreatePromptLibraryTrial)
+				})
+			})
+
+			// Agent playground
+			r.Route("/api/agent-playground-experiments", func(r chi.Router) {
+				r.Get("/", h.ListAgentPlaygroundExperiments)
+				r.Post("/", h.CreateAgentPlaygroundExperiment)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetAgentPlaygroundExperiment)
+					r.Post("/run", h.RunAgentPlaygroundExperiment)
+					r.Post("/sync", h.SyncAgentPlaygroundExperiment)
+					r.Post("/judge", h.JudgeAgentPlaygroundExperiment)
+				})
+			})
+
+			// Prompt evaluation assets
+			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
+			r.Route("/api/prompt-evaluation-assets", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationAssets)
+				r.Post("/", h.CreatePromptEvaluationAsset)
+				r.Post("/dataset-import", h.ImportPromptEvaluationDataset)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetPromptEvaluationAsset)
+					r.Put("/", h.UpdatePromptEvaluationAsset)
+					r.Delete("/", h.DeletePromptEvaluationAsset)
+					r.Post("/run", h.RunPromptEvaluationAsset)
+					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
+					r.Post("/skill-inventory", h.CreatePromptEvaluationSkillInventory)
+					r.Post("/skill-snapshot", h.CreatePromptEvaluationSkillSnapshot)
+					r.Post("/skill-case-drafts", h.CreatePromptEvaluationSkillCaseDrafts)
+					r.Post("/evidence-snapshots", h.CreatePromptEvaluationAssetEvidenceSnapshots)
+					r.Get("/evidence-snapshots/export", h.GetPromptEvaluationAssetEvidenceSnapshotPackage)
+					r.Get("/case-operations", h.ListPromptEvaluationCaseOperations)
+					r.Post("/dataset-from-traces", h.CreatePromptEvaluationDatasetFromTraces)
+					r.Get("/dataset-export", h.ExportPromptEvaluationDataset)
+					r.Route("/dataset-versions", func(r chi.Router) {
+						r.Get("/", h.ListPromptEvaluationDatasetVersions)
+						r.Post("/", h.CreatePromptEvaluationDatasetVersion)
+						r.Get("/tag-trends", h.ListPromptEvaluationDatasetVersionTagTrends)
+						r.Get("/{versionId}/diff", h.DiffPromptEvaluationDatasetVersion)
+						r.Post("/{versionId}/restore", h.RestorePromptEvaluationDatasetVersion)
+						r.Get("/{versionId}/rows", h.ListPromptEvaluationDatasetVersionRows)
+					})
+				})
+			})
+			r.Route("/api/prompt-evaluation-cases", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationCases)
+				r.Get("/tag-summaries", h.ListPromptEvaluationCaseTagSummaries)
+				r.Get("/tag-dataset-summaries", h.ListPromptEvaluationCaseTagDatasetSummaries)
+				r.Post("/", h.CreatePromptEvaluationCase)
+				r.Post("/bulk-tags", h.BulkUpdatePromptEvaluationCaseTags)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Put("/", h.UpdatePromptEvaluationCase)
+					r.Delete("/", h.DeletePromptEvaluationCase)
+				})
+			})
+			r.Get("/api/prompt-evaluation-dimension-scores", h.ListPromptEvaluationDimensionScores)
+			r.Get("/api/prompt-evaluation-dimension-score-summaries", h.ListPromptEvaluationDimensionScoreSummaries)
+			r.Get("/api/prompt-evaluation-dimension-score-trends", h.ListPromptEvaluationDimensionScoreTrends)
+			r.Get("/api/prompt-evaluation-runtime-readiness", h.GetPromptEvaluationRuntimeReadiness)
+			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationRuns)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/trials", h.ListPromptEvaluationRunTrials)
+					r.Get("/evidence", h.GetPromptEvaluationRunEvidence)
+					r.Route("/evidence-snapshots", func(r chi.Router) {
+						r.Get("/", h.ListPromptEvaluationEvidenceSnapshots)
+						r.Post("/", h.CreatePromptEvaluationEvidenceSnapshot)
+						r.Get("/{snapshotId}", h.GetPromptEvaluationEvidenceSnapshot)
+					})
+					r.Post("/sync", h.SyncPromptEvaluationRunFromTask)
+					r.Post("/cancel", h.CancelPromptEvaluationRun)
+					r.Post("/review", h.ReviewPromptEvaluationRun)
+					r.Post("/optimization-candidates", h.CreatePromptEvaluationOptimizationCandidate)
+				})
+			})
+			r.Route("/api/prompt-evaluation-optimization-candidates", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationOptimizationCandidates)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Put("/", h.UpdatePromptEvaluationOptimizationCandidate)
+					r.Post("/publish", h.PublishPromptEvaluationOptimizationCandidate)
+					r.Post("/reject", h.RejectPromptEvaluationOptimizationCandidate)
+					r.Post("/skill-freshness", h.CheckPromptEvaluationSkillCandidateFreshness)
+					r.Post("/skill-apply", h.ApplyPromptEvaluationSkillCandidate)
+					r.Post("/skill-re-eval-asset", h.PreparePromptEvaluationSkillReEvalAsset)
+					r.Post("/skill-re-eval-run", h.RunPromptEvaluationSkillReEval)
+				})
+			})
+
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
+			r.Post("/api/sop-runs/{runId}/steps/{stepId}/events", h.RecordSOPStepEvent)
 
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {
@@ -856,10 +961,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/", h.UpdateAgentRuntime)
 					r.Get("/usage", h.GetRuntimeUsage)
 					r.Get("/usage/by-agent", h.GetRuntimeUsageByAgent)
+					r.Get("/usage/by-task", h.GetRuntimeUsageByTask)
 					r.Get("/usage/by-hour", h.GetRuntimeUsageByHour)
 					r.Get("/activity", h.GetRuntimeTaskActivity)
-					r.Post("/update", h.InitiateUpdate)
-					r.Get("/update/{updateId}", h.GetUpdate)
 					r.Post("/models", h.InitiateListModels)
 					r.Get("/models/{requestId}", h.GetModelListRequest)
 					r.Post("/local-skills", h.InitiateListLocalSkills)
@@ -965,7 +1069,7 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		creds := lark.InstallationCredentials{
 			AppID:     inst.AppID,
 			AppSecret: secret,
-			Region:    lark.RegionOrDefault(inst.Region),
+			Region:    lark.Region(inst.Region),
 		}
 		if inst.TenantKey.Valid {
 			creds.TenantKey = inst.TenantKey.String

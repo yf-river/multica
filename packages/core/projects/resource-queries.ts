@@ -79,6 +79,39 @@ export function useUpdateProjectResource(wsId: string, projectId: string) {
   });
 }
 
+function replaceProjectResource(
+  old: ListProjectResourcesResponse | undefined,
+  updated: ProjectResource,
+): ListProjectResourcesResponse | undefined {
+  return old
+    ? {
+        ...old,
+        resources: old.resources.map((r) =>
+          r.id === updated.id ? updated : r,
+        ),
+      }
+    : old;
+}
+
+export function useSyncProjectResource(wsId: string, projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (resourceId: string) =>
+      api.syncProjectResource(projectId, resourceId),
+    onSuccess: (updated) => {
+      qc.setQueryData<ListProjectResourcesResponse>(
+        projectResourceKeys.list(wsId, projectId),
+        (old) => replaceProjectResource(old, updated),
+      );
+    },
+    onSettled: () => {
+      qc.invalidateQueries({
+        queryKey: projectResourceKeys.list(wsId, projectId),
+      });
+    },
+  });
+}
+
 export function useDeleteProjectResource(wsId: string, projectId: string) {
   const qc = useQueryClient();
   return useMutation({

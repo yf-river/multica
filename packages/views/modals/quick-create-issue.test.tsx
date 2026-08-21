@@ -9,7 +9,6 @@ const mockSetLastProjectId = vi.hoisted(() => vi.fn());
 const mockSetPrompt = vi.hoisted(() => vi.fn());
 const mockClearPrompt = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
-const mockSetLastMode = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockUploadWithToast = vi.hoisted(() => vi.fn());
 
@@ -85,6 +84,7 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
+  assigneeFrequencyOptions: () => ({ queryKey: ["assignee-frequency"] }),
   squadListOptions: (wsId: string) => ({
     queryKey: ["workspaces", wsId, "squads"],
   }),
@@ -94,14 +94,15 @@ vi.mock("@multica/core/projects/queries", () => ({
   projectListOptions: () => ({ queryKey: ["projects"] }),
 }));
 
+vi.mock("@multica/core/issues/queries", () => ({
+  issueDetailOptions: (_wsId: string, issueId: string) => ({
+    queryKey: ["issue-detail", issueId],
+  }),
+}));
+
 vi.mock("@multica/core/issues/stores/quick-create-store", () => ({
   useQuickCreateStore: (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
     (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
-}));
-
-vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
-  useCreateModeStore: (selector?: (state: { setLastMode: typeof mockSetLastMode }) => unknown) =>
-    (selector ? selector({ setLastMode: mockSetLastMode }) : { setLastMode: mockSetLastMode }),
 }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -129,12 +130,19 @@ vi.mock("../common/actor-avatar", () => ({
 }));
 
 vi.mock("../issues/components", () => ({
+  StatusPicker: () => <div data-testid="status-picker" />,
   PriorityPicker: () => <div data-testid="priority-picker" />,
+  StartDatePicker: () => <div data-testid="start-date-picker" />,
   DueDatePicker: () => <div data-testid="due-date-picker" />,
 }));
 
 vi.mock("../projects/components/project-picker", () => ({
   ProjectPicker: () => <div data-testid="project-picker" />,
+}));
+
+vi.mock("./issue-picker-modal", () => ({
+  IssuePickerModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="issue-picker-modal" /> : null,
 }));
 
 vi.mock("../common/pill-button", () => ({
@@ -193,6 +201,15 @@ vi.mock("../editor", () => {
 vi.mock("@multica/ui/components/ui/dialog", () => ({
   DialogTitle: ({ children, className }: { children: ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
+  ),
+}));
+
+vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuTrigger: ({ render }: { render: ReactNode }) => <>{render}</>,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
+    <button type="button" onClick={onClick}>{children}</button>
   ),
 }));
 
@@ -260,7 +277,7 @@ vi.mock("@multica/ui/components/ui/switch", () => ({
 }));
 
 vi.mock("@multica/ui/components/common/file-upload-button", () => ({
-  FileUploadButton: () => <button type="button">Upload file</button>,
+  FileUploadButton: () => <button type="button">上传文件</button>,
 }));
 
 vi.mock("sonner", () => ({
@@ -270,15 +287,15 @@ vi.mock("sonner", () => ({
 }));
 
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enModals from "../locales/zh-Hans/modals.json";
 import { AgentCreatePanel } from "./quick-create-issue";
 
-const TEST_RESOURCES = { en: { common: enCommon, modals: enModals } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, modals: enModals } };
 
 function renderPanel(props: React.ComponentProps<typeof AgentCreatePanel>) {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <AgentCreatePanel {...props} />
     </I18nProvider>,
   );
@@ -323,7 +340,7 @@ describe("AgentCreatePanel", () => {
 
     expect(
       screen.getByPlaceholderText(
-        'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+        '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
       ),
     ).toHaveValue("Persisted draft prompt");
   });
@@ -335,20 +352,22 @@ describe("AgentCreatePanel", () => {
     renderPanel({ onClose, isExpanded: false, setIsExpanded: vi.fn() });
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
 
     await user.clear(editor);
     await user.type(editor, "New agent prompt");
     expect(mockSetPrompt).toHaveBeenLastCalledWith("New agent prompt");
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
         agent_id: "agent-1",
         prompt: "New agent prompt",
         project_id: undefined,
+        status: "todo",
+        priority: "none",
       });
     });
 
@@ -357,7 +376,6 @@ describe("AgentCreatePanel", () => {
     // store stays in sync with the actual outgoing request.
     expect(mockSetLastProjectId).toHaveBeenCalledWith(null);
     expect(mockClearPrompt).toHaveBeenCalled();
-    expect(mockSetLastMode).toHaveBeenCalledWith("agent");
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -371,7 +389,7 @@ describe("AgentCreatePanel", () => {
     await waitFor(() => expect(mockUploadWithToast).toHaveBeenCalled());
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
     await user.clear(editor);
     fireEvent.change(editor, {
@@ -380,15 +398,147 @@ describe("AgentCreatePanel", () => {
       },
     });
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
         agent_id: "agent-1",
         prompt: "Create issue with ![image](/api/attachments/019ec09d-6222-722b-bdfa-427b105d80be/download)",
         project_id: undefined,
-        parent_issue_id: undefined,
+        status: "todo",
+        priority: "none",
         attachment_ids: ["019ec09d-6222-722b-bdfa-427b105d80be"],
+      });
+    });
+  });
+
+  it("defaults to the visible pm squad so SOP quick-create uses squad dispatch", async () => {
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create a TAPD requirement");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        squad_id: "squad-pm",
+        prompt: "Create a TAPD requirement",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+    expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-pm");
+  });
+
+  it("upgrades a persisted PM leader agent preference to the pm squad", async () => {
+    mockQuickCreateStore.lastActorType = "agent";
+    mockQuickCreateStore.lastActorId = "agent-1";
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create a TAPD requirement");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        squad_id: "squad-pm",
+        prompt: "Create a TAPD requirement",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+  });
+
+  it("promotes the selected PM leader agent once the pm squad list loads", async () => {
+    mockQuickCreateStore.lastActorType = "agent";
+    mockQuickCreateStore.lastActorId = "agent-1";
+    const user = userEvent.setup();
+    const props = { onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() };
+
+    const view = renderPanel(props);
+
+    expect(screen.getByRole("button", { name: "Bohan" })).toBeInTheDocument();
+
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    view.rerender(
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
+        <AgentCreatePanel {...props} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "pm" })).toBeInTheDocument();
+    });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create a TAPD requirement");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        squad_id: "squad-pm",
+        prompt: "Create a TAPD requirement",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+  });
+
+  it("keeps an explicit agent seed even when a pm squad is visible", async () => {
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    const user = userEvent.setup();
+
+    renderPanel({
+      onClose: vi.fn(),
+      isExpanded: false,
+      setIsExpanded: vi.fn(),
+      data: { agent_id: "agent-1" },
+    });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create with explicit agent");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        agent_id: "agent-1",
+        prompt: "Create with explicit agent",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
       });
     });
   });
@@ -411,18 +561,20 @@ describe("AgentCreatePanel", () => {
     await user.click(screen.getByRole("button", { name: /Frontend Squad/ }));
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
     await user.clear(editor);
     await user.type(editor, "Investigate the regression");
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
         squad_id: "squad-1",
         prompt: "Investigate the regression",
         project_id: undefined,
+        status: "todo",
+        priority: "none",
       });
     });
     expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-1");
@@ -430,7 +582,7 @@ describe("AgentCreatePanel", () => {
 
   // Squads whose leader agent isn't visible (archived, private, etc.) must
   // not appear in the picker — the backend would reject the pick on
-  // validateAssigneePair, and showing them invites a confusing dead path.
+  // validateAssigneePair, and showing them creates a confusing dead path.
   it("hides squads whose leader agent is not in the visible-agents list", () => {
     mockSquadsData.list = [
       { id: "squad-orphan", name: "Orphan Squad", leader_id: "agent-missing", archived_at: null },
@@ -496,19 +648,57 @@ describe("AgentCreatePanel", () => {
     expect(screen.getByTestId("agent-sub-issue-chip")).toBeInTheDocument();
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
     await user.clear(editor);
     await user.type(editor, "Investigate the regression");
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
         agent_id: "agent-1",
         prompt: "Investigate the regression",
         project_id: undefined,
+        status: "todo",
+        priority: "none",
         parent_issue_id: "parent-uuid-1",
+      });
+    });
+  });
+
+  it("forwards seeded pinned fields without a separate assignee", async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      onClose: vi.fn(),
+      isExpanded: false,
+      setIsExpanded: vi.fn(),
+      data: {
+        status: "in_progress",
+        priority: "high",
+        start_date: "2026-07-02",
+        due_date: "2026-07-10",
+      },
+    });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Investigate the regression");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        agent_id: "agent-1",
+        prompt: "Investigate the regression",
+        project_id: undefined,
+        status: "in_progress",
+        priority: "high",
+        start_date: "2026-07-02",
+        due_date: "2026-07-10",
       });
     });
   });

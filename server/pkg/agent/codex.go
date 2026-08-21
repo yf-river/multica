@@ -39,6 +39,7 @@ const (
 	defaultCodexSemanticInactivityTimeout  = 10 * time.Minute
 	defaultCodexFirstTurnNoProgressTimeout = 30 * time.Second
 	codexVersionDiagnosticTimeout          = 2 * time.Second
+	codexModelCapabilityTimeout            = 3 * time.Second
 	// codexGracefulShutdownTimeout bounds how long the lifecycle goroutine
 	// waits for codex to exit on its own after stdin is closed, before forcing
 	// a context-cancel kill. A clean exit lets codex run its shutdown path and
@@ -59,6 +60,32 @@ const CodexFirstTurnNoProgressMarker = "codex app-server no progress timeout"
 const codexModelCatalogRefreshTimeoutSignal = "failed to refresh available models: timeout waiting for child process to exit"
 
 var errCodexProcessExited = errors.New("codex process exited")
+
+type codexImageGenerationPolicy string
+
+const (
+	codexImageGenerationAuto codexImageGenerationPolicy = "auto"
+	codexImageGenerationOn   codexImageGenerationPolicy = "on"
+	codexImageGenerationOff  codexImageGenerationPolicy = "off"
+)
+
+type codexModelCapability struct {
+	InputModalities                []string
+	ExperimentalSupportedTools     []string
+	SupportsImageDetailOriginalSet bool
+	SupportsImageDetailOriginal    bool
+}
+
+type codexModelCapabilityCacheEntry struct {
+	models    map[string]codexModelCapability
+	ok        bool
+	expiresAt time.Time
+}
+
+var (
+	codexModelCapabilityCacheMu sync.Mutex
+	codexModelCapabilityCache   = map[string]codexModelCapabilityCacheEntry{}
+)
 
 type codexTimeoutKind int
 
@@ -84,7 +111,7 @@ type codexBackend struct {
 	cfg Config
 }
 
-func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
+func buildCodexArgs(opts ExecOptions, logger *slog.Logger, disableImageGeneration bool) []string {
 	args := []string{"app-server", "--listen", "stdio://"}
 	extra := filterCustomArgs(opts.ExtraArgs, codexBlockedArgs, logger)
 	custom := filterCustomArgs(opts.CustomArgs, codexBlockedArgs, logger)
@@ -101,7 +128,202 @@ func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	}
 	args = append(args, extra...)
 	args = append(args, custom...)
+	if disableImageGeneration {
+		args = append(args, "--disable", "image_generation")
+	}
 	return args
+}
+
+func effectiveCodexModelForToolGuard(opts ExecOptions, extraArgs, customArgs []string) string {
+	if strings.TrimSpace(opts.Model) != "" {
+		return opts.Model
+	}
+	model := ""
+	for _, args := range [][]string{extraArgs, customArgs} {
+		if parsed := lastCodexConfigModelArg(args); parsed != "" {
+			model = parsed
+		}
+	}
+	return model
+}
+
+func lastCodexConfigModelArg(args []string) string {
+	model := ""
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		flag, value, hasInlineValue := splitCodexConfigArg(arg)
+		if flag != "-c" && flag != "--config" {
+			continue
+		}
+		if !hasInlineValue {
+			if i+1 >= len(args) {
+				continue
+			}
+			value = args[i+1]
+			i++
+		}
+		if parsed := parseCodexModelConfigValue(value); parsed != "" {
+			model = parsed
+		}
+	}
+	return model
+}
+
+func splitCodexConfigArg(arg string) (flag, value string, hasInlineValue bool) {
+	if idx := strings.Index(arg, "="); idx > 0 {
+		return arg[:idx], arg[idx+1:], true
+	}
+	return arg, "", false
+}
+
+func parseCodexModelConfigValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "model") {
+		return ""
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "model"))
+	if rest == "" || rest[0] != '=' {
+		return ""
+	}
+	model := strings.TrimSpace(rest[1:])
+	if len(model) >= 2 {
+		if (model[0] == '"' && model[len(model)-1] == '"') ||
+			(model[0] == '\'' && model[len(model)-1] == '\'') {
+			model = model[1 : len(model)-1]
+		}
+	}
+	return strings.TrimSpace(model)
+}
+
+func shouldDisableCodexImageGeneration(ctx context.Context, executablePath string, opts ExecOptions, env map[string]string, logger *slog.Logger) bool {
+	policy := resolveCodexImageGenerationPolicy(env, logger)
+	model := effectiveCodexModelForToolGuard(opts, opts.ExtraArgs, opts.CustomArgs)
+	if policy == codexImageGenerationOn {
+		return false
+	}
+	if policy == codexImageGenerationOff {
+		return true
+	}
+	if strings.TrimSpace(model) == "" {
+		return true
+	}
+	models, ok := loadCodexModelCapabilities(ctx, executablePath, env, logger)
+	return shouldDisableCodexImageGenerationForCatalog(policy, model, models, ok)
+}
+
+func shouldDisableCodexImageGenerationForCatalog(policy codexImageGenerationPolicy, model string, models map[string]codexModelCapability, catalogOK bool) bool {
+	if policy == codexImageGenerationOn {
+		return false
+	}
+	if policy == codexImageGenerationOff {
+		return true
+	}
+	model = strings.TrimSpace(model)
+	if model == "" || !catalogOK {
+		return true
+	}
+	capability, ok := models[model]
+	if !ok {
+		return true
+	}
+	return !codexModelCapabilitySupportsImageGeneration(capability)
+}
+
+func resolveCodexImageGenerationPolicy(env map[string]string, logger *slog.Logger) codexImageGenerationPolicy {
+	raw := strings.TrimSpace(env["MULTICA_CODEX_IMAGE_GENERATION"])
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MULTICA_CODEX_IMAGE_GENERATION"))
+	}
+	switch strings.ToLower(raw) {
+	case "", "auto":
+		return codexImageGenerationAuto
+	case "on", "true", "1", "enabled", "enable":
+		return codexImageGenerationOn
+	case "off", "false", "0", "disabled", "disable":
+		return codexImageGenerationOff
+	default:
+		if logger != nil {
+			logger.Warn("codex: invalid MULTICA_CODEX_IMAGE_GENERATION value; using auto", "value", raw)
+		}
+		return codexImageGenerationAuto
+	}
+}
+
+func codexModelCapabilitySupportsImageGeneration(capability codexModelCapability) bool {
+	return containsCaseInsensitive(capability.ExperimentalSupportedTools, "image_generation")
+}
+
+func containsCaseInsensitive(values []string, want string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func loadCodexModelCapabilities(ctx context.Context, executablePath string, env map[string]string, logger *slog.Logger) (map[string]codexModelCapability, bool) {
+	if executablePath == "" {
+		executablePath = "codex"
+	}
+	version, _ := DetectVersion(ctx, executablePath)
+	cacheKey := executablePath + "\x00" + version
+	now := time.Now()
+
+	codexModelCapabilityCacheMu.Lock()
+	if entry, ok := codexModelCapabilityCache[cacheKey]; ok && now.Before(entry.expiresAt) {
+		codexModelCapabilityCacheMu.Unlock()
+		return entry.models, entry.ok
+	}
+	codexModelCapabilityCacheMu.Unlock()
+
+	runCtx, cancel := context.WithTimeout(ctx, codexModelCapabilityTimeout)
+	defer cancel()
+	raw, err := runCodexDebugModelsLive(runCtx, executablePath, env)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("codex: failed to load live model capability catalog; disabling image_generation by default", "error", err)
+		}
+		codexModelCapabilityCacheMu.Lock()
+		codexModelCapabilityCache[cacheKey] = codexModelCapabilityCacheEntry{models: nil, ok: false, expiresAt: now.Add(modelCacheTTL)}
+		codexModelCapabilityCacheMu.Unlock()
+		return nil, false
+	}
+	models := parseCodexModelCapabilities(raw)
+	codexModelCapabilityCacheMu.Lock()
+	codexModelCapabilityCache[cacheKey] = codexModelCapabilityCacheEntry{models: models, ok: true, expiresAt: now.Add(modelCacheTTL)}
+	codexModelCapabilityCacheMu.Unlock()
+	return models, true
+}
+
+func runCodexDebugModelsLive(ctx context.Context, executablePath string, env map[string]string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, executablePath, "debug", "models")
+	hideAgentWindow(cmd)
+	cmd.Env = buildEnv(env)
+	return cmd.Output()
+}
+
+func parseCodexModelCapabilities(raw []byte) map[string]codexModelCapability {
+	out := map[string]codexModelCapability{}
+	var resp codexDebugModelsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return out
+	}
+	for _, m := range resp.Models {
+		if m.Slug == "" {
+			continue
+		}
+		capability := codexModelCapability{
+			InputModalities:            append([]string(nil), m.InputModalities...),
+			ExperimentalSupportedTools: append([]string(nil), m.ExperimentalSupportedTools...),
+		}
+		if m.SupportsImageDetailOriginal != nil {
+			capability.SupportsImageDetailOriginalSet = true
+			capability.SupportsImageDetailOriginal = *m.SupportsImageDetailOriginal
+		}
+		out[m.Slug] = capability
+	}
+	return out
 }
 
 // hasManagedCodexMcpConfig reports whether the agent's mcp_config field is
@@ -544,7 +766,8 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		return nil, fmt.Errorf("codex: mcp_config is set but CODEX_HOME env var is not configured; cannot apply managed MCP")
 	}
 
-	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	disableImageGeneration := shouldDisableCodexImageGeneration(runCtx, execPath, opts, b.cfg.Env, b.cfg.Logger)
+	codexArgs := buildCodexArgs(opts, b.cfg.Logger, disableImageGeneration)
 	cmd := exec.CommandContext(runCtx, execPath, codexArgs...)
 	hideAgentWindow(cmd)
 	// Bound the wait after the context is cancelled so a stuck child (or an
@@ -589,11 +812,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	turnDone := make(chan bool, 1) // true = aborted
 
 	c := &codexClient{
-		cfg:                  b.cfg,
-		stdin:                stdin,
-		pending:              make(map[int]*pendingRPC),
-		processDone:          make(chan struct{}),
-		notificationProtocol: "unknown",
+		cfg:         b.cfg,
+		stdin:       stdin,
+		pending:     make(map[int]*pendingRPC),
+		processDone: make(chan struct{}),
 		onMessage: func(msg Message) {
 			logCodexAgentMessage(b.cfg.Logger, msg)
 			if msg.Type == MessageText {
@@ -680,7 +902,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
-			finalError = withAgentStderr(fmt.Sprintf("codex initialize failed: %v", err), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(fmt.Sprintf("codex initialize failed: %v", err), stderrBuf.Tail())
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -693,7 +915,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
-			finalError = withAgentStderr(err.Error(), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(err.Error(), stderrBuf.Tail())
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -721,7 +943,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
-			finalError = withAgentStderr(fmt.Sprintf("codex turn/start failed: %v", err), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(fmt.Sprintf("codex turn/start failed: %v", err), stderrBuf.Tail())
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -870,7 +1092,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		drainAndWait()
 
 		if processExitErr != nil {
-			finalError = withAgentStderr(processExitErr.Error(), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(processExitErr.Error(), stderrBuf.Tail())
 		}
 		if timeoutDiagnostic.Kind != codexTimeoutNone {
 			timeoutDiagnostic.CodexVersion = detectCodexVersionForDiagnostics(context.Background(), execPath, cmd.Env, b.cfg.Logger)
@@ -891,7 +1113,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
 		// Codex writes token_count events to ~/.codex/sessions/YYYY/MM/DD/*.jsonl.
 		if u.InputTokens == 0 && u.OutputTokens == 0 {
-			if scanned := scanCodexSessionUsage(startTime); scanned != nil {
+			if scanned := scanCodexSessionUsage(startTime, b.cfg.Env["CODEX_HOME"]); scanned != nil {
 				u = scanned.usage
 				if scanned.model != "" && opts.Model == "" {
 					opts.Model = scanned.model
@@ -1095,8 +1317,7 @@ func buildCodexTimeoutDiagnosticError(diag codexTimeoutDiagnostic, stderrTail st
 	default:
 		msg = "codex timed out"
 	}
-	msg = appendCodexKnownStderrHint(msg, stderrTail)
-	return withAgentStderr(msg, "codex", stderrTail)
+	return codexFailureError(msg, stderrTail)
 }
 
 func formatCodexDiagnosticFields(diag codexTimeoutDiagnostic) string {
@@ -1123,10 +1344,33 @@ func formatCodexDiagnosticModel(model string) string {
 }
 
 func appendCodexKnownStderrHint(msg, stderrTail string) string {
+	lower := strings.ToLower(msg + "\n" + stderrTail)
 	if strings.Contains(stderrTail, codexModelCatalogRefreshTimeoutSignal) {
 		return msg + "; diagnosis: Codex stderr shows the model catalog refresh timed out. Try setting an explicit model, switching Codex CLI versions, or using another runtime while Codex app-server recovers"
 	}
+	if containsAnyCodexDiagnostic(lower,
+		"backend-api/codex/responses",
+		"responses_websocket",
+		"failed to connect to websocket",
+		"tls handshake eof",
+		"stream disconnected before completion",
+	) {
+		return msg + "; diagnosis: Codex Responses network failed. Check this runner's proxy profile and websocket/TLS support, switch to a healthy proxy node if needed, restart the daemon, then retry"
+	}
 	return msg
+}
+
+func codexFailureError(msg, stderrTail string) string {
+	return withAgentStderr(appendCodexKnownStderrHint(msg, stderrTail), "codex", stderrTail)
+}
+
+func containsAnyCodexDiagnostic(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectCodexVersionForDiagnostics(ctx context.Context, execPath string, env []string, logger *slog.Logger) string {
@@ -1204,9 +1448,8 @@ type codexClient struct {
 	onSemanticActivity func(description string)
 	onTurnDone         func(aborted bool)
 
-	notificationProtocol string // "unknown", "legacy", "raw"
-	turnStarted          bool
-	completedTurnIDs     map[string]bool
+	turnStarted      bool
+	completedTurnIDs map[string]bool
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
@@ -1348,15 +1591,6 @@ func (c *codexClient) respondError(id int, code int, message string) {
 	_, _ = c.stdin.Write(data)
 }
 
-func (c *codexClient) closeAllPending(err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for id, pr := range c.pending {
-		pr.ch <- rpcResult{err: err}
-		delete(c.pending, id)
-	}
-}
-
 func (c *codexClient) markProcessExited(err error) {
 	if err == nil {
 		err = errCodexProcessExited
@@ -1479,100 +1713,7 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 		_ = json.Unmarshal(p, &params)
 	}
 
-	// Legacy codex/event notifications
-	if method == "codex/event" || strings.HasPrefix(method, "codex/event/") {
-		c.notificationProtocol = "legacy"
-		msgData, ok := params["msg"]
-		if !ok {
-			return
-		}
-		msgMap, ok := msgData.(map[string]any)
-		if !ok {
-			return
-		}
-		c.handleEvent(msgMap)
-		return
-	}
-
-	// Raw v2 notifications
-	if c.notificationProtocol != "legacy" {
-		if c.notificationProtocol == "unknown" &&
-			(method == "turn/started" || method == "turn/completed" ||
-				method == "thread/started" || strings.HasPrefix(method, "item/")) {
-			c.notificationProtocol = "raw"
-		}
-
-		if c.notificationProtocol == "raw" {
-			c.handleRawNotification(method, params)
-		}
-	}
-}
-
-func (c *codexClient) handleEvent(msg map[string]any) {
-	msgType, _ := msg["type"].(string)
-
-	switch msgType {
-	case "task_started":
-		c.turnStarted = true
-		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
-		}
-	case "agent_message":
-		text, _ := msg["message"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
-		}
-	case "exec_command_begin":
-		callID, _ := msg["call_id"].(string)
-		command, _ := msg["command"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "exec_command",
-				CallID: callID,
-				Input:  map[string]any{"command": command},
-			})
-		}
-	case "exec_command_end":
-		callID, _ := msg["call_id"].(string)
-		output, _ := msg["output"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "exec_command",
-				CallID: callID,
-				Output: output,
-			})
-		}
-	case "patch_apply_begin":
-		callID, _ := msg["call_id"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: callID,
-			})
-		}
-	case "patch_apply_end":
-		callID, _ := msg["call_id"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "patch_apply",
-				CallID: callID,
-			})
-		}
-	case "task_complete":
-		// Extract usage from legacy task_complete if present.
-		c.extractUsageFromMap(msg)
-		if c.onTurnDone != nil {
-			c.onTurnDone(false)
-		}
-	case "turn_aborted":
-		if c.onTurnDone != nil {
-			c.onTurnDone(true)
-		}
-	}
+	c.handleRawNotification(method, params)
 }
 
 func (c *codexClient) handleRawNotification(method string, params map[string]any) {
@@ -1819,49 +1960,85 @@ type codexSessionUsage struct {
 	model string
 }
 
-// scanCodexSessionUsage scans Codex session JSONL files written after startTime
-// to extract token usage. Codex writes token_count events to
-// ~/.codex/sessions/YYYY/MM/DD/*.jsonl.
-func scanCodexSessionUsage(startTime time.Time) *codexSessionUsage {
-	root := codexSessionRoot()
-	if root == "" {
-		return nil
+// scanCodexSessionUsage scans Codex session files written after startTime to
+// extract token usage. Older Codex builds write token_count JSONL events under
+// sessions/YYYY/MM/DD. Current app-server builds also persist raw response logs
+// in $CODEX_HOME/logs_*.sqlite; those files are SQLite databases, but the log
+// bodies are plain text in the file and WAL pages, so we can recover usage
+// without adding a SQLite driver to the daemon.
+func scanCodexSessionUsage(startTime time.Time, codexHome string) *codexSessionUsage {
+	var result codexSessionUsage
+
+	if root := codexSessionRoot(codexHome); root != "" {
+		dateDir := filepath.Join(root,
+			fmt.Sprintf("%04d", startTime.Year()),
+			fmt.Sprintf("%02d", int(startTime.Month())),
+			fmt.Sprintf("%02d", startTime.Day()),
+		)
+
+		files, err := filepath.Glob(filepath.Join(dateDir, "*.jsonl"))
+		if err == nil {
+			for _, f := range files {
+				info, err := os.Stat(f)
+				if err != nil || info.ModTime().Before(startTime) {
+					continue
+				}
+				if u := parseCodexSessionFile(f); u != nil {
+					// Take the last matching file's data (usually there's only one per task).
+					result = *u
+				}
+			}
+		}
 	}
 
-	// Look in today's session directory.
-	dateDir := filepath.Join(root,
-		fmt.Sprintf("%04d", startTime.Year()),
-		fmt.Sprintf("%02d", int(startTime.Month())),
-		fmt.Sprintf("%02d", startTime.Day()),
-	)
+	if usageHasTokens(result.usage) {
+		return &result
+	}
+	if scanned := scanCodexLogUsage(startTime, codexHome); scanned != nil {
+		return scanned
+	}
+	return nil
+}
 
-	files, err := filepath.Glob(filepath.Join(dateDir, "*.jsonl"))
-	if err != nil || len(files) == 0 {
+func usageHasTokens(u TokenUsage) bool {
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
+}
+
+func scanCodexLogUsage(startTime time.Time, codexHome string) *codexSessionUsage {
+	if codexHome == "" {
 		return nil
 	}
+	var files []string
+	for _, pattern := range []string{"logs_*.sqlite", "logs_*.sqlite-wal"} {
+		matches, err := filepath.Glob(filepath.Join(codexHome, pattern))
+		if err == nil {
+			files = append(files, matches...)
+		}
+	}
+	sort.Strings(files)
 
-	// Only scan files modified after startTime (this task's session).
 	var result codexSessionUsage
 	for _, f := range files {
 		info, err := os.Stat(f)
 		if err != nil || info.ModTime().Before(startTime) {
 			continue
 		}
-		if u := parseCodexSessionFile(f); u != nil {
-			// Take the last matching file's data (usually there's only one per task).
+		if u := parseCodexLogFile(f); u != nil {
 			result = *u
 		}
 	}
-
-	if result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 {
+	if !usageHasTokens(result.usage) {
 		return nil
 	}
 	return &result
 }
 
 // codexSessionRoot returns the Codex sessions directory.
-func codexSessionRoot() string {
-	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+func codexSessionRoot(codexHome string) string {
+	if codexHome == "" {
+		codexHome = os.Getenv("CODEX_HOME")
+	}
+	if codexHome != "" {
 		dir := filepath.Join(codexHome, "sessions")
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			return dir
@@ -1904,6 +2081,111 @@ type codexSessionTokenCount struct {
 		} `json:"info"`
 		Model string `json:"model"`
 	} `json:"payload"`
+}
+
+type codexResponseCompletedLog struct {
+	Type     string `json:"type"`
+	Response *struct {
+		Model string `json:"model"`
+		Usage *struct {
+			InputTokens        int64 `json:"input_tokens"`
+			OutputTokens       int64 `json:"output_tokens"`
+			CacheReadTokens    int64 `json:"cache_read_tokens"`
+			CacheWriteTokens   int64 `json:"cache_write_tokens"`
+			InputTokensDetails *struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
+		} `json:"usage"`
+	} `json:"response"`
+}
+
+func parseCodexLogFile(path string) *codexSessionUsage {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	const prefix = "Received message "
+	var result codexSessionUsage
+	found := false
+	offset := 0
+	for {
+		idx := bytes.Index(data[offset:], []byte(prefix))
+		if idx < 0 {
+			break
+		}
+		start := offset + idx + len(prefix)
+		jsonStart := bytes.IndexByte(data[start:], '{')
+		if jsonStart < 0 {
+			break
+		}
+		start += jsonStart
+		raw := extractJSONObjectBytes(data[start:])
+		if len(raw) == 0 {
+			offset = start + 1
+			continue
+		}
+		offset = start + len(raw)
+
+		var evt codexResponseCompletedLog
+		if err := json.Unmarshal(raw, &evt); err != nil || evt.Type != "response.completed" || evt.Response == nil || evt.Response.Usage == nil {
+			continue
+		}
+
+		usage := evt.Response.Usage
+		cacheReadTokens := usage.CacheReadTokens
+		if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > cacheReadTokens {
+			cacheReadTokens = usage.InputTokensDetails.CachedTokens
+		}
+		result.usage = TokenUsage{
+			InputTokens:      codexUncachedInputTokens(usage.InputTokens, cacheReadTokens),
+			OutputTokens:     usage.OutputTokens,
+			CacheReadTokens:  cacheReadTokens,
+			CacheWriteTokens: usage.CacheWriteTokens,
+		}
+		if evt.Response.Model != "" {
+			result.model = evt.Response.Model
+		}
+		found = true
+	}
+
+	if !found {
+		return nil
+	}
+	return &result
+}
+
+func extractJSONObjectBytes(data []byte) []byte {
+	depth := 0
+	inString := false
+	escaped := false
+	for i, b := range data {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch b {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return data[:i+1]
+			}
+		}
+	}
+	return nil
 }
 
 // parseCodexSessionFile extracts the final token_count from a Codex session file.

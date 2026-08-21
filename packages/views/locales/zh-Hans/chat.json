@@ -18,8 +18,7 @@
     "show_details": "查看详情",
     "replied_in": "{{elapsed}} 内回复",
     "failed_after": "{{elapsed}} 后失败",
-    "task_failed_fallback": "task 失败",
-    "tools_other": "{{count}} 个工具",
+    "task_failed_fallback": "任务失败",
     "tool_result_named": "{{tool}} 结果：",
     "tool_result_unnamed": "结果：",
     "process_steps_other": "{{count}} 步",
@@ -29,7 +28,6 @@
     "loading_older": "正在加载更早的消息…"
   },
   "session_history": {
-    "untitled": "无标题",
     "time": {
       "just_now": "刚刚",
       "minutes": "{{count}} 分钟前",
@@ -47,16 +45,12 @@
     },
     "stop_dialog": {
       "title": "停止这次运行？",
-      "description_with_title": "这会取消 \"{{title}}\" 里的当前智能体任务。已产生的内容会保留在对话里。",
-      "description_default": "这会取消当前智能体任务。已产生的内容会保留在对话里。",
       "cancel": "继续运行",
       "confirm": "停止运行",
       "confirming": "停止中..."
     },
     "delete_dialog": {
       "title": "删除对话",
-      "description_with_title": "\"{{title}}\" 及其消息会被永久删除，无法撤销。",
-      "description_default": "此对话及其消息会被永久删除，无法撤销。",
       "cancel": "取消",
       "confirm": "删除",
       "confirming": "删除中..."
@@ -69,7 +63,6 @@
     "minimize_tooltip": "最小化",
     "another_running": "另一个对话正在运行",
     "another_unread": "另一个对话有未读回复",
-    "running": "运行中",
     "unread": "未读",
     "no_previous": "暂无历史对话",
     "untitled": "新对话",
@@ -81,10 +74,10 @@
   },
   "empty_state": {
     "first_time_title": "和你的智能体对话",
-    "first_time_intro": "✨ 它们了解你的工作区——",
-    "first_time_pillars": "issue、项目、skill",
+    "first_time_intro": "聊天会使用当前工作区上下文：",
+    "first_time_pillars": "任务、项目、技能和运行记录",
     "first_time_pillars_suffix": "。",
-    "first_time_actions": "让它做一份总结、规划你的一天，或交给它一个小任务。",
+    "first_time_actions": "你可以直接提问，也可以围绕任务和智能体执行记录继续追问。",
     "returning_title_named": "你好，我是 {{name}}",
     "returning_title_default": "欢迎使用 Multica",
     "returning_subtitle": "试试问"

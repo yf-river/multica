@@ -85,7 +85,6 @@ const (
 // Keep the provider roots in sync with upstream docs / conventions:
 //   - GitHub Copilot: https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills
 //   - OpenCode: https://opencode.ai/docs/skills
-//   - OpenClaw: https://github.com/openclaw/openclaw/blob/main/docs/tools/skills.md
 //   - Pi: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md
 //   - Cursor: official forum guidance referencing the built-in /create-skill flow
 //     (https://forum.cursor.com/t/cursor-doesnt-know-new-skills-arens-saved/158507)
@@ -120,8 +119,6 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 		providerRoot = filepath.Join(home, ".copilot", "skills")
 	case "opencode":
 		providerRoot = filepath.Join(home, ".config", "opencode", "skills")
-	case "openclaw":
-		providerRoot = filepath.Join(home, ".openclaw", "skills")
 	case "pi":
 		providerRoot = filepath.Join(home, ".pi", "agent", "skills")
 	case "cursor":

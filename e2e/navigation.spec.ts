@@ -1,7 +1,46 @@
 import { test, expect } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
+import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath, trainingRouteURLPath } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
+const ROUTE_INTRO_TITLES: Record<string, string> = {
+  datasets: "数据集题库",
+  "test-suites": "测试套件回归",
+  "evaluation-runs": "评测记录与证据",
+};
+const ROUTE_OPERATING_TEXT: Record<string, string> = {
+  datasets: "样本入库、版本快照、下游复用",
+  "test-suites": "固定试卷、断言回归、失败定位",
+  "evaluation-runs": "运行检索、证据展开、人工复核",
+};
+
+async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
+  const routeIntroTitle = ROUTE_INTRO_TITLES[item.path];
+  const hasRouteIntro = Boolean(routeIntroTitle);
+  await expect(page.getByTestId("training-page-shell")).toHaveCount(1);
+  await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
+  await expect(page.getByTestId(`training-route-${item.path}`)).toHaveCount(1);
+  await expect(page.getByTestId(`training-route-intro-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-panel-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-operating-model-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  if (routeIntroTitle) {
+    await expect(page.getByTestId(`training-route-intro-${item.path}`)).toContainText(routeIntroTitle);
+    await expect(page.getByTestId(`training-route-operating-model-${item.path}`)).toContainText(ROUTE_OPERATING_TEXT[item.path]!);
+    await expect(page.getByTestId(`training-route-operating-step-${item.path}-1`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${item.path}-2`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${item.path}-3`)).toBeVisible();
+  }
+}
+
+async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {
+  const link = page.getByRole("link", { name: item.nav, exact: true }).first();
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", new RegExp(`/${trainingRouteURLPath(item.path)}$`));
+}
+
+function expectsTrainingSummaryStrip(item: (typeof TRAINING_ROUTES)[number]) {
+  return false;
+}
 
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
@@ -10,34 +49,85 @@ test.describe("Navigation", () => {
   });
 
   test("sidebar navigation works", async ({ page }) => {
-    await page.getByRole("link", { name: "Inbox" }).click();
+    await page.getByRole("link", { name: "收件箱" }).click();
     await expect(page).toHaveURL(/\/inbox/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Inbox");
+    await waitForPageText(page, "收件箱");
 
-    await page.getByRole("link", { name: "Agents" }).click();
+    await page.getByRole("link", { name: "智能体" }).click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Agents");
+    await waitForPageText(page, "智能体");
 
-    await page.getByRole("link", { name: "Issues", exact: true }).click();
+    await page.getByRole("link", { name: "任务", exact: true }).click();
     await expect(page).toHaveURL(/\/issues/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Issues");
+    await waitForPageText(page, "任务");
   });
 
   test("settings page loads via sidebar", async ({ page }) => {
-    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await page.getByRole("link", { name: "设置", exact: true }).click();
     await expect(page).toHaveURL(/\/settings/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Settings");
+    await waitForPageText(page, "设置");
 
-    await expect(page.getByRole("tab", { name: "General" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Members" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "通用" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "成员" })).toBeVisible();
+  });
+
+  test("command palette opens training submodules", async ({ page }) => {
+    for (const item of TRAINING_ROUTES) {
+      await page.getByRole("button", { name: /搜索/ }).first().click();
+      const input = page.getByPlaceholder("输入命令或关键词搜索...");
+      await expect(input).toBeVisible({ timeout: 10000 });
+      await input.fill(item.query);
+      await page
+        .getByText(item.command, { exact: true })
+        .locator("xpath=ancestor::*[@cmdk-item][1]")
+        .click();
+
+      await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+      await waitForPageText(page, item.text);
+      await expectTrainingPageShell(page, item);
+      await expectTrainingNavigationMarker(page, item);
+      await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      if (!item.showPromptEditor) {
+        await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
+      }
+      await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
+      await expect(page.getByTestId("prompt-playground-selector-summary")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-selector-summary")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
+      await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
+      await expect(page.getByRole("button", { name: "起草需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
+      await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
+      await expect(page.getByTestId("training-summary-strip")).toHaveCount(expectsTrainingSummaryStrip(item) ? 1 : 0);
+    }
+  });
+
+  test("sidebar opens every training submodule", async ({ page }) => {
+    await page.getByRole("link", { name: "训练与评估" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(DEFAULT_TRAINING_ROUTE.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+    await waitForPageText(page, DEFAULT_TRAINING_ROUTE.text);
+
+    for (const item of TRAINING_ROUTES) {
+      await page.locator('[data-sidebar="menu-button"]').filter({ hasText: item.nav }).first().click();
+      await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+      await waitForPageText(page, item.text);
+      await expectTrainingPageShell(page, item);
+      await expectTrainingNavigationMarker(page, item);
+      await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      if (!item.showPromptEditor) {
+        await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
+      }
+      await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
+      await expect(page.getByTestId("prompt-playground-selector-summary")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-selector-summary")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
+    }
   });
 
   test("agents page shows agent list", async ({ page }) => {
-    await page.getByRole("link", { name: "Agents" }).click();
+    await page.getByRole("link", { name: "智能体", exact: true }).first().click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "Agents");
+    await waitForPageText(page, "智能体");
 
-    // Should show "Agents" heading
-    await expect(page.locator("text=Agents").first()).toBeVisible();
+    await expect(page.locator("text=智能体").first()).toBeVisible();
   });
 });

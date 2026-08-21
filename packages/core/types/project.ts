@@ -53,9 +53,15 @@ export interface ListProjectsResponse {
 //
 // Known types (UI must default-case unknown server-side additions):
 //   - github_repo: cloud-side git checkout, ref = { url, default_branch_hint? }
+//   - gongfeng_repo: Tencent Gongfeng/GitCode repo context,
+//     ref = { provider, url, project_path, resource_kind, ref? }
 //   - local_directory: in-place agent execution on a specific daemon,
 //     ref = { local_path, daemon_id, label? }
-export type ProjectResourceType = "github_repo" | "local_directory";
+export type ProjectResourceType =
+  | "github_repo"
+  | "gongfeng_repo"
+  | "local_directory"
+  | (string & {});
 
 export interface GithubRepoResourceRef {
   url: string;
@@ -68,8 +74,26 @@ export interface LocalDirectoryResourceRef {
   label?: string;
 }
 
+export interface GongfengRepoResourceRef {
+  provider: string;
+  url: string;
+  project_path: string;
+  resource_kind: "project" | "branch" | "commits" | "commit" | "tag" | "file" | "merge_request";
+  ref?: string;
+  head_commit?: string;
+  branch?: string;
+  commit_sha?: string;
+  connection_status?: string;
+  sync_status?: string;
+  test_status?: string;
+  last_tested_at?: string;
+  last_synced_at?: string;
+  title?: string;
+}
+
 export type ProjectResourceRef =
   | GithubRepoResourceRef
+  | GongfengRepoResourceRef
   | LocalDirectoryResourceRef
   | Record<string, unknown>;
 

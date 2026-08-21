@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable i18next/no-literal-string */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +18,7 @@ import { useNavigation } from "../../navigation";
 import { AppLink } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
-import { Users, Plus, Trash2, ArrowUpRight, Crown, Camera, Loader2, Pencil, FileText, Save } from "lucide-react";
+import { AlertCircle, Archive, ArchiveRestore, Users, Plus, Trash2, ArrowUpRight, Crown, Camera, Loader2, Pencil, FileText, Save } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -52,6 +53,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { InlineEditPopover } from "../../common/inline-edit-popover";
 import { ContentEditor } from "../../editor/content-editor";
 import {
   PickerItem,
@@ -63,6 +65,11 @@ import { toast } from "sonner";
 import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Agent, CreateAgentRequest, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { sopStageDisplayName } from "../../common/sop-stage-labels";
+import {
+  squadResourceScope,
+  ResourceScopeBadge,
+} from "../../common/resource-scope";
 
 export function SquadDetailPage() {
   const { t } = useT("squads");
@@ -123,7 +130,7 @@ export function SquadDetailPage() {
   const [confirmArchive, setConfirmArchive] = useState(false);
 
   const updateSquadMut = useMutation({
-    mutationFn: (data: { name?: string; description?: string; instructions?: string; avatar_url?: string; leader_id?: string }) => api.updateSquad(squadId, data),
+    mutationFn: (data: { name?: string; description?: string; instructions?: string; avatar_url?: string; leader_id?: string; sop_profile?: Record<string, unknown> }) => api.updateSquad(squadId, data),
     onSuccess: () => {
       refetchSquad();
       refetchMembers();
@@ -176,9 +183,21 @@ export function SquadDetailPage() {
 
   const deleteMut = useMutation({
     mutationFn: () => api.deleteSquad(squadId),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) }); push(p.squads()); toast.success("Squad archived"); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) }); push(p.squads()); toast.success(t(($) => $.archive_dialog.success)); },
     onError: (err) =>
-      toast.error(err instanceof Error && err.message ? err.message : "Failed to archive squad"),
+      toast.error(err instanceof Error && err.message ? err.message : "归档小队失败"),
+  });
+
+  const restoreMut = useMutation({
+    mutationFn: () => api.restoreSquad(squadId),
+    onSuccess: () => {
+      refetchSquad();
+      refetchMembers();
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      toast.success(t(($) => $.archive_dialog.restore_success));
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error && err.message ? err.message : t(($) => $.archive_dialog.restore_failed)),
   });
 
   // CreateAgentDialog's onCreate contract: hit POST /api/agents and
@@ -201,7 +220,10 @@ export function SquadDetailPage() {
   };
 
   const getEntityName = (type: string, id: string) => {
-    if (type === "agent") return agents.find((a: Agent) => a.id === id)?.name ?? id.slice(0, 8);
+    if (type === "agent") {
+      const agentName = agents.find((a: Agent) => a.id === id)?.name;
+      return sopStageDisplayName(agentName) || id.slice(0, 8);
+    }
     return wsMembers.find((m) => m.user_id === id)?.name ?? id.slice(0, 8);
   };
 
@@ -214,6 +236,9 @@ export function SquadDetailPage() {
   const isLeader = (m: SquadMember) => m.member_type === "agent" && squad.leader_id === m.member_id;
   const isArchived = (m: SquadMember) =>
     m.member_type === "agent" && !!agents.find((a: Agent) => a.id === m.member_id)?.archived_at;
+  const canManageSquad = isWorkspaceAdmin || squad.creator_id === currentUser?.id;
+  const isSquadArchived = !!squad.archived_at;
+  const canEditSquad = canManageSquad && !isSquadArchived;
 
   const initials = squad.name
     .split(" ")
@@ -232,13 +257,44 @@ export function SquadDetailPage() {
             <h1 className="truncate text-sm font-medium text-foreground">{squad.name}</h1>
           </>
         }
-        actions={
-          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirmArchive(true)}>
-            <Trash2 className="size-3.5 mr-1" />
-            {t(($) => $.inspector.archive_button)}
-          </Button>
-        }
+        actions={canManageSquad ? (
+          isSquadArchived ? (
+            <Button size="sm" variant="outline" disabled={restoreMut.isPending} onClick={() => restoreMut.mutate()}>
+              {restoreMut.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <ArchiveRestore className="size-3.5" />
+              )}
+              {t(($) => $.inspector.restore_button)}
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirmArchive(true)}>
+              <Archive className="size-3.5 mr-1" />
+              {t(($) => $.inspector.archive_button)}
+            </Button>
+          )
+        ) : null}
       />
+
+      {isSquadArchived && (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-6 py-2 text-xs text-muted-foreground">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            {t(($) => $.inspector.archived_banner)}
+          </span>
+          {canManageSquad && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-xs"
+              disabled={restoreMut.isPending}
+              onClick={() => restoreMut.mutate()}
+            >
+              {t(($) => $.inspector.restore_button)}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Two-column grid mirrors agent-detail-page: left inspector (identity +
           properties + leader), right pane with tabs (Members | Instructions).
@@ -249,6 +305,7 @@ export function SquadDetailPage() {
           memberCount={members.length}
           leaderName={getEntityName("agent", squad.leader_id)}
           creatorName={getEntityName("member", squad.creator_id)}
+          canManage={canEditSquad}
           uploadingAvatar={updateSquadMut.isPending}
           onUploadAvatar={(url) => updateSquadMut.mutateAsync({ avatar_url: url })}
           onRename={async (next) => { await updateSquadMut.mutateAsync({ name: next.trim() }); }}
@@ -261,18 +318,19 @@ export function SquadDetailPage() {
           memberStatusById={memberStatusById}
           isLeader={isLeader}
           isArchived={isArchived}
+          canManage={canEditSquad}
           getEntityName={getEntityName}
           onAddMemberClick={() => setShowAddMember(true)}
-          onCreateAgentClick={isWorkspaceAdmin ? () => setShowCreateAgent(true) : undefined}
+          onCreateAgentClick={canEditSquad ? () => setShowCreateAgent(true) : undefined}
           onSetLeader={(id) => setLeaderMut.mutate(id)}
           onRemoveMember={(m) => removeMemberMut.mutate(m)}
           onUpdateRole={async (m, role) => { await updateRoleMut.mutateAsync({ member: m, role }); }}
-          onSaveInstructions={async (next) => { await updateSquadMut.mutateAsync({ instructions: next }); toast.success("Instructions saved"); }}
+          onSaveInstructions={async (next) => { await updateSquadMut.mutateAsync({ instructions: next }); toast.success("小队指令已保存"); }}
           setLeaderPending={setLeaderMut.isPending}
         />
       </div>
 
-      {showAddMember && (
+      {showAddMember && canEditSquad && (
         <AddMemberDialog
           availableMembers={availableMembers}
           availableAgents={availableAgents}
@@ -287,7 +345,7 @@ export function SquadDetailPage() {
           mounted for workspace owner/admin since AddSquadMember is
           owner/admin-gated server-side; for everyone else the trigger
           never renders. */}
-      {showCreateAgent && isWorkspaceAdmin && (
+      {showCreateAgent && canEditSquad && (
         <CreateAgentDialog
           runtimes={runtimes}
           runtimesLoading={runtimesLoading}
@@ -467,13 +525,21 @@ function SquadNameEditor({
   value: string;
   onSave: (next: string) => Promise<void>;
 }) {
+  const { t } = useT("squads");
+
   return (
     <InlineEditPopover
       value={value}
       onSave={onSave}
-      title="Rename squad"
-      placeholder="Squad name"
-      validate={(v) => (v.trim().length > 0 ? null : "Name is required")}
+      title="重命名小队"
+      placeholder="小队名称"
+      cancelLabel={t(($) => $.name_editor.cancel)}
+      saveLabel="Save"
+      validate={(v) => (v.trim().length > 0 ? null : "请输入名称")}
+      onSaveSuccess={() => toast.success("Saved")}
+      onSaveError={(error) => {
+        toast.error(error instanceof Error ? error.message : "Failed to save");
+      }}
     >
       {(triggerProps) => (
         <button
@@ -486,100 +552,6 @@ function SquadNameEditor({
         </button>
       )}
     </InlineEditPopover>
-  );
-}
-
-function InlineEditPopover({
-  value,
-  onSave,
-  title,
-  placeholder,
-  validate,
-  children,
-}: {
-  value: string;
-  onSave: (next: string) => Promise<void>;
-  title: string;
-  placeholder?: string;
-  validate?: (v: string) => string | null;
-  children: (triggerProps: { onClick: (e: React.MouseEvent) => void }) => ReactNode;
-}) {
-  const { t } = useT("squads");
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setDraft(value);
-      setError(null);
-    }
-  }, [open, value]);
-
-  const commit = async () => {
-    const err = validate?.(draft) ?? null;
-    if (err) {
-      setError(err);
-      return;
-    }
-    if (draft === value) {
-      setOpen(false);
-      return;
-    }
-    setSaving(true);
-    try {
-      await onSave(draft);
-      setOpen(false);
-      toast.success("Saved");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={children({ onClick: () => setOpen(true) }) as React.ReactElement}
-      />
-      <PopoverContent align="start" className="w-72 p-3">
-        <div className="space-y-2">
-          <p className="text-xs font-medium">{title}</p>
-          <Input
-            autoFocus
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              if (error) setError(null);
-            }}
-            placeholder={placeholder}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                setOpen(false);
-                return;
-              }
-              if (isImeComposing(e)) return;
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void commit();
-              }
-            }}
-            className="h-8"
-          />
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={saving}>
-              {t(($) => $.name_editor.cancel)}
-            </Button>
-            <Button size="sm" onClick={() => void commit()} disabled={saving || draft === value}>
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
-            </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -659,13 +631,13 @@ function AddMemberDialog({
                     type="text"
                     value={pickerFilter}
                     onChange={(e) => setPickerFilter(e.target.value)}
-                    placeholder="Search members or agents..."
+                    placeholder="搜索成员或智能体..."
                     className="w-full bg-transparent text-sm placeholder:text-muted-foreground outline-none"
                   />
                 </div>
                 <div className="p-1 max-h-72 overflow-y-auto">
                   {filteredMembers.length > 0 && (
-                    <PickerSection label="Members">
+                    <PickerSection label="成员">
                       {filteredMembers.map((m) => (
                         <PickerItem
                           key={m.user_id}
@@ -683,7 +655,7 @@ function AddMemberDialog({
                     </PickerSection>
                   )}
                   {filteredAgents.length > 0 && (
-                    <PickerSection label="Agents">
+                    <PickerSection label="智能体">
                       {filteredAgents.map((a) => (
                         <PickerItem
                           key={a.id}
@@ -802,6 +774,7 @@ function SquadDetailInspector({
   memberCount,
   leaderName,
   creatorName,
+  canManage,
   uploadingAvatar,
   onUploadAvatar,
   onRename,
@@ -811,6 +784,7 @@ function SquadDetailInspector({
   memberCount: number;
   leaderName: string;
   creatorName: string;
+  canManage: boolean;
   uploadingAvatar: boolean;
   onUploadAvatar: (url: string) => Promise<unknown>;
   onRename: (next: string) => Promise<void>;
@@ -836,11 +810,22 @@ function SquadDetailInspector({
           onUpload={onUploadAvatar}
         />
         <div className="flex flex-col gap-1">
-          <SquadNameEditor value={squad.name} onSave={onRename} />
-          <SquadDescriptionEditor
-            value={squad.description ?? ""}
-            onSave={onUpdateDescription}
-          />
+          {canManage ? (
+            <>
+              <SquadNameEditor value={squad.name} onSave={onRename} />
+              <SquadDescriptionEditor
+                value={squad.description ?? ""}
+                onSave={onUpdateDescription}
+              />
+            </>
+          ) : (
+            <>
+              <div className="text-sm font-medium">{squad.name}</div>
+              {squad.description ? (
+                <div className="text-xs text-muted-foreground">{squad.description}</div>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
@@ -850,30 +835,40 @@ function SquadDetailInspector({
           {t(($) => $.inspector.details_section)}
         </div>
         <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
-          <InspectorRow label="Leader">
+          <InspectorRow label="队长">
             <span className="flex min-w-0 items-center gap-1.5">
               <ActorAvatar actorType="agent" actorId={squad.leader_id} size={14} />
               <span className="truncate">{leaderName}</span>
             </span>
           </InspectorRow>
-          <InspectorRow label="Members">
+          <InspectorRow label="成员">
             <span className="text-muted-foreground tabular-nums">{memberCount}</span>
           </InspectorRow>
-          <InspectorRow label="Created by">
+          <InspectorRow label="使用范围">
+            <ResourceScopeBadge
+              scope={squadResourceScope(squad.scope)}
+              label={
+                squad.scope === "personal"
+                  ? t(($) => $.page.scope_personal)
+                  : t(($) => $.page.scope_workspace)
+              }
+            />
+          </InspectorRow>
+          <InspectorRow label="创建者">
             <span className="flex min-w-0 items-center gap-1.5">
               <ActorAvatar actorType="member" actorId={squad.creator_id} size={14} />
               <span className="truncate">{creatorName}</span>
             </span>
           </InspectorRow>
-          <InspectorRow label="Created">
+          <InspectorRow label="创建时间">
             <span className="text-muted-foreground">{timeAgo(squad.created_at)}</span>
           </InspectorRow>
-          <InspectorRow label="Updated">
+          <InspectorRow label="更新时间">
             <span className="text-muted-foreground">{timeAgo(squad.updated_at)}</span>
           </InspectorRow>
         </div>
       </div>
-    </aside>
+  </aside>
   );
 }
 
@@ -995,9 +990,30 @@ function SquadDescriptionEditorBody({
 type SquadDetailTab = "members" | "instructions";
 
 const squadDetailTabs: { id: SquadDetailTab; label: string; icon: typeof FileText }[] = [
-  { id: "members", label: "Members", icon: Users },
-  { id: "instructions", label: "Instructions", icon: FileText },
+  { id: "members", label: "成员", icon: Users },
+  { id: "instructions", label: "指令", icon: FileText },
 ];
+
+type SquadMembersTabProps = {
+  members: SquadMember[];
+  memberStatusById: Map<string, SquadMemberStatus>;
+  isLeader: (m: SquadMember) => boolean;
+  isArchived: (m: SquadMember) => boolean;
+  canManage: boolean;
+  getEntityName: (type: string, id: string) => string;
+  onAddMemberClick: () => void;
+  // Optional: only passed when the current user can manage the squad.
+  onCreateAgentClick?: () => void;
+  onSetLeader: (agentId: string) => void;
+  onRemoveMember: (m: SquadMember) => void;
+  onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
+  setLeaderPending: boolean;
+};
+
+type SquadOverviewPaneProps = SquadMembersTabProps & {
+  squad: Squad;
+  onSaveInstructions: (next: string) => Promise<void>;
+};
 
 function SquadOverviewPane({
   squad,
@@ -1005,6 +1021,7 @@ function SquadOverviewPane({
   memberStatusById,
   isLeader,
   isArchived,
+  canManage,
   getEntityName,
   onAddMemberClick,
   onCreateAgentClick,
@@ -1013,24 +1030,7 @@ function SquadOverviewPane({
   onUpdateRole,
   onSaveInstructions,
   setLeaderPending,
-}: {
-  squad: Squad;
-  members: SquadMember[];
-  memberStatusById: Map<string, SquadMemberStatus>;
-  isLeader: (m: SquadMember) => boolean;
-  isArchived: (m: SquadMember) => boolean;
-  getEntityName: (type: string, id: string) => string;
-  onAddMemberClick: () => void;
-  // Optional — only passed when the current user can manage the squad
-  // (workspace owner/admin). Hidden otherwise so plain members don't
-  // see a button they can't action.
-  onCreateAgentClick?: () => void;
-  onSetLeader: (agentId: string) => void;
-  onRemoveMember: (m: SquadMember) => void;
-  onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
-  onSaveInstructions: (next: string) => Promise<void>;
-  setLeaderPending: boolean;
-}) {
+}: SquadOverviewPaneProps) {
   const { t } = useT("squads");
   const [activeTab, setActiveTab] = useState<SquadDetailTab>("members");
   const [activeDirty, setActiveDirty] = useState(false);
@@ -1078,6 +1078,7 @@ function SquadOverviewPane({
               memberStatusById={memberStatusById}
               isLeader={isLeader}
               isArchived={isArchived}
+              canManage={canManage}
               getEntityName={getEntityName}
               onAddMemberClick={onAddMemberClick}
               onCreateAgentClick={onCreateAgentClick}
@@ -1092,7 +1093,7 @@ function SquadOverviewPane({
           <div className="flex h-full flex-col p-4 md:p-6">
             <SquadInstructionsTab
               squad={squad}
-              onSave={onSaveInstructions}
+              onSave={canManage ? onSaveInstructions : undefined}
               onDirtyChange={setActiveDirty}
             />
           </div>
@@ -1135,12 +1136,21 @@ const SQUAD_STATUS_DOT_CLASS: Record<SquadMemberStatusValue, string> = {
   archived: "bg-muted-foreground/40",
 };
 
+const squadMemberTypeLabel = (type: SquadMember["member_type"]) =>
+  type === "agent" ? "智能体" : "成员";
+
+const visibleMemberRole = (role: string | null | undefined, name: string) => {
+  const trimmedRole = role?.trim() ?? "";
+  return trimmedRole && trimmedRole !== name.trim() ? trimmedRole : "";
+};
+
 // Members tab body — re-uses the existing list/role editing patterns.
 function SquadMembersTab({
   members,
   memberStatusById,
   isLeader,
   isArchived,
+  canManage,
   getEntityName,
   onAddMemberClick,
   onCreateAgentClick,
@@ -1148,20 +1158,7 @@ function SquadMembersTab({
   onRemoveMember,
   onUpdateRole,
   setLeaderPending,
-}: {
-  members: SquadMember[];
-  memberStatusById: Map<string, SquadMemberStatus>;
-  isLeader: (m: SquadMember) => boolean;
-  isArchived: (m: SquadMember) => boolean;
-  getEntityName: (type: string, id: string) => string;
-  onAddMemberClick: () => void;
-  // Hidden for non-admins — see SquadOverviewPane.
-  onCreateAgentClick?: () => void;
-  onSetLeader: (agentId: string) => void;
-  onRemoveMember: (m: SquadMember) => void;
-  onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
-  setLeaderPending: boolean;
-}) {
+}: SquadMembersTabProps) {
   const { t } = useT("squads");
   const timeAgo = useTimeAgo();
   const p = useWorkspacePaths();
@@ -1174,18 +1171,20 @@ function SquadMembersTab({
             {t(($) => $.members_tab.section_count, { count: members.length })}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {onCreateAgentClick && (
-            <Button size="sm" variant="outline" onClick={onCreateAgentClick}>
+        {canManage && (
+          <div className="flex items-center gap-2">
+            {onCreateAgentClick && (
+              <Button size="sm" variant="outline" onClick={onCreateAgentClick}>
+                <Plus className="size-3.5 mr-1.5" />
+                {t(($) => $.members_tab.create_agent_button)}
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={onAddMemberClick}>
               <Plus className="size-3.5 mr-1.5" />
-              {t(($) => $.members_tab.create_agent_button)}
+              {t(($) => $.members_tab.add_member_button)}
             </Button>
-          )}
-          <Button size="sm" variant="outline" onClick={onAddMemberClick}>
-            <Plus className="size-3.5 mr-1.5" />
-            {t(($) => $.members_tab.add_member_button)}
-          </Button>
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -1206,6 +1205,8 @@ function SquadMembersTab({
           const activeIssues = status?.active_issues ?? [];
           const primaryIssue = activeIssues[0];
           const extraIssueCount = Math.max(0, activeIssues.length - 1);
+          const memberName = getEntityName(m.member_type, m.member_id);
+          const memberRole = visibleMemberRole(m.role, memberName);
           // Show last_active only when the agent isn't currently working —
           // a "working" pill already implies the agent is live, and a
           // "last active 2s ago" line next to it is just noise.
@@ -1223,8 +1224,8 @@ function SquadMembersTab({
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{getEntityName(m.member_type, m.member_id)}</span>
-                  <span className="text-xs text-muted-foreground capitalize">{m.member_type}</span>
+                  <span className="text-sm font-medium">{memberName}</span>
+                  <span className="text-xs text-muted-foreground">{squadMemberTypeLabel(m.member_type)}</span>
                   {isLeader(m) && (
                     <span className="inline-flex items-center gap-0.5 text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded">
                       <Crown className="size-3" />
@@ -1238,10 +1239,14 @@ function SquadMembersTab({
                     </span>
                   )}
                 </div>
-                <RoleEditor
-                  value={m.role ?? ""}
-                  onSave={async (next) => { await onUpdateRole(m, next); }}
-                />
+                {canManage && memberRole ? (
+                  <RoleEditor
+                    value={memberRole}
+                    onSave={async (next) => { await onUpdateRole(m, next); }}
+                  />
+                ) : memberRole ? (
+                  <div className="mt-0.5 text-xs text-muted-foreground">{memberRole}</div>
+                ) : null}
                 {primaryIssue && (
                   <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground min-w-0">
                     <AppLink
@@ -1271,68 +1276,68 @@ function SquadMembersTab({
                   </div>
                 )}
               </div>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-              {m.member_type === "agent" && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <AppLink
-                        href={p.agentDetail(m.member_id)}
-                        className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                        aria-label={t(($) => $.members_tab.view_agent_tooltip)}
-                      >
-                        <ArrowUpRight className="size-3.5" />
-                      </AppLink>
-                    }
-                  />
-                  <TooltipContent>
-                    {t(($) => $.members_tab.view_agent_tooltip)}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {m.member_type === "agent" && !isLeader(m) && !isArchived(m) && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-amber-600 h-8 w-8 p-0"
-                        onClick={() => onSetLeader(m.member_id)}
-                        disabled={setLeaderPending}
-                        aria-label={t(($) => $.members_tab.make_leader_tooltip)}
-                      >
-                        <Crown className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    {t(($) => $.members_tab.make_leader_tooltip)}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {!isLeader(m) && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-destructive h-8 w-8 p-0"
-                        onClick={() => onRemoveMember(m)}
-                        aria-label={t(($) => $.members_tab.remove_member_tooltip)}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    {t(($) => $.members_tab.remove_member_tooltip)}
-                  </TooltipContent>
-                </Tooltip>
-              )}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                {m.member_type === "agent" && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <AppLink
+                          href={p.agentDetail(m.member_id)}
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                          aria-label={t(($) => $.members_tab.view_agent_tooltip)}
+                        >
+                          <ArrowUpRight className="size-3.5" />
+                        </AppLink>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $.members_tab.view_agent_tooltip)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {canManage && m.member_type === "agent" && !isLeader(m) && !isArchived(m) && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-amber-600 h-8 w-8 p-0"
+                          onClick={() => onSetLeader(m.member_id)}
+                          disabled={setLeaderPending}
+                          aria-label={t(($) => $.members_tab.make_leader_tooltip)}
+                        >
+                          <Crown className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $.members_tab.make_leader_tooltip)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {canManage && !isLeader(m) && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-destructive h-8 w-8 p-0"
+                          onClick={() => onRemoveMember(m)}
+                          aria-label={t(($) => $.members_tab.remove_member_tooltip)}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $.members_tab.remove_member_tooltip)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             </div>
-          </div>
           );
         })}
       </div>
@@ -1349,13 +1354,14 @@ function SquadInstructionsTab({
   onDirtyChange,
 }: {
   squad: Squad;
-  onSave: (instructions: string) => Promise<void>;
+  onSave?: (instructions: string) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("squads");
   const [value, setValue] = useState(squad.instructions ?? "");
   const [saving, setSaving] = useState(false);
   const isDirty = value !== (squad.instructions ?? "");
+  const canEdit = !!onSave;
 
   useEffect(() => {
     setValue(squad.instructions ?? "");
@@ -1366,6 +1372,7 @@ function SquadInstructionsTab({
   }, [isDirty, onDirtyChange]);
 
   const handleSave = async () => {
+    if (!onSave) return;
     setSaving(true);
     try {
       await onSave(value);
@@ -1377,36 +1384,50 @@ function SquadInstructionsTab({
   };
 
   return (
-    <div className="flex h-full flex-col gap-4">
+    <div className="space-y-4 pb-2">
       <p className="text-xs text-muted-foreground">
         {t(($) => $.instructions_tab.description)}
       </p>
 
-      <div className="flex-1 min-h-0 overflow-y-auto rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">
-        <ContentEditor
-          key={squad.id}
-          defaultValue={value}
-          onUpdate={setValue}
-          placeholder="e.g. Always start by writing a failing test. Prefer small, atomic commits."
-          debounceMs={150}
-          disableMentions
-          className="min-h-full"
-        />
+      <div>
+        <div className="text-sm font-medium text-foreground">PM 提示词</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          这里的内容会注入给小队队长，用来约束它如何调度成员、推进阶段和收口。
+        </div>
+      </div>
+      <div className="min-h-80 rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">
+        {canEdit ? (
+          <ContentEditor
+            key={squad.id}
+            defaultValue={value}
+            onUpdate={setValue}
+            placeholder="例如：先澄清需求和验收口径，再拆分任务；实现后必须补齐测试证据和交接记录。"
+            debounceMs={150}
+            disableMentions
+            className="min-h-full"
+          />
+        ) : (
+          <div className="whitespace-pre-wrap text-sm text-muted-foreground">
+            {value || "暂无小队指令。"}
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-end gap-3">
-        {isDirty && (
-          <span className="text-xs text-muted-foreground">{t(($) => $.instructions_tab.unsaved_changes)}</span>
-        )}
-        <Button size="sm" onClick={handleSave} disabled={!isDirty || saving}>
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
+      {canEdit && (
+        <div className="flex items-center justify-end gap-3">
+          {isDirty && (
+            <span className="text-xs text-muted-foreground">{t(($) => $.instructions_tab.unsaved_changes)}</span>
           )}
-          {t(($) => $.instructions_tab.save_button)}
-        </Button>
-      </div>
+          <Button size="sm" onClick={handleSave} disabled={!isDirty || saving}>
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            {t(($) => $.instructions_tab.save_button)}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

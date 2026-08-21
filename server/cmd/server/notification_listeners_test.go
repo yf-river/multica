@@ -34,6 +34,15 @@ func cleanupInboxForIssue(t *testing.T, issueID string) {
 	testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
 }
 
+func inboxItemCountForIssue(t *testing.T, issueID string) int {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*)::int FROM inbox_item WHERE issue_id = $1`, issueID).Scan(&count); err != nil {
+		t.Fatalf("count inbox items for issue: %v", err)
+	}
+	return count
+}
+
 // addTestSubscriber manually inserts a subscriber for an issue.
 func addTestSubscriber(t *testing.T, issueID, userType, userID, reason string) {
 	t.Helper()
@@ -76,16 +85,17 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	return bus
 }
 
-// TestNotification_IssueCreated_AssigneeNotified verifies that when an issue is
-// created with an assignee different from the creator, the assignee receives an
-// "issue_assigned" inbox notification and the creator receives nothing.
-func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
+type notificationIssueTestFixture struct {
+	queries     *db.Queries
+	bus         *events.Bus
+	issueID     string
+	inboxEvents *[]events.Event
+}
+
+func setupNotificationIssueTest(t *testing.T) notificationIssueTestFixture {
+	t.Helper()
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
-
-	assigneeEmail := "notif-assignee-created@multica.ai"
-	assigneeID := createTestUser(t, assigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeEmail) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -93,21 +103,78 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 		cleanupTestIssue(t, issueID)
 	})
 
-	// Track inbox:new events
 	var inboxEvents []events.Event
 	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
 		inboxEvents = append(inboxEvents, e)
 	})
 
+	return notificationIssueTestFixture{
+		queries:     queries,
+		bus:         bus,
+		issueID:     issueID,
+		inboxEvents: &inboxEvents,
+	}
+}
+
+func (f notificationIssueTestFixture) inboxEventCount() int {
+	return len(*f.inboxEvents)
+}
+
+type parentBubbleNotificationFixture struct {
+	queries     *db.Queries
+	bus         *events.Bus
+	parentSubID string
+	subID       string
+}
+
+func setupParentBubbleNotificationTest(t *testing.T, parentSubAccount string) parentBubbleNotificationFixture {
+	t.Helper()
+	queries := db.New(testPool)
+	bus := newNotificationBus(t, queries)
+
+	parentSubID := createTestUser(t, parentSubAccount)
+	t.Cleanup(func() { cleanupTestUser(t, parentSubAccount) })
+
+	parentID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, parentID)
+		cleanupTestIssue(t, parentID)
+	})
+	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, subID)
+		cleanupTestIssue(t, subID)
+	})
+
+	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
+
+	return parentBubbleNotificationFixture{
+		queries:     queries,
+		bus:         bus,
+		parentSubID: parentSubID,
+		subID:       subID,
+	}
+}
+
+// TestNotification_IssueCreated_AssigneeNotified verifies that when an issue is
+// created with an assignee different from the creator, the assignee receives an
+// "issue_assigned" inbox notification and the creator receives nothing.
+func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+
+	assigneeAccount := "notif-assignee-created@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
+
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:           issueID,
+				ID:           f.issueID,
 				WorkspaceID:  testWorkspaceID,
 				Title:        "notif test issue",
 				Status:       "todo",
@@ -121,7 +188,7 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	})
 
 	// Assignee should have an inbox item
-	items := inboxItemsForRecipient(t, queries, assigneeID)
+	items := inboxItemsForRecipient(t, f.queries, assigneeID)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 inbox item for assignee, got %d", len(items))
 	}
@@ -133,44 +200,65 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	}
 
 	// Creator (actor) should NOT have any inbox items
-	creatorItems := inboxItemsForRecipient(t, queries, testUserID)
+	creatorItems := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(creatorItems) != 0 {
 		t.Fatalf("expected 0 inbox items for creator, got %d", len(creatorItems))
 	}
 
 	// At least one inbox:new event should have been published
-	if len(inboxEvents) < 1 {
+	if f.inboxEventCount() < 1 {
 		t.Fatal("expected at least 1 inbox:new event")
 	}
 }
 
-// TestNotification_IssueCreated_SelfAssign verifies that when the creator
-// assigns the issue to themselves, no notification is generated.
-func TestNotification_IssueCreated_SelfAssign(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+func TestNotification_IssueCreated_SkipsUnsupportedSquadAssigneeDirectInbox(t *testing.T) {
+	f := setupNotificationIssueTest(t)
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	var inboxEvents []events.Event
-	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
-		inboxEvents = append(inboxEvents, e)
-	})
-
-	assigneeType := "member"
-	assigneeID := testUserID // self-assign
-	bus.Publish(events.Event{
+	assigneeType := "squad"
+	assigneeID := "11111111-2222-3333-4444-555555555555"
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:           issueID,
+				ID:           f.issueID,
+				WorkspaceID:  testWorkspaceID,
+				Title:        "test squad issue",
+				Status:       "todo",
+				Priority:     "medium",
+				CreatorType:  "member",
+				CreatorID:    testUserID,
+				AssigneeType: &assigneeType,
+				AssigneeID:   &assigneeID,
+			},
+		},
+	})
+
+	if count := inboxItemCountForIssue(t, f.issueID); count != 0 {
+		t.Fatalf("expected no inbox items for unsupported squad assignee, got %d", count)
+	}
+	if f.inboxEventCount() != 0 {
+		t.Fatalf("expected no inbox:new events for unsupported squad assignee, got %d", f.inboxEventCount())
+	}
+}
+
+// TestNotification_IssueCreated_SelfAssign verifies that when the creator
+// assigns the issue to themselves, no notification is generated.
+func TestNotification_IssueCreated_SelfAssign(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+
+	assigneeType := "member"
+	assigneeID := testUserID // self-assign
+	f.bus.Publish(events.Event{
+		Type:        protocol.EventIssueCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID:           f.issueID,
 				WorkspaceID:  testWorkspaceID,
 				Title:        "self-assign issue",
 				Status:       "todo",
@@ -183,40 +271,28 @@ func TestNotification_IssueCreated_SelfAssign(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, testUserID)
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items for self-assign, got %d", len(items))
 	}
-	if len(inboxEvents) != 0 {
-		t.Fatalf("expected 0 inbox:new events for self-assign, got %d", len(inboxEvents))
+	if f.inboxEventCount() != 0 {
+		t.Fatalf("expected 0 inbox:new events for self-assign, got %d", f.inboxEventCount())
 	}
 }
 
 // TestNotification_IssueCreated_NoAssignee verifies that when an issue is
 // created without an assignee, no notifications are generated.
 func TestNotification_IssueCreated_NoAssignee(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupNotificationIssueTest(t)
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	var inboxEvents []events.Event
-	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
-		inboxEvents = append(inboxEvents, e)
-	})
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          issueID,
+				ID:          f.issueID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "no assignee issue",
 				Status:      "todo",
@@ -227,12 +303,12 @@ func TestNotification_IssueCreated_NoAssignee(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, testUserID)
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items for no-assignee issue, got %d", len(items))
 	}
-	if len(inboxEvents) != 0 {
-		t.Fatalf("expected 0 inbox:new events, got %d", len(inboxEvents))
+	if f.inboxEventCount() != 0 {
+		t.Fatalf("expected 0 inbox:new events, got %d", f.inboxEventCount())
 	}
 }
 
@@ -243,13 +319,13 @@ func TestNotification_StatusChanged(t *testing.T) {
 	bus := newNotificationBus(t, queries)
 
 	// Create two extra users as subscribers
-	sub1Email := "notif-sub1-status@multica.ai"
-	sub1ID := createTestUser(t, sub1Email)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Email) })
+	sub1Account := "notif-sub1-status@multica"
+	sub1ID := createTestUser(t, sub1Account)
+	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
 
-	sub2Email := "notif-sub2-status@multica.ai"
-	sub2ID := createTestUser(t, sub2Email)
-	t.Cleanup(func() { cleanupTestUser(t, sub2Email) })
+	sub2Account := "notif-sub2-status@multica"
+	sub2ID := createTestUser(t, sub2Account)
+	t.Cleanup(func() { cleanupTestUser(t, sub2Account) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -322,13 +398,13 @@ func TestNotification_CommentCreated(t *testing.T) {
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
 
-	commenterEmail := "notif-commenter@multica.ai"
-	commenterID := createTestUser(t, commenterEmail)
-	t.Cleanup(func() { cleanupTestUser(t, commenterEmail) })
+	commenterAccount := "notif-commenter@multica"
+	commenterID := createTestUser(t, commenterAccount)
+	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
 
-	sub1Email := "notif-sub1-comment@multica.ai"
-	sub1ID := createTestUser(t, sub1Email)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Email) })
+	sub1Account := "notif-sub1-comment@multica"
+	sub1ID := createTestUser(t, sub1Account)
+	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -402,15 +478,15 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 	bus := newNotificationBus(t, queries)
 
 	// Subscriber on the issue who would normally receive new_comment.
-	subEmail := "notif-system-comment-sub@multica.ai"
-	subID := createTestUser(t, subEmail)
-	t.Cleanup(func() { cleanupTestUser(t, subEmail) })
+	subAccount := "notif-system-comment-sub@multica"
+	subID := createTestUser(t, subAccount)
+	t.Cleanup(func() { cleanupTestUser(t, subAccount) })
 
 	// A second member whose UUID we will smuggle into the system-comment
 	// body as a fake mention to prove the listener does not parse it.
-	targetEmail := "notif-system-comment-target@multica.ai"
-	targetID := createTestUser(t, targetEmail)
-	t.Cleanup(func() { cleanupTestUser(t, targetEmail) })
+	targetAccount := "notif-system-comment-target@multica"
+	targetID := createTestUser(t, targetAccount)
+	t.Cleanup(func() { cleanupTestUser(t, targetAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -496,17 +572,17 @@ func TestNotification_AssigneeChanged(t *testing.T) {
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
 
-	oldAssigneeEmail := "notif-old-assignee@multica.ai"
-	oldAssigneeID := createTestUser(t, oldAssigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, oldAssigneeEmail) })
+	oldAssigneeAccount := "notif-old-assignee@multica"
+	oldAssigneeID := createTestUser(t, oldAssigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, oldAssigneeAccount) })
 
-	newAssigneeEmail := "notif-new-assignee@multica.ai"
-	newAssigneeID := createTestUser(t, newAssigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, newAssigneeEmail) })
+	newAssigneeAccount := "notif-new-assignee@multica"
+	newAssigneeID := createTestUser(t, newAssigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, newAssigneeAccount) })
 
-	bystanderEmail := "notif-bystander@multica.ai"
-	bystanderID := createTestUser(t, bystanderEmail)
-	t.Cleanup(func() { cleanupTestUser(t, bystanderEmail) })
+	bystanderAccount := "notif-bystander@multica"
+	bystanderID := createTestUser(t, bystanderAccount)
+	t.Cleanup(func() { cleanupTestUser(t, bystanderAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -538,8 +614,8 @@ func TestNotification_AssigneeChanged(t *testing.T) {
 				AssigneeType: &newAssigneeType,
 				AssigneeID:   &newAssigneeID,
 			},
-			"assignee_changed":  true,
-			"status_changed":    false,
+			"assignee_changed":   true,
+			"status_changed":     false,
 			"prev_assignee_type": &oldAssigneeType,
 			"prev_assignee_id":   &oldAssigneeID,
 		},
@@ -675,9 +751,9 @@ func TestNotification_PriorityChanged(t *testing.T) {
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
 
-	sub1Email := "notif-sub1-priority@multica.ai"
-	sub1ID := createTestUser(t, sub1Email)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Email) })
+	sub1Account := "notif-sub1-priority@multica"
+	sub1ID := createTestUser(t, sub1Account)
+	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -740,9 +816,9 @@ func TestNotification_DueDateChanged(t *testing.T) {
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
 
-	sub1Email := "notif-sub1-duedate@multica.ai"
-	sub1ID := createTestUser(t, sub1Email)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Email) })
+	sub1Account := "notif-sub1-duedate@multica"
+	sub1ID := createTestUser(t, sub1Account)
+	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -801,9 +877,9 @@ func TestNotification_StartDateChanged(t *testing.T) {
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
 
-	sub1Email := "notif-sub1-startdate@multica.ai"
-	sub1ID := createTestUser(t, sub1Email)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Email) })
+	sub1Account := "notif-sub1-startdate@multica"
+	sub1ID := createTestUser(t, sub1Account)
+	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -858,36 +934,16 @@ func TestNotification_StartDateChanged(t *testing.T) {
 // TestNotification_ParentBubble_StatusChanged verifies that a status_changed
 // event on a sub-issue bubbles to subscribers of the parent issue.
 func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-status@multica")
 
-	parentSubEmail := "notif-parent-sub-status@multica.ai"
-	parentSubID := createTestUser(t, parentSubEmail)
-	t.Cleanup(func() { cleanupTestUser(t, parentSubEmail) })
-
-	parentID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, parentID)
-		cleanupTestIssue(t, parentID)
-	})
-	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, subID)
-		cleanupTestIssue(t, subID)
-	})
-
-	// Subscribe a watcher to the parent only — they should hear about
-	// status changes on the sub-issue.
-	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          subID,
+				ID:          f.subID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "sub-issue status bubble",
 				Status:      "done",
@@ -901,7 +957,7 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, parentSubID)
+	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 inbox item bubbled to parent subscriber, got %d", len(items))
 	}
@@ -909,9 +965,9 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 		t.Fatalf("expected type 'status_changed', got %q", items[0].Type)
 	}
 	// The inbox item should point to the sub-issue, not the parent.
-	if util.UUIDToString(items[0].IssueID) != subID {
+	if util.UUIDToString(items[0].IssueID) != f.subID {
 		t.Fatalf("expected inbox item issue_id=%s (sub-issue), got %s",
-			subID, util.UUIDToString(items[0].IssueID))
+			f.subID, util.UUIDToString(items[0].IssueID))
 	}
 }
 
@@ -920,31 +976,13 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 // are the loudest signal and we explicitly want to keep them off the parent
 // watcher's inbox.
 func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-comment@multica")
 
-	commenterEmail := "notif-parent-bubble-commenter@multica.ai"
-	commenterID := createTestUser(t, commenterEmail)
-	t.Cleanup(func() { cleanupTestUser(t, commenterEmail) })
+	commenterAccount := "notif-parent-bubble-commenter@multica"
+	commenterID := createTestUser(t, commenterAccount)
+	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
 
-	parentSubEmail := "notif-parent-sub-comment@multica.ai"
-	parentSubID := createTestUser(t, parentSubEmail)
-	t.Cleanup(func() { cleanupTestUser(t, parentSubEmail) })
-
-	parentID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, parentID)
-		cleanupTestIssue(t, parentID)
-	})
-	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, subID)
-		cleanupTestIssue(t, subID)
-	})
-
-	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -952,7 +990,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
 				ID:         "00000000-0000-0000-0000-000000000000",
-				IssueID:    subID,
+				IssueID:    f.subID,
 				AuthorType: "member",
 				AuthorID:   commenterID,
 				Content:    "comment on sub-issue",
@@ -963,7 +1001,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, parentSubID)
+	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items bubbled to parent subscriber for new_comment, got %d", len(items))
 	}
@@ -972,34 +1010,16 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 // TestNotification_ParentBubble_PriorityChangeSuppressed verifies that a
 // priority change on a sub-issue does NOT bubble to parent subscribers.
 func TestNotification_ParentBubble_PriorityChangeSuppressed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-priority@multica")
 
-	parentSubEmail := "notif-parent-sub-priority@multica.ai"
-	parentSubID := createTestUser(t, parentSubEmail)
-	t.Cleanup(func() { cleanupTestUser(t, parentSubEmail) })
-
-	parentID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, parentID)
-		cleanupTestIssue(t, parentID)
-	})
-	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, subID)
-		cleanupTestIssue(t, subID)
-	})
-
-	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          subID,
+				ID:          f.subID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "sub-issue priority bubble",
 				Status:      "todo",
@@ -1014,7 +1034,7 @@ func TestNotification_ParentBubble_PriorityChangeSuppressed(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, parentSubID)
+	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items bubbled to parent subscriber for priority_changed, got %d", len(items))
 	}
@@ -1081,9 +1101,9 @@ func TestNotification_StatusChange_ArchivesStaleTaskFailed(t *testing.T) {
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
 
-	subEmail := "notif-archive-task-failed-sub@multica.ai"
-	subID := createTestUser(t, subEmail)
-	t.Cleanup(func() { cleanupTestUser(t, subEmail) })
+	subAccount := "notif-archive-task-failed-sub@multica"
+	subID := createTestUser(t, subAccount)
+	t.Cleanup(func() { cleanupTestUser(t, subAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {

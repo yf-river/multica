@@ -1,4 +1,4 @@
-// PII scrubbing for `$exception` events before they leave the client.
+// Sensitive-token scrubbing for `$exception` events before they leave the client.
 //
 // Exception autocapture (`capture_exceptions: true`) sends the error message
 // and stack. Stack frames are code locations (file / line / function) and are
@@ -13,15 +13,13 @@ const REDACTED = "[redacted]";
 // Order matters: strip query strings before the generic long-token rule, so a
 // URL's host isn't itself shredded.
 const PATTERNS: Array<[RegExp, string]> = [
-  // Emails.
-  [/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, REDACTED],
   // URL query/fragment (may carry tokens / PII) — keep scheme+host+path.
   [/((?:https?|file|multica):\/\/[^\s?#]*)[?#]\S*/gi, `$1?${REDACTED}`],
   // Long opaque tokens: JWTs, API keys, UUIDs, session ids (24+ chars).
   [/\b[A-Za-z0-9_-]{24,}\b/g, REDACTED],
 ];
 
-/** Redact PII-ish substrings from a free-text string. */
+/** Redact sensitive token-like substrings from a free-text string. */
 export function redactText(input: unknown): unknown {
   if (typeof input !== "string" || input.length === 0) return input;
   let out = input;

@@ -21,60 +21,23 @@ const (
 
 // ClientIdentity captures the already-authenticated daemon connection scope.
 type ClientIdentity struct {
-	DaemonID string
-	UserID   string
-	// WorkspaceID is the legacy single-workspace scope used by older callers
-	// and daemon-token auth. New code should populate WorkspaceIDs from the
-	// runtime rows authorized for this connection.
-	WorkspaceID   string
+	DaemonID      string
+	UserID        string
 	WorkspaceIDs  []string
 	RuntimeIDs    []string
 	ClientVersion string
 }
 
-// AuthorizedWorkspaceIDs returns the connection's workspace scope in stable
-// order, preferring the multi-workspace field and falling back to WorkspaceID
-// for older tests/callers.
-func (i ClientIdentity) AuthorizedWorkspaceIDs() []string {
-	seen := make(map[string]struct{}, len(i.WorkspaceIDs)+1)
-	out := make([]string, 0, len(i.WorkspaceIDs)+1)
-	add := func(id string) {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			return
-		}
-		if _, ok := seen[id]; ok {
-			return
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
-	}
-	for _, id := range i.WorkspaceIDs {
-		add(id)
-	}
-	if len(out) == 0 {
-		add(i.WorkspaceID)
-	}
-	return out
-}
-
 func (i ClientIdentity) PrimaryWorkspaceID() string {
-	ids := i.AuthorizedWorkspaceIDs()
-	if len(ids) == 0 {
+	if len(i.WorkspaceIDs) == 0 {
 		return ""
 	}
-	return ids[0]
+	return i.WorkspaceIDs[0]
 }
 
 // AllowsWorkspace reports whether workspaceID is within the connection scope.
-// An empty scope remains permissive for legacy unit tests that construct
-// ClientIdentity directly without workspace data.
 func (i ClientIdentity) AllowsWorkspace(workspaceID string) bool {
-	ids := i.AuthorizedWorkspaceIDs()
-	if len(ids) == 0 {
-		return true
-	}
-	for _, id := range ids {
+	for _, id := range i.WorkspaceIDs {
 		if id == workspaceID {
 			return true
 		}
@@ -124,7 +87,7 @@ func (c *client) markSeen(eventID string) bool {
 // runtimeID is one of identity.RuntimeIDs (the connection's authenticated
 // scope) and return the ack payload to send back. Returning an error skips
 // the ack and is logged at debug level.
-type HeartbeatHandler func(ctx context.Context, identity ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error)
+type HeartbeatHandler func(ctx context.Context, identity ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error)
 
 // MessageKindRecorder is the optional metric hook called once per inbound
 // daemon WebSocket frame. kind is the protocol message type with the
@@ -330,35 +293,25 @@ func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
 func (h *Hub) notifyFrame(runtimeID string, data []byte, eventID string) (delivered bool, deduped bool) {
 	h.mu.RLock()
 	clients := h.byRuntime[runtimeID]
-	slow := make([]*client, 0)
-	for c := range clients {
-		if !c.markSeen(eventID) {
-			deduped = true
-			continue
-		}
-		select {
-		case c.send <- data:
-			delivered = true
-		default:
-			slow = append(slow, c)
-		}
-	}
+	delivered, deduped, slow := notifyClients(clients, data, eventID)
 	h.mu.RUnlock()
 
-	for _, c := range slow {
-		h.unregister(c)
-		c.conn.Close()
-	}
-	if len(slow) > 0 {
-		M.SlowEvictionsTotal.Add(int64(len(slow)))
-	}
+	h.evictSlowClients(slow)
 	return delivered, deduped
 }
 
 func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID string) (delivered bool, deduped bool) {
 	h.mu.RLock()
 	clients := h.byWorkspace[workspaceID]
-	slow := make([]*client, 0)
+	delivered, deduped, slow := notifyClients(clients, data, eventID)
+	h.mu.RUnlock()
+
+	h.evictSlowClients(slow)
+	return delivered, deduped
+}
+
+func notifyClients(clients map[*client]bool, data []byte, eventID string) (delivered bool, deduped bool, slow []*client) {
+	slow = make([]*client, 0)
 	for c := range clients {
 		if !c.markSeen(eventID) {
 			deduped = true
@@ -371,8 +324,10 @@ func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID stri
 			slow = append(slow, c)
 		}
 	}
-	h.mu.RUnlock()
+	return delivered, deduped, slow
+}
 
+func (h *Hub) evictSlowClients(slow []*client) {
 	for _, c := range slow {
 		h.unregister(c)
 		c.conn.Close()
@@ -380,7 +335,6 @@ func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID stri
 	if len(slow) > 0 {
 		M.SlowEvictionsTotal.Add(int64(len(slow)))
 	}
-	return delivered, deduped
 }
 
 func taskAvailableFrame(runtimeID, taskID string) ([]byte, error) {
@@ -434,7 +388,7 @@ func (h *Hub) register(c *client) {
 		}
 		conns[c] = true
 	}
-	workspaceIDs := c.identity.AuthorizedWorkspaceIDs()
+	workspaceIDs := c.identity.WorkspaceIDs
 	for _, workspaceID := range workspaceIDs {
 		conns := h.byWorkspace[workspaceID]
 		if conns == nil {
@@ -474,7 +428,7 @@ func (h *Hub) unregister(c *client) {
 			}
 		}
 	}
-	workspaceIDs := c.identity.AuthorizedWorkspaceIDs()
+	workspaceIDs := c.identity.WorkspaceIDs
 	for _, workspaceID := range workspaceIDs {
 		if conns := h.byWorkspace[workspaceID]; conns != nil {
 			delete(conns, c)
@@ -584,7 +538,7 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 	// that keeps the HTTP heartbeat from putting a per-call timeout on
 	// PopPending. The natural bound is the read pump's lifetime (the conn
 	// closes if the daemon goes away) plus Redis's own server-side limits.
-	ack, err := handler(context.Background(), c.identity, payload.RuntimeID, payload.SupportsBatchImport)
+	ack, err := handler(context.Background(), c.identity, payload.RuntimeID)
 	if err != nil {
 		slog.Warn("daemon websocket heartbeat handler failed",
 			"error", err,

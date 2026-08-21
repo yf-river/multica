@@ -5,12 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, runtimes: enRuntimes, agents: enAgents },
+  "zh-Hans": { common: enCommon, runtimes: enRuntimes, agents: enAgents },
 };
 
 const mockUpdateRuntime = vi.hoisted(() => vi.fn());
@@ -91,12 +91,16 @@ vi.mock("@multica/core/runtimes/mutations", () => ({
   }),
 }));
 
-// Stubbing ProviderLogo / UsageSection / UpdateSection avoids dragging in
-// chart libs and additional query keys we don't care about here.
+// Stubbing ProviderLogo / UsageSection avoids dragging in chart libs and
+// additional query keys we don't care about here.
 vi.mock("./provider-logo", () => ({ ProviderLogo: () => null }));
-vi.mock("./update-section", () => ({ UpdateSection: () => null }));
 vi.mock("./usage-section", () => ({ UsageSection: () => null }));
-vi.mock("./shared", () => ({ HealthBadge: () => null }));
+vi.mock("./shared", () => ({
+  HealthBadge: () => null,
+  RuntimeVisibilityBadge: ({ runtime }: { runtime: AgentRuntime }) => (
+    <span>{runtime.scope === "workspace" ? "工作区" : "个人"}</span>
+  ),
+}));
 vi.mock("../../agents/presence", () => ({
   availabilityConfig: { offline: { dotClass: "", textClass: "" } },
   workloadConfig: { idle: { icon: () => null, textClass: "" } },
@@ -122,7 +126,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     device_info: "host.local",
     metadata: {},
     owner_id: "user-me",
-    visibility: "private",
+    scope: "personal",
     last_seen_at: "2026-04-27T11:59:50Z",
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
@@ -133,7 +137,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
 function renderDetail(runtime: AgentRuntime) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         <RuntimeDetail runtime={runtime} />
       </QueryClientProvider>
@@ -146,24 +150,24 @@ describe("RuntimeDetail visibility section", () => {
 
   it("shows owner-editable visibility choices when the caller owns the runtime", () => {
     renderDetail(makeRuntime({ owner_id: "user-me" }));
-    expect(screen.getByText("Visibility")).toBeInTheDocument();
-    expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(screen.getByText("使用范围")).toBeInTheDocument();
+    expect(screen.getByText("个人")).toBeInTheDocument();
+    expect(screen.getByText("工作区")).toBeInTheDocument();
   });
 
-  it("flips visibility to public when the owner clicks the Public choice", async () => {
-    renderDetail(makeRuntime({ owner_id: "user-me", visibility: "private" }));
-    fireEvent.click(screen.getByText("Public"));
+  it("flips scope to workspace when the owner clicks the workspace choice", async () => {
+    renderDetail(makeRuntime({ owner_id: "user-me", scope: "personal" }));
+    fireEvent.click(screen.getByText("工作区"));
     await waitFor(() =>
-      expect(mockUpdateRuntime).toHaveBeenCalledWith("rt-1", { visibility: "public" }),
+      expect(mockUpdateRuntime).toHaveBeenCalledWith("rt-1", { scope: "workspace" }),
     );
   });
 
   it("renders a read-only visibility chip when the caller cannot edit", () => {
-    renderDetail(makeRuntime({ owner_id: "someone-else", visibility: "public" }));
-    expect(screen.getByText("Public")).toBeInTheDocument();
-    // The editor's "Private" choice button must not render in read-only mode.
-    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+    renderDetail(makeRuntime({ owner_id: "someone-else", scope: "workspace" }));
+    expect(screen.getByText("工作区")).toBeInTheDocument();
+    // The editor's "个人" choice button must not render in read-only mode.
+    expect(screen.queryByText("个人")).not.toBeInTheDocument();
   });
 
   // MUL-3352: an owner viewing an online local (self-healing) runtime
@@ -179,7 +183,7 @@ describe("RuntimeDetail visibility section", () => {
       }),
     );
     const btn = screen.getByRole("button", {
-      name: /Delete runtime/i,
+      name: /删除运行时/i,
     }) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });
@@ -193,7 +197,7 @@ describe("RuntimeDetail visibility section", () => {
       }),
     );
     expect(
-      screen.queryByRole("button", { name: /Delete runtime/i }),
+      screen.queryByRole("button", { name: /删除运行时/i }),
     ).not.toBeInTheDocument();
   });
 });

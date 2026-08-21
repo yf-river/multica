@@ -20,6 +20,7 @@ import { ProgressRing } from "./progress-ring";
 import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 
 export interface ChildProgress {
   done: number;
@@ -27,7 +28,7 @@ export interface ChildProgress {
 }
 
 function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 function ListRowContent({
@@ -52,11 +53,13 @@ function ListRowContent({
   const p = useWorkspacePaths();
   const storeProperties = useViewStore((s) => s.cardProperties);
   const wsId = useWorkspaceId();
+  const embeddedProject =
+    issue.project_id && issue.project?.id === issue.project_id ? issue.project : undefined;
   const { data: projects = [] } = useQuery({
     ...projectListOptions(wsId),
-    enabled: storeProperties.project && !!issue.project_id,
+    enabled: storeProperties.project && !!issue.project_id && !embeddedProject,
   });
-  const project = issue.project_id ? projects.find((pr) => pr.id === issue.project_id) : undefined;
+  const project = embeddedProject ?? (issue.project_id ? projects.find((pr) => pr.id === issue.project_id) : undefined);
   const labels = issue.labels ?? [];
 
   const showProject = storeProperties.project && project;
@@ -65,6 +68,12 @@ function ListRowContent({
   const showStartDate = storeProperties.startDate && issue.start_date;
   const showDueDate = storeProperties.dueDate && issue.due_date;
   const showLabels = storeProperties.labels && labels.length > 0;
+  const assigneeSummary =
+    showAssignee &&
+    issue.assignee?.type === issue.assignee_type &&
+    issue.assignee?.id === issue.assignee_id
+      ? issue.assignee
+      : null;
 
   return (
     <IssueActionsContextMenu issue={issue}>
@@ -100,7 +109,7 @@ function ListRowContent({
           <span className="w-16 shrink-0 text-xs text-muted-foreground">
             {issue.identifier}
           </span>
-          <IssueAgentActivityIndicator issueId={issue.id} />
+          <IssueAgentActivityIndicator issueId={issue.id} agentActivity={issue.agent_activity} />
 
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>
@@ -125,6 +134,7 @@ function ListRowContent({
               </span>
             )}
           </span>
+          <TAPDSourceBadge issue={issue} variant="inline" className="shrink-0" />
           {showProject && (
             <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground max-w-[140px]">
               <ProjectIcon project={project} size="sm" />
@@ -145,6 +155,8 @@ function ListRowContent({
             <ActorAvatar
               actorType={issue.assignee_type!}
               actorId={issue.assignee_id!}
+              actorName={assigneeSummary?.name}
+              actorAvatarUrl={assigneeSummary?.avatar_url}
               size={20}
               enableHoverCard
             />

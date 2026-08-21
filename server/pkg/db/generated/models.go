@@ -5,8 +5,6 @@
 package db
 
 import (
-	"net/netip"
-
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -28,7 +26,7 @@ type Agent struct {
 	AvatarUrl          pgtype.Text        `json:"avatar_url"`
 	RuntimeMode        string             `json:"runtime_mode"`
 	RuntimeConfig      []byte             `json:"runtime_config"`
-	Visibility         string             `json:"visibility"`
+	Scope              string             `json:"scope"`
 	Status             string             `json:"status"`
 	MaxConcurrentTasks int32              `json:"max_concurrent_tasks"`
 	OwnerID            pgtype.UUID        `json:"owner_id"`
@@ -46,23 +44,91 @@ type Agent struct {
 	ThinkingLevel      pgtype.Text        `json:"thinking_level"`
 }
 
+type AgentPlaygroundAgent struct {
+	ID           pgtype.UUID        `json:"id"`
+	ExperimentID pgtype.UUID        `json:"experiment_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	DisplayOrder int32              `json:"display_order"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentPlaygroundExperiment struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
+	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
+	JudgeAgentID     pgtype.UUID        `json:"judge_agent_id"`
+	Status           string             `json:"status"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentPlaygroundInput struct {
+	ID           pgtype.UUID        `json:"id"`
+	ExperimentID pgtype.UUID        `json:"experiment_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	DatasetRowID pgtype.UUID        `json:"dataset_row_id"`
+	RowIndex     int32              `json:"row_index"`
+	Name         string             `json:"name"`
+	Input        string             `json:"input"`
+	Variables    []byte             `json:"variables"`
+	Expected     string             `json:"expected"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentPlaygroundJudgement struct {
+	ID            pgtype.UUID        `json:"id"`
+	ExperimentID  pgtype.UUID        `json:"experiment_id"`
+	InputID       pgtype.UUID        `json:"input_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	JudgeAgentID  pgtype.UUID        `json:"judge_agent_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	Status        string             `json:"status"`
+	Output        string             `json:"output"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentPlaygroundResult struct {
+	ID                pgtype.UUID        `json:"id"`
+	ExperimentID      pgtype.UUID        `json:"experiment_id"`
+	InputID           pgtype.UUID        `json:"input_id"`
+	ExperimentAgentID pgtype.UUID        `json:"experiment_agent_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	RenderedInput     string             `json:"rendered_input"`
+	Status            string             `json:"status"`
+	Output            string             `json:"output"`
+	Error             string             `json:"error"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentRuntime struct {
-	ID             pgtype.UUID        `json:"id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	DaemonID       pgtype.Text        `json:"daemon_id"`
-	Name           string             `json:"name"`
-	RuntimeMode    string             `json:"runtime_mode"`
-	Provider       string             `json:"provider"`
-	Status         string             `json:"status"`
-	DeviceInfo     string             `json:"device_info"`
-	Metadata       []byte             `json:"metadata"`
-	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	OwnerID        pgtype.UUID        `json:"owner_id"`
-	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
-	Visibility     string             `json:"visibility"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DaemonID    pgtype.Text        `json:"daemon_id"`
+	Name        string             `json:"name"`
+	RuntimeMode string             `json:"runtime_mode"`
+	Provider    string             `json:"provider"`
+	Status      string             `json:"status"`
+	DeviceInfo  string             `json:"device_info"`
+	Metadata    []byte             `json:"metadata"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
+	Scope       string             `json:"scope"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
 }
 
 type AgentSkill struct {
@@ -230,34 +296,6 @@ type CommentReaction struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type ContactSalesInquiry struct {
-	ID              pgtype.UUID        `json:"id"`
-	FirstName       string             `json:"first_name"`
-	LastName        string             `json:"last_name"`
-	BusinessEmail   string             `json:"business_email"`
-	CompanyName     string             `json:"company_name"`
-	CompanySize     string             `json:"company_size"`
-	CountryRegion   string             `json:"country_region"`
-	UseCase         string             `json:"use_case"`
-	Goals           string             `json:"goals"`
-	ConsentOutreach bool               `json:"consent_outreach"`
-	ConsentUpdates  bool               `json:"consent_updates"`
-	SubmitterIp     *netip.Addr        `json:"submitter_ip"`
-	UserAgent       string             `json:"user_agent"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-}
-
-type DaemonConnection struct {
-	ID              pgtype.UUID        `json:"id"`
-	AgentID         pgtype.UUID        `json:"agent_id"`
-	DaemonID        string             `json:"daemon_id"`
-	Status          string             `json:"status"`
-	LastHeartbeatAt pgtype.Timestamptz `json:"last_heartbeat_at"`
-	RuntimeInfo     []byte             `json:"runtime_info"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-}
-
 type DaemonToken struct {
 	ID          pgtype.UUID        `json:"id"`
 	TokenHash   string             `json:"token_hash"`
@@ -265,6 +303,22 @@ type DaemonToken struct {
 	DaemonID    string             `json:"daemon_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type ExternalCredentialProfile struct {
+	ID              pgtype.UUID        `json:"id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Provider        string             `json:"provider"`
+	Name            string             `json:"name"`
+	SecretRef       string             `json:"secret_ref"`
+	EncryptedSecret []byte             `json:"encrypted_secret"`
+	SecretHint      string             `json:"secret_hint"`
+	Capabilities    []byte             `json:"capabilities"`
+	Status          string             `json:"status"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	LastError       string             `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Feedback struct {
@@ -391,13 +445,10 @@ type Issue struct {
 	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
 	StartDate          pgtype.Date        `json:"start_date"`
 	Metadata           []byte             `json:"metadata"`
-}
-
-type IssueDependency struct {
-	ID               pgtype.UUID `json:"id"`
-	IssueID          pgtype.UUID `json:"issue_id"`
-	DependsOnIssueID pgtype.UUID `json:"depends_on_issue_id"`
-	Type             string      `json:"type"`
+	Scope              string             `json:"scope"`
+	OwnerID            pgtype.UUID        `json:"owner_id"`
+	WorkStartedAt      pgtype.Timestamptz `json:"work_started_at"`
+	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
 }
 
 type IssueLabel struct {
@@ -410,12 +461,11 @@ type IssueLabel struct {
 }
 
 type IssuePullRequest struct {
-	IssueID       pgtype.UUID        `json:"issue_id"`
-	PullRequestID pgtype.UUID        `json:"pull_request_id"`
-	LinkedByType  pgtype.Text        `json:"linked_by_type"`
-	LinkedByID    pgtype.UUID        `json:"linked_by_id"`
-	LinkedAt      pgtype.Timestamptz `json:"linked_at"`
-	CloseIntent   bool               `json:"close_intent"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+	PullRequestID pgtype.UUID `json:"pull_request_id"`
+	LinkedByType  pgtype.Text `json:"linked_by_type"`
+	LinkedByID    pgtype.UUID `json:"linked_by_id"`
+	CloseIntent   bool        `json:"close_intent"`
 }
 
 type IssueReaction struct {
@@ -505,7 +555,6 @@ type LarkOutboundCardMessage struct {
 	LarkChatID        string             `json:"lark_chat_id"`
 	LarkCardMessageID string             `json:"lark_card_message_id"`
 	Status            string             `json:"status"`
-	LastPatchedAt     pgtype.Timestamptz `json:"last_patched_at"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -569,6 +618,8 @@ type Project struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	Priority    string             `json:"priority"`
+	Scope       string             `json:"scope"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
 }
 
 type ProjectResource struct {
@@ -581,6 +632,311 @@ type ProjectResource struct {
 	Position     int32              `json:"position"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	CreatedBy    pgtype.UUID        `json:"created_by"`
+}
+
+type PromptEvaluationAsset struct {
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	PromptID                 pgtype.UUID        `json:"prompt_id"`
+	Name                     string             `json:"name"`
+	Description              string             `json:"description"`
+	AssetType                string             `json:"asset_type"`
+	Payload                  []byte             `json:"payload"`
+	Status                   string             `json:"status"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	StructureSchema          string             `json:"structure_schema"`
+	StructuredCaseCount      int32              `json:"structured_case_count"`
+	StructuredVariableCount  int32              `json:"structured_variable_count"`
+	StructuredAssertionCount int32              `json:"structured_assertion_count"`
+	LinkedDatasetCount       int32              `json:"linked_dataset_count"`
+	LinkedPromptCount        int32              `json:"linked_prompt_count"`
+	EvaluationDimensionCount int32              `json:"evaluation_dimension_count"`
+	DatasetRowCount          int32              `json:"dataset_row_count"`
+	TestSuiteCaseCount       int32              `json:"test_suite_case_count"`
+	ExperimentDimensionCount int32              `json:"experiment_dimension_count"`
+}
+
+type PromptEvaluationCase struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	PromptID         pgtype.UUID        `json:"prompt_id"`
+	CaseIndex        int32              `json:"case_index"`
+	CaseName         string             `json:"case_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Input            []byte             `json:"input"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationCaseAssertion struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	CaseID         pgtype.UUID        `json:"case_id"`
+	AssertionIndex int32              `json:"assertion_index"`
+	AssertionType  string             `json:"assertion_type"`
+	ExpectedText   string             `json:"expected_text"`
+	Status         string             `json:"status"`
+	Source         string             `json:"source"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationCaseOperation struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AssetID       pgtype.UUID        `json:"asset_id"`
+	OperationType string             `json:"operation_type"`
+	Filter        []byte             `json:"filter"`
+	Input         []byte             `json:"input"`
+	ChangedCount  int32              `json:"changed_count"`
+	SkippedCount  int32              `json:"skipped_count"`
+	SampleCaseIds []byte             `json:"sample_case_ids"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	Status        string             `json:"status"`
+	ErrorMessage  string             `json:"error_message"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationDatasetRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
+	CaseID           pgtype.UUID        `json:"case_id"`
+	RowIndex         int32              `json:"row_index"`
+	RowName          string             `json:"row_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationDatasetVersion struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	DatasetAssetID pgtype.UUID        `json:"dataset_asset_id"`
+	Version        int32              `json:"version"`
+	VersionLabel   string             `json:"version_label"`
+	RowCount       int32              `json:"row_count"`
+	RowFingerprint string             `json:"row_fingerprint"`
+	Metadata       []byte             `json:"metadata"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationDatasetVersionRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
+	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
+	SourceRowID      pgtype.UUID        `json:"source_row_id"`
+	CaseID           pgtype.UUID        `json:"case_id"`
+	RowIndex         int32              `json:"row_index"`
+	RowName          string             `json:"row_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Source           string             `json:"source"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationDimensionScore struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	PromptID       pgtype.UUID        `json:"prompt_id"`
+	DimensionIndex int32              `json:"dimension_index"`
+	DimensionName  string             `json:"dimension_name"`
+	Score          float64            `json:"score"`
+	PassedCases    int32              `json:"passed_cases"`
+	TotalCases     int32              `json:"total_cases"`
+	Status         string             `json:"status"`
+	Rule           string             `json:"rule"`
+	Evidence       string             `json:"evidence"`
+	Source         string             `json:"source"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationEvidenceSnapshot struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	SnapshotType  string             `json:"snapshot_type"`
+	SchemaVersion string             `json:"schema_version"`
+	Summary       []byte             `json:"summary"`
+	Evidence      []byte             `json:"evidence"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationOptimizationCandidate struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	AssetID              pgtype.UUID        `json:"asset_id"`
+	RunID                pgtype.UUID        `json:"run_id"`
+	PromptID             pgtype.UUID        `json:"prompt_id"`
+	CandidateName        string             `json:"candidate_name"`
+	CandidateContent     string             `json:"candidate_content"`
+	Rationale            string             `json:"rationale"`
+	FailedCaseCount      int32              `json:"failed_case_count"`
+	SourceFailureSummary []byte             `json:"source_failure_summary"`
+	SourcePromptSnapshot []byte             `json:"source_prompt_snapshot"`
+	Metrics              []byte             `json:"metrics"`
+	Status               string             `json:"status"`
+	PublishedPromptID    pgtype.UUID        `json:"published_prompt_id"`
+	PublishedAt          pgtype.Timestamptz `json:"published_at"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationRun struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AssetID           pgtype.UUID        `json:"asset_id"`
+	PromptID          pgtype.UUID        `json:"prompt_id"`
+	RunKind           string             `json:"run_kind"`
+	Status            string             `json:"status"`
+	TriggerSource     string             `json:"trigger_source"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	RuntimeID         pgtype.UUID        `json:"runtime_id"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
+	Model             string             `json:"model"`
+	RuntimeProvider   string             `json:"runtime_provider"`
+	TotalCases        int32              `json:"total_cases"`
+	PassedCases       int32              `json:"passed_cases"`
+	FailedCases       int32              `json:"failed_cases"`
+	PassRate          float64            `json:"pass_rate"`
+	TotalDurationMs   int64              `json:"total_duration_ms"`
+	AverageDurationMs int64              `json:"average_duration_ms"`
+	InputTokens       int32              `json:"input_tokens"`
+	OutputTokens      int32              `json:"output_tokens"`
+	EstimatedCost     float64            `json:"estimated_cost"`
+	FailureReason     string             `json:"failure_reason"`
+	Conclusion        string             `json:"conclusion"`
+	Metrics           []byte             `json:"metrics"`
+	Evidence          []byte             `json:"evidence"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ReviewDecision    string             `json:"review_decision"`
+	ReviewNote        string             `json:"review_note"`
+	ReviewedBy        pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt        pgtype.Timestamptz `json:"reviewed_at"`
+}
+
+type PromptEvaluationTestSuiteCase struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TestSuiteAssetID pgtype.UUID        `json:"test_suite_asset_id"`
+	CaseID           pgtype.UUID        `json:"case_id"`
+	CaseIndex        int32              `json:"case_index"`
+	CaseName         string             `json:"case_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationTrial struct {
+	ID             pgtype.UUID        `json:"id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	CaseIndex      int32              `json:"case_index"`
+	CaseName       string             `json:"case_name"`
+	Status         string             `json:"status"`
+	Input          []byte             `json:"input"`
+	Expected       []byte             `json:"expected"`
+	Output         []byte             `json:"output"`
+	RenderedPrompt string             `json:"rendered_prompt"`
+	InputTokens    int32              `json:"input_tokens"`
+	OutputTokens   int32              `json:"output_tokens"`
+	DurationMs     int64              `json:"duration_ms"`
+	FailureReason  string             `json:"failure_reason"`
+	Evidence       []byte             `json:"evidence"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptLibraryItem struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	PromptType  string             `json:"prompt_type"`
+	Content     string             `json:"content"`
+	Variables   []byte             `json:"variables"`
+	Tags        []byte             `json:"tags"`
+	Status      string             `json:"status"`
+	Version     int32              `json:"version"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptLibraryTrial struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	PromptID        pgtype.UUID        `json:"prompt_id"`
+	VersionID       pgtype.UUID        `json:"version_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	TaskID          pgtype.UUID        `json:"task_id"`
+	Input           string             `json:"input"`
+	RenderedMessage string             `json:"rendered_message"`
+	Variables       []byte             `json:"variables"`
+	Status          string             `json:"status"`
+	OutputPreview   string             `json:"output_preview"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptLibraryVersion struct {
+	ID                pgtype.UUID        `json:"id"`
+	PromptID          pgtype.UUID        `json:"prompt_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Version           int32              `json:"version"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	PromptType        string             `json:"prompt_type"`
+	Content           string             `json:"content"`
+	Variables         []byte             `json:"variables"`
+	Tags              []byte             `json:"tags"`
+	Source            string             `json:"source"`
+	SourceCandidateID pgtype.UUID        `json:"source_candidate_id"`
+	ChangeNote        string             `json:"change_note"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
 type RuntimeProfile struct {
@@ -632,6 +988,8 @@ type Squad struct {
 	ArchivedBy   pgtype.UUID        `json:"archived_by"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	Instructions string             `json:"instructions"`
+	SopProfile   []byte             `json:"sop_profile"`
+	Scope        string             `json:"scope"`
 }
 
 type SquadMember struct {
@@ -641,6 +999,43 @@ type SquadMember struct {
 	MemberID   pgtype.UUID        `json:"member_id"`
 	Role       string             `json:"role"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type SquadSopRun struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	SquadID         pgtype.UUID        `json:"squad_id"`
+	LeaderTaskID    pgtype.UUID        `json:"leader_task_id"`
+	ProfileKey      string             `json:"profile_key"`
+	Profile         []byte             `json:"profile"`
+	Status          string             `json:"status"`
+	CurrentStepKey  string             `json:"current_step_key"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	TotalDurationMs pgtype.Int8        `json:"total_duration_ms"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SquadSopStepEvent struct {
+	ID            pgtype.UUID        `json:"id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	SquadID       pgtype.UUID        `json:"squad_id"`
+	StepKey       string             `json:"step_key"`
+	StepName      string             `json:"step_name"`
+	RoleKey       string             `json:"role_key"`
+	EventType     string             `json:"event_type"`
+	Status        string             `json:"status"`
+	Evidence      []byte             `json:"evidence"`
+	Reason        string             `json:"reason"`
+	DurationMs    pgtype.Int8        `json:"duration_ms"`
+	CreatedByType string             `json:"created_by_type"`
+	CreatedByID   pgtype.UUID        `json:"created_by_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type SysCronExecution struct {
@@ -689,6 +1084,39 @@ type TaskToken struct {
 	UserID      pgtype.UUID        `json:"user_id"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskTraceEvent struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	RuntimeID        pgtype.UUID        `json:"runtime_id"`
+	SquadID          pgtype.UUID        `json:"squad_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Source           string             `json:"source"`
+	EventType        string             `json:"event_type"`
+	EventName        string             `json:"event_name"`
+	Status           string             `json:"status"`
+	Attempt          int32              `json:"attempt"`
+	DurationMs       pgtype.Int8        `json:"duration_ms"`
+	QueueWaitMs      pgtype.Int8        `json:"queue_wait_ms"`
+	RunMs            pgtype.Int8        `json:"run_ms"`
+	TotalMs          pgtype.Int8        `json:"total_ms"`
+	Provider         string             `json:"provider"`
+	Model            string             `json:"model"`
+	InputTokens      int64              `json:"input_tokens"`
+	OutputTokens     int64              `json:"output_tokens"`
+	CacheReadTokens  int64              `json:"cache_read_tokens"`
+	CacheWriteTokens int64              `json:"cache_write_tokens"`
+	FailureReason    string             `json:"failure_reason"`
+	ErrorType        string             `json:"error_type"`
+	TriggerCommentID pgtype.UUID        `json:"trigger_comment_id"`
+	AutopilotRunID   pgtype.UUID        `json:"autopilot_run_id"`
+	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskUsage struct {
@@ -744,29 +1172,16 @@ type TaskUsageHourlyRollupState struct {
 type User struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Name                    string             `json:"name"`
-	Email                   string             `json:"email"`
+	Account                 string             `json:"account"`
 	AvatarUrl               pgtype.Text        `json:"avatar_url"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	OnboardedAt             pgtype.Timestamptz `json:"onboarded_at"`
 	OnboardingQuestionnaire []byte             `json:"onboarding_questionnaire"`
-	CloudWaitlistEmail      pgtype.Text        `json:"cloud_waitlist_email"`
-	CloudWaitlistReason     pgtype.Text        `json:"cloud_waitlist_reason"`
 	StarterContentState     pgtype.Text        `json:"starter_content_state"`
-	Language                pgtype.Text        `json:"language"`
 	ProfileDescription      string             `json:"profile_description"`
-	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
-	Timezone pgtype.Text `json:"timezone"`
-}
-
-type VerificationCode struct {
-	ID        pgtype.UUID        `json:"id"`
-	Email     string             `json:"email"`
-	Code      string             `json:"code"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	Used      bool               `json:"used"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	Attempts  int32              `json:"attempts"`
+	Timezone                pgtype.Text        `json:"timezone"`
+	PasswordHash            pgtype.Text        `json:"password_hash"`
 }
 
 type WebhookDelivery struct {
@@ -807,17 +1222,4 @@ type Workspace struct {
 	IssuePrefix  string             `json:"issue_prefix"`
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
-}
-
-type WorkspaceInvitation struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	InviterID     pgtype.UUID        `json:"inviter_id"`
-	InviteeEmail  string             `json:"invitee_email"`
-	InviteeUserID pgtype.UUID        `json:"invitee_user_id"`
-	Role          string             `json:"role"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -56,13 +57,7 @@ func workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	if settings == nil {
 		settings = map[string]any{}
 	}
-	var repos any
-	if w.Repos != nil {
-		json.Unmarshal(w.Repos, &repos)
-	}
-	if repos == nil {
-		repos = []any{}
-	}
+	repos := workspaceReposForResponse(w.Repos)
 	return WorkspaceResponse{
 		ID:          uuidToString(w.ID),
 		Name:        w.Name,
@@ -78,22 +73,18 @@ func workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	}
 }
 
-type MemberResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	UserID      string `json:"user_id"`
-	Role        string `json:"role"`
-	CreatedAt   string `json:"created_at"`
-}
-
-func memberToResponse(m db.Member) MemberResponse {
-	return MemberResponse{
-		ID:          uuidToString(m.ID),
-		WorkspaceID: uuidToString(m.WorkspaceID),
-		UserID:      uuidToString(m.UserID),
-		Role:        m.Role,
-		CreatedAt:   timestampToString(m.CreatedAt),
+func workspaceReposForResponse(raw []byte) []any {
+	if raw == nil {
+		return []any{}
 	}
+	var repos []any
+	if err := json.Unmarshal(raw, &repos); err != nil {
+		return []any{}
+	}
+	if repos == nil {
+		return []any{}
+	}
+	return repos
 }
 
 func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
@@ -217,8 +208,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	// NOTE: CreateWorkspace deliberately does NOT mark the user as
 	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
-	// (Step 3 of the flow) and by AcceptInvitation (invitee joining an
-	// existing workspace). This decouples "the user has a workspace"
+	// (Step 3 of the flow). This decouples "the user has a workspace"
 	// from "the user has finished setup"; the workspace-layer route
 	// gate (web layout / desktop App.tsx overlay) redirects un-onboarded
 	// users back to /onboarding instead.
@@ -251,8 +241,21 @@ type UpdateWorkspaceRequest struct {
 }
 
 type workspaceRepoRef struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
+	URL              string `json:"url"`
+	Description      string `json:"description,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	ProjectPath      string `json:"project_path,omitempty"`
+	DefaultBranch    string `json:"default_branch,omitempty"`
+	HeadCommit       string `json:"head_commit,omitempty"`
+	CommitSHA        string `json:"commit_sha,omitempty"`
+	ConnectionStatus string `json:"connection_status,omitempty"`
+	SyncStatus       string `json:"sync_status,omitempty"`
+	TestStatus       string `json:"test_status,omitempty"`
+	LastTestedAt     string `json:"last_tested_at,omitempty"`
+	LastSyncedAt     string `json:"last_synced_at,omitempty"`
+	ResolveStatus    string `json:"resolve_status,omitempty"`
+	ResolveError     string `json:"resolve_error,omitempty"`
+	LastResolvedAt   string `json:"last_resolved_at,omitempty"`
 }
 
 func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
@@ -271,6 +274,19 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	for i, repo := range repos {
 		repo.URL = strings.TrimSpace(repo.URL)
 		repo.Description = strings.TrimSpace(repo.Description)
+		repo.Provider = strings.TrimSpace(repo.Provider)
+		repo.ProjectPath = strings.Trim(strings.TrimSpace(repo.ProjectPath), "/")
+		repo.DefaultBranch = strings.TrimSpace(repo.DefaultBranch)
+		repo.HeadCommit = strings.TrimSpace(repo.HeadCommit)
+		repo.CommitSHA = strings.TrimSpace(repo.CommitSHA)
+		repo.ConnectionStatus = strings.TrimSpace(repo.ConnectionStatus)
+		repo.SyncStatus = strings.TrimSpace(repo.SyncStatus)
+		repo.TestStatus = strings.TrimSpace(repo.TestStatus)
+		repo.LastTestedAt = strings.TrimSpace(repo.LastTestedAt)
+		repo.LastSyncedAt = strings.TrimSpace(repo.LastSyncedAt)
+		repo.ResolveStatus = strings.TrimSpace(repo.ResolveStatus)
+		repo.ResolveError = strings.TrimSpace(repo.ResolveError)
+		repo.LastResolvedAt = strings.TrimSpace(repo.LastResolvedAt)
 		if repo.URL == "" {
 			return nil, fmt.Errorf("repos[%d]: url is required", i)
 		}
@@ -289,6 +305,193 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+type resolveWorkspaceRepoRequest struct {
+	URL           string `json:"url"`
+	DefaultBranch string `json:"default_branch"`
+}
+
+type probeWorkspaceRepoRequest struct {
+	URL string `json:"url"`
+}
+
+type probeWorkspaceRepoResponse struct {
+	URL              string   `json:"url"`
+	Provider         string   `json:"provider"`
+	ProjectPath      string   `json:"project_path"`
+	DefaultBranch    string   `json:"default_branch"`
+	Branches         []string `json:"branches"`
+	ConnectionStatus string   `json:"connection_status"`
+	TestStatus       string   `json:"test_status"`
+}
+
+func (h *Handler) prepareGongfengWorkspaceRepo(w http.ResponseWriter, r *http.Request, userID string, rawURL string, missingCredentialMessage string) (parsedGongfengURL, db.ExternalCredentialProfile, string, bool) {
+	if rawURL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	if !isValidGitRepoURL(rawURL) {
+		writeError(w, http.StatusBadRequest, "url must be a valid http(s) or ssh git URL")
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	if !strings.Contains(rawURL, "git.code.tencent.com") {
+		writeError(w, http.StatusBadRequest, "only Gongfeng repository URLs are supported")
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	parsed, err := parseGongfengURL(rawURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	profile, hasProfile, err := h.loadUsableGongfengCredentialProfile(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load gongfeng credential profile")
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	if !hasProfile {
+		writeError(w, http.StatusBadRequest, missingCredentialMessage)
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	return parsed, profile, h.resolveExternalCredentialToken(profile), true
+}
+
+func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
+	id := workspaceIDFromURL(r, "id")
+	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req probeWorkspaceRepoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rawURL := strings.TrimSpace(req.URL)
+	parsed, profile, token, ok := h.prepareGongfengWorkspaceRepo(
+		w,
+		r,
+		userID,
+		rawURL,
+		"gongfeng credential is required to inspect branches",
+	)
+	if !ok {
+		return
+	}
+	defaultBranch, err := fetchGongfengDefaultBranch(r.Context(), parsed.ProjectPath, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	branches, err := fetchGongfengBranches(r.Context(), parsed.ProjectPath, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	credentialProbe := probeGongfengWithCredential(r.Context(), gongfengRepoRef{
+		URL:         rawURL,
+		ProjectPath: parsed.ProjectPath,
+	}, token)
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: rawURL, ProjectPath: parsed.ProjectPath},
+		probeGongfengURL(r.Context(), rawURL),
+		credentialProbe,
+		profile,
+		true,
+	)
+	writeJSON(w, http.StatusOK, probeWorkspaceRepoResponse{
+		URL:              rawURL,
+		Provider:         "gongfeng",
+		ProjectPath:      parsed.ProjectPath,
+		DefaultBranch:    defaultBranch,
+		Branches:         branches,
+		ConnectionStatus: ref.ConnectionStatus,
+		TestStatus:       ref.TestStatus,
+	})
+}
+
+func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
+	id := workspaceIDFromURL(r, "id")
+	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req resolveWorkspaceRepoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rawURL := strings.TrimSpace(req.URL)
+	requestedBranch := strings.TrimSpace(req.DefaultBranch)
+	parsed, profile, token, ok := h.prepareGongfengWorkspaceRepo(
+		w,
+		r,
+		userID,
+		rawURL,
+		"gongfeng credential is required to resolve default branch",
+	)
+	if !ok {
+		return
+	}
+	branch := requestedBranch
+	if branch == "" {
+		branch = parsedGongfengWorkspaceRepoBranch(parsed)
+	}
+	if branch == "" {
+		var err error
+		branch, err = fetchGongfengDefaultBranch(r.Context(), parsed.ProjectPath, token)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	commit, err := fetchGongfengBranchHeadCommit(r.Context(), parsed.ProjectPath, branch, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	credentialProbe := probeGongfengWithCredential(r.Context(), gongfengRepoRef{
+		URL:         rawURL,
+		ProjectPath: parsed.ProjectPath,
+	}, token)
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: rawURL, ProjectPath: parsed.ProjectPath},
+		probeGongfengURL(r.Context(), rawURL),
+		credentialProbe,
+		profile,
+		true,
+	)
+	writeJSON(w, http.StatusOK, workspaceRepoRef{
+		URL:              rawURL,
+		Provider:         "gongfeng",
+		ProjectPath:      parsed.ProjectPath,
+		DefaultBranch:    branch,
+		HeadCommit:       commit,
+		CommitSHA:        commit,
+		ConnectionStatus: ref.ConnectionStatus,
+		SyncStatus:       "synced",
+		TestStatus:       ref.TestStatus,
+		LastTestedAt:     now,
+		LastSyncedAt:     now,
+		ResolveStatus:    "resolved",
+		LastResolvedAt:   now,
+	})
+}
+
+func parsedGongfengWorkspaceRepoBranch(parsed parsedGongfengURL) string {
+	switch parsed.ResourceKind {
+	case "branch", "commits":
+		return strings.TrimSpace(parsed.Ref)
+	default:
+		return ""
+	}
 }
 
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -331,6 +534,10 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if err := h.ensureWorkspaceReposKeepGongfengProjectResources(r.Context(), idUUID, reposJSON); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		params.Repos = reposJSON
 	}
 	if req.IssuePrefix != nil {
@@ -357,27 +564,6 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workspaceToResponse(ws))
 }
 
-func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "id")
-	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
-	if !ok {
-		return
-	}
-
-	members, err := h.Queries.ListMembers(r.Context(), member.WorkspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list members")
-		return
-	}
-
-	resp := make([]MemberResponse, len(members))
-	for i, m := range members {
-		resp[i] = memberToResponse(m)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
 type MemberWithUserResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
@@ -385,7 +571,7 @@ type MemberWithUserResponse struct {
 	Role        string  `json:"role"`
 	CreatedAt   string  `json:"created_at"`
 	Name        string  `json:"name"`
-	Email       string  `json:"email"`
+	Account     string  `json:"account"`
 	AvatarURL   *string `json:"avatar_url"`
 }
 
@@ -411,7 +597,7 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 			Role:        m.Role,
 			CreatedAt:   timestampToString(m.CreatedAt),
 			Name:        m.UserName,
-			Email:       m.UserEmail,
+			Account:     m.UserAccount,
 			AvatarURL:   textToPtr(m.UserAvatarUrl),
 		}
 	}
@@ -420,8 +606,10 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateMemberRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	Account  string `json:"account"`
+	Name     string `json:"name"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
 }
 
 func memberWithUserResponse(member db.Member, user db.User) MemberWithUserResponse {
@@ -432,7 +620,7 @@ func memberWithUserResponse(member db.Member, user db.User) MemberWithUserRespon
 		Role:        member.Role,
 		CreatedAt:   timestampToString(member.CreatedAt),
 		Name:        user.Name,
-		Email:       user.Email,
+		Account:     user.Account,
 		AvatarURL:   textToPtr(user.AvatarUrl),
 	}
 }
@@ -464,12 +652,15 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if email == "" {
-		writeError(w, http.StatusBadRequest, "email is required")
+	account, ok := normalizeAccount(req.Account)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "account must be 3-64 characters using letters, numbers, dot, dash, or underscore")
 		return
 	}
-
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = account
+	}
 	role, valid := normalizeMemberRole(req.Role)
 	if !valid {
 		writeError(w, http.StatusBadRequest, "invalid member role")
@@ -480,16 +671,28 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUserByEmail(r.Context(), email)
+	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	if err != nil {
 		if isNotFound(err) {
-			// Auto-create user with email so they can be invited before signing up
+			if msg := validatePassword(req.Password); msg != "" {
+				writeError(w, http.StatusBadRequest, msg)
+				return
+			}
+			passwordHash, err := hashPassword(req.Password)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to hash password")
+				return
+			}
 			user, err = h.Queries.CreateUser(r.Context(), db.CreateUserParams{
-				Name:  email,
-				Email: email,
+				Name:    name,
+				Account: account,
 			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to create user")
+				return
+			}
+			if _, err := h.DB.Exec(r.Context(), `UPDATE "user" SET password_hash = $2, onboarded_at = COALESCE(onboarded_at, now()), updated_at = now() WHERE id = $1`, user.ID, passwordHash); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to save password")
 				return
 			}
 		} else {
@@ -508,12 +711,12 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "user is already a member")
 			return
 		}
-		slog.Warn("create member failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID, "email", email)...)
+		slog.Warn("create member failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID, "account", account)...)
 		writeError(w, http.StatusInternalServerError, "failed to create member")
 		return
 	}
 
-	slog.Info("member added", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "email", email, "role", role)...)
+	slog.Info("member added", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "account", account, "role", role)...)
 	userID := requestUserID(r)
 	eventPayload := map[string]any{"member": memberWithUserResponse(member, user)}
 	if ws, err := h.Queries.GetWorkspace(r.Context(), requester.WorkspaceID); err == nil {
@@ -528,6 +731,32 @@ type UpdateMemberRequest struct {
 	Role string `json:"role"`
 }
 
+func (h *Handler) workspaceMemberTarget(w http.ResponseWriter, r *http.Request, requester db.Member, memberID string) (db.Member, bool) {
+	memberUUID, ok := parseUUIDOrBadRequest(w, memberID, "member id")
+	if !ok {
+		return db.Member{}, false
+	}
+	target, err := h.Queries.GetMember(r.Context(), memberUUID)
+	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
+		writeError(w, http.StatusNotFound, "member not found")
+		return db.Member{}, false
+	}
+	return target, true
+}
+
+func (h *Handler) ensureWorkspaceHasAnotherOwner(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, failureMessage string) bool {
+	members, err := h.Queries.ListMembers(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, failureMessage)
+		return false
+	}
+	if countOwners(members) <= 1 {
+		writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	requester, ok := h.workspaceMember(w, r, workspaceID)
@@ -536,13 +765,8 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberID := chi.URLParam(r, "memberId")
-	memberUUID, ok := parseUUIDOrBadRequest(w, memberID, "member id")
+	target, ok := h.workspaceMemberTarget(w, r, requester, memberID)
 	if !ok {
-		return
-	}
-	target, err := h.Queries.GetMember(r.Context(), memberUUID)
-	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
-		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
 
@@ -568,13 +792,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if target.Role == "owner" && role != "owner" {
-		members, err := h.Queries.ListMembers(r.Context(), target.WorkspaceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update member")
-			return
-		}
-		if countOwners(members) <= 1 {
-			writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		if !h.ensureWorkspaceHasAnotherOwner(w, r, target.WorkspaceID, "failed to update member") {
 			return
 		}
 	}
@@ -612,13 +830,8 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberID := chi.URLParam(r, "memberId")
-	memberUUID, ok := parseUUIDOrBadRequest(w, memberID, "member id")
+	target, ok := h.workspaceMemberTarget(w, r, requester, memberID)
 	if !ok {
-		return
-	}
-	target, err := h.Queries.GetMember(r.Context(), memberUUID)
-	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
-		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
 
@@ -628,13 +841,7 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if target.Role == "owner" {
-		members, err := h.Queries.ListMembers(r.Context(), target.WorkspaceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to delete member")
-			return
-		}
-		if countOwners(members) <= 1 {
-			writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		if !h.ensureWorkspaceHasAnotherOwner(w, r, target.WorkspaceID, "failed to delete member") {
 			return
 		}
 	}
@@ -671,13 +878,7 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if member.Role == "owner" {
-		members, err := h.Queries.ListMembers(r.Context(), member.WorkspaceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to leave workspace")
-			return
-		}
-		if countOwners(members) <= 1 {
-			writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		if !h.ensureWorkspaceHasAnotherOwner(w, r, member.WorkspaceID, "failed to leave workspace") {
 			return
 		}
 	}

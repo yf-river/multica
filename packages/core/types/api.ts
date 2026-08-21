@@ -15,6 +15,7 @@ export interface CreateIssueRequest {
   start_date?: string;
   due_date?: string;
   attachment_ids?: string[];
+  metadata?: IssueMetadata;
 }
 
 export interface UpdateIssueRequest {
@@ -141,9 +142,13 @@ export interface ListIssuesCache {
   byStatus: Partial<Record<IssueStatus, IssueStatusBucket>>;
 }
 
+/** Raw backend response shape for `GET /api/issues/buckets`. */
+export interface ListIssueBucketsResponse {
+  by_status: Partial<Record<IssueStatus, IssueStatusBucket>>;
+}
+
 export interface SearchIssueResult extends Issue {
   match_source: "title" | "description" | "comment";
-  matched_snippet?: string;
   matched_description_snippet?: string;
   matched_comment_snippet?: string;
 }
@@ -166,7 +171,6 @@ export interface SearchProjectsResponse {
 export interface UpdateMeRequest {
   name?: string;
   avatar_url?: string;
-  language?: string;
   /** Free-form self-description (max 2000 chars). Pass "" to clear. */
   profile_description?: string;
   /** IANA tz to pin; "" clears back to browser-tz; undefined leaves untouched. */
@@ -174,7 +178,9 @@ export interface UpdateMeRequest {
 }
 
 export interface CreateMemberRequest {
-  email: string;
+  account: string;
+  name?: string;
+  password?: string;
   role?: MemberRole;
 }
 

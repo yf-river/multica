@@ -41,7 +41,7 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     device_info: "MacBook",
     metadata: {},
     owner_id: "user-1",
-    visibility: "private",
+    scope: "personal",
     profile_id: null,
     last_seen_at: "2026-01-01T00:00:00Z",
     created_at: "2026-01-01T00:00:00Z",
@@ -57,13 +57,12 @@ describe("pending custom runtime rows", () => {
       profile: profile(),
       createdAt,
       ownerId: "user-1",
-      localDaemonId: "daemon-1",
-      localMachineName: "MacBook",
+      fallbackMachineName: "MacBook",
     });
 
     expect(pending.id).toBe(pendingRuntimeId("profile-1"));
     expect(pending.name).toBe("Team Codex (MacBook)");
-    expect(pending.daemon_id).toBe("daemon-1");
+    expect(pending.daemon_id).toBeNull();
     expect(pending.profile_id).toBe("profile-1");
     expect(pending.provider).toBe("codex");
     expect(isPendingCustomRuntime(pending)).toBe(true);
@@ -84,8 +83,6 @@ describe("pending custom runtime rows", () => {
         pendingProfiles: [{ profile: prof, createdAt }],
         runtimes: [baseRuntime],
         ownerId: "user-1",
-        localDaemonId: "daemon-1",
-        localMachineName: "MacBook",
       }).map((item) => item.id),
     ).toEqual(["runtime-1", pendingRuntimeId(prof.id)]);
 
@@ -94,8 +91,6 @@ describe("pending custom runtime rows", () => {
         pendingProfiles: [{ profile: prof, createdAt }],
         runtimes: [baseRuntime, registeredRuntime],
         ownerId: "user-1",
-        localDaemonId: "daemon-1",
-        localMachineName: "MacBook",
       }).map((item) => item.id),
     ).toEqual(["runtime-1", "runtime-custom"]);
   });

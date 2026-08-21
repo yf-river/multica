@@ -184,13 +184,10 @@ func (s *chatSessionService) createSessionAndBinding(ctx context.Context, p Ensu
 // Together these close the two windows that staleness-TTL alone left
 // open (stale-reclaim race + Mark-window crash): the durable write
 // and the dedup Mark commit (or roll back) atomically.
-//
-// Callers that pass an invalid (zero) ClaimToken get the legacy
-// behavior — just write the message — and are responsible for
-// finalizing the dedup row themselves. The dispatcher always passes
-// the live token; tests use the zero value when they want to exercise
-// the write path without modelling dedup.
 func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUserMessageParams) (AppendResult, error) {
+	if !p.ClaimToken.Valid || p.LarkMessageID == "" {
+		return AppendResult{}, errors.New("claim token and lark message id are required")
+	}
 	tx, err := s.txStarter.Begin(ctx)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("begin tx: %w", err)
@@ -202,18 +199,13 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	// not the stored Body: the enricher prepends quoted / forwarded
 	// context to Body, which would push a `/issue …` off the first line
 	// and silently stop creating the issue (parseIssueCommand only
-	// inspects the first non-empty line). Fall back to Body when
-	// CommandBody is unset so non-enriched callers are unaffected.
+	// inspects the first non-empty line).
 	//
 	// Parse BEFORE the insert so the "/issue alone → use previous user
 	// message" fallback queries from the message set that does NOT yet
 	// include the message currently being appended; otherwise the
 	// previous-message lookup would self-reference.
-	commandSource := p.CommandBody
-	if commandSource == "" {
-		commandSource = p.Body
-	}
-	cmd, _ := parseIssueCommand(commandSource)
+	cmd, _ := parseIssueCommand(p.CommandBody)
 	if cmd != nil && cmd.Title == "" {
 		prev, err := qtx.GetMostRecentUserChatMessage(ctx, p.ChatSessionID)
 		if err == nil {
@@ -242,30 +234,25 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	// claim_token, so our UPDATE matches zero rows; deferring to the
 	// post-method Mark path would leave the chat_message in place
 	// while another worker also wrote one.
-	markedInTx := false
-	if p.ClaimToken.Valid && p.LarkMessageID != "" {
-		rows, err := qtx.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
-			InstallationID: p.InstallationID,
-			MessageID:      p.LarkMessageID,
-			ClaimToken:     p.ClaimToken,
-		})
-		if err != nil {
-			return AppendResult{}, fmt.Errorf("mark dedup processed: %w", err)
-		}
-		if rows == 0 {
-			// Another worker holds (or already finalized) this
-			// claim. Roll back via the deferred Rollback — the
-			// chat_message insert never commits.
-			return AppendResult{}, ErrClaimLost
-		}
-		markedInTx = true
+	rows, err := qtx.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
+		InstallationID: p.InstallationID,
+		MessageID:      p.LarkMessageID,
+		ClaimToken:     p.ClaimToken,
+	})
+	if err != nil {
+		return AppendResult{}, fmt.Errorf("mark dedup processed: %w", err)
+	}
+	if rows == 0 {
+		// Another worker holds (or already finalized) this claim. Roll back via
+		// the deferred Rollback so the chat_message insert never commits.
+		return AppendResult{}, ErrClaimLost
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return AppendResult{}, fmt.Errorf("commit: %w", err)
 	}
 
-	return AppendResult{IssueCommand: cmd, DedupMarked: markedInTx}, nil
+	return AppendResult{IssueCommand: cmd, DedupMarked: true}, nil
 }
 
 // titleFromPreviousMessage extracts a sensible title from a prior

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -29,10 +30,7 @@ type AgentRuntimeResponse struct {
 	DeviceInfo   string  `json:"device_info"`
 	Metadata     any     `json:"metadata"`
 	OwnerID      *string `json:"owner_id"`
-	// Visibility is "private" (default — only the owner / workspace admins
-	// can bind agents) or "public" (any workspace member can). See migration
-	// 083 and canUseRuntimeForAgent.
-	Visibility string  `json:"visibility"`
+	Scope        string  `json:"scope"`
 	// ProfileID is set when this runtime is an instance of a custom
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
@@ -62,7 +60,7 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		DeviceInfo:   rt.DeviceInfo,
 		Metadata:     metadata,
 		OwnerID:      uuidToPtr(rt.OwnerID),
-		Visibility:   rt.Visibility,
+		Scope:        rt.Scope,
 		ProfileID:    uuidToPtr(rt.ProfileID),
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
 		CreatedAt:    timestampToString(rt.CreatedAt),
@@ -83,6 +81,33 @@ type RuntimeUsageResponse struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	UsageCostResponse
+}
+
+type UsageCostResponse struct {
+	CostUSD           float64 `json:"cost_usd"`
+	InputCostUSD      float64 `json:"input_cost_usd"`
+	OutputCostUSD     float64 `json:"output_cost_usd"`
+	CacheReadCostUSD  float64 `json:"cache_read_cost_usd"`
+	CacheWriteCostUSD float64 `json:"cache_write_cost_usd"`
+	CacheSavingsUSD   float64 `json:"cache_savings_usd"`
+	Priced            bool    `json:"priced"`
+}
+
+func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) UsageCostResponse {
+	breakdown, ok := metrics.EstimateUsageCostBreakdownUSD(provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
+	if !ok {
+		return UsageCostResponse{Priced: false}
+	}
+	return UsageCostResponse{
+		CostUSD:           breakdown.TotalCostUSD,
+		InputCostUSD:      breakdown.InputCostUSD,
+		OutputCostUSD:     breakdown.OutputCostUSD,
+		CacheReadCostUSD:  breakdown.CacheReadCostUSD,
+		CacheWriteCostUSD: breakdown.CacheWriteCostUSD,
+		CacheSavingsUSD:   breakdown.CacheSavingsUSD,
+		Priced:            true,
+	}
 }
 
 // GetRuntimeUsage returns daily token usage for a runtime, aggregated from
@@ -142,6 +167,14 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 			OutputTokens:     row.OutputTokens,
 			CacheReadTokens:  row.CacheReadTokens,
 			CacheWriteTokens: row.CacheWriteTokens,
+			UsageCostResponse: usageCostResponse(
+				row.Provider,
+				row.Model,
+				row.InputTokens,
+				row.OutputTokens,
+				row.CacheReadTokens,
+				row.CacheWriteTokens,
+			),
 		}
 	}
 	return resp, nil
@@ -189,10 +222,8 @@ func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request)
 }
 
 // RuntimeUsageByAgentResponse is one (agent, provider, model) row of "Cost by
-// agent". provider + model stay on the wire because cost is computed
-// client-side from a model pricing table (intentionally not stored server-side
-// so pricing changes don't require a back-fill); provider disambiguates bare
-// model ids that collide across providers. The client groups by agent_id and sums.
+// agent". The server computes cost per row; the client groups by agent_id and
+// sums cost across models.
 type RuntimeUsageByAgentResponse struct {
 	AgentID          string `json:"agent_id"`
 	Provider         string `json:"provider"`
@@ -202,6 +233,29 @@ type RuntimeUsageByAgentResponse struct {
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	TaskCount        int32  `json:"task_count"`
+	UsageCostResponse
+}
+
+// RuntimeUsageByTaskResponse is one (task, provider, model) row of "Cost by
+// task". task_usage_hourly intentionally does not carry task_id, so this
+// endpoint reads raw task_usage rows and computes cost before the client folds
+// rows by task_id.
+type RuntimeUsageByTaskResponse struct {
+	TaskID           string  `json:"task_id"`
+	IssueID          *string `json:"issue_id"`
+	IssueNumber      int32   `json:"issue_number"`
+	IssueTitle       string  `json:"issue_title"`
+	AgentID          string  `json:"agent_id"`
+	Status           string  `json:"status"`
+	StartedAt        *string `json:"started_at"`
+	CompletedAt      *string `json:"completed_at"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	UsageCostResponse
 }
 
 // GetRuntimeUsageByAgent returns per-agent token aggregates for a runtime
@@ -248,23 +302,95 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 			CacheReadTokens:  row.CacheReadTokens,
 			CacheWriteTokens: row.CacheWriteTokens,
 			TaskCount:        row.TaskCount,
+			UsageCostResponse: usageCostResponse(
+				row.Provider,
+				row.Model,
+				row.InputTokens,
+				row.OutputTokens,
+				row.CacheReadTokens,
+				row.CacheWriteTokens,
+			),
 		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RuntimeUsageByHourResponse is one (hour, model) row. Hours with zero
-// activity are omitted by the SQL — clients fill the gap to render a
-// continuous 0..23 axis. Model is preserved for client-side cost math.
+// GetRuntimeUsageByTask returns per-task token aggregates for a runtime since
+// the cutoff window. Drives the runtime-detail "Cost by task" tab.
+func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) {
+	runtimeID := chi.URLParam(r, "runtimeId")
+	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	if !ok {
+		return
+	}
+
+	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "runtime not found")
+		return
+	}
+
+	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
+		return
+	}
+
+	viewTZ := h.resolveViewingTZ(r)
+	since := parseSinceParamInTZ(r, 30, viewTZ)
+
+	rows, err := h.Queries.ListRuntimeUsageByTask(r.Context(), db.ListRuntimeUsageByTaskParams{
+		RuntimeID: rt.ID,
+		Since:     since,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list usage by task")
+		return
+	}
+
+	resp := make([]RuntimeUsageByTaskResponse, len(rows))
+	for i, row := range rows {
+		resp[i] = RuntimeUsageByTaskResponse{
+			TaskID:           uuidToString(row.TaskID),
+			IssueID:          uuidToPtr(row.IssueID),
+			IssueNumber:      row.IssueNumber,
+			IssueTitle:       row.IssueTitle,
+			AgentID:          uuidToString(row.AgentID),
+			Status:           row.Status,
+			StartedAt:        timestampToPtr(row.StartedAt),
+			CompletedAt:      timestampToPtr(row.CompletedAt),
+			Provider:         row.Provider,
+			Model:            row.Model,
+			InputTokens:      row.InputTokens,
+			OutputTokens:     row.OutputTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
+			UsageCostResponse: usageCostResponse(
+				row.Provider,
+				row.Model,
+				row.InputTokens,
+				row.OutputTokens,
+				row.CacheReadTokens,
+				row.CacheWriteTokens,
+			),
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// RuntimeUsageByHourResponse is one (hour, provider, model) row. Hours with
+// zero activity are omitted by the SQL; clients fill the gap to render a
+// continuous 0..23 axis.
 type RuntimeUsageByHourResponse struct {
 	Hour             int    `json:"hour"`
+	Provider         string `json:"provider"`
 	Model            string `json:"model"`
 	InputTokens      int64  `json:"input_tokens"`
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	TaskCount        int32  `json:"task_count"`
+	UsageCostResponse
 }
 
 // GetRuntimeUsageByHour returns hourly (0..23) token aggregates for a
@@ -307,12 +433,21 @@ func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) 
 	for i, row := range rows {
 		resp[i] = RuntimeUsageByHourResponse{
 			Hour:             int(row.Hour),
+			Provider:         row.Provider,
 			Model:            row.Model,
 			InputTokens:      row.InputTokens,
 			OutputTokens:     row.OutputTokens,
 			CacheReadTokens:  row.CacheReadTokens,
 			CacheWriteTokens: row.CacheWriteTokens,
 			TaskCount:        row.TaskCount,
+			UsageCostResponse: usageCostResponse(
+				row.Provider,
+				row.Model,
+				row.InputTokens,
+				row.OutputTokens,
+				row.CacheReadTokens,
+				row.CacheWriteTokens,
+			),
 		}
 	}
 
@@ -402,13 +537,10 @@ func (h *Handler) resolveViewingTZ(r *http.Request) string {
 // Only fields users may legitimately edit are listed; other runtime metadata
 // (provider, daemon_id, status…) flows in from the daemon and is read-only here.
 type UpdateAgentRuntimeRequest struct {
-	// Visibility flips a runtime between "private" (default — only the owner
-	// or workspace admins can bind agents) and "public" (any workspace
-	// member can). Owner / workspace admin only, gated by canEditRuntime.
-	Visibility *string `json:"visibility,omitempty"`
+	Scope *string `json:"scope,omitempty"`
 }
 
-// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently visibility
+// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently scope
 // is editable; the request shape is open-ended so future fields (display
 // name, description) can be added without a route change.
 // Workspace-membership-checked; write access is gated by canEditRuntime.
@@ -440,33 +572,53 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		newVisibility  string
-		needVisibility bool
-	)
-	if req.Visibility != nil {
-		v := *req.Visibility
-		if v != "private" && v != "public" {
-			writeError(w, http.StatusBadRequest, "visibility must be 'private' or 'public'")
+	var newScope string
+	needScope := false
+	if req.Scope != nil {
+		v, valid := normalizeScope(*req.Scope, "")
+		if !valid {
+			writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
 			return
 		}
-		if v != rt.Visibility {
-			newVisibility = v
-			needVisibility = true
+		if v != rt.Scope {
+			newScope = v
+			needScope = true
 		}
 	}
 
-	if needVisibility {
-		updated, err := h.Queries.UpdateAgentRuntimeVisibility(r.Context(), db.UpdateAgentRuntimeVisibilityParams{
-			ID:         runtimeUUID,
-			Visibility: newVisibility,
+	if needScope {
+		if newScope == scopePersonal {
+			count, err := h.Queries.CountWorkspaceAgentsByRuntime(r.Context(), runtimeUUID)
+			if err != nil {
+				slog.Error("CountWorkspaceAgentsByRuntime failed", "error", err, "runtime_id", runtimeID)
+				writeError(w, http.StatusInternalServerError, "failed to inspect runtime dependencies")
+				return
+			}
+			if count > 0 {
+				writeError(w, http.StatusConflict, "workspace agents still depend on this runtime; move or archive them before changing it to personal")
+				return
+			}
+		}
+		updated, err := h.Queries.UpdateAgentRuntimeScope(r.Context(), db.UpdateAgentRuntimeScopeParams{
+			ID:    runtimeUUID,
+			Scope: newScope,
 		})
 		if err != nil {
-			slog.Error("UpdateAgentRuntimeVisibility failed", "error", err, "runtime_id", runtimeID)
+			slog.Error("UpdateAgentRuntimeScope failed", "error", err, "runtime_id", runtimeID)
 			writeError(w, http.StatusInternalServerError, "failed to update runtime")
 			return
 		}
 		rt = updated
+		if newScope == scopeWorkspace && rt.OwnerID.Valid {
+			if _, err := h.Queries.OpenPersonalAgentsByRuntimeOwner(r.Context(), db.OpenPersonalAgentsByRuntimeOwnerParams{
+				RuntimeID: runtimeUUID,
+				OwnerID:   rt.OwnerID,
+			}); err != nil {
+				slog.Error("OpenPersonalAgentsByRuntimeOwner failed", "error", err, "runtime_id", runtimeID)
+				writeError(w, http.StatusInternalServerError, "failed to open dependent agents")
+				return
+			}
+		}
 		// Notify connected clients that runtime metadata changed so the
 		// list/detail pages refresh — matches the pattern used by
 		// DeleteAgentRuntime.
@@ -485,18 +637,14 @@ func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
 	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
 }
 
-// canUseRuntimeForAgent reports whether a workspace member is allowed to
-// bind a new agent to — or move an existing agent onto — the given runtime.
-// Mirrors canEditRuntime but layers on the runtime's visibility flag so a
-// `public` runtime is usable by anyone in the workspace while a `private`
-// runtime stays bound to its owner. Workspace owners/admins keep an
-// administrative override for both. See migration 083 for the visibility
-// column.
+// canUseRuntimeForAgent reports whether a workspace member can see/use the
+// runtime at all. Agent-specific scope compatibility is checked separately by
+// validateAgentRuntimeScope.
 func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}
-	if rt.Visibility == "public" {
+	if rt.Scope == scopeWorkspace {
 		return true
 	}
 	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
@@ -522,6 +670,9 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
 		return
 	}
@@ -836,8 +987,8 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	//    Snapshots the full archived set on this runtime — including any
 	//    that were already archived before this call — because the
 	//    DeleteArchivedAgentsByRuntime below will hard-delete the lot, and
-	//    a paused autopilot is much louder in the UI than a silently-
-	//    dangling assignee_id (see migration 096 for why the FK is gone).
+	//    a paused autopilot is much louder in the UI than a silently
+	//    dangling assignee_id.
 	allArchivedIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")

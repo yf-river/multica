@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Archive,
+  ArchiveRestore,
   ArrowDown,
   ArrowUp,
   ChevronDown,
@@ -9,7 +11,6 @@ import {
   Loader2,
   MoreHorizontal,
   Plus,
-  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import {
   squadListOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
+import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useAuthStore } from "@multica/core/auth";
 import { api } from "@multica/core/api";
@@ -35,8 +37,15 @@ import {
   type SquadsScope,
   type SquadSortField,
 } from "@multica/core/squads/stores";
-import type { Agent, MemberWithUser, Squad } from "@multica/core/types";
+import type {
+  Agent,
+  EnsureInternalSquadTemplateRequest,
+  MemberWithUser,
+  Squad,
+  SquadScope,
+} from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +54,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -80,10 +96,21 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
-import { useRowLink } from "../../navigation";
+import {
+  squadResourceScope,
+  ResourceScopeBadge,
+  resourceSegmentedOptionClass,
+} from "../../common/resource-scope";
+import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
+import { preferredPMModel } from "./pm-model-default";
+import {
+  bestRuntimeForPMProvider,
+  pmProviderChoices,
+} from "./pm-runtime-selection";
 
 // Column template — the simplest member of the ListGrid family (squads are
 // the fewest entity, 1-5 rows): subgrid template + var tracks + two-zone
@@ -102,6 +129,8 @@ const COLUMN_WIDTHS: Record<SquadColumnKey, number> = {
   creator: 144,
   created: 104,
 };
+const DEFAULT_PM_PROVIDER = "codebuddy";
+const DEFAULT_PM_SQUAD_NAME = "pm";
 
 // Fixed tracks (edges 12+12, name min 200, leader 160) plus the 7 gap-x-3
 // gaps between the wide template's 8 tracks (zero-width tracks still carry
@@ -129,6 +158,17 @@ function columnTrackVars(
     "--sqc-kebab": showActions ? "1.75rem" : "0px",
     "--sqc-minw": `${minWidth}px`,
   } as React.CSSProperties;
+}
+
+function providerLabel(provider: string) {
+  const labels: Record<string, string> = {
+    codex: "Codex",
+    codebuddy: "CodeBuddy",
+    claude: "Claude",
+    cursor: "Cursor",
+    kimi: "Kimi",
+  };
+  return labels[provider.toLowerCase()] ?? provider;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,12 +205,28 @@ function SquadAvatar({ squad }: { squad: Squad }) {
 
 // Two-line identity cell — same form as the agents list.
 function NameCell({ squad }: { squad: Squad }) {
+  const { t } = useT("squads");
   return (
     <ListGridCell className="gap-3">
       <SquadAvatar squad={squad} />
       <div className="min-w-0 flex-1">
-        <span className="block min-w-0 truncate text-sm font-medium">
-          {squad.name}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 truncate text-sm font-medium">
+            {squad.name}
+          </span>
+          <ResourceScopeBadge
+            scope={squadResourceScope(squad.scope)}
+            label={
+              squad.scope === "personal"
+                ? t(($) => $.page.scope_personal)
+                : t(($) => $.page.scope_workspace)
+            }
+          />
+          {squad.archived_at ? (
+            <span className="shrink-0 rounded border bg-muted/40 px-1 py-0 text-[10px] leading-4 text-muted-foreground">
+              {t(($) => $.profile_card.archived)}
+            </span>
+          ) : null}
         </span>
         {squad.description ? (
           <span className="block min-w-0 truncate text-xs text-muted-foreground">
@@ -241,9 +297,8 @@ function MembersCell({ squad }: { squad: Squad }) {
 }
 
 // ---------------------------------------------------------------------------
-// Archive (= delete) dialog — reuses the existing archive_dialog copy.
-// Workspace owner/admin only (backend gate). No restore endpoint exists, so
-// once archived a squad is gone from the UI.
+// Archive dialog. The squad stays in history and can be restored from the
+// archived scope.
 // ---------------------------------------------------------------------------
 
 function ArchiveSquadDialog({
@@ -311,7 +366,21 @@ function ArchiveSquadDialog({
 
 function SquadRowActions({ squad }: { squad: Squad }) {
   const { t } = useT("squads");
+  const wsId = useCurrentWorkspace()?.id ?? "";
+  const qc = useQueryClient();
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const restore = useMutation({
+    mutationFn: () => api.restoreSquad(squad.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      toast.success(t(($) => $.archive_dialog.restore_success));
+    },
+    onError: (err) =>
+      toast.error(
+        err instanceof Error ? err.message : t(($) => $.archive_dialog.restore_failed),
+      ),
+  });
+  const isArchived = !!squad.archived_at;
   return (
     <span
       onClick={(e) => e.stopPropagation()}
@@ -330,21 +399,62 @@ function SquadRowActions({ squad }: { squad: Squad }) {
           }
         />
         <DropdownMenuContent align="end" className="w-40">
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => setArchiveOpen(true)}
-          >
-            <Trash2 className="size-3.5" />
-            {t(($) => $.page.archive_action)}
-          </DropdownMenuItem>
+          {isArchived ? (
+            <DropdownMenuItem
+              disabled={restore.isPending}
+              onClick={() => restore.mutate()}
+            >
+              <ArchiveRestore className="size-3.5" />
+              {t(($) => $.page.restore_action)}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => setArchiveOpen(true)}
+            >
+              <Archive className="size-3.5" />
+              {t(($) => $.page.archive_action)}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
-      <ArchiveSquadDialog
-        squad={squad}
-        open={archiveOpen}
-        onOpenChange={setArchiveOpen}
-      />
+      {!isArchived && (
+        <ArchiveSquadDialog
+          squad={squad}
+          open={archiveOpen}
+          onOpenChange={setArchiveOpen}
+        />
+      )}
     </span>
+  );
+}
+
+function SquadScopeToggle({
+  value,
+  onChange,
+}: {
+  value: SquadScope;
+  onChange: (value: SquadScope) => void;
+}) {
+  const { t } = useT("squads");
+  const options: SquadScope[] = ["workspace", "personal"];
+  return (
+    <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onChange(option)}
+          className={
+            resourceSegmentedOptionClass(value === option)
+          }
+        >
+          {option === "personal"
+            ? t(($) => $.page.scope_personal)
+            : t(($) => $.page.scope_workspace)}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -462,6 +572,7 @@ function SquadListToolbar({
   const SCOPE_LABELS: Record<SquadsScope, string> = {
     mine: t(($) => $.scope.mine),
     all: t(($) => $.scope.all),
+    archived: t(($) => $.scope.archived),
   };
   const SORT_LABELS: Record<SquadSortField, string> = {
     name: t(($) => $.page.table.name),
@@ -752,14 +863,20 @@ export function SquadsPage() {
   const wsId = workspace?.id ?? "";
   const p = useWorkspacePaths();
   const rowLink = useRowLink();
+  const navigation = useNavigation();
+  const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
 
   const { data: squads = [], isLoading } = useQuery({
-    ...squadListOptions(wsId),
+    ...squadListOptions(wsId, { includeArchived: true }),
     enabled: !!wsId,
   });
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: runtimes = [] } = useQuery({
+    ...runtimeListOptions(wsId),
+    enabled: !!wsId,
+  });
 
   const agentsById = useMemo(() => {
     const m = new Map<string, Agent>();
@@ -778,6 +895,109 @@ export function SquadsPage() {
     const me = members.find((mem: MemberWithUser) => mem.user_id === currentUser.id);
     return me?.role === "owner" || me?.role === "admin";
   }, [members, currentUser]);
+  const [pmDialogOpen, setPmDialogOpen] = useState(false);
+  const [pmName, setPmName] = useState(DEFAULT_PM_SQUAD_NAME);
+  const [pmProvider, setPmProvider] = useState(DEFAULT_PM_PROVIDER);
+  const [pmModel, setPmModel] = useState("");
+  const [pmModelTouched, setPmModelTouched] = useState(false);
+  const [pmScope, setPmScope] = useState<SquadScope>("workspace");
+  const providerChoices = useMemo(() => {
+    return pmProviderChoices(runtimes, pmScope, currentUser?.id ?? null);
+  }, [runtimes, pmScope, currentUser]);
+  useEffect(() => {
+    if (providerChoices.length === 0) {
+      setPmModel("");
+      setPmModelTouched(false);
+      return;
+    }
+    if (providerChoices.includes(pmProvider)) return;
+    setPmProvider(
+      providerChoices.includes(DEFAULT_PM_PROVIDER)
+        ? DEFAULT_PM_PROVIDER
+        : providerChoices[0]!,
+    );
+    setPmModel("");
+    setPmModelTouched(false);
+  }, [providerChoices, pmProvider]);
+  const selectedPmRuntime = useMemo(
+    () =>
+      bestRuntimeForPMProvider(
+        runtimes,
+        pmProvider,
+        pmScope,
+        currentUser?.id ?? null,
+      ),
+    [runtimes, pmProvider, pmScope, currentUser],
+  );
+  const selectedPmRuntimeModelsRuntimeId =
+    pmDialogOpen && selectedPmRuntime?.status === "online"
+      ? selectedPmRuntime.id
+      : null;
+  const pmRuntimeModelsQuery = useQuery(
+    runtimeModelsOptions(selectedPmRuntimeModelsRuntimeId),
+  );
+  const suggestedPmModel = useMemo(
+    () => preferredPMModel(pmRuntimeModelsQuery.data?.models ?? []),
+    [pmRuntimeModelsQuery.data],
+  );
+  const pmModelDiscoveryPending =
+    Boolean(selectedPmRuntime) && pmRuntimeModelsQuery.isLoading;
+  useEffect(() => {
+    if (!pmDialogOpen || pmModelTouched) return;
+    if (pmRuntimeModelsQuery.isLoading) return;
+    if (!suggestedPmModel) return;
+    if (pmModel !== suggestedPmModel) {
+      setPmModel(suggestedPmModel);
+    }
+  }, [
+    pmDialogOpen,
+    pmModel,
+    pmModelTouched,
+    pmRuntimeModelsQuery.isLoading,
+    suggestedPmModel,
+  ]);
+  const ensureInternalSquad = useMutation({
+    mutationFn: (payload: EnsureInternalSquadTemplateRequest) =>
+      api.ensureInternalSquadTemplate(payload),
+    onSuccess: (result) => {
+      toast.success(t(($) => $.pm_dialog.ready_toast, { name: result.squad.name }));
+      setPmDialogOpen(false);
+      const detailPath = p.squadDetail(result.squad.id);
+      navigation.push(detailPath);
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err)),
+  });
+  const openPmDialog = () => {
+    const defaultProvider = providerChoices.includes(DEFAULT_PM_PROVIDER)
+      ? DEFAULT_PM_PROVIDER
+      : providerChoices[0];
+    if (!providerChoices.includes(pmProvider)) {
+      setPmProvider(defaultProvider ?? DEFAULT_PM_PROVIDER);
+    }
+    setPmName(DEFAULT_PM_SQUAD_NAME);
+    setPmModel("");
+    setPmModelTouched(false);
+    setPmDialogOpen(true);
+  };
+  const handlePmScopeChange = (nextScope: SquadScope) => {
+    if (nextScope === pmScope) return;
+    setPmScope(nextScope);
+    setPmModel("");
+    setPmModelTouched(false);
+  };
+  const ensurePmSquad = () => {
+    const name = pmName.trim();
+    if (!name) return;
+    ensureInternalSquad.mutate({
+      template_key: "user-center",
+      name,
+      runtime_provider: pmProvider,
+      scope: pmScope,
+      ...(pmModel.trim() ? { model: pmModel.trim() } : {}),
+    });
+  };
 
   const scope = useSquadsViewStore((s) => s.scope);
   const setScope = useSquadsViewStore((s) => s.setScope);
@@ -796,22 +1016,32 @@ export function SquadsPage() {
 
   const scopeCounts = useMemo<Record<SquadsScope, number>>(() => {
     let mine = 0;
-    if (currentUser) {
-      for (const s of squads) if (s.creator_id === currentUser.id) mine++;
+    let all = 0;
+    let archived = 0;
+    for (const s of squads) {
+      if (s.archived_at) {
+        archived++;
+        continue;
+      }
+      all++;
+      if (currentUser && s.creator_id === currentUser.id) mine++;
     }
-    return { mine, all: squads.length };
+    return { mine, all, archived };
   }, [squads, currentUser]);
 
   // Rows within the current scope, unfiltered — filter option lists + the
   // "n / total" denominator derive from this.
-  const scopeRows = useMemo<Squad[]>(() => {
+  const scopedRowsWithFixtures = useMemo<Squad[]>(() => {
     return squads.filter((s) => {
+      if (scope === "archived") return !!s.archived_at;
+      if (s.archived_at) return false;
       if (scope === "mine") {
         return !!currentUser && s.creator_id === currentUser.id;
       }
       return true;
     });
   }, [squads, scope, currentUser]);
+  const scopeRows = scopedRowsWithFixtures;
 
   const leaderOptions = useMemo(() => {
     const m = new Map<string, { id: string; name: string; count: number }>();
@@ -843,7 +1073,7 @@ export function SquadsPage() {
     return [...m.values()];
   }, [scopeRows, membersById]);
 
-  const rows = useMemo<Squad[]>(() => {
+  const filteredRows = useMemo<Squad[]>(() => {
     const inScope = scopeRows.filter((s) => {
       if (filters.leaders.length > 0 && !filters.leaders.includes(s.leader_id)) {
         return false;
@@ -874,30 +1104,166 @@ export function SquadsPage() {
     return sorted;
   }, [scopeRows, filters, sortField, sortDirection]);
 
+  const rows = filteredRows;
+  const canManageAnyVisibleSquad = rows.some(
+    (squad) => isWorkspaceAdmin || squad.creator_id === currentUser?.id,
+  );
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
+      <Dialog open={pmDialogOpen} onOpenChange={setPmDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.pm_dialog.title)}</DialogTitle>
+            <DialogDescription>
+              {t(($) => $.pm_dialog.description)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <div className="mb-1.5 text-xs text-muted-foreground">
+                {t(($) => $.pm_dialog.name_label)}
+              </div>
+              <Input
+                autoFocus
+                value={pmName}
+                onChange={(event) => setPmName(event.target.value)}
+                placeholder={t(($) => $.pm_dialog.name_placeholder)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") ensurePmSquad();
+                }}
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {t(($) => $.pm_dialog.name_hint)}
+              </p>
+            </div>
+            <div>
+              <div className="mb-1.5 text-xs text-muted-foreground">
+                {t(($) => $.pm_dialog.scope_label)}
+              </div>
+              <SquadScopeToggle
+                value={pmScope}
+                onChange={handlePmScopeChange}
+              />
+            </div>
+            <div>
+              <div className="mb-1.5 text-xs text-muted-foreground">
+                {t(($) => $.pm_dialog.runtime_label)}
+              </div>
+              <Select
+                value={pmProvider}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  setPmProvider(value);
+                  setPmModel("");
+                  setPmModelTouched(false);
+                }}
+              >
+                <SelectTrigger className="w-full" disabled={providerChoices.length === 0}>
+                  <SelectValue>
+                    {providerChoices.length === 0
+                      ? t(($) => $.pm_dialog.no_runtime)
+                      : providerLabel(pmProvider)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {providerChoices.map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {providerLabel(provider)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {selectedPmRuntime
+                  ? t(($) => $.pm_dialog.runtime_online, {
+                      name: selectedPmRuntime.name,
+                    })
+                  : providerChoices.length === 0
+                    ? pmScope === "workspace"
+                      ? t(($) => $.pm_dialog.workspace_runtime_missing)
+                      : t(($) => $.pm_dialog.personal_runtime_missing)
+                    : t(($) => $.pm_dialog.provider_runtime_offline, {
+                        provider: providerLabel(pmProvider),
+                      })}
+              </p>
+            </div>
+
+            <ModelDropdown
+              runtimeId={selectedPmRuntime?.id ?? null}
+              runtimeOnline={selectedPmRuntime?.status === "online"}
+              value={pmModel}
+              onChange={(value) => {
+                setPmModel(value);
+                setPmModelTouched(true);
+              }}
+              disabled={!selectedPmRuntime}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setPmDialogOpen(false)}
+              disabled={ensureInternalSquad.isPending}
+            >
+              {t(($) => $.pm_dialog.cancel)}
+            </Button>
+            <Button
+              onClick={ensurePmSquad}
+              disabled={
+                ensureInternalSquad.isPending ||
+                !pmName.trim() ||
+                providerChoices.length === 0 ||
+                !selectedPmRuntime ||
+                pmModelDiscoveryPending
+              }
+            >
+              {ensureInternalSquad.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              {t(($) => $.pm_dialog.submit)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <PageHeader className="justify-between px-5">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1>
-          {squads.length > 0 && (
+          {scopeCounts.all > 0 && (
             <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
-              {squads.length}
+              {scopeCounts.all}
             </span>
           )}
         </div>
         {/* Quiet chrome button (outline, icon-only below md) — primary is
             reserved for the empty state. */}
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5"
-          aria-label={t(($) => $.page.new_button)}
-          onClick={() => useModalStore.getState().open("create-squad")}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span className="hidden md:inline">{t(($) => $.page.new_button)}</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1 px-2.5"
+            data-testid="ensure-pm-squad"
+            disabled={ensureInternalSquad.isPending}
+            onClick={openPmDialog}
+          >
+            {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+            <span className="hidden lg:inline">
+              {t(($) => $.pm_dialog.button)}
+            </span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5"
+            aria-label={t(($) => $.page.new_button)}
+            onClick={() => useModalStore.getState().open("create-squad")}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">{t(($) => $.page.new_button)}</span>
+          </Button>
+        </div>
       </PageHeader>
 
       {isLoading ? (
@@ -915,6 +1281,16 @@ export function SquadsPage() {
             <Plus className="size-3.5" />
             {t(($) => $.page.new_button)}
           </Button>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={ensureInternalSquad.isPending}
+              onClick={openPmDialog}
+            >
+              {t(($) => $.pm_dialog.button)}
+            </Button>
+          </div>
         </div>
       ) : (
         <>
@@ -940,7 +1316,7 @@ export function SquadsPage() {
             <ListGrid
               className={`${GRID_COLS} @2xl:min-w-[var(--sqc-minw)]`}
               style={{
-                ...columnTrackVars(isColVisible, isWorkspaceAdmin),
+                ...columnTrackVars(isColVisible, canManageAnyVisibleSquad),
                 paddingBottom: LIST_GRID_BOTTOM_CLEARANCE,
               }}
             >
@@ -994,7 +1370,7 @@ export function SquadsPage() {
                       <ListGridCell className="hidden px-0 @2xl:flex" />
                     )}
                     <ListGridCell className="justify-end px-0">
-                      {isWorkspaceAdmin ? (
+                      {isWorkspaceAdmin || squad.creator_id === currentUser?.id ? (
                         <SquadRowActions squad={squad} />
                       ) : null}
                     </ListGridCell>

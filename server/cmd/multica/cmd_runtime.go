@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -40,13 +39,6 @@ var runtimeActivityCmd = &cobra.Command{
 	RunE:  runRuntimeActivity,
 }
 
-var runtimeUpdateCmd = &cobra.Command{
-	Use:   "update <runtime-id>",
-	Short: "Initiate a CLI update on a runtime",
-	Args:  exactArgs(1),
-	RunE:  runRuntimeUpdate,
-}
-
 var runtimeDeleteCmd = &cobra.Command{
 	Use:   "delete <runtime-id>",
 	Short: "Delete a runtime from the workspace",
@@ -61,7 +53,6 @@ func init() {
 	runtimeCmd.AddCommand(runtimeListCmd)
 	runtimeCmd.AddCommand(runtimeUsageCmd)
 	runtimeCmd.AddCommand(runtimeActivityCmd)
-	runtimeCmd.AddCommand(runtimeUpdateCmd)
 	runtimeCmd.AddCommand(runtimeDeleteCmd)
 
 	// runtime list
@@ -73,11 +64,6 @@ func init() {
 
 	// runtime activity
 	runtimeActivityCmd.Flags().String("output", "table", "Output format: table or json")
-
-	// runtime update
-	runtimeUpdateCmd.Flags().String("target-version", "", "Target version to update to (required)")
-	runtimeUpdateCmd.Flags().String("output", "json", "Output format: table or json")
-	runtimeUpdateCmd.Flags().Bool("wait", false, "Wait for update to complete (poll until done)")
 
 	// runtime delete
 	runtimeDeleteCmd.Flags().Bool("cascade", false, "Archive active agents bound to the runtime, cancel their tasks, then delete the runtime")
@@ -237,68 +223,6 @@ func runRuntimeDelete(cmd *cobra.Command, args []string) error {
 	result["id"] = runtimeID
 	result["deleted"] = true
 	return printRuntimeDeleteResult(cmd, result)
-}
-
-func runRuntimeUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-
-	targetVersion, _ := cmd.Flags().GetString("target-version")
-	if targetVersion == "" {
-		return fmt.Errorf("--target-version is required")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), cli.AtLeastAPITimeout(150*time.Second))
-	defer cancel()
-
-	body := map[string]any{
-		"target_version": targetVersion,
-	}
-
-	var update map[string]any
-	if err := client.PostJSON(ctx, "/api/runtimes/"+args[0]+"/update", body, &update); err != nil {
-		return fmt.Errorf("initiate update: %w", err)
-	}
-
-	wait, _ := cmd.Flags().GetBool("wait")
-	if !wait {
-		output, _ := cmd.Flags().GetString("output")
-		if output == "json" {
-			return cli.PrintJSON(os.Stdout, update)
-		}
-		fmt.Printf("Update initiated: %s (status: %s)\n", strVal(update, "id"), strVal(update, "status"))
-		return nil
-	}
-
-	// Poll until completed/failed/timeout.
-	updateID := strVal(update, "id")
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for update (last status: %s)", strVal(update, "status"))
-		case <-time.After(2 * time.Second):
-		}
-
-		if err := client.GetJSON(ctx, "/api/runtimes/"+args[0]+"/update/"+updateID, &update); err != nil {
-			return fmt.Errorf("get update status: %w", err)
-		}
-
-		status := strVal(update, "status")
-		if status == "completed" || status == "failed" || status == "timeout" {
-			output, _ := cmd.Flags().GetString("output")
-			if output == "json" {
-				return cli.PrintJSON(os.Stdout, update)
-			}
-			if status == "completed" {
-				fmt.Printf("Update completed: %s\n", strVal(update, "output"))
-			} else {
-				fmt.Printf("Update %s: %s\n", status, strVal(update, "error"))
-			}
-			return nil
-		}
-	}
 }
 
 type runtimeDeleteConflictPayload struct {

@@ -50,16 +50,16 @@ const (
 	// matching tool_result would otherwise run forever. This is the backstop for
 	// that stuck-tool case (MUL-3064). Set MULTICA_AGENT_TOOL_WATCHDOG=0 to
 	// disable, in which case an in-flight tool never force-stops the run.
-	DefaultAgentToolWatchdog       = 2 * time.Hour
-	DefaultRuntimeName             = "Local Agent"
-	DefaultWorkspaceSyncInterval   = 30 * time.Second
-	DefaultHealthPort              = 19514
-	DefaultMaxConcurrentTasks      = 20
-	DefaultGCInterval              = 1 * time.Hour
-	DefaultGCTTL                   = 24 * time.Hour // 1 day — AI-coding issues rarely stay open long
-	DefaultGCOrphanTTL             = 72 * time.Hour // 3 days — orphans with no meta (crashes, pre-GC leftovers)
-	DefaultGCArtifactTTL           = 12 * time.Hour // 12h — drop regenerable artifacts on completed but still-open issues
-	DefaultAutoUpdateCheckInterval = 6 * time.Hour  // how often the daemon polls GitHub for a newer CLI release
+	DefaultAgentToolWatchdog     = 2 * time.Hour
+	DefaultRuntimeName           = "Local Agent"
+	DefaultWorkspaceSyncInterval = 30 * time.Second
+	DefaultHealthPort            = 19514
+	DefaultMaxConcurrentTasks    = 20
+	DefaultCodexMinTaskInterval  = 10 * time.Second
+	DefaultGCInterval            = 1 * time.Hour
+	DefaultGCTTL                 = 24 * time.Hour // 1 day — AI-coding issues rarely stay open long
+	DefaultGCOrphanTTL           = 72 * time.Hour // 3 days — orphans with no meta (crashes, pre-GC leftovers)
+	DefaultGCArtifactTTL         = 12 * time.Hour // 12h — drop regenerable artifacts on completed but still-open issues
 )
 
 // DefaultGCArtifactPatterns lists basename matches that the GC loop treats as
@@ -74,13 +74,11 @@ var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 type Config struct {
 	ServerBaseURL                  string
 	DaemonID                       string
-	LegacyDaemonIDs                []string // historical daemon_ids this machine may have registered under; reported at register time so the server can merge old runtime rows
 	DeviceName                     string
 	RuntimeName                    string
 	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
-	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
 	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro, antigravity
+	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro, antigravity
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
@@ -91,12 +89,11 @@ type Config struct {
 	GCOrphanTTL                    time.Duration         // clean orphan dirs with no meta, or dirs whose issue gc-check returns 404, once they exceed this age (default: 72h). The 404 path uses the same TTL — a scoped-down token can't instantly wipe live workspaces.
 	GCArtifactTTL                  time.Duration         // when a task has been completed for at least this long but its issue is still open, drop regenerable artifacts (default: 12h, set 0 to disable)
 	GCArtifactPatterns             []string              // basename patterns whose subtrees are removed during artifact cleanup (default: node_modules, .next, .turbo)
-	AutoUpdateEnabled              bool                  // periodically check for a newer CLI release and self-update when idle (default: true on Multica Cloud, false on self-host)
-	AutoUpdateCheckInterval        time.Duration         // how often the auto-update loop polls for a new release (default: 6h)
 	PollInterval                   time.Duration
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
 	CodexSemanticInactivityTimeout time.Duration
+	CodexMinTaskInterval           time.Duration // minimum spacing between Codex task starts on the same runtime (0 = disabled)
 	AgentIdleWatchdog              time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
 	AgentToolWatchdog              time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
 	ClaudeArgs                     []string
@@ -129,11 +126,6 @@ type Overrides struct {
 	RuntimeName                    string
 	Profile                        string // profile name (empty = default)
 	HealthPort                     int    // health check port (0 = use default)
-	// DisableAutoUpdate, when true, forces the auto-update poller off. There
-	// is no symmetric "force on" override because the env/default already
-	// resolves to enabled; the flag exists so users can opt out from the CLI.
-	DisableAutoUpdate       bool
-	AutoUpdateCheckInterval time.Duration // 0 = use env/default
 }
 
 // LoadConfig builds the daemon configuration from environment variables
@@ -149,38 +141,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Apply backend overrides from the CLI config file (issue #3875).
-	//
-	// CLIConfig.Backends.OpenClaw lets users record "which OpenClaw on this
-	// machine, and where its state lives" in a versioned, UI-editable file
-	// instead of a launchctl env hack. We translate those fields into the
-	// same env vars the rest of LoadConfig already honors:
-	//
-	//   - MULTICA_OPENCLAW_PATH: read by probe() via envOrDefault for the
-	//     binary lookup; pre-existing path.
-	//   - OPENCLAW_STATE_DIR:    OpenClaw's own env var; the daemon already
-	//     forwards it to spawned children via mergeEnv (server/pkg/agent/...).
-	//
-	// Precedence is "env wins over config wins over default" — same shape
-	// users already get with MULTICA_OPENCLAW_PATH today. We achieve it with
-	// LookupEnv guards: if the user already exported the env var (in their
-	// shell, via launchctl, or via the systemd unit), we leave it alone;
-	// otherwise we Setenv from the config file. This keeps every downstream
-	// consumer (probe, buildEnv, child processes) on the existing code path
-	// without inventing a new plumbing channel.
-	//
-	// Errors loading CLIConfig are non-fatal: a missing or malformed config
-	// file should not prevent daemon startup, since the daemon can still run
-	// purely from env-var configuration. We log a warning and proceed with
-	// no overrides.
 	var profileCommandOverrides map[string]string
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
-		slog.Warn("could not load CLI config for backend overrides; proceeding without",
+		slog.Warn("could not load CLI config; proceeding without profile command overrides",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		if oc := openclawOverrideFrom(cliCfg); oc != nil {
-			applyOpenclawOverride(oc)
-		}
 		// Per-machine custom-runtime command path overrides (MUL-3284).
 		// Copy into our own map so later mutation of the loaded config can't
 		// alias daemon state, and so an empty map normalizes to nil.
@@ -266,9 +231,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if e, ok := probe("MULTICA_OPENCODE_PATH", "opencode", "MULTICA_OPENCODE_MODEL"); ok {
 		agents["opencode"] = e
 	}
-	if e, ok := probe("MULTICA_OPENCLAW_PATH", "openclaw", "MULTICA_OPENCLAW_MODEL"); ok {
-		agents["openclaw"] = e
-	}
 	if e, ok := probe("MULTICA_HERMES_PATH", "hermes", "MULTICA_HERMES_MODEL"); ok {
 		agents["hermes"] = e
 	}
@@ -302,7 +264,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	agents = filterAgentsByProviderEnv(agents)
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
 	}
 
 	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")
@@ -357,6 +319,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
 	}
 
+	codexMinTaskInterval, err := durationFromEnv("MULTICA_CODEX_MIN_TASK_INTERVAL", DefaultCodexMinTaskInterval)
+	if err != nil {
+		return Config{}, err
+	}
+
 	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
 	// route 0 through durationFromEnv so the operator can opt out without
 	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
@@ -394,30 +361,12 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		daemonID = overrides.DaemonID
 	}
 	if daemonID == "" {
-		persisted, err := EnsureDaemonID(profile)
+		persisted, err := EnsureDaemonID()
 		if err != nil {
 			return Config{}, fmt.Errorf("ensure daemon id: %w", err)
 		}
 		daemonID = persisted
 	}
-	// Historical daemon_ids derived from the current hostname/profile. The
-	// server uses these at register time to merge any pre-UUID runtime rows
-	// for this machine into the new UUID-keyed row and delete the stale ones.
-	legacyDaemonIDs := LegacyDaemonIDs(host, profile)
-	// Pre-change (#1220) daemon identity was stored per profile, which means
-	// the same machine could end up with multiple leftover daemon.id files
-	// — e.g. ~/.multica/daemon.id (default) plus ~/.multica/profiles/<x>/
-	// daemon.id. Surface those UUIDs so the server can merge their runtime
-	// rows into the canonical machine UUID. Fatal-free: a broken profiles
-	// dir shouldn't block startup.
-	if uuids, err := LegacyDaemonUUIDs(); err == nil {
-		legacyDaemonIDs = append(legacyDaemonIDs, uuids...)
-	}
-	// Strip anything that collides with the resolved daemon_id (e.g. when
-	// the user explicitly pins MULTICA_DAEMON_ID=<hostname>, or when the
-	// canonical id was itself promoted from a pre-change profile file).
-	legacyDaemonIDs = filterLegacyIDs(legacyDaemonIDs, daemonID)
-
 	deviceName := envOrDefault("MULTICA_DAEMON_DEVICE_NAME", host)
 	if overrides.DeviceName != "" {
 		deviceName = overrides.DeviceName
@@ -432,6 +381,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	workspacesRoot, err := ResolveWorkspacesRoot(profile, overrides.WorkspacesRoot)
 	if err != nil {
 		return Config{}, err
+	}
+	if _, ok := agents["codex"]; ok {
+		if err := ensureCodexRuntimeProfile(daemonID); err != nil {
+			return Config{}, fmt.Errorf("ensure codex runtime profile: %w", err)
+		}
 	}
 
 	// Health port: override > default
@@ -466,39 +420,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	gcArtifactPatterns := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
 
-	// Auto-update config: default -> env override -> CLI override.
-	//
-	// Default is opt-in on Multica Cloud (api.multica.ai) and opt-out for
-	// self-hosted instances. Self-host operators frequently run a fork with
-	// their own patches, and silently upgrading their daemon to an upstream
-	// GitHub release would clobber that work; they also commonly stay on an
-	// older server build, which a fresh CLI may no longer talk to. Keeping
-	// auto-update off by default for self-host avoids both footguns (MUL-2381).
-	// Operators on either side can flip the default with MULTICA_DAEMON_AUTO_UPDATE.
-	autoUpdateEnabled := isOfficialCloudServer(serverBaseURL)
-	if v := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_AUTO_UPDATE")); v != "" {
-		switch strings.ToLower(v) {
-		case "false", "0", "no", "off":
-			autoUpdateEnabled = false
-		case "true", "1", "yes", "on":
-			autoUpdateEnabled = true
-		}
-	}
-	if overrides.DisableAutoUpdate {
-		autoUpdateEnabled = false
-	}
-	autoUpdateInterval, err := durationFromEnv("MULTICA_DAEMON_AUTO_UPDATE_INTERVAL", DefaultAutoUpdateCheckInterval)
-	if err != nil {
-		return Config{}, err
-	}
-	if overrides.AutoUpdateCheckInterval > 0 {
-		autoUpdateInterval = overrides.AutoUpdateCheckInterval
-	}
-
 	return Config{
 		ServerBaseURL:                  serverBaseURL,
 		DaemonID:                       daemonID,
-		LegacyDaemonIDs:                legacyDaemonIDs,
 		DeviceName:                     deviceName,
 		RuntimeName:                    runtimeName,
 		Profile:                        profile,
@@ -511,14 +435,13 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		GCOrphanTTL:                    gcOrphanTTL,
 		GCArtifactTTL:                  gcArtifactTTL,
 		GCArtifactPatterns:             gcArtifactPatterns,
-		AutoUpdateEnabled:              autoUpdateEnabled,
-		AutoUpdateCheckInterval:        autoUpdateInterval,
 		HealthPort:                     healthPort,
 		MaxConcurrentTasks:             maxConcurrentTasks,
 		PollInterval:                   pollInterval,
 		HeartbeatInterval:              heartbeatInterval,
 		AgentTimeout:                   agentTimeout,
 		CodexSemanticInactivityTimeout: codexSemanticInactivityTimeout,
+		CodexMinTaskInterval:           codexMinTaskInterval,
 		AgentIdleWatchdog:              agentIdleWatchdog,
 		AgentToolWatchdog:              agentToolWatchdog,
 		ClaudeArgs:                     claudeArgs,
@@ -526,26 +449,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		CodebuddyArgs:                  codebuddyArgs,
 		ProfileCommandOverrides:        profileCommandOverrides,
 	}, nil
-}
-
-// officialCloudHost is the hostname of Multica's hosted cloud. It's the only
-// origin we treat as "official" for the auto-update default — staging,
-// preview, and any future *.multica.ai subdomains are deliberately excluded
-// so they inherit the safer self-host default until explicitly opted in.
-const officialCloudHost = "api.multica.ai"
-
-// isOfficialCloudServer reports whether the resolved server base URL points
-// at Multica's hosted cloud. Used to pick the auto-update default: cloud
-// users run a server that publishes the matching CLI release, so opt-in
-// self-update is safe; self-host users may run a fork or pin to an older
-// server, so the default flips to off. Matching is host-only and
-// case-insensitive — port and path are ignored.
-func isOfficialCloudServer(baseURL string) bool {
-	u, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(u.Hostname(), officialCloudHost)
 }
 
 // NormalizeServerBaseURL converts a WebSocket or HTTP URL to a base HTTP URL.
@@ -675,7 +578,7 @@ func shellArgsFromEnv(name string) ([]string, error) {
 // list to pre-fetch canonical paths for every known agent in a single shell
 // invocation, instead of paying the cost-per-miss.
 var defaultAgentCommandNames = []string{
-	"claude", "codex", "opencode", "openclaw", "hermes",
+	"claude", "codex", "opencode", "hermes",
 	"gemini", "pi", "cursor-agent", "copilot", "kimi", "kiro-cli", "codebuddy", "agy",
 }
 
@@ -875,47 +778,4 @@ func isSafeAgentName(s string) bool {
 		}
 	}
 	return true
-}
-
-// openclawOverrideFrom returns the OpenClaw override block from a loaded
-// CLIConfig, or nil when no override is configured. Centralized here so
-// the LoadConfig path and tests share one navigation predicate over the
-// nullable-pointer chain.
-func openclawOverrideFrom(cfg cli.CLIConfig) *cli.OpenClawOverride {
-	if cfg.Backends == nil {
-		return nil
-	}
-	return cfg.Backends.OpenClaw
-}
-
-// applyOpenclawOverride translates the config-file overrides into process
-// env vars, which the existing probe() / buildEnv code paths already honor.
-// Env-set-by-user wins over config-set-by-file: we only Setenv when the var
-// is not already present, preserving the back-compat contract documented
-// on cli.OpenClawOverride.
-//
-// Side-effecting on os.Setenv is intentional and scoped:
-//
-//   - The two vars touched (MULTICA_OPENCLAW_PATH, OPENCLAW_STATE_DIR) are
-//     OpenClaw-specific. Other backends do not read them; setting them in the
-//     daemon process has no observable effect on, e.g., Claude Code or Codex
-//     spawn behavior.
-//   - LoadConfig runs once during daemon startup, before any backend Execute.
-//     Concurrent reads of os.Environ() in spawned children see a stable view.
-//   - We deliberately do not unset on later reload: the daemon's lifecycle is
-//     "exit and respawn" (cmd_daemon.go), not in-process reconfigure.
-func applyOpenclawOverride(oc *cli.OpenClawOverride) {
-	if oc == nil {
-		return
-	}
-	if oc.BinaryPath != "" {
-		if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); !set {
-			_ = os.Setenv("MULTICA_OPENCLAW_PATH", oc.BinaryPath)
-		}
-	}
-	if oc.StateDir != "" {
-		if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); !set {
-			_ = os.Setenv("OPENCLAW_STATE_DIR", oc.StateDir)
-		}
-	}
 }

@@ -52,9 +52,6 @@ fi
 # ---------- Database ----------
 bash scripts/ensure-postgres.sh "$ENV_FILE"
 
-echo "==> Running migrations..."
-(cd server && go run ./cmd/migrate up)
-
 # ---------- Start services ----------
 echo ""
 echo "✓ Ready. Starting services..."

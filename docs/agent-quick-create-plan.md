@@ -67,7 +67,7 @@ Skill 是一个**按需加载的能力包**,本质是 SKILL.md 文件 + 可选�
 
 ### 2.2 Multica 的 Skill 数据模型
 
-3 张表(migration `008_structured_skills.up.sql`):
+3 张表(当前 schema baseline):
 
 | 表 | 关键字段 |
 |---|---|
@@ -462,7 +462,6 @@ Multica 只有**单体 skill**(SKILL.md + skill_file),没有 plugin / bundle 概
 **现状**:`POST /api/skills/import` 当前支持 3 个 source(`fetchFromClawHub` skill.go:642-744、`fetchFromSkillsSh` skill.go:757-879、`fetchFromGitHub` skill.go:1363-1463)。ClawHub 是个独立 HTTP 客户端,不复用 GitHub 基础设施。
 
 **判断**(详见之前讨论):
-- ClawHub 服务的是 OpenClaw 平台(Multica 同生态位竞品的内容生态)
 - UI 没有发现/搜索层,用户只能粘 URL,而 ClawHub 装机量远低于 skills.sh,用户主动逛的概率极低
 - 独立代码路径,API 演进时单独跟进
 
@@ -527,7 +526,7 @@ Multica 只有**单体 skill**(SKILL.md + skill_file),没有 plugin / bundle 概
 
 | 主题 | 位置 |
 |---|---|
-| Skill DB 模型 | `server/migrations/008_structured_skills.up.sql:4-32` |
+| Skill DB 模型 | `server/internal/schema/current.sql` |
 | Skill 创建 handler + 事务 | `server/internal/handler/skill.go:143-162` + `skill_create.go:21-71` |
 | Skill import 入口(支持 3 个 source) | `server/internal/handler/skill.go:1538` |
 | Skill import source 分发 | `server/internal/handler/skill.go:586-617` (`detectImportSource`) |

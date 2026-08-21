@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { Cloud, Lock, Monitor } from "lucide-react";
-import type { AgentRuntime, MemberWithUser } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  AgentScope,
+  MemberWithUser,
+} from "@multica/core/types";
 import { ActorAvatar } from "../../../common/actor-avatar";
 import {
   PickerItem,
@@ -25,6 +29,7 @@ export function RuntimePicker({
   runtimes,
   members,
   currentUserId,
+  targetScope,
   canEdit = true,
   onChange,
 }: {
@@ -32,6 +37,7 @@ export function RuntimePicker({
   runtimes: AgentRuntime[];
   members: MemberWithUser[];
   currentUserId: string | null;
+  targetScope: AgentScope;
   /** When false, render a static read-only display and skip the popover. */
   canEdit?: boolean;
   onChange: (runtimeId: string) => Promise<void> | void;
@@ -46,9 +52,15 @@ export function RuntimePicker({
   // Compute filtered list unconditionally — the early `!canEdit` return
   // below would otherwise re-order this hook across renders.
   const isDisabled = (r: AgentRuntime): boolean => {
+    if (targetScope === "workspace") return r.scope !== "workspace";
+    if (targetScope === "personal") {
+      if (r.scope !== "personal") return true;
+      if (!currentUserId) return false;
+      return r.owner_id !== currentUserId;
+    }
     if (!currentUserId) return false;
     if (r.owner_id === currentUserId) return false;
-    return r.visibility !== "public";
+    return r.scope !== "workspace";
   };
   const filtered = useMemo(() => {
     const list =
@@ -172,7 +184,7 @@ export function RuntimePicker({
             rt.name,
             owner ? t(($) => $.pickers.runtime_owned_by, { name: owner.name }) : null,
             rtOnline ? t(($) => $.pickers.runtime_online) : t(($) => $.pickers.runtime_offline),
-            locked ? t(($) => $.create_dialog.runtime_private_locked_tooltip) : null,
+            locked ? t(($) => $.create_dialog.runtime_personal_locked_tooltip) : null,
           ]
             .filter(Boolean)
             .join(" · ");
@@ -204,7 +216,7 @@ export function RuntimePicker({
                   {locked && (
                     <span className="shrink-0 inline-flex items-center gap-0.5 rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">
                       <Lock className="h-2.5 w-2.5" />
-                      {t(($) => $.create_dialog.runtime_private_badge)}
+                      {t(($) => $.create_dialog.runtime_personal_badge)}
                     </span>
                   )}
                 </div>

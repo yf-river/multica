@@ -9,6 +9,30 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func seedStaleRuntime(t *testing.T, ctx context.Context, name string) string {
+	t.Helper()
+
+	// Use 2x the threshold so this stays correct if staleThresholdSeconds is
+	// retuned in the future.
+	staleSeed := time.Duration(staleThresholdSeconds*2) * time.Second
+	var runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider,
+			status, device_info, metadata, last_seen_at
+		)
+		VALUES ($1, NULL, $2, 'cloud', 'claude',
+			'online', '', '{}'::jsonb, now() - make_interval(secs => $3))
+		RETURNING id
+	`, testWorkspaceID, name, staleSeed.Seconds()).Scan(&runtimeID); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	})
+	return runtimeID
+}
+
 // TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat is the regression
 // test for the SELECT/filter/UPDATE race that GPT-Boy flagged in PR #2121:
 // once the sweeper splits the candidate gather and the actual write into two
@@ -25,25 +49,8 @@ func TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat(t *testing.T) {
 	queries := db.New(testPool)
 
 	// Insert an "online" runtime whose last_seen_at is well past the stale
-	// threshold — the SELECT step would pick this up as a candidate. Use
-	// 2× the threshold so this stays correct if staleThresholdSeconds is
-	// retuned in the future.
-	staleSeed := time.Duration(staleThresholdSeconds*2) * time.Second
-	var runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider,
-			status, device_info, metadata, last_seen_at
-		)
-		VALUES ($1, NULL, $2, 'cloud', 'claude',
-			'online', '', '{}'::jsonb, now() - make_interval(secs => $3))
-		RETURNING id
-	`, testWorkspaceID, "race-test-runtime", staleSeed.Seconds()).Scan(&runtimeID); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
-	})
+	// threshold; the SELECT step would pick this up as a candidate.
+	runtimeID := seedStaleRuntime(t, ctx, "race-test-runtime")
 
 	// Simulate the race window: a heartbeat lands between SELECT and UPDATE.
 	// The sweeper has already gathered this runtime as a candidate and is
@@ -94,22 +101,7 @@ func TestMarkRuntimesOfflineByIDs_OfflinesGenuinelyStale(t *testing.T) {
 	ctx := context.Background()
 	queries := db.New(testPool)
 
-	staleSeed := time.Duration(staleThresholdSeconds*2) * time.Second
-	var runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider,
-			status, device_info, metadata, last_seen_at
-		)
-		VALUES ($1, NULL, $2, 'cloud', 'claude',
-			'online', '', '{}'::jsonb, now() - make_interval(secs => $3))
-		RETURNING id
-	`, testWorkspaceID, "race-test-stale-runtime", staleSeed.Seconds()).Scan(&runtimeID); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
-	})
+	runtimeID := seedStaleRuntime(t, ctx, "race-test-stale-runtime")
 
 	rows, err := queries.MarkRuntimesOfflineByIDs(ctx, db.MarkRuntimesOfflineByIDsParams{
 		Ids:          []pgtype.UUID{parseUUID(runtimeID)},

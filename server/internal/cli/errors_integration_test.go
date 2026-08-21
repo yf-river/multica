@@ -20,8 +20,6 @@ import (
 // delete -> DeleteJSON, agent update -> PatchJSON, upload, download) all get
 // the friendly copy and the tiered exit code, not the old raw string + exit 1.
 func TestHelperStatusErrorsAreClassified(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
-
 	// Each helper wraps a real client call onto a fixed path. The server
 	// returns whatever status the current case dictates.
 	helpers := []struct {
@@ -72,10 +70,10 @@ func TestHelperStatusErrorsAreClassified(t *testing.T) {
 		wantCopy string
 	}{
 		{http.StatusUnauthorized, ExitAuth, "multica login"},
-		{http.StatusForbidden, ExitAuth, "permission"},
-		{http.StatusNotFound, ExitNotFound, "not found"},
+		{http.StatusForbidden, ExitAuth, "无权"},
+		{http.StatusNotFound, ExitNotFound, "未找到"},
 		{http.StatusUnprocessableEntity, ExitValidation, "title is required"},
-		{http.StatusInternalServerError, ExitGeneric, "temporarily unavailable"},
+		{http.StatusInternalServerError, ExitGeneric, "暂时不可用"},
 	}
 
 	for _, sc := range statusCases {
@@ -108,7 +106,7 @@ func TestHelperStatusErrorsAreClassified(t *testing.T) {
 					t.Errorf("ExitCodeFor = %d, want %d", got, sc.wantExit)
 				}
 
-				// 3. Friendly, localized copy — and no raw path/verb leak.
+				// 3. Friendly Chinese copy — and no raw path/verb leak.
 				msg := FormatError(err, false)
 				if !strings.Contains(msg, sc.wantCopy) {
 					t.Errorf("FormatError = %q, want it to contain %q", msg, sc.wantCopy)
@@ -128,7 +126,6 @@ func TestHelperStatusErrorsAreClassified(t *testing.T) {
 // the configured transport timeout. Previously commands hardcoded a 15s
 // context that truncated a longer MULTICA_HTTP_TIMEOUT.
 func TestCommandContextNotTruncatedBelowHTTPTimeout(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
 	// Use a short transport timeout so the test runs fast; the command budget
 	// (transport + grace) is what we assert is NOT the limiting factor.
 	t.Setenv("MULTICA_HTTP_TIMEOUT", "400ms")
@@ -179,7 +176,7 @@ func TestCommandContextNotTruncatedBelowHTTPTimeout(t *testing.T) {
 		if elapsed > 3*time.Second {
 			t.Errorf("request took %v; the command context likely truncated/governed instead of the transport timeout", elapsed)
 		}
-		if msg := FormatError(err, false); !strings.Contains(msg, "timed out") {
+		if msg := FormatError(err, false); !strings.Contains(msg, "请求超时") {
 			t.Errorf("expected friendly timeout copy, got %q", msg)
 		}
 		if got := ExitCodeFor(err); got != ExitNetwork {

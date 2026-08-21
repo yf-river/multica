@@ -2,36 +2,22 @@ import { describe, expect, it } from "vitest";
 import { prefixLocale } from "./locale-link";
 
 describe("prefixLocale", () => {
-  it("prefixes root-relative paths with the active non-default locale", () => {
-    expect(prefixLocale("/workspaces", "zh")).toBe("/zh/workspaces");
-    expect(prefixLocale("/workspaces", "ko")).toBe("/ko/workspaces");
-    expect(prefixLocale("/workspaces", "ja")).toBe("/ja/workspaces");
-    expect(prefixLocale("/agents-create", "zh")).toBe("/zh/agents-create");
+  it("keeps Chinese-only root-relative paths prefix-free", () => {
+    expect(prefixLocale("/workspaces", "zh")).toBe("/workspaces");
+    expect(prefixLocale("/agents-create", "zh")).toBe("/agents-create");
   });
 
-  it("preserves anchors and query strings on prefixed paths", () => {
+  it("preserves anchors and query strings", () => {
     expect(prefixLocale("/providers#claude-code", "zh")).toBe(
-      "/zh/providers#claude-code",
+      "/providers#claude-code",
     );
     expect(prefixLocale("/agents?from=docs", "zh")).toBe(
-      "/zh/agents?from=docs",
+      "/agents?from=docs",
     );
   });
 
-  it("rewrites the bare root path to the locale root", () => {
-    expect(prefixLocale("/", "zh")).toBe("/zh");
-  });
-
-  it("leaves the default language untouched (URLs are prefix-less)", () => {
-    expect(prefixLocale("/workspaces", "en")).toBe("/workspaces");
-    expect(prefixLocale("/", "en")).toBe("/");
-  });
-
-  it("does not double-prefix paths that already carry a known locale", () => {
-    expect(prefixLocale("/zh/workspaces", "zh")).toBe("/zh/workspaces");
-    expect(prefixLocale("/en/workspaces", "zh")).toBe("/en/workspaces");
-    expect(prefixLocale("/ko/workspaces", "zh")).toBe("/ko/workspaces");
-    expect(prefixLocale("/ja/workspaces", "zh")).toBe("/ja/workspaces");
+  it("keeps the bare root path unchanged", () => {
+    expect(prefixLocale("/", "zh")).toBe("/");
   });
 
   it("leaves external URLs alone", () => {

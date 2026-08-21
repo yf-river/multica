@@ -37,7 +37,7 @@ export function assigneeGroupId(
   return type && id ? `assignee:${type}:${id}` : UNASSIGNED_GROUP_ID;
 }
 
-export function getIssueGroupId(issue: Issue, grouping: IssueGrouping): string {
+function getIssueGroupId(issue: Issue, grouping: IssueGrouping): string {
   if (grouping === "status") return statusGroupId(issue.status);
   return assigneeGroupId(issue.assignee_type, issue.assignee_id);
 }

@@ -5,10 +5,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, runtimes: enRuntimes } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } };
 
 // The viewer's tz (Viewing layer) drives both the trend and the heatmap.
 const VIEWER_TZ = "Asia/Tokyo";
@@ -21,6 +21,9 @@ const runtimeUsageOptions = vi.hoisted(() =>
 const runtimeUsageByAgentOptions = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => ({ kind: "by-agent" as const })),
 );
+const runtimeUsageByTaskOptions = vi.hoisted(() =>
+  vi.fn((..._args: unknown[]) => ({ kind: "by-task" as const })),
+);
 
 vi.mock("../../common/use-viewing-timezone", () => ({
   useViewingTimezone: () => VIEWER_TZ,
@@ -29,6 +32,7 @@ vi.mock("../../common/use-viewing-timezone", () => ({
 vi.mock("@multica/core/runtimes/queries", () => ({
   runtimeUsageOptions,
   runtimeUsageByAgentOptions,
+  runtimeUsageByTaskOptions,
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
@@ -38,18 +42,6 @@ vi.mock("@multica/core/workspace/queries", () => ({
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
-
-// custom-pricing-store is consumed two ways: usage-section reads the store
-// hook, and runtimes/utils reads getCustomPricing(). The hook must be both
-// callable and expose getState(), mirroring a real Zustand store.
-vi.mock("@multica/core/runtimes/custom-pricing-store", () => {
-  const state = { pricings: {} as Record<string, unknown> };
-  const useCustomPricingStore = Object.assign(
-    (sel?: (s: typeof state) => unknown) => (sel ? sel(state) : state),
-    { getState: () => state },
-  );
-  return { useCustomPricingStore, getCustomPricing: () => undefined };
-});
 
 // useQuery is mocked so the component renders synchronously with canned
 // data — the `kind` tag on each query-options object routes the response.
@@ -68,6 +60,13 @@ vi.mock("@tanstack/react-query", async () => {
       output_tokens: 0,
       cache_read_tokens: 0,
       cache_write_tokens: 0,
+      cost_usd: 0.003,
+      input_cost_usd: 0.003,
+      output_cost_usd: 0,
+      cache_read_cost_usd: 0,
+      cache_write_cost_usd: 0,
+      cache_savings_usd: 0,
+      priced: true,
     },
   ];
   return {
@@ -91,10 +90,6 @@ vi.mock("./charts", () => ({
   ),
 }));
 
-vi.mock("./custom-pricing-dialog", () => ({
-  CustomPricingDialog: () => null,
-}));
-
 import { UsageSection } from "./usage-section";
 
 const RUNTIME: AgentRuntime = {
@@ -109,7 +104,7 @@ const RUNTIME: AgentRuntime = {
   device_info: "",
   metadata: {},
   owner_id: null,
-  visibility: "private",
+  scope: "personal",
   last_seen_at: null,
   created_at: "2026-05-01T00:00:00Z",
   updated_at: "2026-05-01T00:00:00Z",
@@ -117,7 +112,7 @@ const RUNTIME: AgentRuntime = {
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -127,6 +122,7 @@ describe("UsageSection — Viewing timezone wiring", () => {
   beforeEach(() => {
     runtimeUsageOptions.mockClear();
     runtimeUsageByAgentOptions.mockClear();
+    runtimeUsageByTaskOptions.mockClear();
   });
 
   it("fetches the trend in the viewer's tz", () => {
@@ -142,8 +138,19 @@ describe("UsageSection — Viewing timezone wiring", () => {
     render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
 
     // The heatmap is an opt-in toggle inside the "When" card.
-    fireEvent.click(screen.getByRole("button", { name: "Heatmap" }));
+    fireEvent.click(screen.getByRole("button", { name: "热力图" }));
 
     expect(screen.getByTestId("heatmap-tz").textContent).toBe(VIEWER_TZ);
+  });
+
+  it("fetches task cost attribution lazily in the viewer's tz", () => {
+    render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
+
+    fireEvent.click(screen.getByRole("button", { name: "按任务" }));
+
+    expect(runtimeUsageByTaskOptions).toHaveBeenCalled();
+    const [, days, tz] = runtimeUsageByTaskOptions.mock.calls[0]!;
+    expect(days).toBe(30);
+    expect(tz).toBe(VIEWER_TZ);
   });
 });

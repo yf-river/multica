@@ -26,6 +26,18 @@ import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { MyIssuesHeader } from "./my-issues-header";
 
+function runningIssueIdsFromAgentActivitySummaries(issues: { id: string; agent_activity?: { running_count: number } }[]): Set<string> {
+  const ids = new Set<string>();
+  for (const issue of issues) {
+    if ((issue.agent_activity?.running_count ?? 0) > 0) ids.add(issue.id);
+  }
+  return ids;
+}
+
+function hasCompleteAgentActivitySummaries(issues: { agent_activity?: unknown }[]) {
+  return issues.every((issue) => issue.agent_activity !== undefined);
+}
+
 export function MyIssuesPage() {
   const { t } = useT("my-issues");
   const user = useAuthStore((s) => s.user);
@@ -47,18 +59,6 @@ export function MyIssuesPage() {
     } as const),
     [sortBy, sortDirection],
   );
-
-  // See issues-page.tsx for the rationale — derive a workspace-wide set
-  // of issue ids with at least one running task, drive the "agents
-  // working" quick-filter from it.
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const runningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of snapshot) {
-      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
-    }
-    return ids;
-  }, [snapshot]);
 
   // Clear filter state when switching between workspaces (URL-driven).
   useClearFiltersOnWorkspaceChange(myIssuesViewStore, wsId);
@@ -125,6 +125,24 @@ export function MyIssuesPage() {
   const loading = usesAssigneeBoard
     ? assigneeGroupsQuery.isLoading
     : statusIssuesQuery.isLoading;
+
+  const hasListAgentActivity = hasCompleteAgentActivitySummaries(myIssues);
+  const listRunningIssueIds = useMemo(
+    () => runningIssueIdsFromAgentActivitySummaries(myIssues),
+    [myIssues],
+  );
+  const { data: fallbackSnapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId),
+    enabled: !hasListAgentActivity,
+  });
+  const fallbackRunningIssueIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of fallbackSnapshot) {
+      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
+    }
+    return ids;
+  }, [fallbackSnapshot]);
+  const runningIssueIds = hasListAgentActivity ? listRunningIssueIds : fallbackRunningIssueIds;
 
   // Apply status/priority/agent-running filters from view store
   const issues = useMemo(

@@ -54,6 +54,56 @@ func TestParseMentions(t *testing.T) {
 			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
 		},
 		{
+			name:    "bare agent uuid mention fallback",
+			content: "@aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa 调度 01",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "deduplicate markdown and bare uuid mention",
+			content: "[@A](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) @aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "plain agent id assignment does not mention",
+			content: "agent_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			want:    nil,
+		},
+		{
+			name:    "agent id parenthesized fallback",
+			content: "@01-需求澄清(agent_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "agent colon parenthesized fallback",
+			content: "@01-需求澄清 (agent:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "agent uuid parenthesized fallback",
+			content: "@01-需求澄清 (aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "agent uuid fullwidth parenthesized fallback",
+			content: "@01-需求澄清（aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa）请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "agent scheme markdown fallback",
+			content: "[01-需求澄清](agent://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "agent colon markdown fallback",
+			content: "@[01-需求澄清](agent:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
+			name:    "bare markdown uuid fallback",
+			content: "@[01-需求澄清](aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
+			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
+		},
+		{
 			name:    "no mentions",
 			content: "just a plain comment",
 			want:    nil,

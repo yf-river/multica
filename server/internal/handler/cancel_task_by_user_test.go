@@ -12,7 +12,7 @@ import (
 // off issue_id / chat_session_id alone, which 404'd every task whose only
 // source link was autopilot_run_id or quick_create context (MUL-2827). These
 // tests pin the new behavior: tenancy flows through the task's owning agent,
-// with chat-creator privacy and the private-agent visibility gate layered on.
+// with chat-creator privacy and the personal-agent visibility gate layered on.
 
 // taskStatus reads a task's current status straight from the DB so reject
 // paths can assert "no side effect before the access check".
@@ -101,7 +101,7 @@ func createForeignWorkspaceAgent(t *testing.T) string {
 
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent (workspace_id, name, description, runtime_mode, runtime_config, runtime_id, visibility, max_concurrent_tasks)
+		INSERT INTO agent (workspace_id, name, description, runtime_mode, runtime_config, runtime_id, scope, max_concurrent_tasks)
 		VALUES ($1, 'Foreign Cancel Agent', '', 'cloud', '{}'::jsonb, $2, 'workspace', 1)
 		RETURNING id
 	`, workspaceID, runtimeID).Scan(&agentID); err != nil {
@@ -113,22 +113,22 @@ func createForeignWorkspaceAgent(t *testing.T) string {
 // createWorkspaceMemberUser adds a plain (non-owner/admin) member to the test
 // workspace and returns the user ID. The member row cascades when the user is
 // deleted (member.user_id ON DELETE CASCADE).
-func createWorkspaceMemberUser(t *testing.T, name, email string) string {
+func createWorkspaceMemberUser(t *testing.T, name, account string) string {
 	t.Helper()
 	ctx := context.Background()
 
 	var userID string
 	if err := testPool.QueryRow(ctx,
-		`INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, name, email,
+		`INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id`, name, account,
 	).Scan(&userID); err != nil {
-		t.Fatalf("create user %s: %v", email, err)
+		t.Fatalf("create user %s: %v", account, err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
 
 	if _, err := testPool.Exec(ctx,
 		`INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, userID,
 	); err != nil {
-		t.Fatalf("add member %s: %v", email, err)
+		t.Fatalf("add member %s: %v", account, err)
 	}
 	return userID
 }
@@ -444,7 +444,7 @@ func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing
 // TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds
 // guards the data-loss path on the empty-chat cancel: the user message bound to
 // an attachment is deleted, and attachment.chat_message_id is ON DELETE CASCADE
-// (server/migrations/083_attachment_chat_columns.up.sql), so without the
+// in the current schema, so without the
 // detach-before-delete step the cancel would silently destroy the user's
 // attachment. The detach (chat_message_id -> NULL, chat_session_id retained) is
 // load-bearing, not an optimization; nothing else covered it. This pins:
@@ -599,13 +599,13 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 
 // TestCancelTaskByUser_PrivateAgent_PlainMember_Returns403 verifies the cancel
 // endpoint mirrors the agent Activity / snapshot visibility gate: a plain
-// member who cannot see a private agent's tasks cannot cancel them either.
+// member who cannot see a personal agent's tasks cannot cancel them either.
 func TestCancelTaskByUser_PrivateAgent_PlainMember_Returns403(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
-	agentID, _, memberID := privateAgentTestFixture(t)
+	agentID, _, memberID := personalAgentTestFixture(t)
 	taskID := createAutopilotRunOnlyTask(t, agentID)
 
 	w := httptest.NewRecorder()

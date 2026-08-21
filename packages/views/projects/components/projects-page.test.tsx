@@ -252,6 +252,21 @@ describe("ProjectsPage compact row navigation", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows development acceptance projects as normal data", () => {
+    const fixtureProject: Project = {
+      ...PROJECT,
+      id: "project-fixture",
+      title: "curl gateway 1782316918018",
+      description: "curl user-center 小队真实端到端验收",
+    };
+    mocks.projects = [PROJECT, fixtureProject];
+
+    renderProjects();
+
+    expect(screen.getByText(PROJECT.title)).toBeInTheDocument();
+    expect(screen.getByText(fixtureProject.title)).toBeInTheDocument();
+  });
+
   it("navigates from the row surface", async () => {
     const user = userEvent.setup();
     const push = vi.fn();
@@ -270,9 +285,9 @@ describe("ProjectsPage compact row navigation", () => {
     const row = projectRow();
 
     await user.click(within(row).getByRole("button", { pressed: false }));
-    await user.click(within(row).getByRole("button", { name: "Project actions" }));
-    await user.click(within(row).getAllByRole("button", { name: "In Progress" })[0]!);
-    await user.click(within(row).getAllByRole("button", { name: "High" })[0]!);
+    await user.click(within(row).getByRole("button", { name: "项目操作" }));
+    await user.click(within(row).getAllByRole("button", { name: "进行中" })[0]!);
+    await user.click(within(row).getAllByRole("button", { name: "高" })[0]!);
     await user.click(within(row).getByRole("button", { name: "—" }));
 
     expect(push).not.toHaveBeenCalled();

@@ -32,20 +32,34 @@ var codebuddyBlockedArgs = map[string]blockedArgMode{
 	"--input-format":    blockedWithValue,  // stream-json protocol
 	"--permission-mode": blockedWithValue,  // bypassPermissions for autonomous operation
 	"--mcp-config":      blockedWithValue,  // set by daemon from agent.mcp_config
+	"--tools":           blockedWithValue,  // execution-policy owned built-in tool envelope
+	"--allowedTools":    blockedWithValue,  // execution-policy owned built-in tool envelope
+	"--allowed-tools":   blockedWithValue,  // execution-policy owned built-in tool envelope
 	// `--effort` is owned by the per-agent thinking_level picker so a
 	// user-supplied custom_arg cannot silently outvote it.
 	"--effort": blockedWithValue,
 }
 
 func buildCodebuddyArgs(opts ExecOptions, logger *slog.Logger) []string {
+	disallowedTools := append([]string{"AskUserQuestion"}, opts.DisallowedTools...)
+	permissionMode := strings.TrimSpace(opts.PermissionMode)
+	if permissionMode == "" {
+		permissionMode = "bypassPermissions"
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--verbose",
 		"--strict-mcp-config",
-		"--permission-mode", "bypassPermissions",
-		"--disallowedTools", "AskUserQuestion",
+		"--permission-mode", permissionMode,
+		"--disallowedTools", strings.Join(dedupeToolNames(disallowedTools), ","),
+	}
+	if len(opts.AllowedBuiltinTools) > 0 {
+		args = append(args, "--tools", strings.Join(dedupeToolNames(opts.AllowedBuiltinTools), ","))
+	}
+	if len(opts.AllowedTools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(dedupeToolNames(opts.AllowedTools), ","))
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
@@ -419,7 +433,7 @@ type codebuddySDKMessage struct {
 
 	// result fields
 	ResultText string                               `json:"result,omitempty"`
-	IsError    bool                                  `json:"is_error,omitempty"`
+	IsError    bool                                 `json:"is_error,omitempty"`
 	DurationMs float64                              `json:"duration_ms,omitempty"`
 	NumTurns   int                                  `json:"num_turns,omitempty"`
 	Usage      *codebuddyUsage                      `json:"usage,omitempty"`

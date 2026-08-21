@@ -52,15 +52,42 @@ import { FileCardExtension } from "./file-card";
 import { ImageView } from "./image-view";
 import { BlockMathExtension, InlineMathExtension } from "./math";
 import { HighlightExtension } from "./highlight";
-import { AutolinkEmailRepairExtension } from "./autolink-email-repair";
 
 const lowlight = createLowlight(common);
 
-const LinkExtension = Link.extend({ inclusive: false }).configure({
+const EMAIL_AUTOLINK_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function shouldAutoLinkUrl(url: string): boolean {
+  if (/^mailto:/i.test(url)) return false;
+  if (EMAIL_AUTOLINK_RE.test(url)) return false;
+
+  // Mirrors TipTap's default shouldAutoLink implementation so URL behavior
+  // stays stable while email/mailto auto-linking is removed.
+  const hasProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(url);
+  const hasMaybeProtocol = /^[a-z][a-z0-9+.-]*:/i.test(url);
+
+  if (hasProtocol || (hasMaybeProtocol && !url.includes("@"))) {
+    return true;
+  }
+
+  const urlWithoutUserinfo = url.includes("@") ? url.split("@").pop()! : url;
+  const hostname = urlWithoutUserinfo.split(/[/?#:]/)[0] ?? "";
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    return false;
+  }
+  if (!/\./.test(hostname)) {
+    return false;
+  }
+  return true;
+}
+
+export const LinkExtension = Link.extend({ inclusive: false }).configure({
   openOnClick: false,
   autolink: true,
   linkOnPaste: true,
   defaultProtocol: "https",
+  shouldAutoLink: shouldAutoLinkUrl,
 });
 
 export const ImageExtension = Image.extend({
@@ -180,7 +207,6 @@ export function createEditorExtensions(
     // linkOnPaste relies on Link's handlePaste plugin firing first;
     // markdownPaste's handlePaste is a catch-all that returns true.
     LinkExtension,
-    AutolinkEmailRepairExtension,
     ImageExtension,
     // renderWrapper wraps the table in `<div class="tableWrapper">` (the same
     // wrapper the resizable NodeView emits), which prose.css styles with

@@ -49,6 +49,17 @@ const highlightedCommentBackgroundClass =
 const highlightedCommentFadeClass =
   "after:from-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
 
+export function formatCommentContentForDisplay(content: string): string {
+  if (!content || content.includes("\n") || content.includes("```")) return content;
+  if (!/[：:]\s*1[.、]\s*\S/.test(content) || !/[。！？?；;]\s*2[.、]\s*\S/.test(content)) {
+    return content;
+  }
+  return content
+    .replace(/([：:])\s*(1[.、]\s*)/, "$1\n\n$2")
+    .replace(/([。！？?；;])\s*(\d+[.、]\s*)/g, "$1\n$2")
+    .replace(/([。！？?；;])\s*(建议[：:])/, "$1\n\n$2");
+}
+
 function StickyHeaderShell({
   className,
   sticky = true,
@@ -376,6 +387,14 @@ function useEditAttachmentState(
     retainedStandaloneIds?.has(a.id),
   );
 
+  const removeStandaloneAttachment = useCallback((attachmentId: string) => {
+    setRetainedStandaloneIds((ids) => {
+      const next = new Set(ids ?? []);
+      next.delete(attachmentId);
+      return next;
+    });
+  }, []);
+
   const resetState = () => {
     setEditing(false);
     setContent(entry.content ?? "");
@@ -450,8 +469,7 @@ function useEditAttachmentState(
     clearDraft,
     initialValue,
     standaloneEditAttachments,
-    retainedStandaloneIds,
-    setRetainedStandaloneIds,
+    removeStandaloneAttachment,
     startEdit,
     cancelEdit,
     saveEdit,
@@ -622,13 +640,7 @@ function CommentRow({
             <AttachmentList
               attachments={edit.standaloneEditAttachments}
               className="mt-2 max-w-full"
-              onRemove={(attachmentId) =>
-                edit.setRetainedStandaloneIds((ids) => {
-                  const next = new Set(ids ?? []);
-                  next.delete(attachmentId);
-                  return next;
-                })
-              }
+              onRemove={edit.removeStandaloneAttachment}
             />
           )}
           <div className="flex items-center justify-between gap-2 mt-2">
@@ -654,7 +666,7 @@ function CommentRow({
       ) : (
         <>
           <div className="pl-12 pr-4 pt-1 text-sm leading-relaxed text-foreground/85">
-            <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+            <ReadonlyContent content={formatCommentContentForDisplay(entry.content ?? "")} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4" />
           {retryableAgentFailureComment(entry) && (
@@ -752,7 +764,11 @@ function CommentCardImpl({
     // overflow-clip (not -hidden) clips the rounded corners WITHOUT creating a
     // scroll container, so the sticky collapse affordances below resolve to the
     // timeline's scroll parent instead of this card. See PR #3623.
-    <Card className={cn("!py-0 !gap-0 overflow-clip transition-colors duration-700", isHighlighted && "ring-2 ring-brand/50", isHighlighted && highlightedCommentBackgroundClass)}>
+    <Card
+      data-testid="issue-comment-card"
+      data-comment-id={entry.id}
+      className={cn("!py-0 !gap-0 overflow-clip transition-colors duration-700", isHighlighted && "ring-2 ring-brand/50", isHighlighted && highlightedCommentBackgroundClass)}
+    >
       {onCollapseResolved && (
         <button
           type="button"
@@ -911,13 +927,7 @@ function CommentCardImpl({
                       <AttachmentList
                         attachments={edit.standaloneEditAttachments}
                         className="max-w-full"
-                        onRemove={(attachmentId) =>
-                          edit.setRetainedStandaloneIds((ids) => {
-                            const next = new Set(ids ?? []);
-                            next.delete(attachmentId);
-                            return next;
-                          })
-                        }
+                        onRemove={edit.removeStandaloneAttachment}
                         />
                       )}
                     <CommentTriggerChips
@@ -941,7 +951,7 @@ function CommentCardImpl({
             ) : (
               <>
                 <div className="pl-10 text-sm leading-relaxed text-foreground/85">
-                  <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  <ReadonlyContent content={formatCommentContentForDisplay(entry.content ?? "")} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10" />
                 {retryableAgentFailureComment(entry) && (
@@ -1058,4 +1068,4 @@ function CommentCardImpl({
 // every callback is stabilized via useCallback in use-issue-timeline.ts.
 const CommentCard = memo(CommentCardImpl);
 
-export { CommentCard, type CommentCardProps };
+export { CommentCard };

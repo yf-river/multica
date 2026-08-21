@@ -24,8 +24,7 @@ grep -n "func IsReservedContentPath"    server/internal/skill/reserved.go
 | Persists provenance into `config.origin` | `server/internal/handler/skill.go:1944-1948` — set only when `imported.origin != nil`; otherwise `config` stays `{}` and `origin` is absent |
 | Structured conflict dispatcher | `server/internal/handler/skill.go:1813-1878` |
 | Builds skill + files via `createSkillWithFiles` (def `server/internal/handler/skill_create.go:77`, tx body `:29`) | wrapped by `createImportedSkillWithName` at `server/internal/handler/skill.go:1774` |
-| Structured success: `201 Created` with `{status:"created", skill}` when `on_conflict` was sent | `server/internal/handler/skill.go:1985-1988` |
-| Legacy success: `201 Created` with bare `SkillWithFilesResponse` when `on_conflict` was omitted | `server/internal/handler/skill.go:1990` |
+| Structured success: `201 Created` with `{status:"created", skill}` | `server/internal/handler/skill.go` (`ImportSkill` success branch) |
 | Route registration `r.Post("/import", h.ImportSkill)` | `server/cmd/server/router.go:874` |
 
 ## CLI: `multica skill import --url`
@@ -56,9 +55,6 @@ grep -n "func IsReservedContentPath"    server/internal/skill/reserved.go
 | `overwrite`: creator-only update, preserves skill identity/bindings via `overwriteSkillWithFiles` | `server/internal/handler/skill.go:1823-1852`, tx helper at `server/internal/handler/skill_create.go:133` |
 | `rename`: creates suffixed name with bounded attempts | `server/internal/handler/skill.go:1854-1870`, helper at `:1786` |
 | `skip`: returns `status:"skipped"` and leaves existing skill untouched | `server/internal/handler/skill.go:1816-1821` |
-| Legacy duplicate branch when `on_conflict` was omitted | `server/internal/handler/skill.go:1973-1978` |
-| Legacy duplicate response `{error, existing_skill}` | `server/internal/handler/skill.go:118-123` |
-| CLI normalizes legacy `{existing_skill}` body into `status:"conflict"` | `server/cmd/multica/cmd_skill.go:454-482`, helper at `:484` |
 
 ## Response shape: `SkillWithFilesResponse`
 
@@ -70,9 +66,8 @@ grep -n "func IsReservedContentPath"    server/internal/skill/reserved.go
 | `createSkillWithFilesInTx` returns `SkillWithFilesResponse{SkillResponse, Files}` | `server/internal/handler/skill_create.go:66-69` |
 | `config.origin` set on import | `server/internal/handler/skill.go:1947` |
 
-For current CLI imports, `SkillWithFilesResponse` appears under
-`SkillImportResult.skill` when status is `created` or `updated`. Legacy clients
-that omit `on_conflict` still receive a bare `SkillWithFilesResponse`.
+`SkillWithFilesResponse` appears under `SkillImportResult.skill` when status is
+`created` or `updated`.
 
 ## URL source families (`detectImportSource`)
 

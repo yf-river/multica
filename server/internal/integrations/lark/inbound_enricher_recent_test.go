@@ -23,6 +23,24 @@ func groupCfg() InboundEnricherConfig {
 	return InboundEnricherConfig{RecentContextSize: DefaultRecentContextSize}
 }
 
+func seedNameResolutionRecentContext(fake *enricherFakeClient) InboundMessage {
+	fake.byChat["oc_g"] = []LarkMessage{
+		textMsg("om_trigger", "ou_charlie", "总结一下", "3000"),
+		textMsg("om_b", "ou_bob", "明天发布", "2000"),
+		textMsg("om_a", "ou_alice", "我改完了登录页", "1000"),
+	}
+	return InboundMessage{
+		MessageType:    "text",
+		MessageID:      "om_trigger",
+		ChatID:         "oc_g",
+		ChatType:       ChatTypeGroup,
+		AddressedToBot: true,
+		SenderOpenID:   "ou_charlie",
+		Body:           "总结一下",
+		CreateTime:     "3000",
+	}
+}
+
 // TestEnrichRecentContextGroupMention is the MUL-3084 core: a bare @-bot
 // mention in a group (no quote, no forward) gets the surrounding
 // conversation inlined as a <recent_context> block ahead of the user's
@@ -89,21 +107,7 @@ func TestEnrichRecentContextResolvesNames(t *testing.T) {
 		"ou_bob":     "Bob",
 		"ou_charlie": "Charlie",
 	}
-	fake.byChat["oc_g"] = []LarkMessage{
-		textMsg("om_trigger", "ou_charlie", "总结一下", "3000"),
-		textMsg("om_b", "ou_bob", "明天发布", "2000"),
-		textMsg("om_a", "ou_alice", "我改完了登录页", "1000"),
-	}
-	in := InboundMessage{
-		MessageType:    "text",
-		MessageID:      "om_trigger",
-		ChatID:         "oc_g",
-		ChatType:       ChatTypeGroup,
-		AddressedToBot: true,
-		SenderOpenID:   "ou_charlie",
-		Body:           "总结一下",
-		CreateTime:     "3000",
-	}
+	in := seedNameResolutionRecentContext(fake)
 
 	out := enrich(t, fake, in, groupCfg())
 
@@ -138,21 +142,7 @@ func TestEnrichRecentContextNameFallback(t *testing.T) {
 	t.Parallel()
 	fake := newEnricherFake()
 	fake.userNames = map[string]string{"ou_alice": "Alice"} // bob + charlie unresolved
-	fake.byChat["oc_g"] = []LarkMessage{
-		textMsg("om_trigger", "ou_charlie", "总结一下", "3000"),
-		textMsg("om_b", "ou_bob", "明天发布", "2000"),
-		textMsg("om_a", "ou_alice", "我改完了登录页", "1000"),
-	}
-	in := InboundMessage{
-		MessageType:    "text",
-		MessageID:      "om_trigger",
-		ChatID:         "oc_g",
-		ChatType:       ChatTypeGroup,
-		AddressedToBot: true,
-		SenderOpenID:   "ou_charlie",
-		Body:           "总结一下",
-		CreateTime:     "3000",
-	}
+	in := seedNameResolutionRecentContext(fake)
 
 	out := enrich(t, fake, in, groupCfg())
 

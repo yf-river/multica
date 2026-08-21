@@ -23,9 +23,8 @@ import (
 // ?project_id=<uuid> to scope the rollup to a single project. With no
 // project_id the data spans the whole workspace.
 //
-// Cost is computed client-side from a per-model pricing table — the model
-// dimension is intentionally preserved on the wire (same convention as the
-// per-runtime usage endpoints).
+// Cost is computed server-side from the maintained pricing catalog. The model
+// dimension remains on the wire so clients can show which rows were unpriced.
 //
 // Access control: workspace membership only — we don't filter by per-agent
 // visibility on the dashboard because token spend / run time are workspace-
@@ -51,10 +50,7 @@ func parseProjectIDParam(w http.ResponseWriter, r *http.Request) (pgtype.UUID, b
 	return u, true
 }
 
-// DashboardUsageDailyResponse is one (date, provider, model) bucket. Cost-side
-// math happens on the client from a per-model pricing table; provider + model
-// stay on the wire so the client can disambiguate bare model ids that collide
-// across providers (e.g. Cursor's `auto`).
+// DashboardUsageDailyResponse is one (date, provider, model) bucket.
 type DashboardUsageDailyResponse struct {
 	Date             string `json:"date"`
 	Provider         string `json:"provider"`
@@ -64,6 +60,7 @@ type DashboardUsageDailyResponse struct {
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	TaskCount        int32  `json:"task_count"`
+	UsageCostResponse
 }
 
 // GetDashboardUsageDaily returns per-(date, model) token rows for the
@@ -116,14 +113,21 @@ func (h *Handler) listDashboardUsageDaily(
 			CacheReadTokens:  row.CacheReadTokens,
 			CacheWriteTokens: row.CacheWriteTokens,
 			TaskCount:        row.TaskCount,
+			UsageCostResponse: usageCostResponse(
+				row.Provider,
+				row.Model,
+				row.InputTokens,
+				row.OutputTokens,
+				row.CacheReadTokens,
+				row.CacheWriteTokens,
+			),
 		}
 	}
 	return resp, nil
 }
 
-// DashboardUsageByAgentResponse is one (agent, provider, model) row. provider
-// rides along for the same cross-provider pricing disambiguation as the daily
-// response; the client folds by agent_id and sums cost.
+// DashboardUsageByAgentResponse is one (agent, provider, model) row. The client
+// folds by agent_id and sums the server-computed cost fields.
 type DashboardUsageByAgentResponse struct {
 	AgentID          string `json:"agent_id"`
 	Provider         string `json:"provider"`
@@ -133,6 +137,7 @@ type DashboardUsageByAgentResponse struct {
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 	TaskCount        int32  `json:"task_count"`
+	UsageCostResponse
 }
 
 // GetDashboardUsageByAgent returns per-(agent, model) token aggregates
@@ -185,6 +190,14 @@ func (h *Handler) listDashboardUsageByAgent(
 			CacheReadTokens:  row.CacheReadTokens,
 			CacheWriteTokens: row.CacheWriteTokens,
 			TaskCount:        row.TaskCount,
+			UsageCostResponse: usageCostResponse(
+				row.Provider,
+				row.Model,
+				row.InputTokens,
+				row.OutputTokens,
+				row.CacheReadTokens,
+				row.CacheWriteTokens,
+			),
 		}
 	}
 	return resp, nil

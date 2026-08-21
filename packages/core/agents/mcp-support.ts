@@ -13,7 +13,6 @@ const MCP_SUPPORTED_PROVIDERS = new Set([
   "kimi",
   "kiro",
   "opencode",
-  "openclaw",
 ]);
 
 export function providerSupportsMcpConfig(provider: string | undefined | null): boolean {

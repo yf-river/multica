@@ -1,0 +1,34 @@
+{
+  "minTokens": 90,
+  "minLines": 10,
+  "mode": "mild",
+  "reporters": [
+    "console",
+    "json",
+    "markdown"
+  ],
+  "output": "artifacts/code-health/one-time-cleanup/jscpd",
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/out/**",
+    "**/coverage/**",
+    "artifacts/**",
+    "pnpm-lock.yaml",
+    "server/pkg/db/generated/**",
+    "server/pkg/agent/testdata/**",
+    "packages/views/locales/**",
+    "apps/web/.source/**",
+    "apps/docs/.source/**"
+  ],
+  "format": [
+    "ts",
+    "tsx",
+    "javascript",
+    "go",
+    "json",
+    "css",
+    "markdown"
+  ]
+}

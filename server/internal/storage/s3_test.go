@@ -118,23 +118,6 @@ func TestS3StorageKeyFromURL_PathStylePreservesNestedKey(t *testing.T) {
 	}
 }
 
-func TestS3StorageKeyFromURL_LegacyBucketOnlyHostStillRoundTrips(t *testing.T) {
-	// Old records written before the suffix bug was fixed look like
-	// "https://<bucket>/<key>". They were broken at fetch time but were still
-	// stored, so KeyFromURL must continue to recognise that prefix when we
-	// migrate or delete those records.
-	s := &S3Storage{
-		bucket: "test-bucket",
-		region: "us-east-1",
-	}
-
-	rawURL := "https://test-bucket/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
 func TestLooksLikeS3Hostname(t *testing.T) {
 	cases := []struct {
 		bucket string

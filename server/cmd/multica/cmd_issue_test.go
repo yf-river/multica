@@ -96,6 +96,76 @@ func newFlagTestCmd(name string) *cobra.Command {
 	return c
 }
 
+func newAssigneeResolverTestServer(
+	t *testing.T,
+	membersResp []map[string]any,
+	agentsResp []map[string]any,
+	squadsResp []map[string]any,
+	onSquads func(),
+) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/workspaces/ws-1/members":
+			json.NewEncoder(w).Encode(membersResp)
+		case "/api/agents":
+			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			if onSquads != nil {
+				onSquads()
+			}
+			json.NewEncoder(w).Encode(squadsResp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+type issueCommentListQueryTestServer struct {
+	server *httptest.Server
+	query  url.Values
+}
+
+func newIssueCommentListQueryTestServer(
+	t *testing.T,
+	onComments func(http.ResponseWriter, *http.Request),
+) *issueCommentListQueryTestServer {
+	t.Helper()
+	fixture := &issueCommentListQueryTestServer{}
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-1",
+				"identifier": "MUL-1",
+			})
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
+			fixture.query = r.URL.Query()
+			if onComments != nil {
+				onComments(w, r)
+				return
+			}
+			w.Write([]byte("[]"))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	return fixture
+}
+
+func (s *issueCommentListQueryTestServer) close() {
+	s.server.Close()
+}
+
+func (s *issueCommentListQueryTestServer) setEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("MULTICA_SERVER_URL", s.server.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+}
+
 func TestResolveTextFlag(t *testing.T) {
 	t.Run("inline value is unescaped", func(t *testing.T) {
 		c := newFlagTestCmd("description")
@@ -226,6 +296,70 @@ func TestResolveTextFlag(t *testing.T) {
 	})
 }
 
+func TestResolveFileOrStdinTextFlag(t *testing.T) {
+	t.Run("stdin body is preserved verbatim", func(t *testing.T) {
+		c := &cobra.Command{Use: "test"}
+		c.Flags().Bool("content-stdin", false, "")
+		c.Flags().String("content-file", "", "")
+		_ = c.Flags().Set("content-stdin", "true")
+		pipeStdin(t, "line one\nline two\n", func() {
+			got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+			if err != nil || !ok {
+				t.Fatalf("unexpected: ok=%v err=%v", ok, err)
+			}
+			if got != "line one\nline two" {
+				t.Fatalf("got %q", got)
+			}
+		})
+	})
+
+	t.Run("missing both returns hasValue=false", func(t *testing.T) {
+		c := &cobra.Command{Use: "test"}
+		c.Flags().Bool("content-stdin", false, "")
+		c.Flags().String("content-file", "", "")
+		got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if ok || got != "" {
+			t.Fatalf("expected absent body, got (%q, %v)", got, ok)
+		}
+	})
+
+	t.Run("file plus stdin is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		path := dir + string(os.PathSeparator) + "reply.md"
+		if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
+			t.Fatalf("write tempfile: %v", err)
+		}
+		c := &cobra.Command{Use: "test"}
+		c.Flags().Bool("content-stdin", false, "")
+		c.Flags().String("content-file", "", "")
+		_ = c.Flags().Set("content-stdin", "true")
+		_ = c.Flags().Set("content-file", path)
+		if _, _, err := resolveFileOrStdinTextFlag(c, "content"); err == nil {
+			t.Fatalf("expected mutually-exclusive error")
+		}
+	})
+}
+
+func TestIssueCommentAddNoInlineContentFlag(t *testing.T) {
+	if flag := issueCommentAddCmd.Flags().Lookup("content"); flag != nil {
+		t.Fatalf("issue comment add must not expose inline --content")
+	}
+
+	cmd := &cobra.Command{Use: "add"}
+	cmd.Flags().Bool("content-stdin", false, "")
+	cmd.Flags().String("content-file", "", "")
+	err := runIssueCommentAdd(cmd, []string{"issue-1"})
+	if err == nil {
+		t.Fatalf("expected missing content error")
+	}
+	if got := err.Error(); got != "--content-stdin or --content-file is required" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
 func newIssueCreateTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "create"}
 	cmd.Flags().String("title", "", "")
@@ -239,49 +373,10 @@ func newIssueCreateTestCmd() *cobra.Command {
 	cmd.Flags().String("parent", "", "")
 	cmd.Flags().String("project", "", "")
 	cmd.Flags().String("due-date", "", "")
-	cmd.Flags().Bool("allow-duplicate", false, "")
 	cmd.Flags().String("output", "json", "")
 	cmd.Flags().StringSlice("attachment", nil, "")
 	cmd.Flags().StringSlice("attachment-id", nil, "")
 	return cmd
-}
-
-func TestRunIssueCreateSendsAllowDuplicate(t *testing.T) {
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/issues" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode body: %v", err)
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"id":         "issue-1",
-			"identifier": "MUL-1",
-			"title":      "Duplicate allowed",
-			"status":     "todo",
-			"priority":   "none",
-		})
-	}))
-	defer srv.Close()
-
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
-
-	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "Duplicate allowed")
-	_ = cmd.Flags().Set("allow-duplicate", "true")
-	if err := runIssueCreate(cmd, nil); err != nil {
-		t.Fatalf("runIssueCreate: %v", err)
-	}
-	if got := body["allow_duplicate"]; got != true {
-		t.Fatalf("allow_duplicate = %#v, want true in request body", got)
-	}
 }
 
 func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
@@ -332,43 +427,47 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 	}
 }
 
-func TestRunIssueCreateShowsDuplicateMessage(t *testing.T) {
-	want := "Active duplicate issue exists: YUA-36 SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs (status: in_progress). Set allow_duplicate=true or use --allow-duplicate to create another."
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/issues" {
-			http.NotFound(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]any{
-			"code":  "active_duplicate_issue",
-			"error": want,
-			"issue": map[string]any{
-				"id":         "issue-id",
-				"identifier": "YUA-36",
-				"status":     "in_progress",
-			},
-		})
-	}))
-	defer srv.Close()
-
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
-
-	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs")
-	err := runIssueCreate(cmd, nil)
-	if err == nil {
-		t.Fatal("runIssueCreate: expected duplicate error")
-	}
-	if got := err.Error(); got != want {
-		t.Fatalf("error = %q, want %q", got, want)
-	}
-}
-
 func newIssuePullRequestsTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pull-requests"}
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
+func newIssuePullRequestLinkTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "pull-request link"}
+	cmd.Flags().String("provider", "gongfeng", "")
+	cmd.Flags().String("project-path", "", "")
+	cmd.Flags().String("repo-url", "", "")
+	cmd.Flags().Int32("number", 0, "")
+	cmd.Flags().Int32("iid", 0, "")
+	cmd.Flags().String("title", "", "")
+	cmd.Flags().String("state", "open", "")
+	cmd.Flags().String("html-url", "", "")
+	cmd.Flags().String("source-branch", "", "")
+	cmd.Flags().String("target-branch", "", "")
+	cmd.Flags().String("author-login", "", "")
+	cmd.Flags().String("head-sha", "", "")
+	cmd.Flags().String("mergeable-state", "", "")
+	cmd.Flags().Int32("additions", 0, "")
+	cmd.Flags().Int32("deletions", 0, "")
+	cmd.Flags().Int32("changed-files", 0, "")
+	cmd.Flags().Bool("close-intent", false, "")
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
+func newIssueMRCreateTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "mr create"}
+	cmd.Flags().String("provider", "gongfeng", "")
+	cmd.Flags().String("project-path", "", "")
+	cmd.Flags().String("source-branch", "", "")
+	cmd.Flags().String("target-branch", "", "")
+	cmd.Flags().String("title", "", "")
+	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("description-file", "", "")
+	cmd.Flags().Bool("close-intent", false, "")
+	cmd.Flags().Bool("remove-source-branch", false, "")
+	cmd.Flags().Bool("squash", false, "")
 	cmd.Flags().String("output", "table", "")
 	return cmd
 }
@@ -458,6 +557,229 @@ func TestRunIssuePullRequestsTableIncludesCoreFields(t *testing.T) {
 	}
 }
 
+func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
+	var gotPaths []string
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/issues/GOA-61234":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "GOA-61234",
+				"title":      "CLI MR link",
+			})
+		case "/api/issues/issue-uuid/pull-requests":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"pull_request": map[string]any{
+					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+					"number":   float64(61234),
+					"state":    "open",
+					"title":    "GOA-61234 user-center add quick entry API",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssuePullRequestLinkTestCmd()
+	_ = cmd.Flags().Set("html-url", "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234")
+	_ = cmd.Flags().Set("title", "GOA-61234 user-center add quick entry API")
+	_ = cmd.Flags().Set("source-branch", "goa-61234-usercenter-api")
+	_ = cmd.Flags().Set("target-branch", "dev_sop")
+	_ = cmd.Flags().Set("author-login", "codex")
+	_ = cmd.Flags().Set("head-sha", "abc123")
+	_ = cmd.Flags().Set("output", "json")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssuePullRequestLink(cmd, []string{"GOA-61234"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssuePullRequestLink: %v", err)
+	}
+
+	if want := []string{"/api/issues/GOA-61234", "/api/issues/issue-uuid/pull-requests"}; fmt.Sprint(gotPaths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %v, want %v", gotPaths, want)
+	}
+	for key, want := range map[string]any{
+		"provider":      "gongfeng",
+		"html_url":      "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+		"title":         "GOA-61234 user-center add quick entry API",
+		"source_branch": "goa-61234-usercenter-api",
+		"target_branch": "dev_sop",
+		"author_login":  "codex",
+		"head_sha":      "abc123",
+	} {
+		if posted[key] != want {
+			t.Fatalf("posted[%s] = %#v, want %#v; full body=%#v", key, posted[key], want, posted)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, string(out))
+	}
+	if payload["pull_request"] == nil {
+		t.Fatalf("missing pull_request output: %s", string(out))
+	}
+}
+
+func TestRunIssueMRCreatePostsPlatformCreate(t *testing.T) {
+	var gotPaths []string
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/issues/GOA-61235":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "GOA-61235",
+				"title":      "CLI MR create",
+			})
+		case "/api/issues/issue-uuid/merge-requests/create":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"linked": true,
+				"pull_request": map[string]any{
+					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61235",
+					"number":   float64(61235),
+					"state":    "open",
+					"title":    "GOA-61235 user-center password policy",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	descFile := t.TempDir() + "/mr.md"
+	if err := os.WriteFile(descFile, []byte("验证通过，提交人工 CodeReview。\n"), 0o600); err != nil {
+		t.Fatalf("write description file: %v", err)
+	}
+	cmd := newIssueMRCreateTestCmd()
+	_ = cmd.Flags().Set("project-path", "ChainWeaver/ida/user-center")
+	_ = cmd.Flags().Set("source-branch", "agent/goa-61235")
+	_ = cmd.Flags().Set("target-branch", "v5.0.0_dev_sop")
+	_ = cmd.Flags().Set("title", "GOA-61235 user-center password policy")
+	_ = cmd.Flags().Set("description-file", descFile)
+	_ = cmd.Flags().Set("close-intent", "true")
+	_ = cmd.Flags().Set("remove-source-branch", "true")
+	_ = cmd.Flags().Set("output", "json")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssueMRCreate(cmd, []string{"GOA-61235"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssueMRCreate: %v", err)
+	}
+
+	if want := []string{"/api/issues/GOA-61235", "/api/issues/issue-uuid/merge-requests/create"}; fmt.Sprint(gotPaths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %v, want %v", gotPaths, want)
+	}
+	for key, want := range map[string]any{
+		"provider":             "gongfeng",
+		"project_path":         "ChainWeaver/ida/user-center",
+		"source_branch":        "agent/goa-61235",
+		"target_branch":        "v5.0.0_dev_sop",
+		"title":                "GOA-61235 user-center password policy",
+		"description":          "验证通过，提交人工 CodeReview。\n",
+		"close_intent":         true,
+		"remove_source_branch": true,
+	} {
+		if posted[key] != want {
+			t.Fatalf("posted[%s] = %#v, want %#v; full body=%#v", key, posted[key], want, posted)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, string(out))
+	}
+	if payload["linked"] != true || payload["pull_request"] == nil {
+		t.Fatalf("unexpected MR create output: %s", string(out))
+	}
+}
+
+func TestRunIssueChildrenParsesEnvelopeResponse(t *testing.T) {
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/issues/GOA-520":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "GOA-520",
+				"title":      "Parent",
+				"status":     "done",
+			})
+		case "/api/issues/issue-uuid/children":
+			json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "children"}
+	cmd.Flags().String("output", "json", "")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssueChildren(cmd, []string{"GOA-520"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssueChildren: %v", err)
+	}
+
+	if want := []string{"/api/issues/GOA-520", "/api/issues/issue-uuid/children"}; fmt.Sprint(gotPaths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %v, want %v", gotPaths, want)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, string(out))
+	}
+	if payload["parent_issue_id"] != "issue-uuid" || payload["total"] != float64(0) {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
 func TestTruncateID(t *testing.T) {
 	tests := []struct {
 		name string
@@ -468,7 +790,7 @@ func TestTruncateID(t *testing.T) {
 		{"exact 8", "abcdefgh", "abcdefgh"},
 		{"longer than 8", "abcdefgh-1234-5678", "abcdefgh"},
 		{"empty", "", ""},
-		{"unicode", "日本語テスト文字列追加", "日本語テスト文字"},
+		{"unicode", "中文测试字符串追加", "中文测试字符串追"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -857,18 +1179,7 @@ func TestResolveAssignee(t *testing.T) {
 		{"id": "squad-4444", "name": "Super Human"},
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -992,7 +1303,7 @@ func TestNormalizeAssigneeLookupInput(t *testing.T) {
 
 // TestResolveAssigneeRespectsKinds covers the MUL-2165 follow-up: callers
 // whose target schema is member-or-agent-only (project.lead_type DB CHECK
-// at server/migrations/034_projects.up.sql:10, and the subscriber handler's
+// in the current schema baseline, and the subscriber handler's
 // isWorkspaceEntity switch at server/internal/handler/handler.go:414) must
 // be able to opt out of squad resolution. Without this, "--lead <SquadName>"
 // would return (squad, ...) and the request would 500/403 server-side
@@ -1009,19 +1320,9 @@ func TestResolveAssigneeRespectsKinds(t *testing.T) {
 	}
 
 	var squadsHits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			squadsHits++
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, func() {
+		squadsHits++
+	})
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1078,18 +1379,7 @@ func TestResolveAssigneeExactMatchWins(t *testing.T) {
 		{"id": "f656eab8-1111-1111-1111-111111111111", "name": "reviewer"},
 		{"id": "9b0ff9a2-2222-2222-2222-222222222222", "name": "peer-reviewer"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode([]map[string]any{})
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode([]map[string]any{})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, []map[string]any{}, agentsResp, []map[string]any{}, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1152,18 +1442,7 @@ func TestResolveAssigneeByID(t *testing.T) {
 	squadsResp := []map[string]any{
 		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1225,18 +1504,7 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 	squadsResp := []map[string]any{
 		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1448,7 +1716,7 @@ func TestPickAssigneeFromFlags(t *testing.T) {
 // for the MUL-2165 follow-up. Subscriber add/remove and project lead pass
 // memberOrAgentKinds because their target schema rejects squads
 // (subscriber: server/internal/handler/handler.go:414;
-// project: server/migrations/034_projects.up.sql:10). Without this gating,
+// project: current schema project.lead_type CHECK). Without this gating,
 // `multica issue subscriber add --user "<SquadName>"` or
 // `multica project create --lead "<SquadName>"` would resolve to
 // (squad, ...) and surface as a 500/403 server-side instead of a clean
@@ -1859,28 +2127,10 @@ func TestRunIssueCommentListFlagGuards(t *testing.T) {
 // of #3164: the flag must be forwarded as the server's roots_only query param,
 // and it must still allow the existing --since incremental polling filter.
 func TestRunIssueCommentList_RootsOnlyPassesThroughWithSince(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
-			gotQuery = r.URL.Query()
-			w.Write([]byte("[]"))
-			return
-		}
-		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
-		http.Error(w, "unexpected", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	srv := newIssueCommentListQueryTestServer(t, nil)
+	defer srv.close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	srv.setEnv(t)
 
 	cmd := newIssueCommentListTestCmd()
 	if err := cmd.Flags().Set("roots-only", "true"); err != nil {
@@ -1893,10 +2143,10 @@ func TestRunIssueCommentList_RootsOnlyPassesThroughWithSince(t *testing.T) {
 		t.Fatalf("runIssueCommentList: %v", err)
 	}
 
-	if got := gotQuery.Get("roots_only"); got != "true" {
+	if got := srv.query.Get("roots_only"); got != "true" {
 		t.Errorf("roots_only query = %q, want true", got)
 	}
-	if got := gotQuery.Get("since"); got != "2026-01-01T00:00:00Z" {
+	if got := srv.query.Get("since"); got != "2026-01-01T00:00:00Z" {
 		t.Errorf("since query = %q, want timestamp", got)
 	}
 }
@@ -1906,28 +2156,10 @@ func TestRunIssueCommentList_RootsOnlyPassesThroughWithSince(t *testing.T) {
 // --roots-only (the orientation read it pairs with most often) rather than
 // being rejected as an incompatible combination.
 func TestRunIssueCommentList_SummaryPassesThrough(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
-			gotQuery = r.URL.Query()
-			w.Write([]byte("[]"))
-			return
-		}
-		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
-		http.Error(w, "unexpected", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	srv := newIssueCommentListQueryTestServer(t, nil)
+	defer srv.close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	srv.setEnv(t)
 
 	cmd := newIssueCommentListTestCmd()
 	if err := cmd.Flags().Set("summary", "true"); err != nil {
@@ -1940,10 +2172,10 @@ func TestRunIssueCommentList_SummaryPassesThrough(t *testing.T) {
 		t.Fatalf("runIssueCommentList: %v", err)
 	}
 
-	if got := gotQuery.Get("summary"); got != "true" {
+	if got := srv.query.Get("summary"); got != "true" {
 		t.Errorf("summary query = %q, want true", got)
 	}
-	if got := gotQuery.Get("roots_only"); got != "true" {
+	if got := srv.query.Get("roots_only"); got != "true" {
 		t.Errorf("roots_only query = %q, want true", got)
 	}
 }
@@ -1954,32 +2186,16 @@ func TestRunIssueCommentList_SummaryPassesThrough(t *testing.T) {
 // "Next thread cursor") so an operator can scroll older replies inside
 // the same thread without guessing which cursor model the server emitted.
 func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
-			gotQuery = r.URL.Query()
-			// Emit a cursor so we can prove the CLI labels it "reply"
-			// when the call was a --thread + --tail combo.
-			w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
-			w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000999")
-			w.Write([]byte("[]"))
-			return
-		}
-		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
-		http.Error(w, "unexpected", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	srv := newIssueCommentListQueryTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Emit a cursor so we can prove the CLI labels it "reply"
+		// when the call was a --thread + --tail combo.
+		w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
+		w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000999")
+		w.Write([]byte("[]"))
+	})
+	defer srv.close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	srv.setEnv(t)
 
 	// Redirect stderr so we can assert on the "Next reply cursor" line —
 	// that's the user-visible signal that the CLI knew it was paging
@@ -1998,10 +2214,10 @@ func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *test
 		t.Fatalf("runIssueCommentList: %v", err)
 	}
 
-	if got := gotQuery.Get("thread"); got != "00000000-0000-0000-0000-000000000001" {
+	if got := srv.query.Get("thread"); got != "00000000-0000-0000-0000-000000000001" {
 		t.Errorf("thread query = %q, want the passed anchor", got)
 	}
-	if got := gotQuery.Get("tail"); got != "5" {
+	if got := srv.query.Get("tail"); got != "5" {
 		t.Errorf("tail query = %q, want %q", got, "5")
 	}
 	out := stderr.read()

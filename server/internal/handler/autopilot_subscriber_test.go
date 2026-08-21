@@ -42,6 +42,66 @@ FOR EACH ROW EXECUTE FUNCTION %s();
 	}
 }
 
+type dispatchedAutopilotIssueFixture struct {
+	issueID string
+}
+
+func createDispatchedAutopilotIssue(t *testing.T, ctx context.Context, autopilotTitle, issueTitle string, subscribers []map[string]any) dispatchedAutopilotIssueFixture {
+	t.Helper()
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+
+	body := map[string]any{
+		"title":                autopilotTitle,
+		"assignee_type":        "agent",
+		"assignee_id":          agentID,
+		"execution_mode":       "create_issue",
+		"issue_title_template": issueTitle,
+	}
+	if subscribers != nil {
+		body["subscribers"] = subscribers
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateAutopilot(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var autopilot AutopilotResponse
+	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
+		t.Fatalf("decode autopilot: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilot.ID)
+	})
+
+	queries := db.New(testPool)
+	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilot.ID))
+	if err != nil {
+		t.Fatalf("GetAutopilot: %v", err)
+	}
+	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	if err != nil {
+		t.Fatalf("DispatchAutopilot: %v", err)
+	}
+	if run == nil || !run.IssueID.Valid {
+		t.Fatalf("dispatch run = %+v, want linked issue", run)
+	}
+	issueID := uuidToString(run.IssueID)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	return dispatchedAutopilotIssueFixture{
+		issueID: issueID,
+	}
+}
+
 // TestCreateAutopilotPersistsMemberSubscribers covers the happy path:
 // supplying a non-empty `subscribers` array on POST /api/autopilots stores
 // the rows and the response echoes them back. This is the create half of the
@@ -63,6 +123,7 @@ func TestCreateAutopilotPersistsMemberSubscribers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Subscriber template autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -111,6 +172,7 @@ func TestCreateAutopilotRejectsNonMemberSubscriberType(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Bad subscriber type",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -135,6 +197,7 @@ func TestCreateAutopilotRejectsForeignSubscriber(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Foreign subscriber",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -161,6 +224,7 @@ func TestCreateAutopilotRollsBackWhenSubscriberInsertFails(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          title,
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -205,6 +269,7 @@ func TestUpdateAutopilotFullReplaceSubscribers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Replace subscribers autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -267,6 +332,7 @@ func TestUpdateAutopilotRollsBackWhenSubscriberInsertFails(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          originalTitle,
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -335,6 +401,7 @@ func TestUpdateAutopilotPreservesSubscribersWhenOmitted(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Preserve subscribers autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -381,61 +448,16 @@ func TestUpdateAutopilotPreservesSubscribersWhenOmitted(t *testing.T) {
 func TestAutopilotDispatchFansOutSubscribersToIssue(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot subscriber fanout %d", time.Now().UnixNano())
-	var autopilotID, issueID string
-	defer func() {
-		if issueID != "" {
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-		}
-		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-		}
-	}()
-
-	var agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
-		"title":                "Subscriber fanout autopilot",
-		"assignee_id":          agentID,
-		"execution_mode":       "create_issue",
-		"issue_title_template": title,
-		"subscribers": []map[string]any{
-			{"user_type": "member", "user_id": testUserID},
-		},
+	fixture := createDispatchedAutopilotIssue(t, ctx, "Subscriber fanout autopilot", title, []map[string]any{
+		{"user_type": "member", "user_id": testUserID},
 	})
-	testHandler.CreateAutopilot(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var autopilot AutopilotResponse
-	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
-		t.Fatalf("decode autopilot: %v", err)
-	}
-	autopilotID = autopilot.ID
-
-	queries := db.New(testPool)
-	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
-	if err != nil {
-		t.Fatalf("GetAutopilot: %v", err)
-	}
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
-	if err != nil {
-		t.Fatalf("DispatchAutopilot: %v", err)
-	}
-	if run == nil || !run.IssueID.Valid {
-		t.Fatalf("dispatch run = %+v, want linked issue", run)
-	}
-	issueID = uuidToString(run.IssueID)
 
 	var subscriberReason string
 	if err := testPool.QueryRow(ctx, `
 		SELECT reason
 		FROM issue_subscriber
 		WHERE issue_id = $1 AND user_type = 'member' AND user_id = $2
-	`, issueID, testUserID).Scan(&subscriberReason); err != nil {
+	`, fixture.issueID, testUserID).Scan(&subscriberReason); err != nil {
 		t.Fatalf("query autopilot-fanned subscriber: %v", err)
 	}
 	if subscriberReason != "autopilot" {
@@ -453,62 +475,16 @@ func TestAutopilotDispatchFansOutSubscribersToIssue(t *testing.T) {
 func TestAutopilotDispatchNotifiesSubscribersOnCreate(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot subscriber inbox %d", time.Now().UnixNano())
-	var autopilotID, issueID string
-	defer func() {
-		if issueID != "" {
-			testPool.Exec(ctx, `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-		}
-		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-		}
-	}()
-
-	var agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
-		"title":                "Subscriber inbox autopilot",
-		"assignee_id":          agentID,
-		"execution_mode":       "create_issue",
-		"issue_title_template": title,
-		"subscribers": []map[string]any{
-			{"user_type": "member", "user_id": testUserID},
-		},
+	fixture := createDispatchedAutopilotIssue(t, ctx, "Subscriber inbox autopilot", title, []map[string]any{
+		{"user_type": "member", "user_id": testUserID},
 	})
-	testHandler.CreateAutopilot(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var autopilot AutopilotResponse
-	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
-		t.Fatalf("decode autopilot: %v", err)
-	}
-	autopilotID = autopilot.ID
-
-	queries := db.New(testPool)
-	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
-	if err != nil {
-		t.Fatalf("GetAutopilot: %v", err)
-	}
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
-	if err != nil {
-		t.Fatalf("DispatchAutopilot: %v", err)
-	}
-	if run == nil || !run.IssueID.Valid {
-		t.Fatalf("dispatch run = %+v, want linked issue", run)
-	}
-	issueID = uuidToString(run.IssueID)
 
 	var inboxCount int
 	var inboxType, inboxTitle string
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*) FROM inbox_item
 		WHERE issue_id = $1 AND recipient_id = $2 AND type = 'issue_subscribed'
-	`, issueID, testUserID).Scan(&inboxCount); err != nil {
+	`, fixture.issueID, testUserID).Scan(&inboxCount); err != nil {
 		t.Fatalf("count inbox rows: %v", err)
 	}
 	if inboxCount != 1 {
@@ -518,7 +494,7 @@ func TestAutopilotDispatchNotifiesSubscribersOnCreate(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		SELECT type, title FROM inbox_item
 		WHERE issue_id = $1 AND recipient_id = $2 AND type = 'issue_subscribed'
-	`, issueID, testUserID).Scan(&inboxType, &inboxTitle); err != nil {
+	`, fixture.issueID, testUserID).Scan(&inboxType, &inboxTitle); err != nil {
 		t.Fatalf("load inbox row: %v", err)
 	}
 	if inboxType != "issue_subscribed" {
@@ -538,58 +514,13 @@ func TestAutopilotDispatchNotifiesSubscribersOnCreate(t *testing.T) {
 func TestAutopilotDispatchSkipsInboxWhenNoSubscribers(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot no-subscriber inbox %d", time.Now().UnixNano())
-	var autopilotID, issueID string
-	defer func() {
-		if issueID != "" {
-			testPool.Exec(ctx, `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-		}
-		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-		}
-	}()
-
-	var agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
-		"title":                "No-subscriber autopilot",
-		"assignee_id":          agentID,
-		"execution_mode":       "create_issue",
-		"issue_title_template": title,
-	})
-	testHandler.CreateAutopilot(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var autopilot AutopilotResponse
-	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
-		t.Fatalf("decode autopilot: %v", err)
-	}
-	autopilotID = autopilot.ID
-
-	queries := db.New(testPool)
-	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
-	if err != nil {
-		t.Fatalf("GetAutopilot: %v", err)
-	}
-	run, err := testHandler.AutopilotService.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
-	if err != nil {
-		t.Fatalf("DispatchAutopilot: %v", err)
-	}
-	if run == nil || !run.IssueID.Valid {
-		t.Fatalf("dispatch run = %+v, want linked issue", run)
-	}
-	issueID = uuidToString(run.IssueID)
+	fixture := createDispatchedAutopilotIssue(t, ctx, "No-subscriber autopilot", title, nil)
 
 	var inboxCount int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*) FROM inbox_item
 		WHERE issue_id = $1 AND type = 'issue_subscribed'
-	`, issueID).Scan(&inboxCount); err != nil {
+	`, fixture.issueID).Scan(&inboxCount); err != nil {
 		t.Fatalf("count inbox rows: %v", err)
 	}
 	if inboxCount != 0 {
@@ -619,6 +550,7 @@ func TestDeleteAutopilotRemovesSubscribers(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Delete-with-subscribers autopilot",
+		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{

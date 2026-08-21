@@ -6,18 +6,18 @@ import { issueKeys, PAGINATED_STATUSES } from "@multica/core/issues/queries";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { IssueStatus, ListIssuesCache } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
-import enCommon from "../../locales/en/common.json";
-import enAuth from "../../locales/en/auth.json";
-import enSettings from "../../locales/en/settings.json";
-import enEditor from "../../locales/en/editor.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAuth from "../../locales/zh-Hans/auth.json";
+import enSettings from "../../locales/zh-Hans/settings.json";
+import enEditor from "../../locales/zh-Hans/editor.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, auth: enAuth, settings: enSettings, editor: enEditor },
+  "zh-Hans": { common: enCommon, auth: enAuth, settings: enSettings, editor: enEditor },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -62,7 +62,7 @@ function fakeQc(data: {
     id: string;
     name: string;
     archived_at: string | null;
-    visibility?: "workspace" | "private";
+    scope?: "workspace" | "personal";
     owner_id?: string | null;
   }>;
   squads?: Array<{
@@ -101,6 +101,27 @@ function fakeQc(data: {
   } as unknown as QueryClient;
 }
 
+const CONTEXT_MENTION_CACHE = {
+  members: [{ user_id: "u1", name: "Alice", role: "member" }],
+  agents: [
+    { id: "a1", name: "Aegis", archived_at: null, scope: "workspace" as const, owner_id: null },
+  ],
+  issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
+};
+
+const CONTEXT_MENTION_ITEMS: MentionItem[] = [
+  { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
+  { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
+];
+
+function contextMentionItems(query: string): MentionItem[] {
+  const config = createMentionSuggestion(fakeQc(CONTEXT_MENTION_CACHE), {
+    mode: "context",
+    getContextItems: () => CONTEXT_MENTION_ITEMS,
+  });
+  return config.items!({ query, editor: {} as never }) as MentionItem[];
+}
+
 describe("createMentionSuggestion", () => {
   beforeEach(() => {
     searchIssuesMock.mockReset();
@@ -116,7 +137,7 @@ describe("createMentionSuggestion", () => {
           id: "a1",
           name: "Aegis",
           archived_at: null,
-          visibility: "workspace",
+          scope: "workspace",
           owner_id: null,
         },
       ],
@@ -149,7 +170,7 @@ describe("createMentionSuggestion", () => {
 
     render(<I18nWrapper><MentionList items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
 
-    expect(screen.getByText("Searching...")).toBeInTheDocument();
+    expect(screen.getByText("搜索中...")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("MUL-1007")).toBeInTheDocument();
@@ -221,7 +242,7 @@ describe("createMentionSuggestion", () => {
           id: "a-personal-bob",
           name: "Atlas",
           archived_at: null,
-          visibility: "private",
+          scope: "personal",
           owner_id: "u2",
         },
         // Alice's own personal agent — should be visible.
@@ -229,7 +250,7 @@ describe("createMentionSuggestion", () => {
           id: "a-personal-alice",
           name: "Athena",
           archived_at: null,
-          visibility: "private",
+          scope: "personal",
           owner_id: "u1",
         },
         // Workspace agent — visible to everyone.
@@ -237,7 +258,7 @@ describe("createMentionSuggestion", () => {
           id: "a-shared",
           name: "Aether",
           archived_at: null,
-          visibility: "workspace",
+          scope: "workspace",
           owner_id: "u2",
         },
       ],
@@ -267,7 +288,7 @@ describe("createMentionSuggestion", () => {
           id: "a-personal-bob",
           name: "Atlas",
           archived_at: null,
-          visibility: "private",
+          scope: "personal",
           owner_id: "u2",
         },
       ],
@@ -285,7 +306,7 @@ describe("createMentionSuggestion", () => {
     const qc = fakeQc({
       issues: [
         { id: "i1", identifier: "MUL-1", title: "Login bug", status: "todo" },
-        { id: "i2", identifier: "MUL-2", title: "Other", status: "done" },
+        { id: "i2", identifier: "MUL-2", title: "其他", status: "done" },
       ],
     });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
@@ -314,42 +335,18 @@ describe("createMentionSuggestion", () => {
 
 
   it("shows only current/recent chat context before the user types a query", () => {
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [{ id: "a1", name: "Aegis", archived_at: null, visibility: "workspace", owner_id: null }],
-      issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
-    });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
 
-    const config = createMentionSuggestion(qc, {
-      mode: "context",
-      getContextItems: () => [
-        { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
-        { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
-      ],
-    });
-    const result = config.items!({ query: "", editor: {} as never }) as MentionItem[];
+    const result = contextMentionItems("");
 
     expect(result.map((item) => `${item.type}:${item.id}`)).toEqual(["issue:i1", "project:p1"]);
     expect(result.some((item) => item.type === "member" || item.type === "agent")).toBe(false);
   });
 
   it("prepends current/recent chat context without removing normal mention targets after the user types", () => {
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [{ id: "a1", name: "Aegis", archived_at: null, visibility: "workspace", owner_id: null }],
-      issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
-    });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
 
-    const config = createMentionSuggestion(qc, {
-      mode: "context",
-      getContextItems: () => [
-        { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
-        { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
-      ],
-    });
-    const result = config.items!({ query: "a", editor: {} as never }) as MentionItem[];
+    const result = contextMentionItems("a");
 
     expect(result.map((item) => `${item.type}:${item.id}`).slice(0, 2)).toEqual(["issue:i1", "project:p1"]);
     expect(result.some((item) => item.type === "member" && item.label === "Alice")).toBe(true);
@@ -370,8 +367,8 @@ describe("createMentionSuggestion", () => {
       </I18nWrapper>,
     );
 
-    expect(screen.getByText("Current page")).toBeInTheDocument();
-    expect(screen.getByText("Recently viewed")).toBeInTheDocument();
+    expect(screen.getByText("当前页面")).toBeInTheDocument();
+    expect(screen.getByText("最近浏览")).toBeInTheDocument();
     expect(screen.getByText("MUL-1")).toBeInTheDocument();
     expect(screen.getByText("Roadmap")).toBeInTheDocument();
   });
@@ -450,7 +447,7 @@ describe("createMentionSuggestion", () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
       agents: [
-        { id: "a1", name: "魏和尚", archived_at: null, visibility: "workspace", owner_id: null },
+        { id: "a1", name: "魏和尚", archived_at: null, scope: "workspace", owner_id: null },
       ],
     });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));

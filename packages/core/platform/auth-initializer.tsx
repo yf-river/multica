@@ -2,10 +2,9 @@
 
 import { useEffect, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getApi } from "../api";
+import { ApiError, getApi } from "../api";
 import { useAuthStore } from "../auth";
 import {
-  captureSignupSource,
   identify as identifyAnalytics,
   initAnalytics,
   resetAnalytics,
@@ -41,10 +40,6 @@ export function AuthInitializer({
   useEffect(() => {
     const api = getApi();
 
-    // Stamp attribution before anything else — the signup event (server-side)
-    // reads this cookie, so it has to be present before the user hits submit.
-    captureSignupSource();
-
     // Fetch app config (CDN domain, PostHog key, …) in the background — non-blocking.
     api
       .getConfig()
@@ -58,7 +53,6 @@ export function AuthInitializer({
         }
         configStore.getState().setAuthConfig({
           allowSignup: cfg.allow_signup,
-          googleClientId: cfg.google_client_id,
           // Old servers omit this field — treat that as "creation allowed"
           // (the managed-cloud default) rather than blocking the UI.
           workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
@@ -83,7 +77,7 @@ export function AuthInitializer({
     const onAuthSuccess = (user: User) => {
       onLogin?.();
       useAuthStore.setState({ user, isLoading: false });
-      identifyAnalytics(user.id, { email: user.email, name: user.name });
+      identifyAnalytics(user.id, { account: user.account, name: user.name });
     };
 
     const onAuthFailure = () => {
@@ -106,7 +100,11 @@ export function AuthInitializer({
           qc.setQueryData(workspaceKeys.list(), wsList);
         })
         .catch((err) => {
-          logger.error("cookie auth init failed", err);
+          if (isExpectedCookieAuthMiss(err)) {
+            logger.debug("cookie auth session unavailable", err);
+          } else {
+            logger.error("cookie auth init failed", err);
+          }
           onAuthFailure();
         });
       return;
@@ -140,4 +138,9 @@ export function AuthInitializer({
   }, []);
 
   return <>{children}</>;
+}
+
+function isExpectedCookieAuthMiss(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  return err.status === 401 || err.status === 403;
 }

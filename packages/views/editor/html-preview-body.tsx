@@ -29,7 +29,7 @@ import { CodeBlockIframe } from "./code-block-iframe";
 import { withFragmentNavShim } from "./utils/iframe-fragment-nav";
 import { useAttachmentHtmlText } from "./hooks/use-attachment-html-text";
 
-export type HtmlSource =
+type HtmlSource =
   | { kind: "inline"; html: string }
   | { kind: "attachment"; attachmentId: string };
 

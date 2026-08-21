@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/agenttmpl"
@@ -122,7 +121,7 @@ type CreateAgentFromTemplateRequest struct {
 	Name               string `json:"name"`
 	RuntimeID          string `json:"runtime_id"`
 	Model              string `json:"model,omitempty"`
-	Visibility         string `json:"visibility,omitempty"`
+	Scope              string `json:"scope,omitempty"`
 	MaxConcurrentTasks int32  `json:"max_concurrent_tasks,omitempty"`
 	// Optional overrides — let the picker UI customise the template before
 	// creation without forcing a second round-trip to the detail page.
@@ -169,11 +168,14 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "runtime_id is required")
 		return
 	}
-	if req.Visibility == "" {
-		req.Visibility = "private"
+	scope, validScope := normalizeScope(req.Scope, scopePersonal)
+	if !validScope {
+		writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
+		return
 	}
+	req.Scope = scope
 	if req.MaxConcurrentTasks == 0 {
-		req.MaxConcurrentTasks = 6
+		req.MaxConcurrentTasks = defaultAgentMaxConcurrentTasks
 	}
 
 	tmpl, found := agentTemplates.Get(req.TemplateSlug)
@@ -207,7 +209,11 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
+		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
+		return
+	}
+	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -430,6 +436,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	if req.AvatarURL != nil && *req.AvatarURL != "" {
 		avatarURL = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
+	model := agentModelForRuntime(runtime.Provider, req.Model)
 
 	agent, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:        wsUUID,
@@ -440,21 +447,20 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		RuntimeMode:        runtime.RuntimeMode,
 		RuntimeConfig:      rc,
 		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
+		Scope:              req.Scope,
 		MaxConcurrentTasks: req.MaxConcurrentTasks,
 		OwnerID:            creatorUUID,
 		CustomEnv:          ce,
 		CustomArgs:         ca,
 		McpConfig:          nil,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		Model:              pgtype.Text{String: model, Valid: model != ""},
 	})
 	if err != nil {
 		// Mirror handler/agent.go:CreateAgent: when the duplicate is the
 		// agent name UNIQUE in this workspace, return 409 with a clear
 		// message instead of leaking the raw PG error as 500. Frontend
 		// already knows how to render 409 from the manual create path.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "agent_workspace_name_unique" {
+		if isAgentNameUniqueViolation(err) {
 			slog.Info("agent-template create: agent name conflict",
 				append(logger.RequestAttrs(r),
 					"agent_name", req.Name,

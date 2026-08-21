@@ -1,18 +1,13 @@
 import {
-  BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Cell,
 } from "recharts";
 import {
-  ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
 import { useT } from "../../../i18n";
+import { PartialWeekCells, RuntimeBarChart } from "./runtime-bar-chart";
 
 // Weekly counterpart of DailyTimeChart — same single-series bar, but each
 // bar represents Mon–Sun run-time totals. Partial weeks render at half
@@ -43,26 +38,12 @@ export function WeeklyTimeChart({
 }) {
   const { t } = useT("usage");
   return (
-    <ChartContainer
+    <RuntimeBarChart
       config={weeklyTimeChartConfig}
-      className="aspect-[3/1] w-full"
-    >
-      <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          tickFormatter={(v: number) => formatY(v)}
-          width={56}
-        />
+      data={data}
+      yAxisWidth={56}
+      tickFormatter={(v: number) => formatY(v)}
+      tooltip={
         <ChartTooltip
           content={
             <ChartTooltipContent
@@ -85,16 +66,15 @@ export function WeeklyTimeChart({
             />
           }
         />
+      }
+    >
         <Bar
           dataKey="totalSeconds"
           fill="var(--color-totalSeconds)"
           radius={[3, 3, 0, 0]}
         >
-          {data.map((d) => (
-            <Cell key={d.weekStart} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} />
         </Bar>
-      </BarChart>
-    </ChartContainer>
+    </RuntimeBarChart>
   );
 }

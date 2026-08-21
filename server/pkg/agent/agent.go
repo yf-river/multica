@@ -1,6 +1,6 @@
 // Package agent provides a unified interface for executing prompts via
-// coding agents (Claude Code, CodeBuddy, Codex, Copilot, OpenCode, OpenClaw,
-// Hermes, Gemini, Pi, Cursor, Kimi, Kiro, Antigravity). It mirrors the happy-cli
+// coding agents (Claude Code, CodeBuddy, Codex, Copilot, OpenCode, Hermes,
+// Gemini, Pi, Cursor, Kimi, Kiro, Antigravity). It mirrors the happy-cli
 // AgentBackend pattern, translated to idiomatic Go.
 package agent
 
@@ -35,6 +35,10 @@ type ExecOptions struct {
 	ResumeSessionID           string          // if non-empty, resume a previous agent session
 	ExtraArgs                 []string        // daemon-wide default CLI arguments appended before CustomArgs; currently read by claude and codex backends only
 	CustomArgs                []string        // per-agent CLI arguments appended after ExtraArgs
+	AllowedBuiltinTools       []string        // provider-native built-in tool allowlist; currently read by claude and codebuddy backends only
+	AllowedTools              []string        // provider-native scoped tool allowlist; currently read by claude and codebuddy backends only
+	DisallowedTools           []string        // provider-native tool denylist appended to daemon defaults; currently read by claude and codebuddy backends only
+	PermissionMode            string          // provider-native permission mode override; currently read by claude and codebuddy backends only
 	McpConfig                 json.RawMessage // if non-nil, MCP server config to pass via --mcp-config
 	// ThinkingLevel is the runtime-native reasoning/effort value (e.g.
 	// Claude's "low|medium|high|xhigh|max", Codex's "none|minimal|low|
@@ -46,17 +50,6 @@ type ExecOptions struct {
 	// field rather than fail (so MUL-2339 can grow runtime support
 	// incrementally without breaking unrelated agents).
 	ThinkingLevel string
-	// OpenclawMode chooses between local (embedded) and gateway routing for
-	// the openclaw backend. "" or "local" keeps the historical behaviour —
-	// the daemon spawns `openclaw agent --local …` and the agent loop runs
-	// in-process on the daemon host. "gateway" instructs the daemon to drop
-	// the --local flag and let openclaw route the turn through a Gateway (the
-	// user's globally-configured one, or an endpoint pinned in the per-task
-	// config wrapper that the daemon writes from execenv.OpenclawGatewayPin —
-	// see server/internal/daemon/execenv/openclaw_config.go). Other backends
-	// ignore this field, mirroring ThinkingLevel's renderer-side fall-through
-	// pattern. See issue #3260.
-	OpenclawMode string
 }
 
 // runContext derives the execution context for an agent subprocess from the
@@ -127,25 +120,24 @@ type Result struct {
 
 // Config configures a Backend instance.
 type Config struct {
-	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro-cli, agy)
+	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro-cli, agy)
 	Env            map[string]string // extra environment variables
 	Logger         *slog.Logger
 }
 
 // New creates a Backend for the given agent type.
-// Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "openclaw", "hermes", "gemini", "pi", "cursor", "kimi", "kiro", "antigravity".
+// Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "hermes", "gemini", "pi", "cursor", "kimi", "kiro", "antigravity".
 //
 // SupportedTypes is the canonical whitelist of agent types New can construct.
 // It MUST stay in lockstep with the switch in New below and the
-// runtime_profile.protocol_family CHECK constraint (migration 120): a custom
-// runtime profile may only be based on a backend Multica officially supports.
+// runtime_profile.protocol_family CHECK constraint: a custom runtime profile
+// may only be based on a backend Multica officially supports.
 var SupportedTypes = []string{
 	"claude",
 	"codebuddy",
 	"codex",
 	"copilot",
 	"opencode",
-	"openclaw",
 	"hermes",
 	"gemini",
 	"pi",
@@ -183,8 +175,6 @@ func New(agentType string, cfg Config) (Backend, error) {
 		return &copilotBackend{cfg: cfg}, nil
 	case "opencode":
 		return &opencodeBackend{cfg: cfg}, nil
-	case "openclaw":
-		return &openclawBackend{cfg: cfg}, nil
 	case "hermes":
 		return &hermesBackend{cfg: cfg}, nil
 	case "gemini":
@@ -200,7 +190,7 @@ func New(agentType string, cfg Config) (Backend, error) {
 	case "antigravity":
 		return &antigravityBackend{cfg: cfg}, nil
 	default:
-		return nil, fmt.Errorf("unknown agent type: %q (supported: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro, antigravity)", agentType)
+		return nil, fmt.Errorf("unknown agent type: %q (supported: claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro, antigravity)", agentType)
 	}
 }
 
@@ -226,7 +216,6 @@ var launchHeaders = map[string]string{
 	"hermes":      "hermes acp",
 	"kimi":        "kimi acp",
 	"kiro":        "kiro-cli acp",
-	"openclaw":    "openclaw agent (json)",
 	"opencode":    "opencode run (json)",
 	"pi":          "pi (json mode)",
 }

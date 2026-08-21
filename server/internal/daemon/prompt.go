@@ -7,14 +7,22 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
+const squadOperatingProtocolHeadingZH = "## 小队负责人操作协议"
+
+func hasSquadLeaderBriefing(instructions string) bool {
+	return strings.Contains(instructions, squadOperatingProtocolHeadingZH)
+}
+
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
 // injected by execenv.InjectRuntimeConfig. The provider string is threaded
-// through to comment-triggered tasks' per-turn reply template; that template
-// is provider-agnostic AND host-agnostic now (every OS → write a UTF-8 file,
-// post with `--content-file`) because the shell-layer corruption it guards
-// against is not specific to any one provider or host (MUL-2904, #4182).
+// through to comment-triggered tasks' per-turn reply template; ordinary agents
+// use the provider-agnostic `--content-file` template, while coordinator tasks
+// without file-write tools use final output auto-commenting.
 func BuildPrompt(task Task, provider string) string {
+	if task.SourceSummaryPrompt != "" {
+		return buildSourceSummaryPrompt(task)
+	}
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
 	}
@@ -30,8 +38,38 @@ func BuildPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	if isNoRepoBoundedPromptTask(task) {
+		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
+		b.WriteString("Use only the issue, source, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
+		writeSourceContextPrompt(&b, task)
+		b.WriteString("Return the stage result as your final assistant output. The platform will automatically post it as the issue comment when the task completes.\n")
+		return b.String()
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
+	writeSourceContextPrompt(&b, task)
+	return b.String()
+}
+
+func buildSourceSummaryPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a requirement summarization agent for a Multica issue.\n\n")
+	fmt.Fprintf(&b, "Issue ID: %s\n\n", task.IssueID)
+	if strings.TrimSpace(task.SourceSummaryPrompt) != "" {
+		fmt.Fprintf(&b, "Task: %s\n\n", strings.TrimSpace(task.SourceSummaryPrompt))
+	}
+	b.WriteString("Use the source context below as the authoritative requirement source. Your only job is to produce the issue description that should replace the temporary placeholder.\n\n")
+	writeSourceContextPrompt(&b, task)
+	b.WriteString("Output rules:\n\n")
+	b.WriteString("- Return only Markdown in your final answer. Do not call `multica issue update`, do not add comments, and do not change issue status.\n")
+	b.WriteString("- Keep the content concise but faithful. Do not invent requirements, acceptance criteria, implementation details, APIs, database tables, or error codes that are not present in the source.\n")
+	b.WriteString("- Use this exact structure:\n\n")
+	b.WriteString("## 需求摘要\n")
+	b.WriteString("<用 1-3 段中文概括需求背景、目标用户/场景、要解决的问题。>\n\n")
+	b.WriteString("## 验收要点\n")
+	b.WriteString("- <可验证的期望行为或边界条件>\n")
+	b.WriteString("- <如果来源没有明确验收点，写 2-4 条从来源直接归纳出的可验证行为，不要发明实现方案。>\n\n")
+	b.WriteString("If the source context says the TAPD fetch failed or credentials are missing, output a short `## 需求摘要` explaining that the source content is unavailable and do not pretend the requirement was read.\n")
 	return b.String()
 }
 
@@ -61,12 +99,20 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("  Hard rules: never invent requirements, implementation details, or acceptance criteria the user did not express; never reduce multi-sentence input to a single vague sentence; never echo the title.\n\n")
 
 	// priority
-	b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+	if task.QuickCreatePriority != "" {
+		fmt.Fprintf(&b, "- **priority**: required for this run. Pass `--priority %q`; this value was selected in the create modal and is authoritative.\n\n", task.QuickCreatePriority)
+	} else {
+		b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+	}
 
 	// assignee
 	b.WriteString("- **assignee**:\n")
-	b.WriteString("    - When the user names someone (\"assign to X\" / \"@X\"), call `multica workspace member list --output json`, `multica agent list --output json`, and `multica squad list --output json` and find the matching entity by display name. Squads are first-class assignees too — a squad name (e.g. \"Super Human\") routes work to the squad leader, who then delegates. On a clean unambiguous match, prefer `--assignee-id <uuid>` using the `user_id` (member) or `id` (agent or squad) from that JSON — UUID matching is exact and robust to name collisions in workspaces with overlapping names. `--assignee <name>` (fuzzy) is acceptable as a fallback when names are unambiguous. On no match or ambiguous match, do NOT pass either flag — instead append a final line to the description: `Unrecognized assignee: X`.\n")
-	b.WriteString("    - Treat bare @-routing as an assignee directive even when the user did not write the English word \"assign\". This includes Chinese imperatives like `让 @独立团 review 这个 PR`, `给 @X 处理`, or `交给 @X`; strip the leading `@`/`＠` before matching display names. Do not keep that routing wrapper or `@Name` in the description unless it is a true CC-style notification rather than ownership. If the matched entity is a squad, pass the squad's `id` as `--assignee-id`, not the leader agent's id.\n")
+	if task.QuickCreateAssigneeID != "" {
+		fmt.Fprintf(&b, "    - Required for this run. Pass `--assignee-id %q`; this assignee was selected in the create modal and is authoritative. Do not infer or replace it from names in the user input.\n", task.QuickCreateAssigneeID)
+	} else {
+		b.WriteString("    - When the user names someone (\"assign to X\" / \"@X\"), call `multica workspace member list --output json`, `multica agent list --output json`, and `multica squad list --output json` and find the matching entity by display name. Squads are first-class assignees too — a squad name (e.g. \"Super Human\") routes work to the squad leader, who then delegates. On a clean unambiguous match, prefer `--assignee-id <uuid>` using the `user_id` (member) or `id` (agent or squad) from that JSON — UUID matching is exact and robust to name collisions in workspaces with overlapping names. `--assignee <name>` (fuzzy) is acceptable as a fallback when names are unambiguous. On no match or ambiguous match, do NOT pass either flag — instead append a final line to the description: `Unrecognized assignee: X`.\n")
+		b.WriteString("    - Treat bare @-routing as an assignee directive even when the user did not write the English word \"assign\". This includes Chinese imperatives like `让 @独立团 review 这个 PR`, `给 @X 处理`, or `交给 @X`; strip the leading `@`/`＠` before matching display names. Do not keep that routing wrapper or `@Name` in the description unless it is a true CC-style notification rather than ownership. If the matched entity is a squad, pass the squad's `id` as `--assignee-id`, not the leader agent's id.\n")
+	}
 	agentID := ""
 	agentName := ""
 	if task.Agent != nil {
@@ -74,6 +120,8 @@ func buildQuickCreatePrompt(task Task) string {
 		agentName = task.Agent.Name
 	}
 	switch {
+	case task.QuickCreateAssigneeID != "":
+		b.WriteString("\n")
 	case task.SquadID != "":
 		// The user opened quick-create with a SQUAD selected. The task
 		// runs on the squad's leader agent, but the squad is the expected
@@ -117,7 +165,17 @@ func buildQuickCreatePrompt(task Task) string {
 			fmt.Fprintf(&b, "- **parent**: required for this run. Pass `--parent %q` so the new issue is filed as a sub-issue of the parent the user picked in the quick-create modal. Do not infer a different parent from the prompt text — the modal entry point is authoritative.\n", task.ParentIssueID)
 		}
 	}
-	b.WriteString("- **status**: omit (defaults to `todo`).\n")
+	if task.QuickCreateStatus != "" {
+		fmt.Fprintf(&b, "- **status**: required for this run. Pass `--status %q`; this value was selected in the create modal and is authoritative.\n", task.QuickCreateStatus)
+	} else {
+		b.WriteString("- **status**: omit (defaults to `todo`).\n")
+	}
+	if task.QuickCreateStartDate != "" {
+		fmt.Fprintf(&b, "- **start date**: required for this run. Pass `--start-date %q`; this value was selected in the create modal.\n", task.QuickCreateStartDate)
+	}
+	if task.QuickCreateDueDate != "" {
+		fmt.Fprintf(&b, "- **due date**: required for this run. Pass `--due-date %q`; this value was selected in the create modal.\n", task.QuickCreateDueDate)
+	}
 	b.WriteString("- **attachments**: do NOT pass `--attachment`. The flag only accepts LOCAL file paths. Any image URL in the user input is already markdown — keep it inline in `--description` instead.\n\n")
 
 	// output format
@@ -154,9 +212,16 @@ func buildCommentPrompt(task Task, provider string) string {
 		if task.TriggerAuthorType == "agent" {
 			b.WriteString("⚠️ The triggering comment was posted by another agent. Decide whether a reply is warranted. If you produced actual work this turn (investigated, fixed something, answered a real question), post the result as a normal reply — that is NOT a noise comment, and the standard rule that final results must be delivered via comment still applies. If the triggering comment was a pure acknowledgment, thanks, or sign-off AND you produced no work this turn, do NOT reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is the preferred way to end agent-to-agent threads. If you do reply, do not @mention the other agent as a sign-off (that re-triggers them and starts a loop).\n\n")
 		}
-		if task.Agent != nil && strings.Contains(task.Agent.Instructions, "## Squad Operating Protocol") {
-			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise.\n\n", task.IssueID)
+		if task.Agent != nil && hasSquadLeaderBriefing(task.Agent.Instructions) {
+			fmt.Fprintf(&b, "⚠️ **小队负责人 no_action 规则：** 如果你判断无需行动，调用 `multica squad activity %s no_action --reason \"...\"` 后直接退出。不要发布任何评论，包括“无需行动”或“静默退出”这类评论。squad activity 已经记录了你的决策，额外评论只会制造噪声。阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action；这些都必须发布用户可见评论，并按 action/failed 记录 activity。\n\n", task.IssueID)
 		}
+	}
+	if isNoRepoBoundedPromptTask(task) {
+		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
+		b.WriteString("Use only the issue, source, triggering comment, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
+		writeSourceContextPrompt(&b, task)
+		b.WriteString("Return the stage result as your final assistant output. The platform will automatically post it as the issue comment/reply when the task completes.\n")
+		return b.String()
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	// Comment-reading pointer. Warm path with new comments: issue-wide
@@ -165,17 +230,117 @@ func buildCommentPrompt(task Task, provider string) string {
 	// injected, so don't force a duplicate thread read. Cold path: read the
 	// triggering thread, not the flat timeline. Final fallback (no trigger id,
 	// shouldn't happen here): plain read.
-	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
+	if hint := execenv.BuildNewCommentsHint(task.IssueID, task.TriggerThreadID, task.NewCommentsSince, task.NewCommentCount); hint != "" {
 		b.WriteString(hint)
 	} else if task.PriorSessionID != "" {
 		b.WriteString(execenv.BuildResumedCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID))
-	} else if cold := execenv.BuildColdCommentsHint(task.IssueID, task.TriggerCommentID, task.TriggerThreadID); cold != "" {
+	} else if cold := execenv.BuildColdCommentsHint(task.IssueID, task.TriggerThreadID); cold != "" {
 		b.WriteString(cold)
 	} else {
 		fmt.Fprintf(&b, "Read the discussion: `multica issue comment list %s --output json` (long issue? use `--recent 20`).\n\n", task.IssueID)
 	}
-	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
+	writeSourceContextPrompt(&b, task)
+	b.WriteString(buildTaskCommentReplyInstructions(provider, task))
 	return b.String()
+}
+
+func buildTaskCommentReplyInstructions(provider string, task Task) string {
+	if task.TriggerCommentID == "" {
+		return ""
+	}
+	if isFinalOutputAutoCommentTask(task) {
+		return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Write the complete stage result as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
+	}
+	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
+		return execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID)
+	}
+	return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Coordinator mode has no native file-write tool, so write the complete Markdown reply as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
+}
+
+func isNoRepoBoundedPromptTask(task Task) bool {
+	if task.ExecutionPolicy == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return !task.ExecutionPolicy.CanAccessRepo
+	default:
+		return false
+	}
+}
+
+func isFinalOutputAutoCommentTask(task Task) bool {
+	if task.ExecutionPolicy == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return !task.ExecutionPolicy.CanEditRepo
+	case "coordinator":
+		return !task.ExecutionPolicy.CanAccessRepo
+	default:
+		return false
+	}
+}
+
+func writeSourceContextPrompt(b *strings.Builder, task Task) {
+	if task.SourceContext == nil {
+		return
+	}
+	source := task.SourceContext
+	b.WriteString("Source context:\n")
+	if source.Provider != "" {
+		fmt.Fprintf(b, "- provider: %s\n", source.Provider)
+	}
+	if source.URL != "" {
+		fmt.Fprintf(b, "- url: %s\n", source.URL)
+	}
+	if source.TAPD != nil {
+		tapd := source.TAPD
+		fmt.Fprintf(b, "- TAPD: workspace_id=%s resource_type=%s resource_id=%s fetch_provider=%s fetch_status=%s\n",
+			tapd.WorkspaceID, tapd.ResourceType, tapd.ResourceID, tapd.FetchProvider, tapd.FetchStatus)
+		if tapd.FetchError != "" {
+			fmt.Fprintf(b, "- TAPD fetch error: %s\n", tapd.FetchError)
+		}
+		if strings.HasPrefix(tapd.FetchStatus, "blocked") {
+			b.WriteString("- TAPD action: stop and report that the requester must configure an account-level TAPD credential profile. Do not claim the document was read.\n")
+		} else if tapd.FetchStatus == "fetched" {
+			b.WriteString("- TAPD action: the platform already fetched this source through TAPD MCP. Use the fetched evidence below as the requirement source; do not open the TAPD web page directly and do not repeat source-fetch unless you need to verify a stale or missing field.\n")
+			if tapd.Title != "" {
+				fmt.Fprintf(b, "- TAPD fetched title: %s\n", tapd.Title)
+			}
+			if tapd.Version != "" {
+				fmt.Fprintf(b, "- TAPD fetched version: %s\n", tapd.Version)
+			}
+			if tapd.Summary != "" {
+				fmt.Fprintf(b, "- TAPD fetched summary: %s\n", tapd.Summary)
+			}
+			if tapd.BodyExcerpt != "" {
+				fmt.Fprintf(b, "- TAPD fetched body excerpt: %s\n", tapd.BodyExcerpt)
+			}
+		} else if tapd.FetchStatus == "fetch_failed" {
+			b.WriteString("- TAPD action: the platform attempted TAPD source-fetch and it failed. Do not invent or copy the login page as the requirement. First read the issue description and full comment history for human-supplied TAPD title, summary, or body. If a human has supplied the missing TAPD content, treat that comment as manual source recovery, continue from it, and cite it in your stage comment and markdown artifacts. If the content is still missing, ask for the missing requirement details and keep the issue blocked. Retry source-fetch only after credentials or environment have changed.\n")
+		} else {
+			serverName := "mcp-server-tapd"
+			if cred, ok := source.ExternalCredentials["tapd"]; ok && cred.MCPServer != "" {
+				serverName = cred.MCPServer
+			}
+			fmt.Fprintf(b, "- TAPD action: before design or implementation, read the referenced TAPD document through the configured `%s` MCP tool, using `get_wiki` with workspace_id=%s and resource_id=%s. Do not open the TAPD web page directly and do not run `which %s` or call the MCP server binary manually. After the MCP read succeeds, record source.fetch trace evidence with `multica issue source-fetch %s --provider tapd --status fetched --source-workspace-id %s --resource-type %s --resource-id %s --title <document title> --summary <short summary> --body-excerpt <short excerpt> --output json`. Use `--auto-fetch` only as a fallback if the configured MCP tool is unavailable; if fetching still fails, record/report the fetch_failed error instead of guessing.\n",
+				serverName, tapd.WorkspaceID, tapd.ResourceID, serverName, task.IssueID, tapd.WorkspaceID, tapd.ResourceType, tapd.ResourceID)
+		}
+	}
+	if len(source.ExternalCredentials) > 0 {
+		b.WriteString("- external credential profiles:\n")
+		for provider, credential := range source.ExternalCredentials {
+			status := "missing"
+			if credential.Configured {
+				status = credential.ProfileStatus
+			}
+			fmt.Fprintf(b, "  - %s: scope=%s inheritance=%s profile_id=%s status=%s mcp_server=%s\n",
+				provider, credential.Scope, credential.Inheritance, credential.ProfileID, status, credential.MCPServer)
+		}
+	}
+	b.WriteString("\n")
 }
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.

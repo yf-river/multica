@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable i18next/no-literal-string */
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -6,24 +7,30 @@ import {
   ChevronRight,
   FolderGit,
   FolderOpen,
+  GitBranch,
+  Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
   projectResourcesOptions,
   useCreateProjectResource,
   useDeleteProjectResource,
+  useSyncProjectResource,
   useUpdateProjectResource,
 } from "@multica/core/projects";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
-  GithubRepoResourceRef,
+  GongfengRepoResourceRef,
   LocalDirectoryResourceRef,
   ProjectResource,
+  WorkspaceRepo,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -36,14 +43,14 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
-import {
-  isDesktopShell,
-  pickDirectory,
-  useLocalDaemonStatus,
-  validateLocalDirectory,
-  type ValidateLocalDirectoryResult,
-} from "../../platform";
 import { useT } from "../../i18n";
+import {
+  buildGongfengResourceRefFromWorkspaceRepo,
+  isGongfengRepoURL,
+  normalizeRepoSearch,
+  workspaceRepoSearchText,
+  WorkspaceRepoDisplayText,
+} from "./workspace-repo-resource";
 
 // Project Resources sidebar section.
 //
@@ -51,10 +58,10 @@ import { useT } from "../../i18n";
 //   (1) extending the server validator
 //   (2) extending ProjectResourceType in @multica/core/types
 //   (3) adding a render case in ResourceRow and an add-control here
-function isGithubRef(r: ProjectResource): r is ProjectResource & {
-  resource_ref: GithubRepoResourceRef;
+function isGongfengRef(r: ProjectResource): r is ProjectResource & {
+  resource_ref: GongfengRepoResourceRef;
 } {
-  return r.resource_type === "github_repo";
+  return r.resource_type === "gongfeng_repo";
 }
 
 function isLocalDirectoryRef(r: ProjectResource): r is ProjectResource & {
@@ -67,11 +74,9 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
   const workspace = useCurrentWorkspace();
-  const daemonStatus = useLocalDaemonStatus();
   const [open, setOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
-  const [picking, setPicking] = useState(false);
 
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
@@ -79,113 +84,36 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const createResource = useCreateProjectResource(wsId, projectId);
   const updateResource = useUpdateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
-
-  // Desktop-only entry points. We hide (not just disable) on web so users
-  // there don't see an action they can never complete — the spec calls for
-  // read-only on web because the daemon-id check can't be performed in the
-  // browser.
-  const desktopMode = isDesktopShell();
-  const localDaemonId = daemonStatus.daemonId;
+  const syncResource = useSyncProjectResource(wsId, projectId);
 
   const attachedUrls = new Set(
-    resources.filter(isGithubRef).map((r) => r.resource_ref.url),
+    resources.filter(isGongfengRef).map((r) => r.resource_ref.url),
   );
-  const attachedLocalPaths = new Set(
-    resources
-      .filter(isLocalDirectoryRef)
-      .filter((r) => r.resource_ref.daemon_id === localDaemonId)
-      .map((r) => r.resource_ref.local_path),
-  );
-  // Per (project, daemon) we allow at most one local_directory — the
-  // daemon-side resolver picks the first match by daemon_id, so two rows
-  // on the same daemon would silently route the agent into one of them.
-  // The server enforces this at the API boundary; the UI mirrors the
-  // restriction by hiding the "Add" affordance once a row exists for the
-  // current daemon, otherwise users would only discover the limit on a
-  // 409 toast.
-  const hasLocalDirectoryForCurrentDaemon =
-    localDaemonId !== null && attachedLocalPaths.size > 0;
 
   const repoQuery = repoSearch.trim().toLowerCase();
+  const normalizedRepoQuery = normalizeRepoSearch(repoSearch);
   const filteredRepos =
-    workspace?.repos?.filter((repo) => repo.url.toLowerCase().includes(repoQuery)) ?? [];
+    workspace?.repos
+      ?.filter((repo) => isGongfengRepoURL(repo.url))
+      .filter((repo) => {
+        if (!repoQuery) return true;
+        const searchText = workspaceRepoSearchText(repo);
+        return (
+          searchText.includes(repoQuery) ||
+          normalizeRepoSearch(searchText).includes(normalizedRepoQuery)
+        );
+      }) ?? [];
 
-  const handleAttach = async (url: string) => {
+  const handleAttachGongfeng = async (url: string, repo?: WorkspaceRepo) => {
     try {
       await createResource.mutateAsync({
-        resource_type: "github_repo",
-        resource_ref: { url },
+        resource_type: "gongfeng_repo",
+        resource_ref: buildGongfengResourceRefFromWorkspaceRepo(url, repo),
       });
-      toast.success(t(($) => $.resources.toast_attached));
+      toast.success(t(($) => $.resources.toast_gongfeng_attached));
     } catch (err) {
       const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
       toast.error(msg);
-    }
-  };
-
-  const handleAttachLocalDirectory = async () => {
-    if (picking) return;
-    setPicking(true);
-    try {
-      if (!localDaemonId || !daemonStatus.running) {
-        toast.error(t(($) => $.resources.toast_local_daemon_not_running));
-        return;
-      }
-      // Race guard: the button gates on this already, but if the picker
-      // is opened while a concurrent resource-create lands the user
-      // would otherwise see a 409. Surface a clearer message instead.
-      if (attachedLocalPaths.size > 0) {
-        toast.error(t(($) => $.resources.toast_local_daemon_already_attached));
-        return;
-      }
-      const picked = await pickDirectory();
-      if (!picked.ok) {
-        if (picked.reason && picked.reason !== "cancelled") {
-          toast.error(
-            picked.error ?? t(($) => $.resources.toast_local_pick_failed),
-          );
-        }
-        return;
-      }
-      const path = picked.path ?? "";
-      const fallbackLabel = picked.basename ?? path;
-      if (attachedLocalPaths.has(path)) {
-        toast.error(t(($) => $.resources.toast_local_already_attached));
-        return;
-      }
-      const validation = await validateLocalDirectory(path);
-      if (!validation.ok) {
-        toast.error(
-          localValidationMessage(validation, {
-            not_absolute: t(($) => $.resources.local_validate_not_absolute),
-            not_found: t(($) => $.resources.local_validate_not_found),
-            not_a_directory: t(($) => $.resources.local_validate_not_a_directory),
-            not_readable: t(($) => $.resources.local_validate_not_readable),
-            not_writable: t(($) => $.resources.local_validate_not_writable),
-            unsupported: t(($) => $.resources.local_validate_unsupported),
-            fallback: t(($) => $.resources.toast_local_pick_failed),
-          }),
-        );
-        return;
-      }
-      await createResource.mutateAsync({
-        resource_type: "local_directory",
-        resource_ref: {
-          local_path: path,
-          daemon_id: localDaemonId,
-          label: fallbackLabel,
-        },
-      });
-      toast.success(t(($) => $.resources.toast_local_attached));
-      setAddOpen(false);
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : t(($) => $.resources.toast_local_pick_failed);
-      toast.error(msg);
-    } finally {
-      setPicking(false);
     }
   };
 
@@ -198,6 +126,19 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
         err instanceof Error && err.message
           ? err.message
           : t(($) => $.resources.toast_remove_failed),
+      );
+    }
+  };
+
+  const handleSync = async (resource: ProjectResource) => {
+    try {
+      await syncResource.mutateAsync(resource.id);
+      toast.success(t(($) => $.resources.toast_synced));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.resources.toast_sync_failed),
       );
     }
   };
@@ -254,9 +195,13 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                 <ResourceRow
                   key={resource.id}
                   resource={resource}
-                  localDaemonId={localDaemonId}
-                  canEdit={desktopMode}
+                  canEdit={false}
                   onRemove={() => handleRemove(resource)}
+                  onSync={() => handleSync(resource)}
+                  pendingAction={
+                    syncResource.isPending ||
+                    deleteResource.isPending
+                  }
                   onRenameLocalDirectory={handleRenameLocalDirectory}
                 />
               ))}
@@ -317,22 +262,20 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                           aria-disabled={isDisabled}
                           onClick={async () => {
                             if (isDisabled) return;
-                            await handleAttach(repo.url);
+                            await handleAttachGongfeng(repo.url, repo);
                             setAddOpen(false);
                           }}
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
                         >
-                          <FolderGit className="size-3.5" />
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <span className="truncate flex-1">{repo.url}</span>
-                              }
-                            />
-                            <TooltipContent side="top">{repo.url}</TooltipContent>
-                          </Tooltip>
+                          <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
+                          <WorkspaceRepoDisplayText repo={repo} />
+                          {repo.default_branch && (
+                            <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                              {repo.default_branch}
+                            </span>
+                          )}
                           {isAttached && (
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
                               {t(($) => $.resources.attached_badge)}
                             </span>
                           )}
@@ -342,45 +285,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   </div>
                 </>
               )}
-              <CustomRepoForm
-                onSubmit={async (url) => {
-                  await handleAttach(url);
-                  setAddOpen(false);
-                }}
-              />
             </PopoverContent>
           </Popover>
-          {desktopMode && (
-            <div className="flex flex-col">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 justify-start px-2 text-xs text-muted-foreground hover:text-foreground"
-                disabled={
-                  picking ||
-                  createResource.isPending ||
-                  !daemonStatus.running ||
-                  hasLocalDirectoryForCurrentDaemon
-                }
-                onClick={() => {
-                  void handleAttachLocalDirectory();
-                }}
-              >
-                <FolderOpen className="size-3" />
-                {t(($) => $.resources.add_local_directory_button)}
-              </Button>
-              {!daemonStatus.running && (
-                <p className="px-2 pt-0.5 text-[10px] text-muted-foreground">
-                  {t(($) => $.resources.local_daemon_offline_hint)}
-                </p>
-              )}
-              {daemonStatus.running && hasLocalDirectoryForCurrentDaemon && (
-                <p className="px-2 pt-0.5 text-[10px] text-muted-foreground">
-                  {t(($) => $.resources.local_daemon_already_attached_hint)}
-                </p>
-              )}
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -389,9 +295,10 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
 
 interface ResourceRowProps {
   resource: ProjectResource;
-  localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
+  onSync: () => void;
+  pendingAction: boolean;
   onRenameLocalDirectory: (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
     nextLabel: string,
@@ -400,49 +307,17 @@ interface ResourceRowProps {
 
 function ResourceRow({
   resource,
-  localDaemonId,
   canEdit,
   onRemove,
+  onSync,
+  pendingAction,
   onRenameLocalDirectory,
 }: ResourceRowProps) {
   const { t } = useT("projects");
-  if (isGithubRef(resource)) {
-    const ref = resource.resource_ref;
-    return (
-      <div className="flex items-center gap-2 text-xs group">
-        <FolderGit className="size-3.5 text-muted-foreground shrink-0" />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <a
-                href={ref.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate flex-1 hover:underline"
-              >
-                {resource.label || ref.url}
-              </a>
-            }
-          />
-          <TooltipContent side="top">{ref.url}</TooltipContent>
-        </Tooltip>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
-          title={t(($) => $.resources.remove_tooltip)}
-        >
-          <Trash2 className="size-3 text-muted-foreground" />
-        </button>
-      </div>
-    );
-  }
-
   if (isLocalDirectoryRef(resource)) {
     return (
       <LocalDirectoryRow
         resource={resource}
-        localDaemonId={localDaemonId}
         canEdit={canEdit}
         onRemove={onRemove}
         onRename={onRenameLocalDirectory}
@@ -450,10 +325,90 @@ function ResourceRow({
     );
   }
 
+  if (isGongfengRef(resource)) {
+    const ref = resource.resource_ref;
+    const display =
+      resource.label ||
+      ref.title ||
+      [ref.project_path, ref.ref].filter(Boolean).join(" @ ") ||
+      ref.url;
+    const branch = ref.branch || ref.ref || "";
+    const commit = ref.commit_sha || ref.head_commit || "";
+    const detail = [ref.resource_kind, branch].filter(Boolean).join(": ");
+    const statusItems = [
+      { label: "连接", value: ref.connection_status },
+      { label: "同步", value: ref.sync_status },
+      { label: "测试", value: ref.test_status },
+    ].filter((item): item is { label: string; value: string } => Boolean(item.value));
+    return (
+      <div className="flex items-start gap-2 rounded-md px-1.5 py-1 text-xs group hover:bg-accent/40">
+        <GitBranch className="mt-0.5 size-3.5 text-muted-foreground shrink-0" />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div className="min-w-0 flex-1 space-y-1">
+                <a
+                  href={ref.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block truncate font-medium hover:underline"
+                  data-testid="gongfeng-resource-link"
+                >
+                  {display}
+                </a>
+                <div className="flex flex-wrap items-center gap-1 text-[10px] leading-4 text-muted-foreground">
+                  {branch && <span className="rounded border px-1 font-mono">{branch}</span>}
+                  {commit && <span className="rounded border px-1 font-mono">{shortCommit(commit)}</span>}
+                  {statusItems.map((item) => (
+                    <span
+                      key={`${item.label}:${item.value}`}
+                      className="rounded border px-1"
+                      data-testid="gongfeng-resource-status"
+                    >
+                      {item.label}: {statusLabel(item.value)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            }
+          />
+          <TooltipContent side="top">
+            <div className="space-y-0.5 text-[11px]">
+              <div className="font-mono">{ref.project_path}</div>
+              {detail && <div className="text-muted-foreground">{detail}</div>}
+              {commit && <div className="font-mono text-muted-foreground">{commit}</div>}
+              {statusItems.map((item) => (
+                <div key={item.label} className="text-muted-foreground">
+                  {item.label}: {statusLabel(item.value)}
+                </div>
+              ))}
+              <div className="text-muted-foreground">Gongfeng</div>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <IconAction
+            title={t(($) => $.resources.sync_tooltip)}
+            disabled={pendingAction}
+            onClick={onSync}
+            icon={pendingAction ? Loader2 : RefreshCw}
+            spin={pendingAction}
+          />
+          <IconAction
+            title={t(($) => $.resources.remove_tooltip)}
+            disabled={pendingAction}
+            onClick={onRemove}
+            icon={Trash2}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="truncate flex-1">
-        {resource.label || resource.resource_type}
+        {resource.label || t(($) => $.resources.legacy_resource_label)}
       </span>
       <button
         type="button"
@@ -467,9 +422,74 @@ function ResourceRow({
   );
 }
 
+function IconAction({
+  title,
+  icon: Icon,
+  onClick,
+  disabled,
+  spin,
+}: {
+  title: string;
+  icon: LucideIcon;
+  onClick: () => void;
+  disabled?: boolean;
+  spin?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-sm p-0.5 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      title={title}
+      aria-label={title}
+    >
+      <Icon className={`size-3 text-muted-foreground ${spin ? "animate-spin" : ""}`} />
+    </button>
+  );
+}
+
+function shortCommit(value: string): string {
+  return value.length > 12 ? value.slice(0, 12) : value;
+}
+
+function statusLabel(value: string): string {
+  switch (value) {
+    case "ok":
+    case "passed":
+    case "connected":
+    case "synced":
+      return "通过";
+    case "reachable":
+      return "可达";
+    case "auth_required":
+      return "需要凭据";
+    case "unreachable":
+      return "不可达";
+    case "invalid_url":
+      return "地址无效";
+    case "failed":
+    case "error":
+      return "失败";
+    case "pending_verification":
+      return "待验证";
+    case "needs_test":
+      return "待测试";
+    case "needs_sync":
+      return "待同步";
+    case "not_run":
+      return "未运行";
+    case "seeded_for_remediation":
+      return "已建档";
+    case "requires_real_click_acceptance":
+      return "待 UI 验收";
+    default:
+      return value.replace(/_/g, " ");
+  }
+}
+
 interface LocalDirectoryRowProps {
   resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef };
-  localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
   onRename: (
@@ -480,7 +500,6 @@ interface LocalDirectoryRowProps {
 
 function LocalDirectoryRow({
   resource,
-  localDaemonId,
   canEdit,
   onRemove,
   onRename,
@@ -489,14 +508,11 @@ function LocalDirectoryRow({
   const ref = resource.resource_ref;
   const display = (ref.label || resource.label || ref.local_path).trim() ||
     ref.local_path;
-  const isForeignDaemon =
-    localDaemonId !== null && ref.daemon_id !== localDaemonId;
-  const isLocalUnknown = localDaemonId === null;
-  // "disabled" in the spec sense — visual de-emphasis + no chat hint, and
-  // rename is hidden on foreign / unknown-daemon rows because the label
-  // belongs to the owning device. Delete stays available so the user can
+  // Without a local daemon (web), the owning device is never "this machine" —
+  // the row is always visually de-emphasized and rename is hidden because the
+  // label belongs to the owning device. Delete stays available so the user can
   // drop a stale registration from any device.
-  const mismatch = isForeignDaemon || isLocalUnknown;
+  const mismatch = true;
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(display);
@@ -551,14 +567,20 @@ function LocalDirectoryRow({
               <div className="font-mono">{ref.local_path}</div>
               {mismatch && (
                 <div className="text-muted-foreground">
-                  {isLocalUnknown
-                    ? t(($) => $.resources.local_no_daemon_tooltip)
-                    : t(($) => $.resources.local_other_machine_tooltip)}
+                  {t(($) => $.resources.local_no_daemon_tooltip)}
                 </div>
               )}
+              <div className="text-muted-foreground">
+                {t(($) => $.resources.local_compat_tooltip)}
+              </div>
             </div>
           </TooltipContent>
         </Tooltip>
+      )}
+      {!editing && (
+        <span className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">
+          {t(($) => $.resources.local_compat_badge)}
+        </span>
       )}
       {canEdit && !mismatch && !editing && (
         <button
@@ -580,77 +602,4 @@ function LocalDirectoryRow({
       </button>
     </div>
   );
-}
-
-function CustomRepoForm({
-  onSubmit,
-}: {
-  onSubmit: (url: string) => Promise<void> | void;
-}) {
-  const { t } = useT("projects");
-  const [url, setUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const handle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    setSubmitting(true);
-    try {
-      await onSubmit(trimmed);
-      setUrl("");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <form onSubmit={handle} className="flex items-center gap-1.5 pt-1 border-t">
-      <input
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder={t(($) => $.resources.url_placeholder)}
-        className="flex-1 bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
-      />
-      <Button
-        type="submit"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-xs"
-        disabled={!url.trim() || submitting}
-      >
-        {t(($) => $.resources.url_submit)}
-      </Button>
-    </form>
-  );
-}
-
-function localValidationMessage(
-  result: ValidateLocalDirectoryResult,
-  strings: {
-    not_absolute: string;
-    not_found: string;
-    not_a_directory: string;
-    not_readable: string;
-    not_writable: string;
-    unsupported: string;
-    fallback: string;
-  },
-): string {
-  switch (result.reason) {
-    case "not_absolute":
-      return strings.not_absolute;
-    case "not_found":
-      return strings.not_found;
-    case "not_a_directory":
-      return strings.not_a_directory;
-    case "not_readable":
-      return strings.not_readable;
-    case "not_writable":
-      return strings.not_writable;
-    case "unsupported":
-      return strings.unsupported;
-    case "error":
-    default:
-      return result.error ?? strings.fallback;
-  }
 }

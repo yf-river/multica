@@ -4,27 +4,19 @@ dist
 .DS_Store
 .envrc
 
-# build outputs
+# 构建产物
 .turbo
 .next
 out
 build
 bin
-dist-electron
 *.tsbuildinfo
-# ...except electron-builder's source resources dir, which holds tracked
-# config files (entitlements, icons) — not build output.
-!apps/desktop/build/
-!apps/desktop/build/**
 
 # env
 .env*
 !.env.example
-# Desktop production config is public (backend URL, etc.) — track it so
-# `pnpm package` produces a release-ready build without extra setup.
-!apps/desktop/.env.production
 
-# test coverage
+# 测试覆盖率
 coverage
 
 # Go
@@ -34,26 +26,28 @@ server/migrate
 server/daemon
 server/multica
 
-# Test artifacts
+# 测试产物
 test-results/
 apps/web/test-results/
+artifacts/
 
-# context (agent workspace)
+# 上下文（智能体工作区）
 .context
 .agent_context/
 .multica/
 
-# local settings
+# 本地设置
 .claude/
 .tool-versions
 
-# feature tracking
+# 特性跟踪
 _features/
 
-# runtime
+# 运行时
+.run/
 *.pid
 
-# platform specific
+# 平台专属
 *.dmg
 *.app
 server/server

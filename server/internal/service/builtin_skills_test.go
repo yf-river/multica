@@ -220,15 +220,16 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	// references/source-map.md, not here, so a downstream main merge that
 	// shifts a line cannot rot this test into pinning a stale lie.
 	mustContain := []string{
-		"multica issue pull-requests <issue-id> --output json",
+		"multica issue mr create <issue-id>",
+		"multica issue mr list <issue-id> --output json",
 		"Default for code-changing issue work",
-		"open or update a PR before posting the final Multica issue comment",
+		"create the MR through the Multica platform before posting the final issue",
 		"This is a default, not",
-		"Use a routable issue key in the PR title, body, or branch",
-		"include the PR URL when a PR exists",
-		"Closes MUL-2759",
+		"Do not rely on MR title, body, or branch identifiers as the primary",
+		"include the MR URL when an MR exists",
+		"multica issue mr link",
 		"--status backlog",
-		"pr_url",
+		"mr_url",
 		"references/working-on-issues-source-map.md",
 	}
 	for _, want := range mustContain {
@@ -287,8 +288,6 @@ func TestSkillImportingSkillCoversWorkspaceImportContracts(t *testing.T) {
 		"existing_skill",
 		"id",
 		"name",
-		"legacy",
-		"multica skill list --output json",
 		"npx skills add",
 		"multica agent skills add <agent-id> --skill-ids <skill-id> --output json",
 		"multica agent skills list <agent-id> --output json",

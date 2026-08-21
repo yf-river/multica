@@ -45,12 +45,12 @@ type codexSandboxPolicy struct {
 // codexSandboxPolicyFor picks the right policy for the given platform and
 // detected Codex CLI version.
 //
-// - Non-darwin: always workspace-write with network access (Landlock is not
-//   affected by the macOS Seatbelt bug).
-// - darwin with a version at or above CodexDarwinNetworkAccessFixedVersion:
-//   workspace-write with network access (upstream bug fixed).
-// - darwin otherwise (including when the version is unknown): fall back to
-//   danger-full-access so the Multica CLI can reach the API.
+//   - Non-darwin: always workspace-write with network access (Landlock is not
+//     affected by the macOS Seatbelt bug).
+//   - darwin with a version at or above CodexDarwinNetworkAccessFixedVersion:
+//     workspace-write with network access (upstream bug fixed).
+//   - darwin otherwise (including when the version is unknown): fall back to
+//     danger-full-access so the Multica CLI can reach the API.
 func codexSandboxPolicyFor(goos, detectedVersion string) codexSandboxPolicy {
 	if goos == "" {
 		goos = runtime.GOOS
@@ -171,41 +171,6 @@ func upsertMulticaManagedBlock(content string, policy codexSandboxPolicy) string
 	return block + "\n" + content
 }
 
-// stripLegacySandboxDirectives removes top-level `sandbox_mode = ...` lines
-// and any `[sandbox_workspace_write]` section that would otherwise conflict
-// with the managed block. This lets the daemon migrate tasks whose config.toml
-// was produced by an older daemon that wrote those values inline.
-//
-// Only top-level entries are stripped; anything under an unrelated section
-// header (like `[permissions.foo]`) is preserved untouched.
-func stripLegacySandboxDirectives(content string) string {
-	lines := strings.Split(content, "\n")
-	out := make([]string, 0, len(lines))
-	inLegacyWorkspaceWrite := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			// Entering a new section. Exit legacy-tracking if we were in one.
-			inLegacyWorkspaceWrite = trimmed == "[sandbox_workspace_write]"
-			if inLegacyWorkspaceWrite {
-				continue
-			}
-			out = append(out, line)
-			continue
-		}
-		if inLegacyWorkspaceWrite {
-			// Drop the legacy section body until the next section.
-			continue
-		}
-		if strings.HasPrefix(trimmed, "sandbox_mode") {
-			// Drop legacy top-level sandbox_mode declarations.
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
-}
-
 // ensureCodexSandboxConfig writes the multica-managed sandbox block into the
 // given config.toml according to the policy. It is idempotent: running it
 // twice produces the same file contents. The file is created if it doesn't
@@ -219,12 +184,6 @@ func ensureCodexSandboxConfig(configPath string, policy codexSandboxPolicy, dete
 		return fmt.Errorf("read config.toml: %w", err)
 	}
 	existing := string(data)
-
-	// Drop inline sandbox_mode / [sandbox_workspace_write] from older daemon
-	// versions so they don't collide with the managed block.
-	if existing != "" && !managedBlockRe.MatchString(existing) {
-		existing = stripLegacySandboxDirectives(existing)
-	}
 
 	updated := upsertMulticaManagedBlock(existing, policy)
 	if updated == string(data) {

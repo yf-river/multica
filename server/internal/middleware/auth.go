@@ -22,7 +22,7 @@ func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 //  1. Authorization: Bearer <token> header (PAT or JWT)
 //  2. multica_auth HttpOnly cookie (JWT) — requires valid CSRF token for state-changing requests
 //
-// Sets X-User-ID and X-User-Email headers on the request for downstream handlers.
+// Sets X-User-ID and X-User-Account headers on the request for downstream handlers.
 //
 // patCache is optional; when non-nil, PAT lookups are cached with a short
 // TTL (auth.AuthCacheTTL). On cache hit the middleware skips both the DB
@@ -224,8 +224,8 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				return
 			}
 			r.Header.Set("X-User-ID", sub)
-			if email, ok := claims["email"].(string); ok {
-				r.Header.Set("X-User-Email", email)
+			if account, ok := claims["account"].(string); ok {
+				r.Header.Set("X-User-Account", account)
 			}
 
 			next.ServeHTTP(w, r)

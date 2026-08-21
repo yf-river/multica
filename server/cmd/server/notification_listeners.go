@@ -19,41 +19,6 @@ type mention struct {
 	ID   string // user_id, agent_id, issue_id, or "all"
 }
 
-
-// statusLabels maps DB status values to human-readable labels for notifications.
-var statusLabels = map[string]string{
-	"backlog":     "Backlog",
-	"todo":        "Todo",
-	"in_progress": "In Progress",
-	"in_review":   "In Review",
-	"done":        "Done",
-	"blocked":     "Blocked",
-	"cancelled":   "Cancelled",
-}
-
-// priorityLabels maps DB priority values to human-readable labels for notifications.
-var priorityLabels = map[string]string{
-	"urgent": "Urgent",
-	"high":   "High",
-	"medium": "Medium",
-	"low":    "Low",
-	"none":   "No priority",
-}
-
-func statusLabel(s string) string {
-	if l, ok := statusLabels[s]; ok {
-		return l
-	}
-	return s
-}
-
-func priorityLabel(p string) string {
-	if l, ok := priorityLabels[p]; ok {
-		return l
-	}
-	return p
-}
-
 var emptyDetails = []byte("{}")
 
 // parseMentions extracts mentions from markdown content.
@@ -78,19 +43,19 @@ var parentBubbleNotifTypes = map[string]bool{
 // notifTypeToGroup maps each InboxItemType to a user-configurable preference
 // group. Types not in this map are always delivered (not configurable).
 var notifTypeToGroup = map[string]string{
-	"issue_assigned":  "assignments",
-	"unassigned":      "assignments",
-	"assignee_changed": "assignments",
-	"status_changed":  "status_changes",
-	"new_comment":     "comments",
-	"mentioned":       "comments",
-	"priority_changed": "updates",
+	"issue_assigned":     "assignments",
+	"unassigned":         "assignments",
+	"assignee_changed":   "assignments",
+	"status_changed":     "status_changes",
+	"new_comment":        "comments",
+	"mentioned":          "comments",
+	"priority_changed":   "updates",
 	"start_date_changed": "updates",
-	"due_date_changed": "updates",
-	"task_completed":  "agent_activity",
-	"task_failed":     "agent_activity",
-	"agent_blocked":   "agent_activity",
-	"agent_completed": "agent_activity",
+	"due_date_changed":   "updates",
+	"task_completed":     "agent_activity",
+	"task_failed":        "agent_activity",
+	"agent_blocked":      "agent_activity",
+	"agent_completed":    "agent_activity",
 }
 
 // isNotifMuted returns true if the given notification type is muted for a user
@@ -381,6 +346,9 @@ func notifyDirect(
 	body string,
 	details []byte,
 ) {
+	if !supportsInboxRecipientType(recipientType) {
+		return
+	}
 	// Skip if recipient is the actor
 	if recipientID == e.ActorID {
 		return
@@ -422,6 +390,10 @@ func notifyDirect(
 		ActorID:     e.ActorID,
 		Payload:     map[string]any{"item": resp},
 	})
+}
+
+func supportsInboxRecipientType(recipientType string) bool {
+	return recipientType == "member" || recipientType == "agent"
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,

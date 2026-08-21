@@ -7,7 +7,6 @@ import {
   Loader2,
   Lock,
   Plus,
-  Save,
   Trash2,
 } from "lucide-react";
 import { api } from "@multica/core/api";
@@ -16,6 +15,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
+import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
 // Env values never reach this component until the user clicks
 // "Reveal & edit" — the agent resource feed no longer carries
@@ -288,19 +288,12 @@ export function EnvTab({
         </p>
       )}
 
-      <div className="flex items-center justify-end gap-3">
-        {dirty && (
-          <span className="text-xs text-muted-foreground">{t(($) => $.tab_body.common.unsaved_changes)}</span>
-        )}
-        <Button onClick={handleSave} disabled={!dirty || saving} size="sm">
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {t(($) => $.tab_body.common.save)}
-        </Button>
-      </div>
+      <AgentTabSaveBar
+        dirty={dirty}
+        saving={saving}
+        disabled={!dirty || saving}
+        onSave={handleSave}
+      />
     </div>
   );
 }

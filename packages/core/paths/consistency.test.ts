@@ -18,6 +18,7 @@ describe("paths.workspace() shape", () => {
       new Set([
         "root",
         "usage",
+        "runReviews",
         "issues",
         "projects",
         "autopilots",
@@ -26,8 +27,9 @@ describe("paths.workspace() shape", () => {
         "inbox",
         "myIssues",
         "runtimes",
+        "debug",
+        "evaluation",
         "skills",
-        "squads",
         "settings",
       ]),
     );
@@ -39,6 +41,7 @@ describe("paths.workspace() shape", () => {
     // and that their second URL segment matches the method name's kebab-case.
     const expectedSegments: Array<[string, string]> = [
       ["usage", "usage"],
+      ["runReviews", "run-reviews"],
       ["issues", "issues"],
       ["projects", "projects"],
       ["autopilots", "autopilots"],
@@ -47,8 +50,9 @@ describe("paths.workspace() shape", () => {
       ["inbox", "inbox"],
       ["myIssues", "my-issues"],
       ["runtimes", "runtimes"],
+      ["debug", "debug"],
+      ["evaluation", "evaluation"],
       ["skills", "skills"],
-      ["squads", "squads"],
       ["settings", "settings"],
     ];
     const wsAsAny = ws as unknown as Record<string, () => string>;
@@ -73,8 +77,6 @@ describe("global path / reserved slug consistency", () => {
     "/logout",
     "/signup",
     "/workspaces/",
-    "/invite/",
-    "/auth/",
   ];
 
   it("isGlobalPath agrees with the canonical global prefix list", () => {
@@ -95,5 +97,10 @@ describe("global path / reserved slug consistency", () => {
           `a workspace could be created with this slug and shadow the global route`,
       ).toBe(true);
     }
+  });
+
+  it("reserves canonical workspace route segments", () => {
+    expect(RESERVED_SLUGS.has("debug")).toBe(true);
+    expect(RESERVED_SLUGS.has("evaluation")).toBe(true);
   });
 });

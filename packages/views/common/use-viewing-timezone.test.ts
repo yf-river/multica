@@ -16,6 +16,7 @@ vi.mock("@multica/core/auth", () => {
 
 vi.mock("./timezone-select", () => ({
   browserTimezone: () => "America/Chicago",
+  isValidTimeZone: (value: string) => value !== "Etc/Unknown",
 }));
 
 import { useViewingTimezone } from "./use-viewing-timezone";
@@ -45,6 +46,12 @@ describe("useViewingTimezone", () => {
 
   it("falls back to the browser tz when timezone is blank", () => {
     userRef.current = { timezone: "   " };
+    const { result } = renderHook(() => useViewingTimezone());
+    expect(result.current).toBe("America/Chicago");
+  });
+
+  it("falls back to the browser tz when stored timezone is invalid", () => {
+    userRef.current = { timezone: "Etc/Unknown" };
     const { result } = renderHook(() => useViewingTimezone());
     expect(result.current).toBe("America/Chicago");
   });

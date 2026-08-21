@@ -24,10 +24,10 @@ func setupRerunTestFixture(t *testing.T) (string, string, string) {
 		SELECT a.id, a.runtime_id FROM agent a
 		JOIN member m ON m.workspace_id = a.workspace_id
 		JOIN "user" u ON u.id = m.user_id
-		WHERE u.email = $1
+		WHERE u.account = $1
 		  AND a.archived_at IS NULL
 		LIMIT 1
-	`, integrationTestEmail).Scan(&agentID, &runtimeID); err != nil {
+	`, integrationTestAccount).Scan(&agentID, &runtimeID); err != nil {
 		t.Fatalf("failed to find test agent: %v", err)
 	}
 
@@ -55,43 +55,116 @@ func cleanupRerunFixture(t *testing.T, issueID string) {
 	testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
+type rerunTestFixture struct {
+	ctx       context.Context
+	queries   *db.Queries
+	issueID   string
+	agentID   string
+	runtimeID string
+}
+
+func setupRerunSessionTest(t *testing.T) rerunTestFixture {
+	t.Helper()
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+	return rerunTestFixture{
+		ctx:       context.Background(),
+		queries:   db.New(testPool),
+		issueID:   issueID,
+		agentID:   agentID,
+		runtimeID: runtimeID,
+	}
+}
+
+func (f rerunTestFixture) getLastTaskSession() (db.GetLastTaskSessionRow, error) {
+	return f.queries.GetLastTaskSession(f.ctx, db.GetLastTaskSessionParams{
+		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(f.agentID), Valid: true},
+		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
+	})
+}
+
+func (f rerunTestFixture) insertRetryParentTask(t *testing.T, sessionID, workDir, failureReason string) string {
+	t.Helper()
+
+	var parentID string
+	if err := testPool.QueryRow(f.ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			started_at, completed_at, session_id, work_dir, failure_reason,
+			attempt, max_attempts
+		)
+		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute',
+		        $4, $5, $6, 1, 2)
+		RETURNING id
+	`, f.agentID, f.runtimeID, f.issueID, sessionID, workDir, failureReason).Scan(&parentID); err != nil {
+		t.Fatalf("insert retry parent task: %v", err)
+	}
+	return parentID
+}
+
+func (f rerunTestFixture) createRetryTask(t *testing.T, parentID string) db.AgentTaskQueue {
+	t.Helper()
+
+	child, err := f.queries.CreateRetryTask(f.ctx, pgtype.UUID{Bytes: parseUUIDBytes(parentID), Valid: true})
+	if err != nil {
+		t.Fatalf("CreateRetryTask failed: %v", err)
+	}
+	return child
+}
+
+func (f rerunTestFixture) taskService() *service.TaskService {
+	hub := realtime.NewHub()
+	go hub.Run()
+	return service.NewTaskService(f.queries, nil, hub, events.New())
+}
+
+func (f rerunTestFixture) rerunSourceTask(t *testing.T, sourceTaskID string) *db.AgentTaskQueue {
+	t.Helper()
+
+	task, err := f.taskService().RerunIssue(
+		f.ctx,
+		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
+		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatalf("RerunIssue failed: %v", err)
+	}
+	if task == nil {
+		t.Fatal("RerunIssue returned nil task")
+	}
+	return task
+}
+
 // TestGetLastTaskSessionExcludesPoisonedFailures asserts that the
 // (agent_id, issue_id) resume lookup skips failed tasks whose
 // failure_reason classifies them as poisoned terminal output. This is the
 // SQL-level half of the rerun-poisoned-session fix: without the filter, a
 // rerun would inherit the same session and replay the same bad output.
 func TestGetLastTaskSessionExcludesPoisonedFailures(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
+	f := setupRerunSessionTest(t)
 
 	// Insert an older failed task with a poisoned classifier and a session_id.
 	// The poisoned task is the *most recent* one, so without the filter the
 	// resume lookup would return its session_id.
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'HEALTHY-SESSION', '/tmp/healthy', 'timeout')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert healthy failed task: %v", err)
 	}
 
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'POISONED-SESSION', '/tmp/poisoned', 'iteration_limit')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert poisoned failed task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err != nil {
 		t.Fatalf("GetLastTaskSession failed: %v", err)
 	}
@@ -109,27 +182,16 @@ func TestGetLastTaskSessionExcludesPoisonedFailures(t *testing.T) {
 // TestGetLastTaskSessionFallbackPoisonedClassifier covers the second
 // poisoned classifier so adding a third doesn't silently break this rule.
 func TestGetLastTaskSessionFallbackPoisonedClassifier(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 seconds', now() - interval '5 seconds', 'POISONED-FALLBACK', '/tmp/poisoned', 'agent_fallback_message')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert poisoned failed task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err == nil && prior.SessionID.Valid {
 		t.Fatalf("expected no resumable session, got %q", prior.SessionID.String)
 	}
@@ -142,27 +204,16 @@ func TestGetLastTaskSessionFallbackPoisonedClassifier(t *testing.T) {
 // forever. The daemon classifies these as 'api_invalid_request' and the
 // SQL filter must skip them on the resume lookup.
 func TestGetLastTaskSessionExcludesAPIInvalidRequest(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 seconds', now() - interval '5 seconds', 'POISONED-API400', '/tmp/poisoned', 'api_invalid_request')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert poisoned failed task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err == nil && prior.SessionID.Valid {
 		t.Fatalf("expected no resumable session for api_invalid_request, got %q", prior.SessionID.String)
 	}
@@ -173,35 +224,24 @@ func TestGetLastTaskSessionExcludesAPIInvalidRequest(t *testing.T) {
 // resuming it can replay the same stuck Codex state. The resume lookup must
 // skip that session.
 func TestGetLastTaskSessionExcludesCodexSemanticInactivity(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'HEALTHY-SESSION', '/tmp/healthy', 'timeout')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert healthy failed task: %v", err)
 	}
 
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'CODEX-STUCK-SESSION', '/tmp/codex-stuck', 'codex_semantic_inactivity',
 		        'codex semantic inactivity timeout after 10m0s without agent progress (last activity: tool-result:exec_command)')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert codex semantic inactivity task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err != nil {
 		t.Fatalf("GetLastTaskSession failed: %v", err)
 	}
@@ -211,34 +251,10 @@ func TestGetLastTaskSessionExcludesCodexSemanticInactivity(t *testing.T) {
 }
 
 func TestCreateRetryTaskFreshensCodexSemanticInactivity(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
+	parentID := f.insertRetryParentTask(t, "CODEX-STUCK-SESSION", "/tmp/codex-stuck", "codex_semantic_inactivity")
+	child := f.createRetryTask(t, parentID)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	var parentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, status, priority,
-			started_at, completed_at, session_id, work_dir, failure_reason,
-			attempt, max_attempts
-		)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute',
-		        'CODEX-STUCK-SESSION', '/tmp/codex-stuck', 'codex_semantic_inactivity', 1, 2)
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&parentID); err != nil {
-		t.Fatalf("insert codex semantic inactivity parent task: %v", err)
-	}
-
-	queries := db.New(testPool)
-	child, err := queries.CreateRetryTask(ctx, pgtype.UUID{Bytes: parseUUIDBytes(parentID), Valid: true})
-	if err != nil {
-		t.Fatalf("CreateRetryTask failed: %v", err)
-	}
 	if child.SessionID.Valid {
 		t.Fatalf("expected retry child to drop poisoned session_id, got %q", child.SessionID.String)
 	}
@@ -254,34 +270,10 @@ func TestCreateRetryTaskFreshensCodexSemanticInactivity(t *testing.T) {
 }
 
 func TestCreateRetryTaskKeepsOrdinaryTimeoutSession(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
+	parentID := f.insertRetryParentTask(t, "ORDINARY-TIMEOUT-SESSION", "/tmp/ordinary-timeout", "timeout")
+	child := f.createRetryTask(t, parentID)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	var parentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, status, priority,
-			started_at, completed_at, session_id, work_dir, failure_reason,
-			attempt, max_attempts
-		)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute',
-		        'ORDINARY-TIMEOUT-SESSION', '/tmp/ordinary-timeout', 'timeout', 1, 2)
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&parentID); err != nil {
-		t.Fatalf("insert ordinary timeout parent task: %v", err)
-	}
-
-	queries := db.New(testPool)
-	child, err := queries.CreateRetryTask(ctx, pgtype.UUID{Bytes: parseUUIDBytes(parentID), Valid: true})
-	if err != nil {
-		t.Fatalf("CreateRetryTask failed: %v", err)
-	}
 	if !child.SessionID.Valid || child.SessionID.String != "ORDINARY-TIMEOUT-SESSION" {
 		t.Fatalf("expected retry child to inherit session_id, got %+v", child.SessionID)
 	}
@@ -296,67 +288,8 @@ func TestCreateRetryTaskKeepsOrdinaryTimeoutSession(t *testing.T) {
 	}
 }
 
-// TestGetLastTaskSessionExcludesLegacyAPI400 is the MUL-1921 legacy
-// regression: pre-fix rows are tagged failure_reason='agent_error' even
-// though their error text contains the canonical Anthropic 400
-// invalid_request_error marker. The daemon-side classifier only fires
-// on new failures, so without a defensive ILIKE clause the resume query
-// would happily return one of those rows on the next claim and
-// re-poison every retry of an already-broken issue (e.g. MUL-1918,
-// which already has three poisoned 'agent_error' rows when this PR
-// merges). The SQL must skip the bad row on text shape alone.
-func TestGetLastTaskSessionExcludesLegacyAPI400(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	// Legacy poisoned row: failure_reason was the pre-fix default
-	// 'agent_error' but the error text shows it was an API 400
-	// invalid_request_error. Migration 079 backfills these to
-	// 'api_invalid_request', but the SQL filter must still exclude
-	// them via ILIKE on the off chance a row escapes the migration
-	// (deploy window, manual relabel, etc.).
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'LEGACY-POISONED', '/tmp/legacy', 'agent_error',
-		        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Could not process image"}}')
-	`, agentID, runtimeID, issueID); err != nil {
-		t.Fatalf("insert legacy poisoned task: %v", err)
-	}
-
-	// Newly classified poisoned row coexisting with the legacy one.
-	// Without the ILIKE clause, ORDER BY completed_at DESC would
-	// skip this row (failure_reason filter fires) and fall back to
-	// the legacy row (failure_reason filter MISSES) — the exact
-	// wormhole GPT-Boy flagged on PR review.
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'NEW-POISONED', '/tmp/new', 'api_invalid_request',
-		        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Could not process image"}}')
-	`, agentID, runtimeID, issueID); err != nil {
-		t.Fatalf("insert new poisoned task: %v", err)
-	}
-
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
-	if err == nil && prior.SessionID.Valid {
-		t.Fatalf("expected no resumable session, but query fell back to %q", prior.SessionID.String)
-	}
-}
-
-// TestGetLastTaskSessionKeepsBenignAgentErrorWithSession asserts the
-// ILIKE clause is narrow enough that ordinary 'agent_error' failures
-// (timeouts, tool errors, transient glue failures) still let the next
-// task resume the prior session. Without this guard rail, the MUL-1921
-// fix would regress MUL-1128's resume contract for everything else.
+// TestGetLastTaskSessionKeepsBenignAgentErrorWithSession asserts that
+// ordinary resumable failures let the next task resume the prior session.
 func TestGetLastTaskSessionKeepsBenignAgentErrorWithSession(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -393,21 +326,9 @@ func TestGetLastTaskSessionKeepsBenignAgentErrorWithSession(t *testing.T) {
 // is the call-site half of the fix: even if the SQL filter ever misses a
 // poisoned classifier, manual rerun never resumes.
 func TestRerunIssueSetsForceFreshSession(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, _, _ := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-	queries := db.New(testPool)
-	hub := realtime.NewHub()
-	go hub.Run()
-	bus := events.New()
-	taskService := service.NewTaskService(queries, nil, hub, bus)
-
-	task, err := taskService.RerunIssue(ctx, pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true}, pgtype.UUID{}, pgtype.UUID{})
+	task, err := f.taskService().RerunIssue(f.ctx, pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true}, pgtype.UUID{}, pgtype.UUID{})
 	if err != nil {
 		t.Fatalf("RerunIssue failed: %v", err)
 	}
@@ -426,14 +347,7 @@ func TestRerunIssueSetsForceFreshSession(t *testing.T) {
 // (squad worker, @-mention agent, or a prior assignee) re-fires the new
 // assignee instead, which is the MUL-2457 bug.
 func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueID, primaryAgentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
+	f := setupRerunSessionTest(t)
 
 	// Create a second agent in the same workspace + runtime so we can stand
 	// in as a "row whose agent is no longer the issue assignee" — e.g. a
@@ -441,59 +355,42 @@ func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
 	// the primary agent; the rerun must target this secondary one because
 	// that's whose task row the user clicked.
 	var secondaryAgentID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(f.ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks, owner_id
+			runtime_id, scope, max_concurrent_tasks, owner_id
 		)
 		SELECT a.workspace_id, 'Rerun Secondary Agent', '', 'cloud', '{}'::jsonb,
 		       a.runtime_id, 'workspace', 1, a.owner_id
 		FROM agent a WHERE a.id = $1
 		RETURNING id
-	`, primaryAgentID).Scan(&secondaryAgentID); err != nil {
+	`, f.agentID).Scan(&secondaryAgentID); err != nil {
 		t.Fatalf("create secondary agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE agent_id = $1`, secondaryAgentID)
-		testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, secondaryAgentID)
+		testPool.Exec(f.ctx, `DELETE FROM agent_task_queue WHERE agent_id = $1`, secondaryAgentID)
+		testPool.Exec(f.ctx, `DELETE FROM agent WHERE id = $1`, secondaryAgentID)
 	})
 
 	// Insert a failed past task on this issue under the secondary agent —
 	// the row the user is about to click retry on.
 	var sourceTaskID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority,
 		                              started_at, completed_at, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0,
 		        now() - interval '1 minute', now() - interval '30 seconds', 'agent_error')
 		RETURNING id
-	`, secondaryAgentID, runtimeID, issueID).Scan(&sourceTaskID); err != nil {
+	`, secondaryAgentID, f.runtimeID, f.issueID).Scan(&sourceTaskID); err != nil {
 		t.Fatalf("insert source task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	hub := realtime.NewHub()
-	go hub.Run()
-	bus := events.New()
-	taskService := service.NewTaskService(queries, nil, hub, bus)
-
-	task, err := taskService.RerunIssue(
-		ctx,
-		pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
-		pgtype.UUID{},
-	)
-	if err != nil {
-		t.Fatalf("RerunIssue failed: %v", err)
-	}
-	if task == nil {
-		t.Fatal("RerunIssue returned nil task")
-	}
+	task := f.rerunSourceTask(t, sourceTaskID)
 
 	gotAgent := util.UUIDToString(task.AgentID)
 	if gotAgent != secondaryAgentID {
 		t.Fatalf("rerun targeted wrong agent: got %s, want %s (issue assignee is %s — must not be picked)",
-			gotAgent, secondaryAgentID, primaryAgentID)
+			gotAgent, secondaryAgentID, f.agentID)
 	}
 	if !task.ForceFreshSession {
 		t.Fatal("expected per-row rerun to also set force_fresh_session=true")
@@ -505,14 +402,7 @@ func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
 // against malicious requests and because picking up an unrelated task's
 // agent would silently misroute the rerun.
 func TestRerunIssueRejectsCrossIssueTask(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueAID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueAID) })
-
-	ctx := context.Background()
+	f := setupRerunSessionTest(t)
 
 	// Second issue in the same workspace, with a task that does NOT belong
 	// to issue A. The handler must reject this. Take the next available
@@ -520,37 +410,31 @@ func TestRerunIssueRejectsCrossIssueTask(t *testing.T) {
 	// (both issues default to number=0 otherwise) doesn't fire before the
 	// rerun assertion can.
 	var issueBID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(f.ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id, number)
 		SELECT $1, 'Rerun cross-issue test', 'todo', 'none', 'member', m.user_id, 'agent', $2,
 		       (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1)
 		FROM member m WHERE m.workspace_id = $1 LIMIT 1
 		RETURNING id
-	`, testWorkspaceID, agentID).Scan(&issueBID); err != nil {
+	`, testWorkspaceID, f.agentID).Scan(&issueBID); err != nil {
 		t.Fatalf("create second issue: %v", err)
 	}
 	t.Cleanup(func() { cleanupRerunFixture(t, issueBID) })
 
 	var crossTaskID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority,
 		                              started_at, completed_at, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0,
 		        now() - interval '1 minute', now() - interval '30 seconds', 'agent_error')
 		RETURNING id
-	`, agentID, runtimeID, issueBID).Scan(&crossTaskID); err != nil {
+	`, f.agentID, f.runtimeID, issueBID).Scan(&crossTaskID); err != nil {
 		t.Fatalf("insert cross task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	hub := realtime.NewHub()
-	go hub.Run()
-	bus := events.New()
-	taskService := service.NewTaskService(queries, nil, hub, bus)
-
-	_, err := taskService.RerunIssue(
-		ctx,
-		pgtype.UUID{Bytes: parseUUIDBytes(issueAID), Valid: true},
+	_, err := f.taskService().RerunIssue(
+		f.ctx,
+		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
 		pgtype.UUID{Bytes: parseUUIDBytes(crossTaskID), Valid: true},
 		pgtype.UUID{},
 	)
@@ -567,33 +451,26 @@ func TestRerunIssueRejectsCrossIssueTask(t *testing.T) {
 // issue run that has lost the original comment context — see MUL-2457
 // review feedback.
 func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
+	f := setupRerunSessionTest(t)
 
 	// Create a comment to stand in as the original mention / reply trigger.
 	var triggerCommentID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(f.ctx, `
 		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
 		SELECT $1, $2, 'member', m.user_id, 'please retry this', 'comment'
 		FROM member m WHERE m.workspace_id = $2 LIMIT 1
 		RETURNING id
-	`, issueID, testWorkspaceID).Scan(&triggerCommentID); err != nil {
+	`, f.issueID, testWorkspaceID).Scan(&triggerCommentID); err != nil {
 		t.Fatalf("insert trigger comment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, triggerCommentID)
+		testPool.Exec(f.ctx, `DELETE FROM comment WHERE id = $1`, triggerCommentID)
 	})
 
 	// Source task carries the trigger_comment_id — this is the row whose
 	// retry button the user clicks in the execution log.
 	var sourceTaskID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority,
 		                              started_at, completed_at, failure_reason,
 		                              trigger_comment_id)
@@ -601,28 +478,11 @@ func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
 		        now() - interval '1 minute', now() - interval '30 seconds', 'agent_error',
 		        $4)
 		RETURNING id
-	`, agentID, runtimeID, issueID, triggerCommentID).Scan(&sourceTaskID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID, triggerCommentID).Scan(&sourceTaskID); err != nil {
 		t.Fatalf("insert source task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	hub := realtime.NewHub()
-	go hub.Run()
-	bus := events.New()
-	taskService := service.NewTaskService(queries, nil, hub, bus)
-
-	task, err := taskService.RerunIssue(
-		ctx,
-		pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
-		pgtype.UUID{},
-	)
-	if err != nil {
-		t.Fatalf("RerunIssue failed: %v", err)
-	}
-	if task == nil {
-		t.Fatal("RerunIssue returned nil task")
-	}
+	task := f.rerunSourceTask(t, sourceTaskID)
 	if !task.TriggerCommentID.Valid {
 		t.Fatal("expected per-row rerun to inherit trigger_comment_id from source task, got NULL")
 	}
@@ -636,25 +496,13 @@ func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
 // auto-retry / comment-triggered tasks keep resuming the prior session
 // (MUL-1128 contract).
 func TestEnqueueTaskForIssueDoesNotForceFreshSession(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, _, _ := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-	queries := db.New(testPool)
-	hub := realtime.NewHub()
-	go hub.Run()
-	bus := events.New()
-	taskService := service.NewTaskService(queries, nil, hub, bus)
-
-	issue, err := queries.GetIssue(ctx, pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true})
+	issue, err := f.queries.GetIssue(f.ctx, pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true})
 	if err != nil {
 		t.Fatalf("load issue: %v", err)
 	}
-	task, err := taskService.EnqueueTaskForIssue(ctx, issue)
+	task, err := f.taskService().EnqueueTaskForIssue(f.ctx, issue)
 	if err != nil {
 		t.Fatalf("EnqueueTaskForIssue failed: %v", err)
 	}

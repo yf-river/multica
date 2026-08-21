@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -48,14 +49,13 @@ type dbExecutor interface {
 }
 
 type Config struct {
-	AllowSignup         bool
-	AllowedEmails       []string
-	AllowedEmailDomains []string
+	AllowSignup     bool
+	AllowedAccounts []string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
-	// the flag off, then flip it on and restart so subsequent users join via
-	// invitation only. The public /api/config endpoint mirrors this flag so
+	// the flag off, then flip it on and restart so subsequent users are added
+	// from workspace settings. The public /api/config endpoint mirrors this flag so
 	// the UI can hide every "Create workspace" affordance — see #3433.
 	DisableWorkspaceCreation bool
 	// PublicURL is the absolute base URL the API is reachable at from the
@@ -75,7 +75,7 @@ type Config struct {
 	// "10.0.0.0/8,127.0.0.1/32"). This is specifically to keep the per-IP
 	// webhook limiter from being bypassed by a spoofed XFF on deployments
 	// without a header-stripping reverse proxy in front.
-	TrustedProxies []netip.Prefix
+	TrustedProxies           []netip.Prefix
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
 }
@@ -95,8 +95,6 @@ type Handler struct {
 	TaskService           *service.TaskService
 	IssueService          *service.IssueService
 	AutopilotService      *service.AutopilotService
-	EmailService          *service.EmailService
-	UpdateStore           UpdateStore
 	ModelListStore        ModelListStore
 	LocalSkillListStore   LocalSkillListStore
 	LocalSkillImportStore LocalSkillImportStore
@@ -115,6 +113,10 @@ type Handler struct {
 	MembershipCache      *auth.MembershipCache
 	WebhookRateLimiter   WebhookRateLimiter
 	WebhookIPRateLimiter WebhookRateLimiter
+	// ExternalCredentialBox encrypts account-level TAPD/Gongfeng secrets at
+	// rest. Nil means this deployment can still store secret_ref bindings, but
+	// raw token writes are refused rather than falling back to plaintext.
+	ExternalCredentialBox *secretbox.Box
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host
@@ -132,10 +134,9 @@ type Handler struct {
 	// LarkAPIClient is the live transport that backs SendInteractiveCard,
 	// PatchInteractiveCard, SendBindingPromptCard, GetBotInfo. The
 	// router wires the real Lark HTTP client whenever
-	// MULTICA_LARK_SECRET_KEY is set; tests that need a no-op
-	// behaviour can swap in `lark.NewStubAPIClient(...)` directly. The
-	// UI consults IsConfigured() to decide whether to surface install
-	// entry points.
+	// MULTICA_LARK_SECRET_KEY is set. It remains nil when Lark is not
+	// configured. The UI consults IsConfigured() to decide whether to
+	// surface install entry points.
 	LarkAPIClient lark.APIClient
 	// LarkHub owns the per-installation supervisor goroutines that
 	// hold the §4.4 WS lease and run the EventConnector. Nil only
@@ -151,7 +152,7 @@ type Handler struct {
 	cfg     Config
 }
 
-func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
+func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
 	var executor dbExecutor
 	if candidate, ok := txStarter.(dbExecutor); ok {
 		executor = candidate
@@ -181,7 +182,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
-	return &Handler{
+	h := &Handler{
 		Queries:               queries,
 		DB:                    executor,
 		TxStarter:             txStarter,
@@ -192,8 +193,6 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TaskService:           taskSvc,
 		IssueService:          service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		AutopilotService:      service.NewAutopilotService(queries, txStarter, bus, taskSvc),
-		EmailService:          emailService,
-		UpdateStore:           NewInMemoryUpdateStore(),
 		ModelListStore:        NewInMemoryModelListStore(),
 		LocalSkillListStore:   NewInMemoryLocalSkillListStore(),
 		LocalSkillImportStore: NewInMemoryLocalSkillImportStore(),
@@ -204,8 +203,11 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		Analytics:             analyticsClient,
 		WebhookRateLimiter:    NewMemoryWebhookRateLimiter(DefaultWebhookRateLimit()),
 		WebhookIPRateLimiter:  NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
-		cfg: cfg,
+		cfg:                   cfg,
 	}
+	taskSvc.IssueStatusChanged = h.notifyParentOfChildDone
+	taskSvc.AgentCommentCreated = h.triggerTasksForAgentServiceComment
+	return h
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -216,6 +218,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func writeClientClosedIfCanceled(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, context.Canceled) {
+		return false
+	}
+	writeError(w, 499, "request cancelled")
+	return true
 }
 
 // Thin wrappers around util functions.
@@ -316,6 +326,22 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func isAgentNameUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return false
+	}
+	switch pgErr.ConstraintName {
+	case "agent_workspace_name_unique",
+		"agent_workspace_name_active_unique",
+		"agent_private_owner_name_active_unique",
+		"agent_private_no_owner_name_active_unique":
+		return true
+	default:
+		return false
+	}
+}
+
 // isCheckViolation reports whether err is a PostgreSQL CHECK constraint
 // violation (SQLSTATE 23514). Used to translate column-level CHECK failures
 // into a 4xx instead of a generic 500.
@@ -343,7 +369,7 @@ func requestUserID(r *http.Request) string {
 //
 // X-Agent-ID alone is not trusted: any workspace member can guess or observe
 // an agent's UUID, and a member-supplied X-Agent-ID would otherwise let that
-// member impersonate the agent and bypass the private-agent gate (#2359
+// member impersonate the agent and bypass the personal-agent gate (#2359
 // review). The daemon always pairs the two headers, so requiring both has
 // no effect on legitimate agent callers but closes the impersonation path.
 //

@@ -39,7 +39,10 @@ export function AgentAvatarStack({
   opacity = "full",
   className,
 }: AgentAvatarStackProps) {
-  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName();
+  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName({
+    members: false,
+    squads: false,
+  });
   if (agentIds.length === 0) return null;
 
   const visible = agentIds.slice(0, max);

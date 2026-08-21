@@ -331,6 +331,7 @@ func stubProfilePathExecutable(t *testing.T, executable map[string]bool) {
 	profilePathExecutable = func(path string) bool { return executable[path] }
 	t.Cleanup(func() { profilePathExecutable = orig })
 }
+
 // bookkeeping that runTask relies on to override the launch path.
 func TestCustomCommandPathForRuntime(t *testing.T) {
 	d := freshDaemon("")

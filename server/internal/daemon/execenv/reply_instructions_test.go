@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+func setRuntimeGOOS(t *testing.T, goos string) {
+	t.Helper()
+	saved := runtimeGOOS
+	t.Cleanup(func() { runtimeGOOS = saved })
+	runtimeGOOS = goos
+}
+
+func injectedRuntimeConfigContent(t *testing.T, provider string, ctx TaskContextForEnv) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig failed: %v", err)
+	}
+	fileName := "CLAUDE.md"
+	if provider != "claude" {
+		fileName = "AGENTS.md"
+	}
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
+	if err != nil {
+		t.Fatalf("read %s: %v", fileName, err)
+	}
+	return fileName, string(data)
+}
+
 // TestBuildCommentReplyInstructionsCodexLinux pins that the Linux/macOS
 // reply template now mandates `--content-file` (post-#4182). The previous
 // `--content-stdin` + HEREDOC mandate (#1795 / #1851 / MUL-2904) was kept
@@ -19,9 +43,7 @@ import (
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "linux"
+	setRuntimeGOOS(t, "linux")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
@@ -36,6 +58,7 @@ func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
 		"rm ./reply.md",
 		"Do NOT write literal `\\n` escapes to simulate line breaks",
 		"do NOT reuse --parent values from previous turns",
+		"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("codex/linux reply instructions missing %q\n---\n%s", want, got)
@@ -78,7 +101,7 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 	triggerID := "22222222-2222-2222-2222-222222222222"
 
 	for _, host := range []string{"linux", "darwin"} {
-		for _, provider := range []string{"claude", "opencode", "openclaw", "hermes", "kimi", "kiro", "cursor", "gemini"} {
+		for _, provider := range []string{"claude", "opencode", "hermes", "kimi", "kiro", "cursor", "gemini"} {
 			name := provider + "/" + host
 			t.Run(name, func(t *testing.T) {
 				runtimeGOOS = host
@@ -92,6 +115,7 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 					"rm ./reply.md",
 					"do NOT reuse --parent values from previous turns",
 					"If you decide to reply",
+					"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
 				} {
 					if !strings.Contains(got, want) {
 						t.Errorf("%s reply instructions missing %q\n---\n%s", name, want, got)
@@ -99,7 +123,7 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 				}
 
 				// The two regressions: agent-authored comments must never be
-				// steered at inline `--content "..."` (MUL-2904) and never at
+				// steered at shell-inline bodies (MUL-2904) and never at
 				// `--content-stdin` HEREDOC on multi-flag commands (#4182).
 				for _, banned := range []string{
 					"--content \"...\"",
@@ -126,14 +150,12 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "windows"
+	setRuntimeGOOS(t, "windows")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
 
-	for _, provider := range []string{"codex", "claude", "opencode", "openclaw", "hermes", "kimi", "kiro", "cursor", "gemini"} {
+	for _, provider := range []string{"codex", "claude", "opencode", "hermes", "kimi", "kiro", "cursor", "gemini"} {
 		t.Run(provider+"/windows", func(t *testing.T) {
 			got := BuildCommentReplyInstructions(provider, issueID, triggerID)
 			for _, want := range []string{
@@ -142,6 +164,7 @@ func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 				"Do NOT pipe via `--content-stdin`",
 				"silently drops non-ASCII",
 				"$OutputEncoding",
+				"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
 			} {
 				if !strings.Contains(got, want) {
 					t.Errorf("%s reply instructions missing %q\n---\n%s", provider, want, got)
@@ -174,9 +197,7 @@ func TestBuildCommentReplyInstructionsEmptyWhenNoTrigger(t *testing.T) {
 // Provider is "claude" — exercises the non-codex inline path through
 // InjectRuntimeConfig end-to-end. Not parallel: mutates runtimeGOOS.
 func TestInjectRuntimeConfigCommentTriggerUsesHelper(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "linux"
+	setRuntimeGOOS(t, "linux")
 
 	dir := t.TempDir()
 
@@ -216,9 +237,7 @@ func TestInjectRuntimeConfigCommentTriggerUsesHelper(t *testing.T) {
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestInjectRuntimeConfigWindowsCommentTriggerHasNoStdin(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "windows"
+	setRuntimeGOOS(t, "windows")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
@@ -229,19 +248,7 @@ func TestInjectRuntimeConfigWindowsCommentTriggerHasNoStdin(t *testing.T) {
 
 	for _, provider := range []string{"claude", "codex", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
-			dir := t.TempDir()
-			if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
-				t.Fatalf("InjectRuntimeConfig failed: %v", err)
-			}
-			fileName := "CLAUDE.md"
-			if provider != "claude" {
-				fileName = "AGENTS.md"
-			}
-			data, err := os.ReadFile(filepath.Join(dir, fileName))
-			if err != nil {
-				t.Fatalf("read %s: %v", fileName, err)
-			}
-			s := string(data)
+			fileName, s := injectedRuntimeConfigContent(t, provider, ctx)
 
 			for _, want := range []string{
 				"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file",
@@ -285,28 +292,14 @@ func TestInjectRuntimeConfigWindowsCommentTriggerHasNoStdin(t *testing.T) {
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestInjectRuntimeConfigWindowsAssignmentBriefStaysFileOnly(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "windows"
+	setRuntimeGOOS(t, "windows")
 
 	// Assignment-triggered: IssueID set, no TriggerCommentID.
 	ctx := TaskContextForEnv{IssueID: "issue-1"}
 
 	for _, provider := range []string{"claude", "codex", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
-			dir := t.TempDir()
-			if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
-				t.Fatalf("InjectRuntimeConfig failed: %v", err)
-			}
-			fileName := "CLAUDE.md"
-			if provider != "claude" {
-				fileName = "AGENTS.md"
-			}
-			data, err := os.ReadFile(filepath.Join(dir, fileName))
-			if err != nil {
-				t.Fatalf("read %s: %v", fileName, err)
-			}
-			s := string(data)
+			fileName, s := injectedRuntimeConfigContent(t, provider, ctx)
 
 			// The Windows Comment Formatting section is file-only.
 			for _, want := range []string{

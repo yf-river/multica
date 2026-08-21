@@ -20,7 +20,7 @@ import (
 // mapping — without touching the database. The polling goroutine's
 // DB-write paths (UpsertLarkInstallation + BindInstallerTx in one tx)
 // require a real Postgres + sqlc-generated *db.Queries and are
-// covered by an integration test against the migration suite.
+// covered by an integration test against the current schema.
 
 // TestRegistrationServiceConstructorValidatesDeps pins that every
 // required dependency surfaces as a constructor error rather than a
@@ -29,7 +29,7 @@ import (
 // the logs.
 func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 	client := NewRegistrationClient(RegistrationConfig{})
-	api := NewStubAPIClient(nil)
+	api := NewHTTPAPIClient(HTTPClientConfig{})
 	cases := []struct {
 		name   string
 		fn     func() error

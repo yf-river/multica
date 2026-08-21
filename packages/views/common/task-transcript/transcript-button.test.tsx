@@ -56,7 +56,7 @@ describe("TranscriptButton", () => {
   it("closes the transcript dialog when desktop navigation starts", async () => {
     render(<TranscriptButton task={task} agentName="Codex" items={items} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "View transcript" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看执行记录" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
     act(() => {

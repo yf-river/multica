@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -60,14 +61,6 @@ func thinkingCachePut(key thinkingCacheKey, value map[string]*ModelThinking) {
 	thinkingCacheMu.Lock()
 	defer thinkingCacheMu.Unlock()
 	thinkingCache[key] = thinkingCacheEntry{value: value, expiresAt: time.Now().Add(thinkingDiscoveryTTL)}
-}
-
-// resetThinkingCacheForTests is exposed for tests only; production code
-// must rely on the TTL or process restart for invalidation.
-func resetThinkingCacheForTests() {
-	thinkingCacheMu.Lock()
-	thinkingCache = map[thinkingCacheKey]thinkingCacheEntry{}
-	thinkingCacheMu.Unlock()
 }
 
 // ── Claude ───────────────────────────────────────────────────────────
@@ -260,9 +253,12 @@ var codexEffortLabel = map[string]string{
 // consume are typed; unknown keys are ignored.
 type codexDebugModelsResponse struct {
 	Models []struct {
-		Slug                    string `json:"slug"`
-		DefaultReasoningLevel   string `json:"default_reasoning_level"`
-		SupportedReasoningLevel []struct {
+		Slug                        string   `json:"slug"`
+		InputModalities             []string `json:"input_modalities"`
+		ExperimentalSupportedTools  []string `json:"experimental_supported_tools"`
+		SupportsImageDetailOriginal *bool    `json:"supports_image_detail_original"`
+		DefaultReasoningLevel       string   `json:"default_reasoning_level"`
+		SupportedReasoningLevel     []struct {
 			Effort      string `json:"effort"`
 			Description string `json:"description"`
 		} `json:"supported_reasoning_levels"`
@@ -377,8 +373,7 @@ var codebuddyEffortLabel = map[string]string{
 var codebuddyStaticEffortFallback = []string{"low", "medium", "high", "xhigh"}
 
 // codebuddyHelpCache caches the raw --help output so both model discovery
-// (models.go) and effort discovery avoid redundant slow CLI invocations.
-// CodeBuddy's --help takes ~30s; calling it twice on cold start wastes ~30s.
+// (models.go) and effort discovery avoid redundant CLI invocations.
 var (
 	codebuddyHelpMu    sync.Mutex
 	codebuddyHelpStore = map[string]codebuddyHelpEntry{}
@@ -406,7 +401,7 @@ func codebuddyHelpOutput(ctx context.Context, executablePath string) string {
 	}
 	codebuddyHelpMu.Unlock()
 
-	runCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, executablePath, "--help")
 	hideAgentWindow(cmd)
@@ -419,6 +414,11 @@ func codebuddyHelpOutput(ctx context.Context, executablePath string) string {
 		codebuddyHelpMu.Unlock()
 	}
 	return result
+}
+
+func codebuddyHelpDiscoveryEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("MULTICA_CODEBUDDY_HELP_DISCOVERY")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func annotateCodebuddyThinking(ctx context.Context, models []Model, executablePath string) {
@@ -466,6 +466,9 @@ func annotateCodebuddyThinking(ctx context.Context, models []Model, executablePa
 }
 
 func codebuddyEffortSuperset(ctx context.Context, executablePath string) []string {
+	if !codebuddyHelpDiscoveryEnabled() {
+		return append([]string(nil), codebuddyStaticEffortFallback...)
+	}
 	helpOut := codebuddyHelpOutput(ctx, executablePath)
 	if helpOut == "" {
 		return append([]string(nil), codebuddyStaticEffortFallback...)

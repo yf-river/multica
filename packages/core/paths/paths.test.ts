@@ -6,6 +6,7 @@ describe("paths.workspace(slug)", () => {
 
   it("builds workspace paths with slug prefix", () => {
     expect(ws.usage()).toBe("/acme/usage");
+    expect(ws.runReviews()).toBe("/acme/run-reviews");
     expect(ws.issues()).toBe("/acme/issues");
     expect(ws.issueDetail("abc-123")).toBe("/acme/issues/abc-123");
     expect(ws.projects()).toBe("/acme/projects");
@@ -17,6 +18,10 @@ describe("paths.workspace(slug)", () => {
     expect(ws.inbox()).toBe("/acme/inbox");
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
+    expect(ws.debug()).toBe("/acme/debug");
+    expect(ws.debugView("prompts")).toBe("/acme/debug/prompts");
+    expect(ws.evaluation()).toBe("/acme/evaluation");
+    expect(ws.evaluationView("runs")).toBe("/acme/evaluation/runs");
     expect(ws.skills()).toBe("/acme/skills");
     expect(ws.skillDetail("skl_123")).toBe("/acme/skills/skl_123");
     expect(ws.squads()).toBe("/acme/squads");
@@ -34,8 +39,6 @@ describe("paths (global)", () => {
   it("builds global paths without slug", () => {
     expect(paths.login()).toBe("/login");
     expect(paths.newWorkspace()).toBe("/workspaces/new");
-    expect(paths.invite("inv-1")).toBe("/invite/inv-1");
-    expect(paths.authCallback()).toBe("/auth/callback");
   });
 });
 
@@ -43,8 +46,6 @@ describe("isGlobalPath", () => {
   it("returns true for pre-workspace routes", () => {
     expect(isGlobalPath("/login")).toBe(true);
     expect(isGlobalPath("/workspaces/new")).toBe(true);
-    expect(isGlobalPath("/invite/abc")).toBe(true);
-    expect(isGlobalPath("/auth/callback")).toBe(true);
   });
 
   it("returns false for workspace-scoped paths", () => {

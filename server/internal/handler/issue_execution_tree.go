@@ -1,0 +1,1435 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
+)
+
+type IssueExecutionTreeResponse struct {
+	Root          IssueExecutionNodeResponse   `json:"root"`
+	Summary       map[string]int               `json:"summary"`
+	TimelineNodes []IssueTimelineNodeResponse  `json:"timeline_nodes"`
+	IssueSummary  IssueTimelineSummaryResponse `json:"issue_summary"`
+}
+
+type IssueTimelineNodeResponse struct {
+	IssueID               string                      `json:"issue_id"`
+	RootTaskID            string                      `json:"root_task_id,omitempty"`
+	NodeID                string                      `json:"node_id"`
+	ParentNodeID          string                      `json:"parent_node_id,omitempty"`
+	NodeType              string                      `json:"node_type"`
+	AgentID               string                      `json:"agent_id,omitempty"`
+	AgentName             string                      `json:"agent_name,omitempty"`
+	SquadID               string                      `json:"squad_id,omitempty"`
+	ProjectID             string                      `json:"project_id,omitempty"`
+	ChildIssueID          string                      `json:"child_issue_id,omitempty"`
+	Status                string                      `json:"status"`
+	FailureReason         string                      `json:"failure_reason,omitempty"`
+	StartedAt             string                      `json:"started_at,omitempty"`
+	ActualStartedAt       string                      `json:"actual_started_at,omitempty"`
+	CompletedAt           string                      `json:"completed_at,omitempty"`
+	DurationMs            int64                       `json:"duration_ms"`
+	InputTokens           int64                       `json:"input_tokens"`
+	OutputTokens          int64                       `json:"output_tokens"`
+	CacheReadTokens       int64                       `json:"cache_read_tokens"`
+	CacheWriteTokens      int64                       `json:"cache_write_tokens"`
+	MessageCount          int                         `json:"message_count"`
+	AgentTurnCount        int                         `json:"agent_turn_count"`
+	TraceEventCount       int                         `json:"trace_event_count"`
+	UsageUnavailableTrace bool                        `json:"usage_unavailable_trace"`
+	Summary               string                      `json:"summary"`
+	EvidenceRefs          []IssueTimelineEvidenceRef  `json:"evidence_refs"`
+	Artifacts             []AgentTaskArtifactResponse `json:"artifacts"`
+	Metadata              map[string]any              `json:"metadata,omitempty"`
+}
+
+type IssueTimelineEvidenceRef struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+	Href string `json:"href,omitempty"`
+}
+
+type IssueTimelineSummaryResponse struct {
+	IssueID                     string `json:"issue_id"`
+	NodeCount                   int    `json:"node_count"`
+	TotalDurationMs             int64  `json:"total_duration_ms"`
+	WorkStartedAt               string `json:"work_started_at,omitempty"`
+	WorkCompletedAt             string `json:"work_completed_at,omitempty"`
+	WallClockDurationMs         *int64 `json:"wall_clock_duration_ms"`
+	AgentExecutionDurationMs    int64  `json:"agent_execution_duration_ms"`
+	HumanConfirmationDurationMs *int64 `json:"human_confirmation_duration_ms"`
+	ChildIssueWaitDurationMs    *int64 `json:"child_issue_wait_duration_ms"`
+	TotalInputTokens            int64  `json:"total_input_tokens"`
+	TotalOutputTokens           int64  `json:"total_output_tokens"`
+	TotalCacheReadTokens        int64  `json:"total_cache_read_tokens"`
+	TotalCacheWriteTokens       int64  `json:"total_cache_write_tokens"`
+	MessageCount                int    `json:"message_count"`
+	AgentTurnCount              int    `json:"agent_turn_count"`
+	TraceEventCount             int    `json:"trace_event_count"`
+	UsageUnavailable            bool   `json:"usage_unavailable"`
+	FailureSummary              string `json:"failure_summary,omitempty"`
+	AcceptanceStatus            string `json:"acceptance_status"`
+	FullAnalysisDeepLink        string `json:"full_analysis_deep_link"`
+}
+
+type IssueExecutionNodeResponse struct {
+	Issue           IssueResponse                             `json:"issue"`
+	Tasks           []AgentTaskResponse                       `json:"tasks"`
+	SOPRuns         []SquadSOPRunResponse                     `json:"sop_runs"`
+	TaskMessages    []protocol.TaskMessagePayload             `json:"task_messages"`
+	TraceEvents     []TaskTraceEventResponse                  `json:"trace_events"`
+	ToolCallChains  []PromptEvaluationToolCallChainResponse   `json:"tool_call_chains"`
+	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
+	Artifacts       []AgentTaskArtifactResponse               `json:"artifacts"`
+	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
+	ManualComments  []IssueCommentBrief                       `json:"manual_comments,omitempty"`
+	AgentComments   []IssueCommentBrief                       `json:"agent_comments,omitempty"`
+	ActivityLogs    []IssueActivityBrief                      `json:"activity_logs,omitempty"`
+	Children        []IssueExecutionNodeResponse              `json:"children"`
+}
+
+type AgentTaskArtifactResponse struct {
+	ID          string `json:"id"`
+	TaskID      string `json:"task_id"`
+	CommentID   string `json:"comment_id"`
+	IssueID     string `json:"issue_id"`
+	Filename    string `json:"filename"`
+	Title       string `json:"title"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+	DownloadURL string `json:"download_url"`
+	MarkdownURL string `json:"markdown_url"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type IssueWakeupCommentBrief struct {
+	ID         string  `json:"id"`
+	IssueID    string  `json:"issue_id"`
+	AuthorType string  `json:"author_type"`
+	Type       string  `json:"type"`
+	Content    string  `json:"content"`
+	ParentID   *string `json:"parent_id"`
+	CreatedAt  string  `json:"created_at"`
+}
+
+type IssueCommentBrief struct {
+	ID           string  `json:"id"`
+	IssueID      string  `json:"issue_id"`
+	AuthorType   string  `json:"author_type"`
+	Type         string  `json:"type"`
+	Content      string  `json:"content"`
+	ParentID     *string `json:"parent_id"`
+	SourceTaskID *string `json:"source_task_id,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+type IssueActivityBrief struct {
+	ID        string         `json:"id"`
+	IssueID   string         `json:"issue_id"`
+	ActorType string         `json:"actor_type"`
+	ActorID   string         `json:"actor_id"`
+	Action    string         `json:"action"`
+	Details   map[string]any `json:"details"`
+	CreatedAt string         `json:"created_at"`
+}
+
+// GetIssueExecutionTree returns the cross-issue execution evidence rooted at
+// one issue: issue hierarchy, task runs, SOP runs, trace events and child-done
+// wakeup comments. It is intentionally read-only and derives from existing
+// facts instead of introducing another persistence layer.
+func (h *Handler) GetIssueExecutionTree(w http.ResponseWriter, r *http.Request) {
+	issueID := chi.URLParam(r, "id")
+	issue, ok := h.loadIssueForUser(w, r, issueID)
+	if !ok {
+		return
+	}
+	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
+	root, err := h.buildIssueExecutionNode(r.Context(), issue, prefix, 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build issue execution tree")
+		return
+	}
+	timelineNodes := buildIssueTimelineNodes(root)
+	writeJSON(w, http.StatusOK, IssueExecutionTreeResponse{
+		Root:          root,
+		Summary:       summarizeIssueExecutionTree(root),
+		TimelineNodes: timelineNodes,
+		IssueSummary:  summarizeIssueTimeline(root.Issue, timelineNodes),
+	})
+}
+
+const issueExecutionTreeMaxDepth = 2
+
+func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, prefix string, depth int) (IssueExecutionNodeResponse, error) {
+	tasks, err := h.Queries.ListTasksByIssue(ctx, issue.ID)
+	if err != nil {
+		return IssueExecutionNodeResponse{}, err
+	}
+	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       200,
+	})
+	if err != nil {
+		return IssueExecutionNodeResponse{}, err
+	}
+	commentByID := make(map[string]db.Comment, len(comments))
+	for _, comment := range comments {
+		commentByID[uuidToString(comment.ID)] = comment
+	}
+	taskResp := make([]AgentTaskResponse, 0, len(tasks))
+	taskMessages := make([]protocol.TaskMessagePayload, 0)
+	workspaceID := uuidToString(issue.WorkspaceID)
+	agentNameByID := make(map[string]string)
+	for _, task := range tasks {
+		resp := taskToResponse(task, workspaceID)
+		if resp.TriggerCommentID != nil {
+			if comment, ok := commentByID[*resp.TriggerCommentID]; ok {
+				resp.TriggerAuthorType = comment.AuthorType
+				resp.TriggerCommentContent = comment.Content
+				resp.TriggerCommentCreatedAt = timestampToString(comment.CreatedAt)
+			}
+		}
+		agentID := uuidToString(task.AgentID)
+		if name, ok := agentNameByID[agentID]; ok {
+			resp.Agent = &TaskAgentData{ID: agentID, Name: name}
+		} else if agent, err := h.Queries.GetAgent(ctx, task.AgentID); err == nil {
+			agentNameByID[agentID] = agent.Name
+			resp.Agent = &TaskAgentData{ID: agentID, Name: agent.Name}
+		}
+		taskResp = append(taskResp, resp)
+		messages, err := h.Queries.ListTaskMessages(ctx, task.ID)
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		taskID := uuidToString(task.ID)
+		issueID := uuidToString(issue.ID)
+		for _, message := range messages {
+			taskMessages = append(taskMessages, taskMessageToPayload(message, taskID, issueID))
+		}
+	}
+	toolCallChains := buildPromptEvaluationToolCallChains(taskMessages)
+	toolCallSummary := buildPromptEvaluationToolCallSummary(toolCallChains)
+
+	runs, err := h.Queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return IssueExecutionNodeResponse{}, err
+	}
+	runResp := make([]SquadSOPRunResponse, 0, len(runs))
+	for _, run := range runs {
+		events, err := h.Queries.ListSquadSOPStepEventsByRun(ctx, run.ID)
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		eventResp := make([]SquadSOPEventResponse, 0, len(events))
+		for _, event := range events {
+			eventResp = append(eventResp, squadSOPEventToResponse(event))
+		}
+		enrichedRun, err := h.squadSOPRunToResponseWithStageMetrics(ctx, run, eventResp)
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		runResp = append(runResp, enrichedRun)
+	}
+
+	traces, err := h.Queries.ListIssueTaskTraceEvents(ctx, issue.ID)
+	if err != nil {
+		return IssueExecutionNodeResponse{}, err
+	}
+	traceResp := make([]TaskTraceEventResponse, 0, len(traces))
+	for _, event := range traces {
+		traceResp = append(traceResp, taskTraceEventToResponse(event))
+	}
+
+	commentIDs := make([]pgtype.UUID, 0, len(comments))
+	for _, comment := range comments {
+		if comment.SourceTaskID.Valid {
+			commentIDs = append(commentIDs, comment.ID)
+		}
+	}
+	artifacts := make([]AgentTaskArtifactResponse, 0)
+	if len(commentIDs) > 0 {
+		attachments, err := h.Queries.ListAttachmentsByCommentIDs(ctx, db.ListAttachmentsByCommentIDsParams{
+			Column1:     commentIDs,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		artifactIndexByKey := make(map[string]int, len(attachments))
+		for _, attachment := range attachments {
+			comment, ok := commentByID[uuidToString(attachment.CommentID)]
+			if !ok || !comment.SourceTaskID.Valid {
+				continue
+			}
+			artifact := h.agentTaskArtifactToResponse(attachment, comment.SourceTaskID, issue.ID)
+			key := agentTaskArtifactSemanticKey(artifact)
+			if index, ok := artifactIndexByKey[key]; ok {
+				if artifactCreatedAtAfterOrEqual(artifact, artifacts[index]) {
+					artifacts[index] = artifact
+				}
+				continue
+			}
+			artifactIndexByKey[key] = len(artifacts)
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	wakeupComments := make([]IssueWakeupCommentBrief, 0)
+	manualComments := make([]IssueCommentBrief, 0)
+	agentComments := make([]IssueCommentBrief, 0)
+	for _, comment := range comments {
+		if comment.AuthorType == "member" {
+			manualComments = append(manualComments, issueCommentBrief(comment))
+		}
+		if comment.AuthorType == "agent" {
+			agentComments = append(agentComments, issueCommentBrief(comment))
+		}
+		if comment.AuthorType == "system" && comment.Type == "system" && strings.Contains(comment.Content, "子任务") && strings.Contains(comment.Content, "已完成") {
+			wakeupComments = append(wakeupComments, IssueWakeupCommentBrief{
+				ID:         uuidToString(comment.ID),
+				IssueID:    uuidToString(comment.IssueID),
+				AuthorType: comment.AuthorType,
+				Type:       comment.Type,
+				Content:    comment.Content,
+				ParentID:   uuidToPtr(comment.ParentID),
+				CreatedAt:  timestampToString(comment.CreatedAt),
+			})
+		}
+	}
+	activities, err := h.Queries.ListActivitiesForIssue(ctx, db.ListActivitiesForIssueParams{
+		IssueID: issue.ID,
+		Limit:   200,
+	})
+	if err != nil {
+		return IssueExecutionNodeResponse{}, err
+	}
+	activityResp := make([]IssueActivityBrief, 0, len(activities))
+	for _, activity := range activities {
+		activityResp = append(activityResp, issueActivityBrief(activity))
+	}
+
+	childrenResp := []IssueExecutionNodeResponse{}
+	if depth < issueExecutionTreeMaxDepth {
+		children, err := h.Queries.ListChildIssues(ctx, issue.ID)
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		childrenResp = make([]IssueExecutionNodeResponse, 0, len(children))
+		for _, child := range children {
+			childNode, err := h.buildIssueExecutionNode(ctx, child, prefix, depth+1)
+			if err != nil {
+				return IssueExecutionNodeResponse{}, err
+			}
+			childrenResp = append(childrenResp, childNode)
+		}
+	}
+
+	return IssueExecutionNodeResponse{
+		Issue:           issueToResponse(issue, prefix),
+		Tasks:           taskResp,
+		SOPRuns:         runResp,
+		TaskMessages:    taskMessages,
+		TraceEvents:     traceResp,
+		ToolCallChains:  toolCallChains,
+		ToolCallSummary: toolCallSummary,
+		Artifacts:       artifacts,
+		WakeupComments:  wakeupComments,
+		ManualComments:  manualComments,
+		AgentComments:   agentComments,
+		ActivityLogs:    activityResp,
+		Children:        childrenResp,
+	}, nil
+}
+
+func issueCommentBrief(comment db.Comment) IssueCommentBrief {
+	return IssueCommentBrief{
+		ID:           uuidToString(comment.ID),
+		IssueID:      uuidToString(comment.IssueID),
+		AuthorType:   comment.AuthorType,
+		Type:         comment.Type,
+		Content:      comment.Content,
+		ParentID:     uuidToPtr(comment.ParentID),
+		SourceTaskID: uuidToPtr(comment.SourceTaskID),
+		CreatedAt:    timestampToString(comment.CreatedAt),
+	}
+}
+
+func issueActivityBrief(activity db.ActivityLog) IssueActivityBrief {
+	var details map[string]any
+	if len(activity.Details) > 0 {
+		_ = json.Unmarshal(activity.Details, &details)
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	return IssueActivityBrief{
+		ID:        uuidToString(activity.ID),
+		IssueID:   uuidToString(activity.IssueID),
+		ActorType: activity.ActorType.String,
+		ActorID:   uuidToString(activity.ActorID),
+		Action:    activity.Action,
+		Details:   details,
+		CreatedAt: timestampToString(activity.CreatedAt),
+	}
+}
+
+func (h *Handler) agentTaskArtifactToResponse(attachment db.Attachment, taskID, issueID pgtype.UUID) AgentTaskArtifactResponse {
+	att := h.attachmentToResponse(attachment)
+	return AgentTaskArtifactResponse{
+		ID:          att.ID,
+		TaskID:      uuidToString(taskID),
+		CommentID:   uuidToString(attachment.CommentID),
+		IssueID:     uuidToString(issueID),
+		Filename:    att.Filename,
+		Title:       artifactTitle(att.Filename),
+		Kind:        artifactKind(att.Filename, att.ContentType),
+		ContentType: att.ContentType,
+		SizeBytes:   att.SizeBytes,
+		DownloadURL: att.DownloadURL,
+		MarkdownURL: att.MarkdownURL,
+		CreatedAt:   att.CreatedAt,
+	}
+}
+
+func agentTaskArtifactSemanticKey(artifact AgentTaskArtifactResponse) string {
+	return strings.ToLower(strings.Join([]string{
+		strings.TrimSpace(artifact.TaskID),
+		strings.TrimSpace(artifact.Kind),
+		strings.TrimSpace(artifact.Title),
+		strings.TrimSpace(artifact.Filename),
+	}, ":"))
+}
+
+func artifactCreatedAtAfterOrEqual(left, right AgentTaskArtifactResponse) bool {
+	leftAt, leftErr := time.Parse(time.RFC3339, left.CreatedAt)
+	rightAt, rightErr := time.Parse(time.RFC3339, right.CreatedAt)
+	if leftErr == nil && rightErr == nil {
+		return !leftAt.Before(rightAt)
+	}
+	return left.CreatedAt >= right.CreatedAt
+}
+
+func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int {
+	summary := map[string]int{
+		"任务数":    0,
+		"子任务数":   0,
+		"SOP执行数": 0,
+		"SOP事件数": 0,
+		"观测事件数":  0,
+		"工具调用数":  0,
+		"异常工具数":  0,
+		"唤醒评论数":  0,
+		"完成任务数":  0,
+		"失败任务数":  0,
+		"取消任务数":  0,
+	}
+	var walk func(node IssueExecutionNodeResponse, isRoot bool)
+	walk = func(node IssueExecutionNodeResponse, isRoot bool) {
+		if !isRoot {
+			summary["子任务数"]++
+		}
+		summary["任务数"] += len(node.Tasks)
+		summary["SOP执行数"] += len(node.SOPRuns)
+		summary["观测事件数"] += len(node.TraceEvents)
+		for _, tool := range node.ToolCallSummary {
+			summary["工具调用数"] += tool.TotalCalls
+			summary["异常工具数"] += tool.FailureSignalCalls + tool.MissingResultCalls + tool.OrphanResultCalls
+		}
+		summary["唤醒评论数"] += len(node.WakeupComments)
+		for _, run := range node.SOPRuns {
+			summary["SOP事件数"] += len(run.Events)
+		}
+		for _, task := range node.Tasks {
+			switch task.Status {
+			case "completed":
+				summary["完成任务数"]++
+			case "failed":
+				summary["失败任务数"]++
+			case "cancelled":
+				summary["取消任务数"]++
+			}
+		}
+		for _, child := range node.Children {
+			walk(child, false)
+		}
+	}
+	walk(root, true)
+	return summary
+}
+
+func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNodeResponse {
+	nodes := make([]IssueTimelineNodeResponse, 0)
+	rootTaskID := ""
+	if len(root.Tasks) > 0 {
+		rootTaskID = root.Tasks[0].ID
+	}
+	messageCounts := map[string]int{}
+	agentTurnCounts := map[string]int{}
+	for _, chain := range root.ToolCallChains {
+		if chain.TaskID == "" {
+			continue
+		}
+		messageCounts[chain.TaskID] += 2
+		agentTurnCounts[chain.TaskID]++
+	}
+	traceByTask := map[string][]TaskTraceEventResponse{}
+	for _, event := range root.TraceEvents {
+		traceByTask[event.TaskID] = append(traceByTask[event.TaskID], event)
+	}
+	artifactsByTask := map[string][]AgentTaskArtifactResponse{}
+	for _, artifact := range root.Artifacts {
+		artifactsByTask[artifact.TaskID] = append(artifactsByTask[artifact.TaskID], artifact)
+	}
+	for _, task := range root.Tasks {
+		taskTraces := traceByTask[task.ID]
+		taskArtifacts := artifactsByTask[task.ID]
+		responsibilityStartedAt := taskResponsibilityStartedAt(task)
+		node := IssueTimelineNodeResponse{
+			IssueID:               root.Issue.ID,
+			RootTaskID:            rootTaskID,
+			NodeID:                "task:" + task.ID,
+			NodeType:              "agent_task",
+			AgentID:               task.AgentID,
+			Status:                task.Status,
+			FailureReason:         task.FailureReason,
+			StartedAt:             responsibilityStartedAt,
+			ActualStartedAt:       ptrString(task.StartedAt),
+			CompletedAt:           ptrString(task.CompletedAt),
+			DurationMs:            responsibilityDurationMs(task, responsibilityStartedAt),
+			MessageCount:          messageCounts[task.ID],
+			AgentTurnCount:        agentTurnCounts[task.ID],
+			TraceEventCount:       len(taskTraces),
+			UsageUnavailableTrace: hasUsageUnavailableTrace(taskTraces),
+			Summary:               timelineTaskSummary(task),
+			EvidenceRefs:          []IssueTimelineEvidenceRef{{Type: "agent_task", ID: task.ID}},
+			Artifacts:             taskArtifacts,
+		}
+		for _, artifact := range taskArtifacts {
+			node.EvidenceRefs = append(node.EvidenceRefs, IssueTimelineEvidenceRef{
+				Type: "attachment",
+				ID:   artifact.ID,
+				Href: artifact.DownloadURL,
+			})
+		}
+		if task.Agent != nil {
+			node.AgentName = task.Agent.Name
+		}
+		for _, event := range taskTraces {
+			node.InputTokens += event.InputTokens
+			node.OutputTokens += event.OutputTokens
+			node.CacheReadTokens += event.CacheReadTokens
+			node.CacheWriteTokens += event.CacheWriteTokens
+			if node.ProjectID == "" {
+				node.ProjectID = ptrString(event.ProjectID)
+			}
+			if node.SquadID == "" {
+				node.SquadID = ptrString(event.SquadID)
+			}
+			if node.AgentName == "" && event.AgentID != "" {
+				node.AgentName = event.AgentID
+			}
+		}
+		nodes = append(nodes, node)
+	}
+	for _, run := range root.SOPRuns {
+		runNodeID := "squad_step:" + run.ID
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:         root.Issue.ID,
+			RootTaskID:      rootTaskID,
+			NodeID:          runNodeID,
+			NodeType:        "squad_step",
+			SquadID:         run.SquadID,
+			Status:          run.Status,
+			StartedAt:       run.StartedAt,
+			CompletedAt:     ptrString(run.CompletedAt),
+			DurationMs:      int64PtrValue(run.TotalDurationMs),
+			Summary:         firstNonEmpty(run.CurrentStepKey, run.ProfileKey, "SOP run"),
+			EvidenceRefs:    []IssueTimelineEvidenceRef{{Type: "sop_run", ID: run.ID}},
+			TraceEventCount: len(run.Events),
+		})
+		for _, event := range run.Events {
+			nodes = append(nodes, IssueTimelineNodeResponse{
+				IssueID:         root.Issue.ID,
+				RootTaskID:      rootTaskID,
+				NodeID:          "squad_step_event:" + event.ID,
+				ParentNodeID:    runNodeID,
+				NodeType:        "squad_step",
+				SquadID:         event.SquadID,
+				Status:          event.Status,
+				StartedAt:       event.CreatedAt,
+				CompletedAt:     event.CreatedAt,
+				DurationMs:      int64PtrValue(event.DurationMs),
+				Summary:         firstNonEmpty(event.StepName, event.StepKey, event.EventType),
+				EvidenceRefs:    []IssueTimelineEvidenceRef{{Type: "sop_step_event", ID: event.ID}},
+				TraceEventCount: 1,
+			})
+		}
+	}
+	for _, chain := range root.ToolCallChains {
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:      root.Issue.ID,
+			RootTaskID:   rootTaskID,
+			NodeID:       "tool_call:" + chain.ID,
+			ParentNodeID: "task:" + chain.TaskID,
+			NodeType:     "tool_call",
+			Status:       chain.Status,
+			StartedAt:    chain.CreatedAt,
+			CompletedAt:  chain.CompletedAt,
+			DurationMs:   chain.DurationMs,
+			Summary:      chain.Summary,
+			EvidenceRefs: []IssueTimelineEvidenceRef{{Type: "tool_call_chain", ID: chain.ID}},
+		})
+	}
+	for _, event := range root.TraceEvents {
+		nodeType := "status_change"
+		if strings.Contains(event.EventType, "source") || strings.Contains(event.EventType, "fetch") {
+			nodeType = "source_fetch"
+		}
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:               root.Issue.ID,
+			RootTaskID:            rootTaskID,
+			NodeID:                "trace:" + event.ID,
+			ParentNodeID:          "task:" + event.TaskID,
+			NodeType:              nodeType,
+			AgentID:               event.AgentID,
+			SquadID:               ptrString(event.SquadID),
+			ProjectID:             ptrString(event.ProjectID),
+			Status:                event.Status,
+			StartedAt:             event.CreatedAt,
+			CompletedAt:           event.CreatedAt,
+			DurationMs:            traceDurationMs(event),
+			InputTokens:           event.InputTokens,
+			OutputTokens:          event.OutputTokens,
+			CacheReadTokens:       event.CacheReadTokens,
+			CacheWriteTokens:      event.CacheWriteTokens,
+			TraceEventCount:       1,
+			UsageUnavailableTrace: event.EventType == "llm.usage_unavailable",
+			Summary:               firstNonEmpty(event.EventName, event.EventType, event.FailureReason),
+			EvidenceRefs:          []IssueTimelineEvidenceRef{{Type: "trace_event", ID: event.ID}},
+		})
+	}
+	if status, ok := root.Issue.Metadata["source_fetch_status"].(string); ok && status != "" {
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:      root.Issue.ID,
+			RootTaskID:   rootTaskID,
+			NodeID:       "source_fetch:" + root.Issue.ID,
+			NodeType:     "source_fetch",
+			Status:       status,
+			StartedAt:    stringValue(root.Issue.Metadata["source_fetch_observed_at"]),
+			CompletedAt:  stringValue(root.Issue.Metadata["source_fetch_observed_at"]),
+			Summary:      firstNonEmpty(stringValue(root.Issue.Metadata["source_fetch_summary"]), stringValue(root.Issue.Metadata["source_fetch_error"]), "Source fetch "+status),
+			EvidenceRefs: []IssueTimelineEvidenceRef{{Type: "issue_metadata", ID: root.Issue.ID}},
+		})
+	}
+	for _, child := range root.Children {
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:      root.Issue.ID,
+			RootTaskID:   rootTaskID,
+			NodeID:       "child_issue_ref:" + child.Issue.ID,
+			NodeType:     "child_issue_ref",
+			ProjectID:    ptrString(child.Issue.ProjectID),
+			ChildIssueID: child.Issue.ID,
+			Status:       child.Issue.Status,
+			StartedAt:    child.Issue.CreatedAt,
+			CompletedAt:  child.Issue.UpdatedAt,
+			Summary:      firstNonEmpty(child.Issue.Identifier, child.Issue.Title),
+			EvidenceRefs: []IssueTimelineEvidenceRef{{Type: "child_issue", ID: child.Issue.ID, Href: "/issues/" + child.Issue.ID}},
+		})
+	}
+	for _, comment := range root.WakeupComments {
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:      root.Issue.ID,
+			RootTaskID:   rootTaskID,
+			NodeID:       "approval:" + comment.ID,
+			NodeType:     "approval",
+			Status:       "completed",
+			StartedAt:    comment.CreatedAt,
+			CompletedAt:  comment.CreatedAt,
+			Summary:      comment.Content,
+			EvidenceRefs: []IssueTimelineEvidenceRef{{Type: "comment", ID: comment.ID}},
+		})
+	}
+	nodes = append(nodes, buildHumanConfirmationTimelineNodes(root, rootTaskID)...)
+	sort.SliceStable(nodes, func(i, j int) bool {
+		left := firstNonEmpty(nodes[i].StartedAt, nodes[i].CompletedAt, nodes[i].NodeID)
+		right := firstNonEmpty(nodes[j].StartedAt, nodes[j].CompletedAt, nodes[j].NodeID)
+		if left == right {
+			return nodes[i].NodeID < nodes[j].NodeID
+		}
+		return left < right
+	})
+	return nodes
+}
+
+func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTaskID string) []IssueTimelineNodeResponse {
+	if len(root.Tasks) == 0 {
+		return nil
+	}
+	commentsByID := make(map[string]IssueCommentBrief, len(root.ManualComments))
+	for _, comment := range root.ManualComments {
+		commentsByID[comment.ID] = comment
+	}
+
+	tasks := append([]AgentTaskResponse(nil), root.Tasks...)
+	sort.SliceStable(tasks, func(i, j int) bool {
+		left := firstNonEmpty(ptrString(tasks[i].StartedAt), ptrString(tasks[i].DispatchedAt), tasks[i].CreatedAt, tasks[i].ID)
+		right := firstNonEmpty(ptrString(tasks[j].StartedAt), ptrString(tasks[j].DispatchedAt), tasks[j].CreatedAt, tasks[j].ID)
+		if left == right {
+			return tasks[i].ID < tasks[j].ID
+		}
+		return left < right
+	})
+
+	tasksByTriggerCommentID := make(map[string]AgentTaskResponse)
+	for _, task := range tasks {
+		if task.TriggerCommentID == nil {
+			continue
+		}
+		commentID := *task.TriggerCommentID
+		existing, ok := tasksByTriggerCommentID[commentID]
+		if !ok || compareTimelineTasks(task, existing) < 0 {
+			tasksByTriggerCommentID[commentID] = task
+		}
+	}
+
+	nodes := make([]IssueTimelineNodeResponse, 0)
+	seenComments := make(map[string]bool, len(commentsByID))
+	if len(root.ManualComments) > 0 && len(root.Tasks) >= 2 {
+		for _, comment := range root.ManualComments {
+			if seenComments[comment.ID] {
+				continue
+			}
+			task, ok := tasksByTriggerCommentID[comment.ID]
+			if !ok {
+				continue
+			}
+			seenComments[comment.ID] = true
+			commentAt, commentErr := time.Parse(time.RFC3339, comment.CreatedAt)
+			if commentErr != nil {
+				continue
+			}
+			previousTask, startAt, ok := latestCompletedTaskBefore(tasks, commentAt)
+			if !ok || !commentAt.After(startAt) {
+				continue
+			}
+			nodes = append(nodes, IssueTimelineNodeResponse{
+				IssueID:     root.Issue.ID,
+				RootTaskID:  rootTaskID,
+				NodeID:      "human_confirmation:" + comment.ID + ":" + task.ID,
+				NodeType:    "human_confirmation",
+				AgentID:     task.AgentID,
+				AgentName:   task.TriggerAuthorName,
+				Status:      "completed",
+				StartedAt:   startAt.Format(time.RFC3339Nano),
+				CompletedAt: commentAt.Format(time.RFC3339Nano),
+				DurationMs:  commentAt.Sub(startAt).Milliseconds(),
+				Summary:     humanConfirmationSummary(comment),
+				EvidenceRefs: []IssueTimelineEvidenceRef{
+					{Type: "agent_task", ID: previousTask.ID},
+					{Type: "comment", ID: comment.ID},
+					{Type: "agent_task", ID: task.ID},
+				},
+			})
+		}
+	}
+	if pending := buildPendingHumanConfirmationTimelineNode(root, rootTaskID, tasks); pending != nil {
+		nodes = append(nodes, *pending)
+	}
+	return nodes
+}
+
+type pendingHumanConfirmationCandidate struct {
+	task         AgentTaskResponse
+	startAt      time.Time
+	signalAt     time.Time
+	summary      string
+	evidenceRefs []IssueTimelineEvidenceRef
+	metadata     map[string]any
+}
+
+func buildPendingHumanConfirmationTimelineNode(root IssueExecutionNodeResponse, rootTaskID string, tasks []AgentTaskResponse) *IssueTimelineNodeResponse {
+	if isCompletedIssueStatus(root.Issue.Status) {
+		return nil
+	}
+	taskByID := make(map[string]AgentTaskResponse, len(tasks))
+	for _, task := range tasks {
+		taskByID[task.ID] = task
+	}
+	var selected *pendingHumanConfirmationCandidate
+	for _, activity := range root.ActivityLogs {
+		if activity.Action != "squad_leader_evaluated" || stringValue(activity.Details["wait_kind"]) != "human_confirmation" {
+			continue
+		}
+		taskID := stringValue(activity.Details["task_id"])
+		task, ok := taskByID[taskID]
+		if !ok {
+			continue
+		}
+		signalAt, err := time.Parse(time.RFC3339, activity.CreatedAt)
+		if err != nil {
+			continue
+		}
+		startAt, commentRef := pendingHumanConfirmationStart(root, task, signalAt)
+		summary := firstNonEmpty(stringValue(activity.Details["wait_summary"]), stringValue(activity.Details["reason"]), pendingHumanConfirmationTaskSummary(task))
+		refs := []IssueTimelineEvidenceRef{{Type: "agent_task", ID: task.ID}, {Type: "activity", ID: activity.ID}}
+		if commentRef != "" {
+			refs = append(refs, IssueTimelineEvidenceRef{Type: "comment", ID: commentRef})
+		}
+		candidate := pendingHumanConfirmationCandidate{
+			task:         task,
+			startAt:      startAt,
+			signalAt:     signalAt,
+			summary:      summary,
+			evidenceRefs: refs,
+			metadata: map[string]any{
+				"pending":     true,
+				"wait_kind":   "human_confirmation",
+				"source":      "activity_log",
+				"activity_id": activity.ID,
+			},
+		}
+		selected = laterPendingHumanConfirmationCandidate(selected, candidate)
+	}
+	for _, task := range tasks {
+		if !isPMCoordinatorTask(task) || !isTerminalTimelineStatus(task.Status) {
+			continue
+		}
+		taskSignalAt, ok := parseTaskCompletedAt(task)
+		if !ok {
+			continue
+		}
+		for _, comment := range root.AgentComments {
+			if ptrString(comment.SourceTaskID) != task.ID || !isPendingHumanConfirmationText(comment.Content) {
+				continue
+			}
+			commentAt, err := time.Parse(time.RFC3339, comment.CreatedAt)
+			if err != nil {
+				continue
+			}
+			candidate := pendingHumanConfirmationCandidate{
+				task:         task,
+				startAt:      commentAt,
+				signalAt:     commentAt,
+				summary:      pendingHumanConfirmationSummary(comment.Content),
+				evidenceRefs: []IssueTimelineEvidenceRef{{Type: "agent_task", ID: task.ID}, {Type: "comment", ID: comment.ID}},
+				metadata: map[string]any{
+					"pending":   true,
+					"wait_kind": "human_confirmation",
+					"source":    "agent_comment",
+				},
+			}
+			selected = laterPendingHumanConfirmationCandidate(selected, candidate)
+		}
+		if output := pendingHumanConfirmationTaskSummary(task); output != "" && isPendingHumanConfirmationText(output) {
+			candidate := pendingHumanConfirmationCandidate{
+				task:         task,
+				startAt:      taskSignalAt,
+				signalAt:     taskSignalAt,
+				summary:      pendingHumanConfirmationSummary(output),
+				evidenceRefs: []IssueTimelineEvidenceRef{{Type: "agent_task", ID: task.ID}},
+				metadata: map[string]any{
+					"pending":   true,
+					"wait_kind": "human_confirmation",
+					"source":    "task_result",
+				},
+			}
+			selected = laterPendingHumanConfirmationCandidate(selected, candidate)
+		}
+	}
+	if selected == nil || !isStillPendingHumanConfirmation(root, selected.task.ID, selected.startAt) {
+		return nil
+	}
+	return &IssueTimelineNodeResponse{
+		IssueID:      root.Issue.ID,
+		RootTaskID:   rootTaskID,
+		NodeID:       "human_confirmation:pending:" + selected.task.ID,
+		NodeType:     "human_confirmation",
+		AgentID:      selected.task.AgentID,
+		AgentName:    taskAgentName(selected.task),
+		Status:       "running",
+		StartedAt:    selected.startAt.Format(time.RFC3339Nano),
+		DurationMs:   0,
+		Summary:      firstNonEmpty(selected.summary, "等待用户确认"),
+		EvidenceRefs: selected.evidenceRefs,
+		Metadata:     selected.metadata,
+	}
+}
+
+func laterPendingHumanConfirmationCandidate(current *pendingHumanConfirmationCandidate, candidate pendingHumanConfirmationCandidate) *pendingHumanConfirmationCandidate {
+	if current == nil || candidate.signalAt.After(current.signalAt) {
+		copy := candidate
+		return &copy
+	}
+	return current
+}
+
+func pendingHumanConfirmationStart(root IssueExecutionNodeResponse, task AgentTaskResponse, fallback time.Time) (time.Time, string) {
+	if completedAt, ok := parseTaskCompletedAt(task); ok {
+		for _, comment := range root.AgentComments {
+			if ptrString(comment.SourceTaskID) != task.ID || !isPendingHumanConfirmationText(comment.Content) {
+				continue
+			}
+			commentAt, err := time.Parse(time.RFC3339, comment.CreatedAt)
+			if err != nil || commentAt.Before(completedAt) {
+				continue
+			}
+			return commentAt, comment.ID
+		}
+		return completedAt, ""
+	}
+	return fallback, ""
+}
+
+func isStillPendingHumanConfirmation(root IssueExecutionNodeResponse, taskID string, startAt time.Time) bool {
+	for _, comment := range root.ManualComments {
+		commentAt, err := time.Parse(time.RFC3339, comment.CreatedAt)
+		if err == nil && commentAt.After(startAt) {
+			return false
+		}
+	}
+	for _, task := range root.Tasks {
+		if task.ID == taskID {
+			continue
+		}
+		taskAtText := firstNonEmpty(task.TriggerCommentCreatedAt, task.CreatedAt, ptrString(task.StartedAt), ptrString(task.DispatchedAt))
+		taskAt, err := time.Parse(time.RFC3339, taskAtText)
+		if err == nil && taskAt.After(startAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func isPMCoordinatorTask(task AgentTaskResponse) bool {
+	if task.IsLeaderTask {
+		return true
+	}
+	name := strings.ToLower(taskAgentName(task))
+	return strings.Contains(name, "pm") || strings.Contains(name, "项目经理") || strings.Contains(name, "coordinator")
+}
+
+func taskAgentName(task AgentTaskResponse) string {
+	if task.Agent != nil && task.Agent.Name != "" {
+		return task.Agent.Name
+	}
+	return ""
+}
+
+func isTerminalTimelineStatus(status string) bool {
+	return isCompletedTimelineStatus(status) || isFailedTimelineStatus(status)
+}
+
+func parseTaskCompletedAt(task AgentTaskResponse) (time.Time, bool) {
+	if task.CompletedAt == nil || *task.CompletedAt == "" {
+		return time.Time{}, false
+	}
+	completedAt, err := time.Parse(time.RFC3339, *task.CompletedAt)
+	return completedAt, err == nil
+}
+
+func pendingHumanConfirmationTaskSummary(task AgentTaskResponse) string {
+	if output := taskResultOutput(task.Result); output != "" {
+		return output
+	}
+	return timelineTaskSummary(task)
+}
+
+func taskResultOutput(result any) string {
+	if result == nil {
+		return ""
+	}
+	if value, ok := result.(map[string]any); ok {
+		if output, ok := value["output"].(string); ok {
+			return strings.TrimSpace(output)
+		}
+	}
+	return ""
+}
+
+func pendingHumanConfirmationSummary(value string) string {
+	const maxSummaryRunes = 80
+	content := firstSemanticMarkdownLine(value)
+	if content == "" {
+		content = strings.TrimSpace(value)
+	}
+	if content == "" {
+		return "等待用户确认"
+	}
+	runes := []rune(content)
+	if len(runes) > maxSummaryRunes {
+		content = string(runes[:maxSummaryRunes]) + "..."
+	}
+	return content
+}
+
+func isPendingHumanConfirmationText(value string) bool {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return false
+	}
+	positiveGroups := [][]string{
+		{"等待", "用户", "确认"},
+		{"待", "用户", "确认"},
+		{"需", "用户", "确认"},
+		{"需要", "用户", "确认"},
+		{"人工", "确认"},
+		{"补充", "确认"},
+		{"确认后", "继续"},
+	}
+	for _, group := range positiveGroups {
+		matched := true
+		for _, word := range group {
+			if !strings.Contains(text, word) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func latestCompletedTaskBefore(tasks []AgentTaskResponse, before time.Time) (AgentTaskResponse, time.Time, bool) {
+	var selected AgentTaskResponse
+	var selectedAt time.Time
+	for _, task := range tasks {
+		if task.CompletedAt == nil {
+			continue
+		}
+		completedAt, err := time.Parse(time.RFC3339, *task.CompletedAt)
+		if err != nil || completedAt.After(before) {
+			continue
+		}
+		if selectedAt.IsZero() || completedAt.After(selectedAt) {
+			selected = task
+			selectedAt = completedAt
+		}
+	}
+	if selectedAt.IsZero() {
+		return AgentTaskResponse{}, time.Time{}, false
+	}
+	return selected, selectedAt, true
+}
+
+func compareTimelineTasks(left, right AgentTaskResponse) int {
+	leftValue := firstNonEmpty(left.TriggerCommentCreatedAt, ptrString(left.StartedAt), ptrString(left.DispatchedAt), left.CreatedAt, left.ID)
+	rightValue := firstNonEmpty(right.TriggerCommentCreatedAt, ptrString(right.StartedAt), ptrString(right.DispatchedAt), right.CreatedAt, right.ID)
+	if leftValue < rightValue {
+		return -1
+	}
+	if leftValue > rightValue {
+		return 1
+	}
+	if left.ID < right.ID {
+		return -1
+	}
+	if left.ID > right.ID {
+		return 1
+	}
+	return 0
+}
+
+func taskResponsibilityStartedAt(task AgentTaskResponse) string {
+	return firstNonEmpty(task.TriggerCommentCreatedAt, task.CreatedAt, ptrString(task.StartedAt))
+}
+
+func responsibilityDurationMs(task AgentTaskResponse, startedAt string) int64 {
+	if startedAt == "" || task.CompletedAt == nil {
+		return 0
+	}
+	start, startErr := time.Parse(time.RFC3339, startedAt)
+	end, endErr := time.Parse(time.RFC3339, *task.CompletedAt)
+	if startErr != nil || endErr != nil || !end.After(start) {
+		return 0
+	}
+	return end.Sub(start).Milliseconds()
+}
+
+func humanConfirmationSummary(comment IssueCommentBrief) string {
+	content := strings.TrimSpace(comment.Content)
+	if content == "" {
+		return "等待人工确认"
+	}
+	const maxSummaryRunes = 80
+	runes := []rune(content)
+	if len(runes) > maxSummaryRunes {
+		content = string(runes[:maxSummaryRunes]) + "..."
+	}
+	return "等待人工确认：" + content
+}
+
+func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeResponse) IssueTimelineSummaryResponse {
+	summary := IssueTimelineSummaryResponse{
+		IssueID:              issue.ID,
+		NodeCount:            len(nodes),
+		AcceptanceStatus:     "unknown",
+		FullAnalysisDeepLink: "/issues/" + issue.ID + "?panel=execution",
+	}
+	fallbackStartedAt, fallbackCompletedAt := timelineAgentWorkBounds(nodes)
+	if issue.WorkStartedAt != nil {
+		summary.WorkStartedAt = *issue.WorkStartedAt
+	} else if fallbackStartedAt != "" {
+		summary.WorkStartedAt = fallbackStartedAt
+	}
+	if issue.WorkCompletedAt != nil {
+		summary.WorkCompletedAt = *issue.WorkCompletedAt
+	} else if fallbackCompletedAt != "" {
+		summary.WorkCompletedAt = fallbackCompletedAt
+	}
+	hasTaskUsage := false
+	hasTaskNodes := false
+	for _, node := range nodes {
+		if node.NodeType != "agent_task" {
+			continue
+		}
+		hasTaskNodes = true
+		if node.InputTokens+node.OutputTokens+node.CacheReadTokens+node.CacheWriteTokens > 0 {
+			hasTaskUsage = true
+			break
+		}
+	}
+	for _, node := range nodes {
+		if !hasTaskUsage || node.NodeType == "agent_task" {
+			summary.TotalInputTokens += node.InputTokens
+			summary.TotalOutputTokens += node.OutputTokens
+			summary.TotalCacheReadTokens += node.CacheReadTokens
+			summary.TotalCacheWriteTokens += node.CacheWriteTokens
+		}
+		if !hasTaskNodes || node.NodeType == "agent_task" {
+			summary.MessageCount += node.MessageCount
+			summary.AgentTurnCount += node.AgentTurnCount
+			summary.TraceEventCount += node.TraceEventCount
+		}
+		if node.UsageUnavailableTrace {
+			summary.UsageUnavailable = true
+		}
+		if timelineNodeAffectsAcceptance(node) && summary.FailureSummary == "" && isFailedTimelineStatus(node.Status) && !isRecoveredRuntimeFailure(issue, node) {
+			summary.FailureSummary = node.Summary
+			summary.AcceptanceStatus = node.Status
+		}
+		if timelineNodeAffectsAcceptance(node) && summary.AcceptanceStatus == "unknown" && isCompletedTimelineStatus(node.Status) {
+			summary.AcceptanceStatus = "completed"
+		}
+	}
+	if isCompletedIssueStatus(issue.Status) {
+		summary.AcceptanceStatus = "done"
+		summary.FailureSummary = ""
+	}
+	summary.AgentExecutionDurationMs = mergedAgentExecutionDurationMs(nodes)
+	humanConfirmationMs := mergedHumanConfirmationDurationMs(nodes)
+	childIssueWaitMs := mergedChildIssueWaitDurationMs(nodes)
+	if summary.WorkStartedAt != "" && summary.WorkCompletedAt != "" {
+		if started, startErr := time.Parse(time.RFC3339, summary.WorkStartedAt); startErr == nil {
+			if completed, completedErr := time.Parse(time.RFC3339, summary.WorkCompletedAt); completedErr == nil && completed.After(started) {
+				wall := completed.Sub(started).Milliseconds()
+				summary.WallClockDurationMs = &wall
+				if humanConfirmationMs > 0 {
+					summary.HumanConfirmationDurationMs = &humanConfirmationMs
+				} else {
+					human := wall - summary.AgentExecutionDurationMs - childIssueWaitMs
+					if human < 0 {
+						human = 0
+					}
+					summary.HumanConfirmationDurationMs = &human
+				}
+				summary.ChildIssueWaitDurationMs = &childIssueWaitMs
+			}
+		}
+	} else if humanConfirmationMs > 0 {
+		summary.HumanConfirmationDurationMs = &humanConfirmationMs
+		if childIssueWaitMs > 0 {
+			summary.ChildIssueWaitDurationMs = &childIssueWaitMs
+		}
+	} else if childIssueWaitMs > 0 {
+		summary.ChildIssueWaitDurationMs = &childIssueWaitMs
+	}
+	childIssueWaitDurationMs := int64(0)
+	if summary.ChildIssueWaitDurationMs != nil {
+		childIssueWaitDurationMs = *summary.ChildIssueWaitDurationMs
+	}
+	if summary.HumanConfirmationDurationMs != nil {
+		summary.TotalDurationMs = summary.AgentExecutionDurationMs + *summary.HumanConfirmationDurationMs + childIssueWaitDurationMs
+	} else {
+		summary.TotalDurationMs = summary.AgentExecutionDurationMs + childIssueWaitDurationMs
+	}
+	return summary
+}
+
+func timelineNodeAffectsAcceptance(node IssueTimelineNodeResponse) bool {
+	return node.NodeType == "agent_task" || node.NodeType == "child_issue_ref"
+}
+
+func isRecoveredRuntimeFailure(issue IssueResponse, node IssueTimelineNodeResponse) bool {
+	return isCompletedIssueStatus(issue.Status) && strings.TrimSpace(node.FailureReason) == "runtime_recovery"
+}
+
+func isCompletedIssueStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "done", "completed", "已完成":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFailedTimelineStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "blocked", "cancelled", "失败", "异常", "阻塞", "已取消":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCompletedTimelineStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "done", "已完成":
+		return true
+	default:
+		return false
+	}
+}
+
+func timelineAgentWorkBounds(nodes []IssueTimelineNodeResponse) (startedAt string, completedAt string) {
+	var started *time.Time
+	var completed *time.Time
+	for _, node := range nodes {
+		if node.NodeType != "agent_task" {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, node.StartedAt); err == nil {
+			if started == nil || parsed.Before(*started) {
+				value := parsed
+				started = &value
+			}
+		}
+		if parsed, err := time.Parse(time.RFC3339, node.CompletedAt); err == nil {
+			if completed == nil || parsed.After(*completed) {
+				value := parsed
+				completed = &value
+			}
+		}
+	}
+	if started != nil {
+		startedAt = started.Format(time.RFC3339Nano)
+	}
+	if completed != nil {
+		completedAt = completed.Format(time.RFC3339Nano)
+	}
+	return startedAt, completedAt
+}
+
+type timelineInterval struct {
+	start time.Time
+	end   time.Time
+}
+
+func mergedAgentExecutionDurationMs(nodes []IssueTimelineNodeResponse) int64 {
+	return mergedNodeDurationMs(nodes, "agent_task")
+}
+
+func mergedHumanConfirmationDurationMs(nodes []IssueTimelineNodeResponse) int64 {
+	return mergedNodeDurationMs(nodes, "human_confirmation")
+}
+
+func mergedChildIssueWaitDurationMs(nodes []IssueTimelineNodeResponse) int64 {
+	return mergedNodeDurationMs(nodes, "child_issue_ref")
+}
+
+func mergedWaitDurationMs(nodes []IssueTimelineNodeResponse, nodeTypes ...string) int64 {
+	allowed := make(map[string]bool, len(nodeTypes))
+	for _, nodeType := range nodeTypes {
+		allowed[nodeType] = true
+	}
+	intervals := make([]timelineInterval, 0)
+	for _, node := range nodes {
+		if !allowed[node.NodeType] {
+			continue
+		}
+		if node.StartedAt == "" || node.CompletedAt == "" {
+			continue
+		}
+		start, startErr := time.Parse(time.RFC3339, node.StartedAt)
+		end, endErr := time.Parse(time.RFC3339, node.CompletedAt)
+		if startErr != nil || endErr != nil || !end.After(start) {
+			continue
+		}
+		intervals = append(intervals, timelineInterval{start: start, end: end})
+	}
+	merged := mergeTimelineIntervals(intervals)
+	if len(merged) == 0 {
+		return 0
+	}
+	var total int64
+	for _, interval := range merged {
+		total += interval.end.Sub(interval.start).Milliseconds()
+	}
+	return total
+}
+
+func mergedNodeDurationMs(nodes []IssueTimelineNodeResponse, nodeType string) int64 {
+	return mergedWaitDurationMs(nodes, nodeType)
+}
+
+func mergeTimelineIntervals(intervals []timelineInterval) []timelineInterval {
+	if len(intervals) == 0 {
+		return nil
+	}
+	sorted := append([]timelineInterval(nil), intervals...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].start.Equal(sorted[j].start) {
+			return sorted[i].end.Before(sorted[j].end)
+		}
+		return sorted[i].start.Before(sorted[j].start)
+	})
+	merged := []timelineInterval{sorted[0]}
+	for _, interval := range sorted[1:] {
+		current := &merged[len(merged)-1]
+		if !interval.start.After(current.end) {
+			if interval.end.After(current.end) {
+				current.end = interval.end
+			}
+			continue
+		}
+		merged = append(merged, interval)
+	}
+	return merged
+}
+
+func artifactTitle(filename string) string {
+	base := strings.TrimSpace(filename)
+	if base == "" {
+		return "产物"
+	}
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		return base[:dot]
+	}
+	return base
+}
+
+func artifactKind(filename, contentType string) string {
+	lowerName := strings.ToLower(strings.TrimSpace(filename))
+	lowerType := strings.ToLower(strings.TrimSpace(contentType))
+	if strings.HasSuffix(lowerName, ".md") || strings.Contains(lowerType, "markdown") {
+		return "stage_markdown"
+	}
+	return "agent_attachment"
+}
+
+func timelineTaskSummary(task AgentTaskResponse) string {
+	if isPMCoordinatorTask(task) {
+		if summary := taskResultIntentSummary(task.Result); summary != "" {
+			return summary
+		}
+	}
+	if isTerminalTimelineStatus(task.Status) {
+		if summary := taskResultIntentSummary(task.Result); summary != "" {
+			return summary
+		}
+	}
+	if summary := ptrString(task.TriggerSummary); summary != "" {
+		return summary
+	}
+	if summary := taskResultIntentSummary(task.Result); summary != "" {
+		return summary
+	}
+	if task.IsLeaderTask {
+		if task.Agent != nil && task.Agent.Name != "" {
+			return "SOP leader: " + task.Agent.Name
+		}
+		return "SOP leader task"
+	}
+	return firstNonEmpty(task.FailureReason, "Agent task "+task.Status)
+}
+
+func taskResultIntentSummary(result any) string {
+	output := taskResultOutput(result)
+	if output == "" {
+		return ""
+	}
+	line := firstSemanticMarkdownLine(output)
+	if line != "" {
+		const maxSummaryRunes = 80
+		runes := []rune(line)
+		if len(runes) > maxSummaryRunes {
+			return string(runes[:maxSummaryRunes]) + "..."
+		}
+		return line
+	}
+	return ""
+}
+
+func firstSemanticMarkdownLine(value string) string {
+	for _, rawLine := range strings.Split(value, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || isNonSemanticMarkdownLine(line) {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimLeft(line, "#"))
+		line = strings.TrimSpace(strings.Trim(line, "*"))
+		line = strings.TrimSpace(strings.Trim(line, "`"))
+		if line == "" || isNonSemanticMarkdownLine(line) {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
+func isNonSemanticMarkdownLine(line string) bool {
+	if line == "" {
+		return true
+	}
+	if line == "---" || line == "..." || strings.HasPrefix(line, "```") {
+		return true
+	}
+	trimmed := strings.Trim(line, "-=_*`~ ")
+	return trimmed == ""
+}
+
+func traceDurationMs(event TaskTraceEventResponse) int64 {
+	for _, value := range []*int64{event.DurationMs, event.TotalMs, event.RunMs} {
+		if value != nil && *value > 0 {
+			return *value
+		}
+	}
+	return 0
+}
+
+func hasUsageUnavailableTrace(events []TaskTraceEventResponse) bool {
+	for _, event := range events {
+		if event.EventType == "llm.usage_unavailable" {
+			return true
+		}
+	}
+	return false
+}
+
+func int64PtrValue(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func stringValue(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
+}

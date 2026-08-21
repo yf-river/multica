@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { ObservabilitySummaryCard } from "../../common/observability-summary-card";
 import { AppLink, useNavigation } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
@@ -82,7 +83,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
 
   // Fallback fetch: when the agent is missing from the workspace list, hit
   // GET /api/agents/{id} directly to disambiguate "doesn't exist" (404) from
-  // "you can't see this private agent" (403). Only fires after the list has
+  // "you can't see this personal agent" (403). Only fires after the list has
   // settled, so the common path makes zero extra requests.
   const { error: detailError } = useQuery({
     queryKey: ["agent-detail-probe", wsId, agentId],
@@ -109,7 +110,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     // Optimistic update: patch the matching agent in the cached list
     // BEFORE the network round-trip so the inspector picker chips flip to
     // the new value immediately on click. Without this, every inspector
-    // picker (thinking / visibility / concurrency / model / runtime) waits
+    // picker (thinking / scope / concurrency / model / runtime) waits
     // 0.5-2s for the API response + invalidate + refetch before the trigger
     // updates — readable as obvious lag in the UI.
     //
@@ -117,8 +118,8 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     // other concurrently-mutated fields untouched, then invalidate so the
     // cache converges with the server. A whole-list snapshot rollback
     // would clobber a concurrent successful mutation if the failing call
-    // resolves last (e.g. flipping visibility then runtime simultaneously
-    // and only the visibility PATCH fails).
+    // resolves last (e.g. flipping scope then runtime simultaneously
+    // and only the scope PATCH fails).
     const queryKey = workspaceKeys.agents(wsId);
     const prevAgents = qc.getQueryData<Agent[]>(queryKey);
     const prevAgent = prevAgents?.find((a) => a.id === id);
@@ -174,7 +175,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     return <DetailLoadingSkeleton />;
   }
 
-  // --- No permission (private agent the caller is not in allowed_principals for) ---
+  // --- No permission (personal agent the caller is not in allowed_principals for) ---
   if (!agent && isForbidden) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
@@ -284,18 +285,25 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       )}
 
       <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto p-3 md:grid md:grid-cols-[320px_minmax(0,1fr)] md:gap-4 md:overflow-hidden md:p-6">
-        <AgentDetailInspector
-          agent={agent}
-          runtime={runtime}
-          owner={owner}
-          presence={presence}
-          runtimes={runtimes}
-          members={members}
-          currentUserId={currentUser?.id ?? null}
-          canEdit={canEdit.allowed}
-          onUpdate={handleUpdate}
-          onShowIntegrations={() => setTabNavIntent("integrations")}
-        />
+        <div className="flex min-h-0 flex-col gap-3 md:h-full md:overflow-y-auto">
+          <AgentDetailInspector
+            agent={agent}
+            runtime={runtime}
+            owner={owner}
+            presence={presence}
+            runtimes={runtimes}
+            members={members}
+            currentUserId={currentUser?.id ?? null}
+            canEdit={canEdit.allowed}
+            onUpdate={handleUpdate}
+            onShowIntegrations={() => setTabNavIntent("integrations")}
+          />
+          <ObservabilitySummaryCard
+            title="Agent 观测摘要"
+            scopeLabel="按当前智能体聚合链路追踪、令牌、成本、耗时和证据"
+            agentId={agent.id}
+          />
+        </div>
 
         <AgentOverviewPane
           agent={agent}

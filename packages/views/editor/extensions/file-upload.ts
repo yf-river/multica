@@ -41,7 +41,7 @@ function finalizeFileCard(editor: any, uploadId: string, href: string) {
   if (updated) editor.view.dispatch(tr);
 }
 
-export function findImagePosBySrc(editor: any, src: string): number | null {
+function findImagePosBySrc(editor: any, src: string): number | null {
   if (!editor) return null;
   let imagePos: number | null = null;
   editor.state.doc.descendants((node: any, pos: number) => {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"testing"
 )
 
@@ -21,15 +20,9 @@ func TestEditCommentTriggers(t *testing.T) {
 		clearTasks(t, issueID)
 
 		newContent := fmt.Sprintf("[@Agent](mention://agent/%s) please review", agentID)
-		resp := authRequest(t, "PUT", "/api/comments/"+commentID, map[string]any{
+		updateComment(t, commentID, map[string]any{
 			"content": newContent,
 		})
-		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("UpdateComment: expected 200, got %d: %s", resp.StatusCode, body)
-		}
-		resp.Body.Close()
 
 		if n := countPendingTasks(t, issueID); n != 1 {
 			t.Errorf("expected 1 pending task after adding agent mention via edit, got %d", n)
@@ -45,15 +38,9 @@ func TestEditCommentTriggers(t *testing.T) {
 			t.Fatalf("expected 1 pending task from initial mention, got %d", n)
 		}
 
-		resp := authRequest(t, "PUT", "/api/comments/"+commentID, map[string]any{
+		updateComment(t, commentID, map[string]any{
 			"content": "removed the mention, nevermind",
 		})
-		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("UpdateComment: expected 200, got %d: %s", resp.StatusCode, body)
-		}
-		resp.Body.Close()
 
 		if n := countPendingTasks(t, issueID); n != 0 {
 			t.Errorf("expected 0 pending tasks after removing mention via edit, got %d", n)
@@ -72,15 +59,9 @@ func TestEditCommentTriggers(t *testing.T) {
 		clearTasks(t, issueID)
 
 		newContent := fmt.Sprintf("[@Agent](mention://agent/%s) actually fix bug B instead", agentID)
-		resp := authRequest(t, "PUT", "/api/comments/"+commentID, map[string]any{
+		updateComment(t, commentID, map[string]any{
 			"content": newContent,
 		})
-		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("UpdateComment: expected 200, got %d: %s", resp.StatusCode, body)
-		}
-		resp.Body.Close()
 
 		if n := countPendingTasks(t, issueID); n != 1 {
 			t.Errorf("expected 1 pending task after content change re-trigger, got %d", n)
@@ -103,15 +84,9 @@ func TestEditCommentTriggers(t *testing.T) {
 
 		clearTasks(t, assignedIssue)
 
-		resp := authRequest(t, "PUT", "/api/comments/"+commentID, map[string]any{
+		updateComment(t, commentID, map[string]any{
 			"content": "actually fix the signup page instead",
 		})
-		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			t.Fatalf("UpdateComment: expected 200, got %d: %s", resp.StatusCode, body)
-		}
-		resp.Body.Close()
 
 		if n := countPendingTasks(t, assignedIssue); n != 1 {
 			t.Errorf("expected 1 pending task after edit re-triggered assignee, got %d", n)

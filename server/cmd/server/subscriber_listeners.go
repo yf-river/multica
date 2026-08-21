@@ -119,6 +119,10 @@ func registerSubscriberListeners(bus *events.Bus, queries *db.Queries) {
 	})
 }
 
+func supportsIssueSubscriberUserType(userType string) bool {
+	return userType == "member" || userType == "agent"
+}
+
 // extractIssueFields normalizes an issue payload that may be either a
 // handler.IssueResponse struct (HTTP handler path) or a map[string]any
 // (autopilot service path) into a common shape.
@@ -147,6 +151,9 @@ func extractIssueFields(v any) (handler.IssueResponse, bool) {
 // addSubscriber adds a user as an issue subscriber and publishes a
 // subscriber:added event for real-time frontend sync.
 func addSubscriber(bus *events.Bus, queries *db.Queries, workspaceID, issueID, userType, userID, reason string) {
+	if !supportsIssueSubscriberUserType(userType) {
+		return
+	}
 	err := queries.AddIssueSubscriber(context.Background(), db.AddIssueSubscriberParams{
 		IssueID:  parseUUID(issueID),
 		UserType: userType,

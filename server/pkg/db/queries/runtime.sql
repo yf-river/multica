@@ -45,10 +45,8 @@ INSERT INTO agent_runtime (
     owner_id,
     last_seen_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
--- Built-in runtimes carry no profile_id. The arbiter is the partial unique
--- index from migration 121 (WHERE profile_id IS NULL); the predicate must be
--- spelled out so Postgres selects that partial index, not the custom-runtime
--- one on (workspace_id, daemon_id, profile_id).
+-- Built-in runtimes carry no profile_id. The conflict predicate selects the
+-- built-in-runtime partial unique index rather than the custom-profile index.
 ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
 DO UPDATE SET
     name = EXCLUDED.name,
@@ -63,9 +61,9 @@ RETURNING *, (xmax = 0) AS inserted;
 
 -- name: UpsertAgentRuntimeWithProfile :one
 -- Custom-runtime registration: a daemon resolved a workspace runtime_profile's
--- command_name on PATH and is registering an instance of it. The arbiter is the
--- partial unique index from migration 120 (WHERE profile_id IS NOT NULL), so a
--- single daemon can host the built-in provider AND any number of custom
+-- command_name on PATH and is registering an instance of it. The conflict
+-- predicate selects the custom-profile partial unique index, so a single
+-- daemon can host the built-in provider AND any number of custom
 -- profiles of the same protocol family. provider stays the protocol family so
 -- task routing (agent.New(provider)) is unchanged; profile_id is the stable
 -- identity. (xmax = 0) AS inserted mirrors UpsertAgentRuntime.
@@ -95,15 +93,36 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *, (xmax = 0) AS inserted;
 
--- name: UpdateAgentRuntimeVisibility :one
--- Toggles a runtime between 'private' (only owner can bind agents) and
--- 'public' (any workspace member can). Default for new rows is 'private'
--- (see migration 083). Gated at the handler layer to owner / workspace
--- admin only.
+-- name: UpdateAgentRuntimeScope :one
+-- Toggles a runtime between 'personal' (only owner can bind same-owner
+-- personal agents) and 'workspace' (workspace agents can bind it).
 UPDATE agent_runtime
-SET visibility = @visibility, updated_at = now()
+SET scope = @scope, updated_at = now()
 WHERE id = @id
 RETURNING *;
+
+-- name: CountWorkspaceAgentsByRuntime :one
+SELECT count(*) FROM agent
+WHERE runtime_id = $1
+  AND archived_at IS NULL
+  AND scope = 'workspace';
+
+-- name: OpenPersonalAgentsByRuntimeOwner :many
+UPDATE agent
+SET scope = 'workspace', updated_at = now()
+WHERE runtime_id = $1
+  AND owner_id = $2
+  AND archived_at IS NULL
+  AND scope = 'personal'
+RETURNING *;
+
+-- name: MergeAgentRuntimeMetadata :exec
+-- Merges a top-level runtime metadata patch without overwriting unrelated
+-- keys such as registration version or cli_version.
+UPDATE agent_runtime
+SET metadata = COALESCE(metadata, '{}'::jsonb) || @metadata::jsonb,
+    updated_at = now()
+WHERE id = @id;
 
 
 -- name: TouchAgentRuntimeLastSeen :execrows
@@ -167,11 +186,7 @@ WHERE status = 'online'
 --
 -- Re-checks the stale predicate inside the UPDATE so a concurrent heartbeat
 -- between the SELECT (candidate gather), the LivenessStore filter, and this
--- UPDATE cannot demote a runtime that just refreshed last_seen_at. The
--- legacy MarkStaleRuntimesOffline UPDATE had this property implicitly
--- because the predicate and the write lived in one statement; here we
--- carry it forward explicitly so the SELECT/filter/UPDATE pipeline retains
--- the same race-freedom.
+-- UPDATE cannot demote a runtime that just refreshed last_seen_at.
 UPDATE agent_runtime
 SET status = 'offline', updated_at = now()
 WHERE status = 'online'
@@ -234,9 +249,6 @@ RETURNING *;
 -- name: DeleteAgentRuntime :exec
 DELETE FROM agent_runtime WHERE id = $1;
 
--- name: CountActiveAgentsByRuntime :one
-SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL;
-
 -- name: CountActiveSquadsWithArchivedLeadersByRuntime :one
 SELECT count(*)
 FROM squad
@@ -251,8 +263,8 @@ DELETE FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL;
 -- name: PauseAutopilotsByAgentAssignees :exec
 -- Pauses every active autopilot whose agent assignee is in the supplied list.
 -- Called before hard-deleting archived agents on runtime teardown so the rows
--- do not become dangling (autopilot.assignee_id no longer has an agent FK
--- since migration 096). Status='paused' makes the breakage visible in the UI
+-- do not become dangling because autopilot.assignee_id has no agent FK.
+-- Status='paused' makes the breakage visible in the UI
 -- — operators can re-point the autopilot at a live agent or delete it —
 -- rather than silently piling skipped runs.
 UPDATE autopilot
@@ -278,50 +290,6 @@ WHERE leader_id IN (
     SELECT id FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL
 )
   AND archived_at IS NOT NULL;
-
--- name: FindLegacyRuntimesByDaemonID :many
--- Looks up runtime rows keyed on a prior (hostname-derived) daemon_id. Used
--- at register-time to find rows owned by the same machine under its old
--- identity so agents/tasks can be re-pointed at the new UUID-keyed row.
---
--- Comparison is case-insensitive because os.Hostname() has been observed to
--- return different casings on the same machine (e.g. `Jiayuans-MacBook-Pro`
--- vs `jiayuans-macbook-pro`) across reboots/mDNS state changes. A case-
--- sensitive `=` would strand the old row; LOWER() on both sides handles drift
--- without forcing the daemon to enumerate cased permutations.
---
--- Returns many rather than one because case drift may have already minted
--- duplicate rows historically (e.g. `Foo.local` AND `foo.local` under the
--- same workspace+provider). A single-row lookup would consolidate only one
--- of them and leave the rest orphaned. Callers must merge every returned
--- row into the new UUID-keyed runtime.
-SELECT * FROM agent_runtime
-WHERE workspace_id = @workspace_id
-  AND provider = @provider
-  AND LOWER(daemon_id) = LOWER(@daemon_id);
-
--- name: ReassignAgentsToRuntime :execrows
--- Re-points every agent referencing old_runtime_id at new_runtime_id.
-UPDATE agent
-SET runtime_id = @new_runtime_id
-WHERE runtime_id = @old_runtime_id;
-
--- name: ReassignTasksToRuntime :execrows
--- Re-points every queued/running/completed task referencing old_runtime_id.
--- Required before deleting the old runtime row because agent_task_queue has
--- an ON DELETE CASCADE FK that would otherwise drop historical tasks.
-UPDATE agent_task_queue
-SET runtime_id = @new_runtime_id
-WHERE runtime_id = @old_runtime_id;
-
--- name: RecordRuntimeLegacyDaemonID :exec
--- Remembers the most recent hostname-derived daemon_id that was merged into
--- this row. Useful for debugging when tracing back why a given runtime row
--- subsumed an old one, and only overwrites NULL so the earliest merge is
--- preserved.
-UPDATE agent_runtime
-SET legacy_daemon_id = COALESCE(legacy_daemon_id, $2)
-WHERE id = $1;
 
 -- name: DeleteStaleOfflineRuntimes :many
 -- Deletes runtimes that have been offline for longer than the TTL and have

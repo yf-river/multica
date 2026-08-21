@@ -19,7 +19,6 @@ import (
 // Codex:       skills → handled separately in Prepare via codex-home
 // Copilot:     skills → {workDir}/.github/skills/{name}/SKILL.md  (native project-level discovery)
 // OpenCode:    skills → {workDir}/.opencode/skills/{name}/SKILL.md  (native discovery)
-// OpenClaw:    skills → {workDir}/skills/{name}/SKILL.md  (native discovery — paired with a per-task synthesized openclaw-config.json that pins agents.defaults.workspace to workDir; see openclaw_config.go)
 // Pi:          skills → {workDir}/.pi/skills/{name}/SKILL.md  (native discovery)
 // Cursor:      skills → {workDir}/.cursor/skills/{name}/SKILL.md  (native discovery)
 // Kimi:        skills → {workDir}/.kimi/skills/{name}/SKILL.md  (native discovery)
@@ -190,14 +189,6 @@ func skillsDirPath(workDir, provider string) string {
 		// without those, OpenCode walks from the daemon's inherited PWD and
 		// misses .opencode/skills + AGENTS.md entirely (MUL-2416).
 		return filepath.Join(workDir, ".opencode", "skills")
-	case "openclaw":
-		// OpenClaw's native skill scanner reads <workspaceDir>/skills/. The
-		// daemon pairs this with a per-task synthesized openclaw-config.json
-		// (see openclaw_config.go) that pins agents.defaults.workspace to
-		// workDir, so writing here is what the CLI actually scans. Before
-		// MUL-2219 this used to fall back to .agent_context/skills/, which
-		// no openclaw scan path ever inspected.
-		return filepath.Join(workDir, "skills")
 	case "pi":
 		// Pi natively discovers skills from .pi/skills/ in the workdir.
 		return filepath.Join(workDir, ".pi", "skills")
@@ -483,6 +474,9 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.QuickCreatePrompt != "" {
 		return renderQuickCreateContext(ctx)
 	}
+	if ctx.SourceSummaryPrompt != "" {
+		return renderSourceSummaryContext(ctx)
+	}
 
 	var b strings.Builder
 
@@ -508,6 +502,22 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("\n")
 	}
 
+	return b.String()
+}
+
+func renderSourceSummaryContext(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("# Source Summary\n\n")
+	b.WriteString("**Trigger:** TAPD source summary generation\n\n")
+	fmt.Fprintf(&b, "**Issue ID:** %s\n\n", ctx.IssueID)
+	b.WriteString("Return only the requested Markdown summary in your final output. The platform will write it back to the issue description.\n\n")
+	if len(ctx.AgentSkills) > 0 {
+		b.WriteString("## Agent Skills\n\n")
+		for _, skill := range ctx.AgentSkills {
+			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

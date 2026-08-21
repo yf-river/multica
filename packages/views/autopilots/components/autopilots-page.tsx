@@ -32,7 +32,6 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { Autopilot } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   LIST_GRID_BOTTOM_CLEARANCE,
   ListGrid,
@@ -46,6 +45,10 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  ListGridCheckboxCell,
+  ListGridSelectAllHeaderCell,
+} from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { AutopilotDialog } from "./autopilot-dialog";
 import { AutopilotListToolbar, actorFilterValue } from "./autopilot-list-toolbar";
@@ -204,40 +207,6 @@ const TEMPLATES: AutopilotTemplate[] = [
     time: "14:00",
   },
 ];
-
-// ---------------------------------------------------------------------------
-// Cells
-// ---------------------------------------------------------------------------
-
-function CheckboxCell({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <ListGridCell className="justify-center px-0">
-      <button
-        type="button"
-        aria-pressed={checked}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
-        }`}
-      >
-        <Checkbox
-          checked={checked}
-          tabIndex={-1}
-          className="pointer-events-none"
-        />
-      </button>
-    </ListGridCell>
-  );
-}
 
 function NameCell({ autopilot }: { autopilot: Autopilot }) {
   const { t } = useT("autopilots");
@@ -441,28 +410,13 @@ function AutopilotListHeader({
   const { t } = useT("autopilots");
   const sorted = (field: AutopilotSortField) =>
     sortField === field ? sortDirection : false;
-  const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      <div className="flex items-center justify-center">
-        <button
-          type="button"
-          aria-pressed={allSelected}
-          onClick={onToggleAll}
-          className={`-m-1.5 flex items-center p-1.5 ${
-            anySelected
-              ? ""
-              : "opacity-0 transition-opacity group-hover/header:opacity-100"
-          }`}
-        >
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected && !allSelected}
-            tabIndex={-1}
-            className="pointer-events-none"
-          />
-        </button>
-      </div>
+      <ListGridSelectAllHeaderCell
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={onToggleAll}
+      />
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.page.table.name)}
       </ListGridHeaderCell>
@@ -908,7 +862,7 @@ export function AutopilotsPage() {
                       }`}
                       {...rowLink(wsPaths.autopilotDetail(autopilot.id))}
                     >
-                      <CheckboxCell
+                      <ListGridCheckboxCell
                         checked={selectedIds.has(autopilot.id)}
                         onToggle={() => toggleSelected(autopilot.id)}
                       />

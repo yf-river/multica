@@ -153,12 +153,7 @@ func runSquadCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create squad: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	fmt.Printf("Squad created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Squad", "created", "name", result)
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────
@@ -213,12 +208,7 @@ func runSquadUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update squad: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	fmt.Printf("Squad updated: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Squad", "updated", "name", result)
 }
 
 // ── Delete ──────────────────────────────────────────────────────────────────
@@ -464,6 +454,11 @@ func runSquadActivity(cmd *cobra.Command, args []string) error {
 	}
 
 	reason, _ := cmd.Flags().GetString("reason")
+	waitKind, _ := cmd.Flags().GetString("wait-kind")
+	waitSummary, _ := cmd.Flags().GetString("wait-summary")
+	if waitKind != "" && waitKind != "human_confirmation" {
+		return fmt.Errorf("invalid wait-kind %q; valid value: human_confirmation", waitKind)
+	}
 
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -481,6 +476,12 @@ func runSquadActivity(cmd *cobra.Command, args []string) error {
 	body := map[string]any{
 		"outcome": outcome,
 		"reason":  reason,
+	}
+	if waitKind != "" {
+		body["wait_kind"] = waitKind
+	}
+	if waitSummary != "" {
+		body["wait_summary"] = waitSummary
 	}
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/squad-evaluated", body, &result); err != nil {
@@ -544,6 +545,8 @@ func init() {
 
 	// activity
 	squadActivityCmd.Flags().String("reason", "", "Short explanation of the decision")
+	squadActivityCmd.Flags().String("wait-kind", "", "Structured wait kind, currently: human_confirmation")
+	squadActivityCmd.Flags().String("wait-summary", "", "Short user-facing summary when recording a wait")
 	squadActivityCmd.Flags().String("output", "table", "Output format: table or json")
 
 	squadMemberCmd.AddCommand(squadMemberListCmd)

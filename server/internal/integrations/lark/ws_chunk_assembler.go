@@ -11,9 +11,9 @@ import (
 // arrived. Lark splits large event payloads across multiple binary
 // Frames with the headers:
 //
-//   sum        — total number of chunks (>=2 means multi-frame)
-//   seq        — 0-based index of THIS chunk within the message
-//   message_id — common key across the N chunks
+//	sum        — total number of chunks (>=2 means multi-frame)
+//	seq        — 0-based index of THIS chunk within the message
+//	message_id — common key across the N chunks
 //
 // The SDK reference (larksuite/oapi-sdk-go/v3/ws/client.go combine())
 // uses a 5-second TTL on partial state — anything older than that is
@@ -116,14 +116,6 @@ func (a *chunkAssembler) admit(messageID string, sum, seq int, payload []byte) (
 	}
 	delete(a.buf, messageID)
 	return out, true
-}
-
-// gcExpired removes entries whose deadline has passed. Exposed for
-// tests; production path runs it lazily in admit.
-func (a *chunkAssembler) gcExpired() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.gcExpiredLocked()
 }
 
 func (a *chunkAssembler) gcExpiredLocked() int {

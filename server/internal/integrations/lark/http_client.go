@@ -139,9 +139,7 @@ type cachedToken struct {
 
 // IsConfigured reports true: once this client exists at all, the
 // outbound transport path (send / patch / binding prompt / bot info)
-// is wired. The stub returns false because every call there errors
-// with ErrAPIClientNotConfigured; the real client is the inverse
-// contract.
+// is wired. Unconfigured deployments represent the client as nil.
 func (c *httpAPIClient) IsConfigured() bool { return true }
 
 // tenantAccessToken returns a usable tenant_access_token for the
@@ -522,16 +520,12 @@ func (c *httpAPIClient) GetBotInfo(ctx context.Context, creds InstallationCreden
 		return BotInfo{}, errors.New("lark http client: bot info: response missing open_id")
 	}
 
-	// Resolve union_id via the contact endpoint. Soft-fail: log and
-	// return the BotInfo with empty UnionID. Callers (Registration-
-	// Service.finishSuccess) accept the gap and persist what they
-	// have.
-	unionID, lookupErr := c.fetchBotUnionID(ctx, c.resolveBaseURL(creds), creds.AppID, token, botResp.Bot.OpenID)
-	if lookupErr != nil {
-		c.cfg.Logger.Warn("lark http client: bot union_id lookup failed; continuing without it",
-			"app_id", creds.AppID,
-			"bot_open_id", botResp.Bot.OpenID,
-			"err", lookupErr)
+	unionID, err := c.fetchBotUnionID(ctx, c.resolveBaseURL(creds), creds.AppID, token, botResp.Bot.OpenID)
+	if err != nil {
+		return BotInfo{}, fmt.Errorf("lark http client: bot union_id: %w", err)
+	}
+	if unionID == "" {
+		return BotInfo{}, errors.New("lark http client: bot union_id: response missing union_id")
 	}
 	return BotInfo{OpenID: OpenID(botResp.Bot.OpenID), UnionID: unionID}, nil
 }

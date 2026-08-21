@@ -7,7 +7,6 @@ import {
   ArchiveRestore,
   Bot,
   Loader2,
-  Lock,
   Plus,
   X,
 } from "lucide-react";
@@ -25,7 +24,6 @@ import {
   agentRunCounts30dOptions,
   useWorkspaceActivityMap,
   useWorkspacePresenceMap,
-  VISIBILITY_TOOLTIP,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
 import {
@@ -47,7 +45,6 @@ import {
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -67,18 +64,18 @@ import {
   type ListGridSortDirection,
 } from "@multica/ui/components/ui/list-grid";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  ListGridCheckboxCell,
+  ListGridSelectAllHeaderCell,
+} from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
 import { CreateAgentDialog } from "./create-agent-dialog";
 import { AgentRowActions } from "./agent-row-actions";
 import { AgentListToolbar } from "./agent-list-toolbar";
+import { ScopeBadge } from "./scope-badge";
 import { useT } from "../../i18n";
 
 // Column template — single source of truth for header, rows, and skeletons.
@@ -162,15 +159,6 @@ function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
     if (bucket && bucket.total > 0) return activity.buckets.length - 1 - i;
   }
   return null;
-}
-
-export interface AgentsPageProps {
-  /** Desktop-only daemon wiring, currently unused by the list (kept for
-   *  platform-layer compatibility; the runtime filter lists runtimes by
-   *  name rather than grouped machines). */
-  localDaemonId?: string | null;
-  localMachineName?: string | null;
-  hasLocalMachine?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,49 +266,13 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Cells
-// ---------------------------------------------------------------------------
-
-function CheckboxCell({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <ListGridCell className="justify-center px-0">
-      <button
-        type="button"
-        aria-pressed={checked}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
-        }`}
-      >
-        <Checkbox
-          checked={checked}
-          tabIndex={-1}
-          className="pointer-events-none"
-        />
-      </button>
-    </ListGridCell>
-  );
-}
-
 // Two-line identity cell: avatar left, name + description right. The
 // documented exception to the single-line rule — agents are few and
 // identity-rich, so this is the "team roster" form (GitHub org members,
 // Slack member list).
 function NameCell({ row }: { row: AgentListRow }) {
-  const { t } = useT("agents");
-  const { agent, isOwnedByMe } = row;
+  const { agent } = row;
   const isArchived = !!agent.archived_at;
-  const isPrivate = agent.visibility === "private";
   return (
     <ListGridCell className="gap-3">
       <ActorAvatar
@@ -339,20 +291,8 @@ function NameCell({ row }: { row: AgentListRow }) {
           >
             {agent.name}
           </span>
-          {isPrivate && !isArchived && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                }
-              />
-              <TooltipContent>{VISIBILITY_TOOLTIP.private}</TooltipContent>
-            </Tooltip>
-          )}
-          {isOwnedByMe && (
-            <span className="shrink-0 rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">
-              {t(($) => $.row.you)}
-            </span>
+          {!isArchived && (
+            <ScopeBadge value={agent.scope} />
           )}
         </div>
         {agent.description ? (
@@ -485,28 +425,13 @@ function AgentListHeader({
   const { t } = useT("agents");
   const sorted = (field: AgentSortField) =>
     sortField === field ? sortDirection : false;
-  const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      <div className="flex items-center justify-center">
-        <button
-          type="button"
-          aria-pressed={allSelected}
-          onClick={onToggleAll}
-          className={`-m-1.5 flex items-center p-1.5 ${
-            anySelected
-              ? ""
-              : "opacity-0 transition-opacity group-hover/header:opacity-100"
-          }`}
-        >
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected && !allSelected}
-            tabIndex={-1}
-            className="pointer-events-none"
-          />
-        </button>
-      </div>
+      <ListGridSelectAllHeaderCell
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={onToggleAll}
+      />
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.columns.agent)}
       </ListGridHeaderCell>
@@ -789,7 +714,7 @@ function AgentBatchToolbar({
 // Page
 // ---------------------------------------------------------------------------
 
-export function AgentsPage(_props: AgentsPageProps = {}) {
+export function AgentsPage() {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -889,7 +814,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   // Rows within the current scope, unfiltered, fully assembled — the
   // toolbar's option lists and the "n / total" denominator derive from
   // this; cells never pull their own queries.
-  const scopeRows = useMemo<AgentListRow[]>(() => {
+  const scopedRowsWithFixtures = useMemo<AgentListRow[]>(() => {
     const inScope = agents.filter((a) => {
       if (scope === "archived") return !!a.archived_at;
       if (a.archived_at) return false;
@@ -924,9 +849,10 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     runCountsById,
     isWorkspaceAdmin,
   ]);
+  const scopeRows = scopedRowsWithFixtures;
 
   // Visible rows: filters, then sort.
-  const rows = useMemo<AgentListRow[]>(() => {
+  const filteredRows = useMemo<AgentListRow[]>(() => {
     const filtered = scopeRows.filter((row) => {
       if (
         filters.availability.length > 0 &&
@@ -984,6 +910,8 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     });
     return filtered;
   }, [scopeRows, filters, sortField, sortDirection]);
+
+  const rows = filteredRows;
 
   // Row virtualization — headless math, offsets as padding on the rows
   // wrapper, fixed-height rows. The scroll element is the SINGLE outer
@@ -1050,7 +978,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     );
   }
 
-  const totalCount = agents.filter((a) => !a.archived_at).length;
+  const totalCount = scopeCounts.all;
   const showEmpty = !isLoading && agents.length === 0;
 
   return (
@@ -1129,7 +1057,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       }`}
                       {...rowLink(paths.agentDetail(row.agent.id))}
                     >
-                      <CheckboxCell
+                      <ListGridCheckboxCell
                         checked={selectedIds.has(row.agent.id)}
                         onToggle={() => toggleSelected(row.agent.id)}
                       />

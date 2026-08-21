@@ -11,7 +11,7 @@ import (
 func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{
 			"event_id":"evt-1",
 			"event_type":"im.message.receive_v1",
@@ -60,61 +60,16 @@ func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 	}
 }
 
-func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
-	t.Parallel()
-	mkRaw := func(mentionOpenID string) []byte {
-		return []byte(`{
-			"type":"event_callback",
-			"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
-			"event":{
-				"sender":{"sender_id":{"open_id":"ou_user"}},
-				"message":{
-					"message_id":"m","chat_id":"c","chat_type":"group",
-					"message_type":"text","content":"{\"text\":\"hi\"}",
-					"mentions":[{"id":{"open_id":"` + mentionOpenID + `"}}]
-				}
-			}
-		}`)
-	}
-	d := NewLarkJSONFrameDecoder()
-
-	t.Run("mentions bot", func(t *testing.T) {
-		msg, ok, err := d.Decode(mkRaw("ou_bot"), db.LarkInstallation{BotOpenID: "ou_bot"})
-		if err != nil || !ok {
-			t.Fatalf("ok=%v err=%v", ok, err)
-		}
-		if msg.ChatType != ChatTypeGroup {
-			t.Errorf("ChatType = %q", msg.ChatType)
-		}
-		if !msg.AddressedToBot {
-			t.Error("AddressedToBot = false; expected true")
-		}
-	})
-
-	t.Run("mentions other user", func(t *testing.T) {
-		msg, ok, err := d.Decode(mkRaw("ou_other"), db.LarkInstallation{BotOpenID: "ou_bot"})
-		if err != nil || !ok {
-			t.Fatalf("ok=%v err=%v", ok, err)
-		}
-		if msg.AddressedToBot {
-			t.Error("AddressedToBot = true; expected false")
-		}
-	})
-}
-
 // TestLarkJSONFrameDecoderGroupMentionUnionID exercises the MUL-2671
 // fix: in a multi-bot group chat the per-app `mentions[].id.open_id`
 // is structurally inverted across WS perspectives, so we route on
-// `union_id` (the stable, cross-app identifier captured at install
-// time) when the installation row knows it. The open_id path remains
-// as a transitional fallback for installations that haven't been
-// backfilled yet.
+// `union_id`, the stable cross-app identifier captured at install time.
 func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 	t.Parallel()
 
 	mkRaw := func(mentionOpenID, mentionUnionID string) []byte {
 		return []byte(`{
-			"type":"event_callback",
+			"schema":"2.0",
 			"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 			"event":{
 				"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -168,19 +123,6 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to open_id when union_id is unknown", func(t *testing.T) {
-		// Pre-backfill installation row: no union_id yet. Decoder
-		// must keep working in the single-bot case via the legacy
-		// open_id comparison.
-		inst := db.LarkInstallation{BotOpenID: "ou_bot_a_canonical"}
-		msg, ok, err := d.Decode(mkRaw("ou_bot_a_canonical", "on_anything"), inst)
-		if err != nil || !ok {
-			t.Fatalf("ok=%v err=%v", ok, err)
-		}
-		if !msg.AddressedToBot {
-			t.Error("AddressedToBot = false; expected true via legacy open_id fallback")
-		}
-	})
 }
 
 // TestLarkJSONFrameDecoderMentionPlaceholderRewrite covers the body
@@ -200,7 +142,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 		contentBytes, _ := json.Marshal(contentDoc)
 		contentEsc, _ := json.Marshal(string(contentBytes))
 		return []byte(`{
-			"type":"event_callback",
+			"schema":"2.0",
 			"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 			"event":{
 				"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -379,7 +321,7 @@ func TestLarkJSONFrameDecoderDropsHeartbeat(t *testing.T) {
 	cases := [][]byte{
 		[]byte(`{"type":"heartbeat"}`),
 		[]byte(`{"type":"frame_ack","data":{"id":"1"}}`),
-		[]byte(`{"type":"event_callback","header":{"event_type":"im.message.unknown_kind"}}`),
+		[]byte(`{"schema":"2.0","header":{"event_type":"im.message.unknown_kind"}}`),
 	}
 	for _, raw := range cases {
 		msg, ok, err := d.Decode(raw, db.LarkInstallation{})
@@ -414,7 +356,7 @@ func TestLarkJSONFrameDecoderMalformedReturnsError(t *testing.T) {
 func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -433,7 +375,7 @@ func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.
 func TestLarkJSONFrameDecoderNonTextMessageHasEmptyBody(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -464,7 +406,7 @@ func TestLarkJSONFrameDecoderPostMessageFlattened(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -496,7 +438,7 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -504,13 +446,15 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 				"message_id":"m","chat_id":"c","chat_type":"group","message_type":"post",
 				"content":` + string(escaped) + `,
 				"mentions":[
-					{"key":"@_user_1","id":{"open_id":"ou_bot"},"name":"Bot"},
-					{"key":"@_user_2","id":{"open_id":"ou_alice"},"name":"Alice"}
+					{"key":"@_user_1","id":{"union_id":"on_bot"},"name":"Bot"},
+					{"key":"@_user_2","id":{"union_id":"on_alice"},"name":"Alice"}
 				]
 			}
 		}
 	}`)
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{
+		BotUnionID: pgtype.Text{String: "on_bot", Valid: true},
+	})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}
@@ -530,7 +474,7 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 func TestLarkJSONFrameDecoderCapturesReplyLinkage(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},

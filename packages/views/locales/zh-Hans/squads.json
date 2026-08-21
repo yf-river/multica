@@ -3,7 +3,6 @@
     "title": "小队",
     "new_button": "新建小队",
     "empty_no_squads": "还没有小队，创建一个开始吧。",
-    "empty_no_match": "没有匹配筛选条件的小队。",
     "table": {
       "name": "小队",
       "leader": "队长",
@@ -11,21 +10,46 @@
       "creator": "创建者",
       "created": "创建时间"
     },
+    "scope_workspace": "工作区",
+    "scope_personal": "个人",
     "no_matches": "没有匹配的小队",
     "row_menu": "小队操作",
-    "archive_action": "归档"
+    "archive_action": "归档",
+    "restore_action": "恢复"
   },
   "inspector": {
     "details_section": "详情",
-    "archive_button": "归档"
+    "archive_button": "归档",
+    "restore_button": "恢复",
+    "archived_banner": "该小队已归档，无法被分配或提及。"
   },
   "archive_dialog": {
     "title": "归档这个小队？",
-    "description": "“{{name}}” 将被归档，该小队当前承接的 issue 会转交给小队负责人。此操作无法撤销，如需恢复路由请新建小队。",
+    "description": "“{{name}}” 将被归档，无法被分配或提及；该小队当前承接的任务会转交给小队负责人。小队中的智能体不会被归档，所有历史会保留，可以稍后恢复。",
     "cancel": "取消",
     "confirm": "归档",
     "archiving": "归档中…",
-    "success": "已归档小队"
+    "success": "已归档小队",
+    "restore_success": "已恢复小队",
+    "restore_failed": "恢复小队失败"
+  },
+  "pm_dialog": {
+    "button": "pm",
+    "title": "创建 pm 小队",
+    "description": "选择这组 SOP Agent 初始化时使用的运行时和模型。模型留空时，每个 Agent 使用运行时默认配置。",
+    "name_label": "小队名称",
+    "name_placeholder": "pm",
+    "name_hint": "同名内置 PM 小队会同步到最新模板；其它旧版 PM 小队会自动归档。",
+    "scope_label": "范围",
+    "runtime_label": "默认 Agent",
+    "no_runtime": "暂无可用 Agent",
+    "runtime_online": "将使用在线运行时：{{name}}",
+    "workspace_runtime_missing": "当前 workspace 还没有可用于工作区小队的 Agent runtime。",
+    "personal_runtime_missing": "当前 workspace 还没有你自己的个人 Agent runtime。",
+    "provider_runtime_offline": "当前没有在线可用的 {{provider}} runtime，创建时会提示你先启动 daemon。",
+    "cancel": "取消",
+    "submit": "创建小队",
+    "ready_toast": "{{name}} 已就绪"
   },
   "name_editor": {
     "cancel": "取消"
@@ -73,20 +97,19 @@
     "unavailable": "小队不可用",
     "detail_link": "详情 →",
     "archived": "已归档",
-    "member_count_one": "{{count}} 名成员",
-    "member_count_other": "{{count}} 名成员",
     "members_section": "成员",
     "more_members_one": "还有 {{count}} 人",
     "more_members_other": "还有 {{count}} 人"
   },
   "instructions_tab": {
-    "description": "小队指引会在 Leader 智能体处理分配给该小队的 issue 时注入到它的 prompt 中。可用来给 Leader 提供贯穿全队的指导、协作规范，或每次任务都应遵循的上下文。",
+    "description": "小队指引会在 队长智能体处理分配给该小队的任务时注入到它的提示词中。可用来给队长提供贯穿全队的指导、协作规范，或每次任务都应遵循的上下文。",
     "unsaved_changes": "有未保存的修改",
     "save_button": "保存"
   },
   "scope": {
     "mine": "我的",
-    "all": "全部"
+    "all": "全部",
+    "archived": "已归档"
   },
   "toolbar": {
     "display": "显示",

@@ -93,6 +93,38 @@ type GitHubPullRequestResponse struct {
 	ChangedFiles int32 `json:"changed_files"`
 }
 
+type LinkPullRequestRequest struct {
+	Provider       string  `json:"provider"`
+	ProjectPath    string  `json:"project_path"`
+	RepoURL        string  `json:"repo_url"`
+	Number         int32   `json:"number"`
+	IID            int32   `json:"iid"`
+	Title          string  `json:"title"`
+	State          string  `json:"state"`
+	HtmlURL        string  `json:"html_url"`
+	SourceBranch   string  `json:"source_branch"`
+	TargetBranch   string  `json:"target_branch"`
+	AuthorLogin    string  `json:"author_login"`
+	HeadSHA        string  `json:"head_sha"`
+	MergeableState *string `json:"mergeable_state"`
+	Additions      int32   `json:"additions"`
+	Deletions      int32   `json:"deletions"`
+	ChangedFiles   int32   `json:"changed_files"`
+	CloseIntent    bool    `json:"close_intent"`
+}
+
+type CreateMergeRequestRequest struct {
+	Provider     string `json:"provider"`
+	ProjectPath  string `json:"project_path"`
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	CloseIntent  bool   `json:"close_intent"`
+	RemoveSource bool   `json:"remove_source_branch"`
+	Squash       bool   `json:"squash"`
+}
+
 type GitHubConnectResponse struct {
 	URL        string `json:"url"`
 	Configured bool   `json:"configured"`
@@ -125,15 +157,16 @@ func githubInstallationToBroadcast(i db.GithubInstallation) GitHubInstallationRe
 }
 
 func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestResponse {
+	repoOwner, repoName := normalizePullRequestRepositoryFields(p.RepoOwner, p.RepoName, p.HtmlUrl)
 	return GitHubPullRequestResponse{
 		ID:              uuidToString(p.ID),
 		WorkspaceID:     uuidToString(p.WorkspaceID),
-		RepoOwner:       p.RepoOwner,
-		RepoName:        p.RepoName,
+		RepoOwner:       repoOwner,
+		RepoName:        repoName,
 		Number:          p.PrNumber,
 		Title:           p.Title,
 		State:           p.State,
-		HtmlURL:         p.HtmlUrl,
+		HtmlURL:         normalizeGongfengPullRequestURL(p.HtmlUrl, repoOwner, repoName, p.PrNumber),
 		Branch:          textToPtr(p.Branch),
 		AuthorLogin:     textToPtr(p.AuthorLogin),
 		AuthorAvatarURL: textToPtr(p.AuthorAvatarUrl),
@@ -153,15 +186,16 @@ func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestRespon
 }
 
 func issuePullRequestRowToResponse(p db.ListPullRequestsByIssueRow) GitHubPullRequestResponse {
+	repoOwner, repoName := normalizePullRequestRepositoryFields(p.RepoOwner, p.RepoName, p.HtmlUrl)
 	return GitHubPullRequestResponse{
 		ID:               uuidToString(p.ID),
 		WorkspaceID:      uuidToString(p.WorkspaceID),
-		RepoOwner:        p.RepoOwner,
-		RepoName:         p.RepoName,
+		RepoOwner:        repoOwner,
+		RepoName:         repoName,
 		Number:           p.PrNumber,
 		Title:            p.Title,
 		State:            p.State,
-		HtmlURL:          p.HtmlUrl,
+		HtmlURL:          normalizeGongfengPullRequestURL(p.HtmlUrl, repoOwner, repoName, p.PrNumber),
 		Branch:           textToPtr(p.Branch),
 		AuthorLogin:      textToPtr(p.AuthorLogin),
 		AuthorAvatarURL:  textToPtr(p.AuthorAvatarUrl),
@@ -574,32 +608,571 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"pull_requests": out})
 }
 
+func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req LinkPullRequestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	normalized, ok := normalizeIssuePullRequestLinkRequest(w, req)
+	if !ok {
+		return
+	}
+	repoOwner, repoName := splitRepositoryPath(normalized.ProjectPath)
+	now := time.Now().UTC()
+	pr, err := h.Queries.UpsertGitHubPullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
+		WorkspaceID:         issue.WorkspaceID,
+		InstallationID:      0,
+		RepoOwner:           repoOwner,
+		RepoName:            repoName,
+		PrNumber:            normalized.Number,
+		Title:               normalized.Title,
+		State:               normalized.State,
+		HtmlUrl:             normalized.HtmlURL,
+		PrCreatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		PrUpdatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		HeadSha:             normalized.HeadSHA,
+		Additions:           normalized.Additions,
+		Deletions:           normalized.Deletions,
+		ChangedFiles:        normalized.ChangedFiles,
+		Branch:              textFromNonEmpty(normalized.SourceBranch),
+		AuthorLogin:         textFromNonEmpty(normalized.AuthorLogin),
+		AuthorAvatarUrl:     pgtype.Text{},
+		MergedAt:            pgtype.Timestamptz{},
+		ClosedAt:            pgtype.Timestamptz{},
+		MergeableState:      textFromOptional(normalized.MergeableState),
+		ClearMergeableState: pgtype.Bool{},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record pull request")
+		return
+	}
+	if err := h.Queries.LinkIssueToPullRequest(r.Context(), db.LinkIssueToPullRequestParams{
+		IssueID:             issue.ID,
+		PullRequestID:       pr.ID,
+		CloseIntent:         normalized.CloseIntent,
+		LinkedByType:        pgtype.Text{String: "member", Valid: true},
+		LinkedByID:          parseUUID(userID),
+		PreserveCloseIntent: false,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link pull request")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"pull_request": githubPullRequestToResponse(pr),
+	})
+}
+
+func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req CreateMergeRequestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	normalized, ok := normalizeCreateMergeRequestRequest(w, req)
+	if !ok {
+		return
+	}
+	profile, hasProfile, err := h.loadUsableGongfengCredentialProfile(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load gongfeng credential profile")
+		return
+	}
+	if !hasProfile {
+		writeError(w, http.StatusBadRequest, "gongfeng credential is required to create merge request")
+		return
+	}
+	token := h.resolveExternalCredentialToken(profile)
+	if strings.TrimSpace(token) == "" {
+		writeError(w, http.StatusBadRequest, "gongfeng credential token is unavailable")
+		return
+	}
+	mr, err := createGongfengMergeRequest(r.Context(), token, normalized)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	number := mr.Number()
+	htmlURL := mr.URL()
+	if number <= 0 {
+		writeError(w, http.StatusBadGateway, "gongfeng merge request response missing iid")
+		return
+	}
+	if strings.TrimSpace(htmlURL) == "" {
+		htmlURL = fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(normalized.ProjectPath, "/"), number)
+	}
+	repoOwner, repoName := splitRepositoryPath(normalized.ProjectPath)
+	now := time.Now().UTC()
+	pr, err := h.Queries.UpsertGitHubPullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
+		WorkspaceID:         issue.WorkspaceID,
+		InstallationID:      0,
+		RepoOwner:           repoOwner,
+		RepoName:            repoName,
+		PrNumber:            number,
+		Title:               firstNonEmpty(mr.Title, normalized.Title),
+		State:               normalizeGongfengMergeRequestState(mr.State),
+		HtmlUrl:             htmlURL,
+		Branch:              textFromNonEmpty(firstNonEmpty(mr.SourceBranch, normalized.SourceBranch)),
+		AuthorLogin:         textFromNonEmpty(firstNonEmpty(mr.Author.Username, mr.Author.Name)),
+		AuthorAvatarUrl:     textFromNonEmpty(mr.Author.AvatarURL),
+		MergedAt:            pgtype.Timestamptz{},
+		ClosedAt:            pgtype.Timestamptz{},
+		PrCreatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		PrUpdatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		HeadSha:             "",
+		MergeableState:      pgtype.Text{},
+		ClearMergeableState: pgtype.Bool{},
+		Additions:           0,
+		Deletions:           0,
+		ChangedFiles:        0,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record merge request")
+		return
+	}
+	if err := h.Queries.LinkIssueToPullRequest(r.Context(), db.LinkIssueToPullRequestParams{
+		IssueID:             issue.ID,
+		PullRequestID:       pr.ID,
+		CloseIntent:         normalized.CloseIntent,
+		LinkedByType:        pgtype.Text{String: "member", Valid: true},
+		LinkedByID:          parseUUID(userID),
+		PreserveCloseIntent: false,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link merge request")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"pull_request": githubPullRequestToResponse(pr),
+		"linked":       true,
+		"merge_request": map[string]any{
+			"iid":           number,
+			"url":           htmlURL,
+			"source_branch": firstNonEmpty(mr.SourceBranch, normalized.SourceBranch),
+			"target_branch": firstNonEmpty(mr.TargetBranch, normalized.TargetBranch),
+		},
+	})
+}
+
+func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullRequestRequest) (LinkPullRequestRequest, bool) {
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	if req.Provider == "" {
+		req.Provider = "gongfeng"
+	}
+	if req.Provider != "gongfeng" && req.Provider != "github" {
+		writeError(w, http.StatusBadRequest, "provider must be gongfeng or github")
+		return req, false
+	}
+	req.ProjectPath = strings.Trim(strings.TrimSpace(req.ProjectPath), "/")
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	req.HtmlURL = strings.TrimSpace(req.HtmlURL)
+	if req.ProjectPath == "" {
+		req.ProjectPath = gongfengProjectPathFromURL(firstNonEmpty(req.HtmlURL, req.RepoURL))
+	}
+	if req.ProjectPath == "" {
+		writeError(w, http.StatusBadRequest, "project_path is required")
+		return req, false
+	}
+	if req.HtmlURL == "" {
+		writeError(w, http.StatusBadRequest, "html_url is required")
+		return req, false
+	}
+	if req.Number == 0 {
+		req.Number = req.IID
+	}
+	if req.Number <= 0 {
+		req.Number = int32(gongfengMergeRequestIIDFromURL(req.HtmlURL))
+	}
+	if req.Number <= 0 {
+		writeError(w, http.StatusBadRequest, "number or iid is required")
+		return req, false
+	}
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		req.Title = fmt.Sprintf("MR !%d", req.Number)
+	}
+	if req.Provider == "gongfeng" {
+		req.HtmlURL = normalizeGongfengPullRequestURL(req.HtmlURL, "", req.ProjectPath, req.Number)
+	}
+	req.State = normalizePullRequestState(req.State)
+	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
+	req.TargetBranch = strings.TrimSpace(req.TargetBranch)
+	req.AuthorLogin = strings.TrimSpace(req.AuthorLogin)
+	req.HeadSHA = strings.TrimSpace(req.HeadSHA)
+	for label, value := range map[string]string{
+		"project_path":  req.ProjectPath,
+		"html_url":      req.HtmlURL,
+		"title":         req.Title,
+		"source_branch": req.SourceBranch,
+		"target_branch": req.TargetBranch,
+		"author_login":  req.AuthorLogin,
+		"head_sha":      req.HeadSHA,
+	} {
+		if len(value) > 2048 {
+			writeError(w, http.StatusBadRequest, label+" is too long")
+			return req, false
+		}
+	}
+	return req, true
+}
+
+func normalizeGongfengPullRequestURL(rawURL, repoOwner, repoName string, number int32) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	projectPath := strings.Trim(strings.Trim(repoOwner, "/")+"/"+strings.Trim(repoName, "/"), "/")
+	if strings.Contains(repoName, "/") || repoOwner == "" {
+		projectPath = strings.Trim(repoName, "/")
+	}
+	if parsedProjectPath := gongfengProjectPathFromURL(rawURL); parsedProjectPath != "" {
+		projectPath = parsedProjectPath
+	}
+	if number <= 0 {
+		number = int32(gongfengMergeRequestIIDFromURL(rawURL))
+	}
+	if projectPath == "" || number <= 0 || !strings.Contains(strings.ToLower(rawURL), "git.code.tencent.com") {
+		return rawURL
+	}
+	return fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(projectPath, "/"), number)
+}
+
+func normalizePullRequestRepositoryFields(repoOwner, repoName, htmlURL string) (string, string) {
+	repoOwner = strings.Trim(strings.TrimSpace(repoOwner), "/")
+	repoName = strings.Trim(strings.TrimSpace(repoName), "/")
+	projectPath := gongfengProjectPathFromURL(htmlURL)
+	if projectPath == "" && (repoName == "" || repoName == "-" || strings.Contains(repoOwner, "/")) {
+		projectPath = strings.Trim(strings.Trim(repoOwner, "/")+"/"+strings.Trim(repoName, "/"), "/")
+	}
+	if projectPath == "" {
+		return repoOwner, repoName
+	}
+	parts := strings.Split(strings.Trim(projectPath, "/"), "/")
+	if len(parts) < 2 {
+		return repoOwner, repoName
+	}
+	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
+}
+
+func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req CreateMergeRequestRequest) (CreateMergeRequestRequest, bool) {
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	if req.Provider == "" {
+		req.Provider = "gongfeng"
+	}
+	if req.Provider != "gongfeng" {
+		writeError(w, http.StatusBadRequest, "provider must be gongfeng")
+		return req, false
+	}
+	req.ProjectPath = strings.Trim(strings.TrimSpace(req.ProjectPath), "/")
+	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
+	req.TargetBranch = strings.TrimSpace(req.TargetBranch)
+	req.Title = strings.TrimSpace(req.Title)
+	req.Description = strings.TrimSpace(req.Description)
+	for label, value := range map[string]string{
+		"project_path":  req.ProjectPath,
+		"source_branch": req.SourceBranch,
+		"target_branch": req.TargetBranch,
+		"title":         req.Title,
+	} {
+		if value == "" {
+			writeError(w, http.StatusBadRequest, label+" is required")
+			return req, false
+		}
+	}
+	for label, value := range map[string]string{
+		"project_path":  req.ProjectPath,
+		"source_branch": req.SourceBranch,
+		"target_branch": req.TargetBranch,
+		"title":         req.Title,
+		"description":   req.Description,
+	} {
+		if len(value) > 8192 {
+			writeError(w, http.StatusBadRequest, label+" is too long")
+			return req, false
+		}
+	}
+	return req, true
+}
+
+func normalizePullRequestState(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "draft":
+		return "draft"
+	case "closed", "close":
+		return "closed"
+	case "merged", "merge":
+		return "merged"
+	default:
+		return "open"
+	}
+}
+
+func splitRepositoryPath(projectPath string) (string, string) {
+	parts := strings.Split(strings.Trim(projectPath, "/"), "/")
+	if len(parts) <= 1 {
+		return "", projectPath
+	}
+	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
+}
+
+func gongfengProjectPathFromURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(parsed.Host), "git.code.tencent.com") {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	stop := len(parts)
+	for i, part := range parts {
+		switch part {
+		case "-", "tree", "commits", "commit", "tags", "merge_requests", "blob":
+			stop = i
+		}
+		if stop != len(parts) {
+			break
+		}
+	}
+	if stop <= 0 {
+		return ""
+	}
+	return strings.Join(parts[:stop], "/")
+}
+
+func gongfengMergeRequestIIDFromURL(rawURL string) int {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for i, part := range parts {
+		if part == "merge_requests" && i+1 < len(parts) {
+			n, _ := strconv.Atoi(parts[i+1])
+			return n
+		}
+	}
+	return 0
+}
+
+type gongfengMergeRequestResponse struct {
+	ID           int64  `json:"id"`
+	IID          int32  `json:"iid"`
+	NumberValue  int32  `json:"number"`
+	WebURL       string `json:"web_url"`
+	HTMLURL      string `json:"html_url"`
+	Title        string `json:"title"`
+	State        string `json:"state"`
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+	Author       struct {
+		Username  string `json:"username"`
+		Name      string `json:"name"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"author"`
+}
+
+func (mr gongfengMergeRequestResponse) Number() int32 {
+	if mr.IID > 0 {
+		return mr.IID
+	}
+	return mr.NumberValue
+}
+
+func (mr gongfengMergeRequestResponse) URL() string {
+	return firstNonEmpty(mr.WebURL, mr.HTMLURL)
+}
+
+func createGongfengMergeRequest(ctx context.Context, token string, req CreateMergeRequestRequest) (gongfengMergeRequestResponse, error) {
+	projectID, err := resolveGongfengProjectAPIID(ctx, token, req.ProjectPath)
+	if err != nil {
+		return gongfengMergeRequestResponse{}, err
+	}
+	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests"
+	payload := map[string]any{
+		"source_branch": req.SourceBranch,
+		"target_branch": req.TargetBranch,
+		"title":         req.Title,
+	}
+	if req.Description != "" {
+		payload["description"] = req.Description
+	}
+	if req.RemoveSource {
+		payload["remove_source_branch"] = true
+	}
+	if req.Squash {
+		payload["squash"] = true
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return gongfengMergeRequestResponse{}, fmt.Errorf("marshal gongfeng merge request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
+	if err != nil {
+		return gongfengMergeRequestResponse{}, fmt.Errorf("build gongfeng merge request request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("PRIVATE-TOKEN", token)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return gongfengMergeRequestResponse{}, fmt.Errorf("create gongfeng merge request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return gongfengMergeRequestResponse{}, fmt.Errorf("gongfeng create merge request returned %d: %s", resp.StatusCode, redactGongfengError(respBody))
+	}
+	var out gongfengMergeRequestResponse
+	if len(strings.TrimSpace(string(respBody))) > 0 {
+		if err := json.Unmarshal(respBody, &out); err != nil {
+			return gongfengMergeRequestResponse{}, fmt.Errorf("decode gongfeng merge request response: %w", err)
+		}
+	}
+	return out, nil
+}
+
+func resolveGongfengProjectAPIID(ctx context.Context, token, projectPath string) (string, error) {
+	projectPath = strings.Trim(projectPath, "/")
+	if projectPath == "" {
+		return "", errors.New("gongfeng project path is required")
+	}
+	if _, err := strconv.ParseInt(projectPath, 10, 64); err == nil {
+		return projectPath, nil
+	}
+	if project, ok, err := fetchGongfengProjectByID(ctx, token, url.PathEscape(projectPath)); err != nil {
+		return "", err
+	} else if ok {
+		return strconv.FormatInt(project.ID, 10), nil
+	}
+	parts := strings.Split(projectPath, "/")
+	query := projectPath
+	if len(parts) > 0 {
+		query = parts[len(parts)-1]
+	}
+	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects?search=" + url.QueryEscape(query) + "&per_page=100"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("build gongfeng project search request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("search gongfeng project: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gongfeng project search returned %d: %s", resp.StatusCode, redactGongfengError(body))
+	}
+	var projects []gongfengProjectResponse
+	if err := json.Unmarshal(body, &projects); err != nil {
+		return "", fmt.Errorf("decode gongfeng project search response: %w", err)
+	}
+	for _, project := range projects {
+		if strings.EqualFold(strings.Trim(project.PathWithNamespace, "/"), projectPath) && project.ID > 0 {
+			return strconv.FormatInt(project.ID, 10), nil
+		}
+	}
+	return "", fmt.Errorf("gongfeng project %q not found by path or search", projectPath)
+}
+
+type gongfengProjectResponse struct {
+	ID                int64  `json:"id"`
+	PathWithNamespace string `json:"path_with_namespace"`
+}
+
+func fetchGongfengProjectByID(ctx context.Context, token, projectID string) (gongfengProjectResponse, bool, error) {
+	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + projectID
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return gongfengProjectResponse{}, false, fmt.Errorf("build gongfeng project request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	if err != nil {
+		return gongfengProjectResponse{}, false, fmt.Errorf("fetch gongfeng project: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		var project gongfengProjectResponse
+		if err := json.Unmarshal(body, &project); err != nil {
+			return gongfengProjectResponse{}, false, fmt.Errorf("decode gongfeng project response: %w", err)
+		}
+		return project, project.ID > 0, nil
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound:
+		return gongfengProjectResponse{}, false, nil
+	default:
+		return gongfengProjectResponse{}, false, fmt.Errorf("gongfeng project lookup returned %d: %s", resp.StatusCode, redactGongfengError(body))
+	}
+}
+
+func redactGongfengError(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return ""
+	}
+	text = regexp.MustCompile(`(?i)(private[-_]?token|access[-_]?token|authorization|token)["'\s:=]+[^"',\s}]+`).ReplaceAllString(text, "$1=<redacted>")
+	if len(text) > 1000 {
+		text = text[:1000] + "..."
+	}
+	return text
+}
+
+func normalizeGongfengMergeRequestState(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "merged":
+		return "merged"
+	case "closed", "close":
+		return "closed"
+	case "draft":
+		return "draft"
+	default:
+		return "open"
+	}
+}
+
+func textFromNonEmpty(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func textFromOptional(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return textFromNonEmpty(*value)
+}
+
 // ── Webhook ─────────────────────────────────────────────────────────────────
-
-// identifierRe extracts identifiers like "MUL-1510" from text. Case-insensitive
-// because branch names are conventionally lowercase but issue prefixes are
-// uppercase. Word boundary on the left prevents matching inside email-style
-// strings (e.g. "abc@MUL-1") and the digit anchor on the right rules out
-// version numbers like "v1.2-3".
-var identifierRe = regexp.MustCompile(`(?i)\b([a-z][a-z0-9]{1,9})-(\d+)\b`)
-
-// closingIdentifierRe extracts identifiers that appear immediately after a
-// GitHub-style closing keyword ("close[sd]?", "fix(e[sd])?", "resolve[sd]?"),
-// optionally separated by a colon and whitespace. Matching is intentionally
-// strict on adjacency — "Fix MUL-1" closes MUL-1, but "Fix login MUL-1"
-// does not. This mirrors GitHub's own closing-keyword grammar and is the
-// gate the webhook uses to decide whether to auto-advance an issue to
-// `done` after a PR merges. References like "Follow up in MUL-2" and bare
-// title prefixes like "MUL-1: ..." link the PR (via identifierRe) but
-// never auto-close.
-var closingIdentifierRe = regexp.MustCompile(
-	`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[:\s]+([a-z][a-z0-9]{1,9})-(\d+)\b`,
-)
 
 // HandleGitHubWebhook (POST /api/webhooks/github) is GitHub's destination for
 // every event from a connected installation. We verify HMAC signature, route
-// on X-GitHub-Event, and either upsert PR rows + auto-link to issues or
-// remove the installation on uninstall.
+// on X-GitHub-Event, and either mirror PR/check-suite rows or remove the
+// installation on uninstall.
 func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MiB cap
 	if err != nil {
@@ -859,98 +1432,12 @@ func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {
 	workspaceID := uuidToString(inst.WorkspaceID)
 	resp := githubPullRequestToResponse(pr)
 
-	// Auto-link: scan title/body/branch for issue identifiers, look them
-	// up in this workspace, attach the link rows. Idempotent (ON CONFLICT
-	// upserts the close_intent flag — see LinkIssueToPullRequest) so
-	// re-firing the webhook doesn't duplicate.
-	//
-	// RFC MUL-2414 §4.8: the PR mirror upsert above always runs (so re-enabling
-	// GitHub features restores history without backfill), but the link rows
-	// are a "new side-effect" and must be gated by the workspace's auto-link
-	// flag (which itself short-circuits when the master `github_enabled`
-	// switch is off).
+	// Webhooks mirror provider MR/PR state, but issue association is now a
+	// synchronous platform action (`multica issue mr create` or explicit link).
+	// We intentionally do not infer links from branch/title/body identifiers:
+	// async webhooks are too delayed and deployment-dependent to be a task
+	// completion gate.
 	linkedIssueIDs := make([]string, 0)
-	if h.workspaceAutoLinkPRsEnabled(ctx, inst.WorkspaceID) {
-		idents := extractIdentifiers(p.PullRequest.Title, p.PullRequest.Body, p.PullRequest.Head.Ref)
-		// closingIdents is the subset of identifiers that this PR explicitly
-		// declared via a closing keyword ("Closes/Fixes/Resolves MUL-X").
-		// Linking still happens for every mention (idents above), but the
-		// link row's close_intent column — and therefore whether the
-		// auto-advance gate eventually fires — is only set for keyword-
-		// declared identifiers. Bare title prefixes and branch-name
-		// references are link-only.
-		closingIdents := map[string]struct{}{}
-		for _, c := range extractClosingIdentifiers(p.PullRequest.Title, p.PullRequest.Body) {
-			closingIdents[c] = struct{}{}
-		}
-		// close_intent should follow the PR title/body while the PR is still
-		// editable before its terminal close event. Once GitHub has delivered
-		// a terminal event, later edit/synchronize webhooks must not rewrite
-		// the merge-time close decision.
-		preserveCloseIntent := p.Action != "closed" && (state == "merged" || state == "closed")
-		prefix := h.getIssuePrefix(ctx, inst.WorkspaceID)
-		// reevalIssues collects each issue whose link row we just touched so
-		// we can re-run the auto-advance gate against the persisted aggregate
-		// after every link upsert in this event. Driving the gate off
-		// persisted state (instead of "did *this* webhook declare closing
-		// intent?") is what fixes the multi-PR sibling case: a PR with
-		// `Closes MUL-1` merges first while a link-only sibling is still
-		// open, then the sibling closes later — its webhook has no closing
-		// keyword, but the earlier link row carries close_intent=true, so
-		// MUL-1 still advances.
-		reevalIssues := make([]db.Issue, 0, len(idents))
-		for _, id := range idents {
-			issue, ok := h.lookupIssueByIdentifier(ctx, inst.WorkspaceID, prefix, id)
-			if !ok {
-				continue
-			}
-			_, declared := closingIdents[id]
-			closeIntent := declared && !preserveCloseIntent
-			if err := h.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
-				IssueID:             issue.ID,
-				PullRequestID:       pr.ID,
-				CloseIntent:         closeIntent,
-				PreserveCloseIntent: preserveCloseIntent,
-				LinkedByType:        strToText("system"),
-				LinkedByID:          pgtype.UUID{},
-			}); err != nil {
-				slog.Warn("github: link failed", "err", err)
-				continue
-			}
-			linkedIssueIDs = append(linkedIssueIDs, uuidToString(issue.ID))
-			reevalIssues = append(reevalIssues, issue)
-		}
-
-		// A terminal PR event (`merged` or `closed`) may be the moment the
-		// last in-flight sibling resolves. We re-evaluate every issue we
-		// just linked once both the PR row and the link row are persisted,
-		// so the aggregate query sees the freshest state. We advance the
-		// issue to done when:
-		//   1. the issue isn't already terminal (`done` / `cancelled`);
-		//   2. no linked PR is still `open` / `draft`;
-		//   3. at least one merged linked PR declared close_intent (a
-		//      "Closes/Fixes/Resolves" keyword on its link row).
-		// Rule (3) is what prevents "Follow up in MUL-2" / "Unblocks MUL-3"
-		// references from being treated the same as "Closes MUL-1", and
-		// also prevents an "all closed-without-merge" sequence from
-		// silently auto-closing the issue — if nothing carrying closing
-		// intent was ever delivered, the user should decide manually.
-		if state == "merged" || state == "closed" {
-			for _, issue := range reevalIssues {
-				if issue.Status == "done" || issue.Status == "cancelled" {
-					continue
-				}
-				counts, err := h.Queries.GetIssuePullRequestCloseAggregate(ctx, issue.ID)
-				if err != nil {
-					slog.Warn("github: count linked pr states failed", "err", err, "issue_id", uuidToString(issue.ID))
-					continue
-				}
-				if counts.OpenCount == 0 && counts.MergedWithCloseIntentCount > 0 {
-					h.advanceIssueToDone(ctx, issue, workspaceID)
-				}
-			}
-		}
-	}
 
 	// Broadcast PR change to the workspace so any open issue detail page
 	// re-queries its PR list.
@@ -1217,132 +1704,6 @@ func parseGHTimeRequired(s string) pgtype.Timestamptz {
 	}
 	return t
 }
-
-// extractIdentifiers pulls every "PREFIX-NUMBER" match across the supplied
-// fields, deduplicating in input order.
-func extractIdentifiers(parts ...string) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, src := range parts {
-		for _, m := range identifierRe.FindAllStringSubmatch(src, -1) {
-			ident := strings.ToUpper(m[1]) + "-" + m[2]
-			if _, dup := seen[ident]; dup {
-				continue
-			}
-			seen[ident] = struct{}{}
-			out = append(out, ident)
-		}
-	}
-	return out
-}
-
-// extractClosingIdentifiers pulls every "PREFIX-NUMBER" identifier that
-// appears immediately after a GitHub-style closing keyword in the supplied
-// fields, deduplicating in input order. Identifiers in branch names are
-// intentionally excluded — callers should pass only title and body — because
-// branch names are not natural-language fields and treating "mul-1/fix-login"
-// as a close declaration would silently re-open the bug this gate is meant
-// to fix.
-func extractClosingIdentifiers(parts ...string) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, src := range parts {
-		for _, m := range closingIdentifierRe.FindAllStringSubmatch(src, -1) {
-			ident := strings.ToUpper(m[1]) + "-" + m[2]
-			if _, dup := seen[ident]; dup {
-				continue
-			}
-			seen[ident] = struct{}{}
-			out = append(out, ident)
-		}
-	}
-	return out
-}
-
-// lookupIssueByIdentifier looks up an issue in the given workspace by its
-// "PREFIX-NUMBER" identifier. Returns the row + true if the prefix matches
-// workspaceAutoLinkPRsEnabled reports whether the workspace allows the
-// GitHub webhook to create issue ↔ PR link rows. Defaults to true so that
-// workspaces predating RFC MUL-2414 keep the historical "auto-link on"
-// behavior, and short-circuits to false whenever the master GitHub switch
-// is explicitly off — mirroring the precedence used on the client side.
-func (h *Handler) workspaceAutoLinkPRsEnabled(ctx context.Context, workspaceID pgtype.UUID) bool {
-	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
-	if err != nil || len(ws.Settings) == 0 {
-		return true
-	}
-	var s struct {
-		GitHubEnabled            *bool `json:"github_enabled"`
-		GitHubAutoLinkPRsEnabled *bool `json:"github_auto_link_prs_enabled"`
-	}
-	if err := json.Unmarshal(ws.Settings, &s); err != nil {
-		return true
-	}
-	if s.GitHubEnabled != nil && !*s.GitHubEnabled {
-		return false
-	}
-	if s.GitHubAutoLinkPRsEnabled == nil {
-		return true
-	}
-	return *s.GitHubAutoLinkPRsEnabled
-}
-
-// the workspace's configured prefix and the number resolves to a real issue.
-func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtype.UUID, prefix, identifier string) (db.Issue, bool) {
-	idx := strings.LastIndex(identifier, "-")
-	if idx < 0 {
-		return db.Issue{}, false
-	}
-	gotPrefix, numStr := identifier[:idx], identifier[idx+1:]
-	if !strings.EqualFold(gotPrefix, prefix) {
-		return db.Issue{}, false
-	}
-	n, err := strconv.Atoi(numStr)
-	if err != nil {
-		return db.Issue{}, false
-	}
-	issue, err := h.Queries.GetIssueByNumber(ctx, db.GetIssueByNumberParams{
-		WorkspaceID: workspaceID,
-		Number:      int32(n),
-	})
-	if err != nil {
-		return db.Issue{}, false
-	}
-	return issue, true
-}
-
-func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
-	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-		ID:          issue.ID,
-		Status:      "done",
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		slog.Warn("github: advance issue to done failed", "err", err)
-		return
-	}
-
-	// Fire the platform parent-notification path on the same transition the
-	// HTTP UpdateIssue / BatchUpdateIssues paths use. A merged PR is one of
-	// the most common ways a sub-issue actually reaches `done`, and skipping
-	// it here would leave the parent silent for the dominant completion path.
-	// notifyParentOfChildDone re-checks every guard (prev != done, parent
-	// exists, parent not terminal), so calling it unconditionally is safe.
-	h.notifyParentOfChildDone(ctx, issue, updated, "system", "")
-
-	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
-	resp := issueToResponse(updated, prefix)
-	h.publish(protocol.EventIssueUpdated, workspaceID, "system", "", map[string]any{
-		"issue":          resp,
-		"status_changed": true,
-		"prev_status":    issue.Status,
-		"creator_type":   issue.CreatorType,
-		"creator_id":     uuidToString(issue.CreatorID),
-		"source":         "github_pr_merged",
-	})
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 func parseStrictUUID(s string) (pgtype.UUID, error) {
 	var u pgtype.UUID

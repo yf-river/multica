@@ -3,16 +3,22 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestProjectResourceLifecycle(t *testing.T) {
-	// Create a project to attach resources to.
+func createProjectResourceTestProject(t *testing.T, title string) ProjectResponse {
+	t.Helper()
+
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Resource lifecycle project",
+		"title": title,
 	})
 	testHandler.CreateProject(w, req)
 	if w.Code != http.StatusCreated {
@@ -22,15 +28,22 @@ func TestProjectResourceLifecycle(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode CreateProject: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		req := newRequest("DELETE", "/api/projects/"+project.ID, nil)
 		req = withURLParam(req, "id", project.ID)
 		testHandler.DeleteProject(httptest.NewRecorder(), req)
-	}()
+	})
+
+	return project
+}
+
+func TestProjectResourceLifecycle(t *testing.T) {
+	// Create a project to attach resources to.
+	project := createProjectResourceTestProject(t, "Resource lifecycle project")
 
 	// Attach a github_repo resource.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "github_repo",
 		"resource_ref":  map[string]any{"url": "https://github.com/multica-ai/multica"},
 	})
@@ -141,23 +154,7 @@ func TestProjectResourceLifecycle(t *testing.T) {
 // repos configured with an SSH remote previously got rejected when attached
 // to a project.
 func TestProjectResourceAcceptsSSHRepoURLs(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "SSH repo URL acceptance",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "SSH repo URL acceptance")
 
 	cases := []struct {
 		name string
@@ -229,6 +226,567 @@ func TestIsValidGitRepoURL(t *testing.T) {
 		if isValidGitRepoURL(s) {
 			t.Errorf("isValidGitRepoURL(%q) = true, want false", s)
 		}
+	}
+}
+
+func TestProjectResourceGongfengLifecycle(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{
+			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"provider":       "gongfeng",
+			"project_path":   "ChainWeaver/ida/user-center",
+			"default_branch": "v5.0.0_dev",
+		},
+	})
+
+	project := createProjectResourceTestProject(t, "Gongfeng resource project")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+		"label": "user-center dev",
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode CreateProjectResource: %v", err)
+	}
+	if created.ResourceType != "gongfeng_repo" {
+		t.Fatalf("ResourceType = %q, want gongfeng_repo", created.ResourceType)
+	}
+	var ref gongfengRepoRef
+	if err := json.Unmarshal(created.ResourceRef, &ref); err != nil {
+		t.Fatalf("decode resource_ref: %v", err)
+	}
+	if ref.Provider != "gongfeng" ||
+		ref.ProjectPath != "ChainWeaver/ida/user-center" ||
+		ref.ResourceKind != "commits" ||
+		ref.Ref != "v5.0.0_dev" {
+		t.Fatalf("normalized gongfeng ref = %+v", ref)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("duplicate CreateProjectResource: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/projects/"+project.ID+"/resources/"+created.ID, map[string]any{
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+		},
+	})
+	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
+	testHandler.UpdateProjectResource(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateProjectResource: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode UpdateProjectResource: %v", err)
+	}
+	if err := json.Unmarshal(updated.ResourceRef, &ref); err != nil {
+		t.Fatalf("decode updated resource_ref: %v", err)
+	}
+	if ref.ProjectPath != "ChainWeaver/ida/user-center" || ref.ResourceKind != "branch" || ref.Ref != "release" {
+		t.Fatalf("updated gongfeng ref = %+v", ref)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/projects/"+project.ID+"/resources/"+created.ID, map[string]any{
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
+	testHandler.UpdateProjectResource(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateProjectResource unregistered project_path: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProjectResourceGongfengSyncDropsLegacyDisabledState(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{
+			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"provider":       "gongfeng",
+			"project_path":   "ChainWeaver/ida/user-center",
+			"default_branch": "v5.0.0_dev",
+		},
+	})
+
+	project := createProjectResourceTestProject(t, "Legacy disabled Gongfeng resource")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode CreateProjectResource: %v", err)
+	}
+
+	legacyRef := map[string]any{
+		"provider":          "gongfeng",
+		"url":               "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		"project_path":      "ChainWeaver/ida/user-center",
+		"resource_kind":     "commits",
+		"ref":               "v5.0.0_dev",
+		"branch":            "v5.0.0_dev",
+		"disabled":          true,
+		"disabled_at":       "2026-07-01T00:00:00Z",
+		"connection_status": "disabled",
+		"sync_status":       "disabled",
+		"test_status":       "disabled",
+	}
+	legacyRaw, err := json.Marshal(legacyRef)
+	if err != nil {
+		t.Fatalf("marshal legacy ref: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE project_resource SET resource_ref = $1::jsonb WHERE id = $2
+	`, legacyRaw, created.ID); err != nil {
+		t.Fatalf("seed legacy disabled resource_ref: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources/"+created.ID+"/sync", nil)
+	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
+	testHandler.SyncProjectResource(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SyncProjectResource: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var synced ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&synced); err != nil {
+		t.Fatalf("decode SyncProjectResource: %v", err)
+	}
+	var syncedRef map[string]any
+	if err := json.Unmarshal(synced.ResourceRef, &syncedRef); err != nil {
+		t.Fatalf("decode synced resource_ref: %v", err)
+	}
+	if _, ok := syncedRef["disabled"]; ok {
+		t.Fatalf("synced resource_ref retained disabled: %s", string(synced.ResourceRef))
+	}
+	if _, ok := syncedRef["disabled_at"]; ok {
+		t.Fatalf("synced resource_ref retained disabled_at: %s", string(synced.ResourceRef))
+	}
+	if syncedRef["connection_status"] == "disabled" || syncedRef["test_status"] == "disabled" {
+		t.Fatalf("synced resource_ref retained disabled statuses: %s", string(synced.ResourceRef))
+	}
+	if syncedRef["sync_status"] != "synced" {
+		t.Fatalf("sync_status = %v, want synced (ref=%s)", syncedRef["sync_status"], string(synced.ResourceRef))
+	}
+}
+
+func TestProjectResourceGongfengRequiresWorkspaceInventory(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{})
+
+	project := createProjectResourceTestProject(t, "Gongfeng inventory enforcement")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateProjectResource unregistered project_path: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateProjectGongfengResourceRequiresWorkspaceInventory(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Inline Gongfeng inventory enforcement",
+		"resources": []map[string]any{
+			{
+				"resource_type": "gongfeng_repo",
+				"resource_ref": map[string]any{
+					"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+				},
+			},
+		},
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateProject inline unregistered project_path: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{
+			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"provider":       "gongfeng",
+			"project_path":   "ChainWeaver/ida/user-center",
+			"default_branch": "v5.0.0_dev",
+		},
+	})
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Inline Gongfeng inventory success",
+		"resources": []map[string]any{
+			{
+				"resource_type": "gongfeng_repo",
+				"resource_ref": map[string]any{
+					"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+				},
+			},
+		},
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject inline registered project_path: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project struct {
+		ProjectResponse
+		Resources []ProjectResourceResponse `json:"resources"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject inline: %v", err)
+	}
+	if len(project.Resources) != 1 {
+		t.Fatalf("inline resources len = %d, want 1", len(project.Resources))
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+}
+
+func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T) {
+	var profileID pgtype.UUID
+	if err := profileID.Scan("11111111-1111-1111-1111-111111111111"); err != nil {
+		t.Fatalf("scan profile uuid: %v", err)
+	}
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: "200", Target: "https://git.code.tencent.com/api/v3/projects/ChainWeaver%2Fida%2Fuser-center"},
+		db.ExternalCredentialProfile{
+			ID:        profileID,
+			Provider:  externalCredentialProviderGongfeng,
+			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			Status:    "unverified",
+		},
+		true,
+	)
+	if ref.ConnectionStatus != "credential_backed" {
+		t.Fatalf("ConnectionStatus = %q, want credential_backed", ref.ConnectionStatus)
+	}
+	if ref.UnauthenticatedConnectionStatus != "auth_required" {
+		t.Fatalf("UnauthenticatedConnectionStatus = %q, want auth_required", ref.UnauthenticatedConnectionStatus)
+	}
+	if ref.CredentialStatus != "account_profile_configured" || ref.CredentialProfileStatus != "unverified" {
+		t.Fatalf("credential proof not recorded: %+v", ref)
+	}
+	if ref.CredentialProbeStatus != "credential_backed" || ref.CredentialProbeHTTPStatus != "200" {
+		t.Fatalf("credential probe proof not recorded: %+v", ref)
+	}
+	raw := string(mustMarshalRaw(ref))
+	if strings.Contains(raw, "GONGFENG_ACCESS_TOKEN") {
+		t.Fatalf("resource_ref leaked secret ref name: %s", raw)
+	}
+	if !strings.Contains(raw, "secret_ref") {
+		t.Fatalf("resource_ref did not retain a redacted credential binding mode: %s", raw)
+	}
+}
+
+func TestGongfengResourceCredentialBackedProbeSurvivesAnonymousUnreachable(t *testing.T) {
+	var profileID pgtype.UUID
+	if err := profileID.Scan("11111111-1111-1111-1111-111111111112"); err != nil {
+		t.Fatalf("scan profile uuid: %v", err)
+	}
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: "200", Target: "https://git.code.tencent.com/api/v3/projects/ChainWeaver%2Fida%2Fuser-center"},
+		db.ExternalCredentialProfile{
+			ID:           profileID,
+			Provider:     externalCredentialProviderGongfeng,
+			SecretHint:   "****du-w",
+			Status:       "unverified",
+			SecretRef:    "",
+			Capabilities: []byte(`{}`),
+		},
+		true,
+	)
+	if ref.ConnectionStatus != "credential_backed" || ref.TestStatus != "passed" {
+		t.Fatalf("credential-backed probe should win over anonymous unreachable: %+v", ref)
+	}
+	if ref.UnauthenticatedConnectionStatus != "unreachable" {
+		t.Fatalf("UnauthenticatedConnectionStatus = %q, want unreachable", ref.UnauthenticatedConnectionStatus)
+	}
+}
+
+func TestGongfengResourceProbeWithoutProfileStaysAuthRequired(t *testing.T) {
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
+		gongfengCredentialProbeResult{},
+		db.ExternalCredentialProfile{},
+		false,
+	)
+	if ref.ConnectionStatus != "auth_required" {
+		t.Fatalf("ConnectionStatus = %q, want auth_required", ref.ConnectionStatus)
+	}
+	if ref.CredentialStatus != "not_configured" {
+		t.Fatalf("CredentialStatus = %q, want not_configured", ref.CredentialStatus)
+	}
+}
+
+func TestGongfengResourceProfileWithoutSuccessfulCredentialProbeStaysAuthRequired(t *testing.T) {
+	var profileID pgtype.UUID
+	if err := profileID.Scan("11111111-1111-1111-1111-111111111111"); err != nil {
+		t.Fatalf("scan profile uuid: %v", err)
+	}
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_token_unavailable", TestStatus: "failed"},
+		db.ExternalCredentialProfile{
+			ID:        profileID,
+			Provider:  externalCredentialProviderGongfeng,
+			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			Status:    "unverified",
+		},
+		true,
+	)
+	if ref.ConnectionStatus != "auth_required" {
+		t.Fatalf("ConnectionStatus = %q, want auth_required", ref.ConnectionStatus)
+	}
+	if ref.CredentialStatus != "account_profile_configured" || ref.CredentialProbeStatus != "credential_token_unavailable" {
+		t.Fatalf("credential boundary not recorded: %+v", ref)
+	}
+}
+
+func TestGongfengAPIBaseNormalizesTencentGitRoot(t *testing.T) {
+	t.Setenv("GONGFENG_API_BASE", "https://git.code.tencent.com")
+
+	if got, want := gongfengAPIBase(), "https://git.code.tencent.com/api/v3"; got != want {
+		t.Fatalf("gongfengAPIBase() = %q, want %q", got, want)
+	}
+}
+
+func TestFetchGongfengBranchesHandlesPagination(t *testing.T) {
+	var seenTokens []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenTokens = append(seenTokens, r.Header.Get("PRIVATE-TOKEN"))
+		if r.URL.Query().Get("page") == "1" {
+			w.Header().Set("X-Next-Page", "2")
+			_, _ = w.Write([]byte(`[
+				{"name":"main","commit":{"committed_date":"2026-06-01T01:00:00Z"}},
+				{"name":"v5.0.0_dev","commit":{"committed_date":"2026-06-20T01:00:00Z"}}
+			]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"name":"v5.0.0_dev","commit":{"committed_date":"2026-06-21T01:00:00Z"}},
+			{"name":"dev_sop","commit":{"committed_date":"2026-06-30T01:00:00Z"}}
+		]`))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	branches, err := fetchGongfengBranches(context.Background(), "ChainWeaver/ida/gateway", "token-1")
+	if err != nil {
+		t.Fatalf("fetchGongfengBranches: %v", err)
+	}
+	if got, want := strings.Join(branches, ","), "dev_sop,v5.0.0_dev,main"; got != want {
+		t.Fatalf("branches = %q, want %q", got, want)
+	}
+	if len(seenTokens) != 2 || seenTokens[0] != "token-1" || seenTokens[1] != "token-1" {
+		t.Fatalf("token headers = %#v", seenTokens)
+	}
+}
+
+func TestFetchGongfengBranchesContinuesWhenNextPageHeaderMissing(t *testing.T) {
+	var seenPages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		seenPages = append(seenPages, page)
+		if page == "1" {
+			_, _ = w.Write([]byte(gongfengBranchPayload("branch", 0, 100, "2026-06-01T01:00:00Z")))
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"name":"release/after-headerless-page","commit":{"committed_date":"2026-06-30T01:00:00Z"}}
+		]`))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	branches, err := fetchGongfengBranches(context.Background(), "ChainWeaver/ida/gateway", "token-1")
+	if err != nil {
+		t.Fatalf("fetchGongfengBranches: %v", err)
+	}
+	if len(branches) != 101 {
+		t.Fatalf("branch count = %d, want 101", len(branches))
+	}
+	if branches[0] != "release/after-headerless-page" {
+		t.Fatalf("first branch = %q, want release/after-headerless-page", branches[0])
+	}
+	if got, want := strings.Join(seenPages, ","), "1,2"; got != want {
+		t.Fatalf("seen pages = %q, want %q", got, want)
+	}
+}
+
+func TestFetchGongfengBranchesStopsAtSafetyLimit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(gongfengBranchPayload(fmt.Sprintf("page-%s-branch", r.URL.Query().Get("page")), 0, 100, "2026-06-01T01:00:00Z")))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	_, err := fetchGongfengBranches(context.Background(), "ChainWeaver/ida/gateway", "token-1")
+	if err == nil || !strings.Contains(err.Error(), "exceeded 50 pages") {
+		t.Fatalf("error = %v, want safety limit", err)
+	}
+	if requests != 50 {
+		t.Fatalf("requests = %d, want 50", requests)
+	}
+}
+
+func gongfengBranchPayload(prefix string, start int, count int, committedDate string) string {
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		_, _ = fmt.Fprintf(&b, `{"name":"%s-%03d","commit":{"committed_date":"%s"}}`, prefix, start+i, committedDate)
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
+func TestProjectResourceGongfengValidation(t *testing.T) {
+	project := createProjectResourceTestProject(t, "Gongfeng validation project")
+
+	cases := []struct {
+		name string
+		ref  any
+	}{
+		{"missing url", map[string]any{"project_path": "ChainWeaver/ida/user-center"}},
+		{"wrong host", map[string]any{"url": "https://github.com/ChainWeaver/ida"}},
+		{"unsupported scheme", map[string]any{"url": "ssh://git@git.code.tencent.com/ChainWeaver/ida/user-center.git"}},
+		{"bad resource kind", map[string]any{"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center", "resource_kind": "github"}},
+		{"wrong type", map[string]any{"url": 42}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+				"resource_type": "gongfeng_repo",
+				"resource_ref":  tc.ref,
+			})
+			req = withURLParam(req, "id", project.ID)
+			testHandler.CreateProjectResource(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestParseGongfengURL(t *testing.T) {
+	cases := []struct {
+		raw         string
+		projectPath string
+		kind        string
+		ref         string
+	}{
+		{
+			"https://git.code.tencent.com/ChainWeaver/ida/user-center",
+			"ChainWeaver/ida/user-center",
+			"project",
+			"",
+		},
+		{
+			"https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"ChainWeaver/ida/user-center",
+			"commits",
+			"v5.0.0_dev",
+		},
+		{
+			"https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/v5.0.0_dev",
+			"ChainWeaver/ida/user-center",
+			"branch",
+			"v5.0.0_dev",
+		},
+	}
+	for _, tc := range cases {
+		got, err := parseGongfengURL(tc.raw)
+		if err != nil {
+			t.Fatalf("parseGongfengURL(%q): %v", tc.raw, err)
+		}
+		if got.ProjectPath != tc.projectPath || got.ResourceKind != tc.kind || got.Ref != tc.ref {
+			t.Fatalf("parseGongfengURL(%q) = %+v", tc.raw, got)
+		}
+	}
+}
+
+func TestParsedGongfengWorkspaceRepoBranch(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "commits branch page",
+			raw:  "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			want: "v5.0.0_dev",
+		},
+		{
+			name: "tree branch page",
+			raw:  "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/v5.0.0_dev",
+			want: "v5.0.0_dev",
+		},
+		{
+			name: "project page falls back to api default branch",
+			raw:  "https://git.code.tencent.com/ChainWeaver/ida/user-center",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseGongfengURL(tc.raw)
+			if err != nil {
+				t.Fatalf("parseGongfengURL(%q): %v", tc.raw, err)
+			}
+			if got := parsedGongfengWorkspaceRepoBranch(parsed); got != tc.want {
+				t.Fatalf("parsedGongfengWorkspaceRepoBranch(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -374,23 +932,7 @@ func TestProjectResourceLocalDirectoryLifecycle(t *testing.T) {
 // errors agents will hit, so freezing them as tests prevents accidental
 // loosening when someone touches the validator.
 func TestProjectResourceLocalDirectoryValidation(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Local directory validation",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Local directory validation")
 
 	cases := []struct {
 		name string
@@ -490,23 +1032,7 @@ func TestCreateProjectAttachesResources(t *testing.T) {
 // surfaces on GetProject and ListProjects so agents know to call
 // /api/projects/{id}/resources without inlining the sub-collection.
 func TestProjectResourceCountBreadcrumb(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Resource count breadcrumb",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Resource count breadcrumb")
 
 	getCount := func() int64 {
 		w := httptest.NewRecorder()
@@ -526,8 +1052,8 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		t.Errorf("initial GetProject ResourceCount = %d, want 0", got)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "github_repo",
 		"resource_ref":  map[string]any{"url": "https://github.com/multica-ai/breadcrumb"},
 	})
@@ -691,27 +1217,11 @@ func TestCreateProjectRollsBackOnInvalidResource(t *testing.T) {
 // missing resource_type swap is enforced implicitly because the request body
 // has no resource_type field.
 func TestProjectResourceUpdateLifecycle(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Update lifecycle project",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Update lifecycle project")
 
 	// Seed one local_directory resource we will mutate.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "local_directory",
 		"resource_ref": map[string]any{
 			"local_path": "/Users/foo/work/a",
@@ -833,23 +1343,7 @@ func TestProjectResourceUpdateLifecycle(t *testing.T) {
 // the agent write into whichever sorts first. The DB UNIQUE constraint only
 // catches identical ref JSON; this check covers the broader invariant.
 func TestProjectResourceLocalDirectoryDaemonScopedConflict(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Local dir daemon-scoped conflict",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Local dir daemon-scoped conflict")
 
 	const (
 		daemonID    = "d-scoped"
@@ -858,8 +1352,8 @@ func TestProjectResourceLocalDirectoryDaemonScopedConflict(t *testing.T) {
 	)
 
 	// First attach succeeds.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "local_directory",
 		"resource_ref": map[string]any{
 			"local_path": localPath,

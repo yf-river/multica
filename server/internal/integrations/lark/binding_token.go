@@ -45,10 +45,9 @@ type RedeemedBindingToken struct {
 // Implementations MUST be idempotent on (installation_id, lark_open_id):
 // a re-install by the same user should not error.
 //
-// `qtx` is the *db.Queries handle to run the bind against. The caller
-// opens the transaction so the installation insert and the binding
-// write commit together; nil means "use the service's own
-// (non-transactional) queries handle".
+// `qtx` is the transaction-scoped *db.Queries handle to run the bind
+// against. The caller opens the transaction so the installation insert
+// and the binding write commit together.
 type InstallerBinder interface {
 	BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error
 }
@@ -143,9 +142,6 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 // return guarantees both the consumed_at write and the binding row
 // landed; a returned error guarantees neither did.
 func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, multicaUserID pgtype.UUID) (RedeemedBindingToken, error) {
-	if s.tx == nil {
-		return RedeemedBindingToken{}, errors.New("lark: BindingTokenService missing TxStarter")
-	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("begin tx: %w", err)
@@ -206,9 +202,7 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 // handle. The service opens a transaction that wraps the
 // lark_installation insert and this binding write so a half-applied
 // install (installation row without the installer binding) cannot
-// land. When `qtx` is nil the service's own (non-transactional)
-// queries handle is used, which is the right behavior for tests that
-// don't need atomicity.
+// land.
 //
 // Token redemption deliberately does NOT share this code path:
 //   - RedeemAndBind consumes a server-minted token in the same tx as
@@ -229,11 +223,7 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 // preventing one workspace admin from silently rebinding another's
 // PersonalAgent install.
 func (s *BindingTokenService) BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error {
-	q := qtx
-	if q == nil {
-		q = s.queries
-	}
-	_, err := q.CreateLarkUserBinding(ctx, db.CreateLarkUserBindingParams{
+	_, err := qtx.CreateLarkUserBinding(ctx, db.CreateLarkUserBindingParams{
 		WorkspaceID:    p.WorkspaceID,
 		MulticaUserID:  p.MulticaUserID,
 		InstallationID: p.InstallationID,

@@ -74,34 +74,29 @@ func TestHTTPErrorKind(t *testing.T) {
 	}
 }
 
-// TestFormatErrorAllKinds asserts that every ErrorKind produces a non-empty,
-// localized, user-facing message in both languages, and that none of them leak
-// the raw internal error string when debug is off.
+// TestFormatErrorAllKinds asserts that every ErrorKind produces a non-empty
+// Chinese user-facing message.
 func TestFormatErrorAllKinds(t *testing.T) {
-	withLang(t, "") // default English
 	allKinds := []ErrorKind{
 		KindNetworkTimeout, KindNetworkDNS, KindNetworkRefused, KindNetworkTLS, KindNetworkOffline,
 		KindAuthRequired, KindForbidden, KindNotFound, KindConflict, KindValidation,
 		KindRateLimited, KindServerError, KindUnknown,
 	}
-	for _, lang := range []Language{LangEN, LangZH} {
-		for _, k := range allKinds {
-			msg := messageFor(k, lang)
-			if strings.TrimSpace(msg) == "" {
-				t.Errorf("messageFor(kind=%d, lang=%d) is empty", k, lang)
-			}
+	for _, k := range allKinds {
+		msg := messageFor(k)
+		if strings.TrimSpace(msg) == "" {
+			t.Errorf("messageFor(kind=%d) is empty", k)
 		}
 	}
 }
 
 func TestFormatErrorNetwork(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
 	raw := errors.New("Get \"https://api.multica.ai/api/issues/abc\": context deadline exceeded")
 	netErr := &NetworkError{Kind: KindNetworkTimeout, Op: "GET /api/issues/abc", Err: raw}
 	wrapped := fmt.Errorf("resolve issue: %w", netErr)
 
 	got := FormatError(wrapped, false)
-	if !strings.Contains(got, "timed out") {
+	if !strings.Contains(got, "请求超时") {
 		t.Errorf("expected friendly timeout message, got %q", got)
 	}
 	// Must not leak the URL or internal verb chain when debug is off.
@@ -110,8 +105,7 @@ func TestFormatErrorNetwork(t *testing.T) {
 	}
 }
 
-func TestFormatErrorChineseLocale(t *testing.T) {
-	withLang(t, "zh_CN.UTF-8")
+func TestFormatErrorChineseOutput(t *testing.T) {
 	netErr := &NetworkError{Kind: KindNetworkDNS, Err: errors.New("no such host")}
 	got := FormatError(netErr, false)
 	if !strings.Contains(got, "无法解析") {
@@ -120,7 +114,6 @@ func TestFormatErrorChineseLocale(t *testing.T) {
 }
 
 func TestFormatErrorValidationUsesServerMessage(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
 	httpErr := &HTTPError{
 		Method:     "POST",
 		Path:       "/api/issues",
@@ -134,7 +127,6 @@ func TestFormatErrorValidationUsesServerMessage(t *testing.T) {
 }
 
 func TestFormatErrorDebugIncludesRawChain(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
 	httpErr := &HTTPError{Method: "GET", Path: "/api/issues/abc", StatusCode: 404, Body: `{"error":"not found"}`}
 	wrapped := fmt.Errorf("resolve issue: %w", httpErr)
 
@@ -150,7 +142,6 @@ func TestFormatErrorDebugIncludesRawChain(t *testing.T) {
 }
 
 func TestFormatErrorPlainError(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
 	got := FormatError(errors.New("title is required"), false)
 	if got != "title is required" {
 		t.Errorf("plain error should pass through, got %q", got)
@@ -183,34 +174,6 @@ func TestExitCodeFor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ExitCodeFor(tc.err); got != tc.want {
 				t.Errorf("ExitCodeFor(%v) = %d, want %d", tc.err, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestDetectLanguage(t *testing.T) {
-	cases := []struct {
-		name string
-		env  map[string]string
-		want Language
-	}{
-		{"default english", map[string]string{}, LangEN},
-		{"lang zh", map[string]string{"LANG": "zh_CN.UTF-8"}, LangZH},
-		{"lang en", map[string]string{"LANG": "en_US.UTF-8"}, LangEN},
-		{"lc_all wins over lang", map[string]string{"LC_ALL": "en_US.UTF-8", "LANG": "zh_CN.UTF-8"}, LangEN},
-		{"lc_all zh", map[string]string{"LC_ALL": "zh_CN.UTF-8", "LANG": "en_US.UTF-8"}, LangZH},
-		{"lc_messages zh", map[string]string{"LC_MESSAGES": "zh_TW.UTF-8"}, LangZH},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, k := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-				t.Setenv(k, "")
-			}
-			for k, v := range tc.env {
-				t.Setenv(k, v)
-			}
-			if got := DetectLanguage(); got != tc.want {
-				t.Errorf("DetectLanguage() = %d, want %d", got, tc.want)
 			}
 		})
 	}
@@ -262,16 +225,6 @@ func TestHTTPTimeout(t *testing.T) {
 	}
 }
 
-// withLang clears the locale env vars and sets LANG to the given value for the
-// duration of the test, so language-dependent assertions are deterministic
-// regardless of the host environment.
-func withLang(t *testing.T, lang string) {
-	t.Helper()
-	t.Setenv("LC_ALL", "")
-	t.Setenv("LC_MESSAGES", "")
-	t.Setenv("LANG", lang)
-}
-
 func TestErrorKindString(t *testing.T) {
 	cases := map[ErrorKind]string{
 		KindNetworkTimeout: "network_timeout",
@@ -304,40 +257,29 @@ func TestErrorKindString(t *testing.T) {
 	}
 }
 
-// TestFormatErrorActionableHints locks in the per-status actionable hints
-// refined in PR2, in both languages, so a future copy edit can't silently drop
-// the actionable guidance.
+// TestFormatErrorActionableHints locks in the per-status actionable hints so a
+// future copy edit can't silently drop the guidance.
 func TestFormatErrorActionableHints(t *testing.T) {
 	cases := []struct {
 		status int
-		enWant []string
-		zhWant []string
+		want   []string
 	}{
-		{401, []string{"multica login", "self-hosted", "administrator"}, []string{"multica login", "自托管", "管理员"}},
-		{403, []string{"permission", "workspace"}, []string{"无权", "workspace"}},
-		{404, []string{"not found", "list"}, []string{"未找到", "list"}},
-		{409, []string{"conflict", "again"}, []string{"冲突", "重新获取"}},
-		{400, []string{"--help", "expected format"}, []string{"--help", "格式", "参数"}},
-		{422, []string{"--help", "expected format"}, []string{"--help", "格式", "参数"}},
-		{429, []string{"Too many requests"}, []string{"过于频繁"}},
-		{500, []string{"temporarily unavailable", "--debug"}, []string{"暂时不可用", "--debug"}},
+		{401, []string{"multica login", "管理员"}},
+		{403, []string{"无权", "workspace"}},
+		{404, []string{"未找到", "list"}},
+		{409, []string{"冲突", "重新获取"}},
+		{400, []string{"--help", "格式", "参数"}},
+		{422, []string{"--help", "格式", "参数"}},
+		{429, []string{"过于频繁"}},
+		{500, []string{"暂时不可用", "--debug"}},
 	}
 	for _, tc := range cases {
 		httpErr := &HTTPError{Method: "GET", Path: "/api/x", StatusCode: tc.status}
 
-		withLang(t, "en_US.UTF-8")
-		en := FormatError(httpErr, false)
-		for _, sub := range tc.enWant {
-			if !strings.Contains(en, sub) {
-				t.Errorf("EN %d: %q missing %q", tc.status, en, sub)
-			}
-		}
-
-		withLang(t, "zh_CN.UTF-8")
-		zh := FormatError(httpErr, false)
-		for _, sub := range tc.zhWant {
-			if !strings.Contains(zh, sub) {
-				t.Errorf("ZH %d: %q missing %q", tc.status, zh, sub)
+		got := FormatError(httpErr, false)
+		for _, sub := range tc.want {
+			if !strings.Contains(got, sub) {
+				t.Errorf("%d: %q missing %q", tc.status, got, sub)
 			}
 		}
 	}
@@ -349,8 +291,7 @@ func TestFormatErrorActionableHints(t *testing.T) {
 // still exposes the full original chain. This is the mechanism that makes the
 // `multica login` failure guidance visible without losing classification.
 func TestUserMessageError(t *testing.T) {
-	withLang(t, "en_US.UTF-8")
-	const hint = "Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again."
+	const hint = "无法使用该 token 登录：请确认 token 有效且未过期，然后重新运行 `multica login --token <token>`。"
 
 	t.Run("wrapped HTTPError (invalid token -> 401)", func(t *testing.T) {
 		underlying := &HTTPError{Method: "GET", Path: "/api/me", StatusCode: 401, Body: `{"error":"unauthorized"}`}
@@ -361,7 +302,7 @@ func TestUserMessageError(t *testing.T) {
 		if got != hint {
 			t.Errorf("FormatError(false) = %q, want the login hint", got)
 		}
-		if strings.Contains(got, "session has expired") {
+		if strings.Contains(got, "登录已过期") {
 			t.Errorf("default output leaked the generic 401 copy: %q", got)
 		}
 
@@ -385,16 +326,16 @@ func TestUserMessageError(t *testing.T) {
 
 	t.Run("wrapped NetworkError classifies as network", func(t *testing.T) {
 		underlying := &NetworkError{Kind: KindNetworkTimeout, Op: "GET /api/me", Err: errors.New("context deadline exceeded")}
-		err := WithUserMessage("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", underlying)
+		err := WithUserMessage("登录未完成：服务器未接受新的凭证。请重新运行 `multica login`。", underlying)
 
 		if code := ExitCodeFor(err); code != ExitNetwork {
 			t.Errorf("ExitCodeFor = %d, want ExitNetwork(%d)", code, ExitNetwork)
 		}
 		got := FormatError(err, false)
-		if !strings.Contains(got, "Sign-in did not complete") {
+		if !strings.Contains(got, "登录未完成") {
 			t.Errorf("FormatError(false) = %q, want the sign-in hint", got)
 		}
-		if strings.Contains(got, "timed out") {
+		if strings.Contains(got, "请求超时") {
 			t.Errorf("default output leaked the generic network copy: %q", got)
 		}
 	})

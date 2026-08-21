@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Shared HTML preview iframe.
+ * 共享 HTML 预览 iframe。
  *
  * Used by:
  *   - InlineHtmlIframe inside AttachmentCard (HTML attachments inline preview)

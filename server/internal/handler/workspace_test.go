@@ -37,6 +37,28 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	}
 }
 
+func TestWorkspaceReposForResponse_NormalizesNonArray(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+		want int
+	}{
+		{name: "nil", raw: nil, want: 0},
+		{name: "object", raw: []byte(`{}`), want: 0},
+		{name: "invalid", raw: []byte(`not-json`), want: 0},
+		{name: "array", raw: []byte(`[{"url":"https://git.example.com/repo.git"}]`), want: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := workspaceReposForResponse(tc.raw)
+			if len(got) != tc.want {
+				t.Fatalf("workspaceReposForResponse(%s) len = %d, want %d", tc.raw, len(got), tc.want)
+			}
+		})
+	}
+}
+
 // TestCreateWorkspace_DoesNotMarkOnboarded guards the onboarding
 // contract: creating a workspace MUST leave user.onboarded_at NULL so
 // the route guard in apps/web/app/[workspaceSlug]/layout.tsx (and the
@@ -45,8 +67,7 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 // set onboarded_at inside CreateWorkspace; this test makes the new
 // invariant explicit and regression-protected.
 //
-// CompleteOnboarding (Step 3 exit) and AcceptInvitation are the only
-// remaining handlers that flip onboarded_at.
+// CompleteOnboarding (Step 3 exit) is the handler that flips onboarded_at.
 func TestCreateWorkspace_DoesNotMarkOnboarded(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -409,6 +430,88 @@ VALUES ($1, $2, 'owner')
 			t.Fatalf("second repo not preserved: %+v", repos[1])
 		}
 	})
+
+	t.Run("keeps gongfeng project resources backed by project_path", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"repos": []map[string]any{
+				{
+					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+					"provider":     "gongfeng",
+					"project_path": "ChainWeaver/ida/user-center",
+				},
+				{
+					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+					"provider":     "gongfeng",
+					"project_path": "ChainWeaver/ida/user-center",
+				},
+			},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("seed repos: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		w = httptest.NewRecorder()
+		req = newRequest("POST", "/api/projects?workspace_id="+wsID, map[string]any{
+			"title": "Workspace repo removal guard",
+		})
+		req.Header.Set("X-Workspace-ID", wsID)
+		testHandler.CreateProject(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var project ProjectResponse
+		if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+			t.Fatalf("decode CreateProject: %v", err)
+		}
+		t.Cleanup(func() {
+			r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+			r = withURLParam(r, "id", project.ID)
+			testHandler.DeleteProject(httptest.NewRecorder(), r)
+		})
+
+		w = httptest.NewRecorder()
+		req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+			"resource_type": "gongfeng_repo",
+			"resource_ref": map[string]any{
+				"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			},
+		})
+		req.Header.Set("X-Workspace-ID", wsID)
+		req = withURLParam(req, "id", project.ID)
+		testHandler.CreateProjectResource(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		w = httptest.NewRecorder()
+		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"repos": []map[string]any{
+				{
+					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+					"provider":     "gongfeng",
+					"project_path": "ChainWeaver/ida/user-center",
+				},
+			},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("remove one duplicate project_path repo: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		w = httptest.NewRecorder()
+		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"repos": []map[string]any{},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("remove last project_path repo: expected 409, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }
 
 // revocationFixture is a minimal (workspace, member-to-revoke, runtime,
@@ -450,11 +553,11 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
 		t.Fatalf("create requester member: %v", err)
 	}
 
-	targetEmail := fmt.Sprintf("revocation-%s@multica.ai", slug)
+	targetAccount := fmt.Sprintf("revocation-%s@multica", slug)
 	var targetUserID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
-`, "Revocation Target "+slug, targetEmail).Scan(&targetUserID); err != nil {
+INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+`, "Revocation Target "+slug, targetAccount).Scan(&targetUserID); err != nil {
 		t.Fatalf("create target user: %v", err)
 	}
 
@@ -489,7 +592,7 @@ RETURNING id
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO agent (
     workspace_id, name, description, runtime_mode, runtime_config,
-    runtime_id, visibility, max_concurrent_tasks, owner_id
+    runtime_id, scope, max_concurrent_tasks, owner_id
 )
 VALUES ($1, 'Target Agent', '', 'local', '{}'::jsonb, $2, 'workspace', 1, $3)
 RETURNING id
@@ -717,8 +820,8 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
 
 	var targetUserID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
-`, "Revocation No Runtimes Target", "revocation-no-runtimes@multica.ai").Scan(&targetUserID); err != nil {
+INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+`, "Revocation No Runtimes Target", "revocation-no-runtimes@multica").Scan(&targetUserID); err != nil {
 		t.Fatalf("create target user: %v", err)
 	}
 	t.Cleanup(func() {

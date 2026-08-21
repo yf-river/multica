@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -20,8 +19,8 @@ func seedOwnerLookupUser(t *testing.T, queries *db.Queries) string {
 	ctx := context.Background()
 	stamp := time.Now().UnixNano()
 	user, err := queries.CreateUser(ctx, db.CreateUserParams{
-		Name:  "owner-lookup",
-		Email: pgtypeUniqueEmail(stamp),
+		Name:    "owner-lookup",
+		Account: pgtypeUniqueAccount(stamp),
 	})
 	if err != nil {
 		t.Fatalf("create user: %v", err)
@@ -34,11 +33,11 @@ func seedOwnerLookupUser(t *testing.T, queries *db.Queries) string {
 	return uuidToString(user.ID)
 }
 
-// pgtypeUniqueEmail builds an email that is guaranteed unique within
-// a test run so concurrent tests don't collide on the email UNIQUE
+// pgtypeUniqueAccount builds an account that is guaranteed unique within
+// a test run so concurrent tests don't collide on the account UNIQUE
 // index. Using nanosecond + a static suffix mirrors the patterns used
 // elsewhere in the repo.
-func pgtypeUniqueEmail(stamp int64) string {
+func pgtypeUniqueAccount(stamp int64) string {
 	return time.Unix(0, stamp).UTC().Format("20060102T150405.000000000") + "@owner-lookup.test"
 }
 
@@ -140,13 +139,4 @@ func TestOwnerLookupFor_DBError(t *testing.T) {
 	if errors.Is(err, errors.New("no rows")) {
 		t.Fatalf("DB error must not look like ErrNoRows, got %v", err)
 	}
-}
-
-// uuidToStringForOwnerLookup avoids depending on the existing
-// uuidToString helper here in case its signature changes; the
-// fixtures only need the canonical hyphenated form.
-//
-//nolint:unused // referenced via seedOwnerLookupUser indirectly.
-func uuidToStringForOwnerLookup(u pgtype.UUID) string {
-	return uuidToString(u)
 }

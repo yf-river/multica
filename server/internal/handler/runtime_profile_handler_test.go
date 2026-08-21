@@ -141,7 +141,7 @@ func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 // TestCreateRuntimeProfile_ForcesWorkspaceVisibility is the regression guard
 // for the visibility leak: visibility=private is not user-settable in v1
 // because the read paths don't enforce it. A client that POSTs
-// visibility:"private" must get a profile stored as 'workspace' — never
+// scope: "personal" must get a profile stored as 'workspace' — never
 // private — so a "private" profile can't leak to other members or be
 // registered by other daemons. Belt-and-suspenders: also assert the row in
 // the DB is 'workspace'.
@@ -156,7 +156,7 @@ func TestCreateRuntimeProfile_ForcesWorkspaceVisibility(t *testing.T) {
 		"display_name":    "Visibility Forced Profile",
 		"protocol_family": "codex",
 		"command_name":    "vis-forced-codex",
-		"visibility":      "private", // must be ignored
+		"scope": "personal", // must be ignored
 	})
 	req = withURLParam(req, "id", testWorkspaceID)
 	testHandler.CreateRuntimeProfile(w, req)

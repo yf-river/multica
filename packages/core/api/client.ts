@@ -3,6 +3,8 @@ import type {
   CreateIssueRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
+  IssueStatus,
+  ListIssueBucketsResponse,
   ListIssuesResponse,
   SearchIssuesResponse,
   SearchProjectsResponse,
@@ -13,10 +15,6 @@ import type {
   ListGroupedIssuesParams,
   Agent,
   CreateAgentRequest,
-  AgentTemplate,
-  AgentTemplateSummary,
-  CreateAgentFromTemplateRequest,
-  CreateAgentFromTemplateResponse,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
@@ -35,6 +33,7 @@ import type {
   IssueReaction,
   Workspace,
   WorkspaceRepo,
+  WorkspaceRepoProbeResponse,
   MemberWithUser,
   User,
   Skill,
@@ -47,14 +46,18 @@ import type {
   CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
+  IssueTaskTraceResponse,
+  IssueExecutionTreeResponse,
+  ListIssueSOPRunsResponse,
+  CreateSOPRunRequest,
+  CreateSOPStepEventRequest,
+  SquadSOPRun,
+  SquadSOPStepEvent,
+  ObservabilitySummary,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
+  RuntimeUsageByTask,
   RuntimeUsageByHour,
-  DashboardUsageDaily,
-  DashboardUsageByAgent,
-  DashboardAgentRunTime,
-  DashboardRunTimeDaily,
-  RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
@@ -87,7 +90,6 @@ import type {
   CreatePinRequest,
   PinnedItemType,
   ReorderPinsRequest,
-  Invitation,
   Autopilot,
   AutopilotTrigger,
   AutopilotRun,
@@ -112,6 +114,103 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
+  InternalSquadTemplateKey,
+  EnsureInternalSquadTemplateRequest,
+  InternalSquadTemplateResponse,
+  CreateSquadRequest,
+  UpdateSquadRequest,
+  PromptLibraryItem,
+  PromptLibraryTrial,
+  PromptLibraryVersion,
+  PromptEvaluationAsset,
+  PromptEvaluationRun,
+  PromptEvaluationRunEvidence,
+  PromptEvaluationAssetEvidenceArchivePackage,
+  PromptEvaluationAssetEvidenceSnapshotResponse,
+  PromptEvaluationEvidenceSnapshot,
+  PromptEvaluationEvidenceSnapshotType,
+  PromptEvaluationStructuredCase,
+  PromptEvaluationAgentRunResponse,
+  CreatePromptEvaluationDatasetFromTracesRequest,
+  PromptEvaluationDatasetExportResponse,
+  ImportPromptEvaluationDatasetRequest,
+  ImportPromptEvaluationDatasetResponse,
+  CreatePromptEvaluationDatasetVersionRequest,
+  PromptEvaluationDatasetFromTracesResponse,
+  PromptEvaluationDatasetVersion,
+  PromptEvaluationDatasetVersionDiff,
+  RestorePromptEvaluationDatasetVersionRequest,
+  RestorePromptEvaluationDatasetVersionResponse,
+  PromptEvaluationOptimizationCandidate,
+  UpdatePromptEvaluationOptimizationCandidateRequest,
+  PublishPromptEvaluationOptimizationCandidateResponse,
+  ApplyPromptEvaluationSkillCandidateRequest,
+  CheckPromptEvaluationSkillFreshnessRequest,
+  CreatePromptEvaluationSkillCaseDraftsRequest,
+  CreatePromptEvaluationSkillInventoryRequest,
+  CreatePromptEvaluationSkillSnapshotRequest,
+  PreparePromptEvaluationSkillReEvalRequest,
+  RunPromptEvaluationSkillReEvalRequest,
+  PromptEvaluationSkillApplyCandidateResponse,
+  PromptEvaluationSkillCaseDraftsResult,
+  PromptEvaluationSkillFreshnessResult,
+  PromptEvaluationSkillInventoryResponse,
+  PromptEvaluationSkillReEvalAssetResponse,
+  PromptEvaluationSkillReEvalRunResponse,
+  PromptEvaluationSkillSnapshotResult,
+  ListPromptEvaluationAssetsParams,
+  ListPromptEvaluationRunsParams,
+  ListPromptEvaluationCasesParams,
+  ListPromptEvaluationCaseTagSummariesParams,
+  ListPromptEvaluationCaseTagDatasetSummariesParams,
+  ListPromptEvaluationCaseOperationsParams,
+  ListPromptEvaluationDatasetVersionTagTrendsParams,
+  ListPromptEvaluationDimensionScoresParams,
+  ListPromptEvaluationDimensionScoreSummariesParams,
+  ListPromptEvaluationDimensionScoreTrendsParams,
+  ListPromptEvaluationOptimizationCandidatesParams,
+  ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationDatasetVersionRowsResponse,
+  ListPromptEvaluationDatasetVersionTagTrendsResponse,
+  ListPromptEvaluationDatasetVersionsResponse,
+  ListPromptEvaluationRunsResponse,
+  ListPromptEvaluationTrialsResponse,
+  ListPromptEvaluationEvidenceSnapshotsResponse,
+  ListPromptEvaluationCasesResponse,
+  ListPromptEvaluationCaseTagSummariesResponse,
+  ListPromptEvaluationCaseTagDatasetSummariesResponse,
+  ListPromptEvaluationCaseOperationsResponse,
+  ListPromptEvaluationDimensionScoresResponse,
+  ListPromptEvaluationDimensionScoreSummariesResponse,
+  ListPromptEvaluationDimensionScoreTrendsResponse,
+  ListPromptEvaluationOptimizationCandidatesResponse,
+  CreatePromptEvaluationAssetRequest,
+  UpdatePromptEvaluationAssetRequest,
+  ReviewPromptEvaluationRunRequest,
+  CreatePromptEvaluationCaseRequest,
+  UpdatePromptEvaluationCaseRequest,
+  BulkUpdatePromptEvaluationCaseTagsRequest,
+  BulkUpdatePromptEvaluationCaseTagsResponse,
+  ListPromptLibraryItemsParams,
+  ListPromptLibraryItemsResponse,
+  ListPromptLibraryTrialsResponse,
+  ListPromptLibraryVersionsResponse,
+  CreatePromptLibraryItemRequest,
+  CreatePromptLibraryVersionRequest,
+  CreatePromptLibraryVersionResponse,
+  CreatePromptLibraryTrialRequest,
+  UpdatePromptLibraryItemRequest,
+  AgentPlaygroundDetail,
+  ListAgentPlaygroundExperimentsResponse,
+  CreateAgentPlaygroundExperimentRequest,
+  JudgeAgentPlaygroundExperimentRequest,
+  ExternalCredentialProvider,
+  ExternalCredentialProfile,
+  ListExternalCredentialProfilesResponse,
+  CreateExternalCredentialProfileRequest,
+  UpdateExternalCredentialProfileRequest,
+  TestExternalCredentialProfileRequest,
+  TestExternalCredentialProfileResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -119,44 +218,131 @@ import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
-  AgentTemplateSchema,
-  AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
-  CreateAgentFromTemplateResponseSchema,
-  DashboardAgentRunTimeListSchema,
-  DashboardRunTimeDailyListSchema,
-  DashboardUsageByAgentListSchema,
-  DashboardUsageDailyListSchema,
-  EMPTY_AGENT_TEMPLATE_DETAIL,
-  EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
-  EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
+  EMPTY_LIST_ISSUE_BUCKETS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
+  EMPTY_SQUAD_SOP_RUN,
+  EMPTY_ISSUE_SOP_RUNS_RESPONSE,
+  EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_ITEM,
+  EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_TRIAL,
+  EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_VERSION,
+  EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
+  EMPTY_AGENT_PLAYGROUND_DETAIL,
+  EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_ASSET,
+  EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_RUN,
+  EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
+  EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
+  EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
+  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE,
+  EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE,
+  EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
+  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT,
+  EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
+  EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT,
+  EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
+  EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
+  ListIssueBucketsResponseSchema,
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   ListIssuesResponseSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
+  RuntimeUsageByTaskListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
+  PromptEvaluationAssetSchema,
+  PromptEvaluationAssetListResponseSchema,
+  PromptEvaluationDatasetExportResponseSchema,
+  ImportPromptEvaluationDatasetResponseSchema,
+  PromptEvaluationDatasetFromTracesResponseSchema,
+  PromptEvaluationDatasetVersionDiffSchema,
+  PromptEvaluationDatasetVersionListResponseSchema,
+  PromptEvaluationDatasetVersionRowListResponseSchema,
+  PromptEvaluationDatasetVersionTagTrendListResponseSchema,
+  PromptEvaluationDatasetVersionSchema,
+  RestorePromptEvaluationDatasetVersionResponseSchema,
+  PromptEvaluationRunListResponseSchema,
+  PromptEvaluationRunSchema,
+  PromptEvaluationTrialListResponseSchema,
+  PromptEvaluationRunEvidenceSchema,
+  PromptEvaluationAssetEvidenceArchivePackageSchema,
+  PromptEvaluationAssetEvidenceSnapshotResponseSchema,
+  PromptEvaluationEvidenceSnapshotSchema,
+  PromptEvaluationEvidenceSnapshotListResponseSchema,
+  PromptEvaluationCaseSchema,
+  PromptEvaluationCaseListResponseSchema,
+  PromptEvaluationCaseTagSummaryListResponseSchema,
+  PromptEvaluationCaseTagDatasetSummaryListResponseSchema,
+  PromptEvaluationCaseOperationListResponseSchema,
+  BulkUpdatePromptEvaluationCaseTagsResponseSchema,
+  PromptEvaluationDimensionScoreListResponseSchema,
+  PromptEvaluationDimensionScoreSummaryListResponseSchema,
+  PromptEvaluationDimensionScoreTrendListResponseSchema,
+  PromptEvaluationOptimizationCandidateSchema,
+  PromptEvaluationOptimizationCandidateListResponseSchema,
+  PromptEvaluationSkillApplyCandidateResponseSchema,
+  PromptEvaluationSkillCaseDraftsResultSchema,
+  PromptEvaluationSkillFreshnessResultSchema,
+  PromptEvaluationSkillInventoryResponseSchema,
+  PromptEvaluationSkillReEvalAssetResponseSchema,
+  PromptEvaluationSkillReEvalRunResponseSchema,
+  PromptEvaluationSkillSnapshotResultSchema,
+  PublishPromptEvaluationOptimizationCandidateResponseSchema,
+  PromptLibraryItemSchema,
+  PromptLibraryItemListResponseSchema,
+  PromptLibraryTrialListResponseSchema,
+  PromptLibraryTrialSchema,
+  PromptLibraryVersionSchema,
+  PromptLibraryVersionListResponseSchema,
+  AgentPlaygroundDetailSchema,
+  AgentPlaygroundExperimentListResponseSchema,
+  IssueSOPRunsResponseSchema,
+  ObservabilitySummarySchema,
   SquadSchema,
+  SquadSOPRunSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
@@ -227,6 +413,31 @@ export class PreviewUnsupportedError extends Error {
     super("attachment type not supported for inline preview");
     this.name = "PreviewUnsupportedError";
   }
+}
+
+function issueSearchParams(params?: ListIssuesParams) {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.offset) search.set("offset", String(params.offset));
+  if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
+  if (params?.status) search.set("status", params.status);
+  if (params?.priority) search.set("priority", params.priority);
+  if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
+  if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
+  if (params?.creator_id) search.set("creator_id", params.creator_id);
+  if (params?.project_id) search.set("project_id", params.project_id);
+  if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
+  if (params?.metadata && Object.keys(params.metadata).length > 0) {
+    search.set("metadata", JSON.stringify(params.metadata));
+  }
+  if (params?.open_only) search.set("open_only", "true");
+  if (params?.scheduled) search.set("scheduled", "true");
+  if (params?.date_field) search.set("date_field", params.date_field);
+  if (params?.date_start) search.set("date_start", params.date_start);
+  if (params?.date_end) search.set("date_end", params.date_end);
+  if (params?.sort_by) search.set("sort", params.sort_by);
+  if (params?.sort_direction) search.set("direction", params.sort_direction);
+  return search;
 }
 
 export class ApiClient {
@@ -334,7 +545,7 @@ export class ApiClient {
     if (!res.ok) {
       if (res.status === 401) this.handleUnauthorized();
       const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
-      const logLevel = res.status === 404 ? "warn" : "error";
+      const logLevel = res.status >= 500 ? "error" : "warn";
       this.logger[logLevel](`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
       throw new ApiError(message, res.status, res.statusText, body);
     }
@@ -356,24 +567,10 @@ export class ApiClient {
   }
 
   // Auth
-  async sendCode(email: string): Promise<void> {
-    await this.fetch("/auth/send-code", {
+  async login(account: string, password: string): Promise<LoginResponse> {
+    return this.fetch("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email }),
-    });
-  }
-
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch("/auth/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ email, code }),
-    });
-  }
-
-  async googleLogin(code: string, redirectUri: string): Promise<LoginResponse> {
-    return this.fetch("/auth/google", {
-      method: "POST",
-      body: JSON.stringify({ code, redirect_uri: redirectUri }),
+      body: JSON.stringify({ account, password }),
     });
   }
 
@@ -392,13 +589,13 @@ export class ApiClient {
     });
   }
 
-  async markOnboardingComplete(payload?: {
-    completion_path?: OnboardingCompletionPath;
+  async markOnboardingComplete(payload: {
+    completion_path: OnboardingCompletionPath;
     workspace_id?: string;
   }): Promise<User> {
     const raw = await this.fetch<unknown>("/api/me/onboarding/complete", {
       method: "POST",
-      body: payload ? JSON.stringify(payload) : undefined,
+      body: JSON.stringify(payload),
     });
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "POST /api/me/onboarding/complete",
@@ -429,31 +626,21 @@ export class ApiClient {
 
   // Issues
   async listIssues(params?: ListIssuesParams): Promise<ListIssuesResponse> {
-    const search = new URLSearchParams();
-    if (params?.limit) search.set("limit", String(params.limit));
-    if (params?.offset) search.set("offset", String(params.offset));
-    if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.priority) search.set("priority", params.priority);
-    if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
-    if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
-    if (params?.creator_id) search.set("creator_id", params.creator_id);
-    if (params?.project_id) search.set("project_id", params.project_id);
-    if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
-    if (params?.metadata && Object.keys(params.metadata).length > 0) {
-      search.set("metadata", JSON.stringify(params.metadata));
-    }
-    if (params?.open_only) search.set("open_only", "true");
-    if (params?.scheduled) search.set("scheduled", "true");
-    if (params?.date_field) search.set("date_field", params.date_field);
-    if (params?.date_start) search.set("date_start", params.date_start);
-    if (params?.date_end) search.set("date_end", params.date_end);
-    if (params?.sort_by) search.set("sort", params.sort_by);
-    if (params?.sort_direction) search.set("direction", params.sort_direction);
+    const search = issueSearchParams(params);
     const path = `/api/issues?${search}`;
     const raw = await this.fetch<unknown>(path);
     return parseWithFallback(raw, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, {
       endpoint: "GET /api/issues",
+    });
+  }
+
+  async listIssueBuckets(params?: ListIssuesParams & { statuses?: IssueStatus[] }): Promise<ListIssueBucketsResponse> {
+    const search = issueSearchParams(params);
+    if (params?.statuses?.length) search.set("statuses", params.statuses.join(","));
+    const path = `/api/issues/buckets?${search}`;
+    const raw = await this.fetch<unknown>(path);
+    return parseWithFallback(raw, ListIssueBucketsResponseSchema, EMPTY_LIST_ISSUE_BUCKETS_RESPONSE, {
+      endpoint: "GET /api/issues/buckets",
     });
   }
 
@@ -529,8 +716,17 @@ export class ApiClient {
     prompt: string;
     project_id?: string | null;
     parent_issue_id?: string | null;
+    status?: string;
+    priority?: string;
+    start_date?: string | null;
+    due_date?: string | null;
     attachment_ids?: string[];
-  }): Promise<{ task_id: string }> {
+  }): Promise<{
+    task_id?: string;
+    issue_id?: string;
+    identifier?: string;
+    source_fetch_status?: string;
+  }> {
     return this.fetch("/api/issues/quick-create", {
       method: "POST",
       body: JSON.stringify(data),
@@ -750,51 +946,6 @@ export class ApiClient {
     });
   }
 
-  async listAgentTemplates(): Promise<AgentTemplateSummary[]> {
-    const raw = await this.fetch<unknown>("/api/agent-templates");
-    return parseWithFallback(
-      raw,
-      AgentTemplateSummaryListSchema,
-      EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
-      { endpoint: "GET /api/agent-templates" },
-    );
-  }
-
-  async getAgentTemplate(slug: string): Promise<AgentTemplate> {
-    const raw = await this.fetch<unknown>(
-      `/api/agent-templates/${encodeURIComponent(slug)}`,
-    );
-    // Round-trip the requested slug into the fallback so a malformed
-    // detail response still produces a navigable record matching the URL
-    // the user clicked.
-    return parseWithFallback(
-      raw,
-      AgentTemplateSchema,
-      { ...EMPTY_AGENT_TEMPLATE_DETAIL, slug },
-      { endpoint: "GET /api/agent-templates/:slug" },
-    );
-  }
-
-  /** Creates an agent from a curated template. The server fetches every
-   *  referenced skill URL in parallel, materializes them into the workspace
-   *  (find-or-create by name), and writes the agent + skill bindings in a
-   *  single transaction. On any upstream fetch failure, the entire write is
-   *  rolled back and the API returns 422 with `failed_urls`. */
-  async createAgentFromTemplate(
-    data: CreateAgentFromTemplateRequest,
-  ): Promise<CreateAgentFromTemplateResponse> {
-    const raw = await this.fetch<unknown>("/api/agents/from-template", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(
-      raw,
-      CreateAgentFromTemplateResponseSchema,
-      EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
-      { endpoint: "POST /api/agents/from-template" },
-    );
-  }
-
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
     return this.fetch(`/api/agents/${id}`, {
       method: "PUT",
@@ -874,7 +1025,7 @@ export class ApiClient {
 
   async updateRuntime(
     runtimeId: string,
-    patch: { visibility?: "private" | "public" },
+    patch: { scope?: "personal" | "workspace" },
   ): Promise<AgentRuntime> {
     return this.fetch(`/api/runtimes/${runtimeId}`, {
       method: "PATCH",
@@ -992,6 +1143,24 @@ export class ApiClient {
     );
   }
 
+  async getRuntimeUsageByTask(
+    runtimeId: string,
+    params?: { days?: number; tz?: string },
+  ): Promise<RuntimeUsageByTask[]> {
+    const search = new URLSearchParams();
+    if (params?.days) search.set("days", String(params.days));
+    if (params?.tz) search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/${runtimeId}/usage/by-task?${search}`,
+    );
+    return parseWithFallback<RuntimeUsageByTask[]>(
+      raw,
+      RuntimeUsageByTaskListSchema,
+      [],
+      { endpoint: "GET /api/runtimes/:id/usage/by-task" },
+    );
+  }
+
   async getRuntimeUsageByHour(
     runtimeId: string,
     params?: { days?: number; tz?: string },
@@ -1008,98 +1177,6 @@ export class ApiClient {
       [],
       { endpoint: "GET /api/runtimes/:id/usage/by-hour" },
     );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Workspace dashboard — three independent rollups for `/{slug}/dashboard`.
-  // Each accepts an optional `project_id` to narrow the scope to one project.
-  // Cost is computed client-side from the model pricing table (same contract
-  // as the per-runtime endpoints above).
-  // ---------------------------------------------------------------------------
-
-  async getDashboardUsageDaily(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardUsageDaily[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
-    if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/usage/daily?${search}`);
-    return parseWithFallback<DashboardUsageDaily[]>(
-      raw,
-      DashboardUsageDailyListSchema,
-      [],
-      { endpoint: "GET /api/dashboard/usage/daily" },
-    );
-  }
-
-  async getDashboardUsageByAgent(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardUsageByAgent[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
-    if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/usage/by-agent?${search}`);
-    return parseWithFallback<DashboardUsageByAgent[]>(
-      raw,
-      DashboardUsageByAgentListSchema,
-      [],
-      { endpoint: "GET /api/dashboard/usage/by-agent" },
-    );
-  }
-
-  async getDashboardAgentRunTime(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardAgentRunTime[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
-    // `tz` aligns the "last N days" cutoff with the viewer's calendar,
-    // matching the per-agent token card.
-    if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/agent-runtime?${search}`);
-    return parseWithFallback<DashboardAgentRunTime[]>(
-      raw,
-      DashboardAgentRunTimeListSchema,
-      [],
-      { endpoint: "GET /api/dashboard/agent-runtime" },
-    );
-  }
-
-  async getDashboardRunTimeDaily(
-    params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardRunTimeDaily[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
-    // `tz` cuts the day buckets in the viewer's calendar so Time / Tasks
-    // align with the Cost / Tokens charts.
-    if (params.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(`/api/dashboard/runtime/daily?${search}`);
-    return parseWithFallback<DashboardRunTimeDaily[]>(
-      raw,
-      DashboardRunTimeDailyListSchema,
-      [],
-      { endpoint: "GET /api/dashboard/runtime/daily" },
-    );
-  }
-
-  async initiateUpdate(
-    runtimeId: string,
-    targetVersion: string,
-  ): Promise<RuntimeUpdate> {
-    return this.fetch(`/api/runtimes/${runtimeId}/update`, {
-      method: "POST",
-      body: JSON.stringify({ target_version: targetVersion }),
-    });
-  }
-
-  async getUpdateResult(
-    runtimeId: string,
-    updateId: string,
-  ): Promise<RuntimeUpdate> {
-    return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
   async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
@@ -1187,6 +1264,38 @@ export class ApiClient {
     return this.fetch(`/api/issues/${issueId}/usage`);
   }
 
+  async listIssueTaskTraceEvents(issueId: string): Promise<IssueTaskTraceResponse> {
+    return this.fetch(`/api/issues/${issueId}/trace`);
+  }
+
+  async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
+    return this.fetch(`/api/issues/${issueId}/execution-tree`);
+  }
+
+  async listIssueSOPRuns(issueId: string): Promise<ListIssueSOPRunsResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`);
+    return parseWithFallback(raw, IssueSOPRunsResponseSchema, EMPTY_ISSUE_SOP_RUNS_RESPONSE, {
+      endpoint: "GET /api/issues/:id/sop-runs",
+    }) as ListIssueSOPRunsResponse;
+  }
+
+  async createIssueSOPRun(issueId: string, data: CreateSOPRunRequest = {}): Promise<SquadSOPRun> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SquadSOPRunSchema, EMPTY_SQUAD_SOP_RUN, {
+      endpoint: "POST /api/issues/:id/sop-runs",
+    }) as SquadSOPRun;
+  }
+
+  async recordSOPStepEvent(runId: string, stepId: string, data: CreateSOPStepEventRequest): Promise<SquadSOPStepEvent> {
+    return this.fetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -1270,6 +1379,18 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${id}`);
   }
 
+  async getWorkspaceObservabilitySummary(id: string, paramsInput?: { since?: string; squad_id?: string; project_id?: string; agent_id?: string }): Promise<ObservabilitySummary> {
+    const params = new URLSearchParams();
+    if (paramsInput?.since) params.set("since", paramsInput.since);
+    if (paramsInput?.squad_id) params.set("squad_id", paramsInput.squad_id);
+    if (paramsInput?.project_id) params.set("project_id", paramsInput.project_id);
+    if (paramsInput?.agent_id) params.set("agent_id", paramsInput.agent_id);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${id}/observability/summary${params.toString() ? `?${params}` : ""}`);
+    return parseWithFallback(raw, ObservabilitySummarySchema, EMPTY_OBSERVABILITY_SUMMARY, {
+      endpoint: "GET /api/workspaces/:id/observability/summary",
+    }) as ObservabilitySummary;
+  }
+
   async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }): Promise<Workspace> {
     return this.fetch("/api/workspaces", {
       method: "POST",
@@ -1284,12 +1405,26 @@ export class ApiClient {
     });
   }
 
+  async resolveWorkspaceRepo(workspaceId: string, data: { url: string; default_branch?: string }): Promise<WorkspaceRepo> {
+    return this.fetch(`/api/workspaces/${workspaceId}/repos/resolve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async probeWorkspaceRepo(workspaceId: string, data: { url: string }): Promise<WorkspaceRepoProbeResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/repos/probe`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   // Members
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`);
   }
 
-  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<Invitation> {
+  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<MemberWithUser> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
       body: JSON.stringify(data),
@@ -1311,37 +1446,6 @@ export class ApiClient {
 
   async leaveWorkspace(workspaceId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/leave`, {
-      method: "POST",
-    });
-  }
-
-  // Invitations
-  async listWorkspaceInvitations(workspaceId: string): Promise<Invitation[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/invitations`);
-  }
-
-  async revokeInvitation(workspaceId: string, invitationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
-      method: "DELETE",
-    });
-  }
-
-  async listMyInvitations(): Promise<Invitation[]> {
-    return this.fetch("/api/invitations");
-  }
-
-  async getInvitation(invitationId: string): Promise<Invitation> {
-    return this.fetch(`/api/invitations/${invitationId}`);
-  }
-
-  async acceptInvitation(invitationId: string): Promise<MemberWithUser> {
-    return this.fetch(`/api/invitations/${invitationId}/accept`, {
-      method: "POST",
-    });
-  }
-
-  async declineInvitation(invitationId: string): Promise<void> {
-    await this.fetch(`/api/invitations/${invitationId}/decline`, {
       method: "POST",
     });
   }
@@ -1380,10 +1484,17 @@ export class ApiClient {
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
-    return this.fetch("/api/skills/import", {
+    const result = await this.fetch<{ status: string; skill?: Skill }>(
+      "/api/skills/import",
+      {
       method: "POST",
-      body: JSON.stringify(data),
-    });
+        body: JSON.stringify({ ...data, on_conflict: "fail" }),
+      },
+    );
+    if (result.status !== "created" || !result.skill) {
+      throw new Error(`Unexpected skill import result: ${result.status}`);
+    }
+    return result.skill;
   }
 
   async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
@@ -1636,6 +1747,697 @@ export class ApiClient {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
+  // Prompt library
+  async listPromptLibraryItems(params?: ListPromptLibraryItemsParams): Promise<ListPromptLibraryItemsResponse> {
+    const search = new URLSearchParams();
+    if (params?.project_id) search.set("project_id", params.project_id);
+    if (params?.prompt_type) search.set("prompt_type", params.prompt_type);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-library${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, EMPTY_PROMPT_LIBRARY_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-library",
+    }) as ListPromptLibraryItemsResponse;
+  }
+
+  async getPromptLibraryItem(id: string): Promise<PromptLibraryItem> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`);
+    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      endpoint: "GET /api/prompt-library/:id",
+    }) as PromptLibraryItem;
+  }
+
+  async listPromptLibraryVersions(id: string): Promise<ListPromptLibraryVersionsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
+    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-library/:id/versions",
+    }) as ListPromptLibraryVersionsResponse;
+  }
+
+  async listPromptLibraryTrials(id: string): Promise<ListPromptLibraryTrialsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/trials`);
+    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-library/:id/trials",
+    }) as ListPromptLibraryTrialsResponse;
+  }
+
+  async createPromptLibraryItem(data: CreatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
+    const raw = await this.fetch<unknown>("/api/prompt-library", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      endpoint: "POST /api/prompt-library",
+    }) as PromptLibraryItem;
+  }
+
+  async createPromptLibraryVersion(id: string, data: CreatePromptLibraryVersionRequest): Promise<CreatePromptLibraryVersionResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const response = raw && typeof raw === "object" ? raw as { item?: unknown; version?: unknown } : {};
+    return {
+      item: parseWithFallback(response.item, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+        endpoint: "POST /api/prompt-library/:id/versions.item",
+      }) as PromptLibraryItem,
+      version: parseWithFallback(response.version, PromptLibraryVersionSchema, EMPTY_PROMPT_LIBRARY_VERSION, {
+        endpoint: "POST /api/prompt-library/:id/versions.version",
+      }) as PromptLibraryVersion,
+    };
+  }
+
+  async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest): Promise<PromptLibraryTrial> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions/${versionId}/trials`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
+      endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
+    }) as PromptLibraryTrial;
+  }
+
+  async updatePromptLibraryItem(id: string, data: UpdatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      endpoint: "PUT /api/prompt-library/:id",
+    }) as PromptLibraryItem;
+  }
+
+  async deletePromptLibraryItem(id: string): Promise<void> {
+    await this.fetch(`/api/prompt-library/${id}`, { method: "DELETE" });
+  }
+
+  // Agent playground
+  async listAgentPlaygroundExperiments(): Promise<ListAgentPlaygroundExperimentsResponse> {
+    const raw = await this.fetch<unknown>("/api/agent-playground-experiments");
+    return parseWithFallback(raw, AgentPlaygroundExperimentListResponseSchema, EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE, {
+      endpoint: "GET /api/agent-playground-experiments",
+    }) as ListAgentPlaygroundExperimentsResponse;
+  }
+
+  async getAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}`);
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "GET /api/agent-playground-experiments/:id",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async createAgentPlaygroundExperiment(data: CreateAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>("/api/agent-playground-experiments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments/:id/run",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async syncAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/sync`, { method: "POST" });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments/:id/sync",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async judgeAgentPlaygroundExperiment(id: string, data?: JudgeAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/judge`, {
+      method: "POST",
+      body: JSON.stringify(data ?? {}),
+    });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments/:id/judge",
+    }) as AgentPlaygroundDetail;
+  }
+
+  // Prompt evaluation assets
+  async listPromptEvaluationAssets(params?: ListPromptEvaluationAssetsParams): Promise<ListPromptEvaluationAssetsResponse> {
+    const search = new URLSearchParams();
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.asset_type) search.set("asset_type", params.asset_type);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets",
+    }) as ListPromptEvaluationAssetsResponse;
+  }
+
+  async getPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`);
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id",
+    }) as PromptEvaluationAsset;
+  }
+
+  async createPromptEvaluationAsset(data: CreatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "POST /api/prompt-evaluation-assets",
+    }) as PromptEvaluationAsset;
+  }
+
+  async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "PUT /api/prompt-evaluation-assets/:id",
+    }) as PromptEvaluationAsset;
+  }
+
+  async deletePromptEvaluationAsset(id: string): Promise<void> {
+    await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
+  }
+
+  async createPromptEvaluationSkillInventory(
+    id: string,
+    data: CreatePromptEvaluationSkillInventoryRequest,
+  ): Promise<PromptEvaluationSkillInventoryResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-inventory`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillInventoryResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-inventory",
+    }) as PromptEvaluationSkillInventoryResponse;
+  }
+
+  async createPromptEvaluationSkillSnapshot(
+    id: string,
+    data: CreatePromptEvaluationSkillSnapshotRequest,
+  ): Promise<PromptEvaluationSkillSnapshotResult> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-snapshot`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillSnapshotResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-snapshot",
+    }) as PromptEvaluationSkillSnapshotResult;
+  }
+
+  async createPromptEvaluationSkillCaseDrafts(
+    id: string,
+    data: CreatePromptEvaluationSkillCaseDraftsRequest,
+  ): Promise<PromptEvaluationSkillCaseDraftsResult> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-case-drafts`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillCaseDraftsResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-case-drafts",
+    }) as PromptEvaluationSkillCaseDraftsResult;
+  }
+
+  async exportPromptEvaluationDataset(id: string): Promise<PromptEvaluationDatasetExportResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-export`);
+    return parseWithFallback(raw, PromptEvaluationDatasetExportResponseSchema, {
+      schema: "multica.prompt_evaluation.dataset_export.v1",
+      exported_at: "",
+      source_asset_id: id,
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      case_count: 0,
+      cases: [],
+      payload: {},
+    }, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-export",
+    }) as PromptEvaluationDatasetExportResponse;
+  }
+
+  async importPromptEvaluationDataset(data: ImportPromptEvaluationDatasetRequest): Promise<ImportPromptEvaluationDatasetResponse> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets/dataset-import", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ImportPromptEvaluationDatasetResponseSchema, {
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      source_asset_id: data.export.source_asset_id,
+      case_count: 0,
+      cases: [],
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/dataset-import",
+    }) as ImportPromptEvaluationDatasetResponse;
+  }
+
+  async createPromptEvaluationDatasetFromTraces(
+    id: string,
+    data: CreatePromptEvaluationDatasetFromTracesRequest = {},
+  ): Promise<PromptEvaluationDatasetFromTracesResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      cases: [],
+      trace_events: [],
+      created_count: 0,
+      skipped_count: 0,
+      source: "trace",
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
+    }) as PromptEvaluationDatasetFromTracesResponse;
+  }
+
+  async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<ListPromptEvaluationDatasetVersionsResponse> {
+    const search = new URLSearchParams();
+    if (limit) search.set("limit", String(limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions",
+    }) as ListPromptEvaluationDatasetVersionsResponse;
+  }
+
+  async listPromptEvaluationDatasetVersionTagTrends(id: string, params?: ListPromptEvaluationDatasetVersionTagTrendsParams): Promise<ListPromptEvaluationDatasetVersionTagTrendsResponse> {
+    const search = new URLSearchParams();
+    if (params?.version_limit) search.set("version_limit", String(params.version_limit));
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/tag-trends${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionTagTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/tag-trends",
+    }) as ListPromptEvaluationDatasetVersionTagTrendsResponse;
+  }
+
+  async createPromptEvaluationDatasetVersion(
+    id: string,
+    data: CreatePromptEvaluationDatasetVersionRequest = {},
+  ): Promise<PromptEvaluationDatasetVersion> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionSchema, {
+      id: "",
+      workspace_id: "",
+      dataset_asset_id: id,
+      version: 0,
+      version_label: "",
+      row_count: 0,
+      row_fingerprint: "",
+      metadata: {},
+      created_by: null,
+      created_at: "",
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
+    }) as PromptEvaluationDatasetVersion;
+  }
+
+  async listPromptEvaluationDatasetVersionRows(id: string, versionId: string): Promise<ListPromptEvaluationDatasetVersionRowsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/rows`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionRowListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/rows",
+    }) as ListPromptEvaluationDatasetVersionRowsResponse;
+  }
+
+  async diffPromptEvaluationDatasetVersion(
+    id: string,
+    baseVersionId: string,
+    targetVersionId: string,
+  ): Promise<PromptEvaluationDatasetVersionDiff> {
+    const search = new URLSearchParams({ target_version_id: targetVersionId });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionDiffSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/diff",
+    }) as PromptEvaluationDatasetVersionDiff;
+  }
+
+  async restorePromptEvaluationDatasetVersion(
+    id: string,
+    versionId: string,
+    data: RestorePromptEvaluationDatasetVersionRequest = {},
+  ): Promise<RestorePromptEvaluationDatasetVersionResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/restore`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, RestorePromptEvaluationDatasetVersionResponseSchema, EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/restore",
+    }) as RestorePromptEvaluationDatasetVersionResponse;
+  }
+
+  async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.source) search.set("source", params.source);
+    if (params?.tag) search.set("tag", params.tag);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.cursor) search.set("cursor", params.cursor);
+    if (params?.sort_by) search.set("sort_by", params.sort_by);
+    if (params?.sort_direction) search.set("sort_direction", params.sort_direction);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-cases",
+    }) as ListPromptEvaluationCasesResponse;
+  }
+
+  async listPromptEvaluationCaseTagSummaries(params?: ListPromptEvaluationCaseTagSummariesParams): Promise<ListPromptEvaluationCaseTagSummariesResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.source) search.set("source", params.source);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-summaries${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseTagSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-cases/tag-summaries",
+    }) as ListPromptEvaluationCaseTagSummariesResponse;
+  }
+
+  async listPromptEvaluationCaseTagDatasetSummaries(params?: ListPromptEvaluationCaseTagDatasetSummariesParams): Promise<ListPromptEvaluationCaseTagDatasetSummariesResponse> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.source) search.set("source", params.source);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.top_dataset_limit) search.set("top_dataset_limit", String(params.top_dataset_limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-dataset-summaries${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseTagDatasetSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-cases/tag-dataset-summaries",
+    }) as ListPromptEvaluationCaseTagDatasetSummariesResponse;
+  }
+
+  async listPromptEvaluationCaseOperations(id: string, params?: ListPromptEvaluationCaseOperationsParams): Promise<ListPromptEvaluationCaseOperationsResponse> {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/case-operations${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseOperationListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/case-operations",
+    }) as ListPromptEvaluationCaseOperationsResponse;
+  }
+
+  async createPromptEvaluationCase(data: CreatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+      endpoint: "POST /api/prompt-evaluation-cases",
+    }) as PromptEvaluationStructuredCase;
+  }
+
+  async bulkUpdatePromptEvaluationCaseTags(data: BulkUpdatePromptEvaluationCaseTagsRequest): Promise<BulkUpdatePromptEvaluationCaseTagsResponse> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases/bulk-tags", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, BulkUpdatePromptEvaluationCaseTagsResponseSchema, EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-cases/bulk-tags",
+    }) as BulkUpdatePromptEvaluationCaseTagsResponse;
+  }
+
+  async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+      endpoint: "PUT /api/prompt-evaluation-cases/:id",
+    }) as PromptEvaluationStructuredCase;
+  }
+
+  async deletePromptEvaluationCase(id: string): Promise<void> {
+    await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
+  }
+
+  async listPromptEvaluationDimensionScores(params?: ListPromptEvaluationDimensionScoresParams): Promise<ListPromptEvaluationDimensionScoresResponse> {
+    const search = new URLSearchParams();
+    if (params?.run_id) search.set("run_id", params.run_id);
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-scores${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDimensionScoreListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-dimension-scores",
+    }) as ListPromptEvaluationDimensionScoresResponse;
+  }
+
+  async listPromptEvaluationDimensionScoreSummaries(params?: ListPromptEvaluationDimensionScoreSummariesParams): Promise<ListPromptEvaluationDimensionScoreSummariesResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-summaries${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDimensionScoreSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-dimension-score-summaries",
+    }) as ListPromptEvaluationDimensionScoreSummariesResponse;
+  }
+
+  async listPromptEvaluationDimensionScoreTrends(params?: ListPromptEvaluationDimensionScoreTrendsParams): Promise<ListPromptEvaluationDimensionScoreTrendsResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.since) search.set("since", params.since);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-trends${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDimensionScoreTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-dimension-score-trends",
+    }) as ListPromptEvaluationDimensionScoreTrendsResponse;
+  }
+
+  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/run",
+    }) as PromptEvaluationAsset;
+  }
+
+  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
+    const data = raw as Partial<PromptEvaluationAgentRunResponse>;
+    return {
+      asset: parseWithFallback(data.asset, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.asset",
+      }) as PromptEvaluationAsset,
+      run: parseWithFallback(data.run, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.run",
+      }) as PromptEvaluationRun,
+      task_id: data.task_id ?? "",
+      chat_session_id: data.chat_session_id ?? "",
+      agent_id: data.agent_id ?? "",
+      runtime_id: data.runtime_id ?? "",
+      model: data.model ?? "",
+      status: data.status ?? "",
+      message: data.message ?? "",
+    };
+  }
+
+  async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<ListPromptEvaluationRunsResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.since) search.set("since", params.since);
+    if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.offset) search.set("offset", String(params.offset));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-runs",
+    }) as ListPromptEvaluationRunsResponse;
+  }
+
+  async listPromptEvaluationRunTrials(runId: string): Promise<ListPromptEvaluationTrialsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/trials`);
+    return parseWithFallback(raw, PromptEvaluationTrialListResponseSchema, EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/trials",
+    }) as ListPromptEvaluationTrialsResponse;
+  }
+
+  async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence`);
+    return parseWithFallback(raw, PromptEvaluationRunEvidenceSchema, EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence",
+    }) as PromptEvaluationRunEvidence;
+  }
+
+  async listPromptEvaluationEvidenceSnapshots(runId: string, limit?: number): Promise<ListPromptEvaluationEvidenceSnapshotsResponse> {
+    const search = new URLSearchParams();
+    if (limit) search.set("limit", String(limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots",
+    }) as ListPromptEvaluationEvidenceSnapshotsResponse;
+  }
+
+  async createPromptEvaluationEvidenceSnapshot(runId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "手动归档"): Promise<PromptEvaluationEvidenceSnapshot> {
+    const search = new URLSearchParams({ snapshot_type: snapshotType });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
+    }) as PromptEvaluationEvidenceSnapshot;
+  }
+
+  async createPromptEvaluationAssetEvidenceSnapshots(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
+    const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
+    }) as PromptEvaluationAssetEvidenceSnapshotResponse;
+  }
+
+  async getPromptEvaluationAssetEvidenceArchivePackage(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceArchivePackage> {
+    const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots/export?${search.toString()}`);
+    return parseWithFallback(raw, PromptEvaluationAssetEvidenceArchivePackageSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/evidence-snapshots/export",
+    }) as PromptEvaluationAssetEvidenceArchivePackage;
+  }
+
+  async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots/:snapshotId",
+    }) as PromptEvaluationEvidenceSnapshot;
+  }
+
+  async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
+    }) as PromptEvaluationRun;
+  }
+
+  async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
+    }) as PromptEvaluationRun;
+  }
+
+  async reviewPromptEvaluationRun(runId: string, data: ReviewPromptEvaluationRunRequest): Promise<PromptEvaluationRun> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/review",
+    }) as PromptEvaluationRun;
+  }
+
+  async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<ListPromptEvaluationOptimizationCandidatesResponse> {
+    const search = new URLSearchParams();
+    if (params?.run_id) search.set("run_id", params.run_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-optimization-candidates",
+    }) as ListPromptEvaluationOptimizationCandidatesResponse;
+  }
+
+  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
+    }) as PromptEvaluationOptimizationCandidate;
+  }
+
+  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest): Promise<PromptEvaluationOptimizationCandidate> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      endpoint: "PUT /api/prompt-evaluation-optimization-candidates/:id",
+    }) as PromptEvaluationOptimizationCandidate;
+  }
+
+  async publishPromptEvaluationOptimizationCandidate(candidateId: string): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, { method: "POST" });
+    return parseWithFallback(raw, PublishPromptEvaluationOptimizationCandidateResponseSchema, EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
+    }) as PublishPromptEvaluationOptimizationCandidateResponse;
+  }
+
+  async checkPromptEvaluationSkillCandidateFreshness(
+    candidateId: string,
+    data: CheckPromptEvaluationSkillFreshnessRequest = {},
+  ): Promise<PromptEvaluationSkillFreshnessResult> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-freshness`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillFreshnessResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-freshness",
+    }) as PromptEvaluationSkillFreshnessResult;
+  }
+
+  async applyPromptEvaluationSkillCandidate(
+    candidateId: string,
+    data: ApplyPromptEvaluationSkillCandidateRequest,
+  ): Promise<PromptEvaluationSkillApplyCandidateResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillApplyCandidateResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
+    }) as PromptEvaluationSkillApplyCandidateResponse;
+  }
+
+  async preparePromptEvaluationSkillReEvalAsset(
+    candidateId: string,
+    data: PreparePromptEvaluationSkillReEvalRequest = {},
+  ): Promise<PromptEvaluationSkillReEvalAssetResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
+    }) as PromptEvaluationSkillReEvalAssetResponse;
+  }
+
+  async runPromptEvaluationSkillReEval(
+    candidateId: string,
+    data: RunPromptEvaluationSkillReEvalRequest = {},
+  ): Promise<PromptEvaluationSkillReEvalRunResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
+    }) as PromptEvaluationSkillReEvalRunResponse;
+  }
+
+  async rejectPromptEvaluationOptimizationCandidate(candidateId: string, reason?: string): Promise<PromptEvaluationOptimizationCandidate> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    });
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
+    }) as PromptEvaluationOptimizationCandidate;
+  }
+
   // Project resources
   async listProjectResources(
     projectId: string,
@@ -1664,11 +2466,63 @@ export class ApiClient {
     });
   }
 
+  async syncProjectResource(
+    projectId: string,
+    resourceId: string,
+  ): Promise<ProjectResource> {
+    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
+      method: "POST",
+    });
+  }
+
   async deleteProjectResource(
     projectId: string,
     resourceId: string,
   ): Promise<void> {
     await this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async listExternalCredentialProfiles(
+    provider?: ExternalCredentialProvider,
+  ): Promise<ListExternalCredentialProfilesResponse> {
+    const search = new URLSearchParams();
+    if (provider) search.set("provider", provider);
+    const query = search.toString();
+    return this.fetch(`/api/external-credential-profiles${query ? `?${query}` : ""}`);
+  }
+
+  async createExternalCredentialProfile(
+    data: CreateExternalCredentialProfileRequest,
+  ): Promise<ExternalCredentialProfile> {
+    return this.fetch("/api/external-credential-profiles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateExternalCredentialProfile(
+    id: string,
+    data: UpdateExternalCredentialProfileRequest,
+  ): Promise<ExternalCredentialProfile> {
+    return this.fetch(`/api/external-credential-profiles/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async testExternalCredentialProfile(
+    data: TestExternalCredentialProfileRequest,
+  ): Promise<TestExternalCredentialProfileResponse> {
+    return this.fetch("/api/external-credential-profiles/test", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteExternalCredentialProfile(id: string): Promise<void> {
+    await this.fetch(`/api/external-credential-profiles/${id}`, {
       method: "DELETE",
     });
   }
@@ -1741,8 +2595,11 @@ export class ApiClient {
   }
 
   // Squads
-  async listSquads(): Promise<Squad[]> {
-    const raw = await this.fetch<unknown>(`/api/squads`);
+  async listSquads(paramsInput?: { include_archived?: boolean }): Promise<Squad[]> {
+    const params = new URLSearchParams();
+    if (paramsInput?.include_archived) params.set("include_archived", "true");
+    const qs = params.toString();
+    const raw = await this.fetch<unknown>(`/api/squads${qs ? `?${qs}` : ""}`);
     return parseWithFallback(raw, SquadListSchema, EMPTY_SQUAD_LIST, {
       endpoint: "GET /api/squads",
     }) as Squad[];
@@ -1755,14 +2612,23 @@ export class ApiClient {
     }) as Squad;
   }
 
-  async createSquad(data: { name: string; description?: string; leader_id: string; avatar_url?: string }): Promise<Squad> {
+  async createSquad(data: CreateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "POST /api/squads",
     }) as Squad;
   }
 
-  async updateSquad(id: string, data: { name?: string; description?: string; instructions?: string; leader_id?: string; avatar_url?: string }): Promise<Squad> {
+  async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {
+    const body =
+      typeof template === "string" ? { template_key: template } : template;
+    return this.fetch("/api/squads/internal-template", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "PUT /api/squads/:id",
@@ -1771,6 +2637,13 @@ export class ApiClient {
 
   async deleteSquad(id: string): Promise<void> {
     await this.fetch(`/api/squads/${id}`, { method: "DELETE" });
+  }
+
+  async restoreSquad(id: string): Promise<Squad> {
+    const raw = await this.fetch<unknown>(`/api/squads/${id}/restore`, { method: "POST" });
+    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+      endpoint: "POST /api/squads/:id/restore",
+    }) as Squad;
   }
 
   async listSquadMembers(squadId: string): Promise<SquadMember[]> {

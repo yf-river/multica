@@ -14,7 +14,7 @@ import (
 const archiveAgent = `-- name: ArchiveAgent :one
 UPDATE agent SET archived_at = now(), archived_by = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 type ArchiveAgentParams struct {
@@ -32,7 +32,7 @@ func (q *Queries) ArchiveAgent(ctx context.Context, arg ArchiveAgentParams) (Age
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -56,7 +56,7 @@ const archiveAgentsByIDs = `-- name: ArchiveAgentsByIDs :many
 UPDATE agent
 SET archived_at = now(), archived_by = $1, updated_at = now()
 WHERE id = ANY($2::uuid[]) AND archived_at IS NULL
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 type ArchiveAgentsByIDsParams struct {
@@ -88,7 +88,7 @@ func (q *Queries) ArchiveAgentsByIDs(ctx context.Context, arg ArchiveAgentsByIDs
 			&i.AvatarUrl,
 			&i.RuntimeMode,
 			&i.RuntimeConfig,
-			&i.Visibility,
+			&i.Scope,
 			&i.Status,
 			&i.MaxConcurrentTasks,
 			&i.OwnerID,
@@ -119,7 +119,7 @@ const archiveAgentsByRuntime = `-- name: ArchiveAgentsByRuntime :many
 UPDATE agent
 SET archived_at = now(), archived_by = $1, updated_at = now()
 WHERE runtime_id = ANY($2::uuid[]) AND archived_at IS NULL
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 type ArchiveAgentsByRuntimeParams struct {
@@ -147,7 +147,7 @@ func (q *Queries) ArchiveAgentsByRuntime(ctx context.Context, arg ArchiveAgentsB
 			&i.AvatarUrl,
 			&i.RuntimeMode,
 			&i.RuntimeConfig,
-			&i.Visibility,
+			&i.Scope,
 			&i.Status,
 			&i.MaxConcurrentTasks,
 			&i.OwnerID,
@@ -597,7 +597,7 @@ func (q *Queries) ClaimAgentTask(ctx context.Context, agentID pgtype.UUID) (Agen
 const clearAgentMcpConfig = `-- name: ClearAgentMcpConfig :one
 UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -610,7 +610,7 @@ func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agen
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -633,7 +633,7 @@ func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agen
 const clearAgentThinkingLevel = `-- name: ClearAgentThinkingLevel :one
 UPDATE agent SET thinking_level = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 // Explicit NULL-clear for thinking_level. COALESCE-based UpdateAgent cannot
@@ -649,7 +649,7 @@ func (q *Queries) ClearAgentThinkingLevel(ctx context.Context, id pgtype.UUID) (
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -738,10 +738,10 @@ func (q *Queries) CountRunningTasks(ctx context.Context, agentID pgtype.UUID) (i
 const createAgent = `-- name: CreateAgent :one
 INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,
-    runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id,
+    runtime_config, runtime_id, scope, max_concurrent_tasks, owner_id,
     instructions, custom_env, custom_args, mcp_config, model, thinking_level
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 type CreateAgentParams struct {
@@ -752,7 +752,7 @@ type CreateAgentParams struct {
 	RuntimeMode        string      `json:"runtime_mode"`
 	RuntimeConfig      []byte      `json:"runtime_config"`
 	RuntimeID          pgtype.UUID `json:"runtime_id"`
-	Visibility         string      `json:"visibility"`
+	Scope              string      `json:"scope"`
 	MaxConcurrentTasks int32       `json:"max_concurrent_tasks"`
 	OwnerID            pgtype.UUID `json:"owner_id"`
 	Instructions       string      `json:"instructions"`
@@ -772,7 +772,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.RuntimeMode,
 		arg.RuntimeConfig,
 		arg.RuntimeID,
-		arg.Visibility,
+		arg.Scope,
 		arg.MaxConcurrentTasks,
 		arg.OwnerID,
 		arg.Instructions,
@@ -790,7 +790,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -813,13 +813,14 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 const createAgentTask = `-- name: CreateAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
-    trigger_summary, force_fresh_session, is_leader_task
+    trigger_summary, parent_task_id, force_fresh_session, is_leader_task, context
 )
 VALUES (
     $1, $2, $3, 'queued', $4, $5,
-    $6,
-    COALESCE($7::boolean, FALSE),
-    COALESCE($8::boolean, FALSE)
+    $6, $7,
+    COALESCE($8::boolean, FALSE),
+    COALESCE($9::boolean, FALSE),
+    $10
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id
 `
@@ -831,8 +832,10 @@ type CreateAgentTaskParams struct {
 	Priority          int32       `json:"priority"`
 	TriggerCommentID  pgtype.UUID `json:"trigger_comment_id"`
 	TriggerSummary    pgtype.Text `json:"trigger_summary"`
+	ParentTaskID      pgtype.UUID `json:"parent_task_id"`
 	ForceFreshSession pgtype.Bool `json:"force_fresh_session"`
 	IsLeaderTask      pgtype.Bool `json:"is_leader_task"`
+	Context           []byte      `json:"context"`
 }
 
 func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams) (AgentTaskQueue, error) {
@@ -843,8 +846,10 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.Priority,
 		arg.TriggerCommentID,
 		arg.TriggerSummary,
+		arg.ParentTaskID,
 		arg.ForceFreshSession,
 		arg.IsLeaderTask,
+		arg.Context,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -947,7 +952,13 @@ SELECT
     'queued', p.priority, p.trigger_comment_id, p.trigger_summary, p.context,
     CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.session_id END,
     CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.work_dir END,
-    p.attempt + 1, p.max_attempts, p.id,
+    p.attempt + 1,
+    CASE
+      WHEN p.failure_reason IS NOT DISTINCT FROM 'agent_error.provider_network'
+        THEN GREATEST(p.max_attempts, p.attempt + 1)
+      ELSE p.max_attempts
+    END,
+    p.id,
     p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
     p.is_leader_task
 FROM agent_task_queue p
@@ -1027,12 +1038,8 @@ type ExpireStaleQueuedTasksParams struct {
 }
 
 // Fails tasks that have been sitting in 'queued' for longer than the TTL.
-// This is the cleanup arm of the MUL-1899 "queued backlog" fix: even with the
-// new dispatch-time admission gate that refuses to enqueue when the runtime
-// is offline, we still need to drain the historical 87k+ doomed rows and
-// handle edge cases where a runtime goes offline AFTER a task is already
-// queued (the admission check protects new enqueues, not in-flight queue
-// depth).
+// Handles the case where a runtime goes offline after a task has already
+// entered the queue.
 //
 // Concurrency safety: the daemon's claim path may race with this sweeper to
 // transition the same row out of 'queued'. We protect against that two
@@ -1102,7 +1109,7 @@ UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = $2,
-    failure_reason = COALESCE($3, 'agent_error'),
+    failure_reason = $3::text,
     session_id = COALESCE($4, session_id),
     work_dir = COALESCE($5, work_dir)
 WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
@@ -1112,7 +1119,7 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 type FailAgentTaskParams struct {
 	ID            pgtype.UUID `json:"id"`
 	Error         pgtype.Text `json:"error"`
-	FailureReason pgtype.Text `json:"failure_reason"`
+	FailureReason string      `json:"failure_reason"`
 	SessionID     pgtype.Text `json:"session_id"`
 	WorkDir       pgtype.Text `json:"work_dir"`
 }
@@ -1124,8 +1131,7 @@ type FailAgentTaskParams struct {
 // back to GetLastChatTaskSession and continue the conversation instead of
 // silently starting over.
 //
-// failure_reason is a coarse classifier consumed by the auto-retry path;
-// 'agent_error' is the safe default when the daemon doesn't supply one.
+// failure_reason is the classifier consumed by the auto-retry path.
 func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, failAgentTask,
 		arg.ID,
@@ -1238,7 +1244,7 @@ func (q *Queries) FailStaleTasks(ctx context.Context, arg FailStaleTasksParams) 
 }
 
 const getAgent = `-- name: GetAgent :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE id = $1
 `
 
@@ -1252,7 +1258,7 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -1273,7 +1279,7 @@ func (q *Queries) GetAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
 }
 
 const getAgentInWorkspace = `-- name: GetAgentInWorkspace :one
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -1292,7 +1298,7 @@ func (q *Queries) GetAgentInWorkspace(ctx context.Context, arg GetAgentInWorkspa
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -1408,12 +1414,12 @@ func (q *Queries) GetAgentTaskInWorkspace(ctx context.Context, arg GetAgentTaskI
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND COALESCE(context->>'type', '') <> 'issue_source_summary'
   AND (
     status = 'completed'
     OR (
       status = 'failed'
-      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
-      AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
+      AND failure_reason NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
     )
   )
   AND session_id IS NOT NULL
@@ -1455,15 +1461,6 @@ type GetLastTaskSessionRow struct {
 // conversation history itself is unprocessable (oversized image, malformed
 // base64, etc.), or a Codex semantic inactivity timeout whose recorded
 // session may replay the same stuck state.
-//
-// The error-text ILIKE clause is defense-in-depth for the api_invalid_request
-// shape: a legacy row tagged 'agent_error' (pre-MUL-1921), a deploy-window
-// row that the old code wrote between migration and rollout, or a future
-// error format that escapes the daemon classifier all still get filtered
-// here as long as the canonical Anthropic 400 marker is present in the
-// error text. Migration 079 backfills the failure_reason column itself,
-// so observability stays accurate; this clause guarantees session resume
-// never picks up a bad session even when failure_reason hasn't caught up.
 func (q *Queries) GetLastTaskSession(ctx context.Context, arg GetLastTaskSessionParams) (GetLastTaskSessionRow, error) {
 	row := q.db.QueryRow(ctx, getLastTaskSession, arg.AgentID, arg.IssueID)
 	var i GetLastTaskSessionRow
@@ -1519,6 +1516,55 @@ func (q *Queries) GetLatestTaskIsLeaderForIssueAndAgent(ctx context.Context, arg
 	var is_leader_task bool
 	err := row.Scan(&is_leader_task)
 	return is_leader_task, err
+}
+
+const getRecentRuntimeCapacityFailure = `-- name: GetRecentRuntimeCapacityFailure :one
+SELECT
+  atq.id,
+  atq.completed_at,
+  atq.failure_reason,
+  atq.error
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE a.workspace_id = $1
+  AND atq.runtime_id = $2
+  AND COALESCE(a.model, '') = $4
+  AND atq.status = 'failed'
+  AND atq.failure_reason = 'agent_error.provider_capacity_or_rate_limit'
+  AND atq.completed_at >= $3
+ORDER BY atq.completed_at DESC NULLS LAST
+LIMIT 1
+`
+
+type GetRecentRuntimeCapacityFailureParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+	Model       pgtype.Text        `json:"model"`
+}
+
+type GetRecentRuntimeCapacityFailureRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+	FailureReason pgtype.Text        `json:"failure_reason"`
+	Error         pgtype.Text        `json:"error"`
+}
+
+func (q *Queries) GetRecentRuntimeCapacityFailure(ctx context.Context, arg GetRecentRuntimeCapacityFailureParams) (GetRecentRuntimeCapacityFailureRow, error) {
+	row := q.db.QueryRow(ctx, getRecentRuntimeCapacityFailure,
+		arg.WorkspaceID,
+		arg.RuntimeID,
+		arg.CompletedAt,
+		arg.Model,
+	)
+	var i GetRecentRuntimeCapacityFailureRow
+	err := row.Scan(
+		&i.ID,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.Error,
+	)
+	return i, err
 }
 
 const getWorkspaceAgentActivity30d = `-- name: GetWorkspaceAgentActivity30d :many
@@ -1636,22 +1682,6 @@ func (q *Queries) HasActiveTaskForIssue(ctx context.Context, issueID pgtype.UUID
 	return has_active, err
 }
 
-const hasPendingTaskForIssue = `-- name: HasPendingTaskForIssue :one
-SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched')
-`
-
-// Returns true if there is a queued or dispatched (but not yet running) task for the issue.
-// Used by the coalescing queue: allow enqueue when a task is running (so
-// the agent picks up new comments on the next cycle) but skip if a pending
-// task already exists (natural dedup).
-func (q *Queries) HasPendingTaskForIssue(ctx context.Context, issueID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingTaskForIssue, issueID)
-	var has_pending bool
-	err := row.Scan(&has_pending)
-	return has_pending, err
-}
-
 const hasPendingTaskForIssueAndAgent = `-- name: HasPendingTaskForIssueAndAgent :one
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched')
@@ -1717,7 +1747,7 @@ func (q *Queries) LinkTaskToIssue(ctx context.Context, arg LinkTaskToIssueParams
 }
 
 const listActiveAgentsByRuntime = `-- name: ListActiveAgentsByRuntime :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL
 ORDER BY name ASC
 `
@@ -1744,7 +1774,7 @@ func (q *Queries) ListActiveAgentsByRuntime(ctx context.Context, runtimeID pgtyp
 			&i.AvatarUrl,
 			&i.RuntimeMode,
 			&i.RuntimeConfig,
-			&i.Visibility,
+			&i.Scope,
 			&i.Status,
 			&i.MaxConcurrentTasks,
 			&i.OwnerID,
@@ -1772,7 +1802,7 @@ func (q *Queries) ListActiveAgentsByRuntime(ctx context.Context, runtimeID pgtyp
 }
 
 const listActiveAgentsByRuntimeForUpdate = `-- name: ListActiveAgentsByRuntimeForUpdate :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE runtime_id = $1 AND archived_at IS NULL
 ORDER BY name ASC
 FOR UPDATE
@@ -1802,7 +1832,7 @@ func (q *Queries) ListActiveAgentsByRuntimeForUpdate(ctx context.Context, runtim
 			&i.AvatarUrl,
 			&i.RuntimeMode,
 			&i.RuntimeConfig,
-			&i.Visibility,
+			&i.Scope,
 			&i.Status,
 			&i.MaxConcurrentTasks,
 			&i.OwnerID,
@@ -1943,7 +1973,7 @@ func (q *Queries) ListAgentTasks(ctx context.Context, agentID pgtype.UUID) ([]Ag
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE workspace_id = $1 AND archived_at IS NULL
 ORDER BY created_at ASC
 `
@@ -1964,7 +1994,7 @@ func (q *Queries) ListAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Ag
 			&i.AvatarUrl,
 			&i.RuntimeMode,
 			&i.RuntimeConfig,
-			&i.Visibility,
+			&i.Scope,
 			&i.Status,
 			&i.MaxConcurrentTasks,
 			&i.OwnerID,
@@ -1992,7 +2022,7 @@ func (q *Queries) ListAgents(ctx context.Context, workspaceID pgtype.UUID) ([]Ag
 }
 
 const listAllAgents = `-- name: ListAllAgents :many
-SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -2013,7 +2043,7 @@ func (q *Queries) ListAllAgents(ctx context.Context, workspaceID pgtype.UUID) ([
 			&i.AvatarUrl,
 			&i.RuntimeMode,
 			&i.RuntimeConfig,
-			&i.Visibility,
+			&i.Scope,
 			&i.Status,
 			&i.MaxConcurrentTasks,
 			&i.OwnerID,
@@ -2484,7 +2514,7 @@ SET status = CASE WHEN EXISTS (
 ) THEN 'working' ELSE 'idle' END,
     updated_at = now()
 WHERE a.id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -2497,7 +2527,7 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -2520,7 +2550,7 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 const restoreAgent = `-- name: RestoreAgent :one
 UPDATE agent SET archived_at = NULL, archived_by = NULL, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -2533,7 +2563,7 @@ func (q *Queries) RestoreAgent(ctx context.Context, id pgtype.UUID) (Agent, erro
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -2609,7 +2639,7 @@ UPDATE agent SET
     runtime_config = COALESCE($5, runtime_config),
     runtime_mode = COALESCE($6, runtime_mode),
     runtime_id = COALESCE($7, runtime_id),
-    visibility = COALESCE($8, visibility),
+    scope = COALESCE($8, scope),
     status = COALESCE($9, status),
     max_concurrent_tasks = COALESCE($10, max_concurrent_tasks),
     instructions = COALESCE($11, instructions),
@@ -2620,7 +2650,7 @@ UPDATE agent SET
     thinking_level = COALESCE($16, thinking_level),
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 type UpdateAgentParams struct {
@@ -2631,7 +2661,7 @@ type UpdateAgentParams struct {
 	RuntimeConfig      []byte      `json:"runtime_config"`
 	RuntimeMode        pgtype.Text `json:"runtime_mode"`
 	RuntimeID          pgtype.UUID `json:"runtime_id"`
-	Visibility         pgtype.Text `json:"visibility"`
+	Scope              pgtype.Text `json:"scope"`
 	Status             pgtype.Text `json:"status"`
 	MaxConcurrentTasks pgtype.Int4 `json:"max_concurrent_tasks"`
 	Instructions       pgtype.Text `json:"instructions"`
@@ -2651,7 +2681,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.RuntimeConfig,
 		arg.RuntimeMode,
 		arg.RuntimeID,
-		arg.Visibility,
+		arg.Scope,
 		arg.Status,
 		arg.MaxConcurrentTasks,
 		arg.Instructions,
@@ -2669,7 +2699,7 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,
@@ -2693,7 +2723,7 @@ const updateAgentCustomEnv = `-- name: UpdateAgentCustomEnv :one
 UPDATE agent
 SET custom_env = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
 `
 
 type UpdateAgentCustomEnvParams struct {
@@ -2716,48 +2746,7 @@ func (q *Queries) UpdateAgentCustomEnv(ctx context.Context, arg UpdateAgentCusto
 		&i.AvatarUrl,
 		&i.RuntimeMode,
 		&i.RuntimeConfig,
-		&i.Visibility,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-	)
-	return i, err
-}
-
-const updateAgentStatus = `-- name: UpdateAgentStatus :one
-UPDATE agent SET status = $2, updated_at = now()
-WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
-`
-
-type UpdateAgentStatusParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Status string      `json:"status"`
-}
-
-func (q *Queries) UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, updateAgentStatus, arg.ID, arg.Status)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Visibility,
+		&i.Scope,
 		&i.Status,
 		&i.MaxConcurrentTasks,
 		&i.OwnerID,

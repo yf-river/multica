@@ -16,6 +16,98 @@ import (
 // that remains is the `--status todo` vs `--status backlog` rule for
 // creating sub-issues, which is unrelated to the notification path.
 
+type runtimeConfigModeCase struct {
+	name string
+	ctx  TaskContextForEnv
+}
+
+func nonIssueRuntimeModeCases() []runtimeConfigModeCase {
+	return []runtimeConfigModeCase{
+		{
+			name: "chat",
+			ctx:  TaskContextForEnv{ChatSessionID: "chat-1"},
+		},
+		{
+			name: "quick-create",
+			ctx:  TaskContextForEnv{QuickCreatePrompt: "create me an issue"},
+		},
+		{
+			name: "autopilot run-only",
+			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
+		},
+	}
+}
+
+func TestBuildMetaSkillContentSourceSummaryMode(t *testing.T) {
+	out := buildMetaSkillContent("codex", TaskContextForEnv{
+		IssueID:             "issue-summary-1",
+		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
+	})
+	for _, want := range []string{
+		"source-summary generation task",
+		"return only the requested Markdown summary",
+		"Do NOT run `multica issue update`",
+		"The platform will write your final Markdown output back to the issue description automatically.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("source-summary runtime config missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, unexpected := range []string{
+		"## Issue Metadata",
+		"Complete the task within your Agent Identity boundaries",
+		"multica issue status issue-summary-1 in_review",
+	} {
+		if strings.Contains(out, unexpected) {
+			t.Fatalf("source-summary runtime config should not include %q\n--- output ---\n%s", unexpected, out)
+		}
+	}
+}
+
+func TestRenderIssueContextSourceSummaryMode(t *testing.T) {
+	out := renderIssueContext("codex", TaskContextForEnv{
+		IssueID:             "issue-summary-1",
+		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
+		AgentSkills: []SkillContextForEnv{{
+			Name: "source-reader",
+		}},
+	})
+	for _, want := range []string{
+		"# Source Summary",
+		"**Trigger:** TAPD source summary generation",
+		"**Issue ID:** issue-summary-1",
+		"source-reader",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("source-summary issue context missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Run `multica issue get issue-summary-1 --output json`") {
+		t.Fatalf("source-summary issue context should not render assignment quick start\n--- output ---\n%s", out)
+	}
+}
+
+type runtimeConfigProviderFileCase struct {
+	provider string
+	filename string
+}
+
+func runtimeConfigProviderFileCases() []runtimeConfigProviderFileCase {
+	return []runtimeConfigProviderFileCase{
+		{"claude", "CLAUDE.md"},
+		{"codex", "AGENTS.md"},
+		{"copilot", "AGENTS.md"},
+		{"opencode", "AGENTS.md"},
+		{"hermes", "AGENTS.md"},
+		{"pi", "AGENTS.md"},
+		{"cursor", "AGENTS.md"},
+		{"kimi", "AGENTS.md"},
+		{"kiro", "AGENTS.md"},
+		{"antigravity", "AGENTS.md"},
+		{"gemini", "GEMINI.md"},
+	}
+}
+
 func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -44,6 +136,10 @@ func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 				t.Fatalf("expected Sub-issue Creation section in %s brief", tc.name)
 			}
 			for _, want := range []string{
+				"**Child issues are independent work items, not generic workflow steps.**",
+				"Create a same-project child only when the user explicitly asks for a subtask or the work is an independent deliverable",
+				"`multica issue children <current> --output json`",
+				"at most one backlog child per target project/work intent",
 				"**Choosing `--status` when creating sub-issues.**",
 				"`--status todo` = **start now**",
 				"`--status backlog` = **wait**",
@@ -55,7 +151,142 @@ func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 					t.Errorf("[%s] section missing %q", tc.name, want)
 				}
 			}
+			for _, banned := range []string{
+				"SOP stage",
+				"01-clarify/02-design/03-task-split/04-implement/05-verify",
+				"next SOP stage",
+			} {
+				if strings.Contains(out, banned) {
+					t.Errorf("[%s] runtime sub-issue guidance must not contain SOP-specific %q\n---\n%s", tc.name, banned, out)
+				}
+			}
 		})
+	}
+}
+
+func TestMetaSkillContentDefaultsUserFacingLanguageToChinese(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("codex", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Output Language",
+		"Default to Simplified Chinese for user-facing natural language",
+		"progress updates, stage summaries, issue comments, chat replies, and final delivery notes",
+		"Keep commands, code, file paths, API fields, repository names, product names, logs, and quoted error text in their original language",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output language guidance missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Stage Markdown Artifacts",
+		"requirements note",
+		"verification report",
+		"save only this run's own stage artifact",
+		"as a UTF-8 `.md` file",
+		"use `artifacts/multica/` in the current working directory",
+		"Treat this managed directory as the only stage-artifact handoff path",
+		"do not save stage artifacts only under project-local paths such as `runs/current/projects/...`",
+		"Do not recopy earlier stage markdown files into the current run's artifact directory",
+		"uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/`",
+		"to the issue before marking the task terminal",
+		"links them to an agent-authored issue comment",
+		"Do not also pass those managed markdown files with `multica issue comment add --attachment`",
+		"keep it to a compact outcome summary and evidence pointers only",
+		"do not paste the full artifact body or duplicate long sections",
+		"download or preview",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stage artifact guidance missing %q\n---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"01-clarify requirement note",
+		"02-design proposal",
+		"03-task-split handoff",
+		"04-implement change summary",
+		"05-verify report",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("runtime artifact guidance must not contain SOP-specific %q\n---\n%s", banned, out)
+		}
+	}
+}
+
+func TestMRAndHumanCodeReviewHandoffSectionRequiresLinkedMR(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## MR and Human CodeReview Handoff",
+		"after verification passes and before the final delivery comment",
+		"create the provider MR through the platform",
+		"push your source branch first",
+		"multica issue mr create <issue-id>",
+		"multica issue mr list <issue-id> --output json",
+		"Include the MR URL in the final issue comment",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("MR handoff guidance missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestVerificationOutputContractRequiresConcreteCaseList(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Verification Output Contract",
+		"include a Markdown list or table of the concrete cases you ran",
+		"Do not only say \"all passed\", \"4 checks passed\", or similar",
+		"case/command name",
+		"what it covered",
+		"the result",
+		"evidence pointer",
+		"dedicated verification roles and to simple one-task flows",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("verification output contract missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRepositoryWorktreeContractPreventsNestedCheckout(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Repository Worktree Contract",
+		"git rev-parse --show-toplevel",
+		"if the current worktree is already the requested repository, continue there",
+		"Do not run `multica repo checkout` for the same repository from inside that repo",
+		"nested clean checkout",
+		"Do not `git checkout` or `git switch` to the target/base branch",
+		"Code changes, commits, pushes, verification, and MR source branch selection must stay on the current issue branch",
+		"Verification stages must validate the current issue source branch and its diff against the target branch",
+		"the target branch is the MR base",
+		"Before claiming implementation, verification, or CodeReview follow-up is complete",
+		"git status --short --branch",
+		"commit them to the current issue branch first",
+		"Push the current issue branch before creating or updating the MR",
+		"compare the platform MR source branch/head with the current issue branch",
+		"the same MR did not receive a newer commit/diff",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repository worktree guidance missing %q\n---\n%s", want, out)
+		}
 	}
 }
 
@@ -168,6 +399,7 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID:          issueID,
 		TriggerCommentID: "reply-abc",
+		TriggerThreadID:  "thread-root",
 		NewCommentCount:  4,
 		NewCommentsSince: since,
 	}
@@ -181,7 +413,7 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 		t.Errorf("comment brief must discourage blindly reading every new comment, got:\n%s", out)
 	}
 	// Parent thread first.
-	if !strings.Contains(out, "--thread reply-abc --since "+since+" --output json") {
+	if !strings.Contains(out, "--thread thread-root --since "+since+" --output json") {
 		t.Errorf("comment brief must point at the triggering (parent) thread --since read first, got:\n%s", out)
 	}
 	if !strings.Contains(out, "--tail 30") {
@@ -271,10 +503,11 @@ func TestAssignmentTriggeredProtocolHonorsAgentIdentity(t *testing.T) {
 		"Agent Identity instructions have priority over the assignment workflow below.",
 		"If a workflow step conflicts with Agent Identity, skip the conflicting action",
 		"Never treat this runtime workflow as permission to change issue status, investigate, implement",
-		"Run `multica issue status " + issueID + " in_progress` unless your Agent Identity forbids issue status changes; if it does, skip this step.",
+		"The platform automatically moves ordinary assignment tasks from `todo` to `in_progress`",
+		"from `in_progress` to `in_review` after an ordinary implementation task completes",
 		"Complete the task within your Agent Identity boundaries.",
-		"Do not investigate, implement, create issues, update issues, or delegate if your Agent Identity forbids that action",
-		"When done, run `multica issue status " + issueID + " in_review` unless your Agent Identity forbids issue status changes; if it does, skip this step.",
+		"Do not investigate, implement, create issues, update issues, change issue status, or delegate if your Agent Identity forbids that action",
+		"do not manually set `in_review` just to close the workflow; the platform handles that for ordinary implementation tasks.",
 		"If blocked, run `multica issue status " + issueID + " blocked` unless your Agent Identity forbids issue status changes.",
 	} {
 		if !strings.Contains(out, want) {
@@ -286,6 +519,7 @@ func TestAssignmentTriggeredProtocolHonorsAgentIdentity(t *testing.T) {
 		"4. Run `multica issue status " + issueID + " in_progress`\n",
 		"5. Follow your Skills and Agent Identity to complete the task (write code, investigate, etc.)",
 		"8. When done, run `multica issue status " + issueID + " in_review`\n",
+		"When done, run `multica issue status " + issueID + " in_review`",
 	} {
 		if strings.Contains(out, banned) {
 			t.Errorf("assignment-triggered brief still contains unconditional legacy workflow text %q\n---\n%s", banned, out)
@@ -293,12 +527,270 @@ func TestAssignmentTriggeredProtocolHonorsAgentIdentity(t *testing.T) {
 	}
 }
 
+func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
+	t.Parallel()
+	const issueID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+	ctx := TaskContextForEnv{IssueID: issueID, IsSquadLeader: true}
+	out := buildMetaSkillContent("claude", ctx)
+
+	for _, want := range []string{
+		"Squad-leader / coordinator guardrail",
+		"If your Agent Identity says PM, coordinator, dispatcher, reviewer, or stage owner rather than developer",
+		"do not check out repositories, edit files, run implementation tests, or claim implementation is complete",
+		"A coordinator must not run repo-inspection, build, test, or wait/poll commands",
+		"`git`, `rg`, `cat`, `find`, `sed`, `ls`, `go test`, `pnpm`, `npm`, `make`, `sleep`, `watch`, `multica issue runs`, or `multica issue activity`",
+		"Do not call provider-native task delegation or repo tools such as TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS",
+		"platform runtime does not define squad-specific stages",
+		"the same visible comment must contain exactly one real `mention://agent/...` link",
+		"a comment that says a stage is being dispatched but lacks the mention is not a dispatch",
+		"If native file-write tools are unavailable, return that dispatch or blocker comment as final assistant output",
+		"Then record `multica squad activity ... action` when required and stop",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("assignment-triggered squad leader brief missing guardrail text %q\n---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"simple task may be completed directly",
+		"post the final result and set the issue to done",
+		"issue does not explicitly allow direct completion",
+		"stage_chain",
+		"01-clarify",
+		"05-verify",
+		"skip a SOP stage",
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("assignment-triggered squad leader brief still contains workflow-specific text %q\n---\n%s", banned, out)
+		}
+	}
+}
+
+func TestStageChainPMCoordinatorGetsEntryRule(t *testing.T) {
+	t.Parallel()
+	const issueID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+	ctx := TaskContextForEnv{
+		IssueID:           issueID,
+		IsSquadLeader:     true,
+		AgentName:         "PM-项目经理",
+		AgentInstructions: "PM -> 01-需求澄清 -> 02-方案设计\nstage_chain",
+		ExecutionPolicy: TaskExecutionPolicyForEnv{
+			RoleKind:      "coordinator",
+			CanAccessRepo: false,
+		},
+	}
+	out := buildMetaSkillContent("claude", ctx)
+
+	for _, want := range []string{
+		"Stage-chain PM entry rule from your squad instructions",
+		"this assignment-triggered PM turn is never an implementation turn",
+		"Your first PM turn must dispatch `01-需求澄清`",
+		"the complete successful outcome is only",
+		"run `multica squad activity " + issueID + " action --reason \"dispatch 01\"`",
+		"return a short Markdown final output",
+		"Do not call `multica issue comment add`",
+		"do not run any other tools after the activity call",
+		"This task has no native file-write tool",
+		"Example final output shape",
+		"调度 01-需求澄清",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stage-chain PM runtime brief missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
+	t.Parallel()
+	ctx := TaskContextForEnv{
+		IssueID:          "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+		TriggerCommentID: "11111111-1111-1111-1111-111111111111",
+		IsSquadLeader:    true,
+		AgentName:        "PM-项目经理",
+		AgentInstructions: "PM -> 01-需求澄清 -> 02-方案设计\n" +
+			"stage_chain",
+		ExecutionPolicy: TaskExecutionPolicyForEnv{
+			RoleKind:      "coordinator",
+			CanAccessRepo: false,
+		},
+	}
+	out := buildMetaSkillContent("claude", ctx)
+
+	for _, want := range []string{
+		"Stage-chain PM rule from your squad instructions",
+		"only review the latest stage output or human reply",
+		"Do not implement, inspect repositories, create MRs, run tests, or simulate 01-05 inside this PM task",
+		"your final assistant output must repeat that exact dispatch comment",
+		"Do not replace it with a summary",
+		"Stage-chain PM transition rule",
+		"advance exactly one step in the chain: 01→02, 02→03, 03→04, 04→05, and 05→done",
+		"Do not repeat or paraphrase the completed stage handoff as your own final output",
+		"If the completed stage is 03 or 04, your visible PM output must be a dispatch comment for 04 or 05",
+		"Stage-chain dispatch verification rule",
+		"A stage is actually dispatched only when the platform has a real queued, dispatched, running, or completed task for that target agent",
+		"re-dispatch with exactly one real mention instead of recording `no_action`",
+		"Stage-chain PM wait/block rule",
+		"Do not record only `no_action`",
+		"silence leaves the issue stuck with no user-readable state",
+		"Stage-chain clarification closure rule",
+		"treat non-high-risk open questions as closed with documented assumptions and dispatch `02-方案设计`",
+		"Do not record `no_action` in that case",
+		"Stage-chain cross-project gate",
+		"create or reuse the required child issue with `--parent`, target `--project`, executable assignee, and `--status todo`, then wait",
+		"do not dispatch the parent issue to `04-开发` or `05-验证测试`",
+		"Stage-chain verification dispatch rule",
+		"harness/sandbox/run-password-e2e.sh",
+		"A basic gRPC service-list or `GetPrivateBuiltinSuperAdminTenantId` smoke is not enough for password business E2E",
+		"This task has no native file-write tool",
+		"final assistant output",
+		"the platform will automatically post it as a reply under the triggering comment",
+		"Do not call `multica issue comment add`",
+		"阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stage-chain PM comment-trigger brief missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"Write the reply body to a UTF-8 file",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stage-chain PM coordinator comment-trigger brief should not require file-write reply form %q\n--- output ---\n%s", banned, out)
+		}
+	}
+}
+
+func TestTaskCapabilityPolicyNoRepoBlocksHostPathInspection(t *testing.T) {
+	t.Parallel()
+	out := buildMetaSkillContent("codex", TaskContextForEnv{
+		IssueID: "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+		ExecutionPolicy: TaskExecutionPolicyForEnv{
+			RoleKey:          "pm",
+			RoleKind:         "coordinator",
+			CanAccessRepo:    false,
+			CanEditRepo:      false,
+			ProjectSkillMode: "coordination_only",
+		},
+	})
+
+	for _, want := range []string{
+		"## Task Capability Policy",
+		"Repository access: not allowed for this task",
+		"Coordinator native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS",
+		"using them is a workflow failure",
+		"Bash is restricted to `multica ...` platform coordination commands only",
+		"Do not read host absolute paths, check the current working directory, or inspect project code through shell commands",
+		"`pwd`, `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`",
+		"use it only for platform coordination commands permitted by this task's role",
+		"This task has no native file-write tool",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("capability policy missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
+	t.Parallel()
+	out := buildMetaSkillContent("codebuddy", TaskContextForEnv{
+		IssueID: "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+		ExecutionPolicy: TaskExecutionPolicyForEnv{
+			RoleKey:          "01-clarify",
+			RoleKind:         "planning_stage",
+			CanAccessRepo:    false,
+			CanEditRepo:      false,
+			ProjectSkillMode: "none",
+		},
+	})
+
+	for _, want := range []string{
+		"## Critical No-Repo Planning Tool Boundary",
+		"Do not call tools",
+		"the platform will automatically post that final output as the issue comment",
+		"Do not inspect the current directory, repository structure, local context files, agent roster, or CLI capabilities",
+		"Stage native tool boundary",
+		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Bash, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
+		"Native file-write and shell tools are unavailable",
+		"Do not inspect CLI help or discover extra commands in this task",
+		"No comment command is available in this task",
+		"final assistant output",
+		"Do not call tools or CLI commands in this no-repository planning task",
+		"Use the issue/source context already supplied in this task prompt",
+		"do not attempt to create `reply.md`",
+		"produce their own bounded stage result in this platform task",
+		"do not call `multica issue comment add`",
+		"The platform will automatically post your final output as the issue comment",
+		"No-repo planning override",
+		"do not attempt it in this task",
+		"check the working directory",
+		"Record the missing code facts as assumptions or handoff questions",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("planning stage capability policy missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"always write the comment body to a UTF-8 file",
+		"using the platform-correct non-inline mode",
+		"`multica repo checkout <url>",
+		"For everything else, run `multica --help`",
+		"multica issue comment add <issue-id> --" + "content \"...\"",
+		"Run `multica issue get 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
+		"Run `multica issue comment list 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
+		"Use the `multica` CLI to interact with the platform",
+		"Final results MUST be delivered via `multica issue comment add`",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)
+		}
+	}
+}
+
+func TestRepoReadOnlyPlanningStageUsesFinalOutputForComments(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("codebuddy", TaskContextForEnv{
+		IssueID: "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+		ExecutionPolicy: TaskExecutionPolicyForEnv{
+			RoleKey:          "02-design",
+			RoleKind:         "planning_stage",
+			CanAccessRepo:    true,
+			CanEditRepo:      false,
+			ProjectSkillMode: "stage",
+		},
+	})
+
+	for _, want := range []string{
+		"Repository access: allowed when `$MULTICA_PRIMARY_REPO_DIR` is set",
+		"Stage native tool boundary",
+		"final assistant output",
+		"Do not call `multica issue comment add`",
+		"The platform will automatically post your final output as the issue comment",
+		"Important: Platform Output Is Automatic",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repo read-only planning brief missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --" + "content",
+		"using the platform-correct non-inline mode",
+		"--content-file ./reply.md",
+		"always write the comment body to a UTF-8 file",
+		"Important: Always Use the `multica` CLI",
+		"Final results MUST be delivered via `multica issue comment add`",
+		"Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage artifact",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("repo read-only planning brief should not contain %q\n--- output ---\n%s", banned, out)
+		}
+	}
+}
+
 func TestInstructionPrecedenceOnlyAppliesToAssignmentWorkflow(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name string
-		ctx  TaskContextForEnv
-	}{
+	cases := append([]runtimeConfigModeCase{
 		{
 			name: "comment-triggered",
 			ctx: TaskContextForEnv{
@@ -306,19 +798,7 @@ func TestInstructionPrecedenceOnlyAppliesToAssignmentWorkflow(t *testing.T) {
 				TriggerCommentID: "22222222-3333-4444-5555-666666666666",
 			},
 		},
-		{
-			name: "chat",
-			ctx:  TaskContextForEnv{ChatSessionID: "chat-1"},
-		},
-		{
-			name: "quick-create",
-			ctx:  TaskContextForEnv{QuickCreatePrompt: "create me an issue"},
-		},
-		{
-			name: "autopilot run-only",
-			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
-		},
-	}
+	}, nonIssueRuntimeModeCases()...)
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -474,24 +954,7 @@ func TestWorkspaceContextHeadingSkippedWhenEmpty(t *testing.T) {
 
 func TestSubIssueCreationSectionSkippedForNonIssueModes(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name string
-		ctx  TaskContextForEnv
-	}{
-		{
-			name: "chat",
-			ctx:  TaskContextForEnv{ChatSessionID: "chat-1"},
-		},
-		{
-			name: "quick-create",
-			ctx:  TaskContextForEnv{QuickCreatePrompt: "create me an issue"},
-		},
-		{
-			name: "autopilot run-only",
-			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range nonIssueRuntimeModeCases() {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -652,24 +1115,7 @@ func TestWriteRuntimeConfigFileIsIdempotent(t *testing.T) {
 // semantics propagate through it for each provider's target filename.
 func TestInjectRuntimeConfigPreservesUserContent(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		provider string
-		filename string
-	}{
-		{"claude", "CLAUDE.md"},
-		{"codex", "AGENTS.md"},
-		{"copilot", "AGENTS.md"},
-		{"opencode", "AGENTS.md"},
-		{"openclaw", "AGENTS.md"},
-		{"hermes", "AGENTS.md"},
-		{"pi", "AGENTS.md"},
-		{"cursor", "AGENTS.md"},
-		{"kimi", "AGENTS.md"},
-		{"kiro", "AGENTS.md"},
-		{"antigravity", "AGENTS.md"},
-		{"gemini", "GEMINI.md"},
-	}
-	for _, tc := range cases {
+	for _, tc := range runtimeConfigProviderFileCases() {
 		tc := tc
 		t.Run(tc.provider, func(t *testing.T) {
 			t.Parallel()
@@ -1001,24 +1447,7 @@ func TestCleanupRuntimeConfigRemovesMalformedHalfBlock(t *testing.T) {
 // new provider added to one side cannot drift past the other.
 func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		provider string
-		filename string
-	}{
-		{"claude", "CLAUDE.md"},
-		{"codex", "AGENTS.md"},
-		{"copilot", "AGENTS.md"},
-		{"opencode", "AGENTS.md"},
-		{"openclaw", "AGENTS.md"},
-		{"hermes", "AGENTS.md"},
-		{"pi", "AGENTS.md"},
-		{"cursor", "AGENTS.md"},
-		{"kimi", "AGENTS.md"},
-		{"kiro", "AGENTS.md"},
-		{"antigravity", "AGENTS.md"},
-		{"gemini", "GEMINI.md"},
-	}
-	for _, tc := range cases {
+	for _, tc := range runtimeConfigProviderFileCases() {
 		tc := tc
 		t.Run(tc.provider, func(t *testing.T) {
 			t.Parallel()

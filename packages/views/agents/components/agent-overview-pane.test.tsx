@@ -5,10 +5,10 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 // AgentOverviewPane pulls in ActorIssuesPanel which in turn touches the api
 // layer. The test only cares about which top-of-pane tab buttons render,
@@ -38,7 +38,7 @@ vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
 
-// The pane now reads workspace context to decide whether the Integrations
+// The pane now reads workspace context to decide whether the 集成
 // tab is worth showing (it queries Lark installations to learn whether the
 // deployment has the feature configured). Provide a stable workspace id and
 // a listing query backed by a ref so each test can flip `configured`.
@@ -68,7 +68,7 @@ const baseAgent: Agent = {
   runtime_mode: "local",
   runtime_config: {},
   custom_args: [],
-  visibility: "workspace",
+  scope: "workspace",
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",
@@ -93,7 +93,7 @@ function makeRuntime(provider: string): AgentRuntime {
     device_info: "",
     metadata: {},
     owner_id: null,
-    visibility: "private",
+    scope: "personal",
     last_seen_at: null,
     created_at: "2026-05-28T00:00:00Z",
     updated_at: "2026-05-28T00:00:00Z",
@@ -105,7 +105,7 @@ function renderPane(runtimes: AgentRuntime[]) {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <AgentOverviewPane
           agent={baseAgent}
@@ -130,7 +130,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     ["Kimi", "kimi"],
     ["Kiro", "kiro"],
     ["OpenCode", "opencode"],
-    ["OpenClaw", "openclaw"],
   ])("renders the MCP tab when the agent runs on the %s runtime", (_label, provider) => {
     renderPane([makeRuntime(provider)]);
     expect(screen.getByRole("button", { name: /^MCP$/i })).toBeInTheDocument();
@@ -154,21 +153,21 @@ describe("AgentOverviewPane MCP tab visibility", () => {
   });
 });
 
-describe("AgentOverviewPane Integrations tab visibility", () => {
-  it("shows the Integrations tab once the deployment has Lark configured", async () => {
+describe("AgentOverviewPane 集成 tab visibility", () => {
+  it("shows the 集成 tab once the deployment has Lark configured", async () => {
     larkListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
     expect(
-      await screen.findByRole("button", { name: /^Integrations$/i }),
+      await screen.findByRole("button", { name: /^集成$/i }),
     ).toBeInTheDocument();
   });
 
-  it("hides the Integrations tab when Lark is not configured", () => {
+  it("hides the 集成 tab when Lark is not configured", () => {
     // Default ref is configured:false; the tab must not appear on
     // deployments without the integration, which are the common case.
     renderPane([makeRuntime("claude")]);
     expect(
-      screen.queryByRole("button", { name: /^Integrations$/i }),
+      screen.queryByRole("button", { name: /^集成$/i }),
     ).not.toBeInTheDocument();
   });
 });

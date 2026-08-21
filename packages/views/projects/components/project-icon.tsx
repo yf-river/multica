@@ -1,7 +1,7 @@
 import type { Project } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 
-export type ProjectIconSize = "sm" | "md" | "lg";
+type ProjectIconSize = "sm" | "md" | "lg";
 
 export interface ProjectIconProps {
   project?: Pick<Project, "icon"> | null;

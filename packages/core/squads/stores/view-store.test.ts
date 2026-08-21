@@ -40,8 +40,8 @@ describe("useSquadsViewStore", () => {
   });
 
   it("setScope mutates the store", () => {
-    useSquadsViewStore.getState().setScope("all");
-    expect(useSquadsViewStore.getState().scope).toBe("all");
+    useSquadsViewStore.getState().setScope("archived");
+    expect(useSquadsViewStore.getState().scope).toBe("archived");
   });
 
   it("partialize persists view prefs (no actions) under the workspace-namespaced key", async () => {

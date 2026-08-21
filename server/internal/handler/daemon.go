@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -168,19 +169,14 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 type DaemonRegisterRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 	DaemonID    string `json:"daemon_id"`
-	// LegacyDaemonIDs lists prior hostname-derived daemon_ids this machine
-	// may have registered under before switching to a persistent UUID. The
-	// handler merges any matching runtime rows into the new row so agents
-	// and tasks keep working without manual intervention.
-	LegacyDaemonIDs []string `json:"legacy_daemon_ids"`
-	DeviceName      string   `json:"device_name"`
-	CLIVersion      string   `json:"cli_version"` // multica CLI version
-	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
-	Runtimes        []struct {
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Version string `json:"version"` // agent CLI version (claude/codex)
-		Status  string `json:"status"`
+	DeviceName  string `json:"device_name"`
+	CLIVersion  string `json:"cli_version"` // multica CLI version
+	Runtimes    []struct {
+		Name     string          `json:"name"`
+		Type     string          `json:"type"`
+		Version  string          `json:"version"` // agent CLI version (claude/codex)
+		Status   string          `json:"status"`
+		Metadata json.RawMessage `json:"metadata,omitempty"`
 		// ProfileID, when non-empty, marks this as an instance of a custom
 		// runtime_profile (MUL-3284). Empty = built-in runtime (legacy path).
 		// Type carries the protocol family for both built-in and custom rows
@@ -339,11 +335,21 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		if runtime.Status == "offline" {
 			status = "offline"
 		}
-		metadata, _ := json.Marshal(map[string]any{
+		metadataMap := map[string]any{
 			"version":     runtime.Version,
 			"cli_version": req.CLIVersion,
-			"launched_by": req.LaunchedBy,
-		})
+		}
+		if len(runtime.Metadata) > 0 {
+			var incoming map[string]any
+			if err := json.Unmarshal(runtime.Metadata, &incoming); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid runtime metadata")
+				return
+			}
+			for k, v := range incoming {
+				metadataMap[k] = v
+			}
+		}
+		metadata, _ := json.Marshal(metadataMap)
 
 		var registered db.AgentRuntime
 		var inserted bool
@@ -398,22 +404,21 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 			inserted = prow.Inserted
 			registered = db.AgentRuntime{
-				ID:             prow.ID,
-				WorkspaceID:    prow.WorkspaceID,
-				DaemonID:       prow.DaemonID,
-				Name:           prow.Name,
-				RuntimeMode:    prow.RuntimeMode,
-				Provider:       prow.Provider,
-				Status:         prow.Status,
-				DeviceInfo:     prow.DeviceInfo,
-				Metadata:       prow.Metadata,
-				LastSeenAt:     prow.LastSeenAt,
-				CreatedAt:      prow.CreatedAt,
-				UpdatedAt:      prow.UpdatedAt,
-				OwnerID:        prow.OwnerID,
-				LegacyDaemonID: prow.LegacyDaemonID,
-				Visibility:     prow.Visibility,
-				ProfileID:      prow.ProfileID,
+				ID:          prow.ID,
+				WorkspaceID: prow.WorkspaceID,
+				DaemonID:    prow.DaemonID,
+				Name:        prow.Name,
+				RuntimeMode: prow.RuntimeMode,
+				Provider:    prow.Provider,
+				Status:      prow.Status,
+				DeviceInfo:  prow.DeviceInfo,
+				Metadata:    prow.Metadata,
+				LastSeenAt:  prow.LastSeenAt,
+				CreatedAt:   prow.CreatedAt,
+				UpdatedAt:   prow.UpdatedAt,
+				OwnerID:     prow.OwnerID,
+				Scope:       prow.Scope,
+				ProfileID:   prow.ProfileID,
 			}
 		} else {
 			row, err := h.Queries.UpsertAgentRuntime(r.Context(), db.UpsertAgentRuntimeParams{
@@ -442,22 +447,21 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 			inserted = row.Inserted
 			registered = db.AgentRuntime{
-				ID:             row.ID,
-				WorkspaceID:    row.WorkspaceID,
-				DaemonID:       row.DaemonID,
-				Name:           row.Name,
-				RuntimeMode:    row.RuntimeMode,
-				Provider:       row.Provider,
-				Status:         row.Status,
-				DeviceInfo:     row.DeviceInfo,
-				Metadata:       row.Metadata,
-				LastSeenAt:     row.LastSeenAt,
-				CreatedAt:      row.CreatedAt,
-				UpdatedAt:      row.UpdatedAt,
-				OwnerID:        row.OwnerID,
-				LegacyDaemonID: row.LegacyDaemonID,
-				Visibility:     row.Visibility,
-				ProfileID:      row.ProfileID,
+				ID:          row.ID,
+				WorkspaceID: row.WorkspaceID,
+				DaemonID:    row.DaemonID,
+				Name:        row.Name,
+				RuntimeMode: row.RuntimeMode,
+				Provider:    row.Provider,
+				Status:      row.Status,
+				DeviceInfo:  row.DeviceInfo,
+				Metadata:    row.Metadata,
+				LastSeenAt:  row.LastSeenAt,
+				CreatedAt:   row.CreatedAt,
+				UpdatedAt:   row.UpdatedAt,
+				OwnerID:     row.OwnerID,
+				Scope:       row.Scope,
+				ProfileID:   row.ProfileID,
 			}
 		}
 
@@ -485,21 +489,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Seamless migration from the previous hostname-derived identity. The
-		// daemon sends every legacy daemon_id it may have registered under
-		// (e.g. "host.local", "host", "host-staging"); for each match we
-		// reassign agents + tasks onto the new UUID-keyed row, then delete
-		// the stale row so there's only ever one runtime per machine.
-		//
-		// Only built-in runtimes participate: legacy rows predate custom
-		// profiles, so a profile-keyed instance never has a hostname-derived
-		// ancestor to merge, and mergeLegacyRuntimes scopes by provider alone
-		// (no profile_id), which could otherwise fold a built-in row into a
-		// custom one of the same provider.
-		if !isCustom {
-			h.mergeLegacyRuntimes(r, registered, provider, req.LegacyDaemonIDs)
-		}
-
 		resp = append(resp, runtimeToResponse(registered))
 	}
 
@@ -517,88 +506,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		"repos_version": repoResp.ReposVersion,
 		"settings":      repoResp.Settings,
 	})
-}
-
-// mergeLegacyRuntimes folds every runtime row keyed on a prior hostname-derived
-// daemon_id into the newly registered UUID-keyed row. For each legacy id the
-// lookup is case-insensitive and returns *all* matching rows — case-only drift
-// may have already minted duplicates historically (e.g. `Foo.local` AND
-// `foo.local` coexisting), and we need to consolidate every one of them, not
-// just the first. Per match we reassign agents and tasks, record the legacy
-// id on the new row for audit, then delete the stale row.
-//
-// Scoping by (workspace_id, provider) is sufficient since provider is single-
-// runtime-per-daemon; `unique (workspace_id, daemon_id, provider)` prevents
-// any two *exact* matches but the `LOWER(...)` comparison crosses that bound
-// precisely when case-duplicate rows exist — which is the bug we're fixing.
-// We also dedupe across legacy ids so overlapping candidates (e.g. `foo` and
-// `foo.local` both resolving to the same stored row) don't double-process.
-func (h *Handler) mergeLegacyRuntimes(r *http.Request, registered db.AgentRuntime, provider string, legacyIDs []string) {
-	newID := uuidToString(registered.ID)
-	merged := make(map[string]struct{})
-
-	for _, legacyID := range legacyIDs {
-		legacyID = strings.TrimSpace(legacyID)
-		if legacyID == "" {
-			continue
-		}
-
-		matches, err := h.Queries.FindLegacyRuntimesByDaemonID(r.Context(), db.FindLegacyRuntimesByDaemonIDParams{
-			WorkspaceID: registered.WorkspaceID,
-			Provider:    provider,
-			DaemonID:    legacyID,
-		})
-		if err != nil {
-			slog.Warn("legacy runtime merge: lookup failed", "legacy_daemon_id", legacyID, "error", err)
-			continue
-		}
-		for _, old := range matches {
-			oldID := uuidToString(old.ID)
-			if oldID == newID {
-				continue
-			}
-			if _, seen := merged[oldID]; seen {
-				continue
-			}
-			merged[oldID] = struct{}{}
-
-			agents, err := h.Queries.ReassignAgentsToRuntime(r.Context(), db.ReassignAgentsToRuntimeParams{
-				NewRuntimeID: registered.ID,
-				OldRuntimeID: old.ID,
-			})
-			if err != nil {
-				slog.Warn("legacy runtime merge: reassign agents failed", "legacy_daemon_id", legacyID, "old_runtime_id", oldID, "new_runtime_id", newID, "error", err)
-				continue
-			}
-			tasks, err := h.Queries.ReassignTasksToRuntime(r.Context(), db.ReassignTasksToRuntimeParams{
-				NewRuntimeID: registered.ID,
-				OldRuntimeID: old.ID,
-			})
-			if err != nil {
-				slog.Warn("legacy runtime merge: reassign tasks failed", "legacy_daemon_id", legacyID, "old_runtime_id", oldID, "new_runtime_id", newID, "error", err)
-				continue
-			}
-			if err := h.Queries.RecordRuntimeLegacyDaemonID(r.Context(), db.RecordRuntimeLegacyDaemonIDParams{
-				ID:             registered.ID,
-				LegacyDaemonID: strToText(legacyID),
-			}); err != nil {
-				slog.Warn("legacy runtime merge: record legacy daemon_id failed", "legacy_daemon_id", legacyID, "error", err)
-			}
-			if err := h.Queries.DeleteAgentRuntime(r.Context(), old.ID); err != nil {
-				slog.Warn("legacy runtime merge: delete old runtime failed", "old_runtime_id", oldID, "error", err)
-				continue
-			}
-
-			slog.Info("legacy runtime merged",
-				"legacy_daemon_id", legacyID,
-				"old_runtime_id", oldID,
-				"new_runtime_id", newID,
-				"provider", provider,
-				"agents_reassigned", agents,
-				"tasks_reassigned", tasks,
-			)
-		}
-	}
 }
 
 func (h *Handler) GetDaemonWorkspaceRepos(w http.ResponseWriter, r *http.Request) {
@@ -679,8 +586,8 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 }
 
 type DaemonHeartbeatRequest struct {
-	RuntimeID           string `json:"runtime_id"`
-	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
+	RuntimeID string          `json:"runtime_id"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -811,7 +718,25 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	authMs = time.Since(start).Milliseconds()
 
-	ack, m, err := h.processHeartbeat(r.Context(), rt, req.SupportsBatchImport)
+	if len(req.Metadata) > 0 {
+		var metadata map[string]any
+		if err := json.Unmarshal(req.Metadata, &metadata); err != nil || metadata == nil {
+			outcome = "bad_metadata"
+			writeError(w, http.StatusBadRequest, "invalid heartbeat metadata")
+			return
+		}
+		if err := h.Queries.MergeAgentRuntimeMetadata(r.Context(), db.MergeAgentRuntimeMetadataParams{
+			ID:       rt.ID,
+			Metadata: req.Metadata,
+		}); err != nil {
+			outcome = "metadata_update_error"
+			slog.Warn("merge runtime metadata failed", "runtime_id", req.RuntimeID, "error", err)
+			writeError(w, http.StatusInternalServerError, "heartbeat failed")
+			return
+		}
+	}
+
+	ack, m, err := h.processHeartbeat(r.Context(), rt)
 	updateMs = m.UpdateMs
 	probeModelMs = m.ProbeModelMs
 	popModelMs = m.PopModelMs
@@ -833,17 +758,11 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// in the WS path and would be redundant noise on the HTTP path where the
 	// caller already knows which runtime it asked about.
 	resp := map[string]any{"status": ack.Status}
-	if ack.PendingUpdate != nil {
-		resp["pending_update"] = ack.PendingUpdate
-	}
 	if ack.PendingModelList != nil {
 		resp["pending_model_list"] = ack.PendingModelList
 	}
 	if ack.PendingLocalSkills != nil {
 		resp["pending_local_skills"] = ack.PendingLocalSkills
-	}
-	if ack.PendingLocalSkillImport != nil {
-		resp["pending_local_skill_import"] = ack.PendingLocalSkillImport
 	}
 	if len(ack.PendingLocalSkillImports) > 0 {
 		resp["pending_local_skill_imports"] = ack.PendingLocalSkillImports
@@ -865,7 +784,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 // and tells the daemon to drop the stale runtime and re-register. Other DB
 // errors still propagate as errors so they keep their existing Warn logging
 // and the daemon does not mistake a hiccup for a deletion.
-func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, error) {
+func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws.ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 	runtimeUUID, err := util.ParseUUID(runtimeID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid runtime_id: %w", err)
@@ -884,7 +803,7 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	if !identity.AllowsWorkspace(uuidToString(rt.WorkspaceID)) {
 		return nil, fmt.Errorf("runtime not in connection workspace")
 	}
-	ack, _, err := h.processHeartbeat(ctx, rt, supportsBatchImport)
+	ack, _, err := h.processHeartbeat(ctx, rt)
 	return ack, err
 }
 
@@ -945,7 +864,7 @@ type heartbeatMetrics struct {
 // the WebSocket daemon:heartbeat path: records liveness and pulls any pending
 // actions queued for the runtime. Auth and request decoding live in the
 // caller because they differ between transports.
-func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supportsBatchImport bool) (*protocol.DaemonHeartbeatAckPayload, heartbeatMetrics, error) {
+func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime) (*protocol.DaemonHeartbeatAckPayload, heartbeatMetrics, error) {
 	var m heartbeatMetrics
 	runtimeID := uuidToString(rt.ID)
 
@@ -961,28 +880,6 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 	ack := &protocol.DaemonHeartbeatAckPayload{
 		RuntimeID: runtimeID,
 		Status:    "ok",
-	}
-
-	probeUpdateCtx, cancelProbeUpdate := context.WithTimeout(ctx, heartbeatHasPendingTimeout)
-	hasUpdate, probeUpdateErr := h.UpdateStore.HasPending(probeUpdateCtx, runtimeID)
-	cancelProbeUpdate()
-	switch {
-	case probeUpdateErr == nil && hasUpdate:
-		pending, popUpdateErr := h.UpdateStore.PopPending(ctx, runtimeID)
-		if popUpdateErr != nil {
-			slog.Warn("update PopPending failed", "error", popUpdateErr, "runtime_id", runtimeID)
-		} else if pending != nil {
-			ack.PendingUpdate = &protocol.DaemonHeartbeatPendingUpdate{
-				ID:            pending.ID,
-				TargetVersion: pending.TargetVersion,
-			}
-		}
-	case probeUpdateErr != nil:
-		if errors.Is(probeUpdateErr, context.DeadlineExceeded) || errors.Is(probeUpdateErr, context.Canceled) {
-			slog.Warn("update HasPending timed out", "runtime_id", runtimeID)
-		} else {
-			slog.Warn("update HasPending failed", "error", probeUpdateErr, "runtime_id", runtimeID)
-		}
 	}
 
 	// Probe then claim the model list queue. Same pattern as the local-skill
@@ -1049,43 +946,24 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime, supp
 	switch {
 	case probeErr == nil && hasImport:
 		popStart := time.Now()
-		if supportsBatchImport {
-			pendingImports, popErr := h.LocalSkillImportStore.PopPendingBatch(ctx, runtimeID, maxLocalSkillImportBatch)
-			m.PopImportMs = time.Since(popStart).Milliseconds()
-			if popErr != nil {
-				slog.Warn("local skill import PopPendingBatch failed", "error", popErr, "runtime_id", runtimeID, "claimed", len(pendingImports))
+		pendingImports, popErr := h.LocalSkillImportStore.PopPendingBatch(ctx, runtimeID, maxLocalSkillImportBatch)
+		m.PopImportMs = time.Since(popStart).Milliseconds()
+		if popErr != nil {
+			slog.Warn("local skill import PopPendingBatch failed", "error", popErr, "runtime_id", runtimeID, "claimed", len(pendingImports))
+		}
+		// Always dispatch whatever was claimed — even on partial
+		// failure the claimed requests have already transitioned to
+		// running in the store. Dropping them here would leave them
+		// stranded until the running timeout.
+		if len(pendingImports) > 0 {
+			batch := make([]protocol.DaemonHeartbeatPendingLocalSkillImport, 0, len(pendingImports))
+			for _, p := range pendingImports {
+				batch = append(batch, protocol.DaemonHeartbeatPendingLocalSkillImport{
+					ID:       p.ID,
+					SkillKey: p.SkillKey,
+				})
 			}
-			// Always dispatch whatever was claimed — even on partial
-			// failure the claimed requests have already transitioned to
-			// running in the store. Dropping them here would leave them
-			// stranded until the running timeout.
-			if len(pendingImports) > 0 {
-				// Backwards compat: singular field carries the first item so
-				// old daemons that don't know the plural field still get one.
-				ack.PendingLocalSkillImport = &protocol.DaemonHeartbeatPendingLocalSkillImport{
-					ID:       pendingImports[0].ID,
-					SkillKey: pendingImports[0].SkillKey,
-				}
-				batch := make([]protocol.DaemonHeartbeatPendingLocalSkillImport, 0, len(pendingImports))
-				for _, p := range pendingImports {
-					batch = append(batch, protocol.DaemonHeartbeatPendingLocalSkillImport{
-						ID:       p.ID,
-						SkillKey: p.SkillKey,
-					})
-				}
-				ack.PendingLocalSkillImports = batch
-			}
-		} else {
-			pendingImport, popErr := h.LocalSkillImportStore.PopPending(ctx, runtimeID)
-			m.PopImportMs = time.Since(popStart).Milliseconds()
-			if popErr != nil {
-				slog.Warn("local skill import PopPending failed", "error", popErr, "runtime_id", runtimeID)
-			} else if pendingImport != nil {
-				ack.PendingLocalSkillImport = &protocol.DaemonHeartbeatPendingLocalSkillImport{
-					ID:       pendingImport.ID,
-					SkillKey: pendingImport.SkillKey,
-				}
-			}
+			ack.PendingLocalSkillImports = batch
 		}
 	case probeErr != nil:
 		if errors.Is(probeErr, context.DeadlineExceeded) || errors.Is(probeErr, context.Canceled) {
@@ -1150,6 +1028,126 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 	)
 }
 
+func roleKeyFromAgentRuntimeConfig(agent db.Agent) string {
+	var runtimeConfig map[string]any
+	if len(bytes.TrimSpace(agent.RuntimeConfig)) == 0 || json.Unmarshal(agent.RuntimeConfig, &runtimeConfig) != nil {
+		return ""
+	}
+	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
+		return prompteval.StringFromAny(scope["role_key"])
+	}
+	return ""
+}
+
+func taskExecutionPolicyForRole(roleKey string, fallbackName string, isSquadLeader bool) TaskExecutionPolicyData {
+	key := strings.ToLower(strings.TrimSpace(roleKey))
+	name := strings.TrimSpace(fallbackName)
+	if isSquadLeader || key == "pm" || (key == "" && (strings.EqualFold(name, "pm") || strings.HasPrefix(strings.ToUpper(name), "PM-"))) {
+		return TaskExecutionPolicyData{
+			RoleKey:          "pm",
+			RoleKind:         "coordinator",
+			CanAccessRepo:    false,
+			CanEditRepo:      false,
+			ProjectSkillMode: "none",
+		}
+	}
+	switch key {
+	case "01-clarify":
+		return TaskExecutionPolicyData{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
+	case "02-design":
+		return TaskExecutionPolicyData{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
+	case "03-task-split":
+		return TaskExecutionPolicyData{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
+	case "04-implement":
+		return TaskExecutionPolicyData{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
+	case "05-verify":
+		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
+	}
+	switch name {
+	case projectSOPAgent01:
+		return TaskExecutionPolicyData{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
+	case projectSOPAgent02:
+		return TaskExecutionPolicyData{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
+	case projectSOPAgent03:
+		return TaskExecutionPolicyData{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
+	case projectSOPAgent04:
+		return TaskExecutionPolicyData{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
+	case projectSOPAgent05:
+		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
+	default:
+		return TaskExecutionPolicyData{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
+	}
+}
+
+func taskExecutionPolicyForAgent(agent db.Agent, isSquadLeader bool) TaskExecutionPolicyData {
+	return taskExecutionPolicyForRole(roleKeyFromAgentRuntimeConfig(agent), agent.Name, isSquadLeader)
+}
+
+func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
+	if policy.ProjectSkillMode == "" || policy.ProjectSkillMode == "all" {
+		return skills
+	}
+	coordinatorNoRepo := isCoordinatorWithoutRepoPolicy(policy)
+	allowed := make(map[string]struct{}, len(policy.AllowedProjectSkills))
+	for _, name := range policy.AllowedProjectSkills {
+		allowed[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+	out := make([]service.AgentSkillData, 0, len(skills))
+	for _, skill := range skills {
+		name := strings.ToLower(strings.TrimSpace(skill.Name))
+		if strings.HasPrefix(name, "multica-") {
+			if coordinatorNoRepo && !coordinatorBuiltinSkillAllowed(name) {
+				continue
+			}
+			out = append(out, skill)
+			continue
+		}
+		if _, ok := allowed[name]; ok {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func filterBuiltinSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
+	if !isCoordinatorWithoutRepoPolicy(policy) {
+		return skills
+	}
+	out := make([]service.AgentSkillData, 0, len(skills))
+	for _, skill := range skills {
+		name := strings.ToLower(strings.TrimSpace(skill.Name))
+		if coordinatorBuiltinSkillAllowed(name) {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func isCoordinatorWithoutRepoPolicy(policy TaskExecutionPolicyData) bool {
+	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "coordinator") && !policy.CanAccessRepo
+}
+
+func isNoRepoBoundedPolicy(policy *TaskExecutionPolicyData) bool {
+	if policy == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return !policy.CanAccessRepo
+	default:
+		return false
+	}
+}
+
+func coordinatorBuiltinSkillAllowed(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "multica-mentioning", "multica-projects-and-resources", "multica-squads":
+		return true
+	default:
+		return false
+	}
+}
+
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
 // The response includes the agent's name and skills, fetched fresh from the DB.
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
@@ -1205,11 +1203,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp := taskToResponse(*task, runtimeWorkspaceID)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
+		executionPolicy := taskExecutionPolicyForAgent(agent, false)
 		// Workspace-bound skills first, then platform built-in skills. Built-in
 		// names carry a "multica-" prefix so their on-disk slugs never collide
 		// with a user-authored workspace skill (see writeSkillFiles).
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
-		skills = append(skills, h.TaskService.BuiltinSkills()...)
+		skills = filterAgentSkillsForExecutionPolicy(skills, executionPolicy)
+		skills = append(skills, filterBuiltinSkillsForExecutionPolicy(h.TaskService.BuiltinSkills(), executionPolicy)...)
 		var customEnv map[string]string
 		if agent.CustomEnv != nil {
 			if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
@@ -1226,14 +1226,6 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if agent.McpConfig != nil {
 			mcpConfig = json.RawMessage(agent.McpConfig)
 		}
-		// runtime_config is stored as JSONB and may legitimately be the
-		// empty object `{}` for agents that haven't opted into any
-		// provider-specific tuning. Forward only non-empty payloads so the
-		// daemon's per-provider decoders treat absent-or-empty identically.
-		var runtimeConfig json.RawMessage
-		if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
-			runtimeConfig = json.RawMessage(agent.RuntimeConfig)
-		}
 		resp.Agent = &TaskAgentData{
 			ID:            uuidToString(agent.ID),
 			Name:          agent.Name,
@@ -1244,8 +1236,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			McpConfig:     mcpConfig,
 			Model:         agent.Model.String,
 			ThinkingLevel: agent.ThinkingLevel.String,
-			RuntimeConfig: runtimeConfig,
 		}
+		resp.ExecutionPolicy = &executionPolicy
 	}
 
 	// Resolve the runtime owner's profile description so the daemon can
@@ -1269,7 +1261,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// Stored task initiator: chat tasks persist the real message sender at
 	// enqueue time (web: request user; Lark: inbound sender — NOT the chat
 	// session creator, which for Lark groups is the installer). When set, it is
-	// the authoritative initiator for this run; resolve the live name/email so
+	// the authoritative initiator for this run; resolve the live name/account so
 	// the daemon can render `## Task Initiator`. Comment-triggered tasks instead
 	// resolve their initiator from the triggering comment's author below; the
 	// two paths are mutually exclusive (a task is either chat or issue-bound).
@@ -1279,7 +1271,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		resp.InitiatorID = uuidToString(task.InitiatorUserID)
 		if u, err := h.Queries.GetUser(r.Context(), task.InitiatorUserID); err == nil {
 			resp.InitiatorName = u.Name
-			resp.InitiatorEmail = u.Email
+			resp.InitiatorAccount = u.Account
 		}
 	}
 
@@ -1290,8 +1282,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// project explicitly attached its repos, those are the authoritative set
 	// for issues inside that project. When the project has no github_repo
 	// resources (or no project at all), we fall back to the workspace repos.
+	var issueForSource db.Issue
+	hasIssueForSource := false
+	suppressIssueReposForRole := false
 	if task.IssueID.Valid {
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
+			issueForSource = issue
+			hasIssueForSource = true
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
 
@@ -1313,6 +1310,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					} else {
 						resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
 					}
+					leaderPolicy := taskExecutionPolicyForRole("", resp.Agent.Name, true)
+					resp.ExecutionPolicy = &leaderPolicy
+					resp.Agent.Skills = filterAgentSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
 					slog.Debug("injected squad leader briefing",
 						"squad_id", uuidToString(squad.ID),
 						"squad_name", squad.Name,
@@ -1320,14 +1320,18 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					)
 				}
 			}
+			if resp.ExecutionPolicy != nil && !resp.ExecutionPolicy.CanAccessRepo {
+				suppressIssueReposForRole = true
+			}
 
 			var projectRepos []RepoData
+			projectRepoRef := ""
 			if issue.ProjectID.Valid {
 				resp.ProjectID = uuidToString(issue.ProjectID)
 				if proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID); err == nil {
 					resp.ProjectTitle = proj.Title
 				}
-				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 {
+				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 && !suppressIssueReposForRole {
 					out := make([]ProjectResourceData, 0, len(rows))
 					for _, row := range rows {
 						label := ""
@@ -1344,15 +1348,34 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 							ResourceRef:  ref,
 							Label:        label,
 						})
-						// Lift github_repo resources into the daemon's repo list
+						// Lift git-backed project resources into the daemon's repo list
 						// so `multica repo checkout` and the meta-skill render
 						// them as the issue's repos.
 						if row.ResourceType == "github_repo" {
 							var payload struct {
-								URL string `json:"url"`
+								URL               string `json:"url"`
+								DefaultBranchHint string `json:"default_branch_hint"`
 							}
 							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+								if projectRepoRef == "" {
+									projectRepoRef = strings.TrimSpace(payload.DefaultBranchHint)
+								}
+							}
+						} else if row.ResourceType == "gongfeng_repo" {
+							var payload struct {
+								URL         string `json:"url"`
+								ProjectPath string `json:"project_path"`
+								Ref         string `json:"ref"`
+								Branch      string `json:"branch"`
+							}
+							if json.Unmarshal(row.ResourceRef, &payload) == nil {
+								if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+									projectRepos = append(projectRepos, RepoData{URL: cloneURL})
+									if projectRepoRef == "" {
+										projectRepoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
+									}
+								}
 							}
 						}
 					}
@@ -1360,12 +1383,29 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if len(projectRepos) > 0 {
+			if suppressIssueReposForRole {
+				resp.ProjectResources = nil
+				resp.Repos = nil
+				resp.IssueExecutionSpace = nil
+				slog.Debug("suppressed issue repos for squad leader task",
+					"task_id", uuidToString(task.ID),
+					"issue_id", uuidToString(issue.ID),
+					"agent_id", uuidToString(task.AgentID),
+				)
+			} else if len(projectRepos) > 0 {
 				resp.Repos = projectRepos
 			} else if ws, err := h.Queries.GetWorkspace(r.Context(), issue.WorkspaceID); err == nil && ws.Repos != nil {
 				var repos []RepoData
 				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
 					resp.Repos = repos
+				}
+			}
+			if !suppressIssueReposForRole && len(projectRepos) > 0 {
+				resp.IssueExecutionSpace = &IssueExecutionSpaceData{
+					Enabled:        true,
+					IssueID:        uuidToString(issue.ID),
+					PrimaryRepoURL: projectRepos[0].URL,
+					Ref:            projectRepoRef,
 				}
 			}
 		}
@@ -1386,10 +1426,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				resp.TriggerAuthorType = comment.AuthorType
 				// The triggering comment's author is the task initiator — the
 				// real requester behind this run. Surface it (type + id + name,
-				// plus email for members) so a workspace-visible agent can
+				// plus account for members) so a workspace-visible agent can
 				// attribute the request to the right person instead of to the
 				// runtime owner. Same lookups as the display name above; we just
-				// also capture the id and email. See MUL-2645.
+				// also capture the id and account. See MUL-2645.
 				resp.InitiatorType = comment.AuthorType
 				if comment.AuthorID.Valid {
 					resp.InitiatorID = uuidToString(comment.AuthorID)
@@ -1409,7 +1449,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 						if u, err := h.Queries.GetUser(r.Context(), comment.AuthorID); err == nil {
 							resp.TriggerAuthorName = u.Name
 							resp.InitiatorName = u.Name
-							resp.InitiatorEmail = u.Email
+							resp.InitiatorAccount = u.Account
 						}
 					}
 				}
@@ -1440,6 +1480,23 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if hasIssueForSource {
+			credentialUserID := issueForSource.CreatorID
+			if resp.InitiatorType == "member" && resp.InitiatorID != "" {
+				if initiatorID, err := util.ParseUUID(resp.InitiatorID); err == nil {
+					credentialUserID = initiatorID
+				}
+			}
+			resp.SourceContext = h.buildIssueSourceContext(r.Context(), issueForSource, credentialUserID)
+			if resp.Agent != nil {
+				resp.Agent.McpConfig = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
+			}
+			if _, ok := service.ParseIssueSourceSummaryContext(*task); ok {
+				resp.SourceSummaryPrompt = "基于任务的 TAPD 来源内容生成结构化需求摘要。"
+				resp.ThreadName = "生成需求摘要：" + issueForSource.Title
+			}
+		}
+
 		// Look up the prior session for this (agent, issue) pair so the daemon
 		// can resume the Claude Code conversation context.
 		//
@@ -1447,7 +1504,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		// the user just judged the prior output bad, so the daemon must start a
 		// fresh agent session in a fresh workdir instead of resuming anything
 		// from the same conversation that produced that output.
-		if !task.ForceFreshSession {
+		if !task.ForceFreshSession && !isNoRepoBoundedPolicy(resp.ExecutionPolicy) {
 			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,
@@ -1586,6 +1643,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			hasQuickCreate = true
 			resp.QuickCreatePrompt = qc.Prompt
 			resp.QuickCreateAttachmentIDs = append([]string(nil), qc.AttachmentIDs...)
+			resp.QuickCreateStatus = qc.Status
+			resp.QuickCreatePriority = qc.Priority
+			resp.QuickCreateAssigneeType = qc.AssigneeType
+			resp.QuickCreateAssigneeID = qc.AssigneeID
+			resp.QuickCreateStartDate = qc.StartDate
+			resp.QuickCreateDueDate = qc.DueDate
 			resp.ThreadName = qc.Prompt
 			resp.WorkspaceID = qc.WorkspaceID
 
@@ -1625,6 +1688,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 								}
 								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+								}
+							} else if row.ResourceType == "gongfeng_repo" {
+								var payload struct {
+									URL         string `json:"url"`
+									ProjectPath string `json:"project_path"`
+								}
+								if json.Unmarshal(row.ResourceRef, &payload) == nil {
+									if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+										projectRepos = append(projectRepos, RepoData{URL: cloneURL})
+									}
 								}
 							}
 						}
@@ -1803,6 +1876,20 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"task": resp})
 }
 
+func canonicalGongfengCloneURL(rawURL, projectPath string) string {
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		parsed, err := parseGongfengURL(rawURL)
+		if err == nil {
+			projectPath = parsed.ProjectPath
+		}
+	}
+	if projectPath == "" {
+		return ""
+	}
+	return "https://git.code.tencent.com/" + strings.TrimSuffix(projectPath, ".git") + ".git"
+}
+
 // trailingUserMessages returns the run of user messages after the last
 // assistant message in a chronologically-ordered chat history — the set the
 // agent has NOT yet replied to. The agent resumes its prior session and only
@@ -1863,6 +1950,11 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
 	if err != nil {
+		if errors.Is(err, service.ErrTaskStartConflict) {
+			slog.Info("start task skipped because task is no longer startable", "task_id", taskID, "error", err)
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1872,8 +1964,8 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
-// TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
-// a freshly-dispatched task on a busy local_directory path.
+// TaskWaitLocalDirectoryRequest is the legacy compatibility body the daemon
+// POSTs when it parks a task on a busy local_directory path.
 type TaskWaitLocalDirectoryRequest struct {
 	// Reason is a short hint surfaced by the UI alongside the status —
 	// typically "<path>" or "<path> (holder: <task short id>)". Small
@@ -1883,9 +1975,8 @@ type TaskWaitLocalDirectoryRequest struct {
 }
 
 // MarkTaskWaitingLocalDirectory transitions a dispatched task to
-// waiting_local_directory. Called by the daemon when, after claiming a task
-// whose project carries a local_directory resource, it discovers another
-// in-flight task already holds the path's mutex.
+// waiting_local_directory for legacy local_directory compatibility paths.
+// Standard issue tasks use issue-scoped managed worktrees instead.
 func (h *Handler) MarkTaskWaitingLocalDirectory(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
@@ -1977,6 +2068,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	h.captureTaskUsageUnavailableIfMissing(r.Context(), *task)
 
 	// Best-effort revoke of any agent task token minted at claim time.
 	// The token would naturally expire at the 24h watermark and is also
@@ -1990,6 +2082,21 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) captureTaskUsageUnavailableIfMissing(ctx context.Context, task db.AgentTaskQueue) {
+	usages, err := h.Queries.GetTaskUsage(ctx, task.ID)
+	if err != nil {
+		slog.Warn("complete task: failed to inspect task usage",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	if len(usages) > 0 {
+		return
+	}
+	h.TaskService.CaptureTaskUsageUnavailable(ctx, task, "daemon 完成任务时没有随结果上报模型 token 用量")
 }
 
 // emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at
@@ -2062,29 +2169,19 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider is lowercased on write so client-side pricing lookups tolerate
-	// case drift. An empty provider (an older daemon that omits the field) is
-	// stamped from the task's runtime, so generic model ids like `auto` still
-	// resolve to a provider instead of landing as '' and pricing $0.
-	var runtimeProvider string
-	runtimeProviderLoaded := false
-	for _, u := range req.Usage {
-		provider := normalizeProvider(u.Provider)
-		if provider == "" {
-			if !runtimeProviderLoaded {
-				if rt, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID); err == nil {
-					runtimeProvider = normalizeProvider(rt.Provider)
-				} else {
-					slog.Warn("load runtime provider for usage backfill failed",
-						"task_id", taskID, "runtime_id", uuidToString(task.RuntimeID), "error", err)
-				}
-				runtimeProviderLoaded = true
-			}
-			provider = runtimeProvider
+	for i := range req.Usage {
+		req.Usage[i].Provider = normalizeProvider(req.Usage[i].Provider)
+		if req.Usage[i].Provider == "" {
+			writeError(w, http.StatusBadRequest, "usage provider is required")
+			return
 		}
+	}
+
+	for _, u := range req.Usage {
+		u = h.normalizeTaskUsagePayload(r.Context(), task, u.Provider, u)
 		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
 			TaskID:           parseUUID(taskID),
-			Provider:         provider,
+			Provider:         u.Provider,
 			Model:            u.Model,
 			InputTokens:      u.InputTokens,
 			OutputTokens:     u.OutputTokens,
@@ -2094,10 +2191,75 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
 			continue
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
+		h.TaskService.CaptureTaskUsage(r.Context(), task, u.Provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTaskQueue, provider string, u TaskUsagePayload) TaskUsagePayload {
+	if provider != "codebuddy" {
+		return u
+	}
+	previous, ok := h.previousCodebuddySessionUsage(ctx, task, provider, u.Model)
+	if ok {
+		u.InputTokens = nonNegativeDelta(u.InputTokens, previous.InputTokens)
+		u.OutputTokens = nonNegativeDelta(u.OutputTokens, previous.OutputTokens)
+		u.CacheReadTokens = nonNegativeDelta(u.CacheReadTokens, previous.CacheReadTokens)
+		u.CacheWriteTokens = nonNegativeDelta(u.CacheWriteTokens, previous.CacheWriteTokens)
+	}
+	u.CacheWriteTokens = 0
+	return u
+}
+
+type taskUsageTotals struct {
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
+
+func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string) (taskUsageTotals, bool) {
+	if h == nil || h.DB == nil || !task.SessionID.Valid || strings.TrimSpace(task.SessionID.String) == "" || strings.TrimSpace(model) == "" {
+		return taskUsageTotals{}, false
+	}
+	var previous taskUsageTotals
+	err := h.DB.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(tu.input_tokens), 0)::bigint,
+			COALESCE(SUM(tu.output_tokens), 0)::bigint,
+			COALESCE(SUM(tu.cache_read_tokens), 0)::bigint,
+			COALESCE(SUM(tu.cache_write_tokens), 0)::bigint
+		FROM task_usage tu
+		JOIN agent_task_queue atq ON atq.id = tu.task_id
+		WHERE atq.session_id = $1
+		  AND atq.id <> $2
+		  AND atq.created_at < $3
+		  AND tu.provider = $4
+		  AND tu.model = $5
+	`, task.SessionID.String, task.ID, task.CreatedAt, provider, model).Scan(
+		&previous.InputTokens,
+		&previous.OutputTokens,
+		&previous.CacheReadTokens,
+		&previous.CacheWriteTokens,
+	)
+	if err != nil {
+		slog.Warn("load previous codebuddy session usage failed",
+			"task_id", uuidToString(task.ID),
+			"session_id", task.SessionID.String,
+			"model", model,
+			"error", err,
+		)
+		return taskUsageTotals{}, false
+	}
+	return previous, previous.InputTokens > 0 || previous.OutputTokens > 0 || previous.CacheReadTokens > 0 || previous.CacheWriteTokens > 0
+}
+
+func nonNegativeDelta(current, previous int64) int64 {
+	if current <= previous {
+		return 0
+	}
+	return current - previous
 }
 
 // GetTaskStatus returns the current status of a task.
@@ -2207,9 +2369,11 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 
 	for _, msg := range req.Messages {
 		// Redact sensitive information before persisting or broadcasting.
-		msg.Content = redact.Text(msg.Content)
-		msg.Output = redact.Text(msg.Output)
-		msg.Input = redact.InputMap(msg.Input)
+		msg.Type = sanitizeTaskMessageText(msg.Type)
+		msg.Tool = sanitizeTaskMessageText(msg.Tool)
+		msg.Content = sanitizeTaskMessageText(redact.Text(msg.Content))
+		msg.Output = sanitizeTaskMessageText(redact.Text(msg.Output))
+		msg.Input = sanitizeTaskMessageInput(redact.InputMap(msg.Input))
 
 		var inputJSON []byte
 		if msg.Input != nil {
@@ -2237,6 +2401,39 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func sanitizeTaskMessageText(value string) string {
+	return sanitizeNullBytes(value)
+}
+
+func sanitizeTaskMessageInput(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	sanitized, _ := sanitizeTaskMessageValue(input).(map[string]any)
+	return sanitized
+}
+
+func sanitizeTaskMessageValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return sanitizeTaskMessageText(typed)
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[sanitizeTaskMessageText(key)] = sanitizeTaskMessageValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = sanitizeTaskMessageValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.TaskMessagePayload {
@@ -2454,6 +2651,98 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		"total_cache_write_tokens": row.TotalCacheWriteTokens,
 		"task_count":               row.TaskCount,
 	})
+}
+
+type TaskTraceEventResponse struct {
+	ID               string         `json:"id"`
+	WorkspaceID      string         `json:"workspace_id"`
+	TaskID           string         `json:"task_id"`
+	IssueID          *string        `json:"issue_id"`
+	AgentID          string         `json:"agent_id"`
+	RuntimeID        *string        `json:"runtime_id"`
+	SquadID          *string        `json:"squad_id"`
+	ProjectID        *string        `json:"project_id"`
+	Source           string         `json:"source"`
+	EventType        string         `json:"event_type"`
+	EventName        string         `json:"event_name"`
+	Status           string         `json:"status"`
+	Attempt          int32          `json:"attempt"`
+	DurationMs       *int64         `json:"duration_ms,omitempty"`
+	QueueWaitMs      *int64         `json:"queue_wait_ms,omitempty"`
+	RunMs            *int64         `json:"run_ms,omitempty"`
+	TotalMs          *int64         `json:"total_ms,omitempty"`
+	Provider         string         `json:"provider"`
+	Model            string         `json:"model"`
+	InputTokens      int64          `json:"input_tokens"`
+	OutputTokens     int64          `json:"output_tokens"`
+	CacheReadTokens  int64          `json:"cache_read_tokens"`
+	CacheWriteTokens int64          `json:"cache_write_tokens"`
+	FailureReason    string         `json:"failure_reason"`
+	ErrorType        string         `json:"error_type"`
+	TriggerCommentID *string        `json:"trigger_comment_id"`
+	AutopilotRunID   *string        `json:"autopilot_run_id"`
+	ChatSessionID    *string        `json:"chat_session_id"`
+	Metadata         map[string]any `json:"metadata"`
+	CreatedAt        string         `json:"created_at"`
+}
+
+func taskTraceEventToResponse(ev db.TaskTraceEvent) TaskTraceEventResponse {
+	metadata := map[string]any{}
+	if len(ev.Metadata) > 0 {
+		_ = json.Unmarshal(ev.Metadata, &metadata)
+	}
+	return TaskTraceEventResponse{
+		ID:               uuidToString(ev.ID),
+		WorkspaceID:      uuidToString(ev.WorkspaceID),
+		TaskID:           uuidToString(ev.TaskID),
+		IssueID:          uuidToPtr(ev.IssueID),
+		AgentID:          uuidToString(ev.AgentID),
+		RuntimeID:        uuidToPtr(ev.RuntimeID),
+		SquadID:          uuidToPtr(ev.SquadID),
+		ProjectID:        uuidToPtr(ev.ProjectID),
+		Source:           ev.Source,
+		EventType:        ev.EventType,
+		EventName:        ev.EventName,
+		Status:           ev.Status,
+		Attempt:          ev.Attempt,
+		DurationMs:       int8ToPtr(ev.DurationMs),
+		QueueWaitMs:      int8ToPtr(ev.QueueWaitMs),
+		RunMs:            int8ToPtr(ev.RunMs),
+		TotalMs:          int8ToPtr(ev.TotalMs),
+		Provider:         ev.Provider,
+		Model:            ev.Model,
+		InputTokens:      ev.InputTokens,
+		OutputTokens:     ev.OutputTokens,
+		CacheReadTokens:  ev.CacheReadTokens,
+		CacheWriteTokens: ev.CacheWriteTokens,
+		FailureReason:    ev.FailureReason,
+		ErrorType:        ev.ErrorType,
+		TriggerCommentID: uuidToPtr(ev.TriggerCommentID),
+		AutopilotRunID:   uuidToPtr(ev.AutopilotRunID),
+		ChatSessionID:    uuidToPtr(ev.ChatSessionID),
+		Metadata:         metadata,
+		CreatedAt:        timestampToString(ev.CreatedAt),
+	}
+}
+
+// ListIssueTaskTraceEvents returns the durable task trace events for an issue.
+func (h *Handler) ListIssueTaskTraceEvents(w http.ResponseWriter, r *http.Request) {
+	issueID := chi.URLParam(r, "id")
+	issue, ok := h.loadIssueForUser(w, r, issueID)
+	if !ok {
+		return
+	}
+
+	events, err := h.Queries.ListIssueTaskTraceEvents(r.Context(), issue.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list issue trace events")
+		return
+	}
+	resp := make([]TaskTraceEventResponse, len(events))
+	for i, ev := range events {
+		resp[i] = taskTraceEventToResponse(ev)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": resp})
 }
 
 // GetIssueGCCheck returns minimal issue info needed by the daemon GC loop.

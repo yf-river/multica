@@ -9,6 +9,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
+func getConfigForTest(t *testing.T) AppConfig {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	testHandler.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var cfg AppConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	return cfg
+}
+
 func TestGetConfigReportsCdnSignedMode(t *testing.T) {
 	origStorage := testHandler.Storage
 	origSigner := testHandler.CFSigner
@@ -18,30 +35,15 @@ func TestGetConfigReportsCdnSignedMode(t *testing.T) {
 		testHandler.CFSigner = origSigner
 	}()
 
-	fetch := func() AppConfig {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-		w := httptest.NewRecorder()
-		testHandler.GetConfig(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		var cfg AppConfig
-		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-			t.Fatalf("decode config: %v", err)
-		}
-		return cfg
-	}
-
 	testHandler.CFSigner = nil
-	if cfg := fetch(); cfg.CdnSigned {
+	if cfg := getConfigForTest(t); cfg.CdnSigned {
 		t.Fatalf("cdn_signed: want false without a CloudFront signer, got true")
 	}
 
 	// With signing enabled the same cdn_domain serves private content via
 	// signed URLs only — clients must be told raw storage URLs won't load.
 	testHandler.CFSigner = &auth.CloudFrontSigner{}
-	cfg := fetch()
+	cfg := getConfigForTest(t)
 	if !cfg.CdnSigned {
 		t.Fatalf("cdn_signed: want true with a CloudFront signer, got false")
 	}
@@ -56,33 +58,17 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	defer func() { testHandler.Storage = origStorage }()
 
 	t.Setenv("ALLOW_SIGNUP", "false")
-	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
 	t.Setenv("POSTHOG_API_KEY", "phc_test")
 	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
 	t.Setenv("MULTICA_PUBLIC_URL", "https://api.example.com/")
 	t.Setenv("MULTICA_APP_URL", "https://app.example.com/")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
-
+	cfg := getConfigForTest(t)
 	if cfg.CdnDomain != "cdn.example.com" {
 		t.Fatalf("cdn_domain: want cdn.example.com, got %q", cfg.CdnDomain)
 	}
 	if cfg.AllowSignup {
 		t.Fatalf("allow_signup: want false, got true")
-	}
-	if cfg.GoogleClientID != "google-client-id" {
-		t.Fatalf("google_client_id: want google-client-id, got %q", cfg.GoogleClientID)
 	}
 	if cfg.PosthogKey != "phc_test" {
 		t.Fatalf("posthog_key: want phc_test, got %q", cfg.PosthogKey)
@@ -107,18 +93,7 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
 	t.Setenv("MULTICA_APP_URL", "https://multica.internal.example/")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
+	cfg := getConfigForTest(t)
 	if cfg.DaemonServerURL != "https://multica.internal.example" {
 		t.Fatalf("daemon_server_url: want same-origin URL, got %q", cfg.DaemonServerURL)
 	}
@@ -131,18 +106,7 @@ func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
 	t.Setenv("MULTICA_APP_URL", "")
 	t.Setenv("FRONTEND_ORIGIN", "https://multica.internal.example/")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
+	cfg := getConfigForTest(t)
 	if cfg.DaemonServerURL != "https://multica.internal.example" {
 		t.Fatalf("daemon_server_url: want same-origin URL, got %q", cfg.DaemonServerURL)
 	}
@@ -190,18 +154,7 @@ func TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL(t *testing.T) {
 	t.Setenv("MULTICA_APP_URL", "")
 	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
+	cfg := getConfigForTest(t)
 	if cfg.DaemonServerURL != "" {
 		t.Fatalf("daemon_server_url: want omitted for official cloud, got %q", cfg.DaemonServerURL)
 	}
@@ -217,18 +170,7 @@ func TestGetConfigOmitsCloudDaemonSetupForAppSubdomain(t *testing.T) {
 	t.Setenv("MULTICA_APP_URL", "https://app.multica.ai")
 	t.Setenv("FRONTEND_ORIGIN", "")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
+	cfg := getConfigForTest(t)
 	if cfg.DaemonServerURL != "" {
 		t.Fatalf("daemon_server_url: want omitted for official cloud, got %q", cfg.DaemonServerURL)
 	}
@@ -270,19 +212,8 @@ func TestGetConfigExposesWorkspaceCreationDisabled(t *testing.T) {
 
 	t.Setenv("DISABLE_WORKSPACE_CREATION", "true")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
+	cfg := getConfigForTest(t)
 	if !cfg.WorkspaceCreationDisabled {
-		t.Fatalf("workspace_creation_disabled: want true with env on, got false (body=%s)", w.Body.String())
+		t.Fatalf("workspace_creation_disabled: want true with env on, got false")
 	}
 }

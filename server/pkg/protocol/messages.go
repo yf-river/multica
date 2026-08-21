@@ -126,8 +126,7 @@ type ChatSessionUpdatedPayload struct {
 // Mirrors the body of POST /api/daemon/heartbeat so both transports share
 // identical semantics.
 type DaemonHeartbeatRequestPayload struct {
-	RuntimeID           string `json:"runtime_id"`
-	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
+	RuntimeID string `json:"runtime_id"`
 }
 
 // DaemonHeartbeatAckPayload is the server's reply to DaemonHeartbeatRequestPayload.
@@ -141,30 +140,19 @@ type DaemonHeartbeatRequestPayload struct {
 // and re-registers; without it the dead UUID would keep heartbeating until the
 // daemon process restarts.
 type DaemonHeartbeatAckPayload struct {
-	RuntimeID               string                                  `json:"runtime_id"`
-	Status                  string                                  `json:"status"`
-	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
-	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
-	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
-	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
-	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
+	RuntimeID          string                             `json:"runtime_id"`
+	Status             string                             `json:"status"`
+	RuntimeGone        bool                               `json:"runtime_gone,omitempty"`
+	PendingModelList   *DaemonHeartbeatPendingModelList   `json:"pending_model_list,omitempty"`
+	PendingLocalSkills *DaemonHeartbeatPendingLocalSkills `json:"pending_local_skills,omitempty"`
 	// PendingLocalSkillImports carries multiple import requests in a single
-	// heartbeat so the daemon can process them concurrently. Old daemons
-	// that don't know this field silently ignore it (standard JSON behavior)
-	// and fall back to the singular PendingLocalSkillImport above.
+	// heartbeat so the daemon can process them concurrently.
 	PendingLocalSkillImports []DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_imports,omitempty"`
 }
 
 // HeartbeatStatusRuntimeGone is the ack Status used when the runtime row no
 // longer exists server-side. Companion to DaemonHeartbeatAckPayload.RuntimeGone.
 const HeartbeatStatusRuntimeGone = "runtime_gone"
-
-// DaemonHeartbeatPendingUpdate describes a CLI-update action the daemon
-// should run for the runtime.
-type DaemonHeartbeatPendingUpdate struct {
-	ID            string `json:"id"`
-	TargetVersion string `json:"target_version"`
-}
 
 // DaemonHeartbeatPendingModelList describes a request for the daemon to
 // enumerate the runtime's supported models.

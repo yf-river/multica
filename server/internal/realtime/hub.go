@@ -258,11 +258,6 @@ func (c *Client) markSeen(eventID string) bool {
 	return true
 }
 
-// SubscriptionCallback fires when a scope's local subscriber count crosses
-// 0↔1 boundaries. Used by the Redis relay to start/stop XREADGROUP loops on
-// demand.
-type SubscriptionCallback func(scopeType, scopeID string)
-
 // Hub manages WebSocket connections organized into scope-based rooms.
 type Hub struct {
 	rooms      map[scopeKey]map[*Client]bool
@@ -273,10 +268,6 @@ type Hub struct {
 	mu         sync.RWMutex
 
 	authorizer ScopeAuthorizer
-
-	// Subscription lifecycle hooks. Both can be nil.
-	onFirstSubscriber SubscriptionCallback
-	onLastSubscriber  SubscriptionCallback
 }
 
 // NewHub creates a new Hub instance.
@@ -295,16 +286,6 @@ func (h *Hub) SetAuthorizer(a ScopeAuthorizer) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.authorizer = a
-}
-
-// SetSubscriptionCallbacks registers callbacks fired when a scope on this
-// node transitions from 0→1 subscribers (onFirst) or 1→0 (onLast). The
-// Redis relay uses these to start/stop a per-scope consumer loop.
-func (h *Hub) SetSubscriptionCallbacks(onFirst, onLast SubscriptionCallback) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.onFirstSubscriber = onFirst
-	h.onLastSubscriber = onLast
 }
 
 // Run starts the hub event loop.
@@ -355,26 +336,19 @@ func (h *Hub) removeClient(client *Client) {
 		}
 	}
 	close(client.send)
-	cb := h.onLastSubscriber
 	total := len(h.clients)
 	h.mu.Unlock()
 
 	M.DisconnectsTotal.Add(1)
 	M.ActiveConnections.Add(-1)
-	if cb != nil {
-		for _, key := range emptied {
-			cb(key.Type, key.ID)
-		}
-	}
 	for _, key := range emptied {
 		M.DecRoom(key.Type)
 	}
 	slog.Info("ws client disconnected", "workspace_id", client.workspaceID, "user_id", client.userID, "total_clients", total)
 }
 
-// subscribe adds client to scope (scopeType, scopeID) and fires the
-// onFirstSubscriber callback if the room transitioned from empty to non-empty.
-// Returns true if the subscription was newly added.
+// subscribe adds client to scope (scopeType, scopeID). It returns true if the
+// subscription was newly added.
 func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 	if scopeType == "" || scopeID == "" {
 		return false
@@ -402,21 +376,16 @@ func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 		first = true
 	}
 	room[client] = true
-	cb := h.onFirstSubscriber
 	h.mu.Unlock()
 
 	M.SubscribesTotal(scopeType).Add(1)
 	if first {
 		M.IncRoom(scopeType)
-		if cb != nil {
-			cb(scopeType, scopeID)
-		}
 	}
 	return true
 }
 
-// unsubscribe removes client from a scope room and fires onLastSubscriber if
-// the room is now empty.
+// unsubscribe removes client from a scope room.
 func (h *Hub) unsubscribe(client *Client, scopeType, scopeID string) bool {
 	if scopeType == "" || scopeID == "" {
 		return false
@@ -441,39 +410,13 @@ func (h *Hub) unsubscribe(client *Client, scopeType, scopeID string) bool {
 			emptied = true
 		}
 	}
-	cb := h.onLastSubscriber
 	h.mu.Unlock()
 
 	M.UnsubscribesTotal(scopeType).Add(1)
 	if emptied {
 		M.DecRoom(scopeType)
-		if cb != nil {
-			cb(scopeType, scopeID)
-		}
 	}
 	return true
-}
-
-// HasLocalSubscribers reports whether at least one local client is subscribed
-// to (scopeType, scopeID). Used by the Redis relay to decide whether to keep
-// a per-scope consumer running.
-func (h *Hub) HasLocalSubscribers(scopeType, scopeID string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	_, ok := h.rooms[sk(scopeType, scopeID)]
-	return ok
-}
-
-// LocalScopes returns the set of scopes currently active on this node.
-// Snapshot only — callers must not assume thread-stability.
-func (h *Hub) LocalScopes() []scopeKey {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	out := make([]scopeKey, 0, len(h.rooms))
-	for k := range h.rooms {
-		out = append(out, k)
-	}
-	return out
 }
 
 // BroadcastToScope sends a message to every client subscribed to
@@ -484,7 +427,7 @@ func (h *Hub) BroadcastToScope(scopeType, scopeID string, message []byte) {
 
 // BroadcastToScopeDedup is the same as BroadcastToScope but skips delivery
 // to clients that have already seen eventID (used by the Redis relay to
-// deduplicate the local fast path of DualWriteBroadcaster).
+// deduplicate the local fast path of RelayBroadcaster).
 func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, eventID string) {
 	if scopeType == "" || scopeID == "" {
 		return
@@ -604,8 +547,7 @@ func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventI
 }
 
 // evictSlow removes clients whose send channel was full. Mirrors the
-// pre-phase-1 behavior: closes the send channel, decrements counters, fires
-// onLastSubscriber for any rooms drained as a side effect.
+// pre-phase-1 behavior: closes the send channel and decrements counters.
 func (h *Hub) evictSlow(slow []*Client) {
 	M.MessagesDroppedTotal.Add(int64(len(slow)))
 	M.SlowEvictionsTotal.Add(int64(len(slow)))
@@ -626,7 +568,7 @@ func (h *Hub) evictSlow(slow []*Client) {
 				delete(room, c)
 				if len(room) == 0 {
 					delete(h.rooms, key)
-					drainedRooms = append(drainedRooms, emptied{key.Type, key.ID})
+					drainedRooms = append(drainedRooms, emptied(key))
 				}
 			}
 		}
@@ -634,7 +576,6 @@ func (h *Hub) evictSlow(slow []*Client) {
 		close(c.send)
 		evicted++
 	}
-	cb := h.onLastSubscriber
 	h.mu.Unlock()
 
 	if evicted > 0 {
@@ -643,11 +584,6 @@ func (h *Hub) evictSlow(slow []*Client) {
 	}
 	for _, r := range drainedRooms {
 		M.DecRoom(r.Type)
-	}
-	if cb != nil {
-		for _, r := range drainedRooms {
-			cb(r.Type, r.ID)
-		}
 	}
 }
 

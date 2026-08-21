@@ -1,5 +1,5 @@
 {
-  "title": "Documentation",
+  "title": "文档",
   "pages": [
     "index",
     "how-multica-works",
@@ -34,11 +34,11 @@
     "---自部署运维---",
     "environment-variables",
     "auth-setup",
+    "production-observability",
     "troubleshooting",
     "---参考---",
     "cli",
     "auth-tokens",
-    "desktop-app",
     "---开发者---",
     "developers"
   ]

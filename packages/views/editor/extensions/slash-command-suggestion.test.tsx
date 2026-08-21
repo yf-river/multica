@@ -5,15 +5,15 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
-import enEditor from "../../locales/en/editor.json";
+import enEditor from "../../locales/zh-Hans/editor.json";
 
 const TEST_RESOURCES = {
-  en: { editor: enEditor },
+  "zh-Hans": { editor: enEditor },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -58,7 +58,7 @@ function agent(overrides: Partial<Agent>): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    visibility: "workspace",
+    scope: "workspace",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "",
@@ -217,7 +217,7 @@ describe("slash command suggestion items", () => {
     expect(items(qc)).toEqual([]);
   });
 
-  it("excludes skills from private agents the user cannot access", () => {
+  it("excludes skills from personal agents the user cannot access", () => {
     chatState.selectedAgentId = "private-agent";
     const qc = fakeQc({
       members: [
@@ -227,7 +227,7 @@ describe("slash command suggestion items", () => {
       agents: [
         agent({
           id: "private-agent",
-          visibility: "private",
+          scope: "personal",
           owner_id: "u2",
           skills: [{ id: "private-skill", name: "secret", description: "" }],
         }),
@@ -316,7 +316,7 @@ describe("SlashCommandList empty states", () => {
       </I18nWrapper>,
     );
 
-    expect(getByText("No skills configured")).toBeInTheDocument();
+    expect(getByText("暂无配置的技能")).toBeInTheDocument();
   });
 
   it("shows a no-results empty state when search text has no matches", () => {
@@ -326,7 +326,7 @@ describe("SlashCommandList empty states", () => {
       </I18nWrapper>,
     );
 
-    expect(getByText("No matching skills")).toBeInTheDocument();
+    expect(getByText("没有匹配的技能")).toBeInTheDocument();
   });
 
   it("renders nothing on empty items when hideOnEmpty is set (command menu)", () => {
@@ -378,7 +378,7 @@ describe("SlashCommandList built-in command rendering", () => {
 
     expect(getByText("/note")).toBeInTheDocument();
     expect(
-      getByText("Add a note — won't trigger any agents"),
+      getByText("添加备注 — 不触发任何智能体"),
     ).toBeInTheDocument();
   });
 });

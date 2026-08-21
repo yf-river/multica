@@ -22,9 +22,9 @@
       "task_list": "任务列表"
     },
     "sub_issue": {
-      "tooltip": "用选中内容创建子 issue",
+      "tooltip": "用选中内容创建子任务",
       "created": "已创建 {{identifier}}",
-      "create_failed": "创建子 issue 失败"
+      "create_failed": "创建子任务 失败"
     }
   },
   "image": {
@@ -54,7 +54,7 @@
   },
   "mention": {
     "group_users": "用户",
-    "group_issues": "Issues",
+    "group_issues": "任务",
     "all_members": "所有成员",
     "searching": "搜索中...",
     "no_results": "无结果",
@@ -66,7 +66,7 @@
     "no_skills_configured": "暂无配置的技能",
     "no_results": "没有匹配的技能",
     "commands": {
-      "note": "添加备注 — 不触发任何 Agent"
+      "note": "添加备注 — 不触发任何智能体"
     }
   },
   "code_block": {

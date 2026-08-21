@@ -6,7 +6,7 @@ import { AppSidebar } from "./app-sidebar";
 const { detail, deletePin, navigation, pins } = vi.hoisted(() => ({
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
-  navigation: { current: { pathname: "/acme/issues" } },
+  navigation: { current: { pathname: "/acme/issues", searchParams: new URLSearchParams() } },
   pins: {
     current: [
       {
@@ -62,7 +62,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
 }));
 vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  DropdownMenuContent: () => null,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuItem: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -84,14 +84,50 @@ vi.mock("../auth", () => ({ useLogout: () => vi.fn() }));
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-  useNavigation: () => ({ pathname: navigation.current.pathname, push: vi.fn() }),
+  useNavigation: () => ({ pathname: navigation.current.pathname, searchParams: navigation.current.searchParams, push: vi.fn() }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({ ActorAvatar: () => <span /> }));
+vi.mock("../i18n", () => ({
+  useT: () => ({
+    t: (sel: (s: any) => string) =>
+      sel({
+        nav: {
+          inbox: "收件箱",
+          my_issues: "我的 issue",
+          issues: "任务",
+          projects: "项目",
+          autopilots: "自动化",
+          agents: "智能体",
+          squads: "小队",
+          usage: "用量",
+          run_reviews: "运行复盘",
+          debug: "调试",
+          evaluation: "评估",
+          training: "训练与评估",
+          runtimes: "运行时",
+          skills: "技能",
+          settings: "设置",
+        },
+        sidebar: {
+          unpin_tooltip: "取消固定",
+          workspaces_label: "工作区",
+          create_workspace: "创建工作区",
+          log_out: "退出登录",
+          new_issue: "新建任务",
+          new_issue_shortcut: "C",
+          pinned_label: "固定",
+          workspace_group: "工作区",
+          configure_group: "配置",
+        },
+      }),
+  }),
+}));
 
 vi.mock("@multica/core/auth", () => ({
-  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "user-1" } }),
+  useAuthStore: (selector: (state: { user: { id: string; account: string; name: string } }) => unknown) =>
+    selector({ user: { id: "user-1", account: "test", name: "Test User" } }),
 }));
 vi.mock("@multica/core/paths", () => ({
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
@@ -102,10 +138,15 @@ vi.mock("@multica/core/paths", () => ({
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
     autopilots: () => "/acme/autopilots",
-    agents: () => "/acme/agents",
-    squads: () => "/acme/squads",
-    usage: () => "/acme/usage",
-    runtimes: () => "/acme/runtimes",
+	    agents: () => "/acme/agents",
+	    squads: () => "/acme/squads",
+	    usage: () => "/acme/usage",
+	    runReviews: () => "/acme/run-reviews",
+	    debug: () => "/acme/debug",
+	    debugView: (view: string) => `/acme/debug/${view}`,
+	    evaluation: () => "/acme/evaluation",
+	    evaluationView: (view: string) => `/acme/evaluation/${view}`,
+	    runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
     issueDetail: (id: string) => `/acme/issues/${id}`,
@@ -133,10 +174,7 @@ vi.mock("@multica/core/modals", () => ({ useModalStore: { getState: () => ({ mod
 vi.mock("@multica/core/pins/mutations", () => ({ useDeletePin: () => ({ mutate: deletePin }), useReorderPins: () => ({ mutate: vi.fn() }) }));
 vi.mock("@multica/core/pins/queries", () => ({ pinListOptions: () => ({ queryKey: ["pins"] }) }));
 vi.mock("@multica/core/projects/queries", () => ({ projectDetailOptions: () => ({ queryKey: ["project"] }) }));
-vi.mock("@multica/core/runtimes/hooks", () => ({ useMyRuntimesNeedUpdate: () => false }));
 vi.mock("@multica/core/workspace/queries", () => ({
-  myInvitationListOptions: () => ({ queryKey: ["invitations"] }),
-  workspaceKeys: { myInvitations: () => ["invitations"] },
   workspaceListOptions: () => ({ queryKey: ["workspaces"] }),
 }));
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
@@ -175,6 +213,13 @@ describe("PinRow", () => {
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
   });
 
+  it("shows the account label in the user menu instead of promoting the English name", async () => {
+    render(<AppSidebar />);
+
+    expect(await screen.findByText("账号 test")).toBeInTheDocument();
+    expect(screen.getByText("Test User")).toBeInTheDocument();
+  });
+
   it("does not also highlight the parent workspace nav for an active pin", async () => {
     navigation.current.pathname = "/acme/issues/issue-1";
     detail.current = {
@@ -191,5 +236,52 @@ describe("PinRow", () => {
       "true",
     );
     expect(container.querySelector('button[data-href="/acme/issues"]')).not.toHaveAttribute("data-active");
+  });
+});
+
+describe("AppSidebar workspace nav", () => {
+  beforeEach(() => {
+    navigation.current.pathname = "/acme/issues";
+    navigation.current.searchParams = new URLSearchParams();
+    detail.current = { isPending: false, isError: false, data: null, error: null };
+  });
+
+  it("renders separate debug and evaluation nav items with canonical routes", () => {
+    render(<AppSidebar />);
+
+    expect(document.querySelector('[data-href="/acme/debug/prompts"]')).toHaveAttribute("data-href", "/acme/debug/prompts");
+    expect(document.querySelector('[data-href="/acme/evaluation/datasets"]')).toHaveAttribute(
+      "data-href",
+      "/acme/evaluation/datasets",
+    );
+  });
+
+  it("renders 运行复盘 as the canonical workspace run review entry", () => {
+    render(<AppSidebar />);
+
+    expect(screen.getByText("运行复盘")).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/run-reviews"]')).toHaveAttribute("data-href", "/acme/run-reviews");
+    expect(screen.queryByText("用量")).not.toBeInTheDocument();
+  });
+
+  it("renders debug submodule links and highlights the current debug view", () => {
+    navigation.current.pathname = "/acme/debug/prompts";
+    navigation.current.searchParams = new URLSearchParams();
+
+    render(<AppSidebar />);
+
+    expect(document.querySelector('[data-href="/acme/debug/prompts"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/evaluation/datasets"]')).toBeInTheDocument();
+  });
+
+  it("renders evaluation submodule links and highlights the current evaluation view", () => {
+    navigation.current.pathname = "/acme/evaluation/runs";
+    navigation.current.searchParams = new URLSearchParams("training_data=acceptance");
+
+    render(<AppSidebar />);
+
+    expect(document.querySelector('[data-href="/acme/evaluation/datasets"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/evaluation/test-suites"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/evaluation/runs"]')).toHaveAttribute("data-active", "true");
   });
 });

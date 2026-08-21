@@ -94,12 +94,6 @@ const (
 	EventPinDeleted   = "pin:deleted"
 	EventPinReordered = "pin:reordered"
 
-	// Invitation events
-	EventInvitationCreated  = "invitation:created"
-	EventInvitationAccepted = "invitation:accepted"
-	EventInvitationDeclined = "invitation:declined"
-	EventInvitationRevoked  = "invitation:revoked"
-
 	// Autopilot events
 	EventAutopilotCreated  = "autopilot:created"
 	EventAutopilotUpdated  = "autopilot:updated"
@@ -108,9 +102,10 @@ const (
 	EventAutopilotRunDone  = "autopilot:run_done"
 
 	// Squad events
-	EventSquadCreated = "squad:created"
-	EventSquadUpdated = "squad:updated"
-	EventSquadDeleted = "squad:deleted"
+	EventSquadCreated  = "squad:created"
+	EventSquadUpdated  = "squad:updated"
+	EventSquadDeleted  = "squad:deleted"
+	EventSquadRestored = "squad:restored"
 
 	// Daemon events
 	EventDaemonHeartbeat              = "daemon:heartbeat"

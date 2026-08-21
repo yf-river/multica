@@ -21,7 +21,7 @@ multica daemon start
 启动后它会做四件事：
 
 1. 读取你登录时保存的凭证
-2. 探测本机 `PATH` 上已安装的 AI 编程工具（内置支持 12 款：[Antigravity](/providers#antigravity)、[Claude Code](/providers#claude-code)、[Codex](/providers#codex)、[Cursor](/providers#cursor)、[Copilot](/providers#copilot)、[Gemini](/providers#gemini)、[Hermes](/providers#hermes)、[Kimi](/providers#kimi)、[Kiro CLI](/providers#kiro-cli)、[OpenCode](/providers#opencode)、[OpenClaw](/providers#openclaw)、[Pi](/providers#pi)）
+2. 探测本机 `PATH` 上已安装的 AI 编程工具（内置支持 11 款：[Antigravity](/providers#antigravity)、[Claude Code](/providers#claude-code)、[Codex](/providers#codex)、[Cursor](/providers#cursor)、[Copilot](/providers#copilot)、[Gemini](/providers#gemini)、[Hermes](/providers#hermes)、[Kimi](/providers#kimi)、[Kiro CLI](/providers#kiro-cli)、[OpenCode](/providers#opencode)、[Pi](/providers#pi)）
 3. 向服务器注册自己，以及每款检测到的工具对应的运行时
 4. 持续**每 3 秒轮询一次**是否有任务要领，**每 15 秒发一次心跳**
 
@@ -36,8 +36,6 @@ multica daemon start
 | `multica daemon logs` | 查看日志（加 `-f` 跟随）|
 
 完整 CLI 参考见 [CLI 命令速查](/cli)。
-
-**桌面应用自带守护进程。**用 [桌面应用](/desktop-app) 就不必手动 `multica daemon start`——它启动时会自动拉起守护进程。哪种方式更适合你的工作流，详见 [桌面应用](/desktop-app) 页面。
 
 ## 为什么一台机器会有多个运行时
 
@@ -59,7 +57,7 @@ graph TD
 - Multica 界面的 **Runtimes** 页面列的就是这些行
 
 <Callout type="info">
-**云端运行时即将开放**，目前处于等待名单阶段。上线后，你无需在本地运行守护进程，即可在 Multica Cloud 上直接执行智能体任务。在 [下载页面](https://multica.ai/download) 登记邮箱以获取通知。
+**云端运行时由团队管理员统一配置**。团队成员无需留下联系方式；如果你的工作区已启用云端运行时，可以直接选择可用环境执行智能体任务。
 </Callout>
 
 ## 运行时什么时候被判定为离线
@@ -83,7 +81,7 @@ Multica 用心跳判断运行时是否在线。三个关键数字：
 Multica 对并发有两层限额：
 
 - **守护进程层**：默认 **20 个执行任务并发**（环境变量 `MULTICA_DAEMON_MAX_CONCURRENT_TASKS` 可调）
-- **智能体层**：每个智能体默认 **6 个执行任务并发**（智能体配置里改）
+- **智能体层**：每个智能体默认 **20 个执行任务并发**（智能体配置里改）
 
 两层中更紧的那层生效。如果你的守护进程已经在跑 20 个任务，即使某个智能体还有余量，新的任务也要等。
 
@@ -108,4 +106,4 @@ Multica 对并发有两层限额：
 ## 下一步
 
 - [执行任务](/tasks) —— 守护进程领到任务后，它的完整生命周期
-- [Providers Matrix](/providers) —— 12 款 AI 编程工具的能力差异对照
+- [Providers Matrix](/providers) —— 11 款 AI 编程工具的能力差异对照

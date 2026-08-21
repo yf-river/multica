@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -26,8 +24,8 @@ import (
 )
 
 // Mirrors AGENT_DESCRIPTION_MAX_LENGTH in packages/core/agents/constants.ts
-// and the agent_description_length CHECK constraint in migration 060. Counted
-// in unicode code points (utf8.RuneCountInString), matching Postgres
+// and the agent_description_length CHECK constraint. Counted in Unicode code
+// points (utf8.RuneCountInString), matching Postgres
 // char_length and the front-end's String.prototype.length-with-counter UX.
 const maxAgentDescriptionLength = 255
 
@@ -53,7 +51,7 @@ type AgentResponse struct {
 	HasCustomEnv       bool   `json:"has_custom_env"`
 	CustomEnvKeyCount  int    `json:"custom_env_key_count"`
 	McpConfigRedacted  bool   `json:"mcp_config_redacted"`
-	Visibility         string `json:"visibility"`
+	Scope              string `json:"scope"`
 	Status             string `json:"status"`
 	MaxConcurrentTasks int32  `json:"max_concurrent_tasks"`
 	Model              string `json:"model"`
@@ -70,12 +68,12 @@ type AgentResponse struct {
 }
 
 // runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
-// any non-empty `runtime_config.gateway.token` (openclaw gateway mode, issue
-// #3260). The token is a bearer credential; surfacing the real value through
-// GET responses would let anyone with read access to the agent dump the
-// gateway secret. The mask is a sentinel — when the UI later PATCHes the
-// agent and submits the same mask verbatim under that field, the update
-// handler restores the persisted token instead of overwriting it.
+// any non-empty legacy `runtime_config.gateway.token`. The token is a bearer
+// credential; surfacing the real value through GET responses would let anyone
+// with read access to the agent dump the gateway secret. The mask is a
+// sentinel — when the UI later PATCHes the agent and submits the same mask
+// verbatim under that field, the update handler restores the persisted token
+// instead of overwriting it.
 const runtimeConfigGatewayTokenMask = "***"
 
 func agentToResponse(a db.Agent) AgentResponse {
@@ -131,7 +129,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		McpConfig:          mcpConfig,
 		HasCustomEnv:       envKeyCount > 0,
 		CustomEnvKeyCount:  envKeyCount,
-		Visibility:         a.Visibility,
+		Scope:              a.Scope,
 		Status:             a.Status,
 		MaxConcurrentTasks: a.MaxConcurrentTasks,
 		Model:              a.Model.String,
@@ -147,7 +145,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
 // mask sentinel when a non-empty value is present. No-op for any other
-// shape so non-openclaw / non-gateway agents pass through untouched.
+// shape so non-gateway runtime configs pass through untouched.
 func maskGatewayToken(rc any) {
 	root, ok := rc.(map[string]any)
 	if !ok {
@@ -222,6 +220,28 @@ type ProjectResourceData struct {
 	Label        string          `json:"label,omitempty"`
 }
 
+// IssueExecutionSpaceData tells the daemon to use one stable, issue-scoped
+// worktree for every agent task on the issue instead of a task-scoped scratch
+// workdir. The daemon owns the concrete local path because it is host-local.
+type IssueExecutionSpaceData struct {
+	Enabled        bool   `json:"enabled"`
+	IssueID        string `json:"issue_id"`
+	PrimaryRepoURL string `json:"primary_repo_url"`
+	Ref            string `json:"ref,omitempty"`
+}
+
+// TaskExecutionPolicyData is a daemon-facing capability policy for the current
+// task. It is derived from the agent's role in a squad/profile, not from the
+// runtime provider.
+type TaskExecutionPolicyData struct {
+	RoleKey              string   `json:"role_key,omitempty"`
+	RoleKind             string   `json:"role_kind,omitempty"`
+	CanAccessRepo        bool     `json:"can_access_repo"`
+	CanEditRepo          bool     `json:"can_edit_repo"`
+	ProjectSkillMode     string   `json:"project_skill_mode,omitempty"` // none, stage, implementation, verification, all
+	AllowedProjectSkills []string `json:"allowed_project_skills,omitempty"`
+}
+
 type AgentTaskResponse struct {
 	ID          string `json:"id"`
 	AgentID     string `json:"agent_id"`
@@ -233,28 +253,33 @@ type AgentTaskResponse struct {
 	// as `## Workspace Context` so every agent running in this workspace —
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
-	WorkspaceContext string                `json:"workspace_context,omitempty"`
-	ThreadName       string                `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status           string                `json:"status"`
-	Priority         int32                 `json:"priority"`
-	DispatchedAt     *string               `json:"dispatched_at"`
-	StartedAt        *string               `json:"started_at"`
-	CompletedAt      *string               `json:"completed_at"`
-	Result           any                   `json:"result"`
-	Error            *string               `json:"error"`
-	FailureReason    string                `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
-	Attempt          int32                 `json:"attempt"`
-	MaxAttempts      int32                 `json:"max_attempts"`
-	ParentTaskID     *string               `json:"parent_task_id,omitempty"`
-	Agent            *TaskAgentData        `json:"agent,omitempty"`
-	Repos            []RepoData            `json:"repos,omitempty"`
-	ProjectID        string                `json:"project_id,omitempty"`        // issue's project, when present
-	ProjectTitle     string                `json:"project_title,omitempty"`     // for surfacing in agent context
-	ProjectResources []ProjectResourceData `json:"project_resources,omitempty"` // resources attached to the project
-	CreatedAt        string                `json:"created_at"`
-	PriorSessionID   string                `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir     string                `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
-	WorkDir          string                `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
+	WorkspaceContext    string                   `json:"workspace_context,omitempty"`
+	ThreadName          string                   `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status              string                   `json:"status"`
+	Priority            int32                    `json:"priority"`
+	DispatchedAt        *string                  `json:"dispatched_at"`
+	StartedAt           *string                  `json:"started_at"`
+	CompletedAt         *string                  `json:"completed_at"`
+	Result              any                      `json:"result"`
+	Error               *string                  `json:"error"`
+	FailureReason       string                   `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	Attempt             int32                    `json:"attempt"`
+	MaxAttempts         int32                    `json:"max_attempts"`
+	ParentTaskID        *string                  `json:"parent_task_id,omitempty"`
+	IsLeaderTask        bool                     `json:"is_leader_task,omitempty"`
+	Agent               *TaskAgentData           `json:"agent,omitempty"`
+	Repos               []RepoData               `json:"repos,omitempty"`
+	ProjectID           string                   `json:"project_id,omitempty"`        // issue's project, when present
+	ProjectTitle        string                   `json:"project_title,omitempty"`     // for surfacing in agent context
+	ProjectResources    []ProjectResourceData    `json:"project_resources,omitempty"` // resources attached to the project
+	IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space,omitempty"`
+	ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy,omitempty"`
+	SourceContext       *TaskSourceContext       `json:"source_context,omitempty"` // structured source/MCP context for TAPD/Gongfeng-backed tasks
+	SourceSummaryPrompt string                   `json:"source_summary_prompt,omitempty"`
+	CreatedAt           string                   `json:"created_at"`
+	PriorSessionID      string                   `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir        string                   `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	WorkDir             string                   `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
 	// RelativeWorkDir is a privacy-safe display form of WorkDir intended for
 	// the UI. For standard tasks it strips the daemon's workspaces root so
 	// the user sees `<wsUUID>/<taskShort>/workdir`; for local_directory
@@ -272,6 +297,7 @@ type AgentTaskResponse struct {
 	TriggerSummary           *string              `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
 	TriggerAuthorType        string               `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
 	TriggerAuthorName        string               `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
+	TriggerCommentCreatedAt  string               `json:"trigger_comment_created_at,omitempty"`  // timestamp of the triggering comment for responsibility-window timelines
 	NewCommentCount          int                  `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
 	NewCommentsSince         string               `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
 	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
@@ -285,10 +311,16 @@ type AgentTaskResponse struct {
 	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
 	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
 	QuickCreateAttachmentIDs []string             `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
-	SquadID                  string               `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string               `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string               `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	QuickCreateStatus        string               `json:"quick_create_status,omitempty"`
+	QuickCreatePriority      string               `json:"quick_create_priority,omitempty"`
+	QuickCreateAssigneeType  string               `json:"quick_create_assignee_type,omitempty"`
+	QuickCreateAssigneeID    string               `json:"quick_create_assignee_id,omitempty"`
+	QuickCreateStartDate     string               `json:"quick_create_start_date,omitempty"`
+	QuickCreateDueDate       string               `json:"quick_create_due_date,omitempty"`
+	SquadID                  string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string               `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID            string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -303,18 +335,18 @@ type AgentTaskResponse struct {
 	// Resolved at claim time: comment-triggered tasks use the triggering
 	// comment's author; chat tasks use the chat session creator. Empty for
 	// task kinds with no attributable human initiator (on-assign, autopilot,
-	// quick-create). InitiatorEmail is set only for member initiators
-	// ("member"); agent initiators ("agent") carry a name but no email. The
+	// quick-create). InitiatorAccount is set only for member initiators
+	// ("member"); agent initiators ("agent") carry a name but no account. The
 	// daemon emits these into the brief under `## Task Initiator` so a
 	// workspace-visible, multi-user agent can attribute the request and apply
 	// per-person privacy / access rules instead of seeing every requester as
 	// the owner. The agent's effective Multica credentials stay owner-scoped —
 	// this is an attested identity, not a credential. See MUL-2645.
-	InitiatorType  string `json:"initiator_type,omitempty"`  // "member" or "agent"
-	InitiatorID    string `json:"initiator_id,omitempty"`    // user UUID (member) or agent UUID
-	InitiatorName  string `json:"initiator_name,omitempty"`  // display name of the initiator
-	InitiatorEmail string `json:"initiator_email,omitempty"` // member email; empty for agent initiators
-	Kind           string `json:"kind"`                      // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
+	InitiatorType    string `json:"initiator_type,omitempty"`    // "member" or "agent"
+	InitiatorID      string `json:"initiator_id,omitempty"`      // user UUID (member) or agent UUID
+	InitiatorName    string `json:"initiator_name,omitempty"`    // display name of the initiator
+	InitiatorAccount string `json:"initiator_account,omitempty"` // member account; empty for agent initiators
+	Kind             string `json:"kind"`                        // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -324,6 +356,38 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+}
+
+type TaskSourceContext struct {
+	Provider            string                                   `json:"provider,omitempty"`
+	URL                 string                                   `json:"url,omitempty"`
+	TAPD                *TAPDTaskSourceContext                   `json:"tapd,omitempty"`
+	ExternalCredentials map[string]TaskExternalCredentialContext `json:"external_credentials,omitempty"`
+}
+
+type TAPDTaskSourceContext struct {
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+	ResourceType  string `json:"resource_type,omitempty"`
+	ResourceID    string `json:"resource_id,omitempty"`
+	FetchProvider string `json:"fetch_provider,omitempty"`
+	FetchStatus   string `json:"fetch_status,omitempty"`
+	FetchError    string `json:"fetch_error,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Summary       string `json:"summary,omitempty"`
+	BodyExcerpt   string `json:"body_excerpt,omitempty"`
+	Version       string `json:"version,omitempty"`
+}
+
+type TaskExternalCredentialContext struct {
+	Provider      string `json:"provider"`
+	Scope         string `json:"scope"`
+	Inheritance   string `json:"inheritance"`
+	UserID        string `json:"user_id,omitempty"`
+	ProfileID     string `json:"profile_id,omitempty"`
+	ProfileName   string `json:"profile_name,omitempty"`
+	ProfileStatus string `json:"profile_status,omitempty"`
+	MCPServer     string `json:"mcp_server,omitempty"`
+	Configured    bool   `json:"configured"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata embedded in
@@ -350,12 +414,6 @@ type TaskAgentData struct {
 	McpConfig     json.RawMessage          `json:"mcp_config,omitempty"`
 	Model         string                   `json:"model,omitempty"`
 	ThinkingLevel string                   `json:"thinking_level,omitempty"`
-	// RuntimeConfig is the agent's saved runtime_config JSON as-is. The
-	// daemon decodes it per-provider — e.g. the openclaw backend reads
-	// `mode` + `gateway.*` to choose between embedded and gateway routing
-	// (issue #3260). Other providers ignore the payload entirely. Sent
-	// raw so the daemon can evolve its schema without a server roundtrip.
-	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
@@ -394,6 +452,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		Attempt:          t.Attempt,
 		MaxAttempts:      t.MaxAttempts,
 		ParentTaskID:     uuidToPtr(t.ParentTaskID),
+		IsLeaderTask:     t.IsLeaderTask,
 		CreatedAt:        timestampToString(t.CreatedAt),
 		TriggerCommentID: uuidToPtr(t.TriggerCommentID),
 		TriggerSummary:   textToPtr(t.TriggerSummary),
@@ -442,6 +501,12 @@ func relativeWorkDir(workDir, workspaceID, taskID string) string {
 	if workspaceID != "" && taskID != "" {
 		envRootSuffix := workspaceID + "/" + shortTaskID(taskID)
 		if idx := strings.Index(normalized, envRootSuffix); idx >= 0 {
+			return normalized[idx:]
+		}
+	}
+	if workspaceID != "" {
+		issueRootSuffix := workspaceID + "/issues/"
+		if idx := strings.Index(normalized, issueRootSuffix); idx >= 0 {
 			return normalized[idx:]
 		}
 	}
@@ -578,14 +643,14 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	alwaysRedact := workspaceAlwaysRedactSecrets(ws.Settings)
 
-	// Resolve the request actor once. Agents bypass the private-agent gate
+	// Resolve the request actor once. Agents bypass the personal-agent gate
 	// to preserve A2A collaboration; members must be in allowed_principals
-	// (agent owner or workspace owner/admin) to see private agents.
+	// (agent owner or workspace owner/admin) to see personal agents.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
-		if a.Visibility == "private" && actorType == "member" {
-			if !memberAllowedForPrivateAgent(a, actorID, member.Role) {
+		if a.Scope == scopePersonal && actorType == "member" {
+			if !memberAllowedForPersonalAgent(a, actorID, member.Role) {
 				continue
 			}
 		}
@@ -614,12 +679,12 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Private-agent gate: members must be in allowed_principals to view
-	// (and therefore navigate to) a private agent. The 403 lets the front-end
+	// (and therefore navigate to) a personal agent. The 403 lets the front-end
 	// render an explicit "no access" placeholder instead of a 404 — see
 	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -665,7 +730,7 @@ type CreateAgentRequest struct {
 	CustomEnv          map[string]string `json:"custom_env"`
 	CustomArgs         []string          `json:"custom_args"`
 	McpConfig          json.RawMessage   `json:"mcp_config"`
-	Visibility         string            `json:"visibility"`
+	Scope              string            `json:"scope"`
 	MaxConcurrentTasks int32             `json:"max_concurrent_tasks"`
 	Model              string            `json:"model"`
 	ThinkingLevel      string            `json:"thinking_level"`
@@ -725,11 +790,14 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "runtime_id is required")
 		return
 	}
-	if req.Visibility == "" {
-		req.Visibility = "private"
+	scope, validScope := normalizeScope(req.Scope, scopePersonal)
+	if !validScope {
+		writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
+		return
 	}
+	req.Scope = scope
 	if req.MaxConcurrentTasks == 0 {
-		req.MaxConcurrentTasks = 6
+		req.MaxConcurrentTasks = defaultAgentMaxConcurrentTasks
 	}
 
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
@@ -755,7 +823,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
+		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
+		return
+	}
+	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -797,6 +869,8 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ca = []byte("[]")
 	}
 
+	model := agentModelForRuntime(runtime.Provider, req.Model)
+
 	var mc []byte
 	if rawMcpConfig, ok := rawFields["mcp_config"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null")) {
 		mc = append([]byte(nil), rawMcpConfig...)
@@ -811,20 +885,19 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		RuntimeMode:        runtime.RuntimeMode,
 		RuntimeConfig:      rc,
 		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
+		Scope:              req.Scope,
 		MaxConcurrentTasks: req.MaxConcurrentTasks,
 		OwnerID:            parseUUID(ownerID),
 		CustomEnv:          ce,
 		CustomArgs:         ca,
 		McpConfig:          mc,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		Model:              pgtype.Text{String: model, Valid: model != ""},
 		ThinkingLevel:      pgtype.Text{String: req.ThinkingLevel, Valid: req.ThinkingLevel != ""},
 	})
 	if err != nil {
-		// Unique constraint on (workspace_id, name) — return a clear conflict error
-		// so the UI can show the right message instead of a generic 500.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "agent_workspace_name_unique" {
+		// Unique constraint on agent name within its scope/owner scope.
+		// Return a clear conflict error so the UI can show the right message.
+		if isAgentNameUniqueViolation(err) {
 			writeError(w, http.StatusConflict, fmt.Sprintf("an agent named %q already exists in this workspace", req.Name))
 			return
 		}
@@ -875,7 +948,7 @@ type UpdateAgentRequest struct {
 	// secret values with literal `****`. See MUL-2600.
 	CustomArgs         *[]string        `json:"custom_args"`
 	McpConfig          *json.RawMessage `json:"mcp_config"`
-	Visibility         *string          `json:"visibility"`
+	Scope              *string          `json:"scope"`
 	Status             *string          `json:"status"`
 	MaxConcurrentTasks *int32           `json:"max_concurrent_tasks"`
 	Model              *string          `json:"model"`
@@ -1060,6 +1133,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// runtime to validate a thinking_level change. Resolve once and reuse.
 	targetRuntimeID := existing.RuntimeID
 	targetProvider := ""
+	targetRuntime := db.AgentRuntime{}
+	haveTargetRuntime := false
 	if req.RuntimeID != nil {
 		runtimeUUID, ok := parseUUIDOrBadRequest(w, *req.RuntimeID, "runtime_id")
 		if !ok {
@@ -1074,23 +1149,51 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Same gate as CreateAgent — prevents UpdateAgent from being used to
-		// re-bind an agent onto someone else's private runtime, which would
+		// re-bind an agent onto someone else's personal runtime, which would
 		// otherwise be a quiet end-run around the CreateAgent check.
 		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
 		if !ok {
 			return
 		}
 		if !canUseRuntimeForAgent(member, runtime) {
-			writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can move agents onto it")
+			writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can move agents onto it")
 			return
 		}
 		params.RuntimeID = runtime.ID
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
 		targetProvider = runtime.Provider
+		targetRuntime = runtime
+		haveTargetRuntime = true
 	}
-	if req.Visibility != nil {
-		params.Visibility = pgtype.Text{String: *req.Visibility, Valid: true}
+	if req.Scope != nil {
+		scope, valid := normalizeScope(*req.Scope, "")
+		if !valid {
+			writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
+			return
+		}
+		params.Scope = pgtype.Text{String: scope, Valid: true}
+	}
+	if req.Scope != nil || req.RuntimeID != nil {
+		nextScope := existing.Scope
+		if req.Scope != nil {
+			nextScope = params.Scope.String
+		}
+		if !haveTargetRuntime {
+			runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+				ID:          targetRuntimeID,
+				WorkspaceID: existing.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid runtime_id")
+				return
+			}
+			targetRuntime = runtime
+		}
+		if err := validateAgentRuntimeScope(nextScope, existing.OwnerID, targetRuntime); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if req.Status != nil {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
@@ -1385,11 +1488,11 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Run history is part of the private-agent gate ("查看历史会话"). Same
+	// Run history is part of the personal-agent gate ("查看历史会话"). Same
 	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -1441,8 +1544,11 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 	}
 
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if !ok {
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
@@ -1482,8 +1588,11 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 	}
 
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if !ok {
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
@@ -1523,13 +1632,19 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 
 	tasks, err := h.Queries.ListWorkspaceAgentTaskSnapshot(r.Context(), parseUUID(workspaceID))
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list agent task snapshot")
 		return
 	}
 
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if !ok {
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}

@@ -17,5 +17,6 @@ export {
   projectResourcesOptions,
   useCreateProjectResource,
   useUpdateProjectResource,
+  useSyncProjectResource,
   useDeleteProjectResource,
 } from "./resource-queries";

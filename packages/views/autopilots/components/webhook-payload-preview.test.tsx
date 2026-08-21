@@ -51,7 +51,7 @@ describe("WebhookPayloadPreview", () => {
     );
     // Truncation marker (i18n) appears as a tail span — we assert by
     // partial text rather than coupling to the exact phrasing.
-    expect(screen.getByText(/truncated/i)).toBeInTheDocument();
+    expect(screen.getByText(/已截断/i)).toBeInTheDocument();
 
     // The visible <pre> body must NOT contain the full 5 KiB blob — it is
     // sliced to the truncate threshold.
@@ -60,7 +60,7 @@ describe("WebhookPayloadPreview", () => {
     expect((pre!.textContent ?? "").length).toBeLessThan(5 * 1024 + 200);
 
     // Clicking Copy must still hand the FULL payload to the clipboard.
-    fireEvent.click(screen.getByRole("button", { name: /copy/i }));
+    fireEvent.click(screen.getByRole("button", { name: /复制/i }));
     const writeText = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
     expect(writeText).toHaveBeenCalled();
     const lastCall = writeText.mock.calls[writeText.mock.calls.length - 1];

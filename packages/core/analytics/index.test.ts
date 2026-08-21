@@ -64,18 +64,6 @@ describe("initAnalytics super-properties", () => {
       is_demo: false,
     });
   });
-
-  it("detects desktop when window.electron is present", async () => {
-    vi.stubGlobal("window", { electron: {} });
-    const { analytics, posthog } = await loadModule();
-    analytics.initAnalytics({ key: "k", host: "" });
-    expect(posthog.register).toHaveBeenCalledWith({
-      client_type: "desktop",
-      environment: "dev",
-      event_schema_version: 2,
-      is_demo: false,
-    });
-  });
 });
 
 describe("resetAnalytics", () => {
@@ -113,9 +101,6 @@ describe("normalizePageviewPath", () => {
       analytics.normalizePageviewPath("/acme/issues/8d5c1a2b-0035-4c62-9f14-1ad4215736a5"),
     ).toBe("/acme/issues");
     expect(analytics.normalizePageviewPath("/acme/issues/MUL-123")).toBe("/acme/issues");
-    expect(
-      analytics.normalizePageviewPath("/invite/8d5c1a2b-0035-4c62-9f14-1ad4215736a5"),
-    ).toBe("/invite");
   });
 
   it("strips query string and hash", async () => {
@@ -250,7 +235,7 @@ describe("before_send $exception pipeline", () => {
         $exception_list: [
           {
             type: "TypeError",
-            value: "Bad email bob@corp.com",
+            value: "Request failed https://api.multica.ai/issues?token=abc123secret",
             stacktrace: {
               frames: [{ filename: "a.tsx", function: "f", lineno: 1, colno: 2 }],
             },
@@ -271,7 +256,9 @@ describe("before_send $exception pipeline", () => {
 
     const first = beforeSend(excEvent()) as { properties: { $exception_list: Array<{ value: string }> } };
     // Redaction still runs before the fuse.
-    expect(first.properties.$exception_list[0]!.value).toBe("Bad email [redacted]");
+    expect(first.properties.$exception_list[0]!.value).toBe(
+      "Request failed https://api.multica.ai/issues?[redacted]",
+    );
 
     expect(beforeSend(excEvent())).not.toBeNull();
     expect(beforeSend(excEvent())).not.toBeNull();

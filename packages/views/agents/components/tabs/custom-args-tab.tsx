@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import type { Agent, RuntimeDevice } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
+import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
 interface ArgEntry {
   id: string;
@@ -136,19 +137,12 @@ export function CustomArgsTab({
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-3">
-        {dirty && (
-          <span className="text-xs text-muted-foreground">{t(($) => $.tab_body.common.unsaved_changes)}</span>
-        )}
-        <Button onClick={handleSave} disabled={!dirty || saving} size="sm">
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {t(($) => $.tab_body.common.save)}
-        </Button>
-      </div>
+      <AgentTabSaveBar
+        dirty={dirty}
+        saving={saving}
+        disabled={!dirty || saving}
+        onSave={handleSave}
+      />
     </div>
   );
 }

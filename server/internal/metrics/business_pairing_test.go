@@ -19,17 +19,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/metrics"
 )
-
-// frontendOnlyEvents are declared in events.go but emitted from the frontend,
-// not from server code. They still need a Prometheus counter (so a future
-// server-side emission point lights up the same label set) but the server
-// has no Capture call site to lint.
-var frontendOnlyEvents = map[string]bool{
-	analytics.EventOnboardingStarted: true,
-}
 
 // TestEveryAnalyticsEventHasPrometheusCounter asserts that every Event*
 // constant declared in analytics/events.go is dispatched by
@@ -335,10 +330,44 @@ func constantNameForEvent(name string) string {
 // so a leftover prewarm value from another counter cannot mask a missing
 // dispatch case.
 func dispatchIncrementsCounter(m *metrics.BusinessMetrics, ev analytics.Event) bool {
-	before := metrics.SumAllCounters(m)
+	before := sumAllCounters(m)
 	metrics.RecordEvent(analytics.NoopClient{}, m, ev)
-	after := metrics.SumAllCounters(m)
+	after := sumAllCounters(m)
 	return after > before
+}
+
+// sumAllCounters returns the running sum across every counter sample
+// currently registered with m. Used by the lint tests to confirm that a
+// synthetic event causes AT LEAST ONE counter to advance — i.e. that the
+// IncForEvent dispatch covered the case.
+//
+// Histograms and gauges are deliberately excluded so prewarmed buckets
+// (e.g. failure_reason 0-counts) don't make every event "pass" trivially.
+func sumAllCounters(m *metrics.BusinessMetrics) float64 {
+	if m == nil {
+		return 0
+	}
+	reg := prometheus.NewPedanticRegistry()
+	for _, c := range m.Collectors() {
+		// MustRegister panics on duplicate; we use a fresh registry each call.
+		reg.MustRegister(c)
+	}
+	families, err := reg.Gather()
+	if err != nil {
+		return 0
+	}
+	var total float64
+	for _, fam := range families {
+		if fam.GetType() != dto.MetricType_COUNTER {
+			continue
+		}
+		for _, mtr := range fam.GetMetric() {
+			if c := mtr.GetCounter(); c != nil {
+				total += c.GetValue()
+			}
+		}
+	}
+	return total
 }
 
 // defaultPropsForEvent returns a properties map populated with the label
@@ -347,7 +376,7 @@ func dispatchIncrementsCounter(m *metrics.BusinessMetrics, ev analytics.Event) b
 func defaultPropsForEvent(name string) map[string]any {
 	switch name {
 	case analytics.EventSignup:
-		return map[string]any{"signup_source": "test"}
+		return nil
 	case analytics.EventWorkspaceCreated:
 		return map[string]any{"source": "manual"}
 	case analytics.EventOnboardingStarted:

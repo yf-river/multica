@@ -109,9 +109,9 @@ describe("IssueAgentHeaderChip", () => {
     renderWithI18n(<IssueAgentHeaderChip issueId="issue-1" />);
 
     expect(
-      screen.getByRole("button", { name: "Walt is working" }),
+      screen.getByRole("button", { name: "Walt 在工作" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Walt is working")).toBeInTheDocument();
+    expect(screen.getByText("Walt 在工作")).toBeInTheDocument();
     expect(screen.queryByText(/events?/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+[smh]/i)).not.toBeInTheDocument();
     expect(mockState.taskMessagesOptions).not.toHaveBeenCalled();
@@ -138,9 +138,9 @@ describe("IssueAgentHeaderChip", () => {
     renderWithI18n(<IssueAgentHeaderChip issueId="issue-1" />);
 
     expect(
-      screen.getByRole("button", { name: "2 agents working" }),
+      screen.getByRole("button", { name: "2 个智能体正在工作" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("2 agents working")).toHaveLength(2);
+    expect(screen.getAllByText("2 个智能体正在工作")).toHaveLength(2);
     expect(screen.getAllByTestId("active-task-row")).toHaveLength(2);
     expect(mockState.taskMessagesOptions).not.toHaveBeenCalled();
   });
