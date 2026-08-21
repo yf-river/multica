@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
+	"github.com/multica-ai/multica/server/internal/schema"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/redis/go-redis/v9"
@@ -105,6 +107,9 @@ func envDuration(name string, def time.Duration) time.Duration {
 func main() {
 	logger.Init()
 
+	initSchemaOnly := flag.Bool("init-schema-only", false, "initialize or verify the database schema, then exit")
+	flag.Parse()
+
 	// Warn about missing configuration
 	if os.Getenv("JWT_SECRET") == "" {
 		slog.Warn("JWT_SECRET is not set — using insecure default. Set JWT_SECRET for production use.")
@@ -135,6 +140,15 @@ func main() {
 	}
 	slog.Info("connected to database")
 	logPoolConfig(pool)
+
+	if err := schema.EnsureCurrent(ctx, pool); err != nil {
+		slog.Error("database schema is not usable; reset the database before starting this server", "error", err)
+		os.Exit(1)
+	}
+	if *initSchemaOnly {
+		slog.Info("database schema is current")
+		return
+	}
 
 	bus := events.New()
 	hub := realtime.NewHub()
@@ -317,17 +331,15 @@ func main() {
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
 	// `sys_cron_executions` table into the distributed lease + audit
 	// log for internal periodic jobs. The first job is
-	// `rollup_task_usage_hourly`, which replaces the previously
-	// operator-registered `pg_cron` entry (still safe to run
-	// concurrently — the SQL function holds advisory lock 4246).
+	// `rollup_task_usage_hourly`; the SQL function holds advisory lock
+	// 4246 so multiple server replicas cannot process the same window.
 	//
 	// A failure to register the job is treated as fatal here only at
 	// the registration step (a duplicate name is the only realistic
 	// cause and indicates a code bug). Once running, the manager
-	// surfaces transient errors — DB unreachable, sys_cron_executions
-	// missing because of an unusual partial-migration state — by
-	// logging them on the tick that fails and retrying on the next
-	// cycle, so a temporary outage does not crash the server.
+	// surfaces transient errors such as a temporarily unreachable DB by
+	// logging them on the tick that fails and retrying on the next cycle,
+	// so a temporary outage does not crash the server.
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
 	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
 		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)

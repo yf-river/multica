@@ -113,7 +113,7 @@ make dev
 - 安装 JS 依赖
 - 确保共享 PostgreSQL 容器在跑
 - 若应用数据库不存在则创建
-- 跑所有迁移
+- 启动后端时初始化空数据库 schema
 - 同时启动后端与前端
 
 ### 显式配置（高级）
@@ -251,8 +251,7 @@ make stop
 make check
 make dev
 make test
-make migrate-up
-make migrate-down
+make schema-init
 ```
 
 这些通用 target 要求当前目录存在合法的 env 文件。
@@ -261,14 +260,13 @@ make migrate-down
 
 数据库创建是自动的。
 
-以下命令都会在继续前确保目标数据库存在：
+以下命令都会在继续前确保目标数据库存在，并由后端初始化或校验当前 schema：
 
 - `make setup`
 - `make start`
 - `make dev`
 - `make test`
-- `make migrate-up`
-- `make migrate-down`
+- `make schema-init`
 - `make check`
 
 该逻辑位于 `scripts/ensure-postgres.sh`。
@@ -546,7 +544,7 @@ make db-down
 make db-down
 ```
 
-想为当前 checkout 重置数据库（drop `POSTGRES_DB` 中的库、重建、跑所有迁移）：
+想为当前 checkout 重置数据库（drop `POSTGRES_DB` 中的库、重建、初始化当前 schema）：
 
 ```bash
 make stop        # 先停后端/前端

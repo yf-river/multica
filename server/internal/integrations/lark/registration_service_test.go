@@ -20,7 +20,7 @@ import (
 // mapping — without touching the database. The polling goroutine's
 // DB-write paths (UpsertLarkInstallation + BindInstallerTx in one tx)
 // require a real Postgres + sqlc-generated *db.Queries and are
-// covered by an integration test against the migration suite.
+// covered by an integration test against the current schema.
 
 // TestRegistrationServiceConstructorValidatesDeps pins that every
 // required dependency surfaces as a constructor error rather than a

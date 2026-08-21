@@ -987,8 +987,8 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	//    Snapshots the full archived set on this runtime — including any
 	//    that were already archived before this call — because the
 	//    DeleteArchivedAgentsByRuntime below will hard-delete the lot, and
-	//    a paused autopilot is much louder in the UI than a silently-
-	//    dangling assignee_id (see migration 096 for why the FK is gone).
+	//    a paused autopilot is much louder in the UI than a silently
+	//    dangling assignee_id.
 	allArchivedIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")

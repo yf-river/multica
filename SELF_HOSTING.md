@@ -215,11 +215,11 @@ helm install multica deploy/helm/multica -n multica
 kubectl -n multica get pods -w
 ```
 
-冷集群上后端可能 `Running` 但不 `Ready` 持续几分钟，等 PostgreSQL 并跑迁移——startupProbe 吸收这段时间，pod 不会重启。后端 `Ready` 后迁移完成，`/healthz` 返回 OK：
+冷集群上后端可能 `Running` 但不 `Ready` 持续几分钟，等待 PostgreSQL 并初始化 schema——startupProbe 吸收这段时间，pod 不会重启。后端 `Ready` 后，`/healthz` 返回 OK：
 
 ```bash
 curl -H "Host: api.multica.dev.lan" http://<ingress-ip>/healthz
-# {"status":"ok","checks":{"db":"ok","migrations":"ok"}}
+# {"status":"ok","checks":{"db":"ok","schema":"ok"}}
 ```
 
 然后浏览器打开 http://multica.dev.lan。
@@ -278,13 +278,13 @@ helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
   -f my-values.yaml
 ```
 
-升级出问题时回滚：
+仅在新旧版本使用相同 schema 时才能直接回滚：
 
 ```bash
 helm -n multica rollback multica
 ```
 
-> **从 `v0.3.4` 升级到 `v0.3.5+` 失败、提示 `refusing to drop legacy daily rollups: ...`？** 完整恢复流程见 [高级配置 → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup)。MUL-2957 之后 `migrate up` 会自动跑幂等的 monthly-slice backfill，正常情况一次 `helm upgrade` + 后端滚动即可完成。
+开发阶段不支持数据库原地升级。切换到 schema 不同的版本前，请备份所需数据、重建数据库，再启动新版本后端。
 
 ### 拆除
 
@@ -302,7 +302,7 @@ kubectl delete namespace multica
 
 Usage / Runtime dashboard 从派生的 `task_usage_hourly` 表读，由 `rollup_task_usage_hourly()` 填充。MUL-2957 之后后端通过 DB 调度器（`sys_cron_executions`）在**进程内**跑该 rollup，每个副本都跑；全新自部署安装无需运维操作，自带 `pgvector/pgvector:pg17` 镜像即可——**不需要**换带 `pg_cron` 的镜像、注册外部 cron job、设 systemd timer、跑 Kubernetes `CronJob`。
 
-完整参考（审计表语义、advisory lock 4246、standalone backfill 命令、flag 说明、`v0.3.4 → v0.3.5+` 迁移 auto-hook）见 [高级配置 → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup)。
+完整参考（审计表语义与 advisory lock 4246）见 [高级配置 → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup)。
 
 ## 停止服务
 
@@ -341,9 +341,7 @@ docker compose -f docker-compose.selfhost.yml pull
 docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-`.env` 中把 `MULTICA_IMAGE_TAG` pin 到精确版本（如 `v0.2.4`）可留在特定 release。迁移在后端启动时自动跑。若所选 GHCR tag 尚未发布，回退到 `make selfhost-build` 或 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`。
-
-> **从 `v0.3.4` 升级到 `v0.3.5+`？** 完整说明见 [高级配置 → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup)。MUL-2957 之后 `migrate up` 自动跑 backfill，单次调用即可完成升级。
+`.env` 中把 `MULTICA_IMAGE_TAG` pin 到精确版本（如 `v0.2.4`）可留在特定 release。开发阶段不支持数据库原地升级；切换到 schema 不同的版本前先备份所需数据并重建数据库。若所选 GHCR tag 尚未发布，回退到 `make selfhost-build` 或 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`。
 
 ---
 

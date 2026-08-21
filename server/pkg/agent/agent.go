@@ -130,8 +130,8 @@ type Config struct {
 //
 // SupportedTypes is the canonical whitelist of agent types New can construct.
 // It MUST stay in lockstep with the switch in New below and the
-// runtime_profile.protocol_family CHECK constraint (migration 120): a custom
-// runtime profile may only be based on a backend Multica officially supports.
+// runtime_profile.protocol_family CHECK constraint: a custom runtime profile
+// may only be based on a backend Multica officially supports.
 var SupportedTypes = []string{
 	"claude",
 	"codebuddy",

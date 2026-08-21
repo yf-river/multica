@@ -14,11 +14,13 @@ import (
 )
 
 type stubReadinessDB struct {
-	pingErr      error
-	queryErr     error
-	appliedCount int
-	pingCalls    atomic.Int32
-	queryCalls   atomic.Int32
+	pingErr    error
+	queryErr   error
+	matches    bool
+	version    int
+	hash       string
+	pingCalls  atomic.Int32
+	queryCalls atomic.Int32
 }
 
 func (s *stubReadinessDB) Ping(context.Context) error {
@@ -28,19 +30,23 @@ func (s *stubReadinessDB) Ping(context.Context) error {
 
 func (s *stubReadinessDB) QueryRow(context.Context, string, ...any) pgx.Row {
 	s.queryCalls.Add(1)
-	return stubRow{appliedCount: s.appliedCount, err: s.queryErr}
+	return stubRow{matches: s.matches, version: s.version, hash: s.hash, err: s.queryErr}
 }
 
 type stubRow struct {
-	appliedCount int
-	err          error
+	matches bool
+	version int
+	hash    string
+	err     error
 }
 
 func (r stubRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	*(dest[0].(*int)) = r.appliedCount
+	*(dest[0].(*bool)) = r.matches
+	*(dest[1].(*int)) = r.version
+	*(dest[2].(*string)) = r.hash
 	return nil
 }
 
@@ -64,10 +70,7 @@ func readReadyResponse(t *testing.T, h *serverHealth, wantStatus int) readinessR
 
 func TestServerHealthReadyHandlerDBPingFailure(t *testing.T) {
 	db := &stubReadinessDB{pingErr: errors.New("db unavailable")}
-	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"056_example"},
-	}
+	h := &serverHealth{db: db}
 
 	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
 	if resp.Status != "not_ready" {
@@ -76,17 +79,14 @@ func TestServerHealthReadyHandlerDBPingFailure(t *testing.T) {
 	if resp.Checks.DB != "error" {
 		t.Fatalf("db check = %q, want %q", resp.Checks.DB, "error")
 	}
-	if resp.Checks.Migrations != "unknown" {
-		t.Fatalf("migrations check = %q, want %q", resp.Checks.Migrations, "unknown")
+	if resp.Checks.Schema != "unknown" {
+		t.Fatalf("schema check = %q, want %q", resp.Checks.Schema, "unknown")
 	}
 }
 
-func TestServerHealthReadyHandlerMigrationOutOfDate(t *testing.T) {
-	db := &stubReadinessDB{appliedCount: 0}
-	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"056_example"},
-	}
+func TestServerHealthReadyHandlerSchemaMismatch(t *testing.T) {
+	db := &stubReadinessDB{hash: "wrong"}
+	h := &serverHealth{db: db}
 
 	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
 	if resp.Status != "not_ready" {
@@ -95,36 +95,29 @@ func TestServerHealthReadyHandlerMigrationOutOfDate(t *testing.T) {
 	if resp.Checks.DB != "ok" {
 		t.Fatalf("db check = %q, want %q", resp.Checks.DB, "ok")
 	}
-	if resp.Checks.Migrations != "out_of_date" {
-		t.Fatalf("migrations check = %q, want %q", resp.Checks.Migrations, "out_of_date")
+	if resp.Checks.Schema != "error" {
+		t.Fatalf("schema check = %q, want %q", resp.Checks.Schema, "error")
 	}
 }
 
-func TestServerHealthReadyHandlerMigrationPartiallyApplied(t *testing.T) {
-	// Three migrations required but only two recorded — the out-of-order case
-	// the old "is the latest version applied?" check used to mask. Readiness
-	// must report not_ready, not ok.
-	db := &stubReadinessDB{appliedCount: 2}
-	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"120_a", "120_b", "121_c"},
-	}
+func TestServerHealthReadyHandlerSchemaQueryFailure(t *testing.T) {
+	db := &stubReadinessDB{queryErr: errors.New("schema marker unavailable")}
+	h := &serverHealth{db: db}
 
 	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
 	if resp.Status != "not_ready" {
 		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
 	}
-	if resp.Checks.Migrations != "out_of_date" {
-		t.Fatalf("migrations check = %q, want %q", resp.Checks.Migrations, "out_of_date")
+	if resp.Checks.Schema != "error" {
+		t.Fatalf("schema check = %q, want %q", resp.Checks.Schema, "error")
 	}
 }
 
 func TestServerHealthReadinessCachesResult(t *testing.T) {
-	db := &stubReadinessDB{appliedCount: 1}
+	db := &stubReadinessDB{matches: true}
 	h := &serverHealth{
-		db:                 db,
-		requiredMigrations: []string{"056_example"},
-		cacheTTL:           time.Minute,
+		db:       db,
+		cacheTTL: time.Minute,
 	}
 
 	resp1, status1 := h.readiness(context.Background())

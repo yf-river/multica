@@ -714,9 +714,8 @@ func (s *AutopilotService) shouldSkipDispatch(ctx context.Context, ap db.Autopil
 		case missing && squadResolved:
 			return "assignee squad cannot be resolved", true
 		case missing && !squadResolved:
-			// Agent row gone. With migration 096 the FK is gone too, so
-			// this is the new "agent was hard-deleted under us" case. Skip
-			// rather than fail-open: we know retrying will not help.
+			// The assignee agent was hard-deleted. Skip rather than
+			// fail-open because retrying cannot resolve it.
 			return "assignee agent no longer exists", true
 		}
 		// Transient DB error — fail-open so the next scheduler tick gets a

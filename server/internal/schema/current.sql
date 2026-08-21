@@ -1,4 +1,4 @@
--- Canonical development schema baseline. Historical database upgrades are not supported.
+-- Canonical schema for fresh databases. Historical database upgrades are not supported.
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -261,7 +261,7 @@ BEGIN
                 END IF;
                 -- Cap each tick at a one-day window. In steady state v_from is
                 -- recent, so LEAST picks `now() - 5 min` and nothing changes. But
-                -- if the worker was paused (incident, migration freeze) the
+                -- if the worker was paused during an incident the
                 -- watermark can fall far behind; without the cap a single catch-up
                 -- tick would recompute a multi-week window in one statement while
                 -- holding lock 4246, blocking every other tick. Capped, catch-up

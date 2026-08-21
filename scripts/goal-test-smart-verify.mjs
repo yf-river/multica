@@ -101,7 +101,7 @@ function classifyChanges(files) {
     web_changed: has((file) => file.startsWith("apps/web/")),
     core_changed: has((file) => file.startsWith("packages/core/")),
     server_changed: has((file) => file.startsWith("server/")),
-    migrations_changed: has((file) => file.startsWith("server/migrations/")),
+    schema_changed: has((file) => file === "server/internal/schema/current.sql"),
     deploy_changed: has((file) =>
       file === "Makefile" ||
       file.startsWith("deploy/") ||
@@ -197,7 +197,7 @@ function shouldRunFocusedTrainingE2E(mode, info) {
 function shouldDeploy(info) {
   const metadata = readDeploymentMetadata();
   const deployedCommit = metadata?.commit || metadata?.build_version || "";
-  const deployWorthy = info.server_changed || info.migrations_changed || info.web_changed || info.views_changed || info.core_changed || info.deploy_changed;
+  const deployWorthy = info.server_changed || info.schema_changed || info.web_changed || info.views_changed || info.core_changed || info.deploy_changed;
   if (!metadata) {
     return { deploy: true, reason: "Final gate: deployment metadata is missing, so deploy once." };
   }

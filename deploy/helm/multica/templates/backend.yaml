@@ -26,10 +26,9 @@ metadata:
     {{- include "multica.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  # The backend entrypoint runs migrations before starting. Concurrent
-  # runs are protected by a Postgres advisory lock in cmd/migrate (see
-  # GitHub multica-ai/multica#3647), so multiple replicas no longer race;
-  # 1 is still the chart default (strategy: Recreate, no leader split).
+  # Backend startup initializes an empty database under a PostgreSQL advisory
+  # lock, so multiple replicas do not race. 1 remains the chart default because
+  # background work is not leader-elected.
   replicas: {{ .Values.backend.replicas }}
   strategy:
     type: Recreate
@@ -76,11 +75,11 @@ spec:
             - name: uploads
               mountPath: /app/data/uploads
           {{- end }}
-          # The entrypoint runs `./migrate up` before serving traffic. On a
+          # Server startup initializes the schema before serving traffic. On a
           # cold cluster (Postgres still coming up) this can take minutes. The
           # startupProbe holds off liveness/readiness until /healthz is OK,
-          # giving migrations a ~5 min budget (30 * 10s) so the pod is never
-          # killed mid-migration. Once it passes, the aggressive livenessProbe
+          # giving initialization a ~5 min budget (30 * 10s) so the pod is never
+          # killed mid-initialization. Once it passes, the livenessProbe
           # below takes over.
           startupProbe:
             httpGet:

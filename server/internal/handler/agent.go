@@ -24,8 +24,8 @@ import (
 )
 
 // Mirrors AGENT_DESCRIPTION_MAX_LENGTH in packages/core/agents/constants.ts
-// and the agent_description_length CHECK constraint in migration 060. Counted
-// in unicode code points (utf8.RuneCountInString), matching Postgres
+// and the agent_description_length CHECK constraint. Counted in Unicode code
+// points (utf8.RuneCountInString), matching Postgres
 // char_length and the front-end's String.prototype.length-with-counter UX.
 const maxAgentDescriptionLength = 255
 

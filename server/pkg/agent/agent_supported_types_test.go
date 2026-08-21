@@ -33,7 +33,7 @@ func TestSupportedTypesLockstepWithNew(t *testing.T) {
 }
 
 // TestSupportedTypesMatchesCurrentWhitelist pins the exact set of backends the
-// current server can launch. Historical migrations may retain removed enum
+// current server can launch. The current schema may retain additional enum
 // values so existing databases remain readable.
 func TestSupportedTypesMatchesCurrentWhitelist(t *testing.T) {
 	want := map[string]bool{

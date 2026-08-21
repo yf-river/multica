@@ -170,7 +170,7 @@ docker compose -f docker-compose.selfhost.yml pull
 docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-如果需要固定版本，在 `.env` 中把 `MULTICA_IMAGE_TAG` 设置成明确版本，例如 `v0.2.4`。后端启动时会自动执行迁移。
+如果需要固定版本，在 `.env` 中把 `MULTICA_IMAGE_TAG` 设置成明确版本，例如 `v0.2.4`。后端启动时会自动初始化空数据库；schema 不一致时需要重建数据库。
 如果指定的 GHCR tag 尚未发布，改用 `make selfhost-build` 或 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build` 从当前代码构建。
 
 ---
@@ -278,16 +278,16 @@ docker compose up -d postgres
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### 执行迁移
+### 初始化数据库
 
-启动后端前必须先执行数据库迁移：
+后端启动时会自动初始化空数据库。需要只初始化或验证 schema 而不启动服务时：
 
 ```bash
 # 使用已构建的二进制
-./server/bin/migrate up
+./server/bin/server --init-schema-only
 
 # 或从源码执行
-cd server && go run ./cmd/migrate up
+cd server && go run ./cmd/server --init-schema-only
 ```
 
 ## 手工部署（不使用 Docker Compose）
@@ -302,10 +302,7 @@ cd server && go run ./cmd/migrate up
 # 构建后端
 make build
 
-# 执行数据库迁移
-DATABASE_URL="your-database-url" ./server/bin/migrate up
-
-# 启动后端服务
+# 启动后端服务；空数据库会自动初始化
 DATABASE_URL="your-database-url" PORT=8080 JWT_SECRET="your-secret" ./server/bin/server
 ```
 
@@ -437,18 +434,14 @@ GET /health
 → {"status":"ok"}
 
 GET /readyz
-→ {"status":"ok","checks":{"db":"ok","migrations":"ok"}}
+→ {"status":"ok","checks":{"db":"ok","schema":"ok"}}
 
 GET /healthz
 → 和 /readyz 相同
 ```
 
-`/health` 适合基础存活和可达性检查。`/readyz` 会检查依赖，适合 readiness probe 和外部监控；当数据库不可用或迁移未完成时应失败。`/healthz` 作为运维习惯兼容别名保留。
+`/health` 适合基础存活和可达性检查。`/readyz` 会检查依赖，适合 readiness probe 和外部监控；当数据库不可用或 schema 不匹配时应失败。`/healthz` 作为运维习惯兼容别名保留。
 
 ## 升级
 
-1. 拉取最新代码或镜像。
-2. 执行迁移：`./server/bin/migrate up`。
-3. 重启后端和前端。
-
-迁移只向前执行，可以在在线数据库上运行。迁移是幂等的，重复执行不会产生额外影响。
+开发阶段不支持数据库原地升级。切换到 schema 不同的版本前，请备份所需数据并重建数据库；新版本后端会在启动时初始化空库。

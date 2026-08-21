@@ -21,7 +21,7 @@ daemon（Codex / Claude / OpenCode / CodeBuddy 等运行时）
 
 | 目录 | 作用 |
 | --- | --- |
-| `server/` | Go 后端、CLI、daemon、migration |
+| `server/` | Go 后端、CLI、daemon、数据库 schema |
 | `apps/web/` | Next.js Web 应用 |
 | `apps/docs/` | 文档站 |
 | `packages/core/` | 跨端业务逻辑、API client、类型和 store |
@@ -32,7 +32,7 @@ daemon（Codex / Claude / OpenCode / CodeBuddy 等运行时）
 
 - `cmd/server`：HTTP API、WebSocket、健康检查。
 - `cmd/multica`：CLI 和 daemon 入口。
-- `cmd/migrate`：数据库 migration。
+- `internal/schema`：启动时初始化或验证当前数据库 schema。
 - `internal/handler`：领域 handler，例如 issue、agent、squad、prompt evaluation。
 - `internal/service/task.go`：任务入队、领取、运行、完成和失败。
 - `internal/realtime`：WebSocket hub。

@@ -319,7 +319,7 @@ ORDER BY agent_id, model;
 
 > 产品尚未上线，无存量用户需保护，全部变更作为一组迁移一次性交付——旧的 daily 管线在同一分支里直接拆除，不保留共存期。
 
-整套变更已折叠进 `server/migrations/001_current_schema.up.sql`：
+整套变更已折叠进 `server/internal/schema/current.sql`：
 
 | Current schema area | 内容 |
 |---|---|

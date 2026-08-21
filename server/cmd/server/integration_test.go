@@ -255,8 +255,8 @@ func TestReadinessEndpoints(t *testing.T) {
 			if result.Checks["db"] != "ok" {
 				t.Fatalf("expected db check ok, got %s", result.Checks["db"])
 			}
-			if result.Checks["migrations"] != "ok" {
-				t.Fatalf("expected migrations check ok, got %s", result.Checks["migrations"])
+			if result.Checks["schema"] != "ok" {
+				t.Fatalf("expected schema check ok, got %s", result.Checks["schema"])
 			}
 		})
 	}

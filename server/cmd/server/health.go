@@ -11,15 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/multica-ai/multica/server/internal/migrations"
+	"github.com/multica-ai/multica/server/internal/schema"
 )
-
-// readinessQuery counts how many of the binary's required migration versions
-// are recorded as applied. We compare the count to the number of required
-// versions rather than checking a single "latest" row, so a missing
-// out-of-order migration (numbered below an already-applied later one) is
-// detected instead of being masked by the later version's presence.
-const readinessQuery = `SELECT COUNT(*) FROM schema_migrations WHERE version = ANY($1)`
 
 const readinessCacheTTL = 3 * time.Second
 
@@ -29,12 +22,10 @@ type readinessDB interface {
 }
 
 type serverHealth struct {
-	db                 readinessDB
-	requiredMigrations []string
-	initErr            error
-	cacheTTL           time.Duration
-	refreshMu          sync.Mutex
-	cache              atomic.Pointer[cachedReadiness]
+	db        readinessDB
+	cacheTTL  time.Duration
+	refreshMu sync.Mutex
+	cache     atomic.Pointer[cachedReadiness]
 }
 
 type cachedReadiness struct {
@@ -53,17 +44,14 @@ type readinessResponse struct {
 }
 
 type readinessChecks struct {
-	DB         string `json:"db"`
-	Migrations string `json:"migrations"`
+	DB     string `json:"db"`
+	Schema string `json:"schema"`
 }
 
 func newServerHealth(pool *pgxpool.Pool) *serverHealth {
-	requiredMigrations, err := migrations.AllVersions()
 	return &serverHealth{
-		db:                 pool,
-		requiredMigrations: requiredMigrations,
-		initErr:            err,
-		cacheTTL:           readinessCacheTTL,
+		db:       pool,
+		cacheTTL: readinessCacheTTL,
 	}
 }
 
@@ -115,15 +103,15 @@ func (h *serverHealth) computeReadiness(parent context.Context) (readinessRespon
 	resp := readinessResponse{
 		Status: "ok",
 		Checks: readinessChecks{
-			DB:         "ok",
-			Migrations: "ok",
+			DB:     "ok",
+			Schema: "ok",
 		},
 	}
 
 	if h.db == nil {
 		resp.Status = "not_ready"
 		resp.Checks.DB = "error"
-		resp.Checks.Migrations = "unknown"
+		resp.Checks.Schema = "unknown"
 		return resp, http.StatusServiceUnavailable
 	}
 
@@ -133,29 +121,13 @@ func (h *serverHealth) computeReadiness(parent context.Context) (readinessRespon
 	if err := h.db.Ping(ctx); err != nil {
 		resp.Status = "not_ready"
 		resp.Checks.DB = "error"
-		resp.Checks.Migrations = "unknown"
+		resp.Checks.Schema = "unknown"
 		return resp, http.StatusServiceUnavailable
 	}
 
-	if h.initErr != nil || len(h.requiredMigrations) == 0 {
+	if err := schema.VerifyCurrent(ctx, h.db); err != nil {
 		resp.Status = "not_ready"
-		resp.Checks.Migrations = "error"
-		return resp, http.StatusServiceUnavailable
-	}
-
-	var appliedCount int
-	if err := h.db.QueryRow(ctx, readinessQuery, h.requiredMigrations).Scan(&appliedCount); err != nil {
-		resp.Status = "not_ready"
-		resp.Checks.Migrations = "error"
-		return resp, http.StatusServiceUnavailable
-	}
-
-	// version is the schema_migrations PK, so each required version matches at
-	// most one row; a count below the required total means at least one
-	// migration this binary needs has not been applied.
-	if appliedCount < len(h.requiredMigrations) {
-		resp.Status = "not_ready"
-		resp.Checks.Migrations = "out_of_date"
+		resp.Checks.Schema = "error"
 		return resp, http.StatusServiceUnavailable
 	}
 

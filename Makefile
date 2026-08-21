@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: help makehelp dev server daemon cli multica build test schema-init sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
@@ -170,25 +170,23 @@ selfhost-stop: ## 停止自部署 Docker Compose stack
 # ---------- 一键命令 ----------
 ##@ 一键
 
-setup: ## 从 env 文件配置当前 checkout：装依赖、确保 DB、跑迁移
+setup: ## 从 env 文件配置当前 checkout：装依赖、确保 DB、初始化 schema
 	$(REQUIRE_ENV)
 	@echo "==> 使用 env 文件：$(ENV_FILE)"
 	@echo "==> 安装依赖..."
 	pnpm install
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	@echo "==> 跑迁移..."
-	cd server && go run ./cmd/migrate up
+	@echo "==> 初始化数据库 schema..."
+	cd server && go run ./cmd/server --init-schema-only
 	@echo ""
 	@echo "✓ 配置完成！跑 'make start' 启动应用。"
 
-start: ## 启动当前 checkout 的后端与前端，先跑迁移
+start: ## 启动当前 checkout 的后端与前端；后端自动初始化空数据库
 	$(REQUIRE_ENV)
 	@echo "使用 env 文件：$(ENV_FILE)"
 	@echo "后端：http://localhost:$(PORT)"
 	@echo "前端：http://localhost:$(FRONTEND_PORT)"
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	@echo "跑迁移..."
-	cd server && go run ./cmd/migrate up
 	@echo "启动后端与前端..."
 	@trap 'kill 0' EXIT; \
 		(cd server && go run ./cmd/server) & \
@@ -352,10 +350,10 @@ db-up: ## 启动主 checkout 与 worktree 共用的 PostgreSQL 容器
 db-down: ## 停止共享 PostgreSQL 容器，不删除其 Docker volume
 	@$(COMPOSE) down
 
-# 删除 + 重建当前 env 的数据库，再跑所有迁移。
+# 删除 + 重建当前 env 的数据库，再初始化当前 schema。
 # 用于本地开发重置干净状态。只影响 ENV_FILE 中的 POSTGRES_DB；
 # 共享 postgres 容器与其他 worktree DB 不受影响。远程主机拒绝运行。
-db-reset: ## 删除并重建当前 env 的数据库，再跑所有迁移
+db-reset: ## 删除并重建当前 env 的数据库，再初始化当前 schema
 	$(REQUIRE_ENV)
 	@case "$(DATABASE_URL)" in \
 		""|*@localhost:*|*@localhost/*|*@127.0.0.1:*|*@127.0.0.1/*|*@\[::1\]:*|*@\[::1\]/*) ;; \
@@ -366,8 +364,8 @@ db-reset: ## 删除并重建当前 env 的数据库，再跑所有迁移
 	@$(COMPOSE) exec -T postgres psql -U $(POSTGRES_USER) -d postgres -v ON_ERROR_STOP=1 \
 		-c "DROP DATABASE IF EXISTS \"$(POSTGRES_DB)\" WITH (FORCE);" \
 		-c "CREATE DATABASE \"$(POSTGRES_DB)\";"
-	@echo "==> 跑迁移..."
-	cd server && go run ./cmd/migrate up
+	@echo "==> 初始化数据库 schema..."
+	cd server && go run ./cmd/server --init-schema-only
 	@echo ""
 	@echo "✓ 数据库 '$(POSTGRES_DB)' 已重置。跑 'make start' 启动应用。"
 
@@ -407,7 +405,7 @@ check-worktree: ## 为当前 worktree 跑完整验证流水线
 # ---------- 单项命令 ----------
 ##@ 单项命令
 
-dev: ## 端到端引导当前 checkout：创建 env、确保 DB、迁移、启动服务
+dev: ## 端到端引导当前 checkout：创建 env、确保 DB、启动服务
 	@bash scripts/dev.sh
 
 server: ## 仅跑当前 checkout 的 Go server
@@ -428,29 +426,23 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-build: ## 构建 server、CLI、migrate 二进制到 server/bin
+build: ## 构建 server、CLI 二进制到 server/bin
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/server ./cmd/server
 	cd server && go build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)" -o bin/multica ./cmd/multica
-	cd server && go build -o bin/migrate ./cmd/migrate
 
-test: ## 确保目标 DB 存在并应用迁移后跑 Go 测试
+test: ## 确保目标 DB 存在并初始化 schema 后跑 Go 测试
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate up
+	cd server && go run ./cmd/server --init-schema-only
 	cd server && go test -race ./...
 
 # 数据库
 ##@ 数据库
 
-migrate-up: ## 需要时创建目标 DB，然后应用数据库迁移
+schema-init: ## 需要时创建目标 DB，然后初始化或验证当前 schema
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate up
-
-migrate-down: ## 需要时创建目标 DB，然后回滚数据库迁移
-	$(REQUIRE_ENV)
-	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/migrate down
+	cd server && go run ./cmd/server --init-schema-only
 
 sqlc: ## 重新生成 sqlc 代码
 	cd server && sqlc generate

@@ -132,16 +132,16 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 在 `.env` 中设 `DATABASE_URL`，并从 compose 文件移除 `postgres` service。
 
-### 手动跑迁移
+### 手动初始化数据库
 
-Docker Compose 配置自动跑迁移。需要手动跑时：
+后端启动时会自动初始化空数据库。需要只初始化或验证 schema 时：
 
 ```bash
 # 用构建的二进制
-./server/bin/migrate up
+./server/bin/server --init-schema-only
 
 # 或从源码
-cd server && go run ./cmd/migrate up
+cd server && go run ./cmd/server --init-schema-only
 ```
 
 ## Usage Dashboard Rollup
@@ -161,46 +161,7 @@ SELECT plan_time, status, attempt, runner_id,
  LIMIT 20;
 ```
 
-### 兼容——既有 `pg_cron` 注册
-
-若你之前把 rollup 注册为 `pg_cron` job（`SELECT cron.schedule('rollup_task_usage_hourly', '*/5 * * * *', …)`），留着也安全：advisory lock 4246 防止双写，loser 路径干净 no-op。调度器起来后丢弃冗余条目：
-
-```sql
-SELECT cron.unschedule('rollup_task_usage_hourly')
-  FROM cron.job WHERE jobname = 'rollup_task_usage_hourly';
-```
-
-直接调用 `SELECT rollup_task_usage_hourly()` 的外部 cron / systemd / Kubernetes `CronJob` 也仍合法——它们是 MUL-2957 之前的唯一选项，现在是支持的兼容路径。不再推荐；新部署应依赖进程内调度器。
-
-### Standalone backfill 命令
-
-`rollup_task_usage_hourly()` 只处理它开始运行后的新 bucket。若你已有早于首次 rollup 认领的 `task_usage` 行——最常见的是在已有数月 usage 数据的库上从 `v0.3.4` 升级到 `v0.3.5+`——可跑 `backfill_task_usage_hourly` 回填历史 bucket：
-
-```bash
-# Docker Compose
-docker compose -f docker-compose.selfhost.yml exec backend \
-  ./backfill_task_usage_hourly --sleep-between-slices=2s
-
-# Kubernetes
-kubectl -n multica exec deploy/multica-backend -- \
-  ./backfill_task_usage_hourly --sleep-between-slices=2s
-```
-
-该命令按月切片遍历 `task_usage` 全时间范围，调用与进程内调度器相同的幂等原语，所以可重跑、可 Ctrl-C 中断、可与调度器并发（advisory lock 4246 串行化）。flag：
-
-| flag | 说明 |
-|---|---|
-| `--sleep-between-slices` | 月切片间暂停，给忙库节流读压力（如 `2s`）。有数年历史的生产 DB 推荐用。 |
-| `--months-back N` | 仅回填最近 N 个月。**需 `--force-partial`**——watermark 仍会越过被跳过的更旧 bucket，那些永久放弃。 |
-| `--dry-run` | 只记录将处理的切片，不写任何东西。 |
-
-backfill 完成后，rollup-state watermark 被盖到 `now() - 5 分钟`，所以 backfill 后的首次调度 tick 不会重做历史。
-
-### `v0.3.4 → v0.3.5+` 升级顺序
-
-迁移 `103` 加了 fail-closed 守卫：在 `task_usage_hourly` 追上之前拒绝 drop 旧的 daily rollup。MUL-2957 之后 migrate 命令在应用 `103` 之前**自动**跑幂等月切片 backfill（advisory lock 4246 下），所以 v0.3.4 → v0.3.5+ 升级一次 `migrate up` 即可完成——无需运维步骤。
-
-若从早于 MUL-2957 的二进制升级（或 auto-hook 因环境原因失败），恢复走手动路径：对数据库跑 `backfill_task_usage_hourly`，再重跑 `migrate up`（或重启后端容器——迁移在启动时自动跑）。**全新安装豁免**——`task_usage` 为空时守卫短路，进程内调度器从首次 tick 起接新 bucket。
+新数据库从首次调度 tick 起生成 hourly rollup，不需要 `pg_cron`、外部 CronJob 或 standalone backfill 命令。
 
 ## 无 Docker Compose 的手动配置
 
@@ -214,10 +175,7 @@ backfill 完成后，rollup-state watermark 被盖到 `now() - 5 分钟`，所�
 # 构建后端
 make build
 
-# 跑数据库迁移
-DATABASE_URL="your-database-url" ./server/bin/migrate up
-
-# 启动后端 server
+# 启动后端 server；空数据库会自动初始化
 DATABASE_URL="your-database-url" PORT=8080 JWT_SECRET="your-secret" ./server/bin/server
 ```
 
@@ -389,13 +347,13 @@ GET /health
  {"status":"ok"}
 
 GET /readyz
- {"status":"ok","checks":{"db":"ok","migrations":"ok"}}
+ {"status":"ok","checks":{"db":"ok","schema":"ok"}}
 
 GET /healthz
  同 /readyz
 ```
 
-`/health` 用于基础存活/可达检查。`/readyz` 用于带依赖感知的 readiness 探针与外部监控——数据库不可用或迁移未完全应用时应失败。`/healthz` 作为 alias 保留，便于运维熟悉。
+`/health` 用于基础存活/可达检查。`/readyz` 用于带依赖感知的 readiness 探针与外部监控——数据库不可用或 schema 与当前服务不一致时应失败。`/healthz` 作为 alias 保留，便于运维熟悉。
 
 ## Prometheus Metrics
 
@@ -417,4 +375,4 @@ docker compose -f docker-compose.selfhost.yml pull
 docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-`.env` 中把 `MULTICA_IMAGE_TAG` pin 到精确 release（如 `v0.2.4`）可留在特定版本。迁移在后端启动时自动跑，幂等——多次跑无副作用。若所选 GHCR tag 尚未发布，回退到 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`。
+`.env` 中把 `MULTICA_IMAGE_TAG` pin 到精确 release（如 `v0.2.4`）可留在特定版本。开发阶段不支持数据库原地升级；切换到 schema 不同的版本前先备份所需数据并重建数据库。若所选 GHCR tag 尚未发布，回退到 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`。

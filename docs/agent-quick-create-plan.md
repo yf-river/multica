@@ -526,7 +526,7 @@ Multica 只有**单体 skill**(SKILL.md + skill_file),没有 plugin / bundle 概
 
 | 主题 | 位置 |
 |---|---|
-| Skill DB 模型 | `server/migrations/001_current_schema.up.sql` |
+| Skill DB 模型 | `server/internal/schema/current.sql` |
 | Skill 创建 handler + 事务 | `server/internal/handler/skill.go:143-162` + `skill_create.go:21-71` |
 | Skill import 入口(支持 3 个 source) | `server/internal/handler/skill.go:1538` |
 | Skill import source 分发 | `server/internal/handler/skill.go:586-617` (`detectImportSource`) |

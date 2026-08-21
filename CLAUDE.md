@@ -159,10 +159,10 @@ monorepo 分为两个共享区：
 
 ```bash
 # 一键开发（自动配置 + 启动一切）
-make dev              # 自动创建 env、安装依赖、启动 DB、迁移、启动应用
+make dev              # 自动创建 env、安装依赖、启动 DB、初始化 schema、启动应用
 
 # 显式配置与运行（若偏好分开）
-make setup            # 首次：确保共享 DB、创建应用 DB、迁移
+make setup            # 首次：确保共享 DB、创建应用 DB、初始化 schema
 make start            # 同时启动后端 + 前端
 make stop             # 停止当前 checkout 的应用进程
 make db-down          # 停止共享 PostgreSQL 容器
@@ -182,8 +182,7 @@ make build            # 构建 server + CLI 二进制到 server/bin/
 make cli ARGS="..."   # 运行 multica CLI（如 make cli ARGS="config"）
 make test             # Go 测试
 make sqlc             # 修改 server/pkg/db/queries/ 下的 SQL 后重新生成 sqlc 代码
-make migrate-up       # 运行数据库迁移
-make migrate-down     # 回滚迁移
+make schema-init      # 初始化空数据库或验证当前 schema
 
 # 跑单个 TS 测试（任何含 test 脚本的包都适用）
 pnpm --filter @multica/views exec vitest run auth/login-page.test.tsx
@@ -202,7 +201,7 @@ pnpm ui:add badge                # 添加组件到 packages/ui/components/ui/
 # 基础设施
 make db-up            # 启动共享 PostgreSQL（pgvector/pg17 镜像）
 make db-down          # 停止共享 PostgreSQL
-make db-reset         # 删除 + 重建当前 env 的 DB，再跑迁移（仅本地；先停后端）
+make db-reset         # 删除 + 重建当前 env 的 DB，再初始化 schema（仅本地；先停后端）
 ```
 
 ### CI 要求

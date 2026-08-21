@@ -11,7 +11,7 @@ Use this when the task requires exact source paths, edge-case behavior, tests, o
 Source:
 
 ```text
-server/migrations/001_current_schema.up.sql       # current squad table shape
+server/internal/schema/current.sql                # current squad table shape
 server/pkg/db/queries/squad.sql
 packages/core/types/squad.ts
 ```

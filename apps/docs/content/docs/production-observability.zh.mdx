@@ -45,7 +45,7 @@ Multica 的调试与评估模块以 `/data/ida/opik-local-demo` 的 Opik 语义�
 | 项 | 通过标准 |
 |---|---|
 | 后端健康 | `/health` 返回 `{"status":"ok"}` |
-| 后端就绪 | `/readyz` 返回 DB 和 migration 都是 `ok` |
+| 后端就绪 | `/readyz` 返回 DB 和 schema 都是 `ok` |
 | 前端可访问 | 登录页返回 HTTP 200 |
 | 真实智能体运行时 | 运行看板显示 Codex 运行时已就绪 |
 | 训练评估运行 | 运行历史里至少有一条 `Agent执行` 且状态为 `通过` 或明确失败原因 |
@@ -70,7 +70,7 @@ curl --noproxy '*' -fsS http://<server-ip>:8080/health
 curl --noproxy '*' -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://<server-ip>:3000/login
 ```
 
-`/health` 只证明进程活着；`/readyz` 才证明数据库和 migration 状态能支撑生产请求。
+`/health` 只证明进程活着；`/readyz` 才证明数据库和 schema 状态能支撑生产请求。
 
 ## 自动生成验收包
 

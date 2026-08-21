@@ -41,7 +41,7 @@ const (
 // separate clouds with distinct hosts; a single Multica deployment serves
 // both by resolving the host per installation from this value rather than
 // from a deployment-wide env var. Mirrors the lark_installation.region
-// CHECK constraint (migration 116) — keep the two in lockstep.
+// CHECK constraint; keep the two in lockstep.
 type Region string
 
 const (

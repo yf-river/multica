@@ -50,7 +50,7 @@ func TestDashboardEndpoints(t *testing.T) {
 	}
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
 
-	// issue.number is `UNIQUE (workspace_id, number)` (migration 020) and
+	// issue.number is `UNIQUE (workspace_id, number)` and
 	// defaults to 0. Two inserts into the same workspace would collide on the
 	// default; allocate `MAX(number) + 1` per row to stay sequential and
 	// avoid stepping on rows other tests have left behind in the shared

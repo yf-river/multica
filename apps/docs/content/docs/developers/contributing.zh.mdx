@@ -62,7 +62,7 @@ pnpm exec playwright test
 
 cd server
 go test ./...
-go run ./cmd/migrate up
+go run ./cmd/server --init-schema-only
 ```
 
 修改 SQL 查询后运行：
@@ -74,7 +74,7 @@ sqlc generate
 
 ## 测试要求
 
-涉及 shared API、handler、migration、训练评估、小队、运行时或可观测能力时，至少补对应层级的聚焦测试。生产验收相关改动还应跑：
+涉及 shared API、handler、schema、训练评估、小队、运行时或可观测能力时，至少补对应层级的聚焦测试。生产验收相关改动还应跑：
 
 ```bash
 pnpm acceptance:verify
