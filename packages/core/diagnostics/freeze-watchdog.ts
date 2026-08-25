@@ -10,7 +10,7 @@
 // This is the in-thread, recoverable tier: it catches freezes the thread
 // survives. A true non-recoverable hang (the thread never unblocks) can only
 // be caught from outside — on desktop that is the main process `unresponsive`
-// handler (see apps/desktop renderer-recovery). Web has no free external
+// handler. Web has no free external
 // watcher, so this observer is its only freeze signal for now.
 //
 // The emitted `client_unresponsive` event carries `client_type` automatically

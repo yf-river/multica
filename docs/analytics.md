@@ -304,7 +304,7 @@ in the DB and never broadcast.
 | `message_length_bucket` | string | `0-100` / `100-500` / `500-2000` / `2000+` — coarse bucket of `len(message)` so we can tell "quick note" from "bug report with repro steps" without leaking content. |
 | `has_images` | bool | `true` when the markdown contains at least one `![...](url)` image reference — signals bug reports with visual evidence. |
 | `kind` | string | Current feedback category when the client supplies one. |
-| `platform` | string | Client platform from `X-Client-Platform` header (`web` / `desktop`). Omitted when the header is absent. |
+| `platform` | string | Client platform from the `X-Client-Platform` header. Omitted when the header is absent. |
 | `app_version` | string | Client version from `X-Client-Version` header. Omitted when absent. |
 
 `distinct_id` is the submitter's user id; `workspace_id` is attached from
@@ -313,7 +313,7 @@ sent from a pre-workspace surface.
 
 ### Frontend-only events
 
-- `$pageview` is emitted by the web and Desktop root trackers. Automatic
+- `$pageview` is emitted by the web root tracker. Automatic
   PostHog pageview capture is disabled. `capturePageview` strips query/hash,
   collapses resource IDs to section paths and deduplicates consecutive views
   of the same section.

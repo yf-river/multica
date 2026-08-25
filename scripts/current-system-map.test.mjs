@@ -47,11 +47,10 @@ test("generated evidence never depends on ignored build output", () => {
     input: `${paths.join("\n")}\n`,
   });
   assert.equal(check.stdout.trim(), "", `ignored evidence leaked into inventory:\n${check.stdout}`);
-  assert.doesNotMatch(JSON.stringify(inventory), /apps\/desktop\/out|\/(?:\.next|dist|build|coverage)\//);
-  assert.ok(inventory.frontend.desktopRoutes.length > 0, "private Desktop route table was not inventoried");
+  assert.doesNotMatch(JSON.stringify(inventory), /\/(?:\.next|dist|build|coverage)\//);
 });
 
-test("runtime env helpers and Vite main-process configuration are inventoried", () => {
+test("runtime environment helpers are inventoried", () => {
   const names = new Set(inventory.environment.variables.map((item) => item.name));
   const expected = [
     "MULTICA_AGENT_IDLE_WATCHDOG",
@@ -67,9 +66,6 @@ test("runtime env helpers and Vite main-process configuration are inventoried", 
     "MULTICA_GC_INTERVAL",
     "MULTICA_GC_ORPHAN_TTL",
     "MULTICA_GC_TTL",
-    "VITE_API_URL",
-    "VITE_WS_URL",
-    "VITE_APP_URL",
   ];
   assert.deepEqual(expected.filter((name) => !names.has(name)), []);
 });

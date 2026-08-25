@@ -299,42 +299,6 @@ function parseWebRewrites() {
   return rewrites.sort((a, b) => compareText(a.lane, b.lane) || compareText(a.source, b.source));
 }
 
-function parseDesktopRoutes() {
-  const routeFile = "apps/desktop/src/renderer/src/routes.tsx";
-  const lines = read(routeFile).split("\n");
-  const routes = [];
-  const stack = [];
-  let active = false;
-
-  lines.forEach((line) => {
-    if (/\bconst\s+appRoutes\s*:/.test(line)) active = true;
-    if (!active) return;
-    if (line.includes("Create an independent memory router")) {
-      active = false;
-      return;
-    }
-
-    const events = /\{|\}|path\s*:\s*("(?:[^"\\]|\\.)*")/g;
-    for (const match of line.matchAll(events)) {
-      if (match[0] === "{") {
-        stack.push({ path: null });
-      } else if (match[0] === "}") {
-        stack.pop();
-      } else {
-        const literal = JSON.parse(match[1]);
-        if (stack.length === 0) stack.push({ path: null });
-        const current = stack.at(-1);
-        const parents = stack.slice(0, -1).map((entry) => entry.path).filter(Boolean);
-        current.path = literal;
-        const fullPath = [...parents, literal].reduce((prefix, part) => joinRoute(prefix, part), "");
-        routes.push({ literal, path: fullPath, source: source(routeFile, fullPath) });
-      }
-    }
-  });
-
-  return routes.sort((a, b) => compareText(a.path, b.path) || compareText(a.source, b.source));
-}
-
 function parseDatabase() {
   const migrationFiles = walk("server/migrations", (file) => file.endsWith(".sql"));
   const migrations = migrationFiles.map((file) => {
@@ -548,7 +512,6 @@ function parseStateManagement() {
   const sourceFiles = [
     ...walk("packages", (file) => /\.(?:ts|tsx)$/.test(file) && !isTestFile(file)),
     ...walk("apps/web", (file) => /\.(?:ts|tsx)$/.test(file) && !isTestFile(file)),
-    ...walk("apps/desktop/src/renderer/src", (file) => /\.(?:ts|tsx)$/.test(file) && !isTestFile(file)),
   ];
   const zustandStores = [];
   const reactQueryConsumers = [];
@@ -761,15 +724,12 @@ function buildMap(overrides) {
   const webPages = parseWebPages();
   const webRouteHandlers = parseWebRouteHandlers();
   const webRewrites = parseWebRewrites();
-  const desktopRoutes = parseDesktopRoutes();
   const database = parseDatabase();
   const sqlc = parseSqlc();
   const websocket = parseWebsocketEvents();
   const stateManagement = parseStateManagement();
   const environment = parseEnvironment();
   const externalIo = parseExternalIo(overrides);
-  const webPaths = new Set(webPages.map((page) => page.path));
-  const desktopPaths = new Set(desktopRoutes.map((route) => route.path));
 
   return {
     schemaVersion: 1,
@@ -780,7 +740,6 @@ function buildMap(overrides) {
       webRouteHandlers: "apps/web/app/**/route.ts",
       webProxy: "apps/web/proxy.ts",
       webRewrites: "apps/web/next.config.ts + apps/web/config/runtime-urls.ts",
-      desktopRouter: "apps/desktop/src/renderer/src/routes.tsx",
       migrations: "server/migrations/*.sql",
       sqlc: "server/sqlc.yaml + server/pkg/db/queries/*.sql",
       goWebsocketEvents: "server/pkg/protocol/events.go",
@@ -792,7 +751,6 @@ function buildMap(overrides) {
       webPages: webPages.length,
       webRouteHandlers: webRouteHandlers.length,
       webRewrites: webRewrites.length,
-      desktopRouteLiterals: desktopRoutes.length,
       databaseTables: database.tables.length,
       databaseFunctions: database.functions.length,
       databaseTriggers: database.triggers.length,
@@ -820,11 +778,6 @@ function buildMap(overrides) {
         source: "apps/web/proxy.ts",
         matcher: read("apps/web/proxy.ts").match(/matcher:\s*\["([^"]+)"\]/)?.[1] ?? null,
       } : null,
-      desktopRoutes,
-      routeDifferences: {
-        webOnly: [...webPaths].filter((route) => !desktopPaths.has(route)).sort(compareText),
-        desktopOnly: [...desktopPaths].filter((route) => !webPaths.has(route)).sort(compareText),
-      },
     },
     persistence: { database, sqlc },
     websocket,
@@ -878,7 +831,6 @@ ${table(["Surface", "Count"], [
   ["Next.js pages", s.webPages],
   ["Next.js route handlers", s.webRouteHandlers],
   ["Next.js rewrites", s.webRewrites],
-  ["Desktop route literals", s.desktopRouteLiterals],
   ["Database tables", s.databaseTables],
   ["Database functions", s.databaseFunctions],
   ["Database triggers", s.databaseTriggers],
@@ -950,26 +902,6 @@ ${table(["Lane", "Source", "Destination", "Environment", "Evidence"], systemMap.
   rewrite.environment.map((name) => `\`${name}\``).join(", "),
   `\`${rewrite.sourceFile}\`; \`${rewrite.resolverSource}\``,
 ]))}
-
-### Desktop route literals
-
-Nested \`RouteObject\` paths are joined to show the effective route. Index-only
-routes have no path literal and therefore do not appear in this literal inventory.
-
-${table(["Effective path", "Literal", "Source"], systemMap.frontend.desktopRoutes.map((route) => [
-  `\`${route.path}\``,
-  `\`${route.literal}\``,
-  `\`${route.source}\``,
-]))}
-
-### Platform route differences
-
-- Web only: ${systemMap.frontend.routeDifferences.webOnly.map((route) => `\`${route}\``).join(", ") || "none"}
-- Desktop only: ${systemMap.frontend.routeDifferences.desktopOnly.map((route) => `\`${route}\``).join(", ") || "none"}
-
-These are inventory differences, not automatically defects: login, workspace
-creation, Lark binding, desktop usage, and desktop overlay flows can be
-intentionally platform-specific.
 
 ## Persistence
 
@@ -1107,7 +1039,6 @@ the expanded JSON and Markdown evidence under ignored
 | Next.js pages | ${s.webPages} |
 | Next.js route handlers | ${s.webRouteHandlers} |
 | Next.js rewrites | ${s.webRewrites} |
-| Desktop route literals | ${s.desktopRouteLiterals} |
 | Database tables | ${s.databaseTables} |
 | Database functions | ${s.databaseFunctions} |
 | Database triggers | ${s.databaseTriggers} |

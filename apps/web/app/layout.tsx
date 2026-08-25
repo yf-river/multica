@@ -16,8 +16,7 @@ import "./globals.css";
 // assembled in static CSS in ./globals.css, not here: it must be overridable per
 // `<html lang>` (Japanese Kanji are Han ideographs and need a Japanese-first CJK
 // stack), and a hashed family name can only be referenced from CSS via a variable.
-// Keeping the CJK chain in CSS also keeps it CSP-safe and in sync with the desktop
-// app, which defines the same chain in apps/desktop/src/renderer/src/globals.css.
+// Keeping the CJK chain in CSS also keeps it CSP-safe.
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",

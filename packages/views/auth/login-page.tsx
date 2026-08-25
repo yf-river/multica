@@ -40,10 +40,7 @@ interface LoginPageProps {
   cliCallback?: CliCallbackConfig;
   /** Called after a token is obtained (e.g. to set cookies). */
   onTokenObtained?: () => void;
-  /** Slot rendered at the bottom of the sign-in card, below the
-   *  submit button. The web shell uses it for a "Prefer the desktop
-   *  app?" prompt; desktop omits it (a download prompt inside the app
-   *  would be absurd). */
+  /** Slot rendered at the bottom of the sign-in card. */
   extra?: ReactNode;
 }
 
@@ -102,7 +99,6 @@ export function LoginPage({
   useEffect(() => {
     if (!cliCallback) return;
 
-    // The shared API singleton can also serve token-authenticated Desktop.
     // Clear any in-memory bearer before checking the browser cookie so a CLI
     // authorization can never inherit a different account's token.
     api.setToken(null);

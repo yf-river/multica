@@ -23,7 +23,6 @@ function createWrapper() {
 
 const {
   mockLogin,
-  mockIssueCliToken,
   mockListWorkspaces,
   mockRouterPush,
   mockRouterReplace,
@@ -31,7 +30,6 @@ const {
   authStateRef,
 } = vi.hoisted(() => ({
   mockLogin: vi.fn(),
-  mockIssueCliToken: vi.fn(),
   mockListWorkspaces: vi.fn(),
   mockRouterPush: vi.fn(),
   mockRouterReplace: vi.fn(),
@@ -74,7 +72,6 @@ vi.mock("@multica/core/api", () => ({
     listWorkspaces: mockListWorkspaces,
     setToken: vi.fn(),
     getMe: vi.fn().mockRejectedValue(new Error("unauthorized")),
-    issueCliToken: mockIssueCliToken,
   },
 }));
 
@@ -109,27 +106,6 @@ describe("LoginPage", () => {
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith("alice", "correct-password");
       expect(mockRouterPush).toHaveBeenCalled();
-    });
-  });
-
-  it("mints a token and deep-links to Desktop when already logged in with platform=desktop", async () => {
-    searchParamsState.params = new URLSearchParams({ platform: "desktop" });
-    authStateRef.state.user = {
-      id: "u1",
-      account: "alice",
-    };
-    mockIssueCliToken.mockResolvedValue({ token: "handoff-jwt" });
-
-    Object.defineProperty(window, "location", {
-      writable: true,
-      value: { href: "http://localhost:3000/login?platform=desktop" },
-    });
-
-    render(<LoginPage />, { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(mockIssueCliToken).toHaveBeenCalled();
-      expect(window.location.href).toBe("multica://auth/callback?token=handoff-jwt");
     });
   });
 });

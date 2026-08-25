@@ -56,10 +56,6 @@ multica setup self-host
 3. 把生成的 PAT 存到 `~/.multica/config.json`
 4. **自动启动守护进程**——开始每 3 秒轮询任务、每 15 秒发心跳
 
-<Callout type="info">
-**用的是桌面应用？** 桌面应用启动时**自动拉起守护进程**，不需要手动跑 `multica setup`。见 [桌面应用](/desktop-app)。
-</Callout>
-
 验证守护进程在运行：
 
 ```bash
@@ -115,5 +111,4 @@ Web 界面会**实时**（通过 WebSocket）显示进度——不需要刷新�
 - [守护进程与运行时](/daemon-runtimes) —— 守护进程怎么运作、运行时概念
 - [执行任务](/tasks) —— 任务生命周期、重试规则
 - [AI 编程工具对照](/providers) —— 12 款工具的能力差异
-- [桌面应用](/desktop-app) —— 不想自己跑守护进程的话
 - [自部署快速上手](/self-host-quickstart) —— 在自己服务器上跑一套

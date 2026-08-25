@@ -223,10 +223,6 @@
       "text": "The database inventory replays CREATE/DROP declarations from ordered up migrations for tables, functions, triggers, and indexes. It does not connect to a running database, expand every inline constraint, or detect environment-specific schema drift."
     },
     {
-      "id": "desktop-parser",
-      "text": "Desktop paths are recovered from literal path properties in the appRoutes RouteObject tree. Index routes, Navigate targets, overlay transitions, and paths created outside that tree are not route literals."
-    },
-    {
       "id": "environment-parser",
       "text": "Environment discovery covers literal and same-file constant Go os.Getenv/LookupEnv calls, common Go env helpers, Node process.env/import.meta.env access, Docker Compose template references, and .env.example declarations. Dynamically constructed names, general shell-script variables, CI secrets, and values are intentionally excluded."
     },

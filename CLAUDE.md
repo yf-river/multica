@@ -103,7 +103,6 @@ AI Studio gate applicability:
 
 - `server/` — Go backend (Chi router, sqlc for DB, gorilla/websocket for real-time)
 - `apps/web/` — Next.js frontend (App Router)
-- `apps/desktop/` — Electron desktop app (electron-vite)
 - `packages/core/` — Headless business logic (zero react-dom)
 - `packages/ui/` — Atomic UI components (zero business logic)
 - `packages/views/` — Shared business pages/components (zero next/* imports, zero react-router imports)
@@ -156,9 +155,7 @@ The architecture relies on a strict split between server state and client state.
 
 ## Sharing Principles
 
-The monorepo splits into two share zones:
-
-- **Web and desktop** share business logic, components, hooks, stores, and views through `packages/core/`, `packages/ui/`, and `packages/views/`. Existing model — keep using it.
+The web app shares business logic, components, hooks, stores, and views through `packages/core/`, `packages/ui/`, and `packages/views/`.
 
 ## Commands
 
@@ -175,7 +172,6 @@ make db-down          # Stop the shared PostgreSQL container
 # Frontend (all commands go through Turborepo)
 pnpm install
 pnpm dev:web          # Next.js dev server (port 3000)
-pnpm dev:desktop      # Electron dev (electron-vite, HMR)
 pnpm build            # Build all frontend apps
 pnpm typecheck        # TypeScript check (all packages + apps via turbo)
 pnpm lint             # ESLint
@@ -202,10 +198,6 @@ cd server && go test ./internal/handler/ -run TestName
 
 # Run a single E2E test (requires backend + frontend running)
 pnpm exec playwright test e2e/tests/specific-test.spec.ts
-
-# Desktop build & package
-pnpm --filter @multica/desktop build      # Compile TS → JS (reads .env.production)
-pnpm --filter @multica/desktop package    # Package into .app/.dmg/.exe (current platform only)
 
 # shadcn — config lives in packages/ui/components.json (Base UI variant, base-nova style)
 pnpm ui:add badge                # Adds component to packages/ui/components/ui/
@@ -239,7 +231,7 @@ make start-worktree     # Start using .env.worktree
 - Keep comments in code **English only**.
 - Prefer existing patterns/components over introducing parallel abstractions.
 - Unless the user explicitly asks for backwards compatibility, do **not** add compatibility layers, fallback paths, dual-write logic, legacy adapters, or temporary shims **for internal, non-boundary code** (a function calling another function in the same package, a component reading its own state, a store helper, etc.).
-- This rule does **not** apply at API boundaries: the desktop app cannot assume the backend it talks to has the same shape as the one it was built against (older desktop installs will outlive any given server build). API response handling must follow the rules in **API Response Compatibility** below — that is a defensive boundary, not a legacy shim.
+- This rule does **not** apply at API boundaries: independently deployed clients cannot assume every backend has the same response shape. API response handling must follow the rules in **API Response Compatibility** below — that is a defensive boundary, not a legacy shim.
 - If a flow or API is being replaced and the product is not yet live, prefer removing the old path instead of preserving both old and new behavior.
 - Avoid broad refactors unless required by the task.
 - New global (pre-workspace) routes MUST use a single word (`/login`, `/inbox`) or a `/{noun}/{verb}` pair (`/workspaces/new`). NEVER add hyphenated word-group root routes (`/new-workspace`, `/create-team`) — they collide with common user workspace names and force endless reserved-slug audits. Reserving the noun (`workspaces`) automatically protects the entire `/workspaces/*` subtree.
@@ -248,7 +240,7 @@ make start-worktree     # Start using .env.worktree
 
 ### API Response Compatibility
 
-The desktop app installed on a user's machine is older than any backend it talks to: a user on 0.2.26 will hit a server running 0.3.x, then 0.4.x, then beyond. Every response shape is a contract that **will** drift, and the frontend must survive drift without white-screening. Three concrete incidents already happened from violating this — #2143, #2147, #2192.
+Clients and self-hosted backends may be deployed at different times. Every response shape is a contract that can drift, and the frontend must survive drift without white-screening. Three concrete incidents already happened from violating this — #2143, #2147, #2192.
 
 When writing code that consumes an API response, follow these rules:
 
@@ -262,7 +254,7 @@ When writing code that consumes an API response, follow these rules:
 - **Enum drift downgrades, not crashes.** A new server-side enum value should render a generic fallback. `switch` statements on server-driven strings must have a `default` branch.
 - **When you add or change an endpoint:** add the schema in the same PR, and write at least one test that feeds a malformed response through it (missing field, wrong type, `null` array). Assert the correct policy explicitly: safe fallback for degradable reads, controlled rejection and reconciliation for writes or sensitive reads.
 
-This is not premature defense — it is the *only* defense for an installed-app architecture. CSR-only browser apps can ship a fix in minutes; an Electron build sitting on a developer's laptop cannot.
+This is not premature defense: independently deployed clients and servers must tolerate compatible response drift.
 
 ### Backend Handler UUID Parsing Convention
 
@@ -289,76 +281,37 @@ These are hard constraints. Violating them breaks the cross-platform architectur
 - `packages/ui/` — zero `@multica/core` imports (pure UI, no business logic).
 - `packages/views/` — zero `next/*` imports, zero `react-router-dom` imports, zero stores. Use `NavigationAdapter` for all routing.
 - `apps/web/platform/` — the only place for Next.js APIs (`next/navigation`).
-- `apps/desktop/src/renderer/src/platform/` — the only place for react-router-dom navigation wiring.
 
-### The No-Duplication Rule (web + desktop)
+### The No-Duplication Rule
 
-**If the same logic exists in both web and desktop, it must be extracted to a shared package.**
+**If the same logic exists in multiple places, it must be extracted to a shared package.**
 
-This applies to everything between web and desktop: components, hooks, guards, providers, utility functions. The decision process:
+This applies to components, hooks, guards, providers, and utility functions. The decision process:
 
-1. Does this code depend on Next.js or Electron APIs? → Keep in the respective app.
-2. Does it depend on `react-router-dom` or `next/navigation`? → Keep in app's `platform/` layer.
+1. Does this code depend on Next.js APIs? → Keep it in the web app.
+2. Does it depend on `next/navigation`? → Keep it in the web app's `platform/` layer.
 3. Everything else → belongs in `packages/core/` (headless logic) or `packages/views/` (UI components).
 
 When the two apps need different behavior for the same concept (e.g., different loading UI), extract the shared logic into a component with props/slots for the differences. Don't duplicate the logic.
 
-### Cross-Platform Development Rules (web + desktop)
+### Web Development Rules
 
-When adding a new page or feature for web/desktop:
+When adding a new page or feature for web:
 
 1. **New page component** → add to `packages/views/<domain>/`. Never import from `next/*` or `react-router-dom`.
-2. **Wire it in both apps** → add a route in `apps/web/app/` (Next.js page file) AND in the desktop router. **Exception**: workspace creation is not a desktop route; it uses `WorkspaceCreationOverlay`. See *Desktop-specific Rules → Route categories*.
+2. **Wire it in the app** → add a route in `apps/web/app/` (Next.js page file).
 3. **Navigation** → use `useNavigation().push()` or `<AppLink>`. Never use framework-specific link/router APIs in shared code.
 4. **Shared guards/providers** → use `DashboardGuard` from `packages/views/layout/`. Don't create separate guard logic per app.
-5. **Platform-specific UI** → if a feature is web-only or desktop-only, keep it in the respective app. Use props slots (`extra`, `topSlot`) on shared layout components to inject platform-specific UI.
+5. **Web-specific UI** → keep it in `apps/web/`. Use props slots (`extra`, `topSlot`) on shared layout components when shared views need web-provided UI.
 6. **New hooks that need workspace context** → accept `wsId` as parameter instead of reading from `useWorkspaceId()` Context, so they work both inside and outside `WorkspaceIdProvider`.
 
-### CSS Architecture (web + desktop)
+### CSS Architecture
 
-Web and desktop share the same CSS foundation from `packages/ui/styles/`.
+The web app uses the shared CSS foundation from `packages/ui/styles/`.
 
 - **Design tokens** → use semantic tokens (`bg-background`, `text-muted-foreground`). Never use hardcoded Tailwind colors (`text-red-500`, `bg-gray-100`).
 - **Shared styles** → `packages/ui/styles/`. Never duplicate scrollbar styling, keyframes, or base layer rules in app CSS.
-- **`@source` directives** → both apps scan shared packages so Tailwind sees all class names.
-
-## Desktop-specific Rules
-
-These rules apply to `apps/desktop/` only. Web has different constraints (URL bar, SSR, no tabs) and doesn't share these concerns. Every rule in this section was added after a concrete bug — treat them as enforced, not suggestions.
-
-### Route categories
-
-Every path in the desktop app falls into exactly one category. Choosing the wrong one reproduces bugs we've already fixed.
-
-- **Session routes** — workspace-scoped pages (`/:slug/issues`, `/:slug/settings`). Rendered by the per-tab memory router under `WorkspaceRouteLayout`. These are legitimate tab destinations.
-- **Workspace creation** — a pre-workspace transition, **not a route**. It uses `WorkspaceCreationOverlay`, dispatched when the navigation adapter sees `push('/workspaces/new')` or a user has no workspace. The shared `NewWorkspacePage` supplies the content.
-- **Error / stale states** — "workspace not available", tabs pointing at a revoked workspace. **NOT pages.** `WorkspaceRouteLayout` auto-heals by dropping the stale tab group from the store; the user never lands on an explicit error screen. Web keeps `NoAccessPage` (shareable URL makes the error state meaningful); desktop has no URL bar so stale = heal silently.
-
-Do not put `/workspaces/new` into `routes.tsx`; keep its state in
-`stores/workspace-creation-overlay-store.ts` so the tab system cannot persist it.
-
-### Workspace context
-
-`setCurrentWorkspace(slug, uuid)` from `@multica/core/platform` is the single source of truth for the active workspace. `WorkspaceRouteLayout` sets it on mount; unmount does NOT clear it. Code that leaves workspace context (leave/delete workspace, force-navigate to overlay) must call `setCurrentWorkspace(null, null)` explicitly.
-
-### Workspace destructive operations
-
-Leave / Delete workspace flows must follow this order, otherwise concurrent refetches race and the renderer hard-reloads:
-
-1. Read destination from cached workspace list.
-2. `setCurrentWorkspace(null, null)`.
-3. `navigation.push(destination)`.
-4. THEN `await mutation.mutateAsync(workspaceId)`.
-
-### Tab isolation
-
-Tabs are grouped per workspace in `stores/tab-store.ts`. The TabBar shows only the active workspace's tabs; cross-workspace tab leakage is impossible by construction (no flat global tabs array).
-
-Cross-workspace `push(path)` is detected by the navigation adapter (`platform/navigation.tsx`) and translated into `switchWorkspace(slug, targetPath)` — NOT a navigation within the current tab's router. Don't bypass the adapter; always go through `useNavigation()` from shared code.
-
-### Drag region (macOS)
-
-Every full-window desktop view (anything outside the dashboard shell) must mount `<DragStrip />` from `@multica/views/platform` as the first flex child of the page root, otherwise users can't drag the window. Interactive UI inside the top 48px needs `WebkitAppRegion: "no-drag"` to stay clickable.
+- **`@source` directives** → the app scans shared packages so Tailwind sees all class names.
 
 ## UI/UX Rules
 
@@ -366,7 +319,7 @@ Every full-window desktop view (anything outside the dashboard shell) must mount
 - Use shadcn design tokens for styling. Avoid hardcoded color values.
 - Do not introduce extra state (useState, context, reducers) unless explicitly required by the design.
 - Pay close attention to **overflow** (truncate long text, scrollable containers), **alignment**, and **spacing** consistency.
-- **If a component is identical between web and desktop, it belongs in a shared package.** Do not copy-paste between apps.
+- **If a component is reused, it belongs in a shared package.** Do not copy-paste it.
 
 ## Testing Rules
 
@@ -378,7 +331,7 @@ Tests follow the code, not the app. This is the most important testing principle
 |---|---|---|
 | Shared business logic (stores, queries, hooks) | `packages/core/*.test.ts` | No DOM needed, pure logic |
 | Shared UI components (pages, forms, modals) | `packages/views/*.test.tsx` | jsdom, no framework mocks |
-| Platform-specific wiring (cookies, redirects, searchParams) | `apps/web/*.test.tsx` or `apps/desktop/` | Needs framework-specific mocks |
+| Platform-specific wiring (cookies, redirects, searchParams) | `apps/web/*.test.tsx` | Needs framework-specific mocks |
 | End-to-end user flows | `e2e/*.spec.ts` | Real browser, real backend |
 
 **Never test shared component behavior in an app's test file.** If a test requires mocking `next/navigation` or `react-router-dom` to test a component from `@multica/views`, the test is in the wrong place — move it to `packages/views/` and mock `@multica/core` instead.

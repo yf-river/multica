@@ -1,7 +1,6 @@
 "use client";
 
 import { useNavigation } from "../navigation";
-import { DragStrip } from "../platform";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -33,18 +32,10 @@ export function CreateWorkspaceModal({ onClose }: { onClose: () => void }) {
         showCloseButton={false}
         className="inset-0 flex h-full w-full max-w-none sm:max-w-none translate-0 flex-col rounded-none bg-background ring-0 shadow-none"
       >
-        {/* DragStrip as flex child — macOS traffic lights stay visible and
-            the top 48px is draggable. Back button sits just below the strip
-            (top-16 = 64px), clear of both traffic lights (y<=27) and the
-            strip (y<=48). `no-drag` is a belt-and-braces guard in case the
-            button's layout ever creeps up into the strip zone. */}
-        <DragStrip />
-
         <Button
           variant="ghost"
           size="sm"
-          className="absolute top-16 left-12 text-muted-foreground"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          className="absolute top-4 left-4 text-muted-foreground"
           onClick={onClose}
         >
           <ArrowLeft className="h-4 w-4" />

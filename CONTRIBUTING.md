@@ -454,34 +454,6 @@ make clean
 rm -rf "$HOME/.multica/profiles/$PROFILE"
 ```
 
-### Desktop App Local Testing
-
-To test the Electron desktop app against a local backend:
-
-```bash
-# After backend is running (make dev)
-pnpm dev:desktop
-```
-
-This automatically:
-
-1. Compiles the `multica` CLI from `server/cmd/multica` into
-   `apps/desktop/resources/bin/multica`
-2. Creates an isolated profile named `desktop-localhost-<PORT>`
-3. Starts and manages its own daemon instance
-4. Connects to the local backend
-
-Log in in the Desktop UI with the local account and password you use for the
-web app.
-
-If the backend runs on a non-default port (worktree), create
-`apps/desktop/.env.development.local`:
-
-```bash
-VITE_API_URL=http://localhost:<backend-port>
-VITE_WS_URL=ws://localhost:<backend-port>/ws
-```
-
 ### Isolation Guarantee
 
 Nothing in this flow touches the system-installed `multica` or the default
@@ -494,7 +466,6 @@ Nothing in this flow touches the system-installed `multica` or the default
 | Health port | `19514` | `19514 + 1 + (name_hash % 1000)` |
 | Workspaces dir | `~/multica_workspaces/` | `~/multica_workspaces_dev-<slug>-<hash>/` |
 | Database | remote / production | local Docker: `multica_<slug>_<hash>` |
-| Desktop profile | `desktop-api.multica.ai` | `desktop-localhost-<port>` |
 
 Multiple worktrees can run simultaneously without conflict.
 

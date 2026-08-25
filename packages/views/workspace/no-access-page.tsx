@@ -7,7 +7,6 @@ import { resolvePostAuthDestination } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace/queries";
 import { useNavigation } from "../navigation";
 import { useLogout } from "../auth";
-import { DragStrip } from "../platform";
 import { useT } from "../i18n";
 
 /**
@@ -30,7 +29,7 @@ export function NoAccessPage() {
   // NoAccessPage. The recovery button no longer routes through `/` (recover()
   // resolves a concrete destination directly), but clearing the cookie here
   // keeps those other `/` entry points from re-triggering the loop.
-  // No-op outside the browser (desktop renderer also has document, harmless).
+  // No-op outside the browser.
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.cookie = "last_workspace_slug=; path=/; max-age=0; SameSite=Lax";
@@ -44,7 +43,6 @@ export function NoAccessPage() {
 
   return (
     <div className="flex min-h-svh flex-col">
-      <DragStrip />
       <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-12 text-center">
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">

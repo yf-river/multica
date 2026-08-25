@@ -79,11 +79,6 @@ vi.mock("@multica/ui/components/ui/button", () => ({
   ),
 }));
 
-vi.mock("../../platform", () => ({
-  isDesktopShell: () => false,
-  useLocalDaemonStatus: () => ({ daemonId: null, running: false }),
-}));
-
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));

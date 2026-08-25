@@ -12,7 +12,6 @@ the expanded JSON and Markdown evidence under ignored
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
-| Desktop route literals | 29 |
 | Database tables | 85 |
 | Database functions | 9 |
 | Database triggers | 4 |
@@ -22,9 +21,9 @@ the expanded JSON and Markdown evidence under ignored
 | sqlc queries | 540 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
-| Zustand stores | 22 |
-| React Query consumer files | 178 |
-| Environment variables | 150 |
+| Zustand stores | 20 |
+| React Query consumer files | 165 |
+| Environment variables | 141 |
 | Manually identified external systems | 12 |
 
 The maintained domain and transaction narratives live in

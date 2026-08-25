@@ -8,7 +8,7 @@
  *   - image : <img className="object-contain"> centered in the modal frame.
  *   - pdf   : <iframe src={download_url}> — relies on Chromium's PDFium
  *             plugin. On desktop, requires webPreferences.plugins=true
- *             (see apps/desktop/src/main/index.ts).
+ *             through the platform adapter.
  *   - video : <video controls src={download_url}>
  *   - audio : <audio controls src={download_url}>
  *

@@ -39,10 +39,6 @@ import (
 var defaultOrigins = []string{
 	"http://localhost:3000", // Next.js dev
 	"http://127.0.0.1:3000", // Next.js dev via loopback IP
-	"http://localhost:5173", // electron-vite dev
-	"http://127.0.0.1:5173", // electron-vite dev via loopback IP
-	"http://localhost:5174", // electron-vite dev (fallback port)
-	"http://127.0.0.1:5174", // electron-vite dev (fallback port) via loopback IP
 }
 
 func allowedOrigins() []string {

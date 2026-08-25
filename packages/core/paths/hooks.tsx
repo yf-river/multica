@@ -10,7 +10,7 @@ import { paths, type WorkspacePaths } from "./paths";
  * Context for the current workspace slug (read from URL by the platform layer).
  *
  * apps/web populates this from Next.js `params.workspaceSlug` in
- * [workspaceSlug]/layout.tsx. apps/desktop populates it from react-router's
+ * [workspaceSlug]/layout.tsx. Other clients can populate it from their
  * `useParams()` in the workspace route layout.
  *
  * packages/core/ cannot import next/navigation or react-router-dom directly,

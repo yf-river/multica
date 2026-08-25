@@ -243,7 +243,7 @@ curl -X POST "$MULTICA_WEBHOOK_URL" \
 
 服务端设置 `MULTICA_PUBLIC_URL`（例如 `https://multica.example.com`）后，
 触发器响应里会带绝对的 `webhook_url`，UI 直接显示可复制的 URL。没设
-时 UI 会用客户端的 API origin 拼出 URL——desktop 和同源 web 没问题，
+时 UI 会用客户端的 API origin 拼出 URL——同源 Web 没问题，
 但自定义反向代理就不行了。Multica **故意不**从 `Host` /
 `X-Forwarded-Host` header 推断公开主机，避免反代配置失误时被诱导生成
 指向攻击者域名的 webhook URL。

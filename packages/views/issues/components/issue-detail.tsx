@@ -38,7 +38,6 @@ import { toast } from "sonner";
 import { StatusIcon } from "./status-icon";
 import { IssueActionsDropdown } from "../actions/issue-actions-dropdown";
 import { useIssueActions } from "../actions/use-issue-actions";
-import { LocalDirectoryHint } from "../../projects/components/local-directory-hint";
 import { CommentCard } from "./comment-card";
 import { CommentInput } from "./comment-input";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
@@ -1296,8 +1295,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 </Popover>
               </div>
             </div>
-
-            <LocalDirectoryHint projectId={issue?.project_id} />
 
             {/* The "agent is working" live signal now lives in the header
                 (IssueAgentHeaderChip) so it stays in one fixed place and

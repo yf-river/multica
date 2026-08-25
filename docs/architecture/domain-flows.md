@@ -65,7 +65,7 @@ identity and retention live in
   `packages/views/modals/create-project.tsx`, and
   `server/internal/handler/project.go`.
 - Boundary: Project, bundled resources and exact response commit with
-  `server/pkg/db/queries/resource_create_request.sql`; Web, Desktop and CLI use
+  `server/pkg/db/queries/resource_create_request.sql`; Web and CLI use
   this route.
 - Verification: `server/internal/handler/project_idempotency_test.go`.
 

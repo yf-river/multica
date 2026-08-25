@@ -9,15 +9,15 @@ description: 把工蜂仓库、GitHub 仓库或本地目录绑定到项目，让
 
 | 类型 | 用途 | 当前入口 |
 |---|---|---|
-| `gongfeng_repo` | 腾讯工蜂项目、分支、commit、tag、文件或 MR | Web、Desktop、API |
+| `gongfeng_repo` | 腾讯工蜂项目、分支、commit、tag、文件或 MR | Web、API |
 | `github_repo` | 可通过 HTTP(S) 或 SSH checkout 的 Git 仓库 | CLI、API |
-| `local_directory` | 某台守护进程机器上的现有目录 | Desktop、CLI、API |
+| `local_directory` | 某台守护进程机器上的现有目录 | CLI、API |
 
 服务端会拒绝其他 `resource_type`。类型创建后不能原地改变；需要换类型时，删除旧资源再创建新资源。
 
 ## 工蜂仓库
 
-Web 和 Desktop 的项目资源面板读取当前工作区已登记的工蜂仓库。添加后，系统保存规范化的 `gongfeng_repo`：
+Web 项目资源面板读取当前工作区已登记的工蜂仓库。添加后，系统保存规范化的 `gongfeng_repo`：
 
 ```json
 {
@@ -64,7 +64,7 @@ multica project resource add <project-id> \
   --ref-label "主开发目录"
 ```
 
-Desktop 提供原生文件夹选择器；Web 不读取操作系统路径，因此不显示该入口。同一项目在同一台守护进程上最多绑定一个本地目录。
+Web 不读取操作系统路径，因此本地目录通过 CLI 或 API 添加。同一项目在同一台守护进程上最多绑定一个本地目录。
 
 路径必须：
 
