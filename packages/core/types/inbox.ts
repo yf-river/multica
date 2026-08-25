@@ -1,7 +1,5 @@
 import type { IssueStatus } from "./issue";
 
-export type InboxSeverity = "action_required" | "attention" | "info";
-
 export type InboxItemType =
   | "issue_assigned"
   | "issue_subscribed"
@@ -30,7 +28,6 @@ export interface InboxItem {
   actor_type: "member" | "agent" | "system" | null;
   actor_id: string | null;
   type: InboxItemType;
-  severity: InboxSeverity;
   issue_id: string | null;
   title: string;
   body: string | null;

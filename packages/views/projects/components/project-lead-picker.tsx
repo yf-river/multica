@@ -4,19 +4,26 @@ import { useState } from "react";
 import { UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import type { Project, UpdateProjectRequest } from "@multica/core/types";
 import { useT } from "../../i18n";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { ActorAvatar } from "../../common/actor-avatar";
 
-export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align = "start" }: {
+export function ProjectLeadPicker({
+  project,
+  handleUpdate,
+  renderTrigger,
+  align = "start",
+  listClassName = "max-h-48",
+}: {
   project: Project;
   handleUpdate: (data: UpdateProjectRequest) => void;
   renderTrigger: (leadName: string | null) => React.ReactElement;
-  align?: "start" | "end" | "center"
+  align?: "start" | "end" | "center";
+  listClassName?: string;
 }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
@@ -28,8 +35,8 @@ export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align 
   const [leadFilter, setLeadFilter] = useState("");
   const leadQuery = leadFilter.toLowerCase();
 
-  const filteredMembers = members.filter((m) => m.name.toLowerCase().includes(leadQuery) || matchesPinyin(m.name, leadQuery));
-  const filteredAgents = agents.filter((a) => !a.archived_at && (a.name.toLowerCase().includes(leadQuery) || matchesPinyin(a.name, leadQuery)));
+  const filteredMembers = members.filter((m) => matchesTextQuery(m.name, leadQuery));
+  const filteredAgents = agents.filter((a) => !a.archived_at && matchesTextQuery(a.name, leadQuery));
 
   const leadId = project.lead_id;
   const leadType = project.lead_type;
@@ -48,7 +55,7 @@ export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align 
             className="w-full bg-transparent text-sm placeholder:text-muted-foreground outline-none"
           />
         </div>
-        <div className="p-1 max-h-48 overflow-y-auto">
+        <div className={`p-1 overflow-y-auto ${listClassName}`}>
           <button
             type="button"
             onClick={() => { handleUpdate({ lead_type: null, lead_id: null }); setLeadOpen(false); }}

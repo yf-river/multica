@@ -1,0 +1,922 @@
+package service
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
+)
+
+func (s *TaskService) captureTaskUserInput(ctx context.Context, task db.AgentTaskQueue) {
+	events, err := s.Queries.ListTaskTraceEventsByTask(ctx, task.ID)
+	if err != nil {
+		slog.Warn("list task trace events before user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+	} else {
+		for _, event := range events {
+			if event.EventType == "user_input.received" {
+				return
+			}
+		}
+	}
+
+	metadata := s.buildTaskUserInputMetadata(ctx, task)
+	if len(metadata) == 0 {
+		return
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		slog.Warn("marshal task user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	s.recordTaskTraceEvent(ctx, task, "user_input.received", "用户输入已接收", taskTraceOptions{Metadata: raw})
+}
+
+func (s *TaskService) buildTaskUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	switch {
+	case task.TriggerCommentID.Valid:
+		return s.buildCommentUserInputMetadata(ctx, task)
+	case task.ChatSessionID.Valid:
+		return s.buildChatUserInputMetadata(ctx, task)
+	case task.AutopilotRunID.Valid:
+		return s.buildAutopilotUserInputMetadata(ctx, task, task.AutopilotRunID)
+	default:
+		if qc, ok := ParseQuickCreateContext(task); ok {
+			return s.buildQuickCreateUserInputMetadata(task, qc)
+		}
+		if task.IssueID.Valid {
+			return s.buildIssueUserInputMetadata(ctx, task)
+		}
+		return s.buildDirectUserInputMetadata(task)
+	}
+}
+
+func (s *TaskService) buildIssueUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("build issue user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+
+	inputKind := "issue"
+	extra := map[string]any{}
+	if issue.OriginType.Valid && issue.OriginType.String == "autopilot" {
+		inputKind = "autopilot"
+		extra["origin_type"] = issue.OriginType.String
+		extra["origin_id"] = util.UUIDToString(issue.OriginID)
+		if run, err := s.Queries.GetAutopilotRunByIssue(ctx, issue.ID); err == nil {
+			extra["autopilot_run_id"] = util.UUIDToString(run.ID)
+			extra["trigger_payload_summary"], extra["trigger_payload_truncated"] = summarizeRawJSON(run.TriggerPayload, triggerSummaryMaxLen)
+		}
+	}
+
+	content := textWithTitle(issue.Title, issue.Description.String)
+	metadata := baseUserInputMetadata(inputKind, issue.CreatorType, issue.CreatorID, "issue", issue.ID, issue.Title, content)
+	metadata["source_url"] = "/issues/" + util.UUIDToString(issue.ID)
+	metadata["issue_id"] = util.UUIDToString(issue.ID)
+	for key, value := range extra {
+		if value != "" {
+			metadata[key] = value
+		}
+	}
+	if attachments, err := s.Queries.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err == nil {
+		metadata["attachments"] = attachmentMetadataList(attachments)
+	} else {
+		slog.Warn("list issue attachments for user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+	}
+	return metadata
+}
+
+func (s *TaskService) buildCommentUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	comment, err := s.Queries.GetComment(ctx, task.TriggerCommentID)
+	if err != nil {
+		slog.Warn("build comment user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"comment_id", util.UUIDToString(task.TriggerCommentID),
+			"error", err,
+		)
+		return s.buildIssueUserInputMetadata(ctx, task)
+	}
+
+	title := "Issue 评论"
+	if issue, err := s.Queries.GetIssue(ctx, comment.IssueID); err == nil && issue.Title != "" {
+		title = issue.Title
+	}
+	metadata := baseUserInputMetadata("comment", comment.AuthorType, comment.AuthorID, "comment", comment.ID, title, comment.Content)
+	metadata["issue_id"] = util.UUIDToString(comment.IssueID)
+	metadata["comment_id"] = util.UUIDToString(comment.ID)
+	metadata["source_url"] = "/issues/" + util.UUIDToString(comment.IssueID) + "#comment-" + util.UUIDToString(comment.ID)
+	if attachments, err := s.Queries.ListAttachmentsByComment(ctx, db.ListAttachmentsByCommentParams{
+		CommentID:   comment.ID,
+		WorkspaceID: comment.WorkspaceID,
+	}); err == nil {
+		metadata["attachments"] = attachmentMetadataList(attachments)
+	} else {
+		slog.Warn("list comment attachments for user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"comment_id", util.UUIDToString(comment.ID),
+			"error", err,
+		)
+	}
+	return metadata
+}
+
+func (s *TaskService) buildChatUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	session, err := s.Queries.GetChatSession(ctx, task.ChatSessionID)
+	if err != nil {
+		slog.Warn("build chat user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+
+	message, err := s.Queries.GetUserChatMessageByTask(ctx, task.ID)
+	if err != nil {
+		// Lark's silence-window dispatcher intentionally batches multiple
+		// inbound messages into one task and therefore has no single linked
+		// message. Web sends link task_id atomically and always take the exact
+		// path above; the latest-message fallback is only for that batched flow.
+		message, err = s.Queries.GetMostRecentUserChatMessage(ctx, task.ChatSessionID)
+	}
+	content := session.Title
+	sourceID := session.ID
+	messageID := ""
+	if err == nil {
+		content = message.Content
+		sourceID = message.ID
+		messageID = util.UUIDToString(message.ID)
+	} else {
+		slog.Warn("load latest chat message for user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+			"error", err,
+		)
+	}
+
+	actorID := session.CreatorID
+	if task.InitiatorUserID.Valid {
+		actorID = task.InitiatorUserID
+	}
+	title := firstNonEmpty(session.Title, "Chat 消息")
+	metadata := baseUserInputMetadata("chat", "member", actorID, "chat_message", sourceID, title, content)
+	metadata["chat_session_id"] = util.UUIDToString(session.ID)
+	metadata["source_url"] = "/chats/" + util.UUIDToString(session.ID)
+	if messageID != "" {
+		metadata["chat_message_id"] = messageID
+		metadata["source_url"] = metadata["source_url"].(string) + "#message-" + messageID
+		if attachments, err := s.Queries.ListAttachmentsByChatMessage(ctx, db.ListAttachmentsByChatMessageParams{
+			ChatMessageID: message.ID,
+			WorkspaceID:   session.WorkspaceID,
+		}); err == nil {
+			metadata["attachments"] = attachmentMetadataList(attachments)
+		} else {
+			slog.Warn("list chat attachments for user input trace failed",
+				"task_id", util.UUIDToString(task.ID),
+				"chat_message_id", messageID,
+				"error", err,
+			)
+		}
+	}
+	return metadata
+}
+
+func (s *TaskService) buildQuickCreateUserInputMetadata(task db.AgentTaskQueue, qc QuickCreateContext) map[string]any {
+	requesterID := pgtype.UUID{}
+	if parsed, err := util.ParseUUID(qc.RequesterID); err == nil {
+		requesterID = parsed
+	}
+	metadata := baseUserInputMetadata("quick_create", "member", requesterID, "quick_create", task.ID, "快速创建任务", qc.Prompt)
+	metadata["task_id"] = util.UUIDToString(task.ID)
+	metadata["workspace_id"] = qc.WorkspaceID
+	putStringIfPresent(metadata, "project_id", qc.ProjectID)
+	putStringIfPresent(metadata, "squad_id", qc.SquadID)
+	putStringIfPresent(metadata, "parent_issue_id", qc.ParentIssueID)
+	putStringIfPresent(metadata, "status", qc.Status)
+	putStringIfPresent(metadata, "priority", qc.Priority)
+	putStringIfPresent(metadata, "start_date", qc.StartDate)
+	putStringIfPresent(metadata, "due_date", qc.DueDate)
+	if len(qc.AttachmentIDs) > 0 {
+		attachments := make([]map[string]any, 0, len(qc.AttachmentIDs))
+		for _, id := range qc.AttachmentIDs {
+			if id != "" {
+				attachments = append(attachments, map[string]any{"id": id})
+			}
+		}
+		metadata["attachments"] = attachments
+	}
+	return metadata
+}
+
+func (s *TaskService) buildAutopilotUserInputMetadata(ctx context.Context, task db.AgentTaskQueue, runID pgtype.UUID) map[string]any {
+	run, err := s.Queries.GetAutopilotRun(ctx, runID)
+	if err != nil {
+		slog.Warn("build autopilot user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"autopilot_run_id", util.UUIDToString(runID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+	ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID)
+	if err != nil {
+		slog.Warn("build autopilot user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"autopilot_id", util.UUIDToString(run.AutopilotID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+
+	contentParts := []string{ap.Title}
+	if ap.Description.Valid {
+		contentParts = append(contentParts, ap.Description.String)
+	}
+	payloadSummary, payloadTruncated := summarizeRawJSON(run.TriggerPayload, triggerSummaryMaxLen)
+	if payloadSummary != "" {
+		contentParts = append(contentParts, payloadSummary)
+	}
+	content := strings.Join(contentParts, "\n\n")
+	metadata := baseUserInputMetadata("autopilot", ap.CreatedByType, ap.CreatedByID, "autopilot_run", run.ID, ap.Title, content)
+	metadata["autopilot_id"] = util.UUIDToString(ap.ID)
+	metadata["autopilot_run_id"] = util.UUIDToString(run.ID)
+	metadata["autopilot_source"] = run.Source
+	metadata["trigger_payload_summary"] = payloadSummary
+	metadata["trigger_payload_truncated"] = payloadTruncated
+	if run.IssueID.Valid {
+		metadata["issue_id"] = util.UUIDToString(run.IssueID)
+		metadata["source_url"] = "/issues/" + util.UUIDToString(run.IssueID)
+	}
+	return metadata
+}
+
+func (s *TaskService) buildDirectUserInputMetadata(task db.AgentTaskQueue) map[string]any {
+	content := "系统任务入队"
+	if task.TriggerSummary.Valid && strings.TrimSpace(task.TriggerSummary.String) != "" {
+		content = task.TriggerSummary.String
+	}
+	metadata := baseUserInputMetadata("direct", "system", pgtype.UUID{}, "task", task.ID, "直接任务", content)
+	metadata["task_id"] = util.UUIDToString(task.ID)
+	if task.ParentTaskID.Valid {
+		metadata["parent_task_id"] = util.UUIDToString(task.ParentTaskID)
+	}
+	return metadata
+}
+
+func baseUserInputMetadata(inputKind, actorType string, actorID pgtype.UUID, sourceType string, sourceID pgtype.UUID, title, content string) map[string]any {
+	snapshot, truncated := truncateSnapshot(content, userInputSnapshotMaxLen)
+	metadata := map[string]any{
+		"input_kind":        inputKind,
+		"actor_type":        actorType,
+		"actor_id":          util.UUIDToString(actorID),
+		"source_type":       sourceType,
+		"source_id":         util.UUIDToString(sourceID),
+		"title":             strings.TrimSpace(title),
+		"summary":           truncateForSummary(firstNonEmpty(content, title), triggerSummaryMaxLen),
+		"content_snapshot":  snapshot,
+		"content_truncated": truncated,
+		"content_sha256":    userInputContentSHA256(content),
+		"attachments":       []map[string]any{},
+	}
+	return metadata
+}
+
+func textWithTitle(title, body string) string {
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	switch {
+	case title == "":
+		return body
+	case body == "":
+		return title
+	default:
+		return title + "\n\n" + body
+	}
+}
+
+func truncateSnapshot(s string, maxRunes int) (string, bool) {
+	rs := []rune(strings.TrimSpace(s))
+	if len(rs) <= maxRunes {
+		return string(rs), false
+	}
+	return string(rs[:maxRunes]), true
+}
+
+func userInputContentSHA256(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func summarizeRawJSON(raw []byte, maxRunes int) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var decoded any
+	content := strings.TrimSpace(string(raw))
+	if json.Unmarshal(raw, &decoded) == nil {
+		if compact, err := json.Marshal(decoded); err == nil {
+			content = string(compact)
+		}
+	}
+	return truncateSnapshot(content, maxRunes)
+}
+
+func attachmentMetadataList(attachments []db.Attachment) []map[string]any {
+	out := make([]map[string]any, 0, len(attachments))
+	for _, attachment := range attachments {
+		out = append(out, map[string]any{
+			"id":           util.UUIDToString(attachment.ID),
+			"filename":     attachment.Filename,
+			"content_type": attachment.ContentType,
+			"size_bytes":   attachment.SizeBytes,
+		})
+	}
+	return out
+}
+
+func putStringIfPresent(metadata map[string]any, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		metadata[key] = value
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *TaskService) captureTaskDispatched(ctx context.Context, task db.AgentTaskQueue) {
+	queueWaitMs := durationMilliseconds(task.CreatedAt, task.DispatchedAt)
+	s.recordTaskTraceEvent(ctx, task, "task.dispatched", "任务已领取", taskTraceOptions{
+		DurationMs:  queueWaitMs,
+		QueueWaitMs: queueWaitMs,
+	})
+	if s.Metrics != nil {
+		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
+		s.Metrics.RecordTaskDispatched(util.UUIDToString(task.ID), source, runtimeMode, durationSeconds(task.CreatedAt, task.DispatchedAt))
+	}
+}
+
+func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQueue) {
+	s.recordTaskTraceEvent(ctx, task, "task.started", "任务已开始", taskTraceOptions{
+		QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt),
+	})
+	if s.Metrics != nil {
+		source, runtimeMode, provider := s.taskMetricsContext(ctx, task)
+		s.Metrics.RecordTaskStarted(source, runtimeMode, provider)
+	}
+}
+
+func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTaskQueue) {
+	runMs := durationMilliseconds(task.StartedAt, task.CompletedAt)
+	s.recordTaskTraceEvent(ctx, task, "task.completed", "任务已完成", taskTraceOptions{
+		DurationMs:  runMs,
+		QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt),
+		RunMs:       runMs,
+		TotalMs:     durationMilliseconds(task.CreatedAt, task.CompletedAt),
+	})
+	s.recordTaskTerminalMetrics(ctx, task)
+}
+
+func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
+	failureReason := taskFailureReason(task)
+	runMs := durationMilliseconds(task.StartedAt, task.CompletedAt)
+	s.recordTaskTraceEvent(ctx, task, "task.failed", "任务已失败", taskTraceOptions{
+		DurationMs:    runMs,
+		QueueWaitMs:   durationMilliseconds(task.CreatedAt, task.DispatchedAt),
+		RunMs:         runMs,
+		TotalMs:       durationMilliseconds(task.CreatedAt, task.CompletedAt),
+		FailureReason: failureReason,
+		ErrorType:     taskErrorType(failureReason),
+	})
+	if source, runtimeMode, ok := s.recordTaskTerminalMetrics(ctx, task); ok {
+		s.Metrics.RecordTaskFailed(source, runtimeMode, failureReason)
+	}
+}
+
+func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
+	s.recordTaskCancelledTrace(ctx, s.Queries, task)
+	s.recordTaskTerminalMetrics(ctx, task)
+}
+
+// recordTaskCancelledTrace writes the task.cancelled observability row.
+// Callers that hard-delete a chat session must pass the same transaction
+// queries used for cancel+delete so chat_session_id still resolves while
+// the session row is locked. The session id is also mirrored into metadata
+// because task_trace_event.chat_session_id is ON DELETE SET NULL.
+func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) {
+	var metadata []byte
+	if task.ChatSessionID.Valid {
+		var err error
+		metadata, err = mergeTaskTraceMetadata(nil, map[string]any{
+			"chat_session_id": util.UUIDToString(task.ChatSessionID),
+		})
+		if err != nil {
+			slog.Warn("encode cancelled task trace metadata failed", "error", err, "task_id", util.UUIDToString(task.ID))
+			return
+		}
+	}
+	totalMs := durationMilliseconds(task.CreatedAt, task.CompletedAt)
+	opts := taskTraceOptions{
+		DurationMs:    totalMs,
+		QueueWaitMs:   durationMilliseconds(task.CreatedAt, task.DispatchedAt),
+		RunMs:         durationMilliseconds(task.StartedAt, task.CompletedAt),
+		TotalMs:       totalMs,
+		FailureReason: "cancelled",
+		ErrorType:     "cancelled",
+		Metadata:      metadata,
+	}
+	params, ok := s.buildTaskTraceEventParams(ctx, task, "task.cancelled", "任务已取消", opts)
+	if !ok {
+		return
+	}
+	if _, err := q.CreateTaskTraceEvent(ctx, params); err != nil {
+		slog.Warn("record task trace event failed",
+			"task_id", util.UUIDToString(task.ID),
+			"event_type", "task.cancelled",
+			"error", err,
+		)
+	}
+}
+
+func (s *TaskService) recordTaskTerminalMetrics(ctx context.Context, task db.AgentTaskQueue) (source, runtimeMode string, ok bool) {
+	if s.Metrics == nil {
+		return "", "", false
+	}
+	source, runtimeMode, _ = s.taskMetricsContext(ctx, task)
+	s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, durationSeconds(task.StartedAt, task.CompletedAt), durationSeconds(task.CreatedAt, task.CompletedAt), task.Attempt)
+	return source, runtimeMode, true
+}
+
+// CaptureCancelledTaskTracesInTx records cancel traces inside the caller's
+// transaction. Used by DeleteChatSession so task_trace_event.chat_session_id
+// still points at a live session row when the insert runs.
+func (s *TaskService) CaptureCancelledTaskTracesInTx(ctx context.Context, q *db.Queries, cancelled []db.AgentTaskQueue) {
+	for _, task := range cancelled {
+		s.recordTaskCancelledTrace(ctx, q, task)
+	}
+}
+
+// NotifyCancelledTasks finalizes and publishes persisted cancellations without
+// writing another cancel trace. Call after commit when traces were already
+// recorded in the business transaction (for example chat session deletion).
+func (s *TaskService) NotifyCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue, persistedEvents []events.Event) {
+	for _, t := range cancelled {
+		s.recordTaskTerminalMetrics(ctx, t)
+	}
+	s.reconcileCancelledTaskAgents(ctx, cancelled)
+	s.publishTaskEvents(persistedEvents)
+}
+
+func (s *TaskService) CaptureTaskUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) {
+	s.recordTaskTraceEvent(ctx, task, "llm.usage_reported", "模型用量已上报", taskTraceOptions{
+		Provider:         provider,
+		Model:            model,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+	})
+	if s.Metrics == nil {
+		return
+	}
+	source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
+	s.Metrics.RecordLLMUsage(source, runtimeMode, provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
+}
+
+func (s *TaskService) CaptureTaskUsageUnavailable(ctx context.Context, task db.AgentTaskQueue, reason string) {
+	events, err := s.Queries.ListTaskTraceEventsByTask(ctx, task.ID)
+	if err != nil {
+		slog.Warn("list task trace events before usage unavailable trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+	} else {
+		for _, event := range events {
+			if event.EventType == "llm.usage_reported" || event.EventType == "llm.usage_unavailable" {
+				return
+			}
+		}
+	}
+
+	metadata, _ := json.Marshal(map[string]string{
+		"原因": reason,
+		"说明": "执行器完成任务但模型没有返回 token 用量，本次任务不会计入 token 或成本聚合。",
+	})
+	s.recordTaskTraceEvent(ctx, task, "llm.usage_unavailable", "模型用量未返回", taskTraceOptions{
+		Metadata: metadata,
+	})
+}
+
+func (s *TaskService) CaptureQueuedExpiredTasks(ctx context.Context, tasks []db.AgentTaskQueue) {
+	if s.Metrics == nil {
+		return
+	}
+	for _, task := range tasks {
+		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
+		s.Metrics.RecordTaskQueuedExpired(source, runtimeMode)
+	}
+}
+
+func (s *TaskService) CaptureLeaseExpiredTasks(ctx context.Context, tasks []db.AgentTaskQueue) {
+	if s.Metrics == nil {
+		return
+	}
+	for _, task := range tasks {
+		source, _, _ := s.taskMetricsContext(ctx, task)
+		s.Metrics.RecordTaskLeaseExpired(source)
+	}
+}
+
+func (s *TaskService) cachedTaskAnalyticsContext(task db.AgentTaskQueue) (analytics.CoreProperties, bool) {
+	key := taskAnalyticsContextKey(task)
+	if key == "" {
+		return analytics.CoreProperties{}, false
+	}
+	s.analyticsContextMu.Lock()
+	defer s.analyticsContextMu.Unlock()
+	if s.analyticsContextCache == nil {
+		return analytics.CoreProperties{}, false
+	}
+	tc, ok := s.analyticsContextCache[key]
+	return tc, ok
+}
+
+func (s *TaskService) storeTaskAnalyticsContext(task db.AgentTaskQueue, tc analytics.CoreProperties) {
+	if tc.WorkspaceID == "" {
+		return
+	}
+	key := taskAnalyticsContextKey(task)
+	if key == "" {
+		return
+	}
+	s.analyticsContextMu.Lock()
+	defer s.analyticsContextMu.Unlock()
+	if s.analyticsContextCache == nil {
+		s.analyticsContextCache = make(map[string]analytics.CoreProperties)
+	}
+	if _, ok := s.analyticsContextCache[key]; !ok {
+		s.analyticsContextOrder = append(s.analyticsContextOrder, key)
+		if len(s.analyticsContextOrder) > taskAnalyticsContextCacheMax {
+			oldest := s.analyticsContextOrder[0]
+			s.analyticsContextOrder = s.analyticsContextOrder[1:]
+			delete(s.analyticsContextCache, oldest)
+		}
+	}
+	s.analyticsContextCache[key] = tc
+}
+
+func taskAnalyticsContextKey(task db.AgentTaskQueue) string {
+	taskID := util.UUIDToString(task.ID)
+	if taskID == "" {
+		return ""
+	}
+	return strings.Join([]string{
+		taskID,
+		util.UUIDToString(task.RuntimeID),
+		util.UUIDToString(task.IssueID),
+		util.UUIDToString(task.ChatSessionID),
+		util.UUIDToString(task.AutopilotRunID),
+	}, "|")
+}
+
+func (s *TaskService) taskMetricsContext(ctx context.Context, task db.AgentTaskQueue) (source, runtimeMode, provider string) {
+	tc := s.AnalyticsContextForTask(ctx, task)
+	return taskMetricsDimensions(task, tc)
+}
+
+func taskMetricsDimensions(task db.AgentTaskQueue, tc analytics.CoreProperties) (source, runtimeMode, provider string) {
+	source = "other"
+	switch {
+	case task.ChatSessionID.Valid:
+		source = "chat"
+	case task.IssueID.Valid:
+		if tc.Source == analytics.SourceAutopilot {
+			source = "autopilot_issue"
+		} else {
+			source = "issue"
+		}
+	case task.AutopilotRunID.Valid:
+		source = "autopilot"
+	default:
+		if _, ok := ParseQuickCreateContext(task); ok {
+			source = "quick_create"
+		} else if tc.Source != "" {
+			source = tc.Source
+		}
+	}
+	return source, tc.RuntimeMode, tc.Provider
+}
+
+func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.AgentTaskQueue) analytics.CoreProperties {
+	if tc, ok := s.cachedTaskAnalyticsContext(task); ok {
+		return tc
+	}
+	tc := analytics.CoreProperties{
+		AgentID: util.UUIDToString(task.AgentID),
+		TaskID:  util.UUIDToString(task.ID),
+		Source:  analytics.SourceManual,
+	}
+	if task.IssueID.Valid {
+		tc.IssueID = util.UUIDToString(task.IssueID)
+	}
+	if task.ChatSessionID.Valid {
+		tc.ChatSessionID = util.UUIDToString(task.ChatSessionID)
+		tc.Source = analytics.SourceChat
+	}
+	if task.AutopilotRunID.Valid {
+		tc.AutopilotRunID = util.UUIDToString(task.AutopilotRunID)
+		tc.Source = analytics.SourceAutopilot
+	}
+
+	if rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID); err == nil {
+		tc.WorkspaceID = util.UUIDToString(rt.WorkspaceID)
+		tc.RuntimeMode = rt.RuntimeMode
+		tc.Provider = rt.Provider
+	}
+	if tc.WorkspaceID == "" || tc.RuntimeMode == "" {
+		if agent, err := s.Queries.GetAgent(ctx, task.AgentID); err == nil {
+			if tc.WorkspaceID == "" {
+				tc.WorkspaceID = util.UUIDToString(agent.WorkspaceID)
+			}
+			if tc.RuntimeMode == "" {
+				tc.RuntimeMode = agent.RuntimeMode
+			}
+		}
+	}
+
+	if task.IssueID.Valid {
+		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
+			tc.WorkspaceID = util.UUIDToString(issue.WorkspaceID)
+			if issue.CreatorType == "member" {
+				tc.UserID = util.UUIDToString(issue.CreatorID)
+			}
+			if issue.OriginType.Valid {
+				switch issue.OriginType.String {
+				case "autopilot":
+					tc.Source = analytics.SourceAutopilot
+					if ap, err := s.Queries.GetAutopilot(ctx, issue.OriginID); err == nil {
+						if ap.CreatedByType == "member" {
+							tc.UserID = util.UUIDToString(ap.CreatedByID)
+						}
+					}
+				case "quick_create":
+					tc.Source = analytics.SourceManual
+				}
+			}
+		}
+	}
+	if task.ChatSessionID.Valid {
+		if cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID); err == nil {
+			tc.WorkspaceID = util.UUIDToString(cs.WorkspaceID)
+			tc.UserID = util.UUIDToString(cs.CreatorID)
+		}
+	}
+	if task.AutopilotRunID.Valid {
+		if run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID); err == nil {
+			if ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID); err == nil {
+				tc.WorkspaceID = util.UUIDToString(ap.WorkspaceID)
+				if ap.CreatedByType == "member" {
+					tc.UserID = util.UUIDToString(ap.CreatedByID)
+				}
+			}
+		}
+	}
+	if qc, ok := ParseQuickCreateContext(task); ok {
+		tc.WorkspaceID = qc.WorkspaceID
+		tc.UserID = qc.RequesterID
+		tc.Source = analytics.SourceManual
+	}
+	s.storeTaskAnalyticsContext(task, tc)
+	return tc
+}
+
+type taskTraceOptions struct {
+	DurationMs       pgtype.Int8
+	QueueWaitMs      pgtype.Int8
+	RunMs            pgtype.Int8
+	TotalMs          pgtype.Int8
+	Provider         string
+	Model            string
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	FailureReason    string
+	ErrorType        string
+	Metadata         []byte
+}
+
+func (s *TaskService) recordTaskTraceEvent(ctx context.Context, task db.AgentTaskQueue, eventType, eventName string, opts taskTraceOptions) {
+	params, ok := s.buildTaskTraceEventParams(ctx, task, eventType, eventName, opts)
+	if !ok {
+		return
+	}
+	if _, err := s.Queries.CreateTaskTraceEvent(ctx, params); err != nil {
+		slog.Warn("record task trace event failed",
+			"task_id", util.UUIDToString(task.ID),
+			"event_type", eventType,
+			"error", err,
+		)
+	}
+}
+
+func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.AgentTaskQueue, eventType, eventName string, opts taskTraceOptions) (db.CreateTaskTraceEventParams, bool) {
+	analyticsContext := s.AnalyticsContextForTask(ctx, task)
+	source, _, providerFromRuntime := taskMetricsDimensions(task, analyticsContext)
+	workspaceID, _ := util.ParseUUID(analyticsContext.WorkspaceID)
+	issueID := task.IssueID
+	runtimeID := task.RuntimeID
+	squadID := pgtype.UUID{}
+	projectID := pgtype.UUID{}
+
+	if task.IssueID.Valid {
+		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
+			projectID = issue.ProjectID
+			if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" {
+				squadID = issue.AssigneeID
+			}
+		}
+	}
+	if task.AutopilotRunID.Valid {
+		if run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID); err == nil {
+			if !issueID.Valid {
+				issueID = run.IssueID
+			}
+			if run.SquadID.Valid {
+				squadID = run.SquadID
+			}
+			if ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID); err == nil {
+				if !projectID.Valid {
+					projectID = ap.ProjectID
+				}
+			}
+		}
+	}
+	if qc, ok := ParseQuickCreateContext(task); ok {
+		if qc.SquadID != "" {
+			if parsed, err := util.ParseUUID(qc.SquadID); err == nil {
+				squadID = parsed
+			}
+		}
+		if !projectID.Valid && qc.ProjectID != "" {
+			if parsed, err := util.ParseUUID(qc.ProjectID); err == nil {
+				projectID = parsed
+			}
+		}
+	}
+	if !workspaceID.Valid {
+		return db.CreateTaskTraceEventParams{}, false
+	}
+	if opts.Provider == "" {
+		opts.Provider = providerFromRuntime
+	}
+
+	// task_trace_event.chat_session_id is a hard FK. DeleteChatSession writes
+	// cancel traces before delete inside the same tx; other post-commit
+	// cancel paths may race with session hard-delete. Prefer keeping the
+	// cancel evidence and drop only the FK column when the session is gone,
+	// retaining the id in metadata for later forensics.
+	chatSessionID := task.ChatSessionID
+	metadata := opts.Metadata
+	if chatSessionID.Valid {
+		if _, err := s.Queries.GetChatSession(ctx, chatSessionID); err != nil {
+			sessionID := util.UUIDToString(chatSessionID)
+			metadata, err = mergeTaskTraceMetadata(metadata, map[string]any{
+				"deleted_chat_session_id": sessionID,
+				"chat_session_missing":    true,
+			})
+			if err != nil {
+				slog.Warn("encode missing chat session trace metadata failed", "error", err, "task_id", util.UUIDToString(task.ID))
+				return db.CreateTaskTraceEventParams{}, false
+			}
+			chatSessionID = pgtype.UUID{}
+		}
+	}
+
+	return db.CreateTaskTraceEventParams{
+		WorkspaceID:      workspaceID,
+		TaskID:           task.ID,
+		IssueID:          issueID,
+		AgentID:          task.AgentID,
+		RuntimeID:        runtimeID,
+		SquadID:          squadID,
+		ProjectID:        projectID,
+		Source:           source,
+		EventType:        eventType,
+		EventName:        eventName,
+		Status:           task.Status,
+		Attempt:          task.Attempt,
+		DurationMs:       opts.DurationMs,
+		QueueWaitMs:      opts.QueueWaitMs,
+		RunMs:            opts.RunMs,
+		TotalMs:          opts.TotalMs,
+		Provider:         opts.Provider,
+		Model:            opts.Model,
+		InputTokens:      opts.InputTokens,
+		OutputTokens:     opts.OutputTokens,
+		CacheReadTokens:  opts.CacheReadTokens,
+		CacheWriteTokens: opts.CacheWriteTokens,
+		FailureReason:    opts.FailureReason,
+		ErrorType:        opts.ErrorType,
+		TriggerCommentID: task.TriggerCommentID,
+		AutopilotRunID:   task.AutopilotRunID,
+		ChatSessionID:    chatSessionID,
+		Metadata:         metadata,
+	}, true
+}
+
+func mergeTaskTraceMetadata(raw []byte, extra map[string]any) ([]byte, error) {
+	base := map[string]any{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &base); err != nil {
+			return nil, fmt.Errorf("decode task trace metadata: %w", err)
+		}
+		if base == nil {
+			return nil, errors.New("task trace metadata must be a JSON object")
+		}
+	}
+	for k, v := range extra {
+		base[k] = v
+	}
+	encoded, err := json.Marshal(base)
+	if err != nil {
+		return nil, fmt.Errorf("encode task trace metadata: %w", err)
+	}
+	return encoded, nil
+}
+
+func durationSeconds(start, end pgtype.Timestamptz) float64 {
+	if !start.Valid || !end.Valid {
+		return -1
+	}
+	seconds := end.Time.Sub(start.Time).Seconds()
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
+}
+
+func durationMilliseconds(start, end pgtype.Timestamptz) pgtype.Int8 {
+	if !start.Valid || !end.Valid {
+		return pgtype.Int8{}
+	}
+	ms := end.Time.Sub(start.Time).Milliseconds()
+	if ms < 0 {
+		ms = 0
+	}
+	return pgtype.Int8{Int64: ms, Valid: true}
+}
+
+func taskFailureReason(task db.AgentTaskQueue) string {
+	if task.FailureReason.Valid && task.FailureReason.String != "" {
+		return task.FailureReason.String
+	}
+	return "agent_error"
+}
+
+func taskErrorType(reason string) string {
+	switch reason {
+	case "runtime_offline", "runtime_recovery":
+		return "runtime"
+	case "timeout", string(taskfailure.ReasonCodexSemanticInactivity):
+		return "timeout"
+	case string(taskfailure.ReasonIterationLimit), string(taskfailure.ReasonAgentFallbackMessage):
+		return "agent_output"
+	case "cancelled", "user_cancelled":
+		return "cancelled"
+	default:
+		return "agent_error"
+	}
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useModalStore } from "@multica/core/modals";
+import type { CreateIssueSeed } from "@multica/core/issues";
 import { CreateWorkspaceModal } from "./create-workspace";
 import { CreateIssueDialog } from "./create-issue-dialog";
 import { CreateProjectModal } from "./create-project";
@@ -19,12 +20,13 @@ export function ModalRegistry() {
   switch (modal) {
     case "create-workspace":
       return <CreateWorkspaceModal onClose={close} />;
-    // Legacy "create-issue" callers now enter the single agent-create flow.
-    // The manual create mode is no longer exposed as a product surface.
     case "create-issue":
-      return <CreateIssueDialog onClose={close} initialMode="agent" data={data} />;
-    case "quick-create-issue":
-      return <CreateIssueDialog onClose={close} initialMode="agent" data={data} />;
+      return (
+        <CreateIssueDialog
+          onClose={close}
+          data={data as CreateIssueSeed | null}
+        />
+      );
     case "create-project":
       return <CreateProjectModal onClose={close} />;
     case "create-squad":

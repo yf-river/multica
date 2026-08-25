@@ -61,4 +61,4 @@ function FileUploadButton({
   );
 }
 
-export { FileUploadButton, type FileUploadButtonProps };
+export { FileUploadButton };

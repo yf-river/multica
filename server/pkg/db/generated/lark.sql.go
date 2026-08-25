@@ -126,35 +126,6 @@ func (q *Queries) ClaimLarkInboundDedup(ctx context.Context, arg ClaimLarkInboun
 	return i, err
 }
 
-const consumeLarkBindingToken = `-- name: ConsumeLarkBindingToken :one
-UPDATE lark_binding_token
-SET consumed_at = now()
-WHERE token_hash = $1
-  AND consumed_at IS NULL
-  AND expires_at > now()
-RETURNING token_hash, workspace_id, installation_id, lark_open_id, expires_at, consumed_at, created_at
-`
-
-// Atomic redemption. Returns the row only if (a) the hash exists, (b)
-// it has not been consumed, and (c) it has not expired. The UPDATE +
-// RETURNING pattern guarantees that two simultaneous redemptions of
-// the same token cannot both succeed — exactly one row update wins,
-// the other sees zero rows.
-func (q *Queries) ConsumeLarkBindingToken(ctx context.Context, tokenHash string) (LarkBindingToken, error) {
-	row := q.db.QueryRow(ctx, consumeLarkBindingToken, tokenHash)
-	var i LarkBindingToken
-	err := row.Scan(
-		&i.TokenHash,
-		&i.WorkspaceID,
-		&i.InstallationID,
-		&i.LarkOpenID,
-		&i.ExpiresAt,
-		&i.ConsumedAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createLarkBindingToken = `-- name: CreateLarkBindingToken :one
 
 INSERT INTO lark_binding_token (
@@ -204,13 +175,12 @@ func (q *Queries) CreateLarkBindingToken(ctx context.Context, arg CreateLarkBind
 }
 
 const createLarkChatSessionBinding = `-- name: CreateLarkChatSessionBinding :one
-
 INSERT INTO lark_chat_session_binding (
     chat_session_id, installation_id, lark_chat_id, lark_chat_type
 ) VALUES (
     $1, $2, $3, $4
 )
-RETURNING id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at
+RETURNING id, chat_session_id, installation_id, lark_chat_id, lark_chat_type
 `
 
 type CreateLarkChatSessionBindingParams struct {
@@ -220,9 +190,6 @@ type CreateLarkChatSessionBindingParams struct {
 	LarkChatType   string      `json:"lark_chat_type"`
 }
 
-// =====================
-// lark_chat_session_binding
-// =====================
 func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLarkChatSessionBindingParams) (LarkChatSessionBinding, error) {
 	row := q.db.QueryRow(ctx, createLarkChatSessionBinding,
 		arg.ChatSessionID,
@@ -237,49 +204,6 @@ func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLa
 		&i.InstallationID,
 		&i.LarkChatID,
 		&i.LarkChatType,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createLarkOutboundCardMessage = `-- name: CreateLarkOutboundCardMessage :one
-
-INSERT INTO lark_outbound_card_message (
-    chat_session_id, task_id, lark_chat_id, lark_card_message_id, status
-) VALUES (
-    $1, $5, $2, $3, $4
-)
-RETURNING id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, created_at
-`
-
-type CreateLarkOutboundCardMessageParams struct {
-	ChatSessionID     pgtype.UUID `json:"chat_session_id"`
-	LarkChatID        string      `json:"lark_chat_id"`
-	LarkCardMessageID string      `json:"lark_card_message_id"`
-	Status            string      `json:"status"`
-	TaskID            pgtype.UUID `json:"task_id"`
-}
-
-// =====================
-// lark_outbound_card_message
-// =====================
-func (q *Queries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateLarkOutboundCardMessageParams) (LarkOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, createLarkOutboundCardMessage,
-		arg.ChatSessionID,
-		arg.LarkChatID,
-		arg.LarkCardMessageID,
-		arg.Status,
-		arg.TaskID,
-	)
-	var i LarkOutboundCardMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.TaskID,
-		&i.LarkChatID,
-		&i.LarkCardMessageID,
-		&i.Status,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -287,15 +211,14 @@ func (q *Queries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateL
 const createLarkUserBinding = `-- name: CreateLarkUserBinding :one
 
 INSERT INTO lark_user_binding (
-    workspace_id, multica_user_id, installation_id, lark_open_id, union_id
+    workspace_id, multica_user_id, installation_id, lark_open_id
 ) VALUES (
-    $1, $2, $3, $4, $5
+    $1, $2, $3, $4
 )
 ON CONFLICT (installation_id, lark_open_id) DO UPDATE SET
-    union_id = COALESCE(EXCLUDED.union_id, lark_user_binding.union_id),
-    bound_at = now()
+    multica_user_id = EXCLUDED.multica_user_id
 WHERE lark_user_binding.multica_user_id = EXCLUDED.multica_user_id
-RETURNING id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id, bound_at
+RETURNING id, workspace_id, multica_user_id, installation_id, lark_open_id
 `
 
 type CreateLarkUserBindingParams struct {
@@ -303,7 +226,6 @@ type CreateLarkUserBindingParams struct {
 	MulticaUserID  pgtype.UUID `json:"multica_user_id"`
 	InstallationID pgtype.UUID `json:"installation_id"`
 	LarkOpenID     string      `json:"lark_open_id"`
-	UnionID        pgtype.Text `json:"union_id"`
 }
 
 // =====================
@@ -324,9 +246,8 @@ type CreateLarkUserBindingParams struct {
 //     caller (lark.BindingTokenService.RedeemAndBind) translates
 //     that into ErrBindingAlreadyAssigned.
 //
-// The same-user case still updates metadata (union_id refresh,
-// bound_at bump) so an idempotent re-bind by the original user
-// continues to work; only a cross-user re-assignment is rejected.
+// The same-user case is an idempotent no-op that still returns the existing
+// row; only a cross-user re-assignment is rejected.
 // True account changes must go through an explicit unbind flow, not
 // through a binding token.
 func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserBindingParams) (LarkUserBinding, error) {
@@ -335,7 +256,6 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 		arg.MulticaUserID,
 		arg.InstallationID,
 		arg.LarkOpenID,
-		arg.UnionID,
 	)
 	var i LarkUserBinding
 	err := row.Scan(
@@ -344,14 +264,12 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 		&i.MulticaUserID,
 		&i.InstallationID,
 		&i.LarkOpenID,
-		&i.UnionID,
-		&i.BoundAt,
 	)
 	return i, err
 }
 
 const getLarkChatSessionBinding = `-- name: GetLarkChatSessionBinding :one
-SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at FROM lark_chat_session_binding
+SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type FROM lark_chat_session_binding
 WHERE installation_id = $1 AND lark_chat_id = $2
 `
 
@@ -373,13 +291,12 @@ func (q *Queries) GetLarkChatSessionBinding(ctx context.Context, arg GetLarkChat
 		&i.InstallationID,
 		&i.LarkChatID,
 		&i.LarkChatType,
-		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getLarkChatSessionBindingBySession = `-- name: GetLarkChatSessionBindingBySession :one
-SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at FROM lark_chat_session_binding
+SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type FROM lark_chat_session_binding
 WHERE chat_session_id = $1
 `
 
@@ -395,7 +312,6 @@ func (q *Queries) GetLarkChatSessionBindingBySession(ctx context.Context, chatSe
 		&i.InstallationID,
 		&i.LarkChatID,
 		&i.LarkChatType,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -493,31 +409,8 @@ func (q *Queries) GetLarkInstallationInWorkspace(ctx context.Context, arg GetLar
 	return i, err
 }
 
-const getLarkOutboundCardByTask = `-- name: GetLarkOutboundCardByTask :one
-SELECT id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, created_at FROM lark_outbound_card_message
-WHERE task_id = $1
-`
-
-// Most card patches arrive keyed by task_id (we're streaming an agent
-// run's output). The partial unique index on (task_id) WHERE task_id IS
-// NOT NULL guarantees this returns at most one row.
-func (q *Queries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (LarkOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, getLarkOutboundCardByTask, taskID)
-	var i LarkOutboundCardMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.TaskID,
-		&i.LarkChatID,
-		&i.LarkCardMessageID,
-		&i.Status,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getLarkUserBindingByOpenID = `-- name: GetLarkUserBindingByOpenID :one
-SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id, bound_at FROM lark_user_binding
+SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id FROM lark_user_binding
 WHERE installation_id = $1 AND lark_open_id = $2
 `
 
@@ -539,8 +432,6 @@ func (q *Queries) GetLarkUserBindingByOpenID(ctx context.Context, arg GetLarkUse
 		&i.MulticaUserID,
 		&i.InstallationID,
 		&i.LarkOpenID,
-		&i.UnionID,
-		&i.BoundAt,
 	)
 	return i, err
 }
@@ -634,6 +525,55 @@ func (q *Queries) ListLarkInstallationsByWorkspace(ctx context.Context, workspac
 	return items, nil
 }
 
+const lockLarkBindingToken = `-- name: LockLarkBindingToken :one
+SELECT token_hash, workspace_id, installation_id, lark_open_id, expires_at, consumed_at, created_at FROM lark_binding_token
+WHERE token_hash = $1
+FOR UPDATE
+`
+
+// Serialize first redemption and committed-response replay. The service
+// distinguishes an unused token from one already consumed by the same
+// authenticated Multica user; callers never receive the hash or row.
+func (q *Queries) LockLarkBindingToken(ctx context.Context, tokenHash string) (LarkBindingToken, error) {
+	row := q.db.QueryRow(ctx, lockLarkBindingToken, tokenHash)
+	var i LarkBindingToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.WorkspaceID,
+		&i.InstallationID,
+		&i.LarkOpenID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markLarkBindingTokenConsumed = `-- name: MarkLarkBindingTokenConsumed :one
+UPDATE lark_binding_token
+SET consumed_at = now()
+WHERE token_hash = $1
+  AND consumed_at IS NULL
+  AND expires_at > now()
+RETURNING token_hash, workspace_id, installation_id, lark_open_id, expires_at, consumed_at, created_at
+`
+
+// First redemption remains constrained by both single-use and expiry.
+func (q *Queries) MarkLarkBindingTokenConsumed(ctx context.Context, tokenHash string) (LarkBindingToken, error) {
+	row := q.db.QueryRow(ctx, markLarkBindingTokenConsumed, tokenHash)
+	var i LarkBindingToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.WorkspaceID,
+		&i.InstallationID,
+		&i.LarkOpenID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const markLarkInboundDedupProcessed = `-- name: MarkLarkInboundDedupProcessed :execrows
 UPDATE lark_inbound_message_dedup
 SET processed_at = now()
@@ -677,7 +617,6 @@ func (q *Queries) MarkLarkInboundDedupProcessed(ctx context.Context, arg MarkLar
 }
 
 const recordLarkInboundDrop = `-- name: RecordLarkInboundDrop :exec
-
 INSERT INTO lark_inbound_audit (
     installation_id, lark_chat_id, event_type,
     lark_event_id, lark_message_id, drop_reason
@@ -700,9 +639,6 @@ type RecordLarkInboundDropParams struct {
 	LarkMessageID  pgtype.Text `json:"lark_message_id"`
 }
 
-// =====================
-// lark_inbound_audit
-// =====================
 // The ONLY write path for events that fail identity check or the
 // group-mention filter. Deliberately accepts no body column — the
 // AuditLogger interface in internal/integrations/lark mirrors that
@@ -786,22 +722,6 @@ func (q *Queries) SetLarkInstallationStatus(ctx context.Context, arg SetLarkInst
 	return err
 }
 
-const updateLarkOutboundCardStatus = `-- name: UpdateLarkOutboundCardStatus :exec
-UPDATE lark_outbound_card_message
-SET status = $2
-WHERE id = $1
-`
-
-type UpdateLarkOutboundCardStatusParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Status string      `json:"status"`
-}
-
-func (q *Queries) UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateLarkOutboundCardStatusParams) error {
-	_, err := q.db.Exec(ctx, updateLarkOutboundCardStatus, arg.ID, arg.Status)
-	return err
-}
-
 const upsertLarkInstallation = `-- name: UpsertLarkInstallation :one
 
 
@@ -837,9 +757,7 @@ type UpsertLarkInstallationParams struct {
 	Region             string      `json:"region"`
 }
 
-// Lark (飞书) Bot integration queries. The current schema baseline defines
-// these tables; the architectural boundaries the package enforces on top are
-// documented in server/internal/integrations/lark/doc.go.
+// Lark (飞书) Bot integration queries.
 //
 // Scoping convention: every public-facing read goes through a
 // workspace-scoped variant where one exists. The lookups that take only

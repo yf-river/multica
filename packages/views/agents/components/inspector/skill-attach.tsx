@@ -4,20 +4,12 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent } from "@multica/core/types";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { skillListOptions } from "@multica/core/workspace/queries";
 import { SkillAddDialog } from "../skill-add-dialog";
 import { useT } from "../../../i18n";
 
-/**
- * Inline "+ Attach" trigger for the inspector's Skills row. The trigger is
- * the dashed-border chip; clicking it opens the shared `SkillAddDialog` —
- * same surface the SkillsTab uses for its own "Add skill" button. Single
- * source of truth for the attach flow, single visual for the picker.
- *
- * Hidden when there's nothing left to attach so we don't dangle a chip
- * that opens an empty dialog.
- */
+/** Opens the shared Skill dialog when the Agent has attachable Skills. */
 export function SkillAttach({
   agent,
   canEdit = true,

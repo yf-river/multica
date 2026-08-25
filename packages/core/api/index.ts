@@ -1,11 +1,12 @@
 export {
   ApiClient,
   ApiError,
+  ApiTransportError,
   PreviewTooLargeError,
   PreviewUnsupportedError,
 } from "./client";
 export type { ApiClientOptions } from "./client";
-export { parseWithFallback, setSchemaLogger } from "./schema";
+export { ApiResponseValidationError, parseOrThrow, parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";
 export { WSClient } from "./ws-client";
 

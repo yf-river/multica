@@ -4,7 +4,6 @@ import { useState } from "react";
 import {
   AlertCircle,
   Copy,
-  MoreHorizontal,
   RotateCcw,
   Square,
   Trash2,
@@ -14,7 +13,7 @@ import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
 import type { AgentPresenceDetail } from "@multica/core/agents";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import {
   AlertDialog,
@@ -34,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useT } from "../../i18n";
+import { ListGridRowMenuButton } from "../../common/list-grid-selection";
 
 interface AgentRowActionsProps {
   agent: Agent;
@@ -134,15 +134,7 @@ export function AgentRowActions({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.row.actions_aria)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.row.actions_aria)} />}
         />
         <DropdownMenuContent align="end" className="w-auto">
           {showStop && (

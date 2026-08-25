@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestPostJSON(t *testing.T) {
@@ -41,7 +44,7 @@ func TestPostJSON(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(respBody{ID: "123"})
+			_ = json.NewEncoder(w).Encode(respBody{ID: "123"})
 		}))
 		defer srv.Close()
 
@@ -56,10 +59,42 @@ func TestPostJSON(t *testing.T) {
 		}
 	})
 
+	t.Run("idempotency key", func(t *testing.T) {
+		const requestKey = "33333333-3333-4333-8333-333333333333"
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if got := r.Header.Get("Idempotency-Key"); got != requestKey {
+				t.Errorf("Idempotency-Key = %q, want %q", got, requestKey)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if calls == 1 {
+				_, _ = w.Write([]byte(`{"id":`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(respBody{ID: "project-1"})
+		}))
+		defer srv.Close()
+
+		client := NewAPIClient(srv.URL, "", "test-token")
+		var out respBody
+		if err := client.PostJSONWithIdempotencyKey(
+			context.Background(), "/test", reqBody{Name: "roadmap"}, requestKey, &out,
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out.ID != "project-1" {
+			t.Fatalf("response id = %q", out.ID)
+		}
+		if calls != 2 {
+			t.Fatalf("requests = %d, want one retry", calls)
+		}
+	})
+
 	t.Run("error status", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, "bad request")
+			_, _ = io.WriteString(w, "bad request")
 		}))
 		defer srv.Close()
 
@@ -98,7 +133,7 @@ func TestPostJSON(t *testing.T) {
 				t.Errorf("expected X-Task-ID task-456, got %s", task)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(respBody{ID: "456"})
+			_ = json.NewEncoder(w).Encode(respBody{ID: "456"})
 		}))
 		defer srv.Close()
 
@@ -137,13 +172,10 @@ func TestPostJSON(t *testing.T) {
 	})
 
 	t.Run("client identity headers fall back to package defaults", func(t *testing.T) {
-		origPlatform, origVersion, origOS := ClientPlatform, ClientVersion, ClientOS
-		ClientPlatform = "cli"
+		origVersion := ClientVersion
 		ClientVersion = "1.2.3-test"
-		ClientOS = "macos"
-		t.Cleanup(func() {
-			ClientPlatform, ClientVersion, ClientOS = origPlatform, origVersion, origOS
-		})
+		t.Cleanup(func() { ClientVersion = origVersion })
+		expectedOS := protocol.NormalizeGOOS(runtime.GOOS)
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if got := r.Header.Get("X-Client-Platform"); got != "cli" {
@@ -152,8 +184,8 @@ func TestPostJSON(t *testing.T) {
 			if got := r.Header.Get("X-Client-Version"); got != "1.2.3-test" {
 				t.Errorf("expected X-Client-Version 1.2.3-test, got %s", got)
 			}
-			if got := r.Header.Get("X-Client-OS"); got != "macos" {
-				t.Errorf("expected X-Client-OS macos, got %s", got)
+			if got := r.Header.Get("X-Client-OS"); got != expectedOS {
+				t.Errorf("expected X-Client-OS %s, got %s", expectedOS, got)
 			}
 			w.WriteHeader(http.StatusNoContent)
 		}))
@@ -166,13 +198,85 @@ func TestPostJSON(t *testing.T) {
 	})
 }
 
+func TestJSONWriteMethodsPreserveVerbBodyAndResponse(t *testing.T) {
+	type response struct {
+		ID string `json:"id"`
+	}
+	tests := []struct {
+		name   string
+		method string
+		call   func(*APIClient, *response) error
+	}{
+		{
+			name:   "post",
+			method: http.MethodPost,
+			call: func(client *APIClient, out *response) error {
+				return client.PostJSON(context.Background(), "/resource", map[string]string{"name": "current"}, out)
+			},
+		},
+		{
+			name:   "put",
+			method: http.MethodPut,
+			call: func(client *APIClient, out *response) error {
+				return client.PutJSON(context.Background(), "/resource", map[string]string{"name": "current"}, out)
+			},
+		},
+		{
+			name:   "patch",
+			method: http.MethodPatch,
+			call: func(client *APIClient, out *response) error {
+				return client.PatchJSON(context.Background(), "/resource", map[string]string{"name": "current"}, out)
+			},
+		},
+		{
+			name:   "delete with body",
+			method: http.MethodDelete,
+			call: func(client *APIClient, _ *response) error {
+				return client.DeleteJSONWithBody(context.Background(), "/resource", map[string]string{"name": "current"})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != tt.method {
+					t.Errorf("method = %s, want %s", r.Method, tt.method)
+				}
+				if got := r.Header.Get("Content-Type"); got != "application/json" {
+					t.Errorf("Content-Type = %q, want application/json", got)
+				}
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				if body["name"] != "current" {
+					t.Errorf("body = %#v", body)
+				}
+				if tt.method != http.MethodDelete {
+					_ = json.NewEncoder(w).Encode(response{ID: "resource-1"})
+				}
+			}))
+			defer srv.Close()
+
+			var out response
+			if err := tt.call(NewAPIClient(srv.URL, "", "test-token"), &out); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if tt.method != http.MethodDelete && out.ID != "resource-1" {
+				t.Fatalf("response ID = %q", out.ID)
+			}
+		})
+	}
+}
+
 func TestDownloadFile(t *testing.T) {
 	t.Run("relative URL is resolved against BaseURL and sent with auth", func(t *testing.T) {
 		var gotPath, gotAuth string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
 			gotAuth = r.Header.Get("Authorization")
-			w.Write([]byte("hello"))
+			_, _ = w.Write([]byte("hello"))
 		}))
 		defer srv.Close()
 
@@ -196,7 +300,7 @@ func TestDownloadFile(t *testing.T) {
 		var gotAuth string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
-			w.Write([]byte("signed-payload"))
+			_, _ = w.Write([]byte("signed-payload"))
 		}))
 		defer srv.Close()
 
@@ -224,7 +328,7 @@ func TestDownloadFile(t *testing.T) {
 	t.Run("non-2xx status returns an error with the response body", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
-			io.WriteString(w, "not found")
+			_, _ = io.WriteString(w, "not found")
 		}))
 		defer srv.Close()
 
@@ -250,7 +354,7 @@ func TestUploadFileWithURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("missing file field: %v", err)
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			data, _ := io.ReadAll(file)
 			if string(data) != "hello" {
@@ -269,11 +373,9 @@ func TestUploadFileWithURL(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(AttachmentResponse{
-				ID:        "att-123",
-				URL:       "https://cdn.example.com/file.txt",
-				Filename:  "test.txt",
-				SizeBytes: 5,
+			_ = json.NewEncoder(w).Encode(uploadResponse{
+				ID:  "att-123",
+				URL: "https://cdn.example.com/file.txt",
 			})
 		}))
 		defer srv.Close()
@@ -294,7 +396,7 @@ func TestUploadFileWithURL(t *testing.T) {
 	t.Run("error status", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, "bad request")
+			_, _ = io.WriteString(w, "bad request")
 		}))
 		defer srv.Close()
 
@@ -312,23 +414,24 @@ func TestUploadFileWithURL(t *testing.T) {
 		}
 	})
 
-	t.Run("missing id in response succeeds (fallback path)", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"url": "https://example.com"})
-		}))
-		defer srv.Close()
-
-		client := NewAPIClient(srv.URL, "", "")
-		id, url, err := client.UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if id != "" {
-			t.Errorf("expected empty id, got %s", id)
-		}
-		if url != "https://example.com" {
-			t.Errorf("expected url https://example.com, got %s", url)
+	t.Run("missing required response fields", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, response, want string
+		}{
+			{"id", `{"url":"https://example.com"}`, "missing attachment id"},
+			{"url", `{"id":"att-123"}`, "missing attachment url"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, tc.response)
+				}))
+				t.Cleanup(srv.Close)
+				_, _, err := NewAPIClient(srv.URL, "", "").UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("error = %v, want %q", err, tc.want)
+				}
+			})
 		}
 	})
 
@@ -337,7 +440,7 @@ func TestUploadFileWithURL(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotWorkspace = r.Header.Get("X-Workspace-ID")
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-1", URL: "https://example.com"})
+			_ = json.NewEncoder(w).Encode(uploadResponse{ID: "att-1", URL: "https://example.com"})
 		}))
 		defer srv.Close()
 
@@ -351,34 +454,4 @@ func TestUploadFileWithURL(t *testing.T) {
 		}
 	})
 
-	t.Run("missing url in response", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-123"})
-		}))
-		defer srv.Close()
-
-		client := NewAPIClient(srv.URL, "", "")
-		_, _, err := client.UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "missing attachment url") {
-			t.Errorf("unexpected error message: %s", err.Error())
-		}
-	})
-}
-
-func TestNormalizeGOOS(t *testing.T) {
-	cases := map[string]string{
-		"darwin":  "macos",
-		"windows": "windows",
-		"linux":   "linux",
-		"freebsd": "freebsd",
-	}
-	for in, want := range cases {
-		if got := normalizeGOOS(in); got != want {
-			t.Errorf("normalizeGOOS(%q) = %q, want %q", in, got, want)
-		}
-	}
 }

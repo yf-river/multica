@@ -16,7 +16,8 @@
 - **`apps/docs/content/docs/developers/conventions.mdx`**（英文）
 - **`apps/docs/content/docs/developers/conventions.zh.mdx`**（中文）
 
-在以下情况之前先读该文档：
+Visual implementation rules live in **`docs/design.md`**. Read them before
+changing colors, typography, spacing, interaction states, icons, or motion.
 
 - 编写或修改翻译（`packages/views/locales/`）
 - 命名新的路由、包、文件、数据库列或 TS 类型
@@ -63,7 +64,7 @@ make goal-test-dashboard-click-audit
 make goal-test-real-agent-e2e
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=precommit
-pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
+RUN_PRODUCTION_ACCEPTANCE=1 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
 ```
 
 复杂 goal-test 交付时，主控模型按团队当前在用配置选择高能力模型；生成本地 goal 提示词或只读探索可使用更低成本模型。本地运行时优先使用 Codex，除非用户明确选择其他运行时。
@@ -108,12 +109,18 @@ AI Studio 验收必须包含真实浏览器 UI 检查、E2E/API 数据闭环、�
 
 **Go 后端 + monorepo 前端（pnpm workspaces + Turborepo）+ 共享包。**
 
-- `server/` — Go 后端（Chi 路由、sqlc 生成 DB 代码、gorilla/websocket 实时通信）
-- `apps/web/` — Next.js 前端（App Router）
-- `packages/core/` — 无头业务逻辑（零 react-dom）
-- `packages/ui/` — 原子级 UI 组件（零业务逻辑）
-- `packages/views/` — 共享业务页面/组件（零 `next/*` 导入）
-- `packages/tsconfig/` — 共享 TypeScript 配置
+The compact drift-checked current-system inventory is
+[`docs/architecture/current-system-summary.md`](docs/architecture/current-system-summary.md),
+and the maintained high-risk business flows are indexed in
+[`docs/architecture/domain-flows.md`](docs/architecture/domain-flows.md).
+The current product-event and metrics contract is documented in
+[`docs/analytics.md`](docs/analytics.md).
+When routes, persistence, state ownership, environment inputs, WebSocket
+contracts, or external I/O change, run `pnpm generate:current-system-map` for
+expanded ignored evidence. CI rebuilds the inventory, checks the compact
+summary with `pnpm check:current-system-map`, and runs semantic inventory tests.
+
+What lives where for sharing purposes is documented in *Sharing Principles* below — read it once.
 
 *共享原则*一节说明了为共享目的各模块放在哪里——读一次即可。
 
@@ -175,14 +182,16 @@ pnpm typecheck        # TypeScript 检查（所有包 + 应用，经 turbo）
 pnpm lint             # ESLint
 pnpm test             # TS 测试（Vitest，所有包 + 应用，经 turbo）
 
-# 后端（Go）
-make server           # 仅运行 Go server（端口 8080）
-make daemon           # 运行本地守护进程
-make build            # 构建 server + CLI 二进制到 server/bin/
-make cli ARGS="..."   # 运行 multica CLI（如 make cli ARGS="config"）
-make test             # Go 测试
-make sqlc             # 修改 server/pkg/db/queries/ 下的 SQL 后重新生成 sqlc 代码
-make schema-init      # 初始化空数据库或验证当前 schema
+# Backend (Go)
+make server           # Run Go server only (port 8080)
+make daemon           # Run local daemon
+make build            # Build server + CLI binaries to server/bin/
+make cli ARGS="..."   # Run multica CLI (e.g. make cli ARGS="config")
+make test             # Go tests
+make sqlc             # Regenerate sqlc code after editing SQL in server/pkg/db/queries/
+make migrate-up       # Run database migrations
+make migrate-down     # Roll back the latest applied migration
+make migrate-down-all CONFIRM=yes # Destructively roll back every migration
 
 # 跑单个 TS 测试（任何含 test 脚本的包都适用）
 pnpm --filter @multica/views exec vitest run auth/login-page.test.tsx
@@ -240,12 +249,15 @@ make start-worktree     # 用 .env.worktree 启动
 
 编写消费 API 响应的代码时，遵循：
 
-- **解析，不要 cast。** 跨网络的未类型化 JSON 不是 `T`。在 `packages/core/api/schema.ts` 中用 `parseWithFallback`、一个 `zod` schema 和显式 fallback。校验失败时记 warning 并返回 fallback；绝不向 UI 抛异常。
-- **响应体上不要裸 `as`。** 任何被 UI 逻辑消费的端点方法，返回前必须经过 schema。
-- **下游全用可选链与默认值。** 把每个字段都当可能缺失。用显式布尔检查（`=== true`）而非 truthy/falsy 否定，后者会把 `undefined` 和 `null` 默默当 `false`。
-- **不要把 UI 能力钉在单个后端字段上。** 若一个按钮或指示器只依赖服务端一个布尔值，后端 bug 一删它就坏了。组合多个信号（游标存在、页长度等），让能力在最坏情况下仍可用。
-- **枚举漂移要降级，不要崩。** 新的服务端枚举值应渲染通用 fallback。对服务端驱动字符串的 `switch` 必须有 `default` 分支。
-- **新增或修改端点时：** 同 PR 加 schema，并至少写一个喂入畸形响应（缺字段、错类型、`null` 数组）的测试。若未来变更破坏了合同，测试会失败关闭。
+- **Parse, don't cast.** Untyped JSON crossing the network is not `T`. Every consumed response must pass through a `zod` schema in `packages/core/api/schema.ts`.
+- **Fallback only when degradation is safe.** Read-only display queries and optional enhancements use `parseWithFallback` when an empty or partial result cannot trigger a write, erase data, bypass a permission decision, or manufacture success.
+- **Fail closed for mutations and security-sensitive reads.** Use `parseOrThrow` when a malformed response would otherwise look like a successful write or expose an unsafe default (for example, a missing secret map becoming `{}`). A malformed successful mutation response has an unknown outcome: preserve the user's draft, invalidate and refetch authoritative state, and do not offer an immediate blind retry that can duplicate work.
+- **Malformed JSON follows the same rule.** A 2xx response with an empty, HTML, or invalid JSON body is an API contract error, not an ordinary network failure. Preserve whether the request may already have committed.
+- **No bare `as` casts on response bodies.** Every endpoint method whose response is consumed by UI logic must run through a schema before returning.
+- **Establish invariants at the boundary.** Optional and drifting fields are normalized by the schema. Downstream code should use the parsed type directly instead of repeating fallback checks at every layer.
+- **Don't pin a UI affordance to a single backend field.** If a button or indicator depends on exactly one boolean from the server, a backend bug deletes it. Combine signals (cursor presence, page length, etc.) so the affordance stays available in the worst case.
+- **Enum drift downgrades, not crashes.** A new server-side enum value should render a generic fallback. `switch` statements on server-driven strings must have a `default` branch.
+- **When you add or change an endpoint:** add the schema in the same PR, and write at least one test that feeds a malformed response through it (missing field, wrong type, `null` array). Assert the correct policy explicitly: safe fallback for degradable reads, controlled rejection and reconciliation for writes or sensitive reads.
 
 这不是过度防御——这是已部署应用架构的必要防御。前端构建与后端部署是独立发布的，响应形状会漂移，前端必须能在漂移中存活而不白屏。
 
@@ -290,7 +302,12 @@ make start-worktree     # 用 .env.worktree 启动
 
 ### 跨平台开发规则
 
-为 web 新增页面或功能时：
+1. **New page component** → add to `packages/views/<domain>/`. Never import from `next/*` or `react-router-dom`.
+2. **Wire it in both apps** → add a route in `apps/web/app/` (Next.js page file) AND in the desktop router. **Exception**: workspace creation is not a desktop route; it uses `WorkspaceCreationOverlay`. See *Desktop-specific Rules → Route categories*.
+3. **Navigation** → use `useNavigation().push()` or `<AppLink>`. Never use framework-specific link/router APIs in shared code.
+4. **Shared guards/providers** → use `DashboardGuard` from `packages/views/layout/`. Don't create separate guard logic per app.
+5. **Platform-specific UI** → if a feature is web-only or desktop-only, keep it in the respective app. Use props slots (`extra`, `topSlot`) on shared layout components to inject platform-specific UI.
+6. **New hooks that need workspace context** → accept `wsId` as parameter instead of reading from `useWorkspaceId()` Context, so they work both inside and outside `WorkspaceIdProvider`.
 
 1. **新页面组件** → 加到 `packages/views/<domain>/`。绝不从 `next/*` 导入。
 2. **在应用中接线** → 在 `apps/web/app/`（Next.js page 文件）加路由。
@@ -317,9 +334,12 @@ Web 应用使用 `packages/ui/styles/` 的 CSS 基础。
 
 ## 测试规则
 
-### 测试写在哪
+- **Session routes** — workspace-scoped pages (`/:slug/issues`, `/:slug/settings`). Rendered by the per-tab memory router under `WorkspaceRouteLayout`. These are legitimate tab destinations.
+- **Workspace creation** — a pre-workspace transition, **not a route**. It uses `WorkspaceCreationOverlay`, dispatched when the navigation adapter sees `push('/workspaces/new')` or a user has no workspace. The shared `NewWorkspacePage` supplies the content.
+- **Error / stale states** — "workspace not available", tabs pointing at a revoked workspace. **NOT pages.** `WorkspaceRouteLayout` auto-heals by dropping the stale tab group from the store; the user never lands on an explicit error screen. Web keeps `NoAccessPage` (shareable URL makes the error state meaningful); desktop has no URL bar so stale = heal silently.
 
-测试跟随代码，不跟随应用。这是本 monorepo 最重要的测试原则：
+Do not put `/workspaces/new` into `routes.tsx`; keep its state in
+`stores/workspace-creation-overlay-store.ts` so the tab system cannot persist it.
 
 | 测试对象 | 测试位置 | 原因 |
 |---|---|---|

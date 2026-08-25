@@ -586,6 +586,24 @@ func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptE
 	return items, nil
 }
 
+const nextPromptEvaluationCaseIndex = `-- name: NextPromptEvaluationCaseIndex :one
+SELECT (COALESCE(MAX(case_index), -1) + 1)::int
+FROM prompt_evaluation_case
+WHERE workspace_id = $1 AND asset_id = $2
+`
+
+type NextPromptEvaluationCaseIndexParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AssetID     pgtype.UUID `json:"asset_id"`
+}
+
+func (q *Queries) NextPromptEvaluationCaseIndex(ctx context.Context, arg NextPromptEvaluationCaseIndexParams) (int32, error) {
+	row := q.db.QueryRow(ctx, nextPromptEvaluationCaseIndex, arg.WorkspaceID, arg.AssetID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const updatePromptEvaluationCase = `-- name: UpdatePromptEvaluationCase :one
 UPDATE prompt_evaluation_case SET
     asset_id = $3,

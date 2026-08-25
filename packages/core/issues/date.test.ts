@@ -5,7 +5,7 @@ import {
   addDaysDateOnly,
   dateOnlyToUTCDate,
   dateOnlyToLocalDate,
-  formatDateOnly,
+  formatShortDateOnly,
   isPastDateOnly,
 } from "./date";
 
@@ -18,21 +18,16 @@ describe("issue date-only helpers", () => {
 
   it("formats a date-only string timezone-safely (no day shift)", () => {
     // The bug: a calendar day must render as the same day in every timezone.
-    expect(
-      formatDateOnly("2026-03-01", { month: "short", day: "numeric" }, "zh-CN"),
-    ).toBe("3月1日");
-    expect(formatDateOnly("2026-03-01", undefined, "zh-CN")).toBe("3月1日");
-    expect(formatDateOnly(null)).toBe("");
-    expect(formatDateOnly("")).toBe("");
+    expect(formatShortDateOnly("2026-03-01", "zh-CN")).toBe("3月1日");
+    expect(formatShortDateOnly(null)).toBe("");
+    expect(formatShortDateOnly("")).toBe("");
   });
 
   it("round-trips a picked day back to the same displayed day", () => {
     const picked = new Date(2026, 2, 1); // user clicks March 1 locally
     const stored = toDateOnly(picked);
     expect(stored).toBe("2026-03-01");
-    expect(formatDateOnly(stored, { month: "short", day: "numeric" }, "zh-CN")).toBe(
-      "3月1日",
-    );
+    expect(formatShortDateOnly(stored, "zh-CN")).toBe("3月1日");
   });
 
   it("anchors a date-only value at UTC midnight", () => {
@@ -42,11 +37,9 @@ describe("issue date-only helpers", () => {
     expect(dateOnlyToUTCDate(null)).toBeNull();
   });
 
-  it("tolerates a legacy RFC3339 instant by reading its UTC day", () => {
-    // Old clients stored local-midnight-as-UTC; read the stored UTC calendar day.
-    expect(dateOnlyToUTCDate("2026-02-28T16:00:00Z")?.toISOString()).toBe(
-      "2026-02-28T00:00:00.000Z",
-    );
+  it("rejects values outside the current date-only wire format", () => {
+    expect(dateOnlyToUTCDate("2026-02-28T16:00:00Z")).toBeNull();
+    expect(dateOnlyToUTCDate("2026-02-30")).toBeNull();
   });
 
   it("builds a local-midnight Date for the picker's selected day", () => {

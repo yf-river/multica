@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { FileCardExtension } from "./file-card";
-import { ImageExtension } from "./index";
+import { createEditorExtensions } from "./index";
 import { preprocessFileCards } from "@multica/ui/markdown";
+
+const ImageExtension = createEditorExtensions({}).find(
+  ({ name }) => name === "image",
+)!;
 
 const fileCardRenderMarkdown = FileCardExtension.config.renderMarkdown as (
   node: { attrs: Record<string, string> },
@@ -69,7 +73,7 @@ describe("file-card tokenizer", () => {
 describe("preprocessFileCards", () => {
   it("converts escaped file-card syntax and unescapes the filename", () => {
     const input = "!file[notes\\[v2\\]\\(draft\\).txt](https://cdn.example.com/notes.txt)";
-    const result = preprocessFileCards(input, "cdn.example.com");
+    const result = preprocessFileCards(input);
     expect(result).toContain('data-type="fileCard"');
     expect(result).toContain('data-filename="notes[v2](draft).txt"');
     expect(result).toContain('data-href="https://cdn.example.com/notes.txt"');
@@ -77,7 +81,7 @@ describe("preprocessFileCards", () => {
 
   it("converts a normal file-card syntax", () => {
     const input = "!file[readme.md](https://cdn.example.com/readme.md)";
-    const result = preprocessFileCards(input, "cdn.example.com");
+    const result = preprocessFileCards(input);
     expect(result).toContain('data-type="fileCard"');
     expect(result).toContain('data-filename="readme.md"');
   });

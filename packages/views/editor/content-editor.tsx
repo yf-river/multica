@@ -23,7 +23,7 @@
  *    (v3.21.0+) handles table cell <p> wrapping and custom mention tokenizers
  *    natively, eliminating the need for the HTML detour.
  *
- * 3. PREPROCESSING is minimal: only legacy mention shortcode migration and
+ * 3. PREPROCESSING is minimal: link and file-card normalization plus
  *    URL linkification (preprocessMarkdown). No HTML conversion.
  *
  * Tech: Tiptap v3.22.1 (ProseMirror wrapper), @tiptap/markdown for
@@ -41,10 +41,8 @@ import {
 } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { cn } from "@multica/ui/lib/utils";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import { useWorkspaceSlug } from "@multica/core/paths";
-import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@multica/core/types";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   parseMarkdownChunked,
   MARKDOWN_CHUNK_THRESHOLD,
@@ -108,11 +106,13 @@ interface ContentEditorProps {
   defaultValue?: string;
   onUpdate?: (markdown: string) => void;
   placeholder?: string;
+  /** Accessible name for the editable textbox. Defaults to the placeholder. */
+  ariaLabel?: string;
   className?: string;
   debounceMs?: number;
   onSubmit?: () => void;
   onBlur?: () => void;
-  onUploadFile?: (file: File) => Promise<UploadResult | null>;
+  onUploadFile?: (file: File) => Promise<Attachment | null>;
   /** 选中文字时显示浮动格式工具栏，默认开启。 */
   showBubbleMenu?: boolean;
   /** 开启后直接按 Enter 提交，Mod-Enter 始终提交。 */
@@ -185,6 +185,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       defaultValue = "",
       onUpdate,
       placeholder: placeholderText = "",
+      ariaLabel,
       className,
       debounceMs = 300,
       onSubmit,
@@ -213,7 +214,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const onSubmitRef = useRef(onSubmit);
     const onBlurRef = useRef(onBlur);
     const onUploadFileRef = useRef<
-      ((file: File) => Promise<UploadResult | null>) | undefined
+      ((file: File) => Promise<Attachment | null>) | undefined
     >(undefined);
     const mentionContextItemsRef = useRef<MentionItem[]>(mentionContextItems ?? []);
     const lastEmittedRef = useRef<string | null>(null);
@@ -233,13 +234,9 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     // stable across renders the way the original passthrough did.
     const wrappedOnUploadFile = useMemo(() => {
       if (!onUploadFile) return undefined;
-      return async (file: File): Promise<UploadResult | null> => {
+      return async (file: File): Promise<Attachment | null> => {
         const result = await onUploadFile(file);
-        // Only track attachments that carry a persisted id — the no-workspace
-        // avatar branch returns an id-less record that the resolver can't key
-        // off of, and tracking it would just bloat memory without helping
-        // anyone. See useFileUpload's `markdownLink` docstring for why.
-        if (result?.id) {
+        if (result) {
           setSessionUploads((prev) =>
             // Deduplicate on id so a re-upload (or a paste-then-drop of the
             // same blob) doesn't create a parallel record.
@@ -258,7 +255,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     //
     // One exception on id collision: when the caller's copy has an EMPTY
     // `download_url` (the create-issue draft strips the short-lived signed URL
-    // before persisting), backfill it from the session upload. The session copy
+        // before persisting), populate it from the session upload. The session copy
     // holds the this-response signed URL, so the just-pasted image first-paints
     // from it instead of taking an extra redirect hop through `markdown_url`.
     const providerAttachments = useMemo(() => {
@@ -277,13 +274,6 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       merged.push(...sessionById.values());
       return merged;
     }, [attachments, sessionUploads]);
-
-    // Current workspace slug kept in a ref so the click handler always sees the
-    // latest value without recreating the editor. Used by openLink to prefix
-    // legacy /issues/... style paths that lack a workspace slug.
-    const workspaceSlug = useWorkspaceSlug();
-    const workspaceSlugRef = useRef(workspaceSlug);
-    workspaceSlugRef.current = workspaceSlug;
 
     // Keep refs in sync without recreating editor
     onUpdateRef.current = onUpdate;
@@ -374,12 +364,17 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
             if (!href || isMentionHref(href)) return false;
 
             event.preventDefault();
-            openLink(href, workspaceSlugRef.current);
+            openLink(href);
             return true;
           },
         },
         attributes: {
           class: cn("flex-1 rich-text-editor text-sm outline-none", className),
+          role: "textbox",
+          "aria-multiline": "true",
+          ...(ariaLabel || placeholderText
+            ? { "aria-label": ariaLabel || placeholderText }
+            : {}),
         },
       },
     });
@@ -534,4 +529,4 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
   },
 );
 
-export { ContentEditor, type ContentEditorProps, type ContentEditorRef };
+export { ContentEditor, type ContentEditorRef };

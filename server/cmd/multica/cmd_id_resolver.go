@@ -23,7 +23,6 @@ type resolvedID struct {
 type idCandidate struct {
 	ID      string
 	Display string
-	Detail  string
 }
 
 func displayID(id string, full bool) string {
@@ -48,7 +47,6 @@ func issueCandidate(issue map[string]any) idCandidate {
 	return idCandidate{
 		ID:      strVal(issue, "id"),
 		Display: issueDisplayKey(issue),
-		Detail:  strVal(issue, "title"),
 	}
 }
 
@@ -62,7 +60,7 @@ func normalizeUUIDPrefix(input string) (string, error) {
 		return "", fmt.Errorf("expected a full UUID or at least %d hex characters, got %q", minShortIDPrefixLen, input)
 	}
 	for _, r := range prefix {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return "", fmt.Errorf("expected a UUID prefix containing only hex characters, got %q", input)
 		}
 	}
@@ -167,7 +165,7 @@ func looksLikeIssueIdentifier(input string) bool {
 	}
 	prefix := input[:dash]
 	for _, r := range prefix {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
 			return false
 		}
 	}
@@ -191,7 +189,6 @@ func fetchIssueCandidates(ctx context.Context, client *cli.APIClient) ([]idCandi
 	candidates := []idCandidate{}
 	for offset := 0; ; {
 		params := url.Values{}
-		params.Set("workspace_id", client.WorkspaceID)
 		params.Set("include_closed", "true")
 		params.Set("limit", strconv.Itoa(limit))
 		if offset > 0 {
@@ -231,7 +228,6 @@ func fetchAutopilotCandidates(ctx context.Context, client *cli.APIClient) ([]idC
 	seen := map[string]struct{}{}
 	for offset := 0; ; {
 		params := url.Values{}
-		params.Set("workspace_id", client.WorkspaceID)
 		params.Set("limit", strconv.Itoa(limit))
 		if offset > 0 {
 			params.Set("offset", strconv.Itoa(offset))
@@ -258,7 +254,6 @@ func fetchAutopilotCandidates(ctx context.Context, client *cli.APIClient) ([]idC
 			candidates = append(candidates, idCandidate{
 				ID:      id,
 				Display: strVal(a, "title"),
-				Detail:  strVal(a, "status"),
 			})
 		}
 		pageLen := len(resp.Autopilots)
@@ -316,10 +311,6 @@ func fetchTaskRunCandidatesForIssue(ctx context.Context, client *cli.APIClient, 
 }
 
 func resolveAutopilotTriggerID(ctx context.Context, client *cli.APIClient, autopilotID, input string) (resolvedID, error) {
-	trimmed := strings.TrimSpace(input)
-	if uuidRegexp.MatchString(trimmed) {
-		return resolvedID{ID: trimmed, Display: trimmed}, nil
-	}
 	fetch := func(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 		var resp map[string]any
 		if err := client.GetJSON(ctx, "/api/autopilots/"+url.PathEscape(autopilotID), &resp); err != nil {
@@ -332,14 +323,9 @@ func resolveAutopilotTriggerID(ctx context.Context, client *cli.APIClient, autop
 			if !ok {
 				continue
 			}
-			detail := strVal(t, "kind")
-			if label := strVal(t, "label"); label != "" {
-				detail = label
-			}
 			candidates = append(candidates, idCandidate{
 				ID:      strVal(t, "id"),
 				Display: strVal(t, "id"),
-				Detail:  detail,
 			})
 		}
 		return candidates, nil
@@ -361,9 +347,6 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 		return nil, err
 	}
 	projectsRaw, _ := result["projects"].([]any)
-	if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
-		return nil, err
-	}
 	candidates := make([]idCandidate, 0, len(projectsRaw))
 	for _, raw := range projectsRaw {
 		p, ok := raw.(map[string]any)
@@ -373,7 +356,6 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 		candidates = append(candidates, idCandidate{
 			ID:      strVal(p, "id"),
 			Display: strVal(p, "title"),
-			Detail:  projectCandidateDetail(p),
 		})
 	}
 	return candidates, nil
@@ -399,7 +381,6 @@ func resolveProjectResourceID(ctx context.Context, client *cli.APIClient, projec
 			candidates = append(candidates, idCandidate{
 				ID:      strVal(r, "id"),
 				Display: display,
-				Detail:  summarizeResourceRef(r["resource_ref"]),
 			})
 		}
 		return candidates, nil
@@ -430,7 +411,6 @@ func fetchLabelCandidates(ctx context.Context, client *cli.APIClient) ([]idCandi
 		candidates = append(candidates, idCandidate{
 			ID:      strVal(l, "id"),
 			Display: strVal(l, "name"),
-			Detail:  strVal(l, "color"),
 		})
 	}
 	return candidates, nil
@@ -460,12 +440,12 @@ func loadActorDisplayLookup(ctx context.Context, client *cli.APIClient) actorDis
 }
 
 func (l actorDisplayLookup) loadMembers() {
-	if l.state == nil || l.state.membersLoaded {
+	if l.state.membersLoaded {
 		return
 	}
 	l.state.membersLoaded = true
 	l.state.members = map[string]string{}
-	if l.client == nil || l.client.WorkspaceID == "" {
+	if l.client.WorkspaceID == "" {
 		return
 	}
 	var members []map[string]any
@@ -479,12 +459,12 @@ func (l actorDisplayLookup) loadMembers() {
 }
 
 func (l actorDisplayLookup) loadAgents() {
-	if l.state == nil || l.state.agentsLoaded {
+	if l.state.agentsLoaded {
 		return
 	}
 	l.state.agentsLoaded = true
 	l.state.agents = map[string]string{}
-	if l.client == nil || l.client.WorkspaceID == "" {
+	if l.client.WorkspaceID == "" {
 		return
 	}
 	var agents []map[string]any
@@ -499,12 +479,12 @@ func (l actorDisplayLookup) loadAgents() {
 }
 
 func (l actorDisplayLookup) loadSquads() {
-	if l.state == nil || l.state.squadsLoaded {
+	if l.state.squadsLoaded {
 		return
 	}
 	l.state.squadsLoaded = true
 	l.state.squads = map[string]string{}
-	if l.client == nil || l.client.WorkspaceID == "" {
+	if l.client.WorkspaceID == "" {
 		return
 	}
 	var squads []map[string]any
@@ -524,24 +504,18 @@ func (l actorDisplayLookup) actor(actorType, id string) string {
 	switch actorType {
 	case "member":
 		l.loadMembers()
-		if l.state != nil && l.state.members != nil {
-			if name := l.state.members[id]; name != "" {
-				return "member:" + name
-			}
+		if name := l.state.members[id]; name != "" {
+			return "member:" + name
 		}
 	case "agent":
 		l.loadAgents()
-		if l.state != nil && l.state.agents != nil {
-			if name := l.state.agents[id]; name != "" {
-				return "agent:" + name
-			}
+		if name := l.state.agents[id]; name != "" {
+			return "agent:" + name
 		}
 	case "squad":
 		l.loadSquads()
-		if l.state != nil && l.state.squads != nil {
-			if name := l.state.squads[id]; name != "" {
-				return "squad:" + name
-			}
+		if name := l.state.squads[id]; name != "" {
+			return "squad:" + name
 		}
 	}
 	return actorType + ":" + id
@@ -552,10 +526,8 @@ func (l actorDisplayLookup) agent(id string) string {
 		return ""
 	}
 	l.loadAgents()
-	if l.state != nil && l.state.agents != nil {
-		if name := l.state.agents[id]; name != "" {
-			return name
-		}
+	if name := l.state.agents[id]; name != "" {
+		return name
 	}
 	return id
 }

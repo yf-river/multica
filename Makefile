@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test schema-init sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
@@ -13,7 +13,7 @@ POSTGRES_DB ?= multica
 POSTGRES_USER ?= multica
 POSTGRES_PASSWORD ?= multica
 POSTGRES_PORT ?= 5432
-PORT := $(or $(BACKEND_PORT),$(API_PORT),$(SERVER_PORT),$(PORT),8080)
+PORT := $(or $(BACKEND_PORT),$(PORT),8080)
 FRONTEND_PORT ?= 3000
 FRONTEND_ORIGIN ?= http://localhost:$(FRONTEND_PORT)
 MULTICA_APP_URL ?= $(FRONTEND_ORIGIN)
@@ -57,10 +57,8 @@ help: ## 显示可用 make target 与常用本地工作流
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
 		/^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-makehelp: help ## `make help` 的别名
-
-# ---------- 自部署（Docker Compose）----------
-##@ 自部署
+# ---------- Self-hosting (Docker Compose) ----------
+##@ Self-hosting
 
 selfhost: ## 若需要则创建 .env，然后拉取并启动官方自部署镜像
 	@if [ ! -f .env ]; then \
@@ -256,17 +254,13 @@ goal-test-sync-prod: ## 把已构建的 goal-test 产物同步到生产，然后
 	node scripts/goal-test-environments.mjs verify prod
 	node scripts/goal-test-environments.mjs verify-logs prod
 
-goal-test-promote-prod: goal-test-sync-prod ## 别名：把当前构建产物提升到生产
-
-goal-test-deploy-prod: ## 直接构建并部署 goal-test 生产稳定环境
+goal-test-deploy-prod: ## Build and deploy goal-test production stable environment directly
 	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy prod --build
 	node scripts/goal-test-environments.mjs verify prod
 	node scripts/goal-test-environments.mjs verify-logs prod
 
-goal-test-deploy-int: goal-test-deploy-dev ## 别名：构建并部署 goal-test 联调开发环境
-
-goal-test-deploy-all: ## 先部署 dev，再把同一产物同步到生产
+goal-test-deploy-all: ## Build and deploy dev first, then sync the same artifact to production
 	$(MAKE) goal-test-deploy-dev
 	$(MAKE) goal-test-sync-prod
 
@@ -314,7 +308,7 @@ goal-test-ui-acceptance: goal-test-smoke ## 为当前 goal-test dev 部署跑固
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts e2e/production-acceptance.spec.ts --project=chromium
+	RUN_PRODUCTION_ACCEPTANCE=1 TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts e2e/production-acceptance.spec.ts --project=chromium
 	node scripts/goal-test-environments.mjs verify-logs int
 
 goal-test-ui-audit: goal-test-smoke ## 跑真实浏览器 goal-test 联调 UI、性能、console、中文语义、日志窗口审计
@@ -433,8 +427,12 @@ build: ## 构建 server、CLI 二进制到 server/bin
 test: ## 确保目标 DB 存在并初始化 schema 后跑 Go 测试
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
-	cd server && go run ./cmd/server --init-schema-only
-	cd server && go test -race ./...
+	@bash scripts/ensure-test-redis.sh "$(ENV_FILE)"
+	cd server && go run ./cmd/migrate up
+	# Database-backed packages share this worktree's test database. Serialize
+	# packages so migration DDL cannot block handler/service queries; package
+	# tests still retain their own t.Parallel concurrency and race coverage.
+	cd server && go test -p 1 -race ./...
 
 # 数据库
 ##@ 数据库
@@ -444,7 +442,18 @@ schema-init: ## 需要时创建目标 DB，然后初始化或验证当前 schema
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/server --init-schema-only
 
-sqlc: ## 重新生成 sqlc 代码
+migrate-down: ## Create the target DB if needed, then roll back one migration
+	$(REQUIRE_ENV)
+	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
+	cd server && go run ./cmd/migrate down
+
+migrate-down-all: ## Destructively roll back every applied migration (requires CONFIRM=yes)
+	@test "$(CONFIRM)" = "yes" || (echo "Refusing: rerun with CONFIRM=yes" && exit 1)
+	$(REQUIRE_ENV)
+	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
+	cd server && go run ./cmd/migrate down-all --confirm
+
+sqlc: ## Regenerate sqlc code
 	cd server && sqlc generate
 
 # 清理

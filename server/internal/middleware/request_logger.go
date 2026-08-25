@@ -15,29 +15,24 @@ import (
 // the context key — they go through SetWebhookTriggerID instead.
 type webhookTriggerIDKeyType struct{}
 
-var webhookTriggerIDKey = webhookTriggerIDKeyType{}
-
 // SetWebhookTriggerID stashes the resolved trigger ID on the request context
 // so the request logger can include it in the audit line without revealing
 // the bearer token in the URL path. Called by the webhook handler right after
 // the trigger row is looked up.
 //
-// Mutates `*r` in place so the wrapping middleware (which is still holding the
-// original `*http.Request`) reads the value back out of context after
-// ServeHTTP returns. Reassigning a local `r` variable would not propagate the
-// new context back up to the caller, which is the trap a previous version of
-// this helper fell into.
+// Mutate `*r` in place because the wrapping middleware reads the original
+// request pointer after ServeHTTP returns.
 func SetWebhookTriggerID(r *http.Request, triggerID string) {
 	if triggerID == "" {
 		return
 	}
-	*r = *r.WithContext(context.WithValue(r.Context(), webhookTriggerIDKey, triggerID))
+	*r = *r.WithContext(context.WithValue(r.Context(), webhookTriggerIDKeyType{}, triggerID))
 }
 
 // webhookTriggerIDFromContext returns the trigger ID stashed by
 // SetWebhookTriggerID, or "" when none was set.
 func webhookTriggerIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(webhookTriggerIDKey).(string)
+	v, _ := ctx.Value(webhookTriggerIDKeyType{}).(string)
 	return v
 }
 
@@ -89,8 +84,6 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.buf.Write(p)
 	return len(p), nil
 }
-
-func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
 
 // softNotFoundBodyCaptureLimit is the maximum number of body bytes the
 // request logger inspects to decide whether a 404 is an expected stale-state
@@ -164,7 +157,7 @@ func RequestLogger(next http.Handler) http.Handler {
 		switch {
 		case status >= 500:
 			slog.Error("http request", attrs...)
-		case status == http.StatusNotFound && isSoftNotFound(bodyPrefix.Bytes()):
+		case status == http.StatusNotFound && isSoftNotFound(bodyPrefix.buf.Bytes()):
 			// Lifecycle 404 — runtime/task was deleted server-side. The daemon
 			// catches this exact body and triggers its own self-heal, so it is
 			// neither noise nor a bug; logging at Info keeps the signal in

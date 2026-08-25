@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -15,7 +15,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Label } from "@multica/ui/components/ui/label";
 import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import type { User } from "@multica/core/types";
 import { useT } from "../i18n";
 
@@ -51,7 +51,7 @@ interface LoginPageProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function redirectToCliCallback(url: string, token: string, state: string) {
+function redirectToCliCallback(url: string, token: string, state: string) {
   const separator = url.includes("?") ? "&" : "?";
   window.location.href = `${url}${separator}token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
 }
@@ -96,43 +96,26 @@ export function LoginPage({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [existingUser, setExistingUser] = useState<User | null>(null);
-  // Tracks how the existing session was detected so handleCliAuthorize
-  // uses the matching token source (cookie → issueCliToken, localStorage → direct).
-  const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
 
   // Check for existing session when CLI callback is present.
-  // Prioritises cookie auth (= current browser session) to avoid authorising
-  // the CLI with a stale or mismatched localStorage token.
+  // Web authentication has one source of truth: the HttpOnly session cookie.
   useEffect(() => {
     if (!cliCallback) return;
 
-    // Ensure no stale bearer token interferes — we want to test the cookie first.
+    // The shared API singleton can also serve token-authenticated Desktop.
+    // Clear any in-memory bearer before checking the browser cookie so a CLI
+    // authorization can never inherit a different account's token.
     api.setToken(null);
 
     api
       .getMe()
       .then((user) => {
-        authSourceRef.current = "cookie";
         setExistingUser(user);
         setStep("cli_confirm");
       })
-      .catch(() => {
-        // Cookie auth failed — fall back to localStorage token
-        const token = localStorage.getItem("multica_token");
-        if (!token) return;
-
-        api.setToken(token);
-        api
-          .getMe()
-          .then((user) => {
-            authSourceRef.current = "localStorage";
-            setExistingUser(user);
-            setStep("cli_confirm");
-          })
-          .catch(() => {
-            api.setToken(null);
-            localStorage.removeItem("multica_token");
-          });
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) return;
+        console.warn("[auth] failed to check existing CLI session", err);
       });
   }, [cliCallback]);
 
@@ -151,8 +134,6 @@ export function LoginPage({
     try {
       if (cliCallback) {
         const { token } = await api.login(account, password);
-        localStorage.setItem("multica_token", token);
-        api.setToken(token);
         onTokenObtained?.();
         redirectToCliCallback(cliCallback.url, token, cliCallback.state);
         return;
@@ -178,18 +159,7 @@ export function LoginPage({
     setLoading(true);
 
     try {
-      let token: string;
-
-      if (authSourceRef.current === "localStorage") {
-        // Session was detected via localStorage — reuse that token directly.
-        const stored = localStorage.getItem("multica_token");
-        if (!stored) throw new Error("token missing");
-        token = stored;
-      } else {
-        // Session was detected via cookie — obtain a bearer token from the server.
-        const res = await api.issueCliToken();
-        token = res.token;
-      }
+      const { token } = await api.issueCliToken();
 
       onTokenObtained?.();
       redirectToCliCallback(cliCallback.url, token, cliCallback.state);

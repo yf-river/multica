@@ -3,16 +3,15 @@
 import { Download, HardDrive, Pencil, Search } from "lucide-react";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import {
-  DropdownMenuCheckboxItem,
-} from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
-import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
-  ToolbarCountBadge,
+  countActiveFilters,
+  incrementCount,
+  incrementCountedOption,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterOption,
   ToolbarFilterSubmenu,
   ToolbarFrame,
   ToolbarResultCount,
@@ -27,8 +26,6 @@ import {
 import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 
-export type OriginType = SkillOriginType;
-
 const COLUMN_KEYS: SkillColumnKey[] = [
   "usedBy",
   "source",
@@ -39,16 +36,7 @@ const COLUMN_KEYS: SkillColumnKey[] = [
 
 const SORT_FIELDS: SkillSortField[] = ["name", "usedBy", "updated", "created"];
 
-function countActiveFilterDimensions(filters: SkillListFilters): number {
-  let count = 0;
-  if (filters.usage.length > 0) count++;
-  if (filters.origins.length > 0) count++;
-  if (filters.agents.length > 0) count++;
-  if (filters.creators.length > 0) count++;
-  return count;
-}
-
-const ORIGIN_TYPES: OriginType[] = [
+const ORIGIN_TYPES: SkillOriginType[] = [
   "manual",
   "runtime_local",
   "clawhub",
@@ -56,7 +44,7 @@ const ORIGIN_TYPES: OriginType[] = [
   "github",
 ];
 
-function originIcon(type: OriginType) {
+function originIcon(type: SkillOriginType) {
   if (type === "manual") return <Pencil className="size-3.5" />;
   if (type === "runtime_local") return <HardDrive className="size-3.5" />;
   return <Download className="size-3.5" />;
@@ -95,42 +83,32 @@ export function SkillListToolbar({
 }) {
   const { t } = useT("skills");
 
-  const activeCount = countActiveFilterDimensions(filters);
+  const activeCount = countActiveFilters(filters);
   const hasActiveFilters = activeCount > 0;
 
-  // Option lists with counts, derived from the unfiltered rows so toggling
-  // one dimension doesn't make the others' options vanish.
   const usedCount = allRows.filter((r) => r.agents.length > 0).length;
   const unusedCount = allRows.length - usedCount;
 
-  const originCounts = new Map<OriginType, number>();
+  const originCounts = new Map<SkillOriginType, number>();
   const agentOptions = new Map<string, { agent: Agent; count: number }>();
   const creatorOptions = new Map<
     string,
     { member: MemberWithUser; count: number }
   >();
   for (const row of allRows) {
-    originCounts.set(
-      row.originType,
-      (originCounts.get(row.originType) ?? 0) + 1,
-    );
+    incrementCount(originCounts, row.originType);
     for (const agent of row.agents) {
-      const entry = agentOptions.get(agent.id);
-      if (entry) entry.count += 1;
-      else agentOptions.set(agent.id, { agent, count: 1 });
+      incrementCountedOption(agentOptions, agent.id, { agent });
     }
-    if (row.creator) {
-      const entry = creatorOptions.get(row.creator.user_id);
-      if (entry) entry.count += 1;
-      else
-        creatorOptions.set(row.creator.user_id, {
-          member: row.creator,
-          count: 1,
-        });
+    const creator = row.creator;
+    if (creator) {
+      incrementCountedOption(creatorOptions, creator.user_id, {
+        member: creator,
+      });
     }
   }
 
-  const ORIGIN_LABELS: Record<OriginType, string> = {
+  const ORIGIN_LABELS: Record<SkillOriginType, string> = {
     manual: t(($) => $.table.source_manual),
     runtime_local: t(($) => $.table.source_runtime_unknown),
     clawhub: t(($) => $.table.source_clawhub),
@@ -157,11 +135,6 @@ export function SkillListToolbar({
     <ToolbarFrame
       left={
         <>
-          {/* Name search + result count. The count only appears while
-          search/filters narrow the list — in the idle state it would just
-          duplicate the total already shown in the page header. Below md the
-          search (and its count) disappear entirely, following the issues
-          header's small-screen treatment. */}
           <div className="relative hidden md:block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -180,41 +153,29 @@ export function SkillListToolbar({
         </>
       }
     >
-      {/* Filter */}
       <ToolbarFilterDropdown
         hasActiveFilters={hasActiveFilters}
         activeCount={activeCount}
-        activeLabel={t(($) => $.toolbar.filter_active_count, {
-          count: activeCount,
-        })}
-        filterLabel={t(($) => $.toolbar.filter_label)}
-        clearLabel={t(($) => $.toolbar.clear_filters)}
         onClearFilters={onClearFilters}
       >
-        {/* Usage */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_usage)}
           selectedCount={filters.usage.length}
         >
           {(["used", "unused"] as const).map((value) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={value}
               checked={filters.usage.includes(value)}
-              onCheckedChange={() => onToggleFilter("usage", value)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("usage", value)}
+              count={value === "used" ? usedCount : unusedCount}
             >
-              <HoverCheck checked={filters.usage.includes(value)} />
               {value === "used"
                 ? t(($) => $.page.scopes.used.label)
                 : t(($) => $.page.scopes.unused.label)}
-              <ToolbarCountBadge
-                count={value === "used" ? usedCount : unusedCount}
-              />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Source */}
         <ToolbarFilterSubmenu
           label={t(($) => $.table.source)}
           selectedCount={filters.origins.length}
@@ -222,35 +183,31 @@ export function SkillListToolbar({
         >
           {ORIGIN_TYPES.filter((type) => originCounts.has(type)).map(
             (type) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={type}
                 checked={filters.origins.includes(type)}
-                onCheckedChange={() => onToggleFilter("origins", type)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("origins", type)}
+                count={originCounts.get(type) ?? 0}
               >
-                <HoverCheck checked={filters.origins.includes(type)} />
                 {originIcon(type)}
                 {ORIGIN_LABELS[type]}
-                <ToolbarCountBadge count={originCounts.get(type) ?? 0} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
 
-          {/* Used by */}
         <ToolbarFilterSubmenu
           label={t(($) => $.table.used_by)}
           selectedCount={filters.agents.length}
           contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
         >
           {[...agentOptions.values()].map(({ agent, count }) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={agent.id}
               checked={filters.agents.includes(agent.id)}
-              onCheckedChange={() => onToggleFilter("agents", agent.id)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("agents", agent.id)}
+              count={count}
             >
-              <HoverCheck checked={filters.agents.includes(agent.id)} />
               <ActorAvatar
                 name={agent.name}
                 initials={agent.name.slice(0, 2).toUpperCase()}
@@ -259,27 +216,22 @@ export function SkillListToolbar({
                 size={16}
               />
               <span className="min-w-0 truncate">{agent.name}</span>
-              <ToolbarCountBadge count={count} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Creator */}
         <ToolbarFilterSubmenu
           label={t(($) => $.table.created_by)}
           selectedCount={filters.creators.length}
           contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
         >
           {[...creatorOptions.values()].map(({ member, count }) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={member.user_id}
               checked={filters.creators.includes(member.user_id)}
-              onCheckedChange={() =>
-                onToggleFilter("creators", member.user_id)
-              }
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("creators", member.user_id)}
+              count={count}
             >
-              <HoverCheck checked={filters.creators.includes(member.user_id)} />
               <ActorAvatar
                 name={member.name}
                 initials={member.name.slice(0, 2).toUpperCase()}
@@ -287,8 +239,7 @@ export function SkillListToolbar({
                 size={16}
               />
               <span className="min-w-0 truncate">{member.name}</span>
-              <ToolbarCountBadge count={count} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
       </ToolbarFilterDropdown>
@@ -304,10 +255,6 @@ export function SkillListToolbar({
         columnLabels={COLUMN_LABELS}
         hiddenColumns={hiddenColumns}
         onToggleColumn={onToggleColumn}
-        displayLabel={t(($) => $.toolbar.display)}
-        sortByLabel={t(($) => $.toolbar.sort_by)}
-        directionAscLabel={t(($) => $.toolbar.direction_asc)}
-        directionDescLabel={t(($) => $.toolbar.direction_desc)}
         columnsLabel={t(($) => $.toolbar.section_columns)}
       />
     </ToolbarFrame>

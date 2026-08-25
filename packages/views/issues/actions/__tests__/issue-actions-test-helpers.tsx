@@ -1,18 +1,9 @@
 import type { ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import zhHansCommon from "../../../locales/zh-Hans/common.json";
-import zhHansIssues from "../../../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { common: zhHansCommon, issues: zhHansIssues },
-};
+import { IssueTestProviders } from "../../test/issue-test-providers";
 
 export const mockIssue: Issue = {
   id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
   identifier: "TES-1",
   title: "Example",
   description: null,
@@ -26,25 +17,20 @@ export const mockIssue: Issue = {
   start_date: null,
   due_date: null,
   project_id: null,
+  position: 0,
+  metadata: {},
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
-} as Issue;
+};
 
 export function IssueActionsQueryProvider({
   children,
 }: {
   children: ReactNode;
 }) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-  );
+  return <IssueTestProviders>{children}</IssueTestProviders>;
 }
 
 export function wrapIssueActionsMenu(ui: ReactNode) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <IssueActionsQueryProvider>{ui}</IssueActionsQueryProvider>
-    </I18nProvider>
-  );
+  return <IssueActionsQueryProvider>{ui}</IssueActionsQueryProvider>;
 }

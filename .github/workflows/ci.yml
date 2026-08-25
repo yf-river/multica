@@ -41,6 +41,12 @@ jobs:
           pnpm generate:reserved-slugs
           git diff --exit-code -- packages/core/paths/reserved-slugs.ts
 
+      - name: Verify attachment preview types are up to date
+        run: pnpm check:attachment-preview-types
+
+      - name: Verify current system map is up to date
+        run: pnpm check:current-system-map && pnpm test:current-system-map
+
       - name: Build, type check, lint, and test
         run: pnpm exec turbo build typecheck lint test --filter='!@multica/docs'
 
@@ -93,7 +99,9 @@ jobs:
         run: cd server && go run ./cmd/server --init-schema-only
 
       - name: Test
-        run: cd server && go test -race ./...
+        # Migration and application packages share the job database. Package
+        # serialization prevents transactional DDL from blocking other suites.
+        run: cd server && go test -p 1 -race ./...
 
   installer:
     # Stub-driven shell tests for scripts/install.sh. Kept off the heavy

@@ -1,8 +1,6 @@
 package daemon
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestTaskWakeupURL(t *testing.T) {
 	tests := []struct {

@@ -3,413 +3,236 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-// TestCreateAgent_ThinkingLevel_ValidationConsistency exercises the
-// MUL-2339 invariant: when an HTTP caller sends a literal-invalid
-// thinking_level the API MUST return 400, regardless of which other
-// field combination the same request mutates. The constraint comes
-// from Trump's PR1 review: "invalid value 的 API 行为请保持一致，
-// 不要同一类变更有时 400、有时静默清空".
-func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+func requestThinkingAgentCreate(t *testing.T, body map[string]any) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	testHandler.CreateAgent(response, newRequest(http.MethodPost, "/api/agents", body))
+	return response, decodeThinkingAgentResponse(t, response)
+}
 
+func requestThinkingAgentUpdate(t *testing.T, agentID string, body map[string]any) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
+	testHandler.UpdateAgent(response, request)
+	return response, decodeThinkingAgentResponse(t, response)
+}
+
+func decodeThinkingAgentResponse(t *testing.T, response *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	if response.Code < http.StatusOK || response.Code >= http.StatusMultipleChoices {
+		return nil
+	}
+	var body map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode Agent response: %v", err)
+	}
+	return body
+}
+
+func TestUpdateAgentRollsBackPrimaryFieldsWhenThinkingClearFails(t *testing.T) {
+	requireHandlerDatabase(t)
 	ctx := context.Background()
-	claudeRuntimeID := createClaudeProviderRuntime(t)
+	runtimeID := createProviderRuntime(t, "claude")
+	agentID := createAgentOnRuntime(t, "atomic-agent-update-original", runtimeID, "high", "")
+	const functionName = "test_fail_atomic_agent_thinking_clear"
+	const triggerName = "test_fail_atomic_agent_thinking_clear_trigger"
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.id = %s::uuid AND NEW.thinking_level IS NULL THEN
+				RAISE EXCEPTION 'injected thinking clear failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		DROP TRIGGER IF EXISTS %s ON agent;
+		CREATE TRIGGER %s BEFORE UPDATE ON agent FOR EACH ROW EXECUTE FUNCTION %s()
+	`, functionName, quoteSQLLiteral(agentID), triggerName, triggerName, functionName)); err != nil {
+		t.Fatalf("install thinking clear fault: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON agent; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id=$1`, agentID)
+	})
+
+	w, _ := requestThinkingAgentUpdate(t, agentID, map[string]any{
+		"name": "atomic-agent-update-changed", "thinking_level": "",
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("update agent: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var name, thinking string
+	if err := testPool.QueryRow(ctx, `SELECT name, thinking_level FROM agent WHERE id=$1`, agentID).Scan(&name, &thinking); err != nil {
+		t.Fatalf("read agent after failed update: %v", err)
+	}
+	if name != "atomic-agent-update-original" || thinking != "high" {
+		t.Fatalf("failed update left name=%q thinking=%q", name, thinking)
+	}
+}
+
+func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	claudeRuntimeID := createProviderRuntime(t, "claude")
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx,
+		_, _ = testPool.Exec(ctx,
 			`DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'thinking-test-%'`,
 			testWorkspaceID,
 		)
 	})
 
-	t.Run("empty value succeeds", func(t *testing.T) {
-		body := map[string]any{
-			"name":                 "thinking-test-empty",
-			"runtime_id":           claudeRuntimeID,
-			"scope":                "personal",
-			"max_concurrent_tasks": 1,
-			"thinking_level":       "",
-		}
-		w := httptest.NewRecorder()
-		testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
-		if w.Code != http.StatusCreated {
-			t.Fatalf("empty thinking_level: expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-	})
-
-	t.Run("known claude value succeeds", func(t *testing.T) {
-		body := map[string]any{
-			"name":                 "thinking-test-known",
-			"runtime_id":           claudeRuntimeID,
-			"scope":                "personal",
-			"max_concurrent_tasks": 1,
-			"thinking_level":       "high",
-		}
-		w := httptest.NewRecorder()
-		testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
-		if w.Code != http.StatusCreated {
-			t.Fatalf("thinking_level=high: expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["thinking_level"] != "high" {
-			t.Errorf("expected thinking_level=high in response, got %v", resp["thinking_level"])
-		}
-	})
-
-	t.Run("codex-only token rejected for claude runtime", func(t *testing.T) {
-		// `none` is a valid Codex token but NOT a Claude token. The
-		// gate must always 400 regardless of which other fields the
-		// request also tried to change.
-		body := map[string]any{
-			"name":                 "thinking-test-codex-only",
-			"runtime_id":           claudeRuntimeID,
-			"scope":                "personal",
-			"max_concurrent_tasks": 1,
-			"thinking_level":       "none",
-		}
-		w := httptest.NewRecorder()
-		testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("codex-only thinking_level on claude runtime: expected 400, got %d: %s", w.Code, w.Body.String())
-		}
-	})
-
-	t.Run("garbage value rejected", func(t *testing.T) {
-		body := map[string]any{
-			"name":                 "thinking-test-garbage",
-			"runtime_id":           claudeRuntimeID,
-			"scope":                "personal",
-			"max_concurrent_tasks": 1,
-			"thinking_level":       "supersonic",
-		}
-		w := httptest.NewRecorder()
-		testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("garbage thinking_level: expected 400, got %d: %s", w.Code, w.Body.String())
-		}
-	})
+	tests := []struct {
+		name          string
+		thinkingLevel string
+		wantStatus    int
+		wantLevel     string
+	}{
+		{name: "empty value succeeds", wantStatus: http.StatusCreated},
+		{name: "known claude value succeeds", thinkingLevel: "high", wantStatus: http.StatusCreated, wantLevel: "high"},
+		{name: "codex-only token rejected for claude runtime", thinkingLevel: "none", wantStatus: http.StatusBadRequest},
+		{name: "garbage value rejected", thinkingLevel: "supersonic", wantStatus: http.StatusBadRequest},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response, body := requestThinkingAgentCreate(t, map[string]any{
+				"name":                 fmt.Sprintf("thinking-test-%d", index),
+				"runtime_id":           claudeRuntimeID,
+				"scope":                "personal",
+				"max_concurrent_tasks": 1,
+				"thinking_level":       test.thinkingLevel,
+			})
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.wantLevel != "" && body["thinking_level"] != test.wantLevel {
+				t.Errorf("thinking_level = %v, want %q", body["thinking_level"], test.wantLevel)
+			}
+		})
+	}
 }
 
-// TestUpdateAgent_ThinkingLevel_TriState covers the three modes of
-// the field on PATCH:
-//   - field omitted → leave the existing value alone (the silent-clear
-//     anti-pattern flagged by Trump's review must NOT happen here)
-//   - explicit "" → clear back to NULL
-//   - non-empty → validate against the CURRENT runtime's provider enum
-//
-// All three branches share the same 400 / 200 outcome rule: validation
-// failures are always 400, never auto-clear.
 func TestUpdateAgent_ThinkingLevel_TriState(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
+	requireHandlerDatabase(t)
 	ctx := context.Background()
-	claudeRuntimeID := createClaudeProviderRuntime(t)
-	agentID := createAgentOnRuntime(t, "thinking-update-test", claudeRuntimeID, "high")
+	claudeRuntimeID := createProviderRuntime(t, "claude")
+	agentID := createAgentOnRuntime(t, "thinking-update-test", claudeRuntimeID, "high", "")
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
-	// 1. Omitted field — name-only update must NOT touch thinking_level.
-	t.Run("omitted field leaves value alone", func(t *testing.T) {
-		body := map[string]any{
-			"name": "thinking-update-test-renamed",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("name-only update: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["thinking_level"] != "high" {
-			t.Errorf("name-only update silently changed thinking_level: got %v, want high", resp["thinking_level"])
-		}
-	})
-
-	// 2. Explicit "" — must clear.
-	t.Run("empty string clears", func(t *testing.T) {
-		body := map[string]any{
-			"thinking_level": "",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("clear update: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["thinking_level"] != "" {
-			t.Errorf("empty thinking_level should clear: got %v", resp["thinking_level"])
-		}
-	})
-
-	// 3. Garbage value — always 400, never silently clear.
-	t.Run("garbage value is always 400", func(t *testing.T) {
-		body := map[string]any{
-			"thinking_level": "warp-speed",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("garbage thinking_level: expected 400, got %d: %s", w.Code, w.Body.String())
-		}
-	})
-
-	// 4. Codex-only token while bound to a Claude runtime → 400. This
-	//    is the "consistency" case from Trump's review: the API does
-	//    NOT auto-clear or coerce; the same token that's valid for a
-	//    Codex runtime is rejected here.
-	t.Run("codex token on claude runtime is 400, not silent clear", func(t *testing.T) {
-		body := map[string]any{
-			"thinking_level": "minimal",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("codex token on claude runtime: expected 400, got %d: %s", w.Code, w.Body.String())
-		}
-	})
+	tests := []struct {
+		name       string
+		request    map[string]any
+		wantStatus int
+		wantLevel  string
+		checkLevel bool
+	}{
+		{name: "omitted field leaves value alone", request: map[string]any{"name": "thinking-update-test-renamed"}, wantStatus: http.StatusOK, wantLevel: "high", checkLevel: true},
+		{name: "empty string clears", request: map[string]any{"thinking_level": ""}, wantStatus: http.StatusOK, checkLevel: true},
+		{name: "garbage value is rejected", request: map[string]any{"thinking_level": "warp-speed"}, wantStatus: http.StatusBadRequest},
+		{name: "codex token on claude runtime is rejected", request: map[string]any{"thinking_level": "minimal"}, wantStatus: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response, body := requestThinkingAgentUpdate(t, agentID, test.request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.checkLevel && body["thinking_level"] != test.wantLevel {
+				t.Errorf("thinking_level = %v, want %q", body["thinking_level"], test.wantLevel)
+			}
+		})
+	}
 }
 
-// TestUpdateAgent_RuntimeSwitch_PreservesValidValueRejectsInvalid covers
-// the gap Elon flagged in PR1 review: a PATCH that switches `runtime_id`
-// without explicitly touching `thinking_level` used to silently keep
-// the existing value, so a Claude agent storing `max` could land on a
-// Codex runtime where `max` is not a recognised token at all, and the
-// daemon would receive a literal-invalid level.
-//
-// The contract the test pins, matching the existing "always 400 on
-// literal-invalid" rule:
-//
-//   - existing value still valid for the new runtime → 200, value kept
-//   - existing value invalid for the new runtime → 400, never silent
-//     clear or coerce
-//   - caller can recover by re-sending with `thinking_level: ""` to clear
-//     in the same PATCH
 func TestUpdateAgent_RuntimeSwitch_PreservesValidValueRejectsInvalid(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
+	claudeRuntimeID, codexRuntimeID := setupRuntimeSwitchTest(t, "runtime-switch-%")
+
+	tests := []struct {
+		name          string
+		existingLevel string
+		requestLevel  string
+		setLevel      bool
+		wantStatus    int
+		wantLevel     string
+	}{
+		{name: "existing valid value is kept", existingLevel: "high", wantStatus: http.StatusOK, wantLevel: "high"},
+		{name: "existing invalid value is rejected", existingLevel: "max", wantStatus: http.StatusBadRequest},
+		{name: "explicit clear permits switch", existingLevel: "max", setLevel: true, wantStatus: http.StatusOK},
+		{name: "explicit valid replacement permits switch", existingLevel: "max", requestLevel: "minimal", setLevel: true, wantStatus: http.StatusOK, wantLevel: "minimal"},
 	}
-
-	ctx := context.Background()
-	claudeRuntimeID := createClaudeProviderRuntime(t)
-	codexRuntimeID := createCodexProviderRuntime(t)
-
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-switch-%'`, testWorkspaceID)
-	})
-
-	t.Run("existing value still valid for new runtime is kept", func(t *testing.T) {
-		// `high` is valid for both Claude and Codex enums — switching
-		// runtime without touching thinking_level should keep it.
-		agentID := createAgentOnRuntime(t, "runtime-switch-keep", claudeRuntimeID, "high")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 when existing value is still valid, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["thinking_level"] != "high" {
-			t.Errorf("expected thinking_level=high preserved across runtime switch, got %v", resp["thinking_level"])
-		}
-	})
-
-	t.Run("existing value invalid for new runtime is 400, not silent", func(t *testing.T) {
-		// `max` is Claude-only; switching to Codex must NOT silently
-		// keep it. Behaviour stays consistent with the explicit-set
-		// path: always 400 on literal-invalid.
-		agentID := createAgentOnRuntime(t, "runtime-switch-reject", claudeRuntimeID, "max")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 when existing value is invalid for new runtime, got %d: %s", w.Code, w.Body.String())
-		}
-	})
-
-	t.Run("simultaneous explicit clear lets the switch through", func(t *testing.T) {
-		// The 400 above is recoverable: pass `thinking_level: ""` in
-		// the same PATCH and the switch goes through with a cleared
-		// value. This is the documented escape hatch in the error
-		// message; the test pins it so the contract holds.
-		agentID := createAgentOnRuntime(t, "runtime-switch-clear", claudeRuntimeID, "max")
-		body := map[string]any{
-			"runtime_id":     codexRuntimeID,
-			"thinking_level": "",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 with simultaneous clear, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["thinking_level"] != "" {
-			t.Errorf("expected thinking_level cleared, got %v", resp["thinking_level"])
-		}
-	})
-
-	t.Run("simultaneous explicit set to valid value lets the switch through", func(t *testing.T) {
-		// The other recovery: caller picks a value valid for the new
-		// runtime. Same PATCH, no need for a separate roundtrip.
-		agentID := createAgentOnRuntime(t, "runtime-switch-replace", claudeRuntimeID, "max")
-		body := map[string]any{
-			"runtime_id":     codexRuntimeID,
-			"thinking_level": "minimal",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 with simultaneous set, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["thinking_level"] != "minimal" {
-			t.Errorf("expected thinking_level=minimal, got %v", resp["thinking_level"])
-		}
-	})
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			agentID := createAgentOnRuntime(t, fmt.Sprintf("runtime-switch-%d", index), claudeRuntimeID, test.existingLevel, "")
+			request := map[string]any{"runtime_id": codexRuntimeID}
+			if test.setLevel {
+				request["thinking_level"] = test.requestLevel
+			}
+			response, body := requestThinkingAgentUpdate(t, agentID, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.wantStatus == http.StatusOK && body["thinking_level"] != test.wantLevel {
+				t.Errorf("thinking_level = %v, want %q", body["thinking_level"], test.wantLevel)
+			}
+		})
+	}
 }
 
-// TestUpdateAgent_RuntimeSwitch_ClearsKnownIncompatibleModel covers the
-// runtime/model persistence bug from MUL-3341: a runtime_id-only PATCH used
-// to preserve a provider-native model string, so switching a Claude Code
-// agent to Codex could leave agent.model = "claude-..." and fail at task
-// execution. Unknown custom models are intentionally preserved because the
-// API supports manual entries and cannot prove they are invalid.
 func TestUpdateAgent_RuntimeSwitch_ClearsKnownIncompatibleModel(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
+	claudeRuntimeID, codexRuntimeID := setupRuntimeSwitchTest(t, "runtime-model-switch-%")
+
+	tests := []struct {
+		name          string
+		existingModel string
+		requestModel  string
+		setModel      bool
+		wantModel     string
+	}{
+		{name: "clears known foreign model", existingModel: "claude-sonnet-4-6"},
+		{name: "clears unsupported provider-prefixed model", existingModel: "openai/gpt-4o"},
+		{name: "keeps exact target model", existingModel: "gpt-5.5", wantModel: "gpt-5.5"},
+		{name: "explicit replacement wins", existingModel: "claude-sonnet-4-6", requestModel: "gpt-5.5", setModel: true, wantModel: "gpt-5.5"},
+		{name: "keeps unknown custom model", existingModel: "private-lab-model", wantModel: "private-lab-model"},
 	}
-
-	ctx := context.Background()
-	claudeRuntimeID := createClaudeProviderRuntime(t)
-	codexRuntimeID := createCodexProviderRuntime(t)
-
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-model-switch-%'`, testWorkspaceID)
-	})
-
-	t.Run("runtime-only switch clears known foreign model", func(t *testing.T) {
-		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-clear", claudeRuntimeID, "claude-sonnet-4-6")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 switching runtime with incompatible model, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["model"] != "" {
-			t.Errorf("expected model cleared across Claude->Codex runtime switch, got %v", resp["model"])
-		}
-	})
-
-	t.Run("runtime-only switch clears provider-prefixed model not accepted by target", func(t *testing.T) {
-		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-prefixed", claudeRuntimeID, "openai/gpt-4o")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 switching runtime with provider-prefixed model, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["model"] != "" {
-			t.Errorf("expected provider-prefixed model cleared across runtime switch, got %v", resp["model"])
-		}
-	})
-
-	t.Run("runtime-only switch keeps exact target accepted model", func(t *testing.T) {
-		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-accepted", claudeRuntimeID, "gpt-5.5")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 preserving exact target accepted model, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["model"] != "gpt-5.5" {
-			t.Errorf("expected exact target model preserved, got %v", resp["model"])
-		}
-	})
-
-	t.Run("explicit replacement model wins during switch", func(t *testing.T) {
-		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-replace", claudeRuntimeID, "claude-sonnet-4-6")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-			"model":      "gpt-5.5",
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 with explicit replacement model, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["model"] != "gpt-5.5" {
-			t.Errorf("expected explicit model to be persisted, got %v", resp["model"])
-		}
-	})
-
-	t.Run("unknown custom model is preserved", func(t *testing.T) {
-		agentID := createAgentOnRuntimeWithModel(t, "runtime-model-switch-custom", claudeRuntimeID, "private-lab-model")
-		body := map[string]any{
-			"runtime_id": codexRuntimeID,
-		}
-		w := httptest.NewRecorder()
-		req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, body), "id", agentID)
-		testHandler.UpdateAgent(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 preserving unknown custom model, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp map[string]any
-		_ = json.NewDecoder(w.Body).Decode(&resp)
-		if resp["model"] != "private-lab-model" {
-			t.Errorf("expected unknown custom model preserved, got %v", resp["model"])
-		}
-	})
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			agentID := createAgentOnRuntime(t, fmt.Sprintf("runtime-model-switch-%d", index), claudeRuntimeID, "", test.existingModel)
+			request := map[string]any{"runtime_id": codexRuntimeID}
+			if test.setModel {
+				request["model"] = test.requestModel
+			}
+			response, body := requestThinkingAgentUpdate(t, agentID, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+			}
+			if body["model"] != test.wantModel {
+				t.Errorf("model = %v, want %q", body["model"], test.wantModel)
+			}
+		})
+	}
 }
 
-// createCodexProviderRuntime mirrors createClaudeProviderRuntime but for
-// the codex provider, so runtime-switch tests can exercise a real
-// cross-provider transition.
-func createCodexProviderRuntime(t *testing.T) string {
+func setupRuntimeSwitchTest(t *testing.T, agentNamePattern string) (string, string) {
+	t.Helper()
+	requireHandlerDatabase(t)
+	claudeRuntimeID := createProviderRuntime(t, "claude")
+	codexRuntimeID := createProviderRuntime(t, "codex")
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE $2`, testWorkspaceID, agentNamePattern)
+	})
+	return claudeRuntimeID, codexRuntimeID
+}
+
+func createProviderRuntime(t *testing.T, provider string) string {
 	t.Helper()
 	var runtimeID string
 	err := testPool.QueryRow(context.Background(), `
@@ -417,88 +240,35 @@ func createCodexProviderRuntime(t *testing.T) string {
 			workspace_id, daemon_id, name, runtime_mode, provider, status,
 			device_info, metadata, last_seen_at, owner_id, scope
 		)
-		VALUES ($1, NULL, $2, 'cloud', 'codex', 'online', $3, '{}'::jsonb, now(), $4, 'personal')
+		VALUES ($1, NULL, $2, 'cloud', $3, 'online', $4, '{}'::jsonb, now(), $5, 'personal')
 		RETURNING id
-	`, testWorkspaceID, "Codex Thinking Runtime", "Codex thinking-level test runtime", testUserID).Scan(&runtimeID)
+	`, testWorkspaceID, provider+" Thinking Runtime", provider, provider+" thinking-level test runtime", testUserID).Scan(&runtimeID)
 	if err != nil {
-		t.Fatalf("create codex runtime: %v", err)
+		t.Fatalf("create %s runtime: %v", provider, err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
 
-// createClaudeProviderRuntime stands up a runtime row with provider
-// "claude" so the thinking_level gate runs against the real Claude
-// enum (the default test runtime uses a fake provider). The runtime
-// is workspace-private but visible to the test owner.
-func createClaudeProviderRuntime(t *testing.T) string {
-	t.Helper()
-	var runtimeID string
-	err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider, status,
-			device_info, metadata, last_seen_at, owner_id, scope
-		)
-		VALUES ($1, NULL, $2, 'cloud', 'claude', 'online', $3, '{}'::jsonb, now(), $4, 'personal')
-		RETURNING id
-	`, testWorkspaceID, "Claude Thinking Runtime", "Claude thinking-level test runtime", testUserID).Scan(&runtimeID)
-	if err != nil {
-		t.Fatalf("create claude runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
-	})
-	return runtimeID
-}
-
-// createAgentOnRuntime seeds an agent row bound to the given runtime
-// with the given initial thinking_level (empty for NULL).
-func createAgentOnRuntime(t *testing.T, name, runtimeID, level string) string {
+func createAgentOnRuntime(t *testing.T, name, runtimeID, thinkingLevel, model string) string {
 	t.Helper()
 	var agentID string
-	var levelArg any
-	if level == "" {
-		levelArg = nil
-	} else {
-		levelArg = level
-	}
 	err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
 			runtime_id, scope, max_concurrent_tasks, owner_id,
-			instructions, custom_env, custom_args, thinking_level
+			instructions, custom_env, custom_args, thinking_level, model
 		)
-		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'personal', 1, $4, '', '{}'::jsonb, '[]'::jsonb, $5)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'personal', 1, $4, '', '{}'::jsonb, '[]'::jsonb, NULLIF($5, ''), NULLIF($6, ''))
 		RETURNING id
-	`, testWorkspaceID, name, runtimeID, testUserID, levelArg).Scan(&agentID)
+	`, testWorkspaceID, name, runtimeID, testUserID, thinkingLevel, model).Scan(&agentID)
 	if err != nil {
 		t.Fatalf("create agent on runtime %s: %v", runtimeID, err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
-	})
-	return agentID
-}
-
-func createAgentOnRuntimeWithModel(t *testing.T, name, runtimeID, model string) string {
-	t.Helper()
-	var agentID string
-	err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent (
-			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, scope, max_concurrent_tasks, owner_id,
-			instructions, custom_env, custom_args, model
-		)
-		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'personal', 1, $4, '', '{}'::jsonb, '[]'::jsonb, $5)
-		RETURNING id
-	`, testWorkspaceID, name, runtimeID, testUserID, model).Scan(&agentID)
-	if err != nil {
-		t.Fatalf("create agent on runtime %s with model %s: %v", runtimeID, model, err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }

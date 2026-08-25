@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -8,7 +8,6 @@ import {
   Filter,
   FolderKanban,
   LayoutGrid,
-  MoreHorizontal,
   Pin,
   PinOff,
   Plus,
@@ -25,7 +24,6 @@ import {
   useDeleteProject,
   useProjectViewStore,
   type ProjectColumnKey,
-  type ProjectListFilters,
   type ProjectSortField,
 } from "@multica/core/projects";
 import {
@@ -33,18 +31,28 @@ import {
   useCreatePin,
   useDeletePin,
 } from "@multica/core/pins";
-import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { memberListOptions } from "@multica/core/workspace/queries";
 import { useModalStore } from "@multica/core/modals";
 import { AppLink, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
+import {
+  countActiveFilters,
+  ListBatchToolbar,
+} from "../../common/list-toolbar";
+import {
+  ListGridCheckboxCell,
+  ListGridRowMenuButton,
+  ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
+} from "../../common/list-grid-selection";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   Dialog,
@@ -88,7 +96,6 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import type {
-  MemberWithUser,
   Project,
   ProjectPriority,
   ProjectStatus,
@@ -97,10 +104,11 @@ import type {
 import { PageHeader } from "../../layout/page-header";
 import { ProjectIcon } from "./project-icon";
 import { useT } from "../../i18n";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 
 // Sort order maps for the enum columns (header sort needs a total order).
 const PRIORITY_ORDER: Record<ProjectPriority, number> = {
@@ -158,36 +166,41 @@ const GRID_COLS =
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
-function columnTrackVars(
-  isVisible: (key: ProjectColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: ProjectColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as ProjectColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--pjc-priority": width("priority"),
-    "--pjc-progress": width("progress"),
-    "--pjc-lead": width("lead"),
-    "--pjc-issues": width("issues"),
-    "--pjc-created": width("created"),
-    "--pjc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
+function useProjectUpdater(projectId: string) {
+  const updateProject = useUpdateProject();
+  return useCallback(
+    (data: UpdateProjectRequest) => updateProject.mutate({ id: projectId, ...data }),
+    [projectId, updateProject],
+  );
 }
 
-function ProgressRing({ project }: { project: Project }) {
-  if (project.issue_count === 0) {
-    return <span className="text-xs text-muted-foreground/40">—</span>;
-  }
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  priority: "--pjc-priority",
+  progress: "--pjc-progress",
+  lead: "--pjc-lead",
+  issues: "--pjc-issues",
+  created: "--pjc-created",
+}, "--pjc-minw");
+
+function ProjectProgress({
+  project,
+  className,
+  ringClassName,
+  textClassName,
+  empty,
+}: {
+  project: Project;
+  className: string;
+  ringClassName: string;
+  textClassName: string;
+  empty: ReactNode;
+}) {
+  if (project.issue_count === 0) return empty;
   const pct = Math.round((project.done_count / project.issue_count) * 100);
   return (
-    <span className="flex items-center gap-1.5">
-      <span className="relative h-3.5 w-3.5">
-        <svg className="h-3.5 w-3.5 -rotate-90" viewBox="0 0 16 16">
+    <span className={className}>
+      <span className={`relative ${ringClassName}`}>
+        <svg className={`-rotate-90 ${ringClassName}`} viewBox="0 0 16 16">
           <circle className="text-muted" strokeWidth="2" stroke="currentColor" fill="none" r="6" cx="8" cy="8" />
           <circle
             className="text-emerald-500"
@@ -202,10 +215,40 @@ function ProgressRing({ project }: { project: Project }) {
           />
         </svg>
       </span>
-      <span className="text-xs tabular-nums text-muted-foreground">
+      <span className={textClassName}>
         {project.done_count}/{project.issue_count}
       </span>
     </span>
+  );
+}
+
+function ProjectDeleteDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useT("projects");
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.delete_dialog.title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.delete_dialog.description)}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            {t(($) => $.delete_dialog.cancel)}
+          </Button>
+          <Button type="button" variant="destructive" size="sm" onClick={onConfirm}>
+            {t(($) => $.delete_dialog.confirm)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -235,15 +278,7 @@ function ProjectRowActions({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.page.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.page.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuItem onClick={togglePin}>
@@ -269,70 +304,18 @@ function ProjectRowActions({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.delete_dialog.title)}</DialogTitle>
-            <DialogDescription>
-              {t(($) => $.delete_dialog.description)}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setDeleteOpen(false)}
-            >
-              {t(($) => $.delete_dialog.cancel)}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                deleteProject.mutate(project.id, {
-                  onError: (err) =>
-                    toast.error(
-                      err instanceof Error ? err.message : String(err),
-                    ),
-                });
-                setDeleteOpen(false);
-              }}
-            >
-              {t(($) => $.delete_dialog.confirm)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
-function CheckboxCell({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <ListGridCell className="justify-center px-0">
-      <button
-        type="button"
-        aria-pressed={checked}
-        onClick={(e) => {
-          stopRowNavigation(e);
-          onToggle();
+      <ProjectDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onConfirm={() => {
+          deleteProject.mutate(project.id, {
+            onError: (err) =>
+              toast.error(err instanceof Error ? err.message : String(err)),
+          });
+          setDeleteOpen(false);
         }}
-        onAuxClick={stopRowNavigation}
-        className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
-        }`}
-      >
-        <Checkbox checked={checked} tabIndex={-1} className="pointer-events-none" />
-      </button>
-    </ListGridCell>
+      />
+    </>
   );
 }
 
@@ -356,18 +339,14 @@ function ProjectTableRow({
   rowLink: ReturnType<typeof useRowLink>;
 }) {
   const formatRelativeDate = useFormatRelativeDate();
-  const updateProject = useUpdateProject();
-  const handleUpdate = useCallback(
-    (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
-    [project.id, updateProject],
-  );
+  const handleUpdate = useProjectUpdater(project.id);
 
   return (
     <ListGridRow
       className={`h-11 cursor-pointer ${selected ? "bg-accent/30" : ""}`}
       {...rowLink(rowHref)}
     >
-      <CheckboxCell checked={selected} onToggle={onToggleSelect} />
+      <ListGridCheckboxCell checked={selected} onToggle={onToggleSelect} />
       <ListGridCell className="gap-2">
         <ProjectIcon project={project} size="sm" />
         <span className="min-w-0 truncate text-sm font-medium">
@@ -390,7 +369,13 @@ function ProjectTableRow({
 
       {isColVisible("progress") ? (
         <ListGridCell className="hidden @2xl:flex">
-          <ProgressRing project={project} />
+          <ProjectProgress
+            project={project}
+            className="flex items-center gap-1.5"
+            ringClassName="size-3.5"
+            textClassName="text-xs tabular-nums text-muted-foreground"
+            empty={<span className="text-xs text-muted-foreground/40">—</span>}
+          />
         </ListGridCell>
       ) : (
         <ListGridCell className="hidden px-0 @2xl:flex" />
@@ -468,79 +453,53 @@ function ProjectTableHeader({
   const { t } = useT("projects");
   const sorted = (field: ProjectSortField) =>
     sortField === field ? sortDirection : false;
-  const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      <div className="flex items-center justify-center">
-        <button
-          type="button"
-          aria-pressed={allSelected}
-          onClick={onToggleAll}
-          className={`-m-1.5 flex items-center p-1.5 ${
-            anySelected ? "" : "opacity-0 transition-opacity group-hover/header:opacity-100"
-          }`}
-        >
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected && !allSelected}
-            tabIndex={-1}
-            className="pointer-events-none"
-          />
-        </button>
-      </div>
+      <ListGridSelectAllHeaderCell
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={onToggleAll}
+      />
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.table.name)}
       </ListGridHeaderCell>
       <ListGridHeaderCell sorted={sorted("status")} onSort={() => onSort("status")}>
         {t(($) => $.table.status)}
       </ListGridHeaderCell>
-      {isColVisible("priority") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("priority")}
-          onSort={() => onSort("priority")}
-        >
-          {t(($) => $.table.priority)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("progress") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("progress")}
-          onSort={() => onSort("progress")}
-        >
-          {t(($) => $.table.progress)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("lead") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.table.lead)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("issues") ? (
-        <ListGridHeaderCell className="hidden justify-end @2xl:flex" align="right">
-          {t(($) => $.table.issues)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("priority")}
+        className="hidden @2xl:flex"
+        sorted={sorted("priority")}
+        onSort={() => onSort("priority")}
+      >
+        {t(($) => $.table.priority)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("progress")}
+        className="hidden @2xl:flex"
+        sorted={sorted("progress")}
+        onSort={() => onSort("progress")}
+      >
+        {t(($) => $.table.progress)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("lead")} className="hidden @2xl:flex">
+        {t(($) => $.table.lead)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("issues")}
+        className="hidden justify-end @2xl:flex"
+        align="right"
+      >
+        {t(($) => $.table.issues)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.table.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );
@@ -562,16 +521,7 @@ function ProjectCard({
   const { t } = useT("projects");
   const wsPaths = useWorkspacePaths();
   const formatRelativeDate = useFormatRelativeDate();
-  const updateProject = useUpdateProject();
-  const handleUpdate = useCallback(
-    (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
-    [project.id, updateProject],
-  );
-  const progressPercent =
-    project.issue_count > 0
-      ? Math.round((project.done_count / project.issue_count) * 100)
-      : 0;
-
+  const handleUpdate = useProjectUpdater(project.id);
   return (
     <div className="group/card group/row flex flex-col rounded-md border bg-card transition-colors hover:border-primary/50">
       <div className="p-3 pb-2">
@@ -587,33 +537,17 @@ function ProjectCard({
           <ProjectStatusBadge project={project} handleUpdate={handleUpdate} triggerClassName="shrink-0" />
         </div>
 
-        {project.issue_count > 0 ? (
-          <div className="flex items-center justify-end gap-1.5 pt-2">
-            <div className="relative h-4 w-4">
-              <svg className="h-4 w-4 -rotate-90" viewBox="0 0 16 16">
-                <circle className="text-muted" strokeWidth="2" stroke="currentColor" fill="none" r="6" cx="8" cy="8" />
-                <circle
-                  className="text-emerald-500"
-                  strokeWidth="2"
-                  stroke="currentColor"
-                  fill="none"
-                  r="6"
-                  cx="8"
-                  cy="8"
-                  strokeDasharray={`${progressPercent * 0.377} 37.7`}
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-            <span className="text-[10px] tabular-nums text-muted-foreground">
-              {project.done_count}/{project.issue_count}
+        <ProjectProgress
+          project={project}
+          className="flex items-center justify-end gap-1.5 pt-2"
+          ringClassName="size-4"
+          textClassName="text-[10px] tabular-nums text-muted-foreground"
+          empty={(
+            <span className="flex justify-end pt-2 text-[10px] text-muted-foreground">
+              {t(($) => $.detail.no_issues_yet)}
             </span>
-          </div>
-        ) : (
-          <span className="flex justify-end pt-2 text-[10px] text-muted-foreground">
-            {t(($) => $.detail.no_issues_yet)}
-          </span>
-        )}
+          )}
+        />
       </div>
 
       <div className="mt-0 flex items-center justify-between border-t px-3 pb-3 pt-2">
@@ -660,14 +594,6 @@ const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "
 const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
 
-function countActiveFilters(f: ProjectListFilters): number {
-  let c = 0;
-  if (f.statuses.length) c++;
-  if (f.priorities.length) c++;
-  if (f.leads.length) c++;
-  return c;
-}
-
 // Batch toolbar — page-anchored (not viewport). Pin all selected (any
 // member) + Delete (workspace admin). Mirrors the other lists.
 function ProjectBatchToolbar({
@@ -691,20 +617,11 @@ function ProjectBatchToolbar({
 
   return (
     <>
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.page.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.page.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.page.selected, { count: rows.length })}
+        clearLabel={t(($) => $.page.clear_selection)}
+        onClear={onClear}
+      >
         {anyUnpinned && (
           <Button
             variant="ghost"
@@ -733,33 +650,17 @@ function ProjectBatchToolbar({
             {t(($) => $.page.delete)}
           </Button>
         )}
-      </div>
+      </ListBatchToolbar>
 
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.delete_dialog.title)}</DialogTitle>
-            <DialogDescription>{t(($) => $.delete_dialog.description)}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>
-              {t(($) => $.delete_dialog.cancel)}
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                for (const p of rows) deleteProject.mutate(p.id);
-                setConfirmDelete(false);
-                onClear();
-              }}
-            >
-              {t(($) => $.delete_dialog.confirm)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ProjectDeleteDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        onConfirm={() => {
+          for (const p of rows) deleteProject.mutate(p.id);
+          setConfirmDelete(false);
+          onClear();
+        }}
+      />
     </>
   );
 }
@@ -770,6 +671,7 @@ function ProjectBatchToolbar({
 
 export function ProjectsPage() {
   const { t } = useT("projects");
+  const { t: tCommon } = useT("common");
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
@@ -792,18 +694,14 @@ export function ProjectsPage() {
   const isColVisible = (key: ProjectColumnKey) => !hiddenColumns.includes(key);
 
   const { data: projects = [], isLoading } = useQuery(projectListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { role: currentMemberRole } = useCurrentMember(wsId);
   const { data: pins = [] } = useQuery({
     ...pinListOptions(wsId, currentUser?.id ?? ""),
     enabled: !!wsId && !!currentUser?.id,
   });
   const openCreateProject = () => useModalStore.getState().open("create-project");
 
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const me = members.find((m: MemberWithUser) => m.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
-  }, [members, currentUser]);
+  const isWorkspaceAdmin = canManageWorkspace(currentMemberRole);
 
   const pinnedProjectIds = useMemo(() => {
     const s = new Set<string>();
@@ -813,23 +711,14 @@ export function ProjectsPage() {
 
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
-  const toggleSelected = (id: string) =>
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   const activeFilterCount = countActiveFilters(filters);
   const hasActiveFilters = activeFilterCount > 0;
-  const displayProjects = projects;
-
   // Filter option counts derive from the full set so toggling one dimension
   // doesn't make the others vanish.
   const leadOptions = useMemo(() => {
     const m = new Map<string, { type: string; id: string; count: number }>();
-    for (const p of displayProjects) {
+    for (const p of projects) {
       const v = leadFilterValue(p);
       if (!v || !p.lead_type || !p.lead_id) continue;
       const e = m.get(v);
@@ -837,12 +726,12 @@ export function ProjectsPage() {
       else m.set(v, { type: p.lead_type, id: p.lead_id, count: 1 });
     }
     return m;
-  }, [displayProjects]);
+  }, [projects]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const filtered = displayProjects.filter((p) => {
-      if (q && !p.title.toLowerCase().includes(q) && !matchesPinyin(p.title, q)) {
+    const filtered = projects.filter((p) => {
+      if (q && !matchesTextQuery(p.title, q)) {
         return false;
       }
       if (filters.statuses.length && !filters.statuses.includes(p.status)) return false;
@@ -877,13 +766,18 @@ export function ProjectsPage() {
       return (Date.parse(a.created_at) - Date.parse(b.created_at)) * dir;
     });
     return sorted;
-  }, [displayProjects, search, filters, sortField, sortDirection]);
+  }, [projects, search, filters, sortField, sortDirection]);
 
-  const selectedProjects = visible.filter((p) => selectedIds.has(p.id));
-  const allSelected = visible.length > 0 && selectedProjects.length === visible.length;
-  const someSelected = selectedProjects.length > 0 && !allSelected;
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
+  const selectedProjects = visible.filter((project) => selectedIds.has(project.id));
+  const visibleProjectIds = visible.map((project) => project.id);
+  const { allSelected, someSelected } = getListGridSelectionState(
+    visibleProjectIds,
+    selectedIds,
+  );
   const handleToggleAll = () =>
-    setSelectedIds(allSelected ? new Set() : new Set(visible.map((p) => p.id)));
+    setSelectedIds(allSelected ? new Set() : new Set(visibleProjectIds));
 
   const sortLabel = (f: ProjectSortField) =>
     f === "name"
@@ -906,7 +800,7 @@ export function ProjectsPage() {
             ? t(($) => $.table.issues)
             : t(($) => $.table.created);
 
-  const showEmpty = !isLoading && displayProjects.length === 0 && projects.length === 0;
+  const showEmpty = !isLoading && projects.length === 0;
   const countBadge = (n: number) => (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{n}</span>
   );
@@ -918,9 +812,9 @@ export function ProjectsPage() {
         <div className="flex items-center gap-2">
           <FolderKanban className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1>
-          {displayProjects.length > 0 && (
+          {projects.length > 0 && (
             <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
-              {displayProjects.length}
+              {projects.length}
             </span>
           )}
         </div>
@@ -963,7 +857,7 @@ export function ProjectsPage() {
                   title={t(($) => $.toolbar.result_count_title)}
                   className="hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline"
                 >
-                  {visible.length} / {displayProjects.length}
+                  {visible.length} / {projects.length}
                 </span>
               )}
             </div>
@@ -986,18 +880,18 @@ export function ProjectsPage() {
                       {hasActiveFilters ? (
                         <>
                           <span className="hidden md:inline">
-                            {t(($) => $.toolbar.filter_active_count, { count: activeFilterCount })}
+                            {tCommon(($) => $.list_toolbar.filter_active_count, { count: activeFilterCount })}
                           </span>
                           <span className="tabular-nums md:hidden">{activeFilterCount}</span>
                         </>
                       ) : (
-                        <span className="hidden md:inline">{t(($) => $.toolbar.filter_label)}</span>
+                        <span className="hidden md:inline">{tCommon(($) => $.list_toolbar.filter_label)}</span>
                       )}
                       {hasActiveFilters && (
                         <span
                           role="button"
                           tabIndex={-1}
-                          aria-label={t(($) => $.toolbar.clear_filters)}
+                          aria-label={tCommon(($) => $.list_toolbar.clear_filters)}
                           className="-mr-1 ml-0.5 hidden rounded-sm p-0.5 hover:bg-white/20 md:inline-flex"
                           onClick={(e) => {
                             e.preventDefault();
@@ -1099,11 +993,11 @@ export function ProjectsPage() {
                         />
                       }
                     />
-                    <TooltipContent side="bottom">{t(($) => $.toolbar.display)}</TooltipContent>
+                    <TooltipContent side="bottom">{tCommon(($) => $.list_toolbar.display)}</TooltipContent>
                   </Tooltip>
                   <PopoverContent align="end" className="w-64 p-0">
                     <div className="border-b px-3 py-2.5">
-                      <span className="text-xs font-medium text-muted-foreground">{t(($) => $.toolbar.sort_by)}</span>
+                      <span className="text-xs font-medium text-muted-foreground">{tCommon(($) => $.list_toolbar.sort_by)}</span>
                       <div className="mt-2 flex items-center gap-1.5">
                         <DropdownMenu>
                           <DropdownMenuTrigger
@@ -1131,7 +1025,7 @@ export function ProjectsPage() {
                           variant="outline"
                           size="icon-sm"
                           onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
-                          title={sortDirection === "asc" ? t(($) => $.toolbar.direction_asc) : t(($) => $.toolbar.direction_desc)}
+                          title={sortDirection === "asc" ? tCommon(($) => $.list_toolbar.direction_asc) : tCommon(($) => $.list_toolbar.direction_desc)}
                         >
                           {sortDirection === "asc" ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />}
                         </Button>

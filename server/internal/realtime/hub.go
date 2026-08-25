@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // MembershipChecker verifies a user belongs to a workspace.
@@ -45,62 +45,11 @@ var allowedWSOrigins atomic.Value // holds []string
 var trustedProxies atomic.Value   // holds []netip.Prefix
 
 func init() {
-	allowedWSOrigins.Store(loadAllowedOrigins())
-	trustedProxies.Store(loadTrustedProxies())
-}
-
-func loadAllowedOrigins() []string {
-	raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
-	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	}
-	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
-	}
-	if raw == "" {
-		return []string{
-			"http://localhost:3000",
-			"http://localhost:5173",
-			"http://localhost:5174",
-		}
-	}
-
-	parts := strings.Split(raw, ",")
-	origins := make([]string, 0, len(parts))
-	for _, part := range parts {
-		origin := strings.TrimSpace(part)
-		if origin != "" {
-			origins = append(origins, origin)
-		}
-	}
-	return origins
-}
-
-// loadTrustedProxies reads the same MULTICA_TRUSTED_PROXIES env var the rest of
-// the server uses (see cmd/server/router.go and handler.Config.TrustedProxies),
-// parsing it as a comma-separated list of CIDR prefixes. Invalid entries are
-// dropped with a warn-line rather than crashing. Empty input returns nil, which
-// means "trust no proxy" — X-Forwarded-Host is then never honored. The router
-// overrides this at startup via SetTrustedProxies so both share one config.
-func loadTrustedProxies() []netip.Prefix {
-	raw := strings.TrimSpace(os.Getenv("MULTICA_TRUSTED_PROXIES"))
-	if raw == "" {
-		return nil
-	}
-	var prefixes []netip.Prefix
-	for _, part := range strings.Split(raw, ",") {
-		s := strings.TrimSpace(part)
-		if s == "" {
-			continue
-		}
-		p, err := netip.ParsePrefix(s)
-		if err != nil {
-			slog.Warn("ws: ignoring invalid trusted proxy CIDR", "value", s, "error", err)
-			continue
-		}
-		prefixes = append(prefixes, p)
-	}
-	return prefixes
+	// The server router computes both values once and injects them before it
+	// exposes the WebSocket route. Empty snapshots keep package initialization
+	// fail-closed without duplicating environment parsing here.
+	allowedWSOrigins.Store([]string{})
+	trustedProxies.Store([]netip.Prefix{})
 }
 
 // SetAllowedOrigins overrides the WebSocket origin whitelist.
@@ -221,9 +170,8 @@ type Client struct {
 	// currently in. Used to clean up rooms on disconnect.
 	subscriptions map[scopeKey]bool
 
-	// lastSeenEventIDs is used by the dual-write broadcaster (and any
-	// future deliverer) to dedup messages that arrived first via the local
-	// fast path and are then re-played from Redis. Bounded LRU semantics
+	// lastSeenEventIDs deduplicates messages that arrive through the local
+	// fast path before being replayed from Redis. Bounded LRU semantics
 	// are not required because event IDs are ULIDs and we only keep the
 	// last few.
 	dedupMu  sync.Mutex
@@ -310,7 +258,7 @@ func (h *Hub) Run() {
 			h.removeClient(client)
 
 		case message := <-h.broadcast:
-			h.fanoutAll(message, "")
+			h.fanoutAllDedup(message, "")
 		}
 	}
 }
@@ -342,30 +290,29 @@ func (h *Hub) removeClient(client *Client) {
 	M.DisconnectsTotal.Add(1)
 	M.ActiveConnections.Add(-1)
 	for _, key := range emptied {
-		M.DecRoom(key.Type)
+		loadOrInitCounter(&M.scopeRooms, key.Type).Add(-1)
 	}
 	slog.Info("ws client disconnected", "workspace_id", client.workspaceID, "user_id", client.userID, "total_clients", total)
 }
 
-// subscribe adds client to scope (scopeType, scopeID). It returns true if the
-// subscription was newly added.
-func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
+// subscribe adds client to scope (scopeType, scopeID).
+func (h *Hub) subscribe(client *Client, scopeType, scopeID string) {
 	if scopeType == "" || scopeID == "" {
-		return false
+		return
 	}
 	key := sk(scopeType, scopeID)
 
 	h.mu.Lock()
 	if !h.clients[client] {
 		h.mu.Unlock()
-		return false
+		return
 	}
 	if client.subscriptions == nil {
 		client.subscriptions = map[scopeKey]bool{}
 	}
 	if client.subscriptions[key] {
 		h.mu.Unlock()
-		return false
+		return
 	}
 	client.subscriptions[key] = true
 	room, ok := h.rooms[key]
@@ -378,11 +325,10 @@ func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 	room[client] = true
 	h.mu.Unlock()
 
-	M.SubscribesTotal(scopeType).Add(1)
+	loadOrInitCounter(&M.subscribeTotal, scopeType).Add(1)
 	if first {
-		M.IncRoom(scopeType)
+		loadOrInitCounter(&M.scopeRooms, scopeType).Add(1)
 	}
-	return true
 }
 
 // unsubscribe removes client from a scope room.
@@ -412,9 +358,9 @@ func (h *Hub) unsubscribe(client *Client, scopeType, scopeID string) bool {
 	}
 	h.mu.Unlock()
 
-	M.UnsubscribesTotal(scopeType).Add(1)
+	loadOrInitCounter(&M.unsubscribeTotal, scopeType).Add(1)
 	if emptied {
-		M.DecRoom(scopeType)
+		loadOrInitCounter(&M.scopeRooms, scopeType).Add(-1)
 	}
 	return true
 }
@@ -433,81 +379,17 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 		return
 	}
 	key := sk(scopeType, scopeID)
-
-	h.mu.RLock()
-	clients := h.rooms[key]
-	var slow []*Client
-	var sent int64
-	for client := range clients {
-		if !client.markSeen(eventID) {
-			continue
-		}
-		select {
-		case client.send <- message:
-			sent++
-		default:
-			slow = append(slow, client)
-		}
-	}
-	h.mu.RUnlock()
-
-	if sent > 0 {
-		M.MessagesSentTotal.Add(sent)
-	}
-	if len(slow) > 0 {
-		h.evictSlow(slow)
-	}
+	h.fanoutClients(&key, message, eventID, "")
 }
 
-// fanoutAll delivers message to every connected client. If excludeWorkspace
-// is non-empty, clients whose workspaceID matches are skipped (used by the
-// member:added dedup semantics carried over from SendToUser). eventID is the
-// dedup key (empty disables dedup).
-func (h *Hub) fanoutAll(message []byte, excludeWorkspace string) {
-	h.fanoutAllDedup(message, excludeWorkspace, "")
+func (h *Hub) fanoutAllDedup(message []byte, eventID string) {
+	h.fanoutClients(nil, message, eventID, "")
 }
 
-func (h *Hub) fanoutAllDedup(message []byte, excludeWorkspace, eventID string) {
-	h.mu.RLock()
-	var slow []*Client
-	var sent int64
-	for client := range h.clients {
-		if excludeWorkspace != "" && client.workspaceID == excludeWorkspace {
-			continue
-		}
-		if !client.markSeen(eventID) {
-			continue
-		}
-		select {
-		case client.send <- message:
-			sent++
-		default:
-			slow = append(slow, client)
-		}
-	}
-	h.mu.RUnlock()
-
-	if sent > 0 {
-		M.MessagesSentTotal.Add(sent)
-	}
-	if len(slow) > 0 {
-		h.evictSlow(slow)
-	}
-}
-
-// BroadcastToWorkspace is a back-compat shortcut.
-func (h *Hub) BroadcastToWorkspace(workspaceID string, message []byte) {
-	h.BroadcastToScope(ScopeWorkspace, workspaceID, message)
-}
-
-// SendToUser delivers a message to every connection belonging to userID,
-// skipping any connections whose workspaceID matches excludeWorkspace.
-func (h *Hub) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
-	exclude := ""
-	if len(excludeWorkspace) > 0 {
-		exclude = excludeWorkspace[0]
-	}
-	h.fanoutUser(userID, message, exclude, "")
+// BroadcastToUser delivers a message to every connection belonging to userID,
+// except connections already covered by excludeWorkspaceID.
+func (h *Hub) BroadcastToUser(userID, excludeWorkspaceID string, message []byte) {
+	h.fanoutUser(userID, message, excludeWorkspaceID, "")
 }
 
 // Broadcast sends a message to every connected client (daemon events).
@@ -519,8 +401,17 @@ func (h *Hub) Broadcast(message []byte) {
 // excluding clients in excludeWorkspace and deduping against eventID.
 func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventID string) {
 	key := sk(ScopeUser, userID)
+	h.fanoutClients(&key, message, eventID, excludeWorkspace)
+}
+
+// fanoutClients owns delivery, deduplication, metrics and slow-client eviction
+// for global, scope and user broadcasts. A nil scope targets every client.
+func (h *Hub) fanoutClients(scope *scopeKey, message []byte, eventID, excludeWorkspace string) {
 	h.mu.RLock()
-	clients := h.rooms[key]
+	clients := h.clients
+	if scope != nil {
+		clients = h.rooms[*scope]
+	}
 	var slow []*Client
 	var sent int64
 	for client := range clients {
@@ -546,8 +437,8 @@ func (h *Hub) fanoutUser(userID string, message []byte, excludeWorkspace, eventI
 	}
 }
 
-// evictSlow removes clients whose send channel was full. Mirrors the
-// pre-phase-1 behavior: closes the send channel and decrements counters.
+// evictSlow removes clients whose send channel was full, closes the send
+// channel, and decrements connection and room counters.
 func (h *Hub) evictSlow(slow []*Client) {
 	M.MessagesDroppedTotal.Add(int64(len(slow)))
 	M.SlowEvictionsTotal.Add(int64(len(slow)))
@@ -583,7 +474,7 @@ func (h *Hub) evictSlow(slow []*Client) {
 		M.DisconnectsTotal.Add(int64(evicted))
 	}
 	for _, r := range drainedRooms {
-		M.DecRoom(r.Type)
+		loadOrInitCounter(&M.scopeRooms, r.Type).Add(-1)
 	}
 }
 
@@ -638,8 +529,10 @@ func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (st
 
 // firstMessageAuth reads the first WebSocket message expecting an auth payload.
 func firstMessageAuth(conn *websocket.Conn) (string, string) {
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return "", `{"error":"auth read deadline failed"}`
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
@@ -674,7 +567,7 @@ func writeWSAuthFrame(conn wsMessageWriter, payload []byte, frame string, attrs 
 
 func writeWSAuthErrorAndClose(conn *websocket.Conn, payload []byte, attrs ...any) {
 	writeWSAuthFrame(conn, payload, "auth_error", attrs...)
-	conn.Close()
+	_ = conn.Close()
 }
 
 // HandleWebSocket upgrades an HTTP connection to WebSocket with cookie or
@@ -745,7 +638,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			"workspace_id", workspaceID,
 			"user_id", userID,
 		) {
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
 	}
@@ -778,13 +671,6 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	go client.readPump()
 }
 
-// inboundFrame describes the subset of inbound JSON messages the server
-// understands today.
-type inboundFrame struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
-}
-
 type subPayload struct {
 	Scope string `json:"scope"`
 	ID    string `json:"id"`
@@ -793,13 +679,15 @@ type subPayload struct {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		slog.Debug("websocket read deadline failed", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+		return
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
@@ -815,7 +703,7 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) handleFrame(raw []byte) {
-	var f inboundFrame
+	var f protocol.Message
 	if err := json.Unmarshal(raw, &f); err != nil {
 		slog.Debug("ws inbound: invalid json", "error", err, "user_id", c.userID)
 		return
@@ -824,25 +712,19 @@ func (c *Client) handleFrame(raw []byte) {
 	case "subscribe", "unsubscribe":
 		var p subPayload
 		if err := json.Unmarshal(f.Payload, &p); err != nil || p.Scope == "" || p.ID == "" {
-			c.sendJSON(map[string]any{
-				"type": f.Type + "_error",
-				"payload": map[string]string{
-					"scope": p.Scope,
-					"id":    p.ID,
-					"error": "invalid payload",
-				},
-			})
+			c.sendSubscriptionResult(f.Type, p.Scope, p.ID, "invalid payload")
 			return
 		}
 		if f.Type == "subscribe" {
 			c.handleSubscribe(p.Scope, p.ID)
 		} else {
-			c.handleUnsubscribe(p.Scope, p.ID)
+			c.hub.unsubscribe(c, p.Scope, p.ID)
+			c.sendSubscriptionResult("unsubscribe", p.Scope, p.ID, "")
 		}
 	case "ping":
 		c.sendJSON(map[string]string{"type": "pong"})
 	default:
-		// Unknown frame — ignore silently for forward compat.
+		// Unknown frame types do not change connection state.
 		slog.Debug("ws inbound: unknown frame", "type", f.Type, "user_id", c.userID)
 	}
 }
@@ -852,15 +734,8 @@ func (c *Client) handleSubscribe(scope, id string) {
 	case ScopeWorkspace, ScopeUser:
 		// Implicit scopes — only allowed if it matches the connection identity.
 		if (scope == ScopeWorkspace && id != c.workspaceID) || (scope == ScopeUser && id != c.userID) {
-			M.SubscribeDeniedTotal(scope).Add(1)
-			c.sendJSON(map[string]any{
-				"type": "subscribe_error",
-				"payload": map[string]string{
-					"scope": scope,
-					"id":    id,
-					"error": "forbidden",
-				},
-			})
+			loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
+			c.sendSubscriptionResult("subscribe", scope, id, "forbidden")
 			return
 		}
 		// Already auto-subscribed at connect time; reply ack idempotently.
@@ -870,47 +745,32 @@ func (c *Client) handleSubscribe(scope, id string) {
 		if auth != nil {
 			ok, err := auth.AuthorizeScope(context.Background(), c.userID, c.workspaceID, scope, id)
 			if err != nil || !ok {
-				M.SubscribeDeniedTotal(scope).Add(1)
+				loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
 				reason := "forbidden"
 				if err != nil {
 					reason = "lookup_failed"
 				}
-				c.sendJSON(map[string]any{
-					"type": "subscribe_error",
-					"payload": map[string]string{
-						"scope": scope,
-						"id":    id,
-						"error": reason,
-					},
-				})
+				c.sendSubscriptionResult("subscribe", scope, id, reason)
 				return
 			}
 		}
 		c.hub.subscribe(c, scope, id)
 	default:
-		M.SubscribeDeniedTotal(scope).Add(1)
-		c.sendJSON(map[string]any{
-			"type": "subscribe_error",
-			"payload": map[string]string{
-				"scope": scope,
-				"id":    id,
-				"error": "unknown_scope",
-			},
-		})
+		loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
+		c.sendSubscriptionResult("subscribe", scope, id, "unknown_scope")
 		return
 	}
-	c.sendJSON(map[string]any{
-		"type":    "subscribe_ack",
-		"payload": map[string]string{"scope": scope, "id": id},
-	})
+	c.sendSubscriptionResult("subscribe", scope, id, "")
 }
 
-func (c *Client) handleUnsubscribe(scope, id string) {
-	c.hub.unsubscribe(c, scope, id)
-	c.sendJSON(map[string]any{
-		"type":    "unsubscribe_ack",
-		"payload": map[string]string{"scope": scope, "id": id},
-	})
+func (c *Client) sendSubscriptionResult(action, scope, id, reason string) {
+	payload := map[string]string{"scope": scope, "id": id}
+	suffix := "_ack"
+	if reason != "" {
+		payload["error"] = reason
+		suffix = "_error"
+	}
+	c.sendJSON(map[string]any{"type": action + suffix, "payload": payload})
 }
 
 // sendJSON best-effort encodes v and pushes it to the client's send channel.
@@ -931,15 +791,18 @@ func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				slog.Debug("websocket write deadline failed", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+				return
+			}
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
@@ -947,7 +810,10 @@ func (c *Client) writePump() {
 				return
 			}
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				slog.Debug("websocket ping deadline failed", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskMessagePayload } from "@multica/core/types/events";
-import { appendTimelineItem, buildTimeline, coalesceTimelineItems, type TimelineItem } from "./build-timeline";
+import { buildTimeline } from "./build-timeline";
 
 function message(seq: number, type: TaskMessagePayload["type"], content?: string): TaskMessagePayload {
   return {
@@ -28,12 +28,12 @@ describe("task transcript timeline", () => {
   });
 
   it("does not merge across tool or error boundaries", () => {
-    const items = coalesceTimelineItems([
-      { seq: 1, type: "text", content: "before" },
-      { seq: 2, type: "tool_use", tool: "bash" },
-      { seq: 3, type: "text", content: "after" },
-      { seq: 4, type: "error", content: "failed" },
-      { seq: 5, type: "text", content: "done" },
+    const items = buildTimeline([
+      message(1, "text", "before"),
+      { ...message(2, "tool_use"), tool: "bash" },
+      message(3, "text", "after"),
+      message(4, "error", "failed"),
+      message(5, "text", "done"),
     ]);
 
     expect(items.map((item) => item.content ?? item.tool)).toEqual([
@@ -42,27 +42,6 @@ describe("task transcript timeline", () => {
       "after",
       "failed",
       "done",
-    ]);
-  });
-
-  it("coalesces newly appended live text with the previous text item", () => {
-    const existing: TimelineItem[] = [{ seq: 1, type: "text", content: "hello" }];
-    const items = appendTimelineItem(existing, { seq: 2, type: "text", content: " world" });
-
-    expect(items).toEqual([
-      expect.objectContaining({ seq: 1, type: "text", content: "hello world" }),
-    ]);
-  });
-
-  it("coalesces out-of-order raw text by sequence", () => {
-    const existing: TimelineItem[] = [
-      { seq: 1, type: "text", content: "A" },
-      { seq: 3, type: "text", content: "C" },
-    ];
-    const items = appendTimelineItem(existing, { seq: 2, type: "text", content: "B" });
-
-    expect(items).toEqual([
-      expect.objectContaining({ seq: 1, type: "text", content: "ABC" }),
     ]);
   });
 
@@ -78,9 +57,9 @@ describe("task transcript timeline", () => {
   });
 
   it("keeps the latest created_at when coalescing streaming fragments", () => {
-    const items = coalesceTimelineItems([
-      { seq: 1, type: "text", content: "hello ", created_at: "2026-06-09T09:00:00.000Z" },
-      { seq: 2, type: "text", content: "world", created_at: "2026-06-09T09:00:05.000Z" },
+    const items = buildTimeline([
+      { ...message(1, "text", "hello "), created_at: "2026-06-09T09:00:00.000Z" },
+      { ...message(2, "text", "world"), created_at: "2026-06-09T09:00:05.000Z" },
     ]);
 
     expect(items).toEqual([
@@ -94,9 +73,9 @@ describe("task transcript timeline", () => {
   });
 
   it("falls back to the previous created_at when the merged fragment has none", () => {
-    const items = coalesceTimelineItems([
-      { seq: 1, type: "text", content: "hello ", created_at: "2026-06-09T09:00:00.000Z" },
-      { seq: 2, type: "text", content: "world" },
+    const items = buildTimeline([
+      { ...message(1, "text", "hello "), created_at: "2026-06-09T09:00:00.000Z" },
+      message(2, "text", "world"),
     ]);
 
     expect(items[0]?.created_at).toBe("2026-06-09T09:00:00.000Z");

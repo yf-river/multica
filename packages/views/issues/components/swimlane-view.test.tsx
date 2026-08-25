@@ -1,18 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { SwimLaneView } from "./swimlane-view";
 import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enIssues from "../../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
-
-// Mock hooks
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
+import { renderIssueTest } from "../test/issue-test-providers";
 
 // Mock the API so childrenByParentsOptions doesn't fire real HTTP.
 // Individual tests can override listChildrenByParents via mockResolvedValueOnce.
@@ -41,6 +31,7 @@ vi.mock("@multica/core/paths", async () => {
   );
   return {
     ...actual,
+    useWorkspaceId: () => "ws-1",
     useWorkspaceSlug: () => "acme",
     useRequiredWorkspaceSlug: () => "acme",
     useWorkspacePaths: () => actual.paths.workspace("acme"),
@@ -59,35 +50,7 @@ vi.mock("@multica/core/projects/queries", () => ({
     queryFn: () => Promise.resolve([]),
   }),
 }));
-const { mockActorNameResult } = vi.hoisted(() => ({
-  mockActorNameResult: {
-    getActorName: (_type: string, _id: string) => "模拟负责人",
-    getActorInitials: () => "MA",
-    getActorAvatarUrl: () => null,
-    getMemberName: () => "Mock Member",
-    getAgentName: () => "Mock Agent",
-    getSquadName: () => "Mock Squad",
-  },
-}));
-vi.mock("@multica/core/workspace/hooks", () => ({
-  useActorName: () => mockActorNameResult,
-}));
 
-// Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => {
-      const state = { user: mockAuthUser, isAuthenticated: true };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
-  ),
-  registerAuthStore: vi.fn(),
-  createAuthStore: vi.fn(),
-}));
-
-// Mock navigation
 vi.mock("../../navigation", () => ({
   AppLink: ({ children, href, ...props }: any) => (
     <a href={href} {...props}>
@@ -97,29 +60,26 @@ vi.mock("../../navigation", () => ({
   useNavigation: () => ({ push: vi.fn(), pathname: "/issues" }),
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
+const { mockActorNameResult } = vi.hoisted(() => ({
+  mockActorNameResult: {
+    getActorName: (_type: string, _id: string) => "模拟负责人",
+    getActorInitials: () => "MA",
+    getActorAvatarUrl: () => null,
+  },
+}));
+vi.mock("@multica/core/workspace/hooks", () => ({
+  useActorName: () => mockActorNameResult,
+}));
 
-// Mock issue config
-vi.mock("@multica/core/issues/config", () => ({
-  ALL_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
-  STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  STATUS_CONFIG: {
-    backlog: { label: "待规划", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "待办", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-  },
-  PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
-  PRIORITY_CONFIG: {
-    urgent: { label: "紧急", bars: 4, color: "text-destructive" },
-    high: { label: "高", bars: 3, color: "text-warning" },
-    medium: { label: "中", bars: 2, color: "text-warning" },
-    low: { label: "低", bars: 1, color: "text-info" },
-    none: { label: "无优先级", bars: 0, color: "text-muted-foreground" },
-  },
+const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: Object.assign(
+    (selector?: any) => {
+      const state = { user: mockAuthUser, isAuthenticated: true };
+      return selector ? selector(state) : state;
+    },
+    { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
+  ),
 }));
 
 // Default mock returns hasMore=false so the load-more sentinels render
@@ -258,8 +218,6 @@ vi.mock("@dnd-kit/utilities", () => ({
 const mockIssues: Issue[] = [
   {
     id: "parent-1",
-    workspace_id: "ws-1",
-    number: 1,
     identifier: "PROJ-1",
     title: "Parent Issue 1",
     description: "Parent description",
@@ -280,8 +238,6 @@ const mockIssues: Issue[] = [
   },
   {
     id: "child-1",
-    workspace_id: "ws-1",
-    number: 2,
     identifier: "PROJ-2",
     title: "Child Issue 1",
     description: "Child description",
@@ -302,8 +258,6 @@ const mockIssues: Issue[] = [
   },
   {
     id: "orphan-1",
-    workspace_id: "ws-1",
-    number: 3,
     identifier: "PROJ-3",
     title: "Orphan Issue 1",
     description: "无父 issue",
@@ -325,16 +279,7 @@ const mockIssues: Issue[] = [
 ];
 
 function renderWithI18n(ui: React.ReactNode) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  return render(
-    <QueryClientProvider client={qc}>
-      <I18nProvider resources={TEST_RESOURCES} locale="zh-Hans">
-        {ui}
-      </I18nProvider>
-    </QueryClientProvider>,
-  );
+  return renderIssueTest(ui as React.ReactElement);
 }
 
 describe("SwimLaneView", () => {
@@ -442,8 +387,6 @@ describe("SwimLaneView", () => {
   // A child whose parent isn't in the loaded set — lands in "其他父 issue".
   const orphanChild: Issue = {
     id: "lonely-child",
-    workspace_id: "ws-1",
-    number: 99,
     identifier: "PROJ-99",
     title: "Lonely Child",
     description: null,
@@ -714,8 +657,6 @@ describe("SwimLaneView", () => {
   const multiParentIssues: Issue[] = [
     {
       id: "parent-1",
-      workspace_id: "ws-1",
-      number: 1,
       identifier: "PROJ-1",
       title: "Parent A",
       description: null,
@@ -736,8 +677,6 @@ describe("SwimLaneView", () => {
     },
     {
       id: "parent-2",
-      workspace_id: "ws-1",
-      number: 2,
       identifier: "PROJ-10",
       title: "Parent B",
       description: null,
@@ -758,8 +697,6 @@ describe("SwimLaneView", () => {
     },
     {
       id: "child-of-1",
-      workspace_id: "ws-1",
-      number: 3,
       identifier: "PROJ-2",
       title: "Child of A",
       description: null,
@@ -780,8 +717,6 @@ describe("SwimLaneView", () => {
     },
     {
       id: "child-of-2",
-      workspace_id: "ws-1",
-      number: 4,
       identifier: "PROJ-11",
       title: "Child of B",
       description: null,
@@ -1231,8 +1166,6 @@ describe("SwimLaneView", () => {
     // GP.id (from parent.parent_issue_id) and GC is never fetched.
     const grandparent: Issue = {
       id: "gp-1",
-      workspace_id: "ws-1",
-      number: 10,
       identifier: "PROJ-10",
       title: "Grandparent",
       description: null,
@@ -1254,7 +1187,6 @@ describe("SwimLaneView", () => {
     const parent: Issue = {
       ...grandparent,
       id: "p-1",
-      number: 11,
       identifier: "PROJ-11",
       title: "Parent",
       parent_issue_id: "gp-1",
@@ -1263,7 +1195,6 @@ describe("SwimLaneView", () => {
     const grandchild: Issue = {
       ...grandparent,
       id: "gc-1",
-      number: 12,
       identifier: "PROJ-12",
       title: "Grandchild (batch only)",
       status: "in_progress",
@@ -1304,8 +1235,6 @@ describe("SwimLaneView", () => {
     // grandchildren are discoverable.
     const parentWithUnloadedChildren: Issue = {
       id: "p-only",
-      workspace_id: "ws-1",
-      number: 50,
       identifier: "PROJ-50",
       title: "Standalone parent",
       description: null,
@@ -1384,8 +1313,6 @@ describe("SwimLaneView", () => {
 
     const grandparent: Issue = {
       id: "gp-2",
-      workspace_id: "ws-1",
-      number: 20,
       identifier: "PROJ-20",
       title: "Grandparent 2",
       description: null,
@@ -1407,7 +1334,6 @@ describe("SwimLaneView", () => {
     const parent: Issue = {
       ...grandparent,
       id: "p-2",
-      number: 21,
       identifier: "PROJ-21",
       title: "Parent 2",
       parent_issue_id: "gp-2",
@@ -1416,7 +1342,6 @@ describe("SwimLaneView", () => {
     const matchingGrandchild: Issue = {
       ...grandparent,
       id: "gc-matching",
-      number: 22,
       identifier: "PROJ-22",
       title: "Matching Child (High Priority)",
       status: "in_progress",
@@ -1427,7 +1352,6 @@ describe("SwimLaneView", () => {
     const nonMatchingGrandchild: Issue = {
       ...grandparent,
       id: "gc-non-matching",
-      number: 23,
       identifier: "PROJ-23",
       title: "Non-matching Child (Low Priority)",
       status: "in_progress",
@@ -1477,8 +1401,6 @@ describe("SwimLaneView", () => {
 
     const grandparent: Issue = {
       id: "gp-3",
-      workspace_id: "ws-1",
-      number: 30,
       identifier: "PROJ-30",
       title: "Grandparent 3",
       description: null,
@@ -1500,7 +1422,6 @@ describe("SwimLaneView", () => {
     const parent: Issue = {
       ...grandparent,
       id: "p-3",
-      number: 31,
       identifier: "PROJ-31",
       title: "Parent 3",
       parent_issue_id: "gp-3",
@@ -1509,7 +1430,6 @@ describe("SwimLaneView", () => {
     const runningGrandchild: Issue = {
       ...grandparent,
       id: "gc-running",
-      number: 32,
       identifier: "PROJ-32",
       title: "Running Child",
       status: "in_progress",
@@ -1519,7 +1439,6 @@ describe("SwimLaneView", () => {
     const nonRunningGrandchild: Issue = {
       ...grandparent,
       id: "gc-non-running",
-      number: 33,
       identifier: "PROJ-33",
       title: "Non-running Child",
       status: "in_progress",

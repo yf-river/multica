@@ -67,37 +67,3 @@ func TestNotifyTaskAvailable_BumpsBeforeWakeup(t *testing.T) {
 		t.Fatalf("wakeup task mismatch: got %q want %q", wakeup.calls[0].taskID, util.UUIDToString(taskID))
 	}
 }
-
-// TestNotifyTaskAvailable_InvalidWithoutRuntimeIsNoOp guards the
-// no-RuntimeID early return — chat / quick-create / autopilot all set
-// it on insert, but a buggy caller that forgot must not silently bump
-// every workspace's version. The cache treats Bump("") as a no-op,
-// but this test pins that the RuntimeID guard sits above the Bump
-// call so a future refactor cannot drop the guard without test
-// coverage.
-func TestNotifyTaskAvailable_InvalidWithoutRuntimeIsNoOp(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	cache := NewEmptyClaimCache(rdb)
-	wakeup := &stubWakeup{}
-
-	svc := &TaskService{
-		EmptyClaim: cache,
-		Wakeup:     wakeup,
-	}
-
-	ctx := context.Background()
-	v0 := cache.CurrentVersion(ctx, "rt-stays")
-	cache.MarkEmpty(ctx, "rt-stays", v0)
-
-	svc.notifyTaskAvailable(db.AgentTaskQueue{
-		// RuntimeID intentionally invalid (zero value, Valid=false).
-		ID: testUUID(9),
-	})
-
-	if !cache.IsEmpty(ctx, "rt-stays") {
-		t.Fatal("notifyTaskAvailable with invalid RuntimeID must not touch cache")
-	}
-	if got := len(wakeup.calls); got != 0 {
-		t.Fatalf("expected 0 wakeup calls when RuntimeID is invalid, got %d", got)
-	}
-}

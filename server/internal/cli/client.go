@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -14,34 +15,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ClientVersion is the CLI version sent on every request as X-Client-Version.
 // Set by the multica binary at init() so the package doesn't depend on the
 // concrete cmd package. Defaults to "dev" when running unset (e.g. tests).
 var ClientVersion = "dev"
-
-// ClientPlatform identifies this client to the server. Override for tests
-// or alternative entry points; defaults to "cli".
-var ClientPlatform = "cli"
-
-// ClientOS is the normalized operating system string sent as X-Client-OS.
-// Computed once from runtime.GOOS so the server doesn't need to reverse-map
-// Go's os names ("darwin"/"windows"/"linux") into the protocol vocabulary.
-var ClientOS = normalizeGOOS(runtime.GOOS)
-
-func normalizeGOOS(goos string) string {
-	switch goos {
-	case "darwin":
-		return "macos"
-	case "windows":
-		return "windows"
-	case "linux":
-		return "linux"
-	default:
-		return goos
-	}
-}
 
 // APIClient is a REST client for the Multica server API.
 // Used by ctrl subcommands (agent, runtime, status, etc.). Requests
@@ -54,8 +35,8 @@ type APIClient struct {
 	TaskID      string // When set, sent as X-Task-ID for agent-task validation.
 	HTTPClient  *http.Client
 
-	// Identity overrides. Empty values fall back to the package-level
-	// ClientPlatform / ClientVersion / ClientOS.
+	// Identity overrides. Empty values use CLI/runtime defaults; ClientVersion
+	// remains package-level because the binary injects its build version.
 	Platform string
 	Version  string
 	OS       string
@@ -88,11 +69,8 @@ func newHTTPError(method, path string, resp *http.Response) *HTTPError {
 }
 
 // defaultHTTPTimeout is the per-request timeout for the CLI's HTTP client.
-// It can be overridden with the MULTICA_HTTP_TIMEOUT environment variable
-// (see httpTimeout). 30s is chosen over the historical 15s because complex
-// networks (notably in mainland China) routinely need more than 15s to
-// complete the TLS handshake plus request round-trip, which surfaced as an
-// opaque "context deadline exceeded" to users.
+// It can be overridden with MULTICA_HTTP_TIMEOUT. Thirty seconds accommodates
+// slower TLS handshakes and request round-trips.
 const defaultHTTPTimeout = 30 * time.Second
 
 // httpTimeout returns the HTTP client timeout, honoring MULTICA_HTTP_TIMEOUT.
@@ -122,16 +100,13 @@ const apiContextGrace = 5 * time.Second
 // APITimeout returns the deadline budget for a single CLI API command. It is
 // always at least the configured HTTP transport timeout (see httpTimeout,
 // which honors MULTICA_HTTP_TIMEOUT) plus a small grace margin, so a
-// command-level context never truncates an in-flight request below the timeout
-// the user configured. This is the fix for command contexts that previously
-// hardcoded a 15s deadline shorter than the 30s/env transport timeout.
+// command-level context never truncates the configured transport timeout.
 func APITimeout() time.Duration {
 	return AtLeastAPITimeout(0)
 }
 
 // AtLeastAPITimeout returns max(min, APITimeout()). Use it for commands that
-// need a larger floor than usual (for example file uploads, which historically
-// used a 60s budget).
+// need a larger floor than usual, such as file uploads.
 func AtLeastAPITimeout(min time.Duration) time.Duration {
 	budget := httpTimeout() + apiContextGrace
 	if min > budget {
@@ -177,7 +152,7 @@ func (c *APIClient) setHeaders(req *http.Request) {
 
 	platform := c.Platform
 	if platform == "" {
-		platform = ClientPlatform
+		platform = "cli"
 	}
 	if platform != "" {
 		req.Header.Set("X-Client-Platform", platform)
@@ -191,11 +166,30 @@ func (c *APIClient) setHeaders(req *http.Request) {
 	}
 	osName := c.OS
 	if osName == "" {
-		osName = ClientOS
+		osName = protocol.NormalizeGOOS(runtime.GOOS)
 	}
 	if osName != "" {
 		req.Header.Set("X-Client-OS", osName)
 	}
+}
+
+func (c *APIClient) executeJSON(client *http.Client, req *http.Request, errorPath string, out any) (http.Header, error) {
+	resp, err := client.Do(req)
+	err = wrapTransport(req, err)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		return nil, newHTTPError(req.Method, errorPath, resp)
+	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return resp.Header, err
+		}
+	}
+	return resp.Header, nil
 }
 
 // GetJSON performs a GET request and decodes the JSON response.
@@ -206,26 +200,8 @@ func (c *APIClient) setHeaders(req *http.Request) {
 // given endpoint and degrade gracefully). The error string format
 // ("GET <path> returned <code>: <body>") is preserved by HTTPError.Error().
 func (c *APIClient) GetJSON(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodGet, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	_, err := c.GetJSONWithHeaders(ctx, path, out)
+	return err
 }
 
 // GetJSONWithHeaders performs a GET request, decodes the JSON response, and
@@ -237,23 +213,7 @@ func (c *APIClient) GetJSONWithHeaders(ctx context.Context, path string, out any
 		return nil, err
 	}
 	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return nil, newHTTPError(http.MethodGet, path, resp)
-	}
-	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return resp.Header, err
-		}
-	}
-	return resp.Header, nil
+	return c.executeJSON(c.HTTPClient, req, path, out)
 }
 
 // DeleteJSON performs a DELETE request.
@@ -263,230 +223,158 @@ func (c *APIClient) DeleteJSON(ctx context.Context, path string) error {
 		return err
 	}
 	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodDelete, path, resp)
-	}
-	return nil
+	_, err = c.executeJSON(c.HTTPClient, req, path, nil)
+	return err
 }
 
 // DeleteJSONWithBody performs a DELETE request with a JSON body.
 func (c *APIClient) DeleteJSONWithBody(ctx context.Context, path string, body any) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodDelete, path, resp)
-	}
-	return nil
+	return c.sendJSON(ctx, http.MethodDelete, path, body, "", nil)
 }
 
 // PostJSON performs a POST request with a JSON body.
 func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any) error {
+	return c.sendJSON(ctx, http.MethodPost, path, body, "", out)
+}
+
+// PostJSONWithIdempotencyKey performs a POST for a caller-owned logical
+// operation. Reusing the key lets the server return the committed response
+// when the first response was lost.
+func (c *APIClient) PostJSONWithIdempotencyKey(
+	ctx context.Context,
+	path string,
+	body any,
+	idempotencyKey string,
+	out any,
+) error {
+	if out == nil {
+		err := c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, nil)
+		if err == nil || isHTTPResponseError(err) {
+			return err
+		}
+		return c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, nil)
+	}
+
+	var raw json.RawMessage
+	err := c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, &raw)
+	if err != nil && !isHTTPResponseError(err) {
+		raw = nil
+		err = c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, &raw)
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func isHTTPResponseError(err error) bool {
+	var httpErr *HTTPError
+	return errors.As(err, &httpErr)
+}
+
+// sendJSON is the single transport path for HTTP methods that carry a JSON
+// request body. Public verb-specific helpers keep the caller-facing API small;
+// serialization, identity headers, HTTP error typing and response decoding stay
+// identical across those verbs.
+func (c *APIClient) sendJSON(
+	ctx context.Context,
+	method string,
+	path string,
+	body any,
+	idempotencyKey string,
+	out any,
+) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setHeaders(req)
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodPost, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	_, err = c.executeJSON(c.HTTPClient, req, path, out)
+	return err
 }
 
 // PutJSON performs a PUT request with a JSON body.
 func (c *APIClient) PutJSON(ctx context.Context, path string, body any, out any) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodPut, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return c.sendJSON(ctx, http.MethodPut, path, body, "", out)
 }
 
 // PatchJSON performs a PATCH request with a JSON body.
 func (c *APIClient) PatchJSON(ctx context.Context, path string, body any, out any) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodPatch, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return c.sendJSON(ctx, http.MethodPatch, path, body, "", out)
 }
 
-// AttachmentResponse mirrors the server's upload-file response.
-type AttachmentResponse struct {
-	ID          string `json:"id"`
-	URL         string `json:"url"`
-	DownloadURL string `json:"download_url"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type"`
-	SizeBytes   int64  `json:"size_bytes"`
-	CreatedAt   string `json:"created_at"`
+type uploadResponse struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+func (c *APIClient) uploadFile(ctx context.Context, client *http.Client, fileData []byte, filename, issueID string) (uploadResponse, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return uploadResponse{}, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return uploadResponse{}, fmt.Errorf("write file data: %w", err)
+	}
+
+	if issueID != "" {
+		if err := writer.WriteField("issue_id", issueID); err != nil {
+			return uploadResponse{}, fmt.Errorf("write issue_id field: %w", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return uploadResponse{}, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
+	if err != nil {
+		return uploadResponse{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.setHeaders(req)
+
+	var result uploadResponse
+	if _, err := c.executeJSON(client, req, "/api/upload-file", &result); err != nil {
+		var networkErr *networkError
+		if isHTTPResponseError(err) || errors.As(err, &networkErr) {
+			return uploadResponse{}, err
+		}
+		return uploadResponse{}, fmt.Errorf("decode upload response: %w", err)
+	}
+	return result, nil
 }
 
 // UploadFile uploads a file via multipart form to /api/upload-file.
 // It returns the attachment ID from the server response.
 func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename string, issueID string) (string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
-	if err != nil {
-		return "", fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := part.Write(fileData); err != nil {
-		return "", fmt.Errorf("write file data: %w", err)
-	}
-
-	if issueID != "" {
-		if err := writer.WriteField("issue_id", issueID); err != nil {
-			return "", fmt.Errorf("write issue_id field: %w", err)
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
+	result, err := c.uploadFile(ctx, c.HTTPClient, fileData, filename, issueID)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return "", newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode upload response: %w", err)
-	}
-
-	id, _ := result["id"].(string)
-	if id == "" {
+	if result.ID == "" {
 		return "", fmt.Errorf("upload response missing attachment id")
 	}
-	return id, nil
+	return result.ID, nil
 }
 
 // UploadFileWithURL uploads a file via multipart form to /api/upload-file
-// without associating it with an issue or comment. It decodes the full
-// AttachmentResponse and returns the attachment ID and URL.
+// without associating it with an issue or comment. It returns the attachment
+// ID and URL.
 func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, filename string) (string, string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
-	if err != nil {
-		return "", "", fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := part.Write(fileData); err != nil {
-		return "", "", fmt.Errorf("write file data: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", "", fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	// Use a client that respects the context deadline for slow uploads
-	// (e.g. avatar uploads with 5MB files). The default HTTP client timeout
-	// shadows any longer context deadline.
 	httpClient := c.HTTPClient
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
@@ -496,28 +384,16 @@ func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, file
 			httpClient = &clientCopy
 		}
 	}
-
-	resp, err := httpClient.Do(req)
-	err = wrapTransport(req, err)
+	result, err := c.uploadFile(ctx, httpClient, fileData, filename, "")
 	if err != nil {
 		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return "", "", newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result AttachmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", fmt.Errorf("decode upload response: %w", err)
 	}
 	if result.URL == "" {
 		return "", "", fmt.Errorf("upload response missing attachment url")
 	}
-	// Allow empty ID: the server returns id="" in the fallback path where
-	// S3 upload succeeded but the attachment DB record failed. The file
-	// is still usable via its URL.
+	if result.ID == "" {
+		return "", "", fmt.Errorf("upload response missing attachment id")
+	}
 	return result.ID, result.URL, nil
 }
 
@@ -553,7 +429,7 @@ func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return nil, newHTTPError(http.MethodGet, downloadURL, resp)

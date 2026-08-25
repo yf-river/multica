@@ -5,7 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import { resolvePostAuthDestination, useHasOnboarded } from "@multica/core/paths";
+import { resolvePostAuthDestination } from "@multica/core/paths";
+import { api } from "@multica/core/api";
 import type { Workspace } from "@multica/core/types";
 import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 import { LoginPage, validateCliCallback } from "@multica/views/auth";
@@ -20,16 +21,15 @@ function LoginPageContent() {
   const cliCallbackRaw = searchParams.get("cli_callback");
   const cliState = searchParams.get("cli_state") || "";
   // `next` carries a protected URL the user was originally headed to.
-  // With URL-driven workspaces there is no legacy
-  // "/issues" default — if `next` is absent we decide after login based on
+  // If `next` is absent we decide after login based on
   // the user's workspace list. Sanitize first so a crafted `?next=https://evil`
   // cannot bounce the user off-origin after a successful login.
   const nextUrl = sanitizeNextUrl(searchParams.get("next"));
 
-  const hasOnboarded = useHasOnboarded();
-
+  const [desktopToken, setDesktopToken] = useState<string | null>(null);
+  const [desktopError, setDesktopError] = useState("");
   // Already authenticated — honor ?next= or fall back to first workspace
-  // (or /onboarding if the user has none). Skip this entire path when
+  // (or workspace creation if the user has none). Skip this path when
   // the user arrived to authorize the CLI.
   useEffect(() => {
     if (isLoading || !user || cliCallbackRaw) return;
@@ -38,20 +38,16 @@ function LoginPageContent() {
       return;
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    router.replace(resolvePostAuthDestination(list, hasOnboarded));
-  }, [isLoading, user, router, nextUrl, cliCallbackRaw, hasOnboarded, qc]);
+    router.replace(resolvePostAuthDestination(list));
+  }, [isLoading, user, router, nextUrl, cliCallbackRaw, isDesktopHandoff, qc, t]);
 
   const handleSuccess = async () => {
-    // Read the latest user snapshot directly — the closure's `hasOnboarded`
-    // was captured before login completed and would be stale here.
-    const currentUser = useAuthStore.getState().user;
-    const onboarded = currentUser?.onboarded_at != null;
     if (nextUrl) {
       router.push(nextUrl);
       return;
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    router.push(resolvePostAuthDestination(list, onboarded));
+    router.push(resolvePostAuthDestination(list));
   };
 
   return (

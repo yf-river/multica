@@ -10,6 +10,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { api } from "@multica/core/api";
 import type { AgentTask } from "@multica/core/types/agent";
+import { INTERNAL_NAVIGATION_EVENT } from "../../navigation/internal-navigation";
 import { AgentTranscriptDialog } from "./agent-transcript-dialog";
 import { buildTimeline, type TimelineItem } from "./build-timeline";
 
@@ -88,9 +89,9 @@ export function TranscriptButton({
       setOpen(false);
     };
 
-    window.addEventListener("multica:navigate", handleGlobalNavigate);
+    window.addEventListener(INTERNAL_NAVIGATION_EVENT, handleGlobalNavigate);
     return () => {
-      window.removeEventListener("multica:navigate", handleGlobalNavigate);
+      window.removeEventListener(INTERNAL_NAVIGATION_EVENT, handleGlobalNavigate);
     };
   }, [open]);
 

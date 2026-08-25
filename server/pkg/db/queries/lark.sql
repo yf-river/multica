@@ -1,6 +1,4 @@
--- Lark (飞书) Bot integration queries. The current schema baseline defines
--- these tables; the architectural boundaries the package enforces on top are
--- documented in server/internal/integrations/lark/doc.go.
+-- Lark (飞书) Bot integration queries.
 --
 -- Scoping convention: every public-facing read goes through a
 -- workspace-scoped variant where one exists. The lookups that take only
@@ -37,7 +35,6 @@ ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     installed_at         = now(),
     updated_at           = now()
 RETURNING *;
-
 -- name: GetLarkInstallation :one
 SELECT * FROM lark_installation WHERE id = $1;
 
@@ -118,19 +115,17 @@ WHERE id = $1
 --      caller (lark.BindingTokenService.RedeemAndBind) translates
 --      that into ErrBindingAlreadyAssigned.
 --
--- The same-user case still updates metadata (union_id refresh,
--- bound_at bump) so an idempotent re-bind by the original user
--- continues to work; only a cross-user re-assignment is rejected.
+-- The same-user case is an idempotent no-op that still returns the existing
+-- row; only a cross-user re-assignment is rejected.
 -- True account changes must go through an explicit unbind flow, not
 -- through a binding token.
 INSERT INTO lark_user_binding (
-    workspace_id, multica_user_id, installation_id, lark_open_id, union_id
+    workspace_id, multica_user_id, installation_id, lark_open_id
 ) VALUES (
-    $1, $2, $3, $4, sqlc.narg('union_id')
+    $1, $2, $3, $4
 )
 ON CONFLICT (installation_id, lark_open_id) DO UPDATE SET
-    union_id = COALESCE(EXCLUDED.union_id, lark_user_binding.union_id),
-    bound_at = now()
+    multica_user_id = EXCLUDED.multica_user_id
 WHERE lark_user_binding.multica_user_id = EXCLUDED.multica_user_id
 RETURNING *;
 
@@ -141,10 +136,6 @@ RETURNING *;
 -- existence is itself the membership proof).
 SELECT * FROM lark_user_binding
 WHERE installation_id = $1 AND lark_open_id = $2;
-
--- =====================
--- lark_chat_session_binding
--- =====================
 
 -- name: CreateLarkChatSessionBinding :one
 INSERT INTO lark_chat_session_binding (
@@ -256,10 +247,6 @@ WHERE installation_id = $1
   AND claim_token = $3
   AND processed_at IS NULL;
 
--- =====================
--- lark_inbound_audit
--- =====================
-
 -- name: RecordLarkInboundDrop :exec
 -- The ONLY write path for events that fail identity check or the
 -- group-mention filter. Deliberately accepts no body column — the
@@ -276,30 +263,6 @@ INSERT INTO lark_inbound_audit (
     sqlc.narg('lark_message_id'),
     $2
 );
-
--- =====================
--- lark_outbound_card_message
--- =====================
-
--- name: CreateLarkOutboundCardMessage :one
-INSERT INTO lark_outbound_card_message (
-    chat_session_id, task_id, lark_chat_id, lark_card_message_id, status
-) VALUES (
-    $1, sqlc.narg('task_id'), $2, $3, $4
-)
-RETURNING *;
-
--- name: GetLarkOutboundCardByTask :one
--- Most card patches arrive keyed by task_id (we're streaming an agent
--- run's output). The partial unique index on (task_id) WHERE task_id IS
--- NOT NULL guarantees this returns at most one row.
-SELECT * FROM lark_outbound_card_message
-WHERE task_id = $1;
-
--- name: UpdateLarkOutboundCardStatus :exec
-UPDATE lark_outbound_card_message
-SET status = $2
-WHERE id = $1;
 
 -- =====================
 -- lark_binding_token
@@ -319,12 +282,16 @@ INSERT INTO lark_binding_token (
 )
 RETURNING *;
 
--- name: ConsumeLarkBindingToken :one
--- Atomic redemption. Returns the row only if (a) the hash exists, (b)
--- it has not been consumed, and (c) it has not expired. The UPDATE +
--- RETURNING pattern guarantees that two simultaneous redemptions of
--- the same token cannot both succeed — exactly one row update wins,
--- the other sees zero rows.
+-- name: LockLarkBindingToken :one
+-- Serialize first redemption and committed-response replay. The service
+-- distinguishes an unused token from one already consumed by the same
+-- authenticated Multica user; callers never receive the hash or row.
+SELECT * FROM lark_binding_token
+WHERE token_hash = $1
+FOR UPDATE;
+
+-- name: MarkLarkBindingTokenConsumed :one
+-- First redemption remains constrained by both single-use and expiry.
 UPDATE lark_binding_token
 SET consumed_at = now()
 WHERE token_hash = $1

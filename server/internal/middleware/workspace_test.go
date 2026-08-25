@@ -2,20 +2,19 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const testResolverSlug = "middleware-resolver-test"
 
-// openPool returns a connected pgxpool, or skips the test if the database is
-// unreachable. Mirrors the handler package's fixture approach so tests don't
-// require a DB in environments where one isn't available.
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL := os.Getenv("DATABASE_URL")
@@ -33,12 +32,9 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// setupResolverFixture inserts a workspace with a known slug and returns its
-// UUID. The caller is responsible for calling the returned cleanup func.
-func setupResolverFixture(t *testing.T, pool *pgxpool.Pool) (workspaceID string, cleanup func()) {
+func setupResolverFixture(t *testing.T, pool *pgxpool.Pool) (workspaceID string) {
 	t.Helper()
 	ctx := context.Background()
-	// Pre-cleanup in case a previous run didn't finish.
 	_, _ = pool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, testResolverSlug)
 
 	if err := pool.QueryRow(ctx,
@@ -47,23 +43,18 @@ func setupResolverFixture(t *testing.T, pool *pgxpool.Pool) (workspaceID string,
 	).Scan(&workspaceID); err != nil {
 		t.Fatalf("insert workspace: %v", err)
 	}
-	return workspaceID, func() {
+	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, testResolverSlug)
-	}
+	})
+	return workspaceID
 }
 
-// TestResolveWorkspaceIDFromRequest pins down the priority order of the
-// shared resolver. Every handler-level lookup of workspace identity — whether
-// a route sits inside or outside the workspace middleware — must produce
-// identical results, in the same priority, across all five supported
-// mechanisms. Breaking any row here is a behavioral regression.
 func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 	pool := openPool(t)
 	defer pool.Close()
 	queries := db.New(pool)
 
-	workspaceID, cleanup := setupResolverFixture(t, pool)
-	defer cleanup()
+	workspaceID := setupResolverFixture(t, pool)
 
 	const (
 		uuidA = "00000000-0000-0000-0000-000000000001"
@@ -79,7 +70,7 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 		{
 			name: "context UUID wins over everything else",
 			setup: func(r *http.Request) {
-				ctx := context.WithValue(r.Context(), ctxKeyWorkspaceID, uuidA)
+				ctx := requestctx.WithWorkspace(r.Context(), uuidA, db.Member{})
 				*r = *r.WithContext(ctx)
 				r.Header.Set("X-Workspace-Slug", testResolverSlug)
 				r.Header.Set("X-Workspace-ID", uuidB)
@@ -94,7 +85,7 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 			want: workspaceID,
 		},
 		{
-			name: "X-Workspace-Slug wins over X-Workspace-ID (post-refactor priority)",
+			name: "X-Workspace-Slug wins over X-Workspace-ID",
 			setup: func(r *http.Request) {
 				r.Header.Set("X-Workspace-Slug", testResolverSlug)
 				r.Header.Set("X-Workspace-ID", uuidB)
@@ -102,21 +93,12 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 			want: workspaceID,
 		},
 		{
-			name: "unknown X-Workspace-Slug falls through to UUID header",
+			name: "unknown X-Workspace-Slug does not fall through to another identity",
 			setup: func(r *http.Request) {
 				r.Header.Set("X-Workspace-Slug", "does-not-exist")
 				r.Header.Set("X-Workspace-ID", uuidB)
 			},
-			want: uuidB,
-		},
-		{
-			name: "?workspace_slug query resolves to UUID via DB lookup",
-			setup: func(r *http.Request) {
-				q := r.URL.Query()
-				q.Set("workspace_slug", testResolverSlug)
-				r.URL.RawQuery = q.Encode()
-			},
-			want: workspaceID,
+			wantEmpty: true,
 		},
 		{
 			name: "X-Workspace-ID header is returned when no slug provided",
@@ -126,13 +108,14 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 			want: uuidA,
 		},
 		{
-			name: "?workspace_id query is the last-resort fallback",
+			name: "query parameters cannot select a workspace",
 			setup: func(r *http.Request) {
 				q := r.URL.Query()
-				q.Set("workspace_id", uuidA)
+				q.Set("workspace", testResolverSlug)
+				q.Set("tenant_id", uuidA)
 				r.URL.RawQuery = q.Encode()
 			},
-			want: uuidA,
+			wantEmpty: true,
 		},
 		{
 			name:      "no identifier at all returns empty",
@@ -147,24 +130,11 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 			wantEmpty: true,
 		},
 		{
-			// MUL-2600: a mat_ task token authenticates the request and
-			// the auth middleware writes the token-bound workspace into
-			// X-Workspace-ID along with X-Actor-Source=task_token. Any
-			// other workspace identifier the agent puts on the wire — a
-			// slug pointing at a sibling workspace, a different
-			// workspace_id — must be ignored. Otherwise an agent could
-			// route owner-token traffic at any workspace its host is
-			// also a member of.
 			name: "task_token actor: client-supplied slug/id cannot override token-bound workspace",
 			setup: func(r *http.Request) {
 				r.Header.Set("X-Actor-Source", "task_token")
 				r.Header.Set("X-Workspace-ID", uuidA)
-				// All of these should be ignored under task_token.
 				r.Header.Set("X-Workspace-Slug", testResolverSlug)
-				q := r.URL.Query()
-				q.Set("workspace_slug", testResolverSlug)
-				q.Set("workspace_id", uuidB)
-				r.URL.RawQuery = q.Encode()
 			},
 			want: uuidA,
 		},
@@ -185,6 +155,38 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestResolveWorkspaceUUIDUsesCurrentHeaders(t *testing.T) {
+	pool := openPool(t)
+	defer pool.Close()
+	queries := db.New(pool)
+	workspaceID := setupResolverFixture(t, pool)
+	resolve := resolveWorkspaceUUID(queries)
+
+	tests := []struct {
+		name    string
+		url     string
+		slug    string
+		id      string
+		want    string
+		wantErr error
+	}{
+		{name: "query identity is ignored", url: "/api/anything?workspace=" + testResolverSlug + "&tenant_id=00000000-0000-0000-0000-000000000001"},
+		{name: "unknown slug does not fall through", url: "/api/anything", slug: "does-not-exist", id: "00000000-0000-0000-0000-000000000001", wantErr: errWorkspaceNotFound},
+		{name: "current slug resolves", url: "/api/anything", slug: testResolverSlug, id: "00000000-0000-0000-0000-000000000001", want: workspaceID},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.url, nil)
+			request.Header.Set("X-Workspace-Slug", test.slug)
+			request.Header.Set("X-Workspace-ID", test.id)
+			got, err := resolve(request)
+			if !errors.Is(err, test.wantErr) || got != test.want {
+				t.Fatalf("resolve = %q, err=%v; want %q, err=%v", got, err, test.want, test.wantErr)
 			}
 		})
 	}

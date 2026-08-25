@@ -74,70 +74,31 @@ func (q *Queries) CancelPromptEvaluationRun(ctx context.Context, arg CancelPromp
 	return i, err
 }
 
-const createPromptEvaluationRun = `-- name: CreatePromptEvaluationRun :one
+const createPromptEvaluationRunWithID = `-- name: CreatePromptEvaluationRunWithID :one
 INSERT INTO prompt_evaluation_run (
-    workspace_id,
-    asset_id,
-    prompt_id,
-    run_kind,
-    status,
-    trigger_source,
-    agent_id,
-    runtime_id,
-    task_id,
-    chat_session_id,
-    model,
-    runtime_provider,
-    total_cases,
-    passed_cases,
-    failed_cases,
-    pass_rate,
-    total_duration_ms,
-    average_duration_ms,
-    input_tokens,
-    output_tokens,
-    estimated_cost,
-    failure_reason,
-    conclusion,
-    metrics,
-    evidence,
-    started_at,
-    completed_at,
+    id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+    agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+    total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+    average_duration_ms, input_tokens, output_tokens, estimated_cost,
+    failure_reason, conclusion, metrics, evidence, started_at, completed_at,
     created_by
 ) VALUES (
-    $1,
-    $2,
-    $14,
-    $3,
-    $4,
-    COALESCE($15, '手动'),
-    $16,
-    $17,
-    $18,
-    $19,
-    COALESCE($20, ''),
-    COALESCE($21, ''),
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    COALESCE($22, ''),
-    COALESCE($23, ''),
-    COALESCE($24::jsonb, '{}'::jsonb),
+    $1, $2, $3, $15, $4, $5,
+    COALESCE($16, '手动'), $17,
+    $18, $19, $20,
+    COALESCE($21, ''), COALESCE($22, ''),
+    $6, $7, $8, $9, $10, $11, $12, $13, $14,
+    COALESCE($23, ''), COALESCE($24, ''),
     COALESCE($25::jsonb, '{}'::jsonb),
-    COALESCE($26, now()),
-    $27,
-    $28
+    COALESCE($26::jsonb, '{}'::jsonb),
+    COALESCE($27, now()), $28,
+    $29
 )
 RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
 `
 
-type CreatePromptEvaluationRunParams struct {
+type CreatePromptEvaluationRunWithIDParams struct {
+	ID                pgtype.UUID        `json:"id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
 	AssetID           pgtype.UUID        `json:"asset_id"`
 	RunKind           string             `json:"run_kind"`
@@ -168,8 +129,9 @@ type CreatePromptEvaluationRunParams struct {
 	CreatedBy         pgtype.UUID        `json:"created_by"`
 }
 
-func (q *Queries) CreatePromptEvaluationRun(ctx context.Context, arg CreatePromptEvaluationRunParams) (PromptEvaluationRun, error) {
-	row := q.db.QueryRow(ctx, createPromptEvaluationRun,
+func (q *Queries) CreatePromptEvaluationRunWithID(ctx context.Context, arg CreatePromptEvaluationRunWithIDParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, createPromptEvaluationRunWithID,
+		arg.ID,
 		arg.WorkspaceID,
 		arg.AssetID,
 		arg.RunKind,
@@ -442,7 +404,6 @@ WITH filtered_assets AS (
     SELECT pea.id, pea.workspace_id, pea.prompt_id, pea.name, pea.description, pea.asset_type, pea.payload, pea.status, pea.created_by, pea.created_at, pea.updated_at, pea.structure_schema, pea.structured_case_count, pea.structured_variable_count, pea.structured_assertion_count, pea.linked_dataset_count, pea.linked_prompt_count, pea.evaluation_dimension_count, pea.dataset_row_count, pea.test_suite_case_count, pea.experiment_dimension_count
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
-      AND ($2::boolean OR TRUE)
 ),
 asset_summary AS (
     SELECT
@@ -450,8 +411,6 @@ asset_summary AS (
         COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_assets,
         COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
         COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
-        COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
-        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets,
         COALESCE(SUM(structured_case_count), 0)::bigint AS asset_profile_cases,
         COALESCE(SUM(structured_variable_count), 0)::bigint AS asset_profile_variables,
         COALESCE(SUM(structured_assertion_count), 0)::bigint AS asset_profile_assertions,
@@ -474,7 +433,7 @@ case_summary AS (
 run_summary AS (
     SELECT
         COUNT(*)::bigint AS total_runs,
-        COUNT(*) FILTER (WHERE per.run_kind = '本地渲染')::bigint AS local_runs,
+        COUNT(*) FILTER (WHERE per.run_kind = '模板渲染检查')::bigint AS local_runs,
         COUNT(*) FILTER (WHERE per.run_kind = 'Agent执行')::bigint AS agent_runs,
         COUNT(*) FILTER (WHERE per.status = '已入队')::bigint AS queued_runs,
         COUNT(*) FILTER (WHERE per.status = '运行中')::bigint AS running_runs,
@@ -495,7 +454,7 @@ run_summary AS (
     FROM prompt_evaluation_run per
     JOIN filtered_assets pea ON pea.id = per.asset_id
     WHERE per.workspace_id = $1
-      AND ($3::timestamptz IS NULL OR per.created_at >= $3)
+      AND ($2::timestamptz IS NULL OR per.created_at >= $2)
 ),
 candidate_summary AS (
     SELECT
@@ -506,8 +465,7 @@ candidate_summary AS (
     FROM prompt_evaluation_optimization_candidate peoc
     JOIN filtered_assets pea ON pea.id = peoc.asset_id
     WHERE peoc.workspace_id = $1
-      AND ($3::timestamptz IS NULL OR peoc.created_at >= $3)
-      AND ($2::boolean OR TRUE)
+      AND ($2::timestamptz IS NULL OR peoc.created_at >= $2)
 ),
 snapshot_summary AS (
     SELECT
@@ -517,15 +475,13 @@ snapshot_summary AS (
     JOIN prompt_evaluation_run per ON per.id = pees.run_id
     JOIN filtered_assets pea ON pea.id = per.asset_id
     WHERE pees.workspace_id = $1
-      AND ($3::timestamptz IS NULL OR pees.created_at >= $3)
+      AND ($2::timestamptz IS NULL OR pees.created_at >= $2)
 )
 SELECT
     a.total_assets,
     a.active_assets,
     a.dataset_assets,
     a.test_suite_assets,
-    a.experiment_assets,
-    a.optimization_assets,
     a.asset_profile_cases,
     a.asset_profile_variables,
     a.asset_profile_assertions,
@@ -574,9 +530,8 @@ CROSS JOIN snapshot_summary es
 `
 
 type GetPromptEvaluationSummaryParams struct {
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	IncludeAcceptanceFixtures bool               `json:"include_acceptance_fixtures"`
-	Since                     pgtype.Timestamptz `json:"since"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
 }
 
 type GetPromptEvaluationSummaryRow struct {
@@ -584,8 +539,6 @@ type GetPromptEvaluationSummaryRow struct {
 	ActiveAssets               int64              `json:"active_assets"`
 	DatasetAssets              int64              `json:"dataset_assets"`
 	TestSuiteAssets            int64              `json:"test_suite_assets"`
-	ExperimentAssets           int64              `json:"experiment_assets"`
-	OptimizationAssets         int64              `json:"optimization_assets"`
 	AssetProfileCases          int64              `json:"asset_profile_cases"`
 	AssetProfileVariables      int64              `json:"asset_profile_variables"`
 	AssetProfileAssertions     int64              `json:"asset_profile_assertions"`
@@ -626,15 +579,13 @@ type GetPromptEvaluationSummaryRow struct {
 }
 
 func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptEvaluationSummaryParams) (GetPromptEvaluationSummaryRow, error) {
-	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, arg.WorkspaceID, arg.IncludeAcceptanceFixtures, arg.Since)
+	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, arg.WorkspaceID, arg.Since)
 	var i GetPromptEvaluationSummaryRow
 	err := row.Scan(
 		&i.TotalAssets,
 		&i.ActiveAssets,
 		&i.DatasetAssets,
 		&i.TestSuiteAssets,
-		&i.ExperimentAssets,
-		&i.OptimizationAssets,
 		&i.AssetProfileCases,
 		&i.AssetProfileVariables,
 		&i.AssetProfileAssertions,
@@ -805,6 +756,60 @@ func (q *Queries) ListPromptEvaluationTrialsByRun(ctx context.Context, arg ListP
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPromptEvaluationRun = `-- name: LockPromptEvaluationRun :one
+SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at FROM prompt_evaluation_run
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockPromptEvaluationRunParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockPromptEvaluationRun(ctx context.Context, arg LockPromptEvaluationRunParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, lockPromptEvaluationRun, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+	)
+	return i, err
 }
 
 const markPromptEvaluationReviewTrialsByRun = `-- name: MarkPromptEvaluationReviewTrialsByRun :exec

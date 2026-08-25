@@ -110,13 +110,10 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	m.RecordLLMUsage("issue", "local", "codex", "gpt-5.4", 1, 1, 1, 1)
 	m.RecordLLMUsage("issue", "local", "custom-provider", "custom-model", 1, 0, 0, 0)
 
-	// PR3 funnel / community / commercial events. Drive every counter
+	// Drive every event counter
 	// with one synthetic value so the gather loop below sees the family.
 	exerciseEvent(m, analytics.EventSignup, nil)
 	exerciseEvent(m, analytics.EventWorkspaceCreated, map[string]any{"source": "manual"})
-	exerciseEvent(m, analytics.EventOnboardingStarted, map[string]any{"platform": "web"})
-	exerciseEvent(m, analytics.EventOnboardingQuestionnaireSubmit, nil)
-	exerciseEvent(m, analytics.EventOnboardingCompleted, map[string]any{"completion_path": "full"})
 	exerciseEvent(m, analytics.EventIssueCreated, map[string]any{"source": "manual", "platform": "web"})
 	exerciseEvent(m, analytics.EventChatMessageSent, map[string]any{"platform": "web"})
 	exerciseEvent(m, analytics.EventAgentCreated, map[string]any{"runtime_mode": "local", "source": "manual"})
@@ -135,9 +132,6 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	// Direct Record* helpers (no PostHog event source).
 	m.RecordAutopilotRunSkipped("manual", "throttled")
 	m.RecordWebhookDelivery("github", "dispatched")
-	m.RecordGithubEventReceived("pull_request", "opened")
-	m.RecordGithubPRReview("approved")
-	m.ObserveGithubPRMergeSeconds(120)
 	m.RecordDaemonWSMessageReceived("heartbeat")
 
 	families, err := registry.Gather()

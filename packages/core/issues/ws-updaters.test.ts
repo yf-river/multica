@@ -23,9 +23,7 @@ import type {
   Attachment,
   Issue,
   IssueReaction,
-  IssueLabelsResponse,
   IssueSubscriber,
-  IssueUsageSummary,
   Label,
   ListIssuesCache,
   TimelineEntry,
@@ -40,26 +38,18 @@ const PROJECT_ID = "project-1";
 
 const labelA: Label = {
   id: "label-a",
-  workspace_id: WS_ID,
   name: "bug",
   color: "#ef4444",
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
 };
 
 const labelB: Label = {
   id: "label-b",
-  workspace_id: WS_ID,
   name: "feature",
   color: "#22c55e",
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
 };
 
 const baseIssue: Issue = {
   id: ISSUE_ID,
-  workspace_id: WS_ID,
-  number: 1,
   identifier: "MUL-1",
   title: "Test",
   description: null,
@@ -107,7 +97,6 @@ function makeTask(issueId = ISSUE_ID): AgentTask {
     runtime_id: "runtime-1",
     issue_id: issueId,
     status: "completed",
-    priority: 0,
     dispatched_at: null,
     started_at: "2025-01-01T00:00:00Z",
     completed_at: "2025-01-01T00:01:00Z",
@@ -129,15 +118,13 @@ describe("onIssueLabelsChanged", () => {
   });
 
   it("patches the per-issue label cache when present (LabelPicker source)", () => {
-    qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(WS_ID, ISSUE_ID), {
-      labels: [labelA],
-    });
+    qc.setQueryData<Label[]>(labelKeys.byIssue(WS_ID, ISSUE_ID), [labelA]);
 
     onIssueLabelsChanged(qc, WS_ID, ISSUE_ID, [labelB]);
 
     expect(
-      qc.getQueryData<IssueLabelsResponse>(labelKeys.byIssue(WS_ID, ISSUE_ID)),
-    ).toEqual({ labels: [labelB] });
+      qc.getQueryData<Label[]>(labelKeys.byIssue(WS_ID, ISSUE_ID)),
+    ).toEqual([labelB]);
   });
 
   it("leaves the per-issue label cache untouched when the picker has not fetched", () => {
@@ -310,59 +297,37 @@ describe("onIssueDeleted", () => {
     qc.setQueryData<IssueReaction[]>(issueKeys.reactions(ISSUE_ID), [
       {
         id: "reaction-1",
-        issue_id: ISSUE_ID,
         actor_type: "member",
         actor_id: "user-1",
         emoji: "+1",
-        created_at: "2025-01-01T00:00:00Z",
       },
     ]);
     qc.setQueryData<IssueSubscriber[]>(issueKeys.subscribers(ISSUE_ID), [
       {
-        issue_id: ISSUE_ID,
         user_type: "member",
         user_id: "user-1",
-        reason: "manual",
-        created_at: "2025-01-01T00:00:00Z",
       },
     ]);
-    qc.setQueryData<IssueUsageSummary>(issueKeys.usage(ISSUE_ID), {
-      total_input_tokens: 10,
-      total_output_tokens: 20,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      task_count: 1,
-    });
     qc.setQueryData<Attachment[]>(issueKeys.attachments(ISSUE_ID), [
       {
         id: "attachment-1",
-        workspace_id: WS_ID,
-        issue_id: ISSUE_ID,
-        comment_id: null,
-        chat_session_id: null,
-        chat_message_id: null,
-        uploader_type: "member",
-        uploader_id: "user-1",
         filename: "evidence.png",
         url: "s3://bucket/evidence.png",
         download_url: "https://example.test/evidence.png",
         markdown_url: "https://example.test/api/attachments/att-1/download",
         content_type: "image/png",
         size_bytes: 1,
-        created_at: "2025-01-01T00:00:00Z",
       },
     ]);
     qc.setQueryData<AgentTask[]>(issueKeys.tasks(ISSUE_ID), [makeTask()]);
     qc.setQueryData<Issue[]>(issueKeys.children(WS_ID, ISSUE_ID), [otherIssue]);
-    qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(WS_ID, ISSUE_ID), {
-      labels: [labelA],
-    });
+    qc.setQueryData<Label[]>(labelKeys.byIssue(WS_ID, ISSUE_ID), [labelA]);
 
     qc.setQueryData<Issue>(issueKeys.detail(WS_ID, OTHER_ISSUE_ID), otherIssue);
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(OTHER_ISSUE_ID), []);
-    qc.setQueryData<IssueLabelsResponse>(
+    qc.setQueryData<Label[]>(
       labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID),
-      { labels: [labelB] },
+      [labelB],
     );
 
     onIssueDeleted(qc, WS_ID, ISSUE_ID);
@@ -371,7 +336,6 @@ describe("onIssueDeleted", () => {
     expect(qc.getQueryData(issueKeys.timeline(ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.reactions(ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.subscribers(ISSUE_ID))).toBeUndefined();
-    expect(qc.getQueryData(issueKeys.usage(ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.attachments(ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.tasks(ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.children(WS_ID, ISSUE_ID))).toBeUndefined();
@@ -381,9 +345,9 @@ describe("onIssueDeleted", () => {
       otherIssue,
     );
     expect(qc.getQueryData(issueKeys.timeline(OTHER_ISSUE_ID))).toEqual([]);
-    expect(qc.getQueryData(labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID))).toEqual({
-      labels: [labelB],
-    });
+    expect(qc.getQueryData(labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID))).toEqual([
+      labelB,
+    ]);
   });
 
   it("removes the deleted issue from workspace and my-issues list caches immediately", () => {
@@ -553,7 +517,7 @@ describe("project gantt cache invalidation", () => {
   it("invalidates the project Gantt cache on issue:updated", () => {
     onIssueUpdated(qc, WS_ID, {
       id: ISSUE_ID,
-      start_date: "2026-01-01T00:00:00Z",
+      start_date: "2026-01-01",
     });
     expectInvalidated(qc, issueKeys.projectGantt(WS_ID, PROJECT_ID));
   });

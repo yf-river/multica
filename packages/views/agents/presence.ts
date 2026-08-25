@@ -34,7 +34,7 @@ import type { AgentAvailability, Workload } from "@multica/core/agents";
 // — those are historical context, surfaced via Recent Work + Inbox, not
 // list-level summary state.
 
-export interface AvailabilityVisual {
+interface AvailabilityVisual {
   label: string;
   // Background fill for the dot indicator.
   dotClass: string;
@@ -74,7 +74,7 @@ export const availabilityConfig: Record<AgentAvailability, AvailabilityVisual> =
   },
 };
 
-export interface WorkloadVisual {
+interface WorkloadVisual {
   label: string;
   // Foreground colour for icon + label text.
   textClass: string;

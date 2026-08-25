@@ -17,18 +17,13 @@ const (
 	labelModel          = "model"
 	labelModelAlias     = "model_alias"
 
-	// PR3 labels (team usage and runtime observability).
 	labelPlatform    = "platform"
-	labelPath        = "path"
 	labelCadence     = "cadence"
 	labelTriggerKind = "trigger_kind"
 	labelReason      = "reason"
 	labelRecoverable = "recoverable"
 	labelKind        = "kind"
 	labelStatus      = "status"
-	labelEventKind   = "event_kind"
-	labelAction      = "action"
-	labelResult      = "result"
 	labelOp          = "op"
 )
 
@@ -50,31 +45,25 @@ var businessMetricLabels = map[string][]string{
 	"multica_task_queued_expired_total":     {labelSource, labelRuntimeMode},
 	"multica_task_lease_expired_total":      {labelSource},
 
-	// PR3 funnel / community / commercial.
-	"multica_signup_total":                             {},
-	"multica_workspace_created_total":                  {labelSource},
-	"multica_onboarding_started_total":                 {labelPlatform},
-	"multica_onboarding_questionnaire_submitted_total": {},
-	"multica_onboarding_completed_total":               {labelPath},
-	"multica_issue_created_total":                      {labelSource, labelPlatform},
-	"multica_chat_message_sent_total":                  {labelPlatform},
-	"multica_agent_created_total":                      {labelRuntimeMode, labelSource},
-	"multica_squad_created_total":                      {},
-	"multica_autopilot_created_total":                  {labelCadence},
-	"multica_issue_executed_total":                     {labelSource},
-	"multica_runtime_registered_total":                 {labelRuntimeMode, labelProvider},
-	"multica_runtime_ready_total":                      {labelRuntimeMode, labelProvider},
-	"multica_runtime_ready_seconds":                    {labelRuntimeMode, labelProvider},
-	"multica_runtime_failed_total":                     {labelRuntimeMode, labelProvider, labelFailureReason, labelRecoverable},
-	"multica_runtime_offline_total":                    {labelRuntimeMode, labelProvider},
-	"multica_daemon_ws_message_received_total":         {labelKind},
-	"multica_autopilot_run_started_total":              {labelCadence, labelTriggerKind},
-	"multica_autopilot_run_terminal_total":             {labelCadence, labelTriggerKind, labelTerminalStatus},
-	"multica_autopilot_run_skipped_total":              {labelCadence, labelReason},
-	"multica_webhook_delivery_total":                   {labelProvider, labelStatus},
-	"multica_github_event_received_total":              {labelEventKind, labelAction},
-	"multica_github_pr_review_total":                   {labelResult},
-	"multica_feedback_submitted_total":                 {labelKind, labelPlatform},
+	"multica_signup_total":                     {},
+	"multica_workspace_created_total":          {labelSource},
+	"multica_issue_created_total":              {labelSource, labelPlatform},
+	"multica_chat_message_sent_total":          {labelPlatform},
+	"multica_agent_created_total":              {labelRuntimeMode, labelSource},
+	"multica_squad_created_total":              {},
+	"multica_autopilot_created_total":          {labelCadence},
+	"multica_issue_executed_total":             {labelSource},
+	"multica_runtime_registered_total":         {labelRuntimeMode, labelProvider},
+	"multica_runtime_ready_total":              {labelRuntimeMode, labelProvider},
+	"multica_runtime_ready_seconds":            {labelRuntimeMode, labelProvider},
+	"multica_runtime_failed_total":             {labelRuntimeMode, labelProvider, labelFailureReason, labelRecoverable},
+	"multica_runtime_offline_total":            {labelRuntimeMode, labelProvider},
+	"multica_daemon_ws_message_received_total": {labelKind},
+	"multica_autopilot_run_started_total":      {labelCadence, labelTriggerKind},
+	"multica_autopilot_run_terminal_total":     {labelCadence, labelTriggerKind, labelTerminalStatus},
+	"multica_autopilot_run_skipped_total":      {labelCadence, labelReason},
+	"multica_webhook_delivery_total":           {labelProvider, labelStatus},
+	"multica_feedback_submitted_total":         {labelKind, labelPlatform},
 }
 
 var forbiddenMetricLabels = map[string]struct{}{
@@ -88,58 +77,62 @@ var forbiddenMetricLabels = map[string]struct{}{
 	"ip":           {},
 }
 
+type labelNormalizer struct {
+	allowed  map[string]struct{}
+	fallback string
+}
+
+func newLabelNormalizer(fallback string, values ...string) labelNormalizer {
+	allowed := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		allowed[value] = struct{}{}
+	}
+	return labelNormalizer{allowed: allowed, fallback: fallback}
+}
+
+func (n labelNormalizer) normalize(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := n.allowed[value]; ok {
+		return value
+	}
+	return n.fallback
+}
+
 var (
-	knownSources = map[string]string{
-		"issue":           "issue",
-		"chat":            "chat",
-		"autopilot":       "autopilot",
-		"autopilot_issue": "autopilot_issue",
-		"quick_create":    "quick_create",
-		"manual":          "manual",
-		"api":             "api",
-		"other":           "other",
-	}
-	knownRuntimeModes = map[string]string{
-		"local":   "local",
-		"cloud":   "cloud",
-		"unknown": "unknown",
-	}
-	knownRuntimeProviders = map[string]string{
-		"antigravity":   "antigravity",
-		"claude":        "claude",
-		"codebuddy":     "codebuddy",
-		"codex":         "codex",
-		"copilot":       "copilot",
-		"cursor":        "cursor",
-		"gemini":        "gemini",
-		"hermes":        "hermes",
-		"kiro":          "kiro",
-		"kimi":          "kimi",
-		"multica_agent": "multica_agent",
-		"opencode":      "opencode",
-		"pi":            "pi",
-		"other":         "other",
-	}
-	knownTerminalStatuses = map[string]string{
-		"completed": "completed",
-		"failed":    "failed",
-		"cancelled": "cancelled",
-		"blocked":   "blocked",
-		"other":     "other",
-	}
-	knownTokenTypes = map[string]string{
-		"input":       "input",
-		"output":      "output",
-		"cache_read":  "cache_read",
-		"cache_write": "cache_write",
-	}
-	knownFailureReasons = map[string]string{}
+	taskSourceLabels = newLabelNormalizer(
+		"other", "issue", "chat", "autopilot", "autopilot_issue", "quick_create", "manual", "api",
+	)
+	runtimeModeLabels     = newLabelNormalizer("unknown", "local", "cloud")
+	runtimeProviderLabels = newLabelNormalizer(
+		"other", "antigravity", "claude", "codebuddy", "codex", "copilot", "cursor", "gemini",
+		"hermes", "kiro", "kimi", "multica_agent", "openclaw", "opencode", "pi",
+	)
+	terminalStatusLabels   = newLabelNormalizer("other", "completed", "failed", "cancelled", "blocked")
+	tokenTypeLabels        = newLabelNormalizer("input", "output", "cache_read", "cache_write")
+	platformLabels         = newLabelNormalizer("unknown", "server", "web", "desktop", "cli", "mobile", "ios")
+	autopilotCadenceLabels = newLabelNormalizer(
+		"unknown", "hourly", "daily", "weekly", "monthly", "manual", "webhook",
+	)
+	autopilotTriggerLabels    = newLabelNormalizer("unknown", "schedule", "webhook", "manual")
+	autopilotSkipReasonLabels = newLabelNormalizer(
+		"other", "already_running", "recent_run", "runtime_offline", "throttled", "max_concurrency",
+		"trigger_disabled", "signature_invalid", "unknown",
+	)
+	webhookProviderLabels       = newLabelNormalizer("other", "github", "generic", "gitlab", "stripe")
+	webhookDeliveryStatusLabels = newLabelNormalizer(
+		"other", "queued", "dispatched", "failed", "rejected", "ignored", "duplicate",
+	)
+	daemonWSKindLabels = newLabelNormalizer(
+		"other", "heartbeat", "task_claim", "task_complete", "task_usage", "task_progress", "task_messages", "log",
+	)
+	feedbackKindLabels  = newLabelNormalizer("other", "bug", "feature", "general", "praise")
+	knownFailureReasons = map[string]struct{}{}
 	modelAliasUnsafeRe  = regexp.MustCompile(`[^a-z0-9._:/+-]+`)
 )
 
 func init() {
 	for _, reason := range taskfailure.AllReasons() {
-		knownFailureReasons[reason.String()] = reason.String()
+		knownFailureReasons[reason.String()] = struct{}{}
 	}
 }
 
@@ -161,55 +154,15 @@ func metricLabels(metric string) []string {
 	return labels
 }
 
-func NormalizeTaskSource(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownSources[value]; ok {
-		return normalized
-	}
-	return "other"
-}
-
-func NormalizeRuntimeMode(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownRuntimeModes[value]; ok {
-		return normalized
-	}
-	return "unknown"
-}
-
-func NormalizeRuntimeProvider(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownRuntimeProviders[value]; ok {
-		return normalized
-	}
-	return "other"
-}
-
-func NormalizeTerminalStatus(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownTerminalStatuses[value]; ok {
-		return normalized
-	}
-	return "other"
-}
-
-func NormalizeFailureReason(value string) string {
+func normalizeFailureReason(value string) string {
 	value = strings.TrimSpace(value)
-	if normalized, ok := knownFailureReasons[value]; ok {
-		return normalized
+	if _, ok := knownFailureReasons[value]; ok {
+		return value
 	}
 	return taskfailure.Classify(value).String()
 }
 
-func NormalizeTokenType(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownTokenTypes[value]; ok {
-		return normalized
-	}
-	return "input"
-}
-
-func NormalizeModelAlias(value string) string {
+func normalizeModelAlias(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
 		return "unknown"

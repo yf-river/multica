@@ -1,10 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -29,17 +29,11 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 	fetchErr, _ := cmd.Flags().GetString("error")
 	durationMs, _ := cmd.Flags().GetInt64("duration-ms")
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{
 		"provider":       provider,
@@ -58,12 +52,11 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 		"auto_fetch":     autoFetch,
 	}
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/source-fetch", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/issues/"+issueRef.ID+"/source-fetch", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("record source fetch: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	metadata, _ := result["metadata"].(map[string]any)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { useAuthStore } from "../auth";
 import { agentListOptions, memberListOptions } from "../workspace/queries";
 import { canAssignAgentToIssue } from "../permissions";
@@ -21,7 +21,7 @@ import { canAssignAgentToIssue } from "../permissions";
  *   "none"      — both queries resolved, user has zero assignable agents
  *   "available" — at least one agent passes archive + scope filters
  */
-export type WorkspaceAgentAvailability = "loading" | "none" | "available";
+type WorkspaceAgentAvailability = "loading" | "none" | "available";
 
 /**
  * Mirrors the per-agent scope/archived filter used by AssigneePicker

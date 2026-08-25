@@ -12,43 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-func TestS3StorageKeyFromURL_CustomEndpointPreservesNestedKey(t *testing.T) {
-	s := &S3Storage{
-		bucket:      "test-bucket",
-		endpointURL: "http://localhost:9000",
-	}
-
-	rawURL := "http://localhost:9000/test-bucket/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
-func TestS3StoragePresignGet(t *testing.T) {
-	store := &S3Storage{
-		client: s3.New(s3.Options{
-			Region:      "us-east-1",
-			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "")),
-		}),
-		bucket: "test-bucket",
-	}
-
-	got, err := store.PresignGet(context.Background(), "uploads/abc/file.txt", 5*time.Minute)
-	if err != nil {
-		t.Fatalf("PresignGet: %v", err)
-	}
-	for _, want := range []string{
-		"https://test-bucket.s3.us-east-1.amazonaws.com/uploads/abc/file.txt",
-		"X-Amz-Signature=",
-		"X-Amz-Expires=300",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("presigned URL %q does not contain %q", got, want)
-		}
-	}
-}
-
 func TestS3StoragePresignGetWithContentDisposition(t *testing.T) {
 	store := &S3Storage{
 		client: s3.New(s3.Options{
@@ -71,6 +34,12 @@ func TestS3StoragePresignGetWithContentDisposition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse presigned URL: %v", err)
 	}
+	if u.Scheme != "https" || u.Host != "test-bucket.s3.us-east-1.amazonaws.com" || u.Path != "/uploads/abc/file.txt" {
+		t.Fatalf("presigned URL target = %s://%s%s", u.Scheme, u.Host, u.Path)
+	}
+	if got := u.Query().Get("X-Amz-Expires"); got != "300" {
+		t.Fatalf("X-Amz-Expires = %q, want 300", got)
+	}
 	if got := u.Query().Get("response-content-disposition"); got != `attachment; filename="report.txt"` {
 		t.Fatalf("response-content-disposition = %q", got)
 	}
@@ -79,42 +48,21 @@ func TestS3StoragePresignGetWithContentDisposition(t *testing.T) {
 	}
 }
 
-func TestS3StorageKeyFromURL_CustomEndpointWithTrailingSlash(t *testing.T) {
-	s := &S3Storage{
-		bucket:      "test-bucket",
-		endpointURL: "http://localhost:9000/",
-	}
-
-	rawURL := "http://localhost:9000/test-bucket/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
-func TestS3StorageKeyFromURL_VirtualHostedStylePreservesNestedKey(t *testing.T) {
-	s := &S3Storage{
-		bucket: "test-bucket",
-		region: "us-east-1",
-	}
-
-	rawURL := "https://test-bucket.s3.us-east-1.amazonaws.com/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
-	}
-}
-
-func TestS3StorageKeyFromURL_PathStylePreservesNestedKey(t *testing.T) {
-	s := &S3Storage{
-		bucket: "bucket.with.dots",
-		region: "us-east-1",
-	}
-
-	rawURL := "https://s3.us-east-1.amazonaws.com/bucket.with.dots/uploads/abc/file.png"
-
-	if got := s.KeyFromURL(rawURL); got != "uploads/abc/file.png" {
-		t.Fatalf("KeyFromURL(%q) = %q, want %q", rawURL, got, "uploads/abc/file.png")
+func TestS3StorageKeyFromURLPreservesNestedKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, bucket, region, endpointURL, rawURL string
+	}{
+		{"custom endpoint", "test-bucket", "", "http://localhost:9000", "http://localhost:9000/test-bucket/uploads/abc/file.png"},
+		{"custom endpoint trailing slash", "test-bucket", "", "http://localhost:9000/", "http://localhost:9000/test-bucket/uploads/abc/file.png"},
+		{"virtual hosted", "test-bucket", "us-east-1", "", "https://test-bucket.s3.us-east-1.amazonaws.com/uploads/abc/file.png"},
+		{"path style", "bucket.with.dots", "us-east-1", "", "https://s3.us-east-1.amazonaws.com/bucket.with.dots/uploads/abc/file.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &S3Storage{bucket: tc.bucket, region: tc.region, endpointURL: tc.endpointURL}
+			if got := store.KeyFromURL(tc.rawURL); got != "uploads/abc/file.png" {
+				t.Fatalf("KeyFromURL(%q) = %q", tc.rawURL, got)
+			}
+		})
 	}
 }
 
@@ -136,6 +84,54 @@ func TestLooksLikeS3Hostname(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewS3StorageFromEnvRejectsExplicitMisconfiguration(t *testing.T) {
+	baseEnv := func(t *testing.T) {
+		t.Helper()
+		for _, key := range []string{
+			"S3_BUCKET", "S3_REGION", "AWS_ACCESS_KEY_ID",
+			"AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL", "CLOUDFRONT_DOMAIN",
+		} {
+			t.Setenv(key, "")
+		}
+	}
+
+	t.Run("bucket hostname", func(t *testing.T) {
+		baseEnv(t)
+		t.Setenv("S3_BUCKET", "assets.s3.us-east-1.amazonaws.com")
+		if _, err := NewS3StorageFromEnv(); err == nil || !strings.Contains(err.Error(), "bucket name") {
+			t.Fatalf("NewS3StorageFromEnv error = %v, want bucket-name error", err)
+		}
+	})
+
+	t.Run("partial static credentials", func(t *testing.T) {
+		baseEnv(t)
+		t.Setenv("S3_BUCKET", "assets")
+		t.Setenv("AWS_ACCESS_KEY_ID", "access-only")
+		if _, err := NewS3StorageFromEnv(); err == nil || !strings.Contains(err.Error(), "configured together") {
+			t.Fatalf("NewS3StorageFromEnv error = %v, want credential-pair error", err)
+		}
+	})
+
+	t.Run("invalid endpoint", func(t *testing.T) {
+		baseEnv(t)
+		t.Setenv("S3_BUCKET", "assets")
+		t.Setenv("AWS_ACCESS_KEY_ID", "access")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+		t.Setenv("AWS_ENDPOINT_URL", "not-a-url")
+		if _, err := NewS3StorageFromEnv(); err == nil || !strings.Contains(err.Error(), "absolute http") {
+			t.Fatalf("NewS3StorageFromEnv error = %v, want endpoint error", err)
+		}
+	})
+
+	t.Run("unset selects local backend", func(t *testing.T) {
+		baseEnv(t)
+		store, err := NewS3StorageFromEnv()
+		if err != nil || store != nil {
+			t.Fatalf("NewS3StorageFromEnv = (%v, %v), want (nil, nil)", store, err)
+		}
+	})
 }
 
 func TestS3StorageUploadedURL(t *testing.T) {

@@ -31,7 +31,10 @@ type CloudFrontSigner struct {
 }
 
 // NewCloudFrontSignerFromEnv creates a signer from environment variables.
-// Returns nil if CLOUDFRONT_KEY_PAIR_ID is not set (disables signed cookies).
+// Public CDN delivery may set CLOUDFRONT_DOMAIN by itself. Supplying any
+// signing-specific setting opts into private delivery and makes the whole
+// signer configuration mandatory; errors are returned instead of disabling
+// signing behind the operator's back.
 //
 // Private key resolution order:
 //  1. AWS Secrets Manager (CLOUDFRONT_PRIVATE_KEY_SECRET — secret name/ARN)
@@ -41,29 +44,31 @@ type CloudFrontSigner struct {
 //   - CLOUDFRONT_KEY_PAIR_ID
 //   - CLOUDFRONT_DOMAIN       (e.g. "static.multica.ai")
 //   - COOKIE_DOMAIN           (e.g. ".multica.ai")
-func NewCloudFrontSignerFromEnv() *CloudFrontSigner {
-	keyPairID := os.Getenv("CLOUDFRONT_KEY_PAIR_ID")
-	if keyPairID == "" {
+func NewCloudFrontSignerFromEnv() (*CloudFrontSigner, error) {
+	keyPairID := strings.TrimSpace(os.Getenv("CLOUDFRONT_KEY_PAIR_ID"))
+	privateKeySecret := strings.TrimSpace(os.Getenv("CLOUDFRONT_PRIVATE_KEY_SECRET"))
+	privateKey := strings.TrimSpace(os.Getenv("CLOUDFRONT_PRIVATE_KEY"))
+	if keyPairID == "" && privateKeySecret == "" && privateKey == "" {
 		slog.Info("CLOUDFRONT_KEY_PAIR_ID not set, signed cookies disabled")
-		return nil
+		return nil, nil
+	}
+	if keyPairID == "" {
+		return nil, fmt.Errorf("CLOUDFRONT_KEY_PAIR_ID is required when CloudFront signing is configured")
 	}
 
-	domain := os.Getenv("CLOUDFRONT_DOMAIN")
+	domain := strings.TrimSpace(os.Getenv("CLOUDFRONT_DOMAIN"))
 	if domain == "" {
-		slog.Error("CLOUDFRONT_DOMAIN not set")
-		return nil
+		return nil, fmt.Errorf("CLOUDFRONT_DOMAIN is required when CloudFront signing is configured")
 	}
 
-	cookieDomain := os.Getenv("COOKIE_DOMAIN")
+	cookieDomain := strings.TrimSpace(os.Getenv("COOKIE_DOMAIN"))
 	if cookieDomain == "" {
-		slog.Error("COOKIE_DOMAIN not set")
-		return nil
+		return nil, fmt.Errorf("COOKIE_DOMAIN is required when CloudFront signing is configured")
 	}
 
 	rsaKey, err := loadPrivateKey()
 	if err != nil {
-		slog.Error("failed to load CloudFront private key", "error", err)
-		return nil
+		return nil, fmt.Errorf("load CloudFront private key: %w", err)
 	}
 
 	slog.Info("CloudFront cookie signer initialized", "key_pair_id", keyPairID, "domain", domain)
@@ -72,7 +77,7 @@ func NewCloudFrontSignerFromEnv() *CloudFrontSigner {
 		privateKey:   rsaKey,
 		domain:       domain,
 		cookieDomain: cookieDomain,
-	}
+	}, nil
 }
 
 // loadPrivateKey loads the RSA private key from Secrets Manager or env var fallback.
@@ -141,17 +146,10 @@ func parseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 // SignedCookies generates the three CloudFront signed cookies with the given expiry.
 func (s *CloudFrontSigner) SignedCookies(expiry time.Time) []*http.Cookie {
 	policy := fmt.Sprintf(`{"Statement":[{"Resource":"https://%s/*","Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, s.domain, expiry.Unix())
-
-	encodedPolicy := cfBase64Encode([]byte(policy))
-
-	h := sha1.New()
-	h.Write([]byte(policy))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA1, h.Sum(nil))
-	if err != nil {
-		slog.Error("failed to sign CloudFront policy", "error", err)
+	encodedPolicy, encodedSig, ok := s.signPolicy(policy)
+	if !ok {
 		return nil
 	}
-	encodedSig := cfBase64Encode(sig)
 
 	cookieAttrs := func(name, value string) *http.Cookie {
 		return &http.Cookie{
@@ -177,23 +175,26 @@ func (s *CloudFrontSigner) SignedCookies(expiry time.Time) []*http.Cookie {
 // Used by CLI/API clients that don't have browser cookies.
 func (s *CloudFrontSigner) SignedURL(rawURL string, expiry time.Time) string {
 	policy := fmt.Sprintf(`{"Statement":[{"Resource":"%s","Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, rawURL, expiry.Unix())
-
-	encodedPolicy := cfBase64Encode([]byte(policy))
-
-	h := sha1.New()
-	h.Write([]byte(policy))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA1, h.Sum(nil))
-	if err != nil {
-		slog.Error("failed to sign CloudFront URL", "error", err)
+	encodedPolicy, encodedSig, ok := s.signPolicy(policy)
+	if !ok {
 		return rawURL
 	}
-	encodedSig := cfBase64Encode(sig)
-
 	separator := "?"
 	if strings.Contains(rawURL, "?") {
 		separator = "&"
 	}
 	return fmt.Sprintf("%s%sPolicy=%s&Signature=%s&Key-Pair-Id=%s", rawURL, separator, encodedPolicy, encodedSig, s.keyPairID)
+}
+
+func (s *CloudFrontSigner) signPolicy(policy string) (string, string, bool) {
+	h := sha1.New()
+	_, _ = h.Write([]byte(policy))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA1, h.Sum(nil))
+	if err != nil {
+		slog.Error("failed to sign CloudFront policy", "error", err)
+		return "", "", false
+	}
+	return cfBase64Encode([]byte(policy)), cfBase64Encode(sig), true
 }
 
 func (s *CloudFrontSigner) SignedURLWithContentDisposition(rawURL string, contentDisposition string, expiry time.Time) string {

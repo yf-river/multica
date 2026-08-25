@@ -1,1 +1,1 @@
-export { PromptLibraryPage } from "./components";
+export { PromptLibraryPage } from "./components/prompt-library-page";

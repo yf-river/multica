@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -16,7 +17,7 @@ import (
 
 const agentPlaygroundMaxInputs = 20
 
-type AgentPlaygroundExperimentResponse struct {
+type agentPlaygroundExperimentResponse struct {
 	ID               string  `json:"id"`
 	WorkspaceID      string  `json:"workspace_id"`
 	Name             string  `json:"name"`
@@ -78,8 +79,8 @@ type AgentPlaygroundJudgementResponse struct {
 	UpdatedAt     string  `json:"updated_at"`
 }
 
-type AgentPlaygroundDetailResponse struct {
-	Experiment AgentPlaygroundExperimentResponse  `json:"experiment"`
+type agentPlaygroundDetailResponse struct {
+	Experiment agentPlaygroundExperimentResponse  `json:"experiment"`
 	Inputs     []AgentPlaygroundInputResponse     `json:"inputs"`
 	Agents     []AgentPlaygroundAgentResponse     `json:"agents"`
 	Results    []AgentPlaygroundResultResponse    `json:"results"`
@@ -95,14 +96,23 @@ type CreateAgentPlaygroundExperimentRequest struct {
 	AgentIDs         []string `json:"agent_ids"`
 }
 
-type SetAgentPlaygroundJudgeRequest struct {
+type setAgentPlaygroundJudgeRequest struct {
 	JudgeAgentID string `json:"judge_agent_id"`
 }
 
 func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
+		return
+	}
+	allowedAgentIDs, err := h.agentPlaygroundAllowedAgentIDs(r, userID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent playground access")
 		return
 	}
 	rows, err := h.Queries.ListAgentPlaygroundExperiments(r.Context(), db.ListAgentPlaygroundExperimentsParams{
@@ -113,9 +123,22 @@ func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to list agent playground experiments")
 		return
 	}
-	resp := make([]AgentPlaygroundExperimentResponse, 0, len(rows))
+	resp := make([]agentPlaygroundExperimentResponse, 0, len(rows))
 	for _, row := range rows {
-		resp = append(resp, agentPlaygroundExperimentRowToResponse(row))
+		experiment := row.AgentPlaygroundExperiment
+		allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), experiment.ID, experiment.WorkspaceID, experiment.JudgeAgentID, allowedAgentIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to filter agent playground experiments")
+			return
+		}
+		if !allowed {
+			continue
+		}
+		resp = append(resp, agentPlaygroundExperimentToResponse(
+			row.AgentPlaygroundExperiment,
+			row.InputCount,
+			row.AgentCount,
+		))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
@@ -140,8 +163,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	}
 
 	var req CreateAgentPlaygroundExperimentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -158,28 +180,18 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	seenAgents := map[string]bool{}
 	for _, rawID := range req.AgentIDs {
 		rawID = strings.TrimSpace(rawID)
-		if rawID == "" || seenAgents[rawID] {
+		if rawID == "" {
 			continue
 		}
 		agentID, ok := parseUUIDOrBadRequest(w, rawID, "agent_id")
 		if !ok {
 			return
 		}
-		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceUUID})
-		if err != nil {
-			writeError(w, http.StatusNotFound, "agent not found")
-			return
+		canonicalAgentID := uuidToString(agentID)
+		if seenAgents[canonicalAgentID] {
+			continue
 		}
-		if agent.ArchivedAt.Valid {
-			writeError(w, http.StatusBadRequest, "agent is archived")
-			return
-		}
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-			writeError(w, http.StatusForbidden, "you do not have access to this agent")
-			return
-		}
-		seenAgents[rawID] = true
+		seenAgents[canonicalAgentID] = true
 		agentIDs = append(agentIDs, agentID)
 	}
 	if len(agentIDs) == 0 {
@@ -189,7 +201,6 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 
 	var datasetAssetID pgtype.UUID
 	var datasetVersionID pgtype.UUID
-	var datasetRows []db.PromptEvaluationDatasetVersionRow
 	if strings.TrimSpace(req.DatasetAssetID) == "" {
 		writeError(w, http.StatusBadRequest, "dataset_asset_id is required")
 		return
@@ -206,32 +217,8 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetPromptEvaluationDatasetVersionInAsset(r.Context(), db.GetPromptEvaluationDatasetVersionInAssetParams{
-		WorkspaceID:    workspaceUUID,
-		DatasetAssetID: parsedAssetID,
-		ID:             parsedVersionID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "dataset version not found")
-		return
-	}
-	rows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
-		WorkspaceID:      workspaceUUID,
-		DatasetVersionID: parsedVersionID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load dataset rows")
-		return
-	}
-	if len(rows) == 0 {
-		writeError(w, http.StatusBadRequest, "dataset snapshot has no rows")
-		return
-	}
-	if len(rows) > agentPlaygroundMaxInputs {
-		rows = rows[:agentPlaygroundMaxInputs]
-	}
 	datasetAssetID = parsedAssetID
 	datasetVersionID = parsedVersionID
-	datasetRows = rows
 
 	var judgeAgentID pgtype.UUID
 	if strings.TrimSpace(req.JudgeAgentID) != "" {
@@ -239,25 +226,114 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		if !ok {
 			return
 		}
-		if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: parsedJudgeID, WorkspaceID: workspaceUUID}); err != nil {
-			writeError(w, http.StatusNotFound, "judge agent not found")
-			return
-		}
 		judgeAgentID = parsedJudgeID
 	}
-
-	tx, err := h.TxStarter.Begin(r.Context())
+	req.Description = strings.TrimSpace(req.Description)
+	req.DatasetAssetID = uuidToString(datasetAssetID)
+	req.DatasetVersionID = uuidToString(datasetVersionID)
+	req.AgentIDs = make([]string, len(agentIDs))
+	for i, agentID := range agentIDs {
+		req.AgentIDs[i] = uuidToString(agentID)
+	}
+	if judgeAgentID.Valid {
+		req.JudgeAgentID = uuidToString(judgeAgentID)
+	} else {
+		req.JudgeAgentID = ""
+	}
+	requestHash, err := hashRequestFingerprint(req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start agent playground transaction")
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint agent playground request")
 		return
 	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different agent playground request",
+		"failed to recover agent playground request",
+	)
+	loadReplay := func() (agentPlaygroundDetailResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypeAgentPlayground,
+			idempotencyKey, requestHash,
+			func(response agentPlaygroundDetailResponse) bool { return response.Experiment.ID != "" },
+		)
+	}
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
+		return
+	}
 
-	experiment, err := qtx.CreateAgentPlaygroundExperiment(r.Context(), db.CreateAgentPlaygroundExperimentParams{
+	actorType, actorID := resolveActor(r, userID)
+	for _, agentID := range agentIDs {
+		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceUUID})
+		if err != nil {
+			writeEntityLoadError(w, err, "agent", "agent_id", uuidToString(agentID))
+			return
+		}
+		if agent.ArchivedAt.Valid {
+			writeError(w, http.StatusBadRequest, "agent is archived")
+			return
+		}
+		if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
+			return
+		}
+	}
+	if judgeAgentID.Valid {
+		judgeAgent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: judgeAgentID, WorkspaceID: workspaceUUID})
+		if err != nil {
+			writeEntityLoadError(w, err, "judge agent", "agent_id", uuidToString(judgeAgentID))
+			return
+		}
+		if !h.requirePersonalAgentAccess(w, r, judgeAgent, actorType, actorID, workspaceID, "you do not have access to the judge agent") {
+			return
+		}
+	}
+	if _, err := h.Queries.GetPromptEvaluationDatasetVersionInAsset(r.Context(), db.GetPromptEvaluationDatasetVersionInAssetParams{
+		WorkspaceID:    workspaceUUID,
+		DatasetAssetID: datasetAssetID,
+		ID:             datasetVersionID,
+	}); err != nil {
+		writeEntityLoadError(w, err, "dataset version", "dataset_asset_id", req.DatasetAssetID, "dataset_version_id", req.DatasetVersionID)
+		return
+	}
+	datasetRows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
+		WorkspaceID:      workspaceUUID,
+		DatasetVersionID: datasetVersionID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load dataset rows")
+		return
+	}
+	if len(datasetRows) == 0 {
+		writeError(w, http.StatusBadRequest, "dataset snapshot has no rows")
+		return
+	}
+	if len(datasetRows) > agentPlaygroundMaxInputs {
+		datasetRows = datasetRows[:agentPlaygroundMaxInputs]
+	}
+
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start agent playground transaction")
+	if !ok {
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypeAgentPlayground, idempotencyKey, requestHash)
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeReplayError,
+		"failed to reserve agent playground request",
+		http.StatusCreated,
+	) {
+		return
+	}
+
+	experiment, err := qtx.CreateAgentPlaygroundExperimentWithID(r.Context(), db.CreateAgentPlaygroundExperimentWithIDParams{
+		ID:               idempotencyKey,
 		WorkspaceID:      workspaceUUID,
 		Name:             req.Name,
-		Description:      strings.TrimSpace(req.Description),
+		Description:      req.Description,
 		DatasetAssetID:   datasetAssetID,
 		DatasetVersionID: datasetVersionID,
 		JudgeAgentID:     judgeAgentID,
@@ -280,29 +356,39 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		}
 	}
 	for i, row := range datasetRows {
-		vars := jsonObjectBytes(row.Variables)
+		variables, err := decodeAgentPlaygroundVariables(row.Variables)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decode dataset variables")
+			return
+		}
 		if _, err := qtx.CreateAgentPlaygroundInput(r.Context(), db.CreateAgentPlaygroundInputParams{
 			ExperimentID: experiment.ID,
 			WorkspaceID:  workspaceUUID,
 			RowIndex:     int32(i),
-			Input:        datasetRowInput(row),
+			Input:        datasetRowInput(row, variables),
 			DatasetRowID: row.ID,
 			Name:         row.RowName,
-			Variables:    vars,
+			Variables:    row.Variables,
 			Expected:     expectedJSONText(row.Expected),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create experiment inputs")
 			return
 		}
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit agent playground experiment")
-		return
-	}
-
-	detail, err := h.loadAgentPlaygroundDetail(r.Context(), experiment.ID, workspaceUUID)
+	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), qtx, experiment.ID, workspaceUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent playground experiment")
+		return
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypeAgentPlayground,
+		idempotencyKey, requestHash, experiment.ID, detail,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete agent playground request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent playground experiment")
 		return
 	}
 	writeJSON(w, http.StatusCreated, detail)
@@ -319,11 +405,21 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 	}
 	workspaceID := parseUUID(detail.Experiment.WorkspaceID)
 	experimentID := parseUUID(detail.Experiment.ID)
+	actorType, actorID := resolveActor(r, userID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start agent playground run")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	queuedTasks := make([]db.AgentTaskQueue, 0, len(detail.Inputs)*len(detail.Agents))
+	lockedAgents := make(map[string]db.Agent, len(detail.Agents))
 
 	for _, input := range detail.Inputs {
 		for _, experimentAgent := range detail.Agents {
 			rendered := input.Input
-			result, err := h.Queries.CreateAgentPlaygroundResult(r.Context(), db.CreateAgentPlaygroundResultParams{
+			result, err := qtx.CreateAgentPlaygroundResult(r.Context(), db.CreateAgentPlaygroundResultParams{
 				ExperimentID:      experimentID,
 				InputID:           parseUUID(input.ID),
 				ExperimentAgentID: parseUUID(experimentAgent.ID),
@@ -338,7 +434,37 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 			if result.TaskID.Valid {
 				continue
 			}
-			session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+
+			agentID := experimentAgent.AgentID
+			agent, exists := lockedAgents[agentID]
+			if !exists {
+				agent, err = qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
+					ID:          parseUUID(agentID),
+					WorkspaceID: workspaceID,
+				})
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to load experiment agent")
+					return
+				}
+				lockedAgents[agentID] = agent
+			}
+			if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, detail.Experiment.WorkspaceID, "you do not have access to an experiment agent") {
+				return
+			}
+			if reason, unavailable := agentPlaygroundUnavailableReason(agent); unavailable {
+				if _, err := qtx.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
+					ID:          result.ID,
+					WorkspaceID: workspaceID,
+					Status:      "failed",
+					Error:       pgtype.Text{String: reason, Valid: true},
+				}); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to record unavailable experiment agent")
+					return
+				}
+				continue
+			}
+
+			session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 				WorkspaceID: workspaceID,
 				AgentID:     parseUUID(experimentAgent.AgentID),
 				CreatorID:   parseUUID(userID),
@@ -348,7 +474,7 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusInternalServerError, "failed to create playground chat session")
 				return
 			}
-			msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+			msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 				ChatSessionID: session.ID,
 				Role:          "user",
 				Content:       rendered,
@@ -357,18 +483,16 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusInternalServerError, "failed to create playground chat message")
 				return
 			}
-			task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+			task, err := h.TaskService.CreateChatTaskInTx(r.Context(), qtx, session, agent, parseUUID(userID))
 			if err != nil {
-				_, _ = h.Queries.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
-					ID:          result.ID,
-					WorkspaceID: workspaceID,
-					Status:      "failed",
-					Error:       pgtype.Text{String: err.Error(), Valid: true},
-				})
-				continue
+				writeError(w, http.StatusInternalServerError, "failed to create experiment task")
+				return
 			}
-			_ = h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID})
-			if _, err := h.Queries.StartAgentPlaygroundResult(r.Context(), db.StartAgentPlaygroundResultParams{
+			if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to link experiment message")
+				return
+			}
+			if _, err := qtx.StartAgentPlaygroundResult(r.Context(), db.StartAgentPlaygroundResultParams{
 				ID:            result.ID,
 				WorkspaceID:   workspaceID,
 				ChatSessionID: session.ID,
@@ -378,24 +502,45 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusInternalServerError, "failed to update experiment result")
 				return
 			}
+			queuedTasks = append(queuedTasks, task)
 		}
 	}
-	_, _ = h.Queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{
+	if _, err := qtx.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{
 		ID:          experimentID,
 		WorkspaceID: workspaceID,
 		Status:      "running",
-	})
-	refreshed, err := h.syncAgentPlaygroundExperiment(r, experimentID, workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync agent playground experiment")
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update experiment status")
 		return
 	}
+	refreshed, err := loadAgentPlaygroundDetailWithQueries(r.Context(), qtx, experimentID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load committed playground run")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent playground run")
+		return
+	}
+	for _, task := range queuedTasks {
+		h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
+	}
 	writeJSON(w, http.StatusAccepted, refreshed)
+}
+
+func agentPlaygroundUnavailableReason(agent db.Agent) (string, bool) {
+	if agent.ArchivedAt.Valid {
+		return "agent is archived", true
+	}
+	return "", false
 }
 
 func (h *Handler) SyncAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Request) {
 	experiment, ok := h.loadAgentPlaygroundExperiment(w, r)
 	if !ok {
+		return
+	}
+	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
 		return
 	}
 	detail, err := h.syncAgentPlaygroundExperiment(r, experiment.ID, experiment.WorkspaceID)
@@ -415,25 +560,23 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	var req SetAgentPlaygroundJudgeRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
+		return
+	}
+	actorType, actorID := resolveActor(r, userID)
+	var req setAgentPlaygroundJudgeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var requestedJudgeID pgtype.UUID
 	if strings.TrimSpace(req.JudgeAgentID) != "" {
-		judgeID, ok := parseUUIDOrBadRequest(w, req.JudgeAgentID, "judge_agent_id")
+		requestedJudgeID, ok = parseUUIDOrBadRequest(w, req.JudgeAgentID, "judge_agent_id")
 		if !ok {
 			return
 		}
-		updated, err := h.Queries.SetAgentPlaygroundJudgeAgent(r.Context(), db.SetAgentPlaygroundJudgeAgentParams{
-			ID:           experiment.ID,
-			WorkspaceID:  experiment.WorkspaceID,
-			JudgeAgentID: judgeID,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to set judge agent")
-			return
-		}
-		experiment = updated
 	}
-	if !experiment.JudgeAgentID.Valid {
+	if !requestedJudgeID.Valid && !experiment.JudgeAgentID.Valid {
 		writeError(w, http.StatusBadRequest, "judge_agent_id is required")
 		return
 	}
@@ -442,6 +585,68 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to sync before judge")
 		return
 	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start playground judgement")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	experiment, err = qtx.LockAgentPlaygroundExperiment(r.Context(), db.LockAgentPlaygroundExperimentParams{
+		ID:          experiment.ID,
+		WorkspaceID: experiment.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload playground experiment")
+		return
+	}
+	if requestedJudgeID.Valid && experiment.JudgeAgentID.Valid && requestedJudgeID != experiment.JudgeAgentID {
+		judgements, err := qtx.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{
+			ExperimentID: experiment.ID,
+			WorkspaceID:  experiment.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to inspect active playground judgements")
+			return
+		}
+		for _, judgement := range judgements {
+			if judgement.TaskID.Valid && !isAgentPlaygroundTerminalStatus(judgement.Status) {
+				writeJSON(w, http.StatusConflict, map[string]string{
+					"error": "cannot change judge agent while judgement tasks are active",
+					"code":  "agent_playground_judgement_active",
+				})
+				return
+			}
+		}
+	}
+	if requestedJudgeID.Valid {
+		experiment, err = qtx.SetAgentPlaygroundJudgeAgent(r.Context(), db.SetAgentPlaygroundJudgeAgentParams{
+			ID:           experiment.ID,
+			WorkspaceID:  experiment.WorkspaceID,
+			JudgeAgentID: requestedJudgeID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to set judge agent")
+			return
+		}
+	}
+	judgeAgent, err := qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
+		ID:          experiment.JudgeAgentID,
+		WorkspaceID: experiment.WorkspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "judge agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load judge agent")
+		return
+	}
+	if !h.requirePersonalAgentAccess(w, r, judgeAgent, actorType, actorID, uuidToString(experiment.WorkspaceID), "you do not have access to the judge agent") {
+		return
+	}
+	queuedTasks := make([]db.AgentTaskQueue, 0, len(synced.Inputs))
 	resultByInput := map[string][]AgentPlaygroundResultResponse{}
 	for _, result := range synced.Results {
 		if result.Status == "completed" {
@@ -453,7 +658,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		if len(results) == 0 {
 			continue
 		}
-		judgement, err := h.Queries.CreateAgentPlaygroundJudgement(r.Context(), db.CreateAgentPlaygroundJudgementParams{
+		judgement, err := qtx.CreateAgentPlaygroundJudgement(r.Context(), db.CreateAgentPlaygroundJudgementParams{
 			ExperimentID: experiment.ID,
 			InputID:      parseUUID(input.ID),
 			WorkspaceID:  experiment.WorkspaceID,
@@ -466,8 +671,20 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		if judgement.TaskID.Valid {
 			continue
 		}
+		if reason, unavailable := agentPlaygroundUnavailableReason(judgeAgent); unavailable {
+			if _, err := qtx.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
+				ID:          judgement.ID,
+				WorkspaceID: experiment.WorkspaceID,
+				Status:      "failed",
+				Output:      pgtype.Text{String: reason, Valid: true},
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to record unavailable judge agent")
+				return
+			}
+			continue
+		}
 		message := buildAgentPlaygroundJudgeMessage(input, synced.Agents, results)
-		session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+		session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 			WorkspaceID: experiment.WorkspaceID,
 			AgentID:     experiment.JudgeAgentID,
 			CreatorID:   parseUUID(userID),
@@ -477,7 +694,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "failed to create judge chat session")
 			return
 		}
-		msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 			ChatSessionID: session.ID,
 			Role:          "user",
 			Content:       message,
@@ -486,18 +703,16 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "failed to create judge chat message")
 			return
 		}
-		task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+		task, err := h.TaskService.CreateChatTaskInTx(r.Context(), qtx, session, judgeAgent, parseUUID(userID))
 		if err != nil {
-			_, _ = h.Queries.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
-				ID:          judgement.ID,
-				WorkspaceID: experiment.WorkspaceID,
-				Status:      "failed",
-				Output:      pgtype.Text{String: err.Error(), Valid: true},
-			})
-			continue
+			writeError(w, http.StatusInternalServerError, "failed to create judge task")
+			return
 		}
-		_ = h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID})
-		if _, err := h.Queries.StartAgentPlaygroundJudgement(r.Context(), db.StartAgentPlaygroundJudgementParams{
+		if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to link judge message")
+			return
+		}
+		if _, err := qtx.StartAgentPlaygroundJudgement(r.Context(), db.StartAgentPlaygroundJudgementParams{
 			ID:            judgement.ID,
 			WorkspaceID:   experiment.WorkspaceID,
 			ChatSessionID: session.ID,
@@ -507,11 +722,19 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "failed to update judgement")
 			return
 		}
+		queuedTasks = append(queuedTasks, task)
 	}
-	refreshed, err := h.syncAgentPlaygroundExperiment(r, experiment.ID, experiment.WorkspaceID)
+	refreshed, err := loadAgentPlaygroundDetailWithQueries(r.Context(), qtx, experiment.ID, experiment.WorkspaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync judgement")
+		writeError(w, http.StatusInternalServerError, "failed to load committed playground judgements")
 		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit playground judgements")
+		return
+	}
+	for _, task := range queuedTasks {
+		h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
 	}
 	writeJSON(w, http.StatusAccepted, refreshed)
 }
@@ -541,44 +764,112 @@ func (h *Handler) loadAgentPlaygroundExperiment(w http.ResponseWriter, r *http.R
 	return experiment, true
 }
 
-func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) (AgentPlaygroundDetailResponse, bool) {
+func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) (agentPlaygroundDetailResponse, bool) {
 	experiment, ok := h.loadAgentPlaygroundExperiment(w, r)
 	if !ok {
-		return AgentPlaygroundDetailResponse{}, false
+		return agentPlaygroundDetailResponse{}, false
 	}
-	detail, err := h.loadAgentPlaygroundDetail(r.Context(), experiment.ID, experiment.WorkspaceID)
+	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
+		return agentPlaygroundDetailResponse{}, false
+	}
+	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), h.Queries, experiment.ID, experiment.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent playground detail")
-		return AgentPlaygroundDetailResponse{}, false
+		return agentPlaygroundDetailResponse{}, false
 	}
 	return detail, true
 }
 
-func (h *Handler) loadAgentPlaygroundDetail(ctx context.Context, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
-	experiment, err := h.Queries.GetAgentPlaygroundExperiment(ctx, db.GetAgentPlaygroundExperimentParams{ID: experimentID, WorkspaceID: workspaceID})
-	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+func (h *Handler) requireAgentPlaygroundExperimentAccess(w http.ResponseWriter, r *http.Request, experiment db.AgentPlaygroundExperiment) bool {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return false
 	}
-	inputs, err := h.Queries.ListAgentPlaygroundInputs(ctx, db.ListAgentPlaygroundInputsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	workspaceID := uuidToString(experiment.WorkspaceID)
+	allowedAgentIDs, err := h.agentPlaygroundAllowedAgentIDs(r, userID, workspaceID)
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent playground access")
+		return false
 	}
-	agents, err := h.Queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), experiment.ID, experiment.WorkspaceID, experiment.JudgeAgentID, allowedAgentIDs)
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		writeError(w, http.StatusInternalServerError, "failed to check agent playground access")
+		return false
 	}
-	results, err := h.Queries.ListAgentPlaygroundResults(ctx, db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
-	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent playground experiment")
+		return false
 	}
-	judgements, err := h.Queries.ListAgentPlaygroundJudgements(ctx, db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	return true
+}
+
+func (h *Handler) agentPlaygroundAllowedAgentIDs(r *http.Request, userID, workspaceID string) (map[string]struct{}, error) {
+	actorType, actorID := resolveActor(r, userID)
+	role := ""
+	if actorType == "member" {
+		member, err := h.getWorkspaceMember(r.Context(), actorID, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		role = member.Role
+	}
+	return h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, role)
+}
+
+func (h *Handler) agentPlaygroundExperimentUsesOnlyAllowedAgents(
+	ctx context.Context,
+	experimentID, workspaceID, judgeAgentID pgtype.UUID,
+	allowedAgentIDs map[string]struct{},
+) (bool, error) {
+	agents, err := h.Queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{
+		ExperimentID: experimentID,
+		WorkspaceID:  workspaceID,
+	})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return false, err
+	}
+	for _, agent := range agents {
+		if _, allowed := allowedAgentIDs[uuidToString(agent.AgentID)]; !allowed {
+			return false, nil
+		}
+	}
+	if judgeAgentID.Valid {
+		if _, allowed := allowedAgentIDs[uuidToString(judgeAgentID)]; !allowed {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queries, experimentID, workspaceID pgtype.UUID) (agentPlaygroundDetailResponse, error) {
+	experiment, err := queries.GetAgentPlaygroundExperiment(ctx, db.GetAgentPlaygroundExperimentParams{ID: experimentID, WorkspaceID: workspaceID})
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
+	}
+	inputs, err := queries.ListAgentPlaygroundInputs(ctx, db.ListAgentPlaygroundInputsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
+	}
+	agents, err := queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
+	}
+	results, err := queries.ListAgentPlaygroundResults(ctx, db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
+	}
+	judgements, err := queries.ListAgentPlaygroundJudgements(ctx, db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
 	}
 
 	inputResp := make([]AgentPlaygroundInputResponse, 0, len(inputs))
 	for _, input := range inputs {
-		inputResp = append(inputResp, agentPlaygroundInputToResponse(input))
+		item, err := agentPlaygroundInputToResponse(input)
+		if err != nil {
+			return agentPlaygroundDetailResponse{}, err
+		}
+		inputResp = append(inputResp, item)
 	}
 	agentResp := make([]AgentPlaygroundAgentResponse, 0, len(agents))
 	for _, agent := range agents {
@@ -592,7 +883,7 @@ func (h *Handler) loadAgentPlaygroundDetail(ctx context.Context, experimentID, w
 	for _, judgement := range judgements {
 		judgementResp = append(judgementResp, agentPlaygroundJudgementToResponse(judgement))
 	}
-	return AgentPlaygroundDetailResponse{
+	return agentPlaygroundDetailResponse{
 		Experiment: agentPlaygroundExperimentToResponse(experiment, int32(len(inputs)), int32(len(agents))),
 		Inputs:     inputResp,
 		Agents:     agentResp,
@@ -601,20 +892,30 @@ func (h *Handler) loadAgentPlaygroundDetail(ctx context.Context, experimentID, w
 	}, nil
 }
 
-func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
-	results, err := h.Queries.ListAgentPlaygroundResults(r.Context(), db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, workspaceID pgtype.UUID) (agentPlaygroundDetailResponse, error) {
+	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, fmt.Errorf("start playground sync: %w", err)
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+
+	results, err := queries.ListAgentPlaygroundResults(r.Context(), db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
 	}
 	completedResults := 0
 	totalResults := len(results)
 	for _, result := range results {
 		if !result.TaskID.Valid {
+			if isAgentPlaygroundTerminalStatus(result.Status) {
+				completedResults++
+			}
 			continue
 		}
-		task, err := h.Queries.GetAgentTask(r.Context(), result.TaskID)
+		task, err := queries.GetAgentTask(r.Context(), result.TaskID)
 		if err != nil {
-			continue
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground result task: %w", err)
 		}
 		status := task.Status
 		output := pgtype.Text{}
@@ -627,86 +928,89 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 				errText = task.Error
 			}
 			if result.ChatSessionID.Valid {
-				if assistant := h.latestAssistantMessage(r, result.ChatSessionID); assistant != "" {
+				assistant, err := latestAssistantMessage(r.Context(), queries, result.ChatSessionID)
+				if err != nil {
+					return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground result output: %w", err)
+				}
+				if assistant != "" {
 					output = pgtype.Text{String: assistant, Valid: true}
 				}
 			}
 		}
-		_, _ = h.Queries.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
+		if _, err := queries.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
 			ID:          result.ID,
 			WorkspaceID: workspaceID,
 			Status:      status,
 			Output:      output,
 			Error:       errText,
 			CompletedAt: completedAt,
-		})
+		}); err != nil {
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("sync playground result: %w", err)
+		}
 	}
 
-	judgements, err := h.Queries.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	judgements, err := queries.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
-		return AgentPlaygroundDetailResponse{}, err
+		return agentPlaygroundDetailResponse{}, err
 	}
 	for _, judgement := range judgements {
 		if !judgement.TaskID.Valid {
 			continue
 		}
-		task, err := h.Queries.GetAgentTask(r.Context(), judgement.TaskID)
+		task, err := queries.GetAgentTask(r.Context(), judgement.TaskID)
 		if err != nil {
-			continue
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement task: %w", err)
 		}
 		output := pgtype.Text{}
 		if isAgentPlaygroundTerminalStatus(task.Status) && judgement.ChatSessionID.Valid {
-			if assistant := h.latestAssistantMessage(r, judgement.ChatSessionID); assistant != "" {
+			assistant, err := latestAssistantMessage(r.Context(), queries, judgement.ChatSessionID)
+			if err != nil {
+				return agentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement output: %w", err)
+			}
+			if assistant != "" {
 				output = pgtype.Text{String: assistant, Valid: true}
 			}
 		}
-		_, _ = h.Queries.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
+		if _, err := queries.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
 			ID:          judgement.ID,
 			WorkspaceID: workspaceID,
 			Status:      task.Status,
 			Output:      output,
-		})
+		}); err != nil {
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("sync playground judgement: %w", err)
+		}
 	}
 
 	if totalResults > 0 && completedResults >= totalResults {
-		_, _ = h.Queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{ID: experimentID, WorkspaceID: workspaceID, Status: "completed"})
+		if _, err := queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{ID: experimentID, WorkspaceID: workspaceID, Status: "completed"}); err != nil {
+			return agentPlaygroundDetailResponse{}, fmt.Errorf("complete playground experiment: %w", err)
+		}
 	}
-	return h.loadAgentPlaygroundDetail(r.Context(), experimentID, workspaceID)
+	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), queries, experimentID, workspaceID)
+	if err != nil {
+		return agentPlaygroundDetailResponse{}, err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return agentPlaygroundDetailResponse{}, fmt.Errorf("commit playground sync: %w", err)
+	}
+	return detail, nil
 }
 
-func (h *Handler) latestAssistantMessage(r *http.Request, chatSessionID pgtype.UUID) string {
-	messages, err := h.Queries.ListChatMessages(r.Context(), chatSessionID)
+func latestAssistantMessage(ctx context.Context, queries *db.Queries, chatSessionID pgtype.UUID) (string, error) {
+	messages, err := queries.ListChatMessages(ctx, chatSessionID)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "assistant" {
-			return messages[i].Content
+			return messages[i].Content, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
-func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperimentsRow) AgentPlaygroundExperimentResponse {
-	return AgentPlaygroundExperimentResponse{
-		ID:               uuidToString(row.ID),
-		WorkspaceID:      uuidToString(row.WorkspaceID),
-		Name:             row.Name,
-		Description:      row.Description,
-		DatasetAssetID:   uuidToPtr(row.DatasetAssetID),
-		DatasetVersionID: uuidToPtr(row.DatasetVersionID),
-		JudgeAgentID:     uuidToPtr(row.JudgeAgentID),
-		Status:           row.Status,
-		CreatedBy:        uuidToPtr(row.CreatedBy),
-		CreatedAt:        timestampToString(row.CreatedAt),
-		UpdatedAt:        timestampToString(row.UpdatedAt),
-		InputCount:       row.InputCount,
-		AgentCount:       row.AgentCount,
-	}
-}
-
-func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment, inputCount, agentCount int32) AgentPlaygroundExperimentResponse {
-	return AgentPlaygroundExperimentResponse{
+func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment, inputCount, agentCount int32) agentPlaygroundExperimentResponse {
+	return agentPlaygroundExperimentResponse{
 		ID:               uuidToString(experiment.ID),
 		WorkspaceID:      uuidToString(experiment.WorkspaceID),
 		Name:             experiment.Name,
@@ -723,11 +1027,10 @@ func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment
 	}
 }
 
-func agentPlaygroundInputToResponse(input db.AgentPlaygroundInput) AgentPlaygroundInputResponse {
-	var variables map[string]any
-	_ = json.Unmarshal(input.Variables, &variables)
-	if variables == nil {
-		variables = map[string]any{}
+func agentPlaygroundInputToResponse(input db.AgentPlaygroundInput) (AgentPlaygroundInputResponse, error) {
+	variables, err := decodeAgentPlaygroundVariables(input.Variables)
+	if err != nil {
+		return AgentPlaygroundInputResponse{}, fmt.Errorf("decode playground input variables: %w", err)
 	}
 	return AgentPlaygroundInputResponse{
 		ID:           uuidToString(input.ID),
@@ -738,7 +1041,7 @@ func agentPlaygroundInputToResponse(input db.AgentPlaygroundInput) AgentPlaygrou
 		Expected:     input.Expected,
 		DatasetRowID: uuidToPtr(input.DatasetRowID),
 		CreatedAt:    timestampToString(input.CreatedAt),
-	}
+	}, nil
 }
 
 func agentPlaygroundAgentToResponse(agent db.ListAgentPlaygroundAgentsRow) AgentPlaygroundAgentResponse {
@@ -790,20 +1093,18 @@ func timeToPtr(value pgtype.Timestamptz) *string {
 	return &v
 }
 
-func jsonObjectBytes(raw []byte) []byte {
-	if len(raw) == 0 {
-		return []byte(`{}`)
-	}
+func decodeAgentPlaygroundVariables(raw []byte) (map[string]any, error) {
 	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err == nil && obj != nil {
-		return raw
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
 	}
-	return []byte(`{}`)
+	if obj == nil {
+		return nil, errors.New("expected JSON object")
+	}
+	return obj, nil
 }
 
-func datasetRowInput(row db.PromptEvaluationDatasetVersionRow) string {
-	var variables map[string]any
-	_ = json.Unmarshal(row.Variables, &variables)
+func datasetRowInput(row db.PromptEvaluationDatasetVersionRow, variables map[string]any) string {
 	for _, key := range []string{"input", "用户输入", "需求", "question", "content", "text"} {
 		if value, ok := variables[key]; ok {
 			if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {

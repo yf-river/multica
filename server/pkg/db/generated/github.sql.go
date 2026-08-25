@@ -184,7 +184,7 @@ func (q *Queries) GetGitHubInstallationByInstallationID(ctx context.Context, ins
 }
 
 const getGitHubPullRequest = `-- name: GetGitHubPullRequest :one
-SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files FROM github_pull_request
+SELECT id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, head_sha, mergeable_state, additions, deletions, changed_files FROM github_pull_request
 WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4
 `
 
@@ -220,8 +220,6 @@ func (q *Queries) GetGitHubPullRequest(ctx context.Context, arg GetGitHubPullReq
 		&i.ClosedAt,
 		&i.PrCreatedAt,
 		&i.PrUpdatedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.HeadSha,
 		&i.MergeableState,
 		&i.Additions,
@@ -232,7 +230,7 @@ func (q *Queries) GetGitHubPullRequest(ctx context.Context, arg GetGitHubPullReq
 }
 
 const getPendingGitHubInstallation = `-- name: GetPendingGitHubInstallation :one
-SELECT installation_id, account_login, account_type, account_avatar_url, received_at, updated_at FROM github_pending_installation WHERE installation_id = $1
+SELECT installation_id, account_login, account_type, account_avatar_url FROM github_pending_installation WHERE installation_id = $1
 `
 
 func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, installationID int64) (GithubPendingInstallation, error) {
@@ -243,8 +241,6 @@ func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, installation
 		&i.AccountLogin,
 		&i.AccountType,
 		&i.AccountAvatarUrl,
-		&i.ReceivedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -388,12 +384,7 @@ checks AS (
     GROUP BY pr_id
 )
 SELECT
-    pr.id, pr.workspace_id, pr.installation_id, pr.repo_owner, pr.repo_name,
-    pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.author_login,
-    pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at,
-    pr.pr_updated_at, pr.head_sha, pr.mergeable_state,
-    pr.additions, pr.deletions, pr.changed_files,
-    pr.created_at, pr.updated_at,
+    pr.id, pr.workspace_id, pr.installation_id, pr.repo_owner, pr.repo_name, pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.author_login, pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at, pr.pr_updated_at, pr.head_sha, pr.mergeable_state, pr.additions, pr.deletions, pr.changed_files,
     COALESCE(c.total, 0)::bigint   AS checks_total,
     COALESCE(c.passed, 0)::bigint  AS checks_passed,
     COALESCE(c.failed, 0)::bigint  AS checks_failed,
@@ -406,33 +397,11 @@ ORDER BY pr.pr_created_at DESC
 `
 
 type ListPullRequestsByIssueRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
-	InstallationID  int64              `json:"installation_id"`
-	RepoOwner       string             `json:"repo_owner"`
-	RepoName        string             `json:"repo_name"`
-	PrNumber        int32              `json:"pr_number"`
-	Title           string             `json:"title"`
-	State           string             `json:"state"`
-	HtmlUrl         string             `json:"html_url"`
-	Branch          pgtype.Text        `json:"branch"`
-	AuthorLogin     pgtype.Text        `json:"author_login"`
-	AuthorAvatarUrl pgtype.Text        `json:"author_avatar_url"`
-	MergedAt        pgtype.Timestamptz `json:"merged_at"`
-	ClosedAt        pgtype.Timestamptz `json:"closed_at"`
-	PrCreatedAt     pgtype.Timestamptz `json:"pr_created_at"`
-	PrUpdatedAt     pgtype.Timestamptz `json:"pr_updated_at"`
-	HeadSha         string             `json:"head_sha"`
-	MergeableState  pgtype.Text        `json:"mergeable_state"`
-	Additions       int32              `json:"additions"`
-	Deletions       int32              `json:"deletions"`
-	ChangedFiles    int32              `json:"changed_files"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	ChecksTotal     int64              `json:"checks_total"`
-	ChecksPassed    int64              `json:"checks_passed"`
-	ChecksFailed    int64              `json:"checks_failed"`
-	ChecksPending   int64              `json:"checks_pending"`
+	GithubPullRequest GithubPullRequest `json:"github_pull_request"`
+	ChecksTotal       int64             `json:"checks_total"`
+	ChecksPassed      int64             `json:"checks_passed"`
+	ChecksFailed      int64             `json:"checks_failed"`
+	ChecksPending     int64             `json:"checks_pending"`
 }
 
 // Returns the issue's linked PRs with the aggregated check-suite counts for
@@ -454,29 +423,27 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 	for rows.Next() {
 		var i ListPullRequestsByIssueRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.InstallationID,
-			&i.RepoOwner,
-			&i.RepoName,
-			&i.PrNumber,
-			&i.Title,
-			&i.State,
-			&i.HtmlUrl,
-			&i.Branch,
-			&i.AuthorLogin,
-			&i.AuthorAvatarUrl,
-			&i.MergedAt,
-			&i.ClosedAt,
-			&i.PrCreatedAt,
-			&i.PrUpdatedAt,
-			&i.HeadSha,
-			&i.MergeableState,
-			&i.Additions,
-			&i.Deletions,
-			&i.ChangedFiles,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.GithubPullRequest.ID,
+			&i.GithubPullRequest.WorkspaceID,
+			&i.GithubPullRequest.InstallationID,
+			&i.GithubPullRequest.RepoOwner,
+			&i.GithubPullRequest.RepoName,
+			&i.GithubPullRequest.PrNumber,
+			&i.GithubPullRequest.Title,
+			&i.GithubPullRequest.State,
+			&i.GithubPullRequest.HtmlUrl,
+			&i.GithubPullRequest.Branch,
+			&i.GithubPullRequest.AuthorLogin,
+			&i.GithubPullRequest.AuthorAvatarUrl,
+			&i.GithubPullRequest.MergedAt,
+			&i.GithubPullRequest.ClosedAt,
+			&i.GithubPullRequest.PrCreatedAt,
+			&i.GithubPullRequest.PrUpdatedAt,
+			&i.GithubPullRequest.HeadSha,
+			&i.GithubPullRequest.MergeableState,
+			&i.GithubPullRequest.Additions,
+			&i.GithubPullRequest.Deletions,
+			&i.GithubPullRequest.ChangedFiles,
 			&i.ChecksTotal,
 			&i.ChecksPassed,
 			&i.ChecksFailed,
@@ -526,9 +493,8 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     END,
     additions     = EXCLUDED.additions,
     deletions     = EXCLUDED.deletions,
-    changed_files = EXCLUDED.changed_files,
-    updated_at = now()
-RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, created_at, updated_at, head_sha, mergeable_state, additions, deletions, changed_files
+    changed_files = EXCLUDED.changed_files
+RETURNING id, workspace_id, installation_id, repo_owner, repo_name, pr_number, title, state, html_url, branch, author_login, author_avatar_url, merged_at, closed_at, pr_created_at, pr_updated_at, head_sha, mergeable_state, additions, deletions, changed_files
 `
 
 type UpsertGitHubPullRequestParams struct {
@@ -610,8 +576,6 @@ func (q *Queries) UpsertGitHubPullRequest(ctx context.Context, arg UpsertGitHubP
 		&i.ClosedAt,
 		&i.PrCreatedAt,
 		&i.PrUpdatedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.HeadSha,
 		&i.MergeableState,
 		&i.Additions,
@@ -691,9 +655,8 @@ INSERT INTO github_pending_installation (
 ON CONFLICT (installation_id) DO UPDATE SET
     account_login = EXCLUDED.account_login,
     account_type = EXCLUDED.account_type,
-    account_avatar_url = EXCLUDED.account_avatar_url,
-    updated_at = now()
-RETURNING installation_id, account_login, account_type, account_avatar_url, received_at, updated_at
+    account_avatar_url = EXCLUDED.account_avatar_url
+RETURNING installation_id, account_login, account_type, account_avatar_url
 `
 
 type UpsertPendingGitHubInstallationParams struct {
@@ -716,14 +679,11 @@ func (q *Queries) UpsertPendingGitHubInstallation(ctx context.Context, arg Upser
 		&i.AccountLogin,
 		&i.AccountType,
 		&i.AccountAvatarUrl,
-		&i.ReceivedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const upsertPullRequestCheckSuite = `-- name: UpsertPullRequestCheckSuite :exec
-
 INSERT INTO github_pull_request_check_suite (
     pr_id, suite_id, head_sha, app_id, conclusion, status, updated_at
 ) VALUES (
@@ -748,9 +708,6 @@ type UpsertPullRequestCheckSuiteParams struct {
 	Conclusion pgtype.Text        `json:"conclusion"`
 }
 
-// =====================
-// GitHub PR check suite
-// =====================
 // Upserts a single check_suite row keyed by (pr_id, suite_id). The WHERE
 // clause on the DO UPDATE branch prevents a late-arriving older event from
 // overwriting a newer one — same-PR/same-suite ordering protection. Late

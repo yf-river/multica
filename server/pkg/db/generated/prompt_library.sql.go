@@ -76,27 +76,21 @@ func (q *Queries) CreatePromptLibraryItem(ctx context.Context, arg CreatePromptL
 	return i, err
 }
 
-const createPromptLibraryItemVersion = `-- name: CreatePromptLibraryItemVersion :one
+const createPromptLibraryItemVersionWithID = `-- name: CreatePromptLibraryItemVersionWithID :one
 INSERT INTO prompt_library_item (
-    workspace_id, project_id, name, description, prompt_type,
+    id, workspace_id, project_id, name, description, prompt_type,
     content, variables, tags, status, version, created_by
 ) VALUES (
-    $1,
-    $8,
-    $2,
-    $3,
-    $4,
-    $5,
-    COALESCE($9::jsonb, '[]'::jsonb),
+    $1, $2, $9, $3, $4, $5, $6,
     COALESCE($10::jsonb, '[]'::jsonb),
-    COALESCE($11, '启用'),
-    $6,
-    $7
+    COALESCE($11::jsonb, '[]'::jsonb),
+    COALESCE($12, '启用'), $7, $8
 )
 RETURNING id, workspace_id, project_id, name, description, prompt_type, content, variables, tags, status, version, created_by, created_at, updated_at
 `
 
-type CreatePromptLibraryItemVersionParams struct {
+type CreatePromptLibraryItemVersionWithIDParams struct {
+	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
@@ -110,8 +104,9 @@ type CreatePromptLibraryItemVersionParams struct {
 	Status      interface{} `json:"status"`
 }
 
-func (q *Queries) CreatePromptLibraryItemVersion(ctx context.Context, arg CreatePromptLibraryItemVersionParams) (PromptLibraryItem, error) {
-	row := q.db.QueryRow(ctx, createPromptLibraryItemVersion,
+func (q *Queries) CreatePromptLibraryItemVersionWithID(ctx context.Context, arg CreatePromptLibraryItemVersionWithIDParams) (PromptLibraryItem, error) {
+	row := q.db.QueryRow(ctx, createPromptLibraryItemVersionWithID,
+		arg.ID,
 		arg.WorkspaceID,
 		arg.Name,
 		arg.Description,

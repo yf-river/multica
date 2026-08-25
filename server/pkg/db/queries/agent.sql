@@ -1,11 +1,7 @@
 -- name: ListAgents :many
 SELECT * FROM agent
-WHERE workspace_id = $1 AND archived_at IS NULL
-ORDER BY created_at ASC;
-
--- name: ListAllAgents :many
-SELECT * FROM agent
-WHERE workspace_id = $1
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND (sqlc.arg('include_archived')::boolean OR archived_at IS NULL)
 ORDER BY created_at ASC;
 
 -- name: GetAgent :one
@@ -15,6 +11,14 @@ WHERE id = $1;
 -- name: GetAgentInWorkspace :one
 SELECT * FROM agent
 WHERE id = $1 AND workspace_id = $2;
+
+-- name: LockAgentInWorkspaceForChat :one
+-- Chat create/send takes the agent lock before the session lock. This keeps
+-- archive/delete and send on one lock order and prevents a task from being
+-- queued after the destination agent becomes unusable.
+SELECT * FROM agent
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE;
 
 -- name: CreateAgent :one
 INSERT INTO agent (
@@ -38,23 +42,16 @@ UPDATE agent SET
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
     custom_env = COALESCE(sqlc.narg('custom_env'), custom_env),
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),
-    mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
+    mcp_config = CASE
+        WHEN sqlc.arg('clear_mcp_config')::boolean THEN NULL
+        ELSE COALESCE(sqlc.narg('mcp_config'), mcp_config)
+    END,
     model = COALESCE(sqlc.narg('model'), model),
-    thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
+    thinking_level = CASE
+        WHEN sqlc.arg('clear_thinking_level')::boolean THEN NULL
+        ELSE COALESCE(sqlc.narg('thinking_level'), thinking_level)
+    END,
     updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- name: ClearAgentThinkingLevel :one
--- Explicit NULL-clear for thinking_level. COALESCE-based UpdateAgent cannot
--- set the column back to NULL, so the API layer routes "user picked Default"
--- through this dedicated query.
-UPDATE agent SET thinking_level = NULL, updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- name: ClearAgentMcpConfig :one
-UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1
 RETURNING *;
 
@@ -151,8 +148,8 @@ RETURNING *;
 -- Quick-create tasks have no issue / chat / autopilot link; the entire job
 -- description (prompt, requester, workspace) lives in context JSONB. The
 -- daemon detects this variant via context.type == "quick_create".
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
+INSERT INTO agent_task_queue (id, agent_id, runtime_id, issue_id, status, priority, context)
+VALUES ($1, $2, $3, NULL, 'queued', $4, $5)
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
@@ -170,8 +167,8 @@ WHERE id = $1 AND issue_id IS NULL;
 -- agent's resume context (session_id/work_dir) so the child can continue
 -- the conversation when the backend supports it. Resume-unsafe failures are
 -- retried as fresh sessions so the child does not inherit a stuck agent
--- conversation. Keep the CASE WHEN predicates in sync with
--- resumeUnsafeFailureReason and the resume lookup blacklists. attempt is
+-- conversation. Keep the CASE WHEN predicates in sync with the resume lookup
+-- blacklists. attempt is
 -- incremented; max_attempts, trigger_comment_id, and is_leader_task are
 -- inherited so the retried task keeps the same squad-role provenance as its
 -- parent and the self-trigger guard in shouldEnqueueSquadLeaderOnComment
@@ -208,7 +205,7 @@ RETURNING *;
 -- status="working" with no self-correction.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
@@ -218,8 +215,16 @@ RETURNING *;
 -- still-running @-mention agent on the same issue.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
+
+-- name: LockIssueAgentRerun :exec
+-- Serializes intentional reruns for one issue/agent pair. Different request
+-- identities then cancel/replace in order instead of both observing no active
+-- task and leaving two queued executions.
+SELECT pg_advisory_xact_lock(
+    hashtextextended(sqlc.arg(issue_id)::uuid::text || ':' || sqlc.arg(agent_id)::uuid::text, 0)
+);
 
 -- name: CancelAgentTasksByAgent :many
 -- Bulk-cancel every active (queued/dispatched/running) task for an agent.
@@ -229,7 +234,7 @@ RETURNING *;
 -- behave consistently.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
 -- name: CancelAgentTasksByTriggerComment :many
@@ -240,7 +245,7 @@ RETURNING *;
 -- and we'd lose the ability to find the affected tasks.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
 -- name: CancelAgentTasksByChatSession :many
@@ -251,7 +256,7 @@ RETURNING *;
 -- could no longer reach those tasks.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
 -- name: GetAgentTask :one
@@ -270,7 +275,7 @@ SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE atq.id = $1 AND a.workspace_id = $2;
 
--- name: ClaimAgentTask :one
+-- name: ClaimAgentTaskForRuntime :one
 -- Claims the next queued task for an agent, enforcing per-(issue, agent) serialization:
 -- a task is only claimable when no other task for the same issue AND same agent is
 -- already dispatched or running. This allows different agents to work on the same
@@ -284,11 +289,13 @@ UPDATE agent_task_queue
 SET status = 'dispatched', dispatched_at = now()
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
-    WHERE atq.agent_id = $1 AND atq.status = 'queued'
+    WHERE atq.agent_id = sqlc.arg('agent_id')
+      AND atq.runtime_id = sqlc.arg('runtime_id')
+      AND atq.status = 'queued'
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+            AND active.status IN ('dispatched', 'running')
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
@@ -329,29 +336,9 @@ WHERE id = (
 RETURNING *;
 
 -- name: StartAgentTask :one
--- Transitions a task to running. Accepts either 'dispatched' (the normal
--- claim → run flow) or 'waiting_local_directory' (the daemon held the row in
--- a wait state while another task owned the local_directory path lock; once
--- the lock was acquired the daemon flips here). wait_reason is cleared on
--- the transition so a future read can't conflate "currently waiting" with
--- "previously waited".
+-- Transitions a normally claimed task from dispatched to running.
 UPDATE agent_task_queue
-SET status = 'running', started_at = now(), wait_reason = NULL
-WHERE id = $1 AND status IN ('dispatched', 'waiting_local_directory')
-RETURNING *;
-
--- name: MarkAgentTaskWaitingLocalDirectory :one
--- Transitions a freshly-dispatched task into 'waiting_local_directory' while
--- the daemon waits for another in-flight task to release the path lock on a
--- project_resource of type local_directory. wait_reason carries a short
--- human-readable hint (typically the contested path) that the UI surfaces
--- alongside the status.
---
--- The CHECK only allows the transition from 'dispatched' so a daemon can't
--- mark an already-running or terminal task as waiting; the StartAgentTask
--- mutation handles the reverse transition once the lock is acquired.
-UPDATE agent_task_queue
-SET status = 'waiting_local_directory', wait_reason = $2
+SET status = 'running', started_at = now()
 WHERE id = $1 AND status = 'dispatched'
 RETURNING *;
 
@@ -393,7 +380,7 @@ WHERE agent_id = $1 AND issue_id = $2
     status = 'completed'
     OR (
       status = 'failed'
-      AND failure_reason NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
+      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
     )
   )
   AND session_id IS NOT NULL
@@ -417,55 +404,46 @@ LIMIT 1;
 -- if the agent already established a real session before failing (e.g. it
 -- crashed mid-conversation, was cancelled, or hit a tool error) the resume
 -- pointer is preserved on the task row. The next chat task can then fall
--- back to GetLastChatTaskSession and continue the conversation instead of
+-- use GetChatResumePointer and continue the conversation instead of
 -- silently starting over.
 --
--- failure_reason is the classifier consumed by the auto-retry path.
+-- failure_reason is classified by TaskService before this write. Keep it a
+-- required argument so new callers cannot silently create coarse failures.
 UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = $2,
-    failure_reason = @failure_reason::text,
+    failure_reason = sqlc.arg('failure_reason')::text,
     session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir = COALESCE(sqlc.narg('work_dir'), work_dir)
-WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
+WHERE id = $1 AND status IN ('dispatched', 'running')
 RETURNING *;
 
 -- name: UpdateAgentTaskSession :exec
 -- Pins the resume pointer mid-flight so a daemon crash leaves a usable
 -- session_id/work_dir on the task row. No-op if the task is no longer
--- in dispatched/running. waiting_local_directory tasks have no session yet
--- so this query intentionally skips them.
+-- in dispatched/running.
 UPDATE agent_task_queue
 SET session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir  = COALESCE(sqlc.narg('work_dir'), work_dir)
 WHERE id = $1 AND status IN ('dispatched', 'running');
 
 -- name: RecoverOrphanedTasksForRuntime :many
--- Called by the daemon at startup. Atomically fails any dispatched/running/
--- waiting_local_directory task that the prior incarnation of this runtime
--- owned but did not finalize. Returns the failed rows so callers can hand
--- them to the auto-retry path. waiting_local_directory rows are included
--- because the daemon holding the path lock is the same process that just
--- died — without us, the row would sit waiting forever.
+-- Called by the daemon at startup. Atomically fails any dispatched/running
+-- task that the prior incarnation of this runtime owned but did not finalize.
+-- Returns the failed rows so callers can hand them to the auto-retry path.
 UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = 'daemon restarted while task was in flight',
-    failure_reason = 'runtime_recovery',
-    wait_reason = NULL
-WHERE runtime_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
+    failure_reason = 'runtime_recovery'
+WHERE runtime_id = $1 AND status IN ('dispatched', 'running')
 RETURNING *;
 
 -- name: FailStaleTasks :many
 -- Fails tasks stuck in dispatched/running beyond the given thresholds.
 -- Handles cases where the daemon is alive but the task is orphaned
 -- (e.g. agent process hung, daemon failed to report completion).
--- waiting_local_directory rows are intentionally excluded: the daemon owns
--- the wait (with its own ctx-driven timeout) and a legitimate queue ahead
--- of this task can exceed the dispatch / running timeouts without being
--- "stuck". If the daemon dies, RecoverOrphanedTasksForRuntime reclaims
--- those rows at restart.
 UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(), error = 'task timed out',
     failure_reason = 'timeout'
@@ -475,23 +453,15 @@ RETURNING *;
 
 -- name: ExpireStaleQueuedTasks :many
 -- Fails tasks that have been sitting in 'queued' for longer than the TTL.
--- Handles the case where a runtime goes offline after a task has already
--- entered the queue.
+-- Admission prevents enqueueing against an offline runtime; this query handles
+-- a runtime that goes offline after the task was queued.
 --
--- Concurrency safety: the daemon's claim path may race with this sweeper to
--- transition the same row out of 'queued'. We protect against that two
--- ways:
+-- The daemon claim path may race with this sweep:
 --   1. The CTE selects victims with FOR UPDATE SKIP LOCKED so a row that is
---      currently being claimed (or otherwise locked) is skipped — no lock
---      contention with the dispatch path, and we won't queue up behind it.
+--      being claimed is skipped without lock contention.
 --   2. The outer UPDATE re-checks status='queued' AND the TTL predicate at
---      apply time. If a daemon claimed the row between selection and update
---      (e.g. lock released after the claim transaction commits), the row is
---      already 'dispatched'/'running' and the WHERE clause filters it out
---      so we cannot clobber an in-flight task.
--- Capped via LIMIT inside the CTE so a single sweep tick cannot monopolise
--- the DB when the backlog is large — the sweeper drains the rest on
--- subsequent ticks.
+--      apply time so a newly claimed task cannot be overwritten.
+-- LIMIT bounds each cleanup transaction.
 WITH victims AS (
     SELECT id FROM agent_task_queue
     WHERE status = 'queued'
@@ -514,18 +484,37 @@ RETURNING t.*;
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
 -- name: CountRunningTasks :one
 SELECT count(*) FROM agent_task_queue
-WHERE agent_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory');
+WHERE agent_id = $1 AND status IN ('dispatched', 'running');
 
 -- name: HasActiveTaskForIssue :one
--- Returns true if there is any queued, dispatched, waiting_local_directory,
--- or running task for the issue.
+-- Returns true if there is any queued, dispatched or running task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running');
+
+-- name: HasRetryTaskForParent :one
+-- A failed parent is not the terminal attempt once CreateRetryTask has
+-- materialized a child, regardless of the child's current status by the time
+-- an asynchronous projection replays the parent failure.
+SELECT count(*) > 0 AS has_retry FROM agent_task_queue
+WHERE parent_task_id = $1;
+
+-- name: LockAgentTaskForRetry :one
+-- Serializes retry materialization for one failed parent. Every current retry
+-- creator takes this lock before checking for an existing child.
+SELECT * FROM agent_task_queue
+WHERE id = $1
+FOR UPDATE;
+
+-- name: GetRetryTaskForParent :one
+SELECT * FROM agent_task_queue
+WHERE parent_task_id = $1
+ORDER BY created_at, id
+LIMIT 1;
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
@@ -580,7 +569,7 @@ ORDER BY priority DESC, created_at ASC;
 -- busy on a prior task, and a silent UI during that window looks like the
 -- platform never received the trigger.
 SELECT * FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
 ORDER BY created_at DESC;
 
 -- name: GetWorkspaceAgentRunCounts :many
@@ -645,7 +634,7 @@ ORDER BY atq.agent_id, bucket;
 SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
-  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND atq.status IN ('queued', 'dispatched', 'running')
 
 UNION ALL
 
@@ -684,7 +673,7 @@ LIMIT 1;
 UPDATE agent AS a
 SET status = CASE WHEN EXISTS (
     SELECT 1 FROM agent_task_queue q
-    WHERE q.agent_id = a.id AND q.status IN ('dispatched', 'running', 'waiting_local_directory')
+    WHERE q.agent_id = a.id AND q.status IN ('dispatched', 'running')
 ) THEN 'working' ELSE 'idle' END,
     updated_at = now()
 WHERE a.id = $1

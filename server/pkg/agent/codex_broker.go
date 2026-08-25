@@ -115,7 +115,7 @@ func (b *CodexBrokerBackend) ensureProcess(ctx context.Context, cfg Config, opts
 		return nil, fmt.Errorf("codex: mcp_config is set but CODEX_HOME env var is not configured; cannot apply managed MCP")
 	}
 	disableImageGeneration := shouldDisableCodexImageGeneration(ctx, execPath, opts, cfg.Env, cfg.Logger)
-	args := buildCodexArgs(opts, cfg.Logger, disableImageGeneration)
+	args := buildCodexArgs(opts, cfg.Env, cfg.Logger, disableImageGeneration)
 	key := codexBrokerKey(execPath, args, cfg.Env, opts.McpConfig)
 
 	b.procMu.Lock()
@@ -329,7 +329,7 @@ func (b *CodexBrokerBackend) runTurn(ctx context.Context, proc *codexBrokerProce
 			}
 		}
 	}
-	if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+	if u.hasTokens() {
 		model := opts.Model
 		if model == "" {
 			model = "unknown"
@@ -413,7 +413,10 @@ func startCodexBrokerProcess(ctx context.Context, cfg Config, execPath string, a
 		proc.close("initialize failed")
 		return nil, fmt.Errorf("codex initialize failed: %s", codexFailureError(err.Error(), proc.stderrTail()))
 	}
-	c.notify("initialized")
+	if err := c.notify("initialized"); err != nil {
+		proc.close("initialize notification failed")
+		return nil, fmt.Errorf("codex initialize notification failed: %s", codexFailureError(err.Error(), proc.stderrTail()))
+	}
 	return proc, nil
 }
 

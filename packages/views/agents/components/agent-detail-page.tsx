@@ -17,7 +17,7 @@ import {
 } from "@multica/core/agents";
 import { api, ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
@@ -25,7 +25,7 @@ import {
   workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
-import { useAgentPermissions } from "@multica/core/permissions";
+import { useAgentEditPermission } from "@multica/core/permissions";
 import { Button } from "@multica/ui/components/ui/button";
 import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
 import {
@@ -98,7 +98,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   // signature handles the not-found / loading case internally so the early
   // returns below don't violate the rules of hooks. Backend gates archive
   // and restore identically to edit, so a single `canEdit` covers them all.
-  const { canEdit } = useAgentPermissions(agent, wsId);
+  const canEdit = useAgentEditPermission(agent, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -299,8 +299,8 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             onShowIntegrations={() => setTabNavIntent("integrations")}
           />
           <ObservabilitySummaryCard
-            title="Agent 观测摘要"
-            scopeLabel="按当前智能体聚合链路追踪、令牌、成本、耗时和证据"
+            title={t(($) => $.detail.observability_title)}
+            scopeLabel={t(($) => $.detail.observability_scope)}
             agentId={agent.id}
           />
         </div>

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -16,25 +17,48 @@ type fakeScopeQuerier struct {
 	tasks    map[[16]byte]db.AgentTaskQueue
 	issues   map[[16]byte]db.Issue
 	sessions map[[16]byte]db.ChatSession
+	err      error
 }
 
 func (f *fakeScopeQuerier) GetAgentTask(_ context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
+	if f.err != nil {
+		return db.AgentTaskQueue{}, f.err
+	}
 	if t, ok := f.tasks[id.Bytes]; ok {
 		return t, nil
 	}
-	return db.AgentTaskQueue{}, errors.New("not found")
+	return db.AgentTaskQueue{}, pgx.ErrNoRows
 }
 func (f *fakeScopeQuerier) GetIssue(_ context.Context, id pgtype.UUID) (db.Issue, error) {
+	if f.err != nil {
+		return db.Issue{}, f.err
+	}
 	if i, ok := f.issues[id.Bytes]; ok {
 		return i, nil
 	}
-	return db.Issue{}, errors.New("not found")
+	return db.Issue{}, pgx.ErrNoRows
 }
 func (f *fakeScopeQuerier) GetChatSession(_ context.Context, id pgtype.UUID) (db.ChatSession, error) {
+	if f.err != nil {
+		return db.ChatSession{}, f.err
+	}
 	if s, ok := f.sessions[id.Bytes]; ok {
 		return s, nil
 	}
-	return db.ChatSession{}, errors.New("not found")
+	return db.ChatSession{}, pgx.ErrNoRows
+}
+
+func TestScopeAuthorizerPropagatesStorageFailure(t *testing.T) {
+	workspaceID, _ := mustUUID(t)
+	userID, _ := mustUUID(t)
+	taskID, _ := mustUUID(t)
+	wantErr := errors.New("database unavailable")
+	a := &dbScopeAuthorizer{q: &fakeScopeQuerier{err: wantErr}}
+
+	ok, err := a.AuthorizeScope(context.Background(), userID, workspaceID, realtime.ScopeTask, taskID)
+	if ok || !errors.Is(err, wantErr) {
+		t.Fatalf("AuthorizeScope() ok=%t err=%v, want false and wrapped %v", ok, err, wantErr)
+	}
 }
 
 func mustUUID(t *testing.T) (string, pgtype.UUID) {
@@ -46,18 +70,12 @@ func mustUUID(t *testing.T) (string, pgtype.UUID) {
 	return u.String(), pgtype.UUID{Bytes: u, Valid: true}
 }
 
-// TestScopeAuthorizer_ChatRequiresCreator pins must-fix #2 from PR #1429:
-// ScopeChat MUST verify CreatorID == userID. A workspace peer that knows the
-// session_id must NOT be able to subscribe to chat:message / chat:done /
-// chat:session_read for that private session.
 func TestScopeAuthorizer_ChatRequiresCreator(t *testing.T) {
 	wsStr, wsUUID := mustUUID(t)
 	creatorStr, creatorUUID := mustUUID(t)
 	otherStr, _ := mustUUID(t)
 	sessStr, sessUUID := mustUUID(t)
 	otherWsStr, _ := mustUUID(t)
-	otherWsStrOnly, otherWsUUID := mustUUID(t)
-	_ = otherWsStrOnly
 
 	q := &fakeScopeQuerier{
 		sessions: map[[16]byte]db.ChatSession{
@@ -68,7 +86,7 @@ func TestScopeAuthorizer_ChatRequiresCreator(t *testing.T) {
 			},
 		},
 	}
-	a := newScopeAuthorizer(q)
+	a := &dbScopeAuthorizer{q: q}
 	ctx := context.Background()
 
 	// Creator in matching workspace → allowed.
@@ -89,35 +107,25 @@ func TestScopeAuthorizer_ChatRequiresCreator(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("cross-workspace must be denied: ok=%v err=%v", ok, err)
 	}
-	_ = otherWsUUID
 
-	// Empty userID → must be denied (defensive).
 	ok, err = a.AuthorizeScope(ctx, "", wsStr, realtime.ScopeChat, sessStr)
 	if err != nil || ok {
 		t.Fatalf("empty userID must be denied: ok=%v err=%v", ok, err)
 	}
 
-	// Unknown session → denied.
-	_, missingStr := mustUUID(t)
-	_ = missingStr
-	missingUUID, _ := uuid.NewRandom()
-	ok, err = a.AuthorizeScope(ctx, creatorStr, wsStr, realtime.ScopeChat, missingUUID.String())
+	missingID, _ := mustUUID(t)
+	ok, err = a.AuthorizeScope(ctx, creatorStr, wsStr, realtime.ScopeChat, missingID)
 	if err != nil || ok {
 		t.Fatalf("unknown session must be denied: ok=%v err=%v", ok, err)
 	}
 }
 
-// TestScopeAuthorizer_ChatTaskRequiresCreator pins must-fix #2 for the
-// task-scope path of chat tasks (task.ChatSessionID set, no IssueID): only
-// the chat session creator may subscribe to that task's stream, since
-// task:message for chat tasks contains assistant chat content.
 func TestScopeAuthorizer_ChatTaskRequiresCreator(t *testing.T) {
 	wsStr, wsUUID := mustUUID(t)
 	creatorStr, creatorUUID := mustUUID(t)
 	otherStr, _ := mustUUID(t)
-	sessStr, sessUUID := mustUUID(t)
+	_, sessUUID := mustUUID(t)
 	taskStr, taskUUID := mustUUID(t)
-	_ = sessStr
 
 	q := &fakeScopeQuerier{
 		tasks: map[[16]byte]db.AgentTaskQueue{
@@ -134,7 +142,7 @@ func TestScopeAuthorizer_ChatTaskRequiresCreator(t *testing.T) {
 			},
 		},
 	}
-	a := newScopeAuthorizer(q)
+	a := &dbScopeAuthorizer{q: q}
 	ctx := context.Background()
 
 	ok, err := a.AuthorizeScope(ctx, creatorStr, wsStr, realtime.ScopeTask, taskStr)
@@ -171,7 +179,7 @@ func TestScopeAuthorizer_IssueTaskWorkspaceOnly(t *testing.T) {
 			},
 		},
 	}
-	a := newScopeAuthorizer(q)
+	a := &dbScopeAuthorizer{q: q}
 	ctx := context.Background()
 
 	ok, err := a.AuthorizeScope(ctx, memberStr, wsStr, realtime.ScopeTask, taskStr)

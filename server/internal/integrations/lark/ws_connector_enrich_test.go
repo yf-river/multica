@@ -2,8 +2,6 @@ package lark
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -34,66 +32,28 @@ func (e *recordingEnricher) Enrich(ctx context.Context, msg InboundMessage, cred
 func TestWSConnectorEnrichesBeforeEmit(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{
 			EventID:   string(payload),
 			AppID:     "test_app",
 			MessageID: "msg-" + string(payload),
 			Body:      "raw-" + string(payload),
 		}, true, nil
-	})
+	}
 	enr := &recordingEnricher{}
 
-	c, err := NewWSLongConnConnector(WSConnectorConfig{
-		Dialer: &fakeWSDialer{conn: conn},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
-			return WSEndpoint{URL: "wss://test/ignored", ServiceID: 7, PingInterval: time.Hour}, nil
-		}),
-		FrameDecoder: decoder,
-		Enricher:     enr,
-		CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) {
-			return InstallationCredentials{AppID: "test_app", AppSecret: "secret"}, nil
-		}),
-		PingInterval:  time.Hour,
-		ReadDeadline:  time.Second,
-		WriteTimeout:  time.Second,
-		EnrichTimeout: time.Second,
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-	if err != nil {
-		t.Fatalf("NewWSLongConnConnector: %v", err)
-	}
+	c := quietConnector(t, conn, decoder, time.Hour, enr.Enrich)
 
-	var emitted []InboundMessage
-	var emitMu sync.Mutex
-	emit := func(_ context.Context, msg InboundMessage) (DispatchResult, error) {
-		emitMu.Lock()
-		emitted = append(emitted, msg)
-		emitMu.Unlock()
-		return DispatchResult{Outcome: OutcomeIngested}, nil
-	}
+	emitted := &inboundMessageRecorder{}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- c.Run(ctx, db.LarkInstallation{AppID: "test_app"}, emit) }()
+	go func() { done <- c.Run(ctx, db.LarkInstallation{AppID: "test_app"}, emitted.emit) }()
 
 	pushDataFrame(conn, []byte("evt-1"), "m1")
 
-	deadline := time.After(2 * time.Second)
-	for {
-		emitMu.Lock()
-		n := len(emitted)
-		emitMu.Unlock()
-		if n >= 1 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("no emit within 2s")
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+	messages := waitForEmits(t, emitted, 1)
 	cancel()
 	select {
 	case <-done:
@@ -101,10 +61,8 @@ func TestWSConnectorEnrichesBeforeEmit(t *testing.T) {
 		t.Fatal("Run did not return after cancel")
 	}
 
-	emitMu.Lock()
-	defer emitMu.Unlock()
-	if emitted[0].Body != "ENRICHED:raw-evt-1" {
-		t.Errorf("emit body = %q; enricher did not run before emit", emitted[0].Body)
+	if messages[0].Body != "ENRICHED:raw-evt-1" {
+		t.Errorf("emit body = %q; enricher did not run before emit", messages[0].Body)
 	}
 
 	enr.mu.Lock()

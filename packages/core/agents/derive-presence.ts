@@ -34,11 +34,8 @@ export function deriveAgentAvailability(
   return "offline"; // offline | about_to_gc collapse here
 }
 
-// Atomic workload derivation: pure 3-way classification of running/queued
-// counts. Exported so Runtime-level views (which already aggregate counts
-// per-runtime in their own indices) can plug into the same vocabulary
-// without re-deriving from raw task arrays.
-export function deriveWorkload(counts: {
+// Atomic workload derivation from current running/queued counts.
+function deriveWorkload(counts: {
   runningCount: number;
   queuedCount: number;
 }): Workload {
@@ -53,28 +50,38 @@ interface WorkloadDetail {
   queuedCount: number;
 }
 
-// Aggregates a task list into running/queued counts, then classifies via
-// deriveWorkload. Caller pre-filters to the relevant scope (per-agent or
-// per-runtime) — we don't filter again here.
-export function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetail {
-  let runningCount = 0;
-  let queuedCount = 0;
-  for (const t of tasks) {
-    if (t.status === "running") {
-      runningCount += 1;
-    } else if (
-      t.status === "queued" ||
-      t.status === "dispatched" ||
-      // The daemon parked this task on a busy local_directory path. It's
-      // still on the agent's plate (counts toward "queued" presence), but
-      // it hasn't reached the run phase yet.
-      t.status === "waiting_local_directory"
-    ) {
-      queuedCount += 1;
-    }
-    // Terminal statuses (completed / failed / cancelled) intentionally
-    // ignored — workload is "what's on the plate right now", not history.
+export function agentTaskWorkloadKind(
+  status: string | undefined,
+): "running" | "queued" | null {
+  if (status === "running") return "running";
+  if (status === "queued" || status === "dispatched") return "queued";
+  return null;
+}
+
+export function isActiveAgentTaskStatus(status: string | undefined): boolean {
+  return agentTaskWorkloadKind(status) !== null;
+}
+
+export function partitionActiveAgentTasks(
+  tasks: readonly AgentTask[],
+  include: (task: AgentTask) => boolean = () => true,
+): { running: AgentTask[]; queued: AgentTask[] } {
+  const running: AgentTask[] = [];
+  const queued: AgentTask[] = [];
+  for (const task of tasks) {
+    if (!include(task)) continue;
+    const kind = agentTaskWorkloadKind(task.status);
+    if (kind === "running") running.push(task);
+    else if (kind === "queued") queued.push(task);
   }
+  return { running, queued };
+}
+
+// Caller pre-filters tasks to the relevant agent scope.
+function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetail {
+  const { running, queued } = partitionActiveAgentTasks(tasks);
+  const runningCount = running.length;
+  const queuedCount = queued.length;
   return {
     workload: deriveWorkload({ runningCount, queuedCount }),
     runningCount,
@@ -104,7 +111,6 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
       workload: "idle",
       runningCount: 0,
       queuedCount: 0,
-      capacity: input.agent.max_concurrent_tasks,
     };
   }
 
@@ -116,7 +122,6 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     workload: detail.workload,
     runningCount: detail.runningCount,
     queuedCount: detail.queuedCount,
-    capacity: input.agent.max_concurrent_tasks,
   };
 }
 

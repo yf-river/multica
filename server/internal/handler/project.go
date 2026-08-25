@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,7 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type ProjectResponse struct {
+type projectResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
 	Title       string  `json:"title"`
@@ -38,57 +39,73 @@ type ProjectResponse struct {
 	ResourceCount int64 `json:"resource_count"`
 }
 
-func projectToResponse(p db.Project) ProjectResponse {
-	return ProjectResponse{
-		ID:          uuidToString(p.ID),
-		WorkspaceID: uuidToString(p.WorkspaceID),
-		Title:       p.Title,
-		Description: textToPtr(p.Description),
-		Icon:        textToPtr(p.Icon),
-		Status:      p.Status,
-		Priority:    p.Priority,
-		LeadType:    textToPtr(p.LeadType),
-		LeadID:      uuidToPtr(p.LeadID),
-		CreatedAt:   timestampToString(p.CreatedAt),
-		UpdatedAt:   timestampToString(p.UpdatedAt),
+func projectToResponse(p db.Project, summary projectSummary) projectResponse {
+	return projectResponse{
+		ID:            uuidToString(p.ID),
+		WorkspaceID:   uuidToString(p.WorkspaceID),
+		Title:         p.Title,
+		Description:   textToPtr(p.Description),
+		Icon:          textToPtr(p.Icon),
+		Status:        p.Status,
+		Priority:      p.Priority,
+		LeadType:      textToPtr(p.LeadType),
+		LeadID:        uuidToPtr(p.LeadID),
+		CreatedAt:     timestampToString(p.CreatedAt),
+		UpdatedAt:     timestampToString(p.UpdatedAt),
+		IssueCount:    summary.issueCount,
+		DoneCount:     summary.doneCount,
+		ResourceCount: summary.resourceCount,
 	}
 }
 
-func (h *Handler) loadProjectIssueStats(ctx context.Context, projectID pgtype.UUID) (int64, int64) {
-	stats, err := h.Queries.GetProjectIssueStats(ctx, []pgtype.UUID{projectID})
-	if err != nil || len(stats) == 0 {
-		return 0, 0
-	}
-	return stats[0].TotalCount, stats[0].DoneCount
+type projectSummary struct {
+	issueCount    int64
+	doneCount     int64
+	resourceCount int64
 }
 
-func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype.UUID) int64 {
-	rows, err := h.Queries.GetProjectResourceCounts(ctx, []pgtype.UUID{projectID})
-	if err != nil || len(rows) == 0 {
-		return 0
+func (h *Handler) loadProjectSummaries(ctx context.Context, projectIDs []pgtype.UUID) (map[string]projectSummary, error) {
+	summaries := make(map[string]projectSummary, len(projectIDs))
+	stats, statsErr := h.Queries.GetProjectIssueStats(ctx, projectIDs)
+	if statsErr == nil {
+		for _, row := range stats {
+			summaries[uuidToString(row.ProjectID)] = projectSummary{issueCount: row.TotalCount, doneCount: row.DoneCount}
+		}
 	}
-	return rows[0].ResourceCount
+	resources, resourcesErr := h.Queries.GetProjectResourceCounts(ctx, projectIDs)
+	if resourcesErr == nil {
+		for _, row := range resources {
+			key := uuidToString(row.ProjectID)
+			summary := summaries[key]
+			summary.resourceCount = row.ResourceCount
+			summaries[key] = summary
+		}
+	}
+	return summaries, errors.Join(statsErr, resourcesErr)
+}
+
+func writeProjectSummaryError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeClientClosedIfCanceled(w, err) {
+		return
+	}
+	slog.Error("load project summary failed", append(logger.RequestAttrs(r), "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to load project summary")
 }
 
 type CreateProjectRequest struct {
-	Title       string                                `json:"title"`
-	Description *string                               `json:"description"`
-	Icon        *string                               `json:"icon"`
-	Status      string                                `json:"status"`
-	Priority    string                                `json:"priority"`
-	LeadType    *string                               `json:"lead_type"`
-	LeadID      *string                               `json:"lead_id"`
-	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
+	Title       string                         `json:"title"`
+	Description *string                        `json:"description"`
+	Icon        *string                        `json:"icon"`
+	Status      string                         `json:"status"`
+	Priority    string                         `json:"priority"`
+	LeadType    *string                        `json:"lead_type"`
+	LeadID      *string                        `json:"lead_id"`
+	Resources   []CreateProjectResourceRequest `json:"resources,omitempty"`
 }
 
-// CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
-// is embedded inside the project create payload. Kept as a separate type so a
-// future change to the standalone request can't silently break this surface.
-type CreateProjectResourceRequestPayload struct {
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        *string         `json:"label"`
-	Position     *int32          `json:"position"`
+type createProjectResponse struct {
+	projectResponse
+	Resources []ProjectResourceResponse `json:"resources,omitempty"`
 }
 
 type UpdateProjectRequest struct {
@@ -129,35 +146,23 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Batch-fetch issue stats and resource counts for all projects
-	statsMap := make(map[string]db.GetProjectIssueStatsRow)
-	resourceCountMap := make(map[string]int64)
+	summaries := map[string]projectSummary{}
 	if len(projects) > 0 {
 		projectIDs := make([]pgtype.UUID, len(projects))
 		for i, p := range projects {
 			projectIDs[i] = p.ID
 		}
-		stats, err := h.Queries.GetProjectIssueStats(r.Context(), projectIDs)
-		if err == nil {
-			for _, s := range stats {
-				statsMap[uuidToString(s.ProjectID)] = s
-			}
-		}
-		counts, err := h.Queries.GetProjectResourceCounts(r.Context(), projectIDs)
-		if err == nil {
-			for _, c := range counts {
-				resourceCountMap[uuidToString(c.ProjectID)] = c.ResourceCount
-			}
+		var err error
+		summaries, err = h.loadProjectSummaries(r.Context(), projectIDs)
+		if err != nil {
+			writeProjectSummaryError(w, r, err)
+			return
 		}
 	}
 
-	resp := make([]ProjectResponse, len(projects))
+	resp := make([]projectResponse, len(projects))
 	for i, p := range projects {
-		resp[i] = projectToResponse(p)
-		if s, ok := statsMap[resp[i].ID]; ok {
-			resp[i].IssueCount = s.TotalCount
-			resp[i].DoneCount = s.DoneCount
-		}
-		resp[i].ResourceCount = resourceCountMap[resp[i].ID]
+		resp[i] = projectToResponse(p, summaries[uuidToString(p.ID)])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": resp, "total": len(resp)})
 }
@@ -165,30 +170,41 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	project, ok := h.loadProjectForRequest(w, r, id, workspaceID)
 	if !ok {
 		return
 	}
+	summaries, err := h.loadProjectSummaries(r.Context(), []pgtype.UUID{project.ID})
+	if err != nil {
+		writeProjectSummaryError(w, r, err)
+		return
+	}
+	resp := projectToResponse(project, summaries[uuidToString(project.ID)])
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) loadProjectForRequest(w http.ResponseWriter, r *http.Request, id, workspaceID string) (db.Project, bool) {
+	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	if !ok {
+		return db.Project{}, false
+	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
-		return
+		return db.Project{}, false
 	}
 	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
 		ID: idUUID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
+		writeEntityLoadError(w, err, "project", "project_id", id)
+		return db.Project{}, false
 	}
-	resp := projectToResponse(project)
-	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
-	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
-	writeJSON(w, http.StatusOK, resp)
+	return project, true
 }
 
 // validProjectStatuses / validProjectPriorities mirror the CHECK constraints on
-// the project table. CreateProject / UpdateProject pre-validate against these
-// so an unknown enum value returns a clean 400 with
+// the project table. CreateProject / UpdateProject
+// pre-validate against these so an unknown enum value returns a clean 400 with
 // the allowed list instead of surfacing the DB CHECK violation as a 500 — the
 // exact mismatch reported in #3925 (`--status active`).
 var validProjectStatuses = []string{"planned", "in_progress", "paused", "completed", "cancelled"}
@@ -223,8 +239,7 @@ func (h *Handler) writeProjectWriteError(w http.ResponseWriter, r *http.Request,
 
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var req CreateProjectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Title == "" {
@@ -288,11 +303,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
 			return
 		}
-		if err := h.ensureGongfengProjectPathRegistered(r.Context(), wsUUID, res.ResourceType, ref); err != nil {
-			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
-			return
-		}
 		normalizedRefs[i] = ref
+		req.Resources[i].ResourceType = res.ResourceType
+		req.Resources[i].ResourceRef = ref
 		if res.ResourceType == "local_directory" {
 			var ld localDirectoryRef
 			if err := json.Unmarshal(ref, &ld); err != nil {
@@ -304,6 +317,40 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			localDirSeen[ld.DaemonID] = i
+		}
+	}
+	req.Status = status
+	req.Priority = priority
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different request",
+		"failed to load project request",
+	)
+	loadReplay := func() (createProjectResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, actorID, resourceTypeProject,
+			idempotencyKey, requestHash,
+			func(response createProjectResponse) bool { return response.ID != "" },
+		)
+	}
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
+		return
+	}
+	for i, res := range req.Resources {
+		if err := h.ensureGongfengProjectPathRegistered(
+			r.Context(), wsUUID, strings.TrimSpace(res.ResourceType), normalizedRefs[i],
+		); err != nil {
+			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
+			return
 		}
 	}
 
@@ -318,28 +365,24 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Priority:    priority,
 	}
 
-	// Without resources, keep the simple non-tx path.
-	if len(req.Resources) == 0 {
-		project, err := h.Queries.CreateProject(r.Context(), createParams)
-		if err != nil {
-			h.writeProjectWriteError(w, r, err, "create")
-			return
-		}
-		resp := projectToResponse(project)
-		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
-		writeJSON(w, http.StatusCreated, resp)
+	// Project, optional resources, and the exact replay response share one
+	// transaction. This is deliberately the only create path: a response lost
+	// after commit can be retried without creating a duplicate Project.
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start transaction")
+	if !ok {
 		return
 	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
 
-	// Transactional path: project + all resources are atomic.
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeReplayError,
+		"failed to reserve project request",
+		http.StatusCreated,
+	) {
 		return
 	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-
 	project, err := qtx.CreateProject(r.Context(), createParams)
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "create")
@@ -353,7 +396,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		if res.Label != nil && strings.TrimSpace(*res.Label) != "" {
 			label = pgtype.Text{String: strings.TrimSpace(*res.Label), Valid: true}
 		}
-		var position int32 = int32(i)
+		position := int32(i)
 		if res.Position != nil {
 			position = *res.Position
 		}
@@ -376,17 +419,27 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		resourceRows = append(resourceRows, row)
 	}
+	resourceResp := make([]ProjectResourceResponse, len(resourceRows))
+	for i, row := range resourceRows {
+		resourceResp[i] = projectResourceToResponse(row)
+	}
+	resp := projectToResponse(project, projectSummary{resourceCount: int64(len(resourceResp))})
+	createResp := createProjectResponse{projectResponse: resp}
+	if len(resourceResp) > 0 {
+		createResp.Resources = resourceResp
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, actorID, resourceTypeProject,
+		idempotencyKey, requestHash, project.ID, createResp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete project request")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit project create")
 		return
 	}
 
-	resourceResp := make([]ProjectResourceResponse, len(resourceRows))
-	for i, row := range resourceRows {
-		resourceResp[i] = projectResourceToResponse(row)
-	}
-	resp := projectToResponse(project)
-	resp.ResourceCount = int64(len(resourceResp))
 	h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
 	for _, rr := range resourceResp {
 		h.publish(protocol.EventProjectResourceCreated, workspaceID, "member", userID, map[string]any{
@@ -394,34 +447,19 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			"project_id": resp.ID,
 		})
 	}
-	// One-shot create echo: the parent ProjectResponse fields plus the just-
-	// created resources. This is a transient creation echo, not a contract for
-	// reads — GET /projects/{id} stays metadata-only with resource_count.
-	writeJSON(w, http.StatusCreated, struct {
-		ProjectResponse
-		Resources []ProjectResourceResponse `json:"resources"`
-	}{
-		ProjectResponse: resp,
-		Resources:       resourceResp,
-	})
+	writeJSON(w, http.StatusCreated, createResp)
 }
 
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	prevProject, ok := h.loadProjectForRequest(w, r, id, workspaceID)
 	if !ok {
 		return
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-	prevProject, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: idUUID, WorkspaceID: wsUUID,
-	})
+	summaries, err := h.loadProjectSummaries(r.Context(), []pgtype.UUID{prevProject.ID})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
+		writeProjectSummaryError(w, r, err)
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -439,7 +477,10 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rawFields map[string]json.RawMessage
-	json.Unmarshal(bodyBytes, &rawFields)
+	if err := json.Unmarshal(bodyBytes, &rawFields); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	params := db.UpdateProjectParams{
 		ID:          prevProject.ID,
@@ -500,9 +541,7 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		h.writeProjectWriteError(w, r, err, "update")
 		return
 	}
-	resp := projectToResponse(project)
-	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
-	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	resp := projectToResponse(project, summaries[uuidToString(project.ID)])
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -510,19 +549,8 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	project, ok := h.loadProjectForRequest(w, r, id, workspaceID)
 	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: idUUID, WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -540,43 +568,22 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchProjectResponse extends ProjectResponse with search metadata.
+// SearchProjectResponse extends projectResponse with search metadata.
 type SearchProjectResponse struct {
-	ProjectResponse
+	projectResponse
 	MatchSource    string  `json:"match_source"`
 	MatchedSnippet *string `json:"matched_snippet,omitempty"`
 }
 
 // buildProjectSearchQuery builds a dynamic SQL query for project search.
 func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) (string, []any) {
-	phrase = strings.ToLower(phrase)
-	for i, t := range terms {
-		terms[i] = strings.ToLower(t)
-	}
-
-	argIdx := 1
-	args := []any{}
-	nextArg := func(val any) string {
-		args = append(args, val)
-		s := fmt.Sprintf("$%d", argIdx)
-		argIdx++
-		return s
-	}
-
-	escapedPhrase := escapeLike(phrase)
-	phraseParam := nextArg(escapedPhrase)
-	phraseContains := "'%' || " + phraseParam + " || '%'"
-	phraseStartsWith := phraseParam + " || '%'"
-
-	wsParam := nextArg(nil) // workspace_id placeholder
-
-	var termParams []string
-	if len(terms) > 1 {
-		for _, t := range terms {
-			et := escapeLike(t)
-			termParams = append(termParams, nextArg(et))
-		}
-	}
+	var args dynamicQueryArgs
+	patterns := addSearchQueryPatterns(&args, phrase, terms)
+	phraseParam := patterns.exact
+	phraseContains := patterns.contains
+	phraseStartsWith := patterns.starts
+	wsParam := patterns.workspace
+	termParams := patterns.terms
 
 	// --- WHERE clause ---
 	var whereParts []string
@@ -592,10 +599,9 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if len(termParams) > 1 {
 		var termConditions []string
 		for _, tp := range termParams {
-			tc := "'%' || " + tp + " || '%'"
 			termConditions = append(termConditions, fmt.Sprintf(
 				"(LOWER(p.title) LIKE %s OR LOWER(COALESCE(p.description, '')) LIKE %s)",
-				tc, tc,
+				tp, tp,
 			))
 		}
 		whereParts = append(whereParts, "("+strings.Join(termConditions, " AND ")+")")
@@ -623,7 +629,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if len(termParams) > 1 {
 		var titleTerms []string
 		for _, tp := range termParams {
-			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE '%s' || %s || '%s'", "%", tp, "%"))
+			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE %s", tp))
 		}
 		rankCases = append(rankCases, fmt.Sprintf("WHEN (%s) THEN 3", strings.Join(titleTerms, " AND ")))
 	}
@@ -642,7 +648,7 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 	if len(termParams) > 1 {
 		var titleTerms []string
 		for _, tp := range termParams {
-			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE '%s' || %s || '%s'", "%", tp, "%"))
+			titleTerms = append(titleTerms, fmt.Sprintf("LOWER(p.title) LIKE %s", tp))
 		}
 		matchSourceExpr = fmt.Sprintf(`CASE
 			WHEN LOWER(p.title) LIKE %s THEN 'title'
@@ -653,8 +659,8 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 		)
 	}
 
-	limitParam := nextArg(nil)
-	offsetParam := nextArg(nil)
+	limitParam := args.add(nil)
+	offsetParam := args.add(nil)
 
 	query := fmt.Sprintf(`SELECT p.id, p.workspace_id, p.title, p.description, p.icon,
 		p.status, p.priority, p.lead_type, p.lead_id,
@@ -678,46 +684,20 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 
 func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	workspaceID := h.resolveWorkspaceID(r)
-
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeError(w, http.StatusBadRequest, "q parameter is required")
-		return
-	}
-
-	limit := 20
-	offset := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	if limit > 50 {
-		limit = 50
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = v
-		}
-	}
-
-	includeClosed := r.URL.Query().Get("include_closed") == "true"
-
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	query, workspaceUUID, options, ok := h.parseSearchRequest(w, r)
 	if !ok {
 		return
 	}
-	terms := splitSearchTerms(q)
+	terms := splitSearchTerms(query)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed)
-	args[1] = wsUUID
-	args[len(args)-2] = limit
-	args[len(args)-1] = offset
+	sqlQuery, args := buildProjectSearchQuery(query, terms, options.includeClosed)
+	args[1] = workspaceUUID
+	args[len(args)-2] = options.limit
+	args[len(args)-1] = options.offset
 
 	rows, err := h.DB.Query(ctx, sqlQuery, args...)
 	if err != nil {
-		slog.Warn("search projects failed", "error", err, "workspace_id", workspaceID, "query", q)
+		slog.Warn("search projects failed", "error", err, "workspace_id", uuidToString(workspaceUUID), "query", query)
 		writeError(w, http.StatusInternalServerError, "failed to search projects")
 		return
 	}
@@ -765,37 +745,20 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Batch-fetch issue stats and resource counts
-	statsMap := make(map[string]db.GetProjectIssueStatsRow)
-	resourceCountMap := make(map[string]int64)
+	summaries := map[string]projectSummary{}
 	if len(results) > 0 {
 		projectIDs := make([]pgtype.UUID, len(results))
 		for i, r := range results {
 			projectIDs[i] = r.project.ID
 		}
-		stats, err := h.Queries.GetProjectIssueStats(ctx, projectIDs)
-		if err == nil {
-			for _, s := range stats {
-				statsMap[uuidToString(s.ProjectID)] = s
-			}
-		}
-		counts, err := h.Queries.GetProjectResourceCounts(ctx, projectIDs)
-		if err == nil {
-			for _, c := range counts {
-				resourceCountMap[uuidToString(c.ProjectID)] = c.ResourceCount
-			}
-		}
+		summaries, _ = h.loadProjectSummaries(ctx, projectIDs)
 	}
 
 	resp := make([]SearchProjectResponse, len(results))
 	for i, row := range results {
-		pr := projectToResponse(row.project)
-		if s, ok := statsMap[pr.ID]; ok {
-			pr.IssueCount = s.TotalCount
-			pr.DoneCount = s.DoneCount
-		}
-		pr.ResourceCount = resourceCountMap[pr.ID]
+		pr := projectToResponse(row.project, summaries[uuidToString(row.project.ID)])
 		spr := SearchProjectResponse{
-			ProjectResponse: pr,
+			projectResponse: pr,
 			MatchSource:     row.matchSource,
 		}
 		if row.matchSource == "description" {
@@ -804,7 +767,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				desc = row.project.Description.String
 			}
 			if desc != "" {
-				snippet := extractSnippet(desc, q)
+				snippet := extractSnippet(desc, query)
 				spr.MatchedSnippet = &snippet
 			}
 		}

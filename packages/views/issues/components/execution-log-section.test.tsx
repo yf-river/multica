@@ -46,10 +46,6 @@ vi.mock("../../common/task-transcript", () => ({
   ),
 }));
 
-vi.mock("./terminate-task-confirm-dialog", () => ({
-  TerminateTaskConfirmDialog: () => null,
-}));
-
 import { ActiveTaskRow, ExecutionLogSection, IssueRunReviewSummaryCard } from "./execution-log-section";
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
@@ -59,7 +55,6 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
     runtime_id: "runtime-1",
     issue_id: "issue-1",
     status: "running",
-    priority: 0,
     dispatched_at: null,
     started_at: "2026-06-08T08:00:00Z",
     completed_at: null,
@@ -79,7 +74,7 @@ beforeEach(() => {
   mockState.listTasksByIssue.mockResolvedValue([]);
   mockState.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
   mockState.getIssueExecutionTree.mockResolvedValue(null);
-  mockState.listIssueSOPRuns.mockResolvedValue({ items: [] });
+  mockState.listIssueSOPRuns.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -132,18 +127,13 @@ describe("ExecutionLogSection trace", () => {
       events: [
         {
           id: "trace-started",
-          workspace_id: "workspace-1",
           task_id: "task-1",
-          issue_id: "issue-1",
           agent_id: "agent-1",
           runtime_id: "runtime-1",
-          squad_id: null,
-          project_id: null,
           source: "issue",
           event_type: "task.started",
           event_name: "任务已开始",
           status: "running",
-          attempt: 1,
           duration_ms: null,
           queue_wait_ms: null,
           run_ms: null,
@@ -156,26 +146,18 @@ describe("ExecutionLogSection trace", () => {
           cache_write_tokens: 0,
           failure_reason: "",
           error_type: "",
-          trigger_comment_id: null,
-          autopilot_run_id: null,
-          chat_session_id: null,
           metadata: {},
           created_at: "2026-06-08T08:00:00Z",
         },
         {
           id: "trace-1",
-          workspace_id: "workspace-1",
           task_id: "task-1",
-          issue_id: "issue-1",
           agent_id: "agent-1",
           runtime_id: "runtime-1",
-          squad_id: null,
-          project_id: null,
           source: "issue",
           event_type: "llm.usage_reported",
           event_name: "模型用量已上报",
           status: "running",
-          attempt: 1,
           duration_ms: null,
           queue_wait_ms: null,
           run_ms: null,
@@ -188,36 +170,18 @@ describe("ExecutionLogSection trace", () => {
           cache_write_tokens: 0,
           failure_reason: "",
           error_type: "",
-          trigger_comment_id: null,
-          autopilot_run_id: null,
-          chat_session_id: null,
           metadata: {},
           created_at: "2026-06-08T08:01:00Z",
         },
       ],
     });
-    mockState.listIssueSOPRuns.mockResolvedValue({
-      items: [
-        {
-          id: "run-1",
-          workspace_id: "workspace-1",
-          issue_id: "issue-1",
-          squad_id: "squad-1",
-          leader_task_id: "task-1",
-          profile_key: "default",
-          profile: {},
-          status: "进行中",
-          current_step_key: "04-implement",
-          started_at: "2026-06-08T08:00:00Z",
-          completed_at: null,
-          total_duration_ms: null,
-          metrics: {},
-          events: [],
-          created_at: "2026-06-08T08:00:00Z",
-          updated_at: "2026-06-08T08:00:00Z",
-        },
-      ],
-    });
+    mockState.listIssueSOPRuns.mockResolvedValue([
+      {
+        current_step_key: "04-implement",
+        started_at: "2026-06-08T08:00:00Z",
+        completed_at: null,
+      },
+    ]);
 
     renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
 
@@ -259,7 +223,6 @@ describe("ExecutionLogSection trace", () => {
       summary: { 任务数: 1, 子任务数: 0, SOP执行数: 1, 观测事件数: 2, 工具调用数: 1, 唤醒评论数: 0 },
       issue_summary: {
         issue_id: "issue-1",
-        node_count: 2,
         total_duration_ms: 60000,
         total_input_tokens: 10,
         total_output_tokens: 5,
@@ -270,16 +233,13 @@ describe("ExecutionLogSection trace", () => {
         trace_event_count: 2,
         usage_unavailable: false,
         acceptance_status: "completed",
-        full_analysis_deep_link: "/test/run-reviews?issue=issue-1",
       },
       root: {
         issue: { id: "issue-1", title: "历史任务", status: "done" },
         tasks: [makeTask({ status: "completed", completed_at: "2026-06-08T08:07:00Z" })],
-        sop_runs: [],
         trace_events: [{ id: "trace-1" }],
         tool_call_chains: [],
         tool_call_summary: [],
-        wakeup_comments: [],
         children: [],
       },
       timeline_nodes: [],
@@ -308,7 +268,6 @@ describe("ExecutionLogSection trace", () => {
       },
       issue_summary: {
         issue_id: "issue-parent",
-        node_count: 12,
         total_duration_ms: 65000,
         total_input_tokens: 100,
         total_output_tokens: 40,
@@ -320,7 +279,6 @@ describe("ExecutionLogSection trace", () => {
         usage_unavailable: false,
         failure_summary: "验收失败：缺少执行级结论",
         acceptance_status: "failed",
-        full_analysis_deep_link: "/test/run-reviews?issue=issue-parent",
       },
       root: {
         issue: {
@@ -346,7 +304,6 @@ describe("ExecutionLogSection trace", () => {
           metadata: {},
         },
         tasks: [makeTask({ id: "task-parent", status: "completed", issue_id: "issue-parent" })],
-        sop_runs: [{ id: "run-1", events: [{ id: "event-1" }, { id: "event-2" }] }],
         trace_events: [{ id: "trace-1" }, { id: "trace-2" }],
         tool_call_chains: [
           {
@@ -359,7 +316,6 @@ describe("ExecutionLogSection trace", () => {
             input: { url: "/health" },
             output: "Error: HTTP 500 from upstream",
             duration_ms: 1200,
-            result_category: "异常线索",
             failure_signal: true,
             failure_reason: "工具结果包含 HTTP 状态码 500",
             summary: "工具 curl-check 已配对：调用 #1，结果 #2",
@@ -367,33 +323,7 @@ describe("ExecutionLogSection trace", () => {
             completed_at: "2026-06-08T08:02:01Z",
           },
         ],
-        tool_call_summary: [
-          {
-            tool: "curl-check",
-            total_calls: 2,
-            paired_calls: 2,
-            missing_result_calls: 0,
-            orphan_result_calls: 0,
-            average_duration_ms: 900,
-            max_duration_ms: 1200,
-            slowest_tool_call_chain_id: "tool:call-1",
-            result_categories: { 已返回: 1, 异常线索: 1 },
-            failure_signal_calls: 1,
-            needs_attention: true,
-            summary: "curl-check：调用 2 次，异常线索 1 次",
-          },
-        ],
-        wakeup_comments: [
-          {
-            id: "comment-1",
-            issue_id: "issue-parent",
-            author_type: "system",
-            type: "system",
-            content: "子任务 [GTD-2]「gateway 子任务」已完成。",
-            parent_id: null,
-            created_at: "2026-06-08T08:03:00Z",
-          },
-        ],
+        tool_call_summary: [],
         children: [
           {
             issue: {
@@ -419,11 +349,9 @@ describe("ExecutionLogSection trace", () => {
               metadata: {},
             },
             tasks: [makeTask({ id: "task-child", status: "queued", issue_id: "issue-child" })],
-            sop_runs: [],
             trace_events: [{ id: "trace-child" }],
             tool_call_chains: [],
             tool_call_summary: [],
-            wakeup_comments: [],
             children: [],
           },
         ],

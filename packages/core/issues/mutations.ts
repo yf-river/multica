@@ -25,9 +25,8 @@ import {
   pruneDeletedIssueFromListCaches,
   pruneDeletedIssueFromParentChildrenCaches,
 } from "./delete-cache";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
-import { useRecentIssuesStore } from "./stores";
 import type { GroupedIssuesResponse, Issue, IssueAssigneeGroup, IssueReaction, IssueStatus } from "../types";
 import type {
   CreateIssueRequest,
@@ -36,6 +35,8 @@ import type {
 } from "../types";
 import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
+import { createIssueWithRecovery } from "./create-operation";
+import { createCommentWithRecovery } from "./comment-create-operation";
 
 // ---------------------------------------------------------------------------
 // Shared mutation variable types — used by both mutation hooks and
@@ -184,14 +185,20 @@ export function useCreateIssue() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (data: CreateIssueRequest) => api.createIssue(data),
+    mutationFn: (data: CreateIssueRequest) => createIssueWithRecovery(data),
     onSuccess: (newIssue) => {
       for (const [key, data] of qc.getQueriesData<ListIssuesCache>({ queryKey: issueKeys.list(wsId) })) {
         if (data) qc.setQueryData<ListIssuesCache>(key, addIssueToBuckets(data, newIssue));
       }
       // Surface the just-created issue in cmd+k's Recent list without
       // requiring the user to open it first.
-      useRecentIssuesStore.getState().recordVisit(wsId, newIssue.id);
+      useRecentContextStore.getState().recordVisit(wsId, {
+        type: "issue",
+        id: newIssue.id,
+        label: newIssue.identifier,
+        subtitle: newIssue.title,
+        status: newIssue.status,
+      });
       // Invalidate parent's children query so sub-issues list updates immediately
       if (newIssue.parent_issue_id) {
         qc.invalidateQueries({ queryKey: issueKeys.children(wsId, newIssue.parent_issue_id) });
@@ -382,7 +389,6 @@ export function useDeleteIssue() {
       }
     },
     onSuccess: (_data, id, ctx) => {
-      useRecentContextStore.getState().forgetContext(wsId, { type: "issue", id });
       cleanupDeletedIssueCaches(qc, wsId, id, ctx?.metadata);
     },
     onSettled: (_data, _err, _id, ctx) => {
@@ -540,9 +546,7 @@ export function useBatchDeleteIssues() {
     },
     onSuccess: (data, ids, ctx) => {
       if (data.deleted === ids.length) {
-        const { forgetContext } = useRecentContextStore.getState();
         for (const id of ids) {
-          forgetContext(wsId, { type: "issue", id });
           cleanupDeletedIssueCaches(qc, wsId, id, ctx?.metadataById.get(id));
         }
         return;
@@ -605,7 +609,13 @@ export function useCreateComment(issueId: string) {
       parentId?: string;
       attachmentIds?: string[];
       suppressAgentIds?: string[];
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
+    }) => createCommentWithRecovery(issueId, {
+      content,
+      type,
+      ...(parentId ? { parent_id: parentId } : {}),
+      ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
+      ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+    }),
     onSuccess: (comment) => {
       const entry: TimelineEntry = {
         type: "comment",
@@ -618,7 +628,6 @@ export function useCreateComment(issueId: string) {
         reactions: comment.reactions ?? [],
         attachments: comment.attachments ?? [],
         created_at: comment.created_at,
-        updated_at: comment.updated_at,
       };
       // Dedupe by id: the `comment:created` WS event may have already added
       // this entry from the broadcast path before this onSuccess fires. Skip
@@ -780,10 +789,8 @@ export function useResolveComment(issueId: string) {
       qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) => {
         if (!old) return old;
         // Resolving makes this comment the sole resolution in its thread, so
-        // mirror the server (ClearOtherThreadResolutions) and clear every other
-        // resolution in the same thread. Without this the cache shows two
-        // resolutions until the settle refetch, which is exactly the flash the
-        // single-resolution fix removes. Unresolve only clears its own row.
+        // mirror the server and clear the previous resolution in that thread.
+        // Unresolving only clears the selected row.
         const threadIds = resolved ? collectThreadCommentIds(old, commentId) : null;
         return old.map((e) => {
           if (e.id === commentId) {
@@ -896,11 +903,8 @@ export function useToggleIssueSubscriber(issueId: string) {
         );
       } else {
         const temp: IssueSubscriber = {
-          issue_id: issueId,
           user_type: userType,
           user_id: userId,
-          reason: "manual",
-          created_at: new Date().toISOString(),
         };
         qc.setQueryData<IssueSubscriber[]>(
           issueKeys.subscribers(issueId),

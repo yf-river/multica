@@ -2,23 +2,10 @@ package agent
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
-
-func TestNewReturnsKimiBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("kimi", Config{ExecutablePath: "/nonexistent/kimi"})
-	if err != nil {
-		t.Fatalf("New(kimi) error: %v", err)
-	}
-	if _, ok := b.(*kimiBackend); !ok {
-		t.Fatalf("expected *kimiBackend, got %T", b)
-	}
-}
 
 func TestKimiToolNameFromTitle(t *testing.T) {
 	t.Parallel()
@@ -40,9 +27,7 @@ func TestKimiToolNameFromTitle(t *testing.T) {
 		{"Fetch: https://example.com", "web_fetch"},
 		{"Todo Write", "todo_write"},
 		{"Todo List", "todo_list"},
-		// Fallback: snake_case the title.
 		{"Custom Thing", "custom_thing"},
-		// Empty input returns empty — caller decides how to react.
 		{"", ""},
 	}
 	for _, tt := range tests {
@@ -53,23 +38,8 @@ func TestKimiToolNameFromTitle(t *testing.T) {
 	}
 }
 
-// fakeKimiACPScript returns a POSIX-sh script that impersonates
-// `kimi acp` for a single short ACP session: it acks initialize /
-// session/new and then replies to session/set_model with a JSON-RPC
-// error — the scenario the kimiBackend must propagate as a failed
-// task rather than silently falling back to the default model.
 func fakeKimiACPScript() string {
 	return `#!/bin/sh
-# Fake ` + "`kimi`" + ` binary — used by TestKimiBackendSetModelFailureFailsTask
-# and TestKimiBackendPassesYoloFlag.
-#
-# Writes the full argv (one arg per line) to $KIMI_ARGS_FILE if that env
-# var is set, so tests can assert that the daemon invokes us with the
-# right flags (` + "`--yolo acp`" + `, not bare ` + "`acp`" + `).
-#
-# Then reads one JSON-RPC request per line from stdin, matches on the
-# method name, and writes back a canned response. Exits after set_model
-# so the kimiBackend cleanup path can run.
 if [ -n "$KIMI_ARGS_FILE" ]; then
   for arg in "$@"; do
     printf '%s\n' "$arg" >> "$KIMI_ARGS_FILE"
@@ -93,12 +63,6 @@ done
 `
 }
 
-// TestKimiBackendSetModelFailureFailsTask pins the "don't silently
-// fall back" behaviour that landed in this PR: when kimi rejects the
-// caller-selected model via session/set_model, the task result must
-// report status=failed with a message that names the model and the
-// upstream error — not claim success while actually running on the
-// default model.
 func TestKimiBackendSetModelFailureFailsTask(t *testing.T) {
 	t.Parallel()
 
@@ -106,19 +70,7 @@ func TestKimiBackendSetModelFailureFailsTask(t *testing.T) {
 		Model:   "bogus-model",
 		Timeout: 5 * time.Second,
 	})
-
-	if result.Status != "failed" {
-		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-	}
-	if !strings.Contains(result.Error, `could not switch to model "bogus-model"`) {
-		t.Errorf("expected error to name the requested model, got %q", result.Error)
-	}
-	if !strings.Contains(result.Error, "model not available") {
-		t.Errorf("expected error to surface upstream message, got %q", result.Error)
-	}
-	if result.SessionID != "ses_fake" {
-		t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
-	}
+	assertACPModelFailure(t, result, "ses_fake")
 }
 
 // fakeKimiACPStaleResumeSetModelScript impersonates kimi-cli when a
@@ -149,11 +101,6 @@ done
 `
 }
 
-// TestKimiBackendClearsSessionIDWhenSetModelSessionNotFound pins the
-// set_model sibling of the resumed-session fix: with a model override,
-// session/set_model runs before session/prompt, so a dead resumed
-// session surfaces there. The Result must carry an empty SessionID so
-// the daemon's fresh-session retry (gated on SessionID == "") fires.
 func TestKimiBackendClearsSessionIDWhenSetModelSessionNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -163,33 +110,15 @@ func TestKimiBackendClearsSessionIDWhenSetModelSessionNotFound(t *testing.T) {
 		Model:           "kimi-for-coding",
 	})
 
-	if result.Status != "failed" {
-		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-	}
-	if !strings.Contains(result.Error, `could not switch to model "kimi-for-coding"`) {
-		t.Errorf("expected error to name the requested model, got %q", result.Error)
-	}
-	if result.SessionID != "" {
-		t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
-	}
+	assertStaleSessionModelFailure(t, result, "kimi-for-coding")
 }
 
-// TestKimiBackendInvokesACPSubcommand pins the argv for `kimi`. An
-// earlier fix tried passing `--yolo` to bypass per-tool approval
-// prompts, but the `acp` subcommand in kimi-cli takes no options
-// (see cli/__init__.py @cli.command def acp()), so `--yolo` was a
-// no-op and the daemon still hung for 5 min on the first Shell call.
-// The actual bypass is in hermesClient.handleAgentRequest, which
-// auto-approves session/request_permission. This test catches
-// accidental re-introduction of the dead flag.
 func TestKimiBackendInvokesACPSubcommand(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
 
-	// Set Model so the fake binary exits on set_model and we don't
-	// have to wait for the prompt branch. We only care about argv here.
 	executeBackendScript(t, "kimi", "kimi", fakeKimiACPScript(), ExecOptions{
 		Model:   "bogus-model",
 		Timeout: 5 * time.Second,
@@ -197,11 +126,7 @@ func TestKimiBackendInvokesACPSubcommand(t *testing.T) {
 		cfg.Env = map[string]string{"KIMI_ARGS_FILE": argsFile}
 	})
 
-	raw, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatalf("read args file: %v", err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	lines := readTestLines(t, argsFile)
 	if len(lines) < 1 {
 		t.Fatalf("expected at least 1 arg (acp), got %d: %q", len(lines), lines)
 	}
@@ -216,9 +141,6 @@ func TestKimiBackendInvokesACPSubcommand(t *testing.T) {
 	}
 }
 
-// TestKimiResumeIncludesMcpServers pins the same contract as the matching
-// Hermes test: session/resume must carry the managed MCP set so a resumed
-// Kimi task has the same MCP tools as a fresh one.
 func TestKimiResumeIncludesMcpServers(t *testing.T) {
 	t.Parallel()
 

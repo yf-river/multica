@@ -10,7 +10,7 @@ const DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One day's tally for the sparkline. */
-export interface ActivityBucket {
+interface ActivityBucket {
   total: number;
   failed: number;
 }
@@ -24,13 +24,6 @@ export interface AgentActivity {
    * tail-slice + roll-up).
    */
   buckets: ActivityBucket[];
-  /**
-   * Days the agent has existed, capped at DAYS. Pure cosmetic — used by
-   * tooltip copy ("Created 3 days ago"). The sparkline doesn't change
-   * shape for young agents on purpose; pre-life days look the same as
-   * zero days.
-   */
-  daysSinceCreated: number;
 }
 
 /**
@@ -39,27 +32,19 @@ export interface AgentActivity {
  * read through this so the totals can never drift from the bars they
  * label.
  */
-export interface ActivityWindowSummary {
+interface ActivityWindowSummary {
   /** Trailing-N buckets from the activity series (newest end). */
   buckets: ActivityBucket[];
   /** Sum of `bucket.total` across the window. */
   totalRuns: number;
   /** Sum of `bucket.failed` across the window. */
   totalFailed: number;
-  /** Echo of the input window — the renderer uses it for copy. */
-  windowDays: number;
 }
-
-const EMPTY: AgentActivity = {
-  buckets: Array.from({ length: DAYS }, () => ({ total: 0, failed: 0 })),
-  daysSinceCreated: DAYS,
-};
 
 const EMPTY_SUMMARY: ActivityWindowSummary = {
   buckets: [],
   totalRuns: 0,
   totalFailed: 0,
-  windowDays: 0,
 };
 
 /**
@@ -89,7 +74,7 @@ export function useWorkspaceActivityMap(wsId: string | undefined): {
   return { byAgent, loading: agentsPending || bucketsPending };
 }
 
-export function buildActivityMap(
+function buildActivityMap(
   agents: readonly Agent[],
   buckets: readonly AgentActivityBucket[],
   now: number,
@@ -109,7 +94,6 @@ export function buildActivityMap(
       agent.id,
       deriveAgentActivity(
         bucketsByAgent.get(agent.id) ?? [],
-        agent.created_at,
         now,
       ),
     );
@@ -119,13 +103,10 @@ export function buildActivityMap(
 
 /**
  * Pure derivation: filter the workspace-wide buckets to one agent and
- * normalise to a fixed 30-element series ending at `now`. Exported for
- * unit-testing and direct reuse on surfaces that already have the
- * workspace-wide buckets in hand.
+ * normalise to a fixed 30-element series ending at `now`.
  */
-export function deriveAgentActivity(
+function deriveAgentActivity(
   buckets: readonly AgentActivityBucket[],
-  agentCreatedAt: string,
   now: number,
 ): AgentActivity {
   const series: ActivityBucket[] = Array.from({ length: DAYS }, () => ({
@@ -147,17 +128,7 @@ export function deriveAgentActivity(
     series[slot]!.failed += b.failed_count;
   }
 
-  const createdAt = new Date(agentCreatedAt).getTime();
-  const ageMs = Number.isFinite(createdAt) ? now - createdAt : Infinity;
-  const daysSinceCreated = Math.min(
-    DAYS,
-    Math.max(0, Math.floor(ageMs / DAY_MS)),
-  );
-
-  return {
-    buckets: series,
-    daysSinceCreated,
-  };
+  return { buckets: series };
 }
 
 /**
@@ -173,7 +144,7 @@ export function summarizeActivityWindow(
   activity: AgentActivity | undefined,
   windowDays: number,
 ): ActivityWindowSummary {
-  if (!activity) return { ...EMPTY_SUMMARY, windowDays };
+  if (!activity) return EMPTY_SUMMARY;
   const safeWindow = Math.min(
     Math.max(0, windowDays),
     activity.buckets.length,
@@ -188,7 +159,7 @@ export function summarizeActivityWindow(
     totalRuns += b.total;
     totalFailed += b.failed;
   }
-  return { buckets: slice, totalRuns, totalFailed, windowDays };
+  return { buckets: slice, totalRuns, totalFailed };
 }
 
 function startOfDay(ts: number): number {
@@ -200,5 +171,3 @@ function startOfDay(ts: number): number {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
-
-export const __EMPTY_ACTIVITY = EMPTY;

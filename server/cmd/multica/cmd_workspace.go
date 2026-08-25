@@ -104,8 +104,14 @@ type workspaceSummary struct {
 // is shared by `list` and `switch` so both see the same access-controlled view
 // of workspaces.
 func fetchWorkspaces(ctx context.Context, cmd *cobra.Command) ([]workspaceSummary, error) {
-	serverURL := resolveServerURL(cmd)
-	token := resolveToken(cmd)
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return nil, err
+	}
+	token, err := resolveToken(cmd)
+	if err != nil {
+		return nil, err
+	}
 	if token == "" {
 		return nil, fmt.Errorf("not authenticated: run 'multica login' first")
 	}
@@ -127,8 +133,7 @@ func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, workspaces)
 	}
 
@@ -137,16 +142,19 @@ func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	currentID := resolveWorkspaceID(cmd)
+	currentID, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return err
+	}
 	fullID, _ := cmd.Flags().GetBool("full-id")
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "\tID\tNAME\tSLUG")
+	_, _ = fmt.Fprintln(w, "\tID\tNAME\tSLUG")
 	for _, ws := range workspaces {
 		marker := " "
 		if ws.ID == currentID {
 			marker = "*"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", marker, displayID(ws.ID, fullID), ws.Name, ws.Slug)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", marker, displayID(ws.ID, fullID), ws.Name, ws.Slug)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -259,18 +267,15 @@ func runWorkspaceSwitch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "Switched to workspace: %s (%s)\n", ws.Name, ws.ID)
+	if _, err := fmt.Fprintf(os.Stdout, "Switched to workspace: %s (%s)\n", ws.Name, ws.ID); err != nil {
+		return fmt.Errorf("print switched workspace: %w", err)
+	}
 	return nil
 }
 
-// resolveWorkspaceArg returns the canonical UUID for a workspace command that
-// takes an optional `[workspace-id]` arg. When the arg is supplied it is
-// resolved against the caller's workspace list (UUID, slug, or short prefix);
-// when omitted it falls back to the standard --workspace-id / env / profile
-// resolution chain — the caller is responsible for guarding against the empty
-// case. A full UUID is forwarded as-is to avoid an extra /api/workspaces
-// round trip; access control is enforced by the downstream endpoint.
-func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
+// requireWorkspaceArg resolves an explicit id/slug/UUID-prefix or the standard
+// workspace selection and rejects a missing selection for every current caller.
+func requireWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 	if len(args) > 0 {
 		trimmed := strings.TrimSpace(args[0])
 		if uuidRegexp.MatchString(trimmed) {
@@ -284,24 +289,26 @@ func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 		}
 		return ws.ID, nil
 	}
-	return resolveWorkspaceID(cmd), nil
+	wsID, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return "", err
+	}
+	if wsID == "" {
+		return "", fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
+	}
+	return wsID, nil
 }
 
 func runWorkspaceGet(cmd *cobra.Command, args []string) error {
-	wsID, err := resolveWorkspaceArg(cmd, args)
-	if err != nil {
-		return err
-	}
-	if wsID == "" {
-		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
-	}
-
-	client, err := newAPIClient(cmd)
+	wsID, err := requireWorkspaceArg(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
+	client, ctx, cancel, err := newAPIClientContext(cmd)
+	if err != nil {
+		return err
+	}
 	defer cancel()
 
 	var ws map[string]any
@@ -309,27 +316,16 @@ func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get workspace: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		return printWorkspaceDetailsTable(ws)
-	}
-
-	return cli.PrintJSON(os.Stdout, ws)
+	return printWorkspaceResult(cmd, ws)
 }
 
-func printWorkspaceDetailsTable(ws map[string]any) error {
+func printWorkspaceResult(cmd *cobra.Command, ws map[string]any) error {
 	desc := truncateWorkspaceDetail(strVal(ws, "description"))
 	wsContext := truncateWorkspaceDetail(strVal(ws, "context"))
-	headers := []string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"}
-	rows := [][]string{{
-		strVal(ws, "id"),
-		strVal(ws, "name"),
-		strVal(ws, "slug"),
-		desc,
-		wsContext,
-	}}
-	cli.PrintTable(os.Stdout, headers, rows)
-	return nil
+	return printRecordResult(cmd, ws,
+		[]string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"},
+		[]string{strVal(ws, "id"), strVal(ws, "name"), strVal(ws, "slug"), desc, wsContext},
+	)
 }
 
 func truncateWorkspaceDetail(value string) string {
@@ -346,10 +342,7 @@ func truncateWorkspaceDetail(value string) string {
 // the caller cannot accidentally clobber a field they did not pass.
 func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 	body := map[string]any{}
-	if cmd.Flags().Changed("name") {
-		v, _ := cmd.Flags().GetString("name")
-		body["name"] = v
-	}
+	applyChangedStringFlag(cmd, body, "name", "name")
 	if cmd.Flags().Changed("description") || cmd.Flags().Changed("description-stdin") {
 		desc, _, err := resolveTextFlag(cmd, "description")
 		if err != nil {
@@ -378,12 +371,9 @@ func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 }
 
 func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
-	wsID, err := resolveWorkspaceArg(cmd, args)
+	wsID, err := requireWorkspaceArg(cmd, args)
 	if err != nil {
 		return err
-	}
-	if wsID == "" {
-		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
 	}
 
 	body, err := buildWorkspaceUpdateBody(cmd)
@@ -394,12 +384,10 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no fields to update; use --name, --description, --context, or --issue-prefix")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var ws map[string]any
@@ -407,38 +395,21 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update workspace: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		return printWorkspaceDetailsTable(ws)
-	}
-
-	return cli.PrintJSON(os.Stdout, ws)
+	return printWorkspaceResult(cmd, ws)
 }
 
 func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
-	wsID, err := resolveWorkspaceArg(cmd, args)
-	if err != nil {
-		return err
-	}
-	if wsID == "" {
-		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
-	}
-
-	client, err := newAPIClient(cmd)
+	wsID, err := requireWorkspaceArg(cmd, args)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var members []map[string]any
-	if err := client.GetJSON(ctx, "/api/workspaces/"+wsID+"/members", &members); err != nil {
-		return fmt.Errorf("list members: %w", err)
+	members, err := fetchMapList(cmd, "/api/workspaces/"+wsID+"/members", "list members")
+	if err != nil {
+		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, members)
 	}
 

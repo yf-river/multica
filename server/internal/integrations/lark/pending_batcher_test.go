@@ -71,9 +71,9 @@ func (f *fakeTimerFactory) armedCount() int {
 
 // newTestBatcher builds a batcher whose timers are driven by f. Shared with
 // dispatcher_test.go (same package) to drive the debounce coalescing test.
-func newTestBatcher(f *fakeTimerFactory) *pendingBatcher {
-	return &pendingBatcher{
-		window:    DefaultChatRunBatchWindow,
+func newTestBatcher(f *fakeTimerFactory) pendingBatcher {
+	return pendingBatcher{
+		window:    defaultChatRunBatchWindow,
 		afterFunc: f.after,
 		pending:   make(map[string]*pendingEntry),
 	}
@@ -95,7 +95,7 @@ func TestPendingBatcher_DebounceCoalesces(t *testing.T) {
 	b.Schedule("s", flush)
 	b.Schedule("s", flush)
 
-	if got := pendingBatchCount(b); got != 1 {
+	if got := pendingBatchCount(&b); got != 1 {
 		t.Fatalf("three Schedules on one session must keep a single pending entry; got %d", got)
 	}
 	if got := f.armedCount(); got != 1 {
@@ -106,7 +106,7 @@ func TestPendingBatcher_DebounceCoalesces(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("a debounced burst must flush exactly once; got %d", calls)
 	}
-	if got := pendingBatchCount(b); got != 0 {
+	if got := pendingBatchCount(&b); got != 0 {
 		t.Fatalf("the session entry must be cleaned up after flush; pending=%d", got)
 	}
 }
@@ -119,7 +119,7 @@ func TestPendingBatcher_MultiSessionIndependent(t *testing.T) {
 	b.Schedule("a", func() { a++ })
 	b.Schedule("c", func() { c++ })
 
-	if got := pendingBatchCount(b); got != 2 {
+	if got := pendingBatchCount(&b); got != 2 {
 		t.Fatalf("two distinct sessions must hold two windows; got %d", got)
 	}
 	f.fireArmed()
@@ -166,7 +166,7 @@ func TestPendingBatcher_FlushAllDrainsPending(t *testing.T) {
 	if a != 1 || c != 1 {
 		t.Fatalf("FlushAll must flush every pending session once; a=%d c=%d", a, c)
 	}
-	if got := pendingBatchCount(b); got != 0 {
+	if got := pendingBatchCount(&b); got != 0 {
 		t.Fatalf("FlushAll must clear pending state; got %d", got)
 	}
 
@@ -179,19 +179,19 @@ func TestPendingBatcher_FlushAllDrainsPending(t *testing.T) {
 	}
 }
 
-func TestNewPendingBatcher_DefaultsWindow(t *testing.T) {
-	if b := newPendingBatcher(0); b.window != DefaultChatRunBatchWindow {
-		t.Fatalf("non-positive window must default to %v; got %v", DefaultChatRunBatchWindow, b.window)
-	}
-	if b := newPendingBatcher(500 * time.Millisecond); b.window != 500*time.Millisecond {
-		t.Fatalf("explicit window must be honoured; got %v", b.window)
+func TestPendingBatcher_ZeroValueUsesDefaultWindow(t *testing.T) {
+	f := &fakeTimerFactory{}
+	b := pendingBatcher{afterFunc: f.after}
+	b.Schedule("s", func() {})
+	if b.window != defaultChatRunBatchWindow {
+		t.Fatalf("zero value must default to %v; got %v", defaultChatRunBatchWindow, b.window)
 	}
 }
 
 func TestPendingBatcher_RealTimerFlushes(t *testing.T) {
 	// Exercises the production afterFunc (time.AfterFunc) path with a short
 	// real window so a mis-wired default would be caught.
-	b := newPendingBatcher(15 * time.Millisecond)
+	b := pendingBatcher{window: 15 * time.Millisecond}
 	done := make(chan struct{})
 	b.Schedule("s", func() { close(done) })
 

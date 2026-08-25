@@ -35,25 +35,7 @@ type RedeemedBindingToken struct {
 	LarkOpenID     OpenID
 }
 
-// InstallerBinder is the narrow surface RegistrationService needs to
-// record the installer's lark_user_binding row in the same business
-// step as the installation insert. Without this step the first inbound
-// message from the installer would be dropped as `unbound_user` and
-// the Bot would reply "you're not bound, click here…" to the person
-// who just authorized the install seconds ago.
-//
-// Implementations MUST be idempotent on (installation_id, lark_open_id):
-// a re-install by the same user should not error.
-//
-// `qtx` is the transaction-scoped *db.Queries handle to run the bind
-// against. The caller opens the transaction so the installation insert
-// and the binding write commit together.
-type InstallerBinder interface {
-	BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error
-}
-
-// InstallerBindParams carries the inputs InstallerBinder needs. Kept
-// as a struct so adding union_id (Phase 2) does not break callers.
+// InstallerBindParams carries the complete current binding identity.
 type InstallerBindParams struct {
 	WorkspaceID    pgtype.UUID
 	InstallationID pgtype.UUID
@@ -73,21 +55,11 @@ type InstallerBindParams struct {
 type BindingTokenService struct {
 	queries *db.Queries
 	tx      TxStarter
-	now     func() time.Time
 }
 
-// NewBindingTokenService constructs the default service. The clock
-// is injectable so tests can pin time for deterministic expiry
-// behavior; production callers use NewBindingTokenServiceWithClock
-// with time.Now.
+// NewBindingTokenService constructs the binding-token service.
 func NewBindingTokenService(queries *db.Queries, tx TxStarter) *BindingTokenService {
-	return NewBindingTokenServiceWithClock(queries, tx, time.Now)
-}
-
-// NewBindingTokenServiceWithClock is the seam for tests; production
-// callers should use NewBindingTokenService.
-func NewBindingTokenServiceWithClock(queries *db.Queries, tx TxStarter, now func() time.Time) *BindingTokenService {
-	return &BindingTokenService{queries: queries, tx: tx, now: now}
+	return &BindingTokenService{queries: queries, tx: tx}
 }
 
 // Mint creates a new single-use binding token and returns the raw
@@ -101,7 +73,7 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 		return BindingToken{}, fmt.Errorf("generate token: %w", err)
 	}
 	hash := hashToken(raw)
-	expiresAt := s.now().Add(BindingTokenTTL)
+	expiresAt := time.Now().Add(BindingTokenTTL)
 
 	if _, err := s.queries.CreateLarkBindingToken(ctx, db.CreateLarkBindingTokenParams{
 		TokenHash:      hash,
@@ -123,9 +95,10 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 //
 // Failure modes are returned as typed errors:
 //
-//   - ErrBindingTokenInvalid: token doesn't exist / already consumed /
-//     expired. Same opaque error for all three to avoid a timing
-//     oracle for replay races.
+//   - ErrBindingTokenInvalid: token doesn't exist, expired before its first
+//     redemption, or was already consumed by a different user. A retry by the
+//     same authenticated user replays the committed binding result so response
+//     loss cannot turn a successful bind into a false "expired" error.
 //
 //   - ErrBindingAlreadyAssigned: a binding already exists for this
 //     (installation, open_id), pointing at a DIFFERENT Multica user.
@@ -146,10 +119,31 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
-	row, err := qtx.ConsumeLarkBindingToken(ctx, hashToken(raw))
+	row, err := qtx.LockLarkBindingToken(ctx, hashToken(raw))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RedeemedBindingToken{}, ErrBindingTokenInvalid
+		}
+		return RedeemedBindingToken{}, fmt.Errorf("lock token: %w", err)
+	}
+	if row.ConsumedAt.Valid {
+		binding, err := qtx.GetLarkUserBindingByOpenID(ctx, db.GetLarkUserBindingByOpenIDParams{
+			InstallationID: row.InstallationID,
+			LarkOpenID:     row.LarkOpenID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !uuidEqual(binding.MulticaUserID, multicaUserID)) {
+			return RedeemedBindingToken{}, ErrBindingTokenInvalid
+		}
+		if err != nil {
+			return RedeemedBindingToken{}, fmt.Errorf("load committed binding: %w", err)
+		}
+		return redeemedBindingToken(row), nil
+	}
+
+	row, err = qtx.MarkLarkBindingTokenConsumed(ctx, row.TokenHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RedeemedBindingToken{}, ErrBindingTokenInvalid
@@ -185,11 +179,15 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if err := tx.Commit(ctx); err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("commit: %w", err)
 	}
+	return redeemedBindingToken(row), nil
+}
+
+func redeemedBindingToken(row db.LarkBindingToken) RedeemedBindingToken {
 	return RedeemedBindingToken{
 		WorkspaceID:    row.WorkspaceID,
 		InstallationID: row.InstallationID,
 		LarkOpenID:     OpenID(row.LarkOpenID),
-	}, nil
+	}
 }
 
 // BindInstallerTx is the auto-binding path for the device-flow
@@ -198,11 +196,9 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 // bot's DM arrives at a `bound` identity check and the user is NOT
 // prompted with a redundant "click here to bind" card.
 //
-// `qtx` is the RegistrationService's transaction-scoped queries
-// handle. The service opens a transaction that wraps the
-// lark_installation insert and this binding write so a half-applied
-// install (installation row without the installer binding) cannot
-// land.
+// `qtx` is the RegistrationService's transaction-scoped queries handle. The
+// service opens a transaction that wraps the installation insert and this
+// binding write so a half-applied install cannot land.
 //
 // Token redemption deliberately does NOT share this code path:
 //   - RedeemAndBind consumes a server-minted token in the same tx as

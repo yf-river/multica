@@ -1,0 +1,84 @@
+import { z } from "zod";
+import type {
+  GitHubConnectResponse,
+  ListGitHubInstallationsResponse,
+} from "../types";
+import { NonEmptyStringSchema } from "./schemas-internal";
+
+const ExternalHttpsURLSchema = z.string().url().refine((value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}, "expected an HTTPS URL");
+
+const GitHubInstallURLSchema = ExternalHttpsURLSchema.refine((value) => {
+  try {
+    return new URL(value).hostname === "github.com";
+  } catch {
+    return false;
+  }
+}, "expected an https://github.com URL");
+
+const GitHubInstallationSchema = z.object({
+  id: NonEmptyStringSchema,
+  account_login: NonEmptyStringSchema,
+});
+
+export const GitHubInstallationListResponseSchema = z.object({
+  installations: z.array(GitHubInstallationSchema).default([]),
+  configured: z.boolean(),
+  can_manage: z.boolean(),
+});
+
+export const GitHubConnectResponseSchema = z.object({
+  url: z.string().optional(),
+  configured: z.boolean(),
+}).superRefine((response, context) => {
+  if (!response.configured) return;
+  const parsed = GitHubInstallURLSchema.safeParse(response.url);
+  if (!parsed.success) {
+    context.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "configured GitHub response requires a safe install URL",
+    });
+  }
+}).transform((response) => response.configured
+  ? response
+  : { configured: false });
+
+const GitHubPullRequestSchema = z.object({
+  id: NonEmptyStringSchema,
+  repo_owner: NonEmptyStringSchema,
+  repo_name: NonEmptyStringSchema,
+  number: z.number(),
+  title: z.string(),
+  state: NonEmptyStringSchema,
+  html_url: ExternalHttpsURLSchema,
+  author_login: z.string().nullable(),
+  mergeable_state: z.string().nullable(),
+  checks_conclusion: z.string().nullable(),
+  checks_passed: z.number(),
+  checks_failed: z.number(),
+  checks_pending: z.number(),
+  additions: z.number(),
+  deletions: z.number(),
+  changed_files: z.number(),
+});
+
+export const GitHubPullRequestListResponseSchema = z.object({
+  pull_requests: z.array(GitHubPullRequestSchema).default([]),
+}).transform(({ pull_requests }) => pull_requests);
+
+export const EMPTY_GITHUB_CONNECT_RESPONSE: GitHubConnectResponse = {
+  configured: false,
+};
+
+export const EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE: ListGitHubInstallationsResponse = {
+  installations: [],
+  configured: false,
+  can_manage: false,
+};

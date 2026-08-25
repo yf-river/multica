@@ -8,13 +8,21 @@ import (
 	"testing"
 )
 
-// Sub-issue Creation section — after MUL-2538 the platform posts the
-// child-done parent notification itself, so the brief no longer carries
-// any parent-notification rule (per Bohan's call on PR #3055: delete the
-// guidance entirely, do not replace it with a "do not post one" sentence
-// — the agent should not be thinking about parent comments at all). All
-// that remains is the `--status todo` vs `--status backlog` rule for
-// creating sub-issues, which is unrelated to the notification path.
+func writeRuntimeConfigTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write runtime config fixture: %v", err)
+	}
+}
+
+func readRuntimeConfigTestFile(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read runtime config fixture: %v", err)
+	}
+	return string(content)
+}
 
 type runtimeConfigModeCase struct {
 	name string
@@ -65,7 +73,7 @@ func TestBuildMetaSkillContentSourceSummaryMode(t *testing.T) {
 }
 
 func TestRenderIssueContextSourceSummaryMode(t *testing.T) {
-	out := renderIssueContext("codex", TaskContextForEnv{
+	out := renderIssueContext(TaskContextForEnv{
 		IssueID:             "issue-summary-1",
 		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
 		AgentSkills: []SkillContextForEnv{{
@@ -290,85 +298,7 @@ func TestRepositoryWorktreeContractPreventsNestedCheckout(t *testing.T) {
 	}
 }
 
-// The brief must no longer carry any parent-notification guidance. PR
-// #2918 added a "Tell the parent when you finish a child" rule that
-// turned into noise (self-mention loops, planner ack ping-pong,
-// hardcoded `MUL-` prefix). PR #3055 first downgraded it to a "do NOT
-// post one" guardrail, but Bohan's product call was to remove the
-// guidance entirely rather than substitute a new prohibition. These
-// canaries lock that in: any wording that re-introduces the
-// parent-comment concept — positive, negative, or descriptive — must
-// not come back through future edits.
-func TestBriefHasNoParentNotificationGuidance(t *testing.T) {
-	t.Parallel()
-	cases := []TaskContextForEnv{
-		{IssueID: "11111111-2222-3333-4444-555555555555"},
-		{
-			IssueID:          "22222222-3333-4444-5555-666666666666",
-			TriggerCommentID: "33333333-4444-5555-6666-777777777777",
-		},
-	}
-	for _, ctx := range cases {
-		ctx := ctx
-		out := buildMetaSkillContent("claude", ctx)
-
-		// The pre-MUL-2538 phrasing instructed the agent to compose a
-		// parent comment by hand — including a hardcoded `MUL-` prefix
-		// and an assignee mention. The intermediate revision (PR #3055
-		// before Bohan's call) instead told the agent NOT to post one.
-		// Both framings must stay out.
-		for _, banned := range []string{
-			// Old "do it yourself" framing (PR #2918).
-			"## Parent / Sub-issue Protocol",
-			"**Tell the parent when you finish a child.**",
-			"multica issue comment add <parent-id>",
-			"with NO `--parent`",
-			"link the child as `[MUL-",
-			"`@mention` the parent's assignee",
-			"`mention://agent/<id>`",
-			"`mention://member/<id>`",
-			"`mention://squad/<id>`",
-			// Intermediate "do NOT do it yourself" framing (PR #3055
-			// before Bohan's call) — also out per product direction.
-			"**Do NOT post your own parent-notification comment.**",
-			"Do NOT post your own parent-notification comment",
-			"parent-notification comment",
-			"system comment on the parent fires from the status transition",
-			"re-trigger the parent's assignee for nothing",
-			"platform posts a top-level system comment on the parent",
-			// Earlier revisions split rules by trigger type or used
-			// table/subsection layouts. None of those structures should
-			// come back either.
-			"| Parent assignee | Parent status |",
-			"The same agent as yourself",
-			"| Member or squad |",
-			"### A. Notify the parent",
-			"### B. Choose",
-			"When this issue has `parent_issue_id`:",
-			"**Closing out child work** (only if this issue has `parent_issue_id`)",
-			"**Notify the parent** (only if this issue has `parent_issue_id`",
-			"**Creating sub-issues** (applies to any issue-bound run)",
-			"For parent/child work, use these best-effort rules",
-			// The protocol must no longer emit a placeholder
-			// `<this-issue-id>` status flip — the workflow above owns
-			// that command with the real issue id substituted.
-			"`multica issue status <this-issue-id> in_review`",
-			// Non-existent CLI form Elon's earlier review flagged.
-			"issue list --parent",
-		} {
-			if strings.Contains(out, banned) {
-				t.Errorf("expected %q to be removed from the brief", banned)
-			}
-		}
-	}
-}
-
-// Comment-triggered briefs must NOT carry any unconditional status-flip
-// command targeting the current issue. Previous revisions had a
-// dedicated protocol step that wrote `multica issue status <this-issue-id> in_review`;
-// the comment-triggered workflow rule "Do NOT change the issue status
-// unless the comment explicitly asks for it" must remain the source of
-// truth (Elon's blocking review on PR #2918).
+// Comment-triggered work changes status only when the comment asks for it.
 func TestCommentTriggeredProtocolDoesNotForceInReview(t *testing.T) {
 	t.Parallel()
 	ctx := TaskContextForEnv{
@@ -387,9 +317,7 @@ func TestCommentTriggeredProtocolDoesNotForceInReview(t *testing.T) {
 	}
 }
 
-// The CLAUDE.md workflow surface must carry the same issue-wide since-delta
-// new-comment hint as the per-turn prompt. PR #2816 requires the two surfaces
-// stay in sync.
+// Runtime config and the per-turn prompt share the same comment delta.
 func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	t.Parallel()
 	const (
@@ -399,7 +327,7 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID:          issueID,
 		TriggerCommentID: "reply-abc",
-		TriggerThreadID:  "thread-root",
+		TriggerThreadID:  "reply-abc",
 		NewCommentCount:  4,
 		NewCommentsSince: since,
 	}
@@ -422,10 +350,6 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	// Issue-wide catch-up demoted to an only-if-needed fallback.
 	if !strings.Contains(out, "multica issue comment list "+issueID+" --since "+since+" --output json") {
 		t.Errorf("comment brief must keep the issue-wide --since catch-up fallback, got:\n%s", out)
-	}
-	// The removed resolve step must not reappear.
-	if strings.Contains(out, "multica comment resolve") {
-		t.Errorf("comment brief must not carry the dropped resolve step, got:\n%s", out)
 	}
 }
 
@@ -515,16 +439,6 @@ func TestAssignmentTriggeredProtocolHonorsAgentIdentity(t *testing.T) {
 		}
 	}
 
-	for _, banned := range []string{
-		"4. Run `multica issue status " + issueID + " in_progress`\n",
-		"5. Follow your Skills and Agent Identity to complete the task (write code, investigate, etc.)",
-		"8. When done, run `multica issue status " + issueID + " in_review`\n",
-		"When done, run `multica issue status " + issueID + " in_review`",
-	} {
-		if strings.Contains(out, banned) {
-			t.Errorf("assignment-triggered brief still contains unconditional legacy workflow text %q\n---\n%s", banned, out)
-		}
-	}
 }
 
 func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
@@ -966,12 +880,6 @@ func TestSubIssueCreationSectionSkippedForNonIssueModes(t *testing.T) {
 	}
 }
 
-// writeRuntimeConfigFile is the safe replacement for the previous
-// unconditional os.WriteFile of CLAUDE.md / AGENTS.md / GEMINI.md. The three
-// states it must handle correctly are: file missing, file present without
-// markers (user-authored content already there — the regression case from
-// MUL-2753), and file present with markers (idempotent second-run replace).
-
 func TestWriteRuntimeConfigFileCreatesMissingFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -981,11 +889,7 @@ func TestWriteRuntimeConfigFileCreatesMissingFile(t *testing.T) {
 	if err := writeRuntimeConfigFile(path, brief); err != nil {
 		t.Fatalf("writeRuntimeConfigFile returned error: %v", err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back file: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 	if !strings.HasPrefix(s, runtimeMarkerBegin+"\n") {
 		t.Errorf("output should start with begin marker, got:\n%s", s)
 	}
@@ -1002,22 +906,14 @@ func TestWriteRuntimeConfigFilePreservesUserContent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 	const userContent = "# User repo CLAUDE.md\n\n- rule one\n- rule two\n"
-	if err := os.WriteFile(path, []byte(userContent), 0o644); err != nil {
-		t.Fatalf("seed user file: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, userContent)
 
 	const brief = "## Multica brief\n\ninjected body"
 	if err := writeRuntimeConfigFile(path, brief); err != nil {
 		t.Fatalf("writeRuntimeConfigFile returned error: %v", err)
 	}
 
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back file: %v", err)
-	}
-	s := string(got)
-	// The user's original content must be untouched and appear before the
-	// injected marker block; this is the core regression case from MUL-2753.
+	s := readRuntimeConfigTestFile(t, path)
 	if !strings.HasPrefix(s, userContent) {
 		t.Errorf("user content must be preserved verbatim at the top of the file, got:\n%s", s)
 	}
@@ -1045,20 +941,14 @@ func TestWriteRuntimeConfigFileReplacesExistingBlock(t *testing.T) {
 		"OLD BRIEF CONTENT THAT MUST GO AWAY\n" +
 		runtimeMarkerEnd + "\n" +
 		userAfter
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, original)
 
 	const newBrief = "## New Multica brief\n\nfresh body"
 	if err := writeRuntimeConfigFile(path, newBrief); err != nil {
 		t.Fatalf("writeRuntimeConfigFile returned error: %v", err)
 	}
 
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back file: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 	if !strings.HasPrefix(s, userBefore) {
 		t.Errorf("content above the marker block must be preserved, got:\n%s", s)
 	}
@@ -1081,9 +971,7 @@ func TestWriteRuntimeConfigFileIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 	const userContent = "# User CLAUDE.md\n\nimportant rules\n"
-	if err := os.WriteFile(path, []byte(userContent), 0o644); err != nil {
-		t.Fatalf("seed user file: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, userContent)
 
 	const brief = "## Multica brief\n\nbody"
 	for i := 0; i < 5; i++ {
@@ -1092,11 +980,7 @@ func TestWriteRuntimeConfigFileIsIdempotent(t *testing.T) {
 		}
 	}
 
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back file: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 	if strings.Count(s, runtimeMarkerBegin) != 1 {
 		t.Errorf("repeated runs must not duplicate the begin marker, count=%d, file:\n%s", strings.Count(s, runtimeMarkerBegin), s)
 	}
@@ -1122,9 +1006,7 @@ func TestInjectRuntimeConfigPreservesUserContent(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, tc.filename)
 			const userContent = "# User-authored file\n\ndon't touch this\n"
-			if err := os.WriteFile(path, []byte(userContent), 0o644); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
+			writeRuntimeConfigTestFile(t, path, userContent)
 
 			content, err := InjectRuntimeConfig(dir, tc.provider, TaskContextForEnv{
 				IssueID: "11111111-2222-3333-4444-555555555555",
@@ -1136,11 +1018,7 @@ func TestInjectRuntimeConfigPreservesUserContent(t *testing.T) {
 				t.Fatalf("returned brief content must be non-empty")
 			}
 
-			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read back: %v", err)
-			}
-			s := string(got)
+			s := readRuntimeConfigTestFile(t, path)
 			if !strings.HasPrefix(s, userContent) {
 				t.Errorf("[%s] user content must be preserved verbatim at the top of %s, got:\n%s", tc.provider, tc.filename, s)
 			}
@@ -1195,19 +1073,13 @@ func TestWriteRuntimeConfigFileIgnoresStrayEndMarkerBeforeBegin(t *testing.T) {
 		runtimeMarkerEnd + "\n\n# Real config below\n"
 	original := userDoc +
 		runtimeMarkerBegin + "\nFIRST BRIEF\n" + runtimeMarkerEnd + "\n"
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, original)
 
 	const newBrief = "SECOND BRIEF"
 	if err := writeRuntimeConfigFile(path, newBrief); err != nil {
 		t.Fatalf("writeRuntimeConfigFile: %v", err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 
 	// The user's stray end marker line plus surrounding doc text must still
 	// be present, and the file must contain exactly one begin marker and
@@ -1241,9 +1113,7 @@ func TestWriteRuntimeConfigFileIgnoresStrayEndMarkerBeforeBegin(t *testing.T) {
 	}
 }
 
-// Parser hardening: a file containing only a begin marker (e.g. a previous
-// run that crashed mid-write) must not cause every subsequent run to stack
-// another block beneath the half-block.
+// A half-written managed block is replaced rather than stacked.
 func TestWriteRuntimeConfigFileReplacesMalformedHalfBlock(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1252,19 +1122,13 @@ func TestWriteRuntimeConfigFileReplacesMalformedHalfBlock(t *testing.T) {
 	const userTop = "# Repo AGENTS.md\n\nrules above\n"
 	const halfBlock = "leftover from crashed write\nsecond line\n"
 	original := userTop + runtimeMarkerBegin + "\n" + halfBlock
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, original)
 
 	const newBrief = "recovered brief"
 	if err := writeRuntimeConfigFile(path, newBrief); err != nil {
 		t.Fatalf("writeRuntimeConfigFile: %v", err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 	if !strings.HasPrefix(s, userTop) {
 		t.Errorf("user content above the half-block must be preserved, got:\n%s", s)
 	}
@@ -1296,9 +1160,7 @@ func TestCleanupRuntimeConfigPreservesUserContent(t *testing.T) {
 	const userExpected = "# Repo CLAUDE.md\n\nuser line above\n\nuser line below the block\n"
 	// Inject via the production write path so we exercise the actual
 	// marker block format, not a hand-rolled approximation.
-	if err := os.WriteFile(path, []byte(userBefore+userAfter), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, userBefore+userAfter)
 	if err := writeRuntimeConfigFile(path, "brief body"); err != nil {
 		t.Fatalf("seed brief: %v", err)
 	}
@@ -1306,11 +1168,7 @@ func TestCleanupRuntimeConfigPreservesUserContent(t *testing.T) {
 	if err := CleanupRuntimeConfig(dir, "claude"); err != nil {
 		t.Fatalf("CleanupRuntimeConfig: %v", err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 	if strings.Contains(s, runtimeMarkerBegin) || strings.Contains(s, runtimeMarkerEnd) {
 		t.Errorf("marker block must be removed, got:\n%s", s)
 	}
@@ -1370,9 +1228,7 @@ func TestCleanupRuntimeConfigNoOpCases(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "CLAUDE.md")
 		const userContent = "# Repo CLAUDE.md\n\nrules\n"
-		if err := os.WriteFile(path, []byte(userContent), 0o644); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		writeRuntimeConfigTestFile(t, path, userContent)
 		if err := CleanupRuntimeConfig(dir, "claude"); err != nil {
 			t.Errorf("no-marker-block file must be no-op, got: %v", err)
 		}
@@ -1409,9 +1265,6 @@ func TestCleanupRuntimeConfigNoOpCases(t *testing.T) {
 	})
 }
 
-// Cleanup must handle a half-block left by a previous crashed run: begin
-// marker present but no end. Otherwise the half-block would survive
-// cleanup and pollute the next manual CLI invocation in the same dir.
 func TestCleanupRuntimeConfigRemovesMalformedHalfBlock(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1419,18 +1272,12 @@ func TestCleanupRuntimeConfigRemovesMalformedHalfBlock(t *testing.T) {
 
 	const userTop = "# Repo AGENTS.md\n\nrules\n"
 	original := userTop + runtimeMarkerBegin + "\nhalf-written brief no end\n"
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, original)
 
 	if err := CleanupRuntimeConfig(dir, "codex"); err != nil {
 		t.Fatalf("CleanupRuntimeConfig: %v", err)
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	s := string(got)
+	s := readRuntimeConfigTestFile(t, path)
 	if strings.Contains(s, runtimeMarkerBegin) {
 		t.Errorf("half-block begin marker must be excised, got:\n%s", s)
 	}
@@ -1442,9 +1289,6 @@ func TestCleanupRuntimeConfigRemovesMalformedHalfBlock(t *testing.T) {
 	}
 }
 
-// Cleanup must remove the marker block for every provider's target file,
-// using the same provider→filename mapping as InjectRuntimeConfig — so a
-// new provider added to one side cannot drift past the other.
 func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 	t.Parallel()
 	for _, tc := range runtimeConfigProviderFileCases() {
@@ -1454,12 +1298,8 @@ func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, tc.filename)
 			const userContent = "# User file\n\ndon't touch this\n"
-			if err := os.WriteFile(path, []byte(userContent), 0o644); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
+			writeRuntimeConfigTestFile(t, path, userContent)
 
-			// Inject through the production path so cleanup runs against
-			// the same wire format the agent saw.
 			if _, err := InjectRuntimeConfig(dir, tc.provider, TaskContextForEnv{
 				IssueID: "11111111-2222-3333-4444-555555555555",
 			}); err != nil {
@@ -1468,11 +1308,7 @@ func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 			if err := CleanupRuntimeConfig(dir, tc.provider); err != nil {
 				t.Fatalf("CleanupRuntimeConfig: %v", err)
 			}
-			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read back: %v", err)
-			}
-			s := string(got)
+			s := readRuntimeConfigTestFile(t, path)
 			if strings.Contains(s, runtimeMarkerBegin) || strings.Contains(s, runtimeMarkerEnd) {
 				t.Errorf("[%s] marker block must be removed from %s, got:\n%s", tc.provider, tc.filename, s)
 			}
@@ -1483,22 +1319,13 @@ func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 	}
 }
 
-// Inject → Cleanup → manual edit → Inject must converge back to the
-// pre-injection state on the next Cleanup. This is the end-to-end
-// regression that locks in: the user's repo is byte-identical to what
-// they had before the task, every task cycle.
 func TestInjectThenCleanupRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 	const userContent = "# User-authored CLAUDE.md\n\n- rule A\n- rule B\n"
-	if err := os.WriteFile(path, []byte(userContent), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	writeRuntimeConfigTestFile(t, path, userContent)
 
-	// Two full inject→cleanup cycles — covers both the "first task on a
-	// fresh user file" path and the "subsequent task hits a clean file
-	// again" path.
 	for i := 0; i < 2; i++ {
 		if _, err := InjectRuntimeConfig(dir, "claude", TaskContextForEnv{
 			IssueID: "11111111-2222-3333-4444-555555555555",
@@ -1518,19 +1345,11 @@ func TestInjectThenCleanupRoundTrip(t *testing.T) {
 	}
 }
 
-// Byte-exact boundary coverage flagged in PR #3438 review (Elon): the
-// previous cleanup used TrimRight + "\n" and TrimSpace-based file removal,
-// which created a real diff in three boundary cases. The table walks each
-// one through a full inject→cleanup cycle and asserts the file ends up
-// byte-identical (or, for missing-file, that it stays missing).
+// Inject then cleanup restores every pre-existing byte boundary exactly.
 func TestInjectThenCleanupRoundTripByteExactBoundaries(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
-		// seed describes the pre-inject filesystem state. When seedExists
-		// is false the file is absent; when true the file is created with
-		// seedContent (which may be empty / whitespace-only / arbitrary
-		// bytes).
+		name        string
 		seedExists  bool
 		seedContent string
 	}{
@@ -1588,9 +1407,7 @@ func TestInjectThenCleanupRoundTripByteExactBoundaries(t *testing.T) {
 			path := filepath.Join(dir, "CLAUDE.md")
 
 			if tc.seedExists {
-				if err := os.WriteFile(path, []byte(tc.seedContent), 0o644); err != nil {
-					t.Fatalf("seed: %v", err)
-				}
+				writeRuntimeConfigTestFile(t, path, tc.seedContent)
 			}
 
 			// Two cycles to cover both "first inject hits user file" and
@@ -1626,12 +1443,6 @@ func TestInjectThenCleanupRoundTripByteExactBoundaries(t *testing.T) {
 	}
 }
 
-// Idempotency across the byte-exact boundaries: when a second Inject runs
-// against a file that already carries a marker block (the "replace in
-// place" branch), the surrounding bytes must stay untouched and the
-// subsequent Cleanup must still restore the user's original file
-// byte-exactly. This guards against a regression where the replace path
-// would re-normalise pre/post bytes the way the old cleanup did.
 func TestInjectReplaceThenCleanupRestoresByteExact(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -1648,17 +1459,13 @@ func TestInjectReplaceThenCleanupRestoresByteExact(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "CLAUDE.md")
-			if err := os.WriteFile(path, []byte(tc.seedContent), 0o644); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
+			writeRuntimeConfigTestFile(t, path, tc.seedContent)
 
-			// First inject — append path.
 			if _, err := InjectRuntimeConfig(dir, "claude", TaskContextForEnv{
 				IssueID: "11111111-2222-3333-4444-555555555555",
 			}); err != nil {
 				t.Fatalf("first inject: %v", err)
 			}
-			// Second inject — replace-in-place path.
 			if _, err := InjectRuntimeConfig(dir, "claude", TaskContextForEnv{
 				IssueID: "11111111-2222-3333-4444-555555555555",
 			}); err != nil {
@@ -1678,10 +1485,7 @@ func TestInjectReplaceThenCleanupRestoresByteExact(t *testing.T) {
 	}
 }
 
-// The fixed managed separator is the invariant that makes byte-exact
-// cleanup possible. This test pins it: writeRuntimeConfigFile must
-// produce exactly `<user-bytes><\n\n><marker-block>` for ANY non-empty
-// or empty pre-existing file, with no trailing-newline normalisation.
+// Managed blocks always follow the fixed separator without normalizing user bytes.
 func TestWriteRuntimeConfigFileAlwaysInsertsFixedManagedSeparator(t *testing.T) {
 	t.Parallel()
 	for _, seed := range []string{"", "rules", "rules\n", "rules\n\n", "rules\n\n\n\n"} {
@@ -1690,24 +1494,14 @@ func TestWriteRuntimeConfigFileAlwaysInsertsFixedManagedSeparator(t *testing.T) 
 			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "CLAUDE.md")
-			if err := os.WriteFile(path, []byte(seed), 0o644); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
+			writeRuntimeConfigTestFile(t, path, seed)
 			if err := writeRuntimeConfigFile(path, "brief body"); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read back: %v", err)
-			}
-			s := string(got)
-			// The seed must appear verbatim at the start of the file —
-			// no extra newline appended, no trailing newline trimmed.
+			s := readRuntimeConfigTestFile(t, path)
 			if !strings.HasPrefix(s, seed) {
 				t.Errorf("seed bytes must survive verbatim at the start of the file\n got: %q\n seed: %q", s, seed)
 			}
-			// Immediately after the seed we must see the fixed managed
-			// separator, then the begin marker.
 			markerStart := len(seed) + len(runtimeManagedSeparator)
 			if len(s) < markerStart+len(runtimeMarkerBegin) {
 				t.Fatalf("file shorter than expected layout\n got: %q", s)

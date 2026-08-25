@@ -15,7 +15,6 @@ describe("useWorkspaceSeen", () => {
     );
     expect(result.current).toBe(true);
 
-    // Workspace disappears (e.g. just deleted) — hook still reports "seen"
     rerender({ slug: "acme", resolved: false });
     expect(result.current).toBe(true);
   });
@@ -25,15 +24,12 @@ describe("useWorkspaceSeen", () => {
       ({ slug, resolved }) => useWorkspaceSeen(slug, resolved),
       { initialProps: { slug: "acme", resolved: true } },
     );
-    // Switch to a different resolved slug
     rerender({ slug: "beta", resolved: true });
     expect(result.current).toBe(true);
 
-    // Now check a never-seen slug — should not leak positive
     rerender({ slug: "gamma", resolved: false });
     expect(result.current).toBe(false);
 
-    // Back to "acme" (which we saw first) — still seen
     rerender({ slug: "acme", resolved: false });
     expect(result.current).toBe(true);
   });

@@ -94,35 +94,6 @@ describe("resetAnalytics", () => {
   });
 });
 
-describe("normalizePageviewPath", () => {
-  it("collapses resource-id segments to the section route", async () => {
-    const { analytics } = await loadModule();
-    expect(
-      analytics.normalizePageviewPath("/acme/issues/8d5c1a2b-0035-4c62-9f14-1ad4215736a5"),
-    ).toBe("/acme/issues");
-    expect(analytics.normalizePageviewPath("/acme/issues/MUL-123")).toBe("/acme/issues");
-  });
-
-  it("strips query string and hash", async () => {
-    const { analytics } = await loadModule();
-    expect(analytics.normalizePageviewPath("/acme/issues?status=open&view=board")).toBe(
-      "/acme/issues",
-    );
-    expect(analytics.normalizePageviewPath("/acme/issues#section")).toBe("/acme/issues");
-  });
-
-  it("keeps non-id sub-sections and never drops the leading segment", async () => {
-    const { analytics } = await loadModule();
-    expect(analytics.normalizePageviewPath("/acme/settings/members")).toBe(
-      "/acme/settings/members",
-    );
-    // A workspace slug that looks like an issue key must not be dropped.
-    expect(analytics.normalizePageviewPath("/team-1/issues/MUL-9")).toBe("/team-1/issues");
-    expect(analytics.normalizePageviewPath("/login")).toBe("/login");
-    expect(analytics.normalizePageviewPath("/")).toBe("/");
-  });
-});
-
 describe("capturePageview", () => {
   function captureMock(posthog: unknown) {
     return (posthog as { capture: ReturnType<typeof vi.fn> }).capture;
@@ -138,6 +109,28 @@ describe("capturePageview", () => {
 
     expect(capture).toHaveBeenCalledTimes(1);
     expect(capture).toHaveBeenCalledWith("$pageview", { $current_url: "/acme/issues" });
+  });
+
+  it("normalizes query, hash, resource IDs, and non-resource sections", async () => {
+    const { analytics, posthog } = await loadModule();
+    analytics.initAnalytics({ key: "k", host: "" });
+    const capture = captureMock(posthog);
+    const cases = [
+      ["/acme/issues/MUL-123", "/acme/issues"],
+      ["/acme/issues?status=open&view=board", "/acme/issues"],
+      ["/acme/issues#section", "/acme/issues"],
+      ["/acme/settings/members", "/acme/settings/members"],
+      ["/team-1/issues/MUL-9", "/team-1/issues"],
+      ["/login", "/login"],
+      ["/", "/"],
+    ] as const;
+
+    for (const [path, expected] of cases) {
+      analytics.resetAnalytics();
+      capture.mockClear();
+      analytics.capturePageview(path);
+      expect(capture).toHaveBeenCalledWith("$pageview", { $current_url: expected });
+    }
   });
 
   it("dedupes consecutive views of the same section but fires on section change", async () => {

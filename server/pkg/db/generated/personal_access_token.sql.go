@@ -12,17 +12,22 @@ import (
 )
 
 const createPersonalAccessToken = `-- name: CreatePersonalAccessToken :one
-INSERT INTO personal_access_token (user_id, name, token_hash, token_prefix, expires_at)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at
+INSERT INTO personal_access_token (
+  user_id, name, token_hash, token_prefix, expires_at,
+  idempotency_key, request_hash
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at, idempotency_key, request_hash
 `
 
 type CreatePersonalAccessTokenParams struct {
-	UserID      pgtype.UUID        `json:"user_id"`
-	Name        string             `json:"name"`
-	TokenHash   string             `json:"token_hash"`
-	TokenPrefix string             `json:"token_prefix"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Name           string             `json:"name"`
+	TokenHash      string             `json:"token_hash"`
+	TokenPrefix    string             `json:"token_prefix"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    pgtype.Text        `json:"request_hash"`
 }
 
 func (q *Queries) CreatePersonalAccessToken(ctx context.Context, arg CreatePersonalAccessTokenParams) (PersonalAccessToken, error) {
@@ -32,6 +37,8 @@ func (q *Queries) CreatePersonalAccessToken(ctx context.Context, arg CreatePerso
 		arg.TokenHash,
 		arg.TokenPrefix,
 		arg.ExpiresAt,
+		arg.IdempotencyKey,
+		arg.RequestHash,
 	)
 	var i PersonalAccessToken
 	err := row.Scan(
@@ -44,6 +51,8 @@ func (q *Queries) CreatePersonalAccessToken(ctx context.Context, arg CreatePerso
 		&i.LastUsedAt,
 		&i.Revoked,
 		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }
@@ -83,8 +92,37 @@ func (q *Queries) ExtendPersonalAccessTokenExpiry(ctx context.Context, arg Exten
 	return expires_at, err
 }
 
+const getPersonalAccessTokenByCreateRequest = `-- name: GetPersonalAccessTokenByCreateRequest :one
+SELECT id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at, idempotency_key, request_hash FROM personal_access_token
+WHERE user_id = $1 AND idempotency_key = $2
+`
+
+type GetPersonalAccessTokenByCreateRequestParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+}
+
+func (q *Queries) GetPersonalAccessTokenByCreateRequest(ctx context.Context, arg GetPersonalAccessTokenByCreateRequestParams) (PersonalAccessToken, error) {
+	row := q.db.QueryRow(ctx, getPersonalAccessTokenByCreateRequest, arg.UserID, arg.IdempotencyKey)
+	var i PersonalAccessToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.TokenHash,
+		&i.TokenPrefix,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.Revoked,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+	)
+	return i, err
+}
+
 const getPersonalAccessTokenByHash = `-- name: GetPersonalAccessTokenByHash :one
-SELECT id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at FROM personal_access_token
+SELECT id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at, idempotency_key, request_hash FROM personal_access_token
 WHERE token_hash = $1
   AND revoked = FALSE
   AND (expires_at IS NULL OR expires_at > now())
@@ -103,12 +141,14 @@ func (q *Queries) GetPersonalAccessTokenByHash(ctx context.Context, tokenHash st
 		&i.LastUsedAt,
 		&i.Revoked,
 		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }
 
 const listPersonalAccessTokensByUser = `-- name: ListPersonalAccessTokensByUser :many
-SELECT id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at FROM personal_access_token
+SELECT id, user_id, name, token_hash, token_prefix, expires_at, last_used_at, revoked, created_at, idempotency_key, request_hash FROM personal_access_token
 WHERE user_id = $1
   AND revoked = FALSE
 ORDER BY created_at DESC
@@ -133,6 +173,8 @@ func (q *Queries) ListPersonalAccessTokensByUser(ctx context.Context, userID pgt
 			&i.LastUsedAt,
 			&i.Revoked,
 			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestHash,
 		); err != nil {
 			return nil, err
 		}

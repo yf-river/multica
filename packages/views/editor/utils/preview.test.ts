@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   extensionToLanguage,
   getPreviewKind,
-  isPreviewable,
   type PreviewKind,
 } from "./preview";
 
@@ -35,6 +34,9 @@ describe("getPreviewKind", () => {
     // Build files without extension
     ["application/octet-stream", "Dockerfile", "text"],
     ["application/octet-stream", "Makefile", "text"],
+    ["application/octet-stream", ".env", "text"],
+    ["application/octet-stream", ".gitignore", "text"],
+    ["application/octet-stream", "service.dockerfile", "text"],
 
     // Out of scope
     ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "report.docx", null],
@@ -51,18 +53,6 @@ describe("getPreviewKind", () => {
   // PDF should dispatch from extension alone when content_type is wrong.
   it("falls through to extension when content_type is mislabeled", () => {
     expect(getPreviewKind("application/octet-stream", "manual.pdf")).toBe("pdf");
-  });
-});
-
-describe("isPreviewable", () => {
-  it("is true for any non-null PreviewKind", () => {
-    expect(isPreviewable("application/pdf", "x.pdf")).toBe(true);
-    expect(isPreviewable("text/plain", "x.txt")).toBe(true);
-  });
-
-  it("is false for unsupported types", () => {
-    expect(isPreviewable("application/zip", "x.zip")).toBe(false);
-    expect(isPreviewable("application/octet-stream", "x.bin")).toBe(false);
   });
 });
 

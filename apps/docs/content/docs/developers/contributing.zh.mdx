@@ -61,8 +61,8 @@ pnpm --filter @multica/core test
 pnpm exec playwright test
 
 cd server
-go test ./...
-go run ./cmd/server --init-schema-only
+go test -p 1 ./... # 数据库测试包共享本地测试库，包之间必须串行
+go run ./cmd/migrate up
 ```
 
 修改 SQL 查询后运行：
@@ -74,10 +74,11 @@ sqlc generate
 
 ## 测试要求
 
-涉及 shared API、handler、schema、训练评估、小队、运行时或可观测能力时，至少补对应层级的聚焦测试。生产验收相关改动还应跑：
+涉及 shared API、handler、migration、训练评估、小队、运行时或可观测能力时，至少补对应层级的聚焦测试。开发期使用 changed-aware gate；准备交付当前 checkout 时运行完整检查：
 
 ```bash
-pnpm acceptance:verify
+make goal-test-fast-check
+make check
 ```
 
 ## 数据库

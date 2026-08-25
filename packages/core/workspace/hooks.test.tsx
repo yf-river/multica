@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import type { ReactNode } from "react";
 
 import { WorkspaceSlugProvider } from "../paths";
-import type { Workspace } from "../types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "../types";
+import { nameInitials } from "./actor-display";
 import { workspaceKeys } from "./queries";
 import { useActorName } from "./hooks";
 
@@ -16,12 +17,10 @@ const WORKSPACE: Workspace = {
   slug: "ai-studio",
   description: null,
   context: null,
-  settings: {},
+  settings: { ...DEFAULT_WORKSPACE_SETTINGS },
   repos: [],
   issue_prefix: "GT",
   avatar_url: null,
-  created_at: "2026-06-24T00:00:00.000Z",
-  updated_at: "2026-06-24T00:00:00.000Z",
 };
 
 function makeWrapper() {
@@ -42,6 +41,11 @@ function makeWrapper() {
 }
 
 describe("useActorName", () => {
+  it("keeps the current first-letter initials rule", () => {
+    expect(nameInitials("Ada Lovelace")).toBe("AL");
+    expect(nameInitials("单名")).toBe("单");
+  });
+
   it("keeps actor name callbacks stable when identity queries are disabled", () => {
     const { result, rerender } = renderHook(
       () =>

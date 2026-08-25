@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemonws"
-	"github.com/multica-ai/multica/server/internal/middleware"
 )
 
 func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -27,10 +26,6 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if daemonID := middleware.DaemonIDFromContext(r.Context()); daemonID != "" && rt.DaemonID.Valid && rt.DaemonID.String != daemonID {
-			writeError(w, http.StatusNotFound, "runtime not found")
-			return
-		}
 		workspaceID := uuidToString(rt.WorkspaceID)
 		if workspaceID != "" {
 			if _, ok := seenWorkspaceIDs[workspaceID]; !ok {
@@ -41,7 +36,6 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.DaemonHub.HandleWebSocket(w, r, daemonws.ClientIdentity{
-		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
 		UserID:        requestUserID(r),
 		WorkspaceIDs:  workspaceIDs,
 		RuntimeIDs:    runtimeIDs,

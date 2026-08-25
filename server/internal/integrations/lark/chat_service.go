@@ -130,7 +130,7 @@ func (s *chatSessionService) createSessionAndBinding(ctx context.Context, p Ensu
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
@@ -171,9 +171,9 @@ func (s *chatSessionService) createSessionAndBinding(ctx context.Context, p Ensu
 //     processed_at IS NOT NULL — is dropped at that gate and never
 //     reaches AppendUserMessage at all.
 //
-//  2. INSIDE this method's chat_message+session transaction, when
-//     ClaimToken is supplied, we run MarkLarkInboundDedupProcessed
-//     gated on (message_id, claim_token, processed_at IS NULL). If
+//  2. INSIDE this method's chat_message+session transaction, we run
+//     MarkLarkInboundDedupProcessed gated on (message_id, claim_token,
+//     processed_at IS NULL). If
 //     another worker re-claimed the dedup row in the meantime — e.g.
 //     because we ran slowly past the 60-second staleness TTL — the
 //     row's claim_token has rotated, our UPDATE matches zero rows,
@@ -192,7 +192,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	// Parse the command from the user's OWN typed text (CommandBody),
@@ -252,7 +252,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 		return AppendResult{}, fmt.Errorf("commit: %w", err)
 	}
 
-	return AppendResult{IssueCommand: cmd, DedupMarked: true}, nil
+	return AppendResult{IssueCommand: cmd}, nil
 }
 
 // titleFromPreviousMessage extracts a sensible title from a prior

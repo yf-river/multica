@@ -7,21 +7,11 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Label } from "@multica/ui/components/ui/label";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
-} from "@multica/ui/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace as hasWorkspaceManagementRole, useCurrentMember } from "@multica/core/permissions";
 import { useLeaveWorkspace, useDeleteWorkspace } from "@multica/core/workspace/mutations";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   memberListOptions,
   workspaceKeys,
@@ -34,25 +24,27 @@ import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import {
   resolvePostAuthDestination,
   useCurrentWorkspace,
-  useHasOnboarded,
 } from "@multica/core/paths";
 import { setCurrentWorkspace } from "@multica/core/platform";
 import type { Workspace } from "@multica/core/types";
 import { useNavigation } from "../../navigation";
 import { DeleteWorkspaceDialog } from "./delete-workspace-dialog";
+import {
+  SettingsConfirmDialog,
+  type SettingsConfirmAction,
+} from "./settings-confirm-dialog";
 import { useT } from "../../i18n";
 
 export function WorkspaceTab() {
   const { t } = useT("settings");
-  const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
+  const { role } = useCurrentMember(wsId);
   const { data: members = [], isFetched: membersFetched } = useQuery(memberListOptions(wsId));
   const qc = useQueryClient();
   const leaveWorkspace = useLeaveWorkspace();
   const deleteWorkspace = useDeleteWorkspace();
   const navigation = useNavigation();
-  const hasOnboarded = useHasOnboarded();
 
   /**
    * Send the user to a safe URL BEFORE the leave/delete mutation fires.
@@ -95,7 +87,7 @@ export function WorkspaceTab() {
     // takes over immediately, or the new-workspace overlay takes over
     // (which has no workspace context, so null is correct).
     setCurrentWorkspace(null, null);
-    navigation.push(resolvePostAuthDestination(remaining, hasOnboarded));
+    navigation.push(resolvePostAuthDestination(remaining));
   };
 
   const [name, setName] = useState(workspace?.name ?? "");
@@ -104,17 +96,11 @@ export function WorkspaceTab() {
   const [issuePrefix, setIssuePrefix] = useState(workspace?.issue_prefix ?? "");
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{
-    title: string;
-    description: string;
-    variant?: "destructive";
-    onConfirm: () => Promise<void>;
-  } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<SettingsConfirmAction | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
-  const isOwner = currentMember?.role === "owner";
+  const canManageWorkspace = hasWorkspaceManagementRole(role);
+  const isOwner = role === "owner";
   // Mirror the backend invariant (server/internal/handler/workspace.go:569):
   // a workspace must always have at least one owner, so the sole owner can't
   // leave. Pre-flight here instead of letting the 400 round-trip become a
@@ -193,7 +179,7 @@ export function WorkspaceTab() {
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
+  const { upload, uploading } = useFileUpload();
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!workspace) return;
@@ -204,7 +190,7 @@ export function WorkspaceTab() {
     try {
       const result = await upload(file);
       if (!result) return;
-      const updated = await api.updateWorkspace(workspace.id, { avatar_url: result.link });
+      const updated = await api.updateWorkspace(workspace.id, { avatar_url: result.url });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
       );
@@ -305,8 +291,9 @@ export function WorkspaceTab() {
               </div>
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground">{t(($) => $.workspace.name_label)}</Label>
+              <Label htmlFor="workspace-name" className="text-xs text-muted-foreground">{t(($) => $.workspace.name_label)}</Label>
               <Input
+                id="workspace-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -315,8 +302,9 @@ export function WorkspaceTab() {
               />
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground">{t(($) => $.workspace.description_label)}</Label>
+              <Label htmlFor="workspace-description" className="text-xs text-muted-foreground">{t(($) => $.workspace.description_label)}</Label>
               <Textarea
+                id="workspace-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
@@ -326,8 +314,9 @@ export function WorkspaceTab() {
               />
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground">{t(($) => $.workspace.context_label)}</Label>
+              <Label htmlFor="workspace-context" className="text-xs text-muted-foreground">{t(($) => $.workspace.context_label)}</Label>
               <Textarea
+                id="workspace-context"
                 value={context}
                 onChange={(e) => setContext(e.target.value)}
                 rows={4}
@@ -343,8 +332,9 @@ export function WorkspaceTab() {
               </div>
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground">{t(($) => $.workspace.issue_prefix_label)}</Label>
+              <Label htmlFor="workspace-issue-prefix" className="text-xs text-muted-foreground">{t(($) => $.workspace.issue_prefix_label)}</Label>
               <Input
+                id="workspace-issue-prefix"
                 type="text"
                 value={issuePrefix}
                 onChange={(e) => setIssuePrefix(normalizePrefix(e.target.value))}
@@ -434,26 +424,21 @@ export function WorkspaceTab() {
       </section>
       )}
 
-      <AlertDialog open={!!confirmAction} onOpenChange={(v) => { if (!v) setConfirmAction(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t(($) => $.workspace.confirm_cancel)}</AlertDialogCancel>
-            <AlertDialogAction
-              variant={confirmAction?.variant === "destructive" ? "destructive" : "default"}
-              onClick={async () => {
-                await confirmAction?.onConfirm();
-                setConfirmAction(null);
-              }}
-            >
-              {t(($) => $.workspace.confirm_action)}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SettingsConfirmDialog
+        open={!!confirmAction}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+        title={confirmAction?.title}
+        description={confirmAction?.description}
+        cancelLabel={t(($) => $.workspace.confirm_cancel)}
+        actionLabel={t(($) => $.workspace.confirm_action)}
+        variant={confirmAction?.variant}
+        onConfirm={async () => {
+          await confirmAction?.onConfirm();
+          setConfirmAction(null);
+        }}
+      />
 
       <DeleteWorkspaceDialog
         workspaceName={workspace.name}

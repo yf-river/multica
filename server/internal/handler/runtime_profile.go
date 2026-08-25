@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -30,30 +32,15 @@ import (
 // agent on this runtime must inherit to enter a compatible mode.
 // ---------------------------------------------------------------------------
 
-type RuntimeProfileResponse struct {
-	ID             string   `json:"id"`
-	WorkspaceID    string   `json:"workspace_id"`
-	DisplayName    string   `json:"display_name"`
-	ProtocolFamily string   `json:"protocol_family"`
-	CommandName    string   `json:"command_name"`
-	Description    *string  `json:"description"`
-	FixedArgs      []string `json:"fixed_args"`
-	Visibility     string   `json:"visibility"`
-	CreatedBy      *string  `json:"created_by"`
-	Enabled        bool     `json:"enabled"`
-	CreatedAt      string   `json:"created_at"`
-	UpdatedAt      string   `json:"updated_at"`
-}
-
-func runtimeProfileToResponse(p db.RuntimeProfile) RuntimeProfileResponse {
-	args := []string{}
-	if len(p.FixedArgs) > 0 {
-		_ = json.Unmarshal(p.FixedArgs, &args)
-		if args == nil {
-			args = []string{}
-		}
+func runtimeProfileToResponse(p db.RuntimeProfile) (protocol.RuntimeProfileResponse, error) {
+	var args []string
+	if err := json.Unmarshal(p.FixedArgs, &args); err != nil {
+		return protocol.RuntimeProfileResponse{}, fmt.Errorf("decode runtime profile fixed_args: %w", err)
 	}
-	return RuntimeProfileResponse{
+	if args == nil {
+		return protocol.RuntimeProfileResponse{}, errors.New("decode runtime profile fixed_args: expected JSON array")
+	}
+	return protocol.RuntimeProfileResponse{
 		ID:             uuidToString(p.ID),
 		WorkspaceID:    uuidToString(p.WorkspaceID),
 		DisplayName:    p.DisplayName,
@@ -61,23 +48,17 @@ func runtimeProfileToResponse(p db.RuntimeProfile) RuntimeProfileResponse {
 		CommandName:    p.CommandName,
 		Description:    textToPtr(p.Description),
 		FixedArgs:      args,
-		Visibility:     p.Visibility,
 		CreatedBy:      uuidToPtr(p.CreatedBy),
 		Enabled:        p.Enabled,
 		CreatedAt:      timestampToString(p.CreatedAt),
 		UpdatedAt:      timestampToString(p.UpdatedAt),
-	}
+	}, nil
 }
 
-// NOTE: runtime_profile.visibility is intentionally NOT user-settable in v1.
-// The column exists and the API still returns it, but creation always forces
-// 'workspace': the daemon-pull, DaemonRegister and ListRuntimeProfiles read
-// paths do not yet enforce 'private', so accepting 'private' from a client
-// would silently leak a "private" profile's name/command to other members and
-// let other machines' daemons register it (lateral data leak). Re-expose a
-// visibility control only once those read paths enforce creator visibility.
-// Follow-up: MUL-3308.
-const runtimeProfileDefaultVisibility = "workspace"
+func writeRuntimeProfileDecodeError(w http.ResponseWriter, r *http.Request, profileID string, err error) {
+	slog.Error("decode runtime profile failed", append(logger.RequestAttrs(r), "profile_id", profileID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode runtime profile")
+}
 
 // marshalFixedArgs validates and JSON-encodes the fixed_args list. Each entry
 // must be a non-empty string; the column defaults to an empty array.
@@ -85,16 +66,14 @@ func marshalFixedArgs(args []string) ([]byte, error) {
 	if len(args) == 0 {
 		return []byte("[]"), nil
 	}
-	clean := make([]string, 0, len(args))
 	for _, a := range args {
 		// fixed_args are launch flags inherited by every agent on the runtime;
 		// blank entries are always a client mistake.
 		if strings.TrimSpace(a) == "" {
 			return nil, errors.New("fixed_args entries must be non-empty")
 		}
-		clean = append(clean, a)
 	}
-	return json.Marshal(clean)
+	return json.Marshal(args)
 }
 
 type createRuntimeProfileRequest struct {
@@ -120,7 +99,9 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createRuntimeProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -150,15 +131,58 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	requestHash, err := hashRequestFingerprint(struct {
+		DisplayName    string   `json:"display_name"`
+		ProtocolFamily string   `json:"protocol_family"`
+		CommandName    string   `json:"command_name"`
+		Description    *string  `json:"description"`
+		FixedArgs      []string `json:"fixed_args"`
+		Enabled        bool     `json:"enabled"`
+	}{req.DisplayName, req.ProtocolFamily, req.CommandName, req.Description, req.FixedArgs, enabled})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	writeReplayError := resourceCreateReplayMessageErrorWriter(
+		"Idempotency-Key was already used with a different runtime profile request",
+		"failed to replay runtime profile create",
+	)
+	loadReplay := func() (protocol.RuntimeProfileResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
+			idempotencyKey, requestHash, func(response protocol.RuntimeProfileResponse) bool { return response.ID != "" },
+		)
+	}
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
+		return
+	}
 
-	profile, err := h.Queries.CreateRuntimeProfile(r.Context(), db.CreateRuntimeProfileParams{
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to create runtime profile")
+	if !ok {
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile, idempotencyKey, requestHash)
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeReplayError,
+		"failed to create runtime profile",
+		http.StatusCreated,
+	) {
+		return
+	}
+
+	profile, err := qtx.CreateRuntimeProfile(r.Context(), db.CreateRuntimeProfileParams{
 		WorkspaceID:    wsUUID,
 		DisplayName:    req.DisplayName,
 		ProtocolFamily: req.ProtocolFamily,
 		CommandName:    req.CommandName,
 		Description:    ptrToText(req.Description),
 		FixedArgs:      fixedArgs,
-		Visibility:     runtimeProfileDefaultVisibility,
 		CreatedBy:      member.UserID,
 		Enabled:        enabled,
 	})
@@ -173,12 +197,27 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profileID := uuidToString(profile.ID)
+	resp, err := runtimeProfileToResponse(profile)
+	if err != nil {
+		writeRuntimeProfileDecodeError(w, r, profileID, err)
+		return
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile,
+		idempotencyKey, requestHash, profile.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
 	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
 	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
 		"runtime_profile_id": profileID,
 	})
-
-	writeJSON(w, http.StatusCreated, runtimeProfileToResponse(profile))
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ListRuntimeProfiles returns every runtime profile in the workspace.
@@ -198,37 +237,59 @@ func (h *Handler) ListRuntimeProfiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runtime profiles")
 		return
 	}
-	resp := make([]RuntimeProfileResponse, len(profiles))
+	resp := make([]protocol.RuntimeProfileResponse, len(profiles))
 	for i, p := range profiles {
-		resp[i] = runtimeProfileToResponse(p)
+		resp[i], err = runtimeProfileToResponse(p)
+		if err != nil {
+			writeRuntimeProfileDecodeError(w, r, uuidToString(p.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runtime_profiles": resp})
 }
 
-// GetRuntimeProfile returns one runtime profile. Member-gated by the router.
-func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	if _, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found"); !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
+type runtimeProfileScope struct {
+	member        db.Member
+	workspaceID   string
+	workspaceUUID pgtype.UUID
+	profileUUID   pgtype.UUID
+}
+
+func (h *Handler) requireRuntimeProfileScope(w http.ResponseWriter, r *http.Request) (runtimeProfileScope, bool) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "id"))
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
 	if !ok {
-		return
+		return runtimeProfileScope{}, false
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return runtimeProfileScope{}, false
 	}
 	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	return runtimeProfileScope{member: member, workspaceID: workspaceID, workspaceUUID: workspaceUUID, profileUUID: profileUUID}, ok
+}
+
+// GetRuntimeProfile returns one runtime profile. Member-gated by the router.
+func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.requireRuntimeProfileScope(w, r)
 	if !ok {
 		return
 	}
 
 	profile, err := h.Queries.GetRuntimeProfileForWorkspace(r.Context(), db.GetRuntimeProfileForWorkspaceParams{
-		ID:          profileUUID,
-		WorkspaceID: wsUUID,
+		ID:          scope.profileUUID,
+		WorkspaceID: scope.workspaceUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime profile not found")
+		writeEntityLoadError(w, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
 		return
 	}
-	writeJSON(w, http.StatusOK, runtimeProfileToResponse(profile))
+	resp, err := runtimeProfileToResponse(profile)
+	if err != nil {
+		writeRuntimeProfileDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type updateRuntimeProfileRequest struct {
@@ -243,27 +304,20 @@ type updateRuntimeProfileRequest struct {
 // (changing it would silently repoint bound agents onto a different backend).
 // Admin-gated by the router.
 func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
-	if !ok {
-		return
-	}
-	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	scope, ok := h.requireRuntimeProfileScope(w, r)
 	if !ok {
 		return
 	}
 
 	var req updateRuntimeProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	params := db.UpdateRuntimeProfileParams{ID: profileUUID, WorkspaceID: wsUUID}
+	params := db.UpdateRuntimeProfileParams{ID: scope.profileUUID, WorkspaceID: scope.workspaceUUID}
 	if req.DisplayName != nil {
 		name := strings.TrimSpace(*req.DisplayName)
 		if name == "" {
@@ -305,46 +359,42 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "a runtime profile with this display_name already exists")
 			return
 		}
-		slog.Error("UpdateRuntimeProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
+		slog.Error("UpdateRuntimeProfile failed", "error", err, "profile_id", uuidToString(scope.profileUUID))
 		writeError(w, http.StatusInternalServerError, "failed to update runtime profile")
 		return
 	}
 
 	profileID := uuidToString(profile.ID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
+	h.requestDaemonRuntimeProfileRefresh(scope.workspaceID, profileID)
+	h.publish(protocol.EventDaemonRegister, scope.workspaceID, "member", uuidToString(scope.member.UserID), map[string]any{
 		"runtime_profile_id": profileID,
 	})
 
-	writeJSON(w, http.StatusOK, runtimeProfileToResponse(profile))
+	resp, err := runtimeProfileToResponse(profile)
+	if err != nil {
+		writeRuntimeProfileDecodeError(w, r, profileID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // DeleteRuntimeProfile removes a profile and, in the same transaction, the
-// agent_runtime instance rows registered against it. Migration 120 dropped the
+// agent_runtime instance rows registered against it. The current schema has no
 // DB ON DELETE CASCADE, so this app-layer cleanup is what prevents orphaned
 // runtime rows. Refuses (409) while active agents are still bound to the
 // profile's runtimes. Admin-gated by the router.
 func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
-	if !ok {
-		return
-	}
-	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	scope, ok := h.requireRuntimeProfileScope(w, r)
 	if !ok {
 		return
 	}
 
 	// Confirm the profile exists in this workspace before mutating anything.
 	if _, err := h.Queries.GetRuntimeProfileForWorkspace(r.Context(), db.GetRuntimeProfileForWorkspaceParams{
-		ID:          profileUUID,
-		WorkspaceID: wsUUID,
+		ID:          scope.profileUUID,
+		WorkspaceID: scope.workspaceUUID,
 	}); err != nil {
-		writeError(w, http.StatusNotFound, "runtime profile not found")
+		writeEntityLoadError(w, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
 		return
 	}
 
@@ -354,7 +404,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	// archived agent still pointing at one of these rows would turn a bare
 	// delete into a 500. We refuse active agents (409) and clean archived
 	// agents / their archived squad+autopilot references before deleting.
-	runtimeIDs, err := h.Queries.ListAgentRuntimeIDsByProfile(r.Context(), profileUUID)
+	runtimeIDs, err := h.Queries.ListAgentRuntimeIDsByProfile(r.Context(), scope.profileUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate profile runtimes")
 		return
@@ -363,7 +413,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	// Guard 1: refuse while any active (non-archived) agent is bound to one of
 	// the profile's runtimes. Keep this a 409 — deleting would orphan live
 	// agents.
-	agentCount, err := h.Queries.CountAgentsByProfile(r.Context(), profileUUID)
+	agentCount, err := h.Queries.CountAgentsByProfile(r.Context(), scope.profileUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check profile usage")
 		return
@@ -394,47 +444,28 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	// App-layer cascade, per runtime, mirroring DeleteAgentRuntime: pause
-	// autopilots pointing at the archived agents, drop archived squads led by
-	// them, then hard-delete the archived agents so the RESTRICT FK on
-	// agent.runtime_id no longer blocks removing the runtime row.
 	for _, rid := range runtimeIDs {
-		archivedAgentIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rid)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
-			return
-		}
-		if len(archivedAgentIDs) > 0 {
-			if err := qtx.PauseAutopilotsByAgentAssignees(r.Context(), archivedAgentIDs); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to pause autopilots")
-				return
-			}
-		}
-		if err := qtx.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rid); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
-			return
-		}
-		if err := qtx.DeleteArchivedAgentsByRuntime(r.Context(), rid); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to clean up archived agents")
+		if err := removeArchivedRuntimeDependents(r.Context(), qtx, rid); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
 
 	// Now the runtime rows have no agent references; remove them, then the
 	// profile itself.
-	if _, err := qtx.DeleteAgentRuntimesByProfile(r.Context(), profileUUID); err != nil {
-		slog.Error("DeleteAgentRuntimesByProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
+	if _, err := qtx.DeleteAgentRuntimesByProfile(r.Context(), scope.profileUUID); err != nil {
+		slog.Error("DeleteAgentRuntimesByProfile failed", "error", err, "profile_id", uuidToString(scope.profileUUID))
 		writeError(w, http.StatusInternalServerError, "failed to clean up runtime instances")
 		return
 	}
 	if err := qtx.DeleteRuntimeProfile(r.Context(), db.DeleteRuntimeProfileParams{
-		ID:          profileUUID,
-		WorkspaceID: wsUUID,
+		ID:          scope.profileUUID,
+		WorkspaceID: scope.workspaceUUID,
 	}); err != nil {
-		slog.Error("DeleteRuntimeProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
+		slog.Error("DeleteRuntimeProfile failed", "error", err, "profile_id", uuidToString(scope.profileUUID))
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime profile")
 		return
 	}
@@ -444,9 +475,9 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tell connected clients to refetch the runtime list (instances vanished).
-	profileID := uuidToString(profileUUID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
+	profileID := uuidToString(scope.profileUUID)
+	h.requestDaemonRuntimeProfileRefresh(scope.workspaceID, profileID)
+	h.publish(protocol.EventDaemonRegister, scope.workspaceID, "member", uuidToString(scope.member.UserID), map[string]any{
 		"deleted_runtime_profile_id": profileID,
 	})
 
@@ -472,9 +503,13 @@ func (h *Handler) DaemonListRuntimeProfiles(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to list runtime profiles")
 		return
 	}
-	resp := make([]RuntimeProfileResponse, len(profiles))
+	resp := make([]protocol.RuntimeProfileResponse, len(profiles))
 	for i, p := range profiles {
-		resp[i] = runtimeProfileToResponse(p)
+		resp[i], err = runtimeProfileToResponse(p)
+		if err != nil {
+			writeRuntimeProfileDecodeError(w, r, uuidToString(p.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspace_id":     workspaceID,

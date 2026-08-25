@@ -7,6 +7,7 @@ export default defineConfig({
     globals: true,
     include: ["**/*.test.{ts,tsx}"],
     exclude: ["node_modules/**", ".next/**", ".source/**"],
+    maxWorkers: 4,
   },
   resolve: {
     alias: {

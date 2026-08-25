@@ -12,16 +12,15 @@ import { issueKeys } from "@multica/core/issues/queries";
 import { labelKeys } from "@multica/core/labels/queries";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import type {
-  AgentTask,
-  Attachment,
-  Issue,
-  IssueLabelsResponse,
-  IssueUsageSummary,
-  Label,
-  ListIssuesCache,
-  TimelineEntry,
-  Workspace,
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type AgentTask,
+  type Attachment,
+  type Issue,
+  type Label,
+  type ListIssuesCache,
+  type TimelineEntry,
+  type Workspace,
 } from "@multica/core/types";
 
 const WS_ID = "ws-1";
@@ -37,18 +36,14 @@ const workspace: Workspace = {
   slug: SLUG,
   description: null,
   context: null,
-  settings: {},
+  settings: { ...DEFAULT_WORKSPACE_SETTINGS },
   repos: [],
   issue_prefix: "TST",
   avatar_url: null,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
 };
 
 const baseIssue: Issue = {
   id: ISSUE_ID,
-  workspace_id: WS_ID,
-  number: 1,
   identifier: "TST-1",
   title: "Deleted issue",
   description: null,
@@ -72,36 +67,19 @@ const baseIssue: Issue = {
 const otherIssue: Issue = {
   ...baseIssue,
   id: OTHER_ISSUE_ID,
-  number: 2,
   identifier: "TST-2",
   title: "Other issue",
   parent_issue_id: null,
 };
 
-const usage: IssueUsageSummary = {
-  total_input_tokens: 10,
-  total_output_tokens: 20,
-  total_cache_read_tokens: 1,
-  total_cache_write_tokens: 2,
-  task_count: 1,
-};
-
 const attachment: Attachment = {
   id: "attachment-1",
-  workspace_id: WS_ID,
-  issue_id: ISSUE_ID,
-  comment_id: null,
-  chat_session_id: null,
-  chat_message_id: null,
-  uploader_type: "member",
-  uploader_id: "member-1",
   filename: "evidence.png",
   url: "s3://bucket/evidence.png",
   download_url: "https://example.test/evidence.png",
   markdown_url: "https://example.test/api/attachments/attachment-1/download",
   content_type: "image/png",
   size_bytes: 1,
-  created_at: "2026-01-01T00:00:00Z",
 };
 
 const timeline: TimelineEntry[] = [
@@ -117,16 +95,11 @@ const timeline: TimelineEntry[] = [
 
 const label: Label = {
   id: "label-1",
-  workspace_id: WS_ID,
   name: "bug",
   color: "#ef4444",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
 };
 
-const issueLabels: IssueLabelsResponse = {
-  labels: [label],
-};
+const issueLabels: Label[] = [label];
 
 function makeListCache(...issues: Issue[]): ListIssuesCache {
   return {
@@ -143,7 +116,6 @@ function makeTask(issueId = ISSUE_ID): AgentTask {
     runtime_id: "runtime-1",
     issue_id: issueId,
     status: "completed",
-    priority: 0,
     dispatched_at: null,
     started_at: "2026-01-01T00:00:00Z",
     completed_at: "2026-01-01T00:01:00Z",
@@ -259,7 +231,6 @@ describe("useDeleteIssue", () => {
       issueKeys.children(WS_ID, PARENT_ISSUE_ID),
       [baseIssue, otherIssue],
     );
-    qc.setQueryData<IssueUsageSummary>(issueKeys.usage(ISSUE_ID), usage);
     qc.setQueryData<AgentTask[]>(agentTaskSnapshotKeys.list(WS_ID), [
       makeTask(),
     ]);
@@ -276,7 +247,6 @@ describe("useDeleteIssue", () => {
     expect(deleteIssue).toHaveBeenCalledWith(ISSUE_ID);
     expectOnlyOtherIssueRemains(qc, assignedFilter, createdFilter);
     expect(qc.getQueryData(issueKeys.detail(WS_ID, ISSUE_ID))).toBeUndefined();
-    expect(qc.getQueryData(issueKeys.usage(ISSUE_ID))).toBeUndefined();
     expectInvalidated(qc, agentTaskSnapshotKeys.list(WS_ID));
     expectInvalidated(qc, agentTasksKeys.detail(WS_ID, AGENT_ID));
   });
@@ -343,7 +313,6 @@ describe("useDeleteIssue", () => {
       issueKeys.children(WS_ID, PARENT_ISSUE_ID),
       children,
     );
-    qc.setQueryData<IssueUsageSummary>(issueKeys.usage(ISSUE_ID), usage);
 
     const { result } = renderHook(() => useDeleteIssue(), { wrapper });
 
@@ -363,7 +332,6 @@ describe("useDeleteIssue", () => {
     expect(qc.getQueryData(issueKeys.children(WS_ID, PARENT_ISSUE_ID))).toEqual(
       children,
     );
-    expect(qc.getQueryData(issueKeys.usage(ISSUE_ID))).toEqual(usage);
   });
 });
 
@@ -398,11 +366,6 @@ describe("useBatchDeleteIssues", () => {
       [baseIssue, childIssue],
     );
     qc.setQueryData(issueKeys.childProgress(WS_ID), {});
-    qc.setQueryData<IssueUsageSummary>(issueKeys.usage(ISSUE_ID), usage);
-    qc.setQueryData<IssueUsageSummary>(
-      issueKeys.usage(OTHER_ISSUE_ID),
-      usage,
-    );
     qc.setQueryData<AgentTask[]>(issueKeys.tasks(ISSUE_ID), [makeTask()]);
     qc.setQueryData<AgentTask[]>(issueKeys.tasks(OTHER_ISSUE_ID), [
       makeTask(OTHER_ISSUE_ID),
@@ -432,8 +395,6 @@ describe("useBatchDeleteIssues", () => {
     expect(
       qc.getQueryData(issueKeys.detail(WS_ID, OTHER_ISSUE_ID)),
     ).toBeUndefined();
-    expect(qc.getQueryData(issueKeys.usage(ISSUE_ID))).toBeUndefined();
-    expect(qc.getQueryData(issueKeys.usage(OTHER_ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.tasks(ISSUE_ID))).toBeUndefined();
     expect(qc.getQueryData(issueKeys.tasks(OTHER_ISSUE_ID))).toBeUndefined();
     expect(
@@ -490,26 +451,21 @@ describe("useBatchDeleteIssues", () => {
     );
     qc.setQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID), baseIssue);
     qc.setQueryData<Issue>(issueKeys.detail(WS_ID, OTHER_ISSUE_ID), childIssue);
-    qc.setQueryData<IssueUsageSummary>(issueKeys.usage(ISSUE_ID), usage);
     qc.setQueryData<Attachment[]>(issueKeys.attachments(ISSUE_ID), [
       attachment,
     ]);
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(ISSUE_ID), timeline);
-    qc.setQueryData<IssueLabelsResponse>(
+    qc.setQueryData<Label[]>(
       labelKeys.byIssue(WS_ID, ISSUE_ID),
       issueLabels,
     );
-    qc.setQueryData<IssueUsageSummary>(
-      issueKeys.usage(OTHER_ISSUE_ID),
-      usage,
-    );
     qc.setQueryData<Attachment[]>(issueKeys.attachments(OTHER_ISSUE_ID), [
-      { ...attachment, id: "attachment-2", issue_id: OTHER_ISSUE_ID },
+      { ...attachment, id: "attachment-2" },
     ]);
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(OTHER_ISSUE_ID), [
       { ...timeline[0]!, id: "activity-2" },
     ]);
-    qc.setQueryData<IssueLabelsResponse>(
+    qc.setQueryData<Label[]>(
       labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID),
       issueLabels,
     );
@@ -552,7 +508,6 @@ describe("useBatchDeleteIssues", () => {
       expect(qc.getQueryData(issueKeys.detail(WS_ID, OTHER_ISSUE_ID))).toEqual(
         childIssue,
       );
-      expect(qc.getQueryData(issueKeys.usage(ISSUE_ID))).toEqual(usage);
       expect(qc.getQueryData(issueKeys.attachments(ISSUE_ID))).toEqual([
         attachment,
       ]);
@@ -560,9 +515,8 @@ describe("useBatchDeleteIssues", () => {
       expect(qc.getQueryData(labelKeys.byIssue(WS_ID, ISSUE_ID))).toEqual(
         issueLabels,
       );
-      expect(qc.getQueryData(issueKeys.usage(OTHER_ISSUE_ID))).toEqual(usage);
       expect(qc.getQueryData(issueKeys.attachments(OTHER_ISSUE_ID))).toEqual([
-        { ...attachment, id: "attachment-2", issue_id: OTHER_ISSUE_ID },
+        { ...attachment, id: "attachment-2" },
       ]);
       expect(qc.getQueryData(issueKeys.timeline(OTHER_ISSUE_ID))).toEqual([
         { ...timeline[0]!, id: "activity-2" },
@@ -572,11 +526,9 @@ describe("useBatchDeleteIssues", () => {
       );
       expectInvalidated(qc, issueKeys.detail(WS_ID, ISSUE_ID));
       expectInvalidated(qc, issueKeys.detail(WS_ID, OTHER_ISSUE_ID));
-      expectInvalidated(qc, issueKeys.usage(ISSUE_ID));
       expectInvalidated(qc, issueKeys.attachments(ISSUE_ID));
       expectInvalidated(qc, issueKeys.timeline(ISSUE_ID));
       expectInvalidated(qc, labelKeys.byIssue(WS_ID, ISSUE_ID));
-      expectInvalidated(qc, issueKeys.usage(OTHER_ISSUE_ID));
       expectInvalidated(qc, issueKeys.attachments(OTHER_ISSUE_ID));
       expectInvalidated(qc, issueKeys.timeline(OTHER_ISSUE_ID));
       expectInvalidated(qc, labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID));

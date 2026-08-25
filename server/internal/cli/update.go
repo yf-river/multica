@@ -20,31 +20,23 @@ import (
 	"time"
 )
 
-// ChecksumManifestName is the asset name GoReleaser publishes for the
+// checksumManifestName is the asset name GoReleaser publishes for the
 // checksum manifest (`checksum.name_template: "checksums.txt"` in
 // .goreleaser.yml). Kept as a constant rather than inlined so a future rename
 // changes one place.
-const ChecksumManifestName = "checksums.txt"
+const checksumManifestName = "checksums.txt"
 
 const DefaultUpdateDownloadTimeout = 120 * time.Second
 
 // GitHubRelease is the subset of the GitHub releases API response we need.
 type GitHubRelease struct {
 	TagName string               `json:"tag_name"`
-	HTMLURL string               `json:"html_url"`
-	Assets  []GitHubReleaseAsset `json:"assets"`
+	Assets  []githubReleaseAsset `json:"assets"`
 }
 
-type GitHubReleaseAsset struct {
+type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
-}
-
-func releaseArchiveExtension(goos string) string {
-	if goos == "windows" {
-		return "zip"
-	}
-	return "tar.gz"
 }
 
 func normalizeReleaseTag(targetVersion string) string {
@@ -58,18 +50,21 @@ func normalizeReleaseTag(targetVersion string) string {
 func releaseAssetName(targetVersion, goos, goarch string) string {
 	tag := normalizeReleaseTag(targetVersion)
 	version := strings.TrimPrefix(tag, "v")
-	ext := releaseArchiveExtension(goos)
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
 	return fmt.Sprintf("multica-cli-%s-%s-%s.%s", version, goos, goarch, ext)
 }
 
-func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch string) (*GitHubReleaseAsset, error) {
-	name := releaseAssetName(targetVersion, goos, goarch)
+func findReleaseAsset(assets []githubReleaseAsset, targetVersion, goos, goarch string) (*githubReleaseAsset, error) {
+	want := releaseAssetName(targetVersion, goos, goarch)
 	for i := range assets {
-		if assets[i].Name == name {
+		if assets[i].Name == want {
 			return &assets[i], nil
 		}
 	}
-	return nil, fmt.Errorf("release asset %q not found", name)
+	return nil, fmt.Errorf("release asset %q not present for %s/%s", want, goos, goarch)
 }
 
 // findChecksumManifestAsset locates the GoReleaser-generated checksums.txt
@@ -77,13 +72,13 @@ func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch s
 // verification — if it is missing we refuse to replace the binary rather
 // than fall back to unverified install, because the auto-update poller runs
 // unattended and an unverified binary swap is a supply-chain risk.
-func findChecksumManifestAsset(assets []GitHubReleaseAsset) (*GitHubReleaseAsset, error) {
+func findChecksumManifestAsset(assets []githubReleaseAsset) (*githubReleaseAsset, error) {
 	for i := range assets {
-		if assets[i].Name == ChecksumManifestName {
+		if assets[i].Name == checksumManifestName {
 			return &assets[i], nil
 		}
 	}
-	return nil, fmt.Errorf("checksum manifest %q not present in release", ChecksumManifestName)
+	return nil, fmt.Errorf("checksum manifest %q not present in release", checksumManifestName)
 }
 
 // parseChecksumManifest reads a GoReleaser-style "<sha256>  <filename>"
@@ -141,7 +136,7 @@ func fetchGitHubRelease(url string) (*GitHubRelease, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
@@ -154,10 +149,6 @@ func fetchGitHubRelease(url string) (*GitHubRelease, error) {
 	return &release, nil
 }
 
-func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
-	return fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/tags/" + tag)
-}
-
 // FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
 func FetchLatestRelease() (*GitHubRelease, error) {
 	return fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/latest")
@@ -166,19 +157,6 @@ func FetchLatestRelease() (*GitHubRelease, error) {
 // knownBrewPrefixes lists the install roots Homebrew uses on each platform.
 // Order is irrelevant — the prefixes do not nest.
 var knownBrewPrefixes = []string{"/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"}
-
-// MatchKnownBrewPrefix returns the Homebrew prefix whose Cellar contains path,
-// or "" if path is not under a known Cellar. It is the offline equivalent of
-// `brew --prefix`: callers reach for it when `brew --prefix` is unavailable
-// (brew not on PATH) but the binary's path still betrays its install root.
-func MatchKnownBrewPrefix(path string) string {
-	for _, prefix := range knownBrewPrefixes {
-		if strings.HasPrefix(path, prefix+"/Cellar/") {
-			return prefix
-		}
-	}
-	return ""
-}
 
 // IsBrewInstall checks whether the running multica binary was installed via Homebrew.
 func IsBrewInstall() bool {
@@ -191,21 +169,18 @@ func IsBrewInstall() bool {
 		resolved = exePath
 	}
 
-	brewPrefix := GetBrewPrefix()
-	if brewPrefix != "" && strings.HasPrefix(resolved, brewPrefix) {
-		return true
+	if brewPrefix, err := exec.Command("brew", "--prefix").Output(); err == nil {
+		if prefix := strings.TrimSpace(string(brewPrefix)); prefix != "" && strings.HasPrefix(resolved, prefix) {
+			return true
+		}
 	}
 
-	return MatchKnownBrewPrefix(resolved) != ""
-}
-
-// GetBrewPrefix returns the Homebrew prefix by running `brew --prefix`, or empty string.
-func GetBrewPrefix() string {
-	out, err := exec.Command("brew", "--prefix").Output()
-	if err != nil {
-		return ""
+	for _, prefix := range knownBrewPrefixes {
+		if strings.HasPrefix(resolved, prefix+"/Cellar/") {
+			return true
+		}
 	}
-	return strings.TrimSpace(string(out))
+	return false
 }
 
 // UpdateViaBrew runs `brew upgrade multica-ai/tap/multica`.
@@ -219,24 +194,17 @@ func UpdateViaBrew() (string, error) {
 	return string(out), nil
 }
 
-func updateDownloadTimeoutOrDefault(timeout time.Duration) time.Duration {
-	if timeout <= 0 {
-		return DefaultUpdateDownloadTimeout
-	}
-	return timeout
-}
-
 // fetchURLBytes does a GET with the given timeout and returns the response
 // body in full. Used for the checksum manifest (tiny) and the release
 // archive (single-digit MB). The checksum verification path requires buffered
 // bytes so streaming would just push the buffer into the caller anyway.
 func fetchURLBytes(url string, timeout time.Duration) ([]byte, error) {
-	client := &http.Client{Timeout: updateDownloadTimeoutOrDefault(timeout)}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
@@ -256,7 +224,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	}
 
 	tag := normalizeReleaseTag(targetVersion)
-	release, err := fetchReleaseByTag(tag)
+	release, err := fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/tags/" + tag)
 	if err != nil {
 		return "", fmt.Errorf("fetch release metadata: %w", err)
 	}
@@ -274,8 +242,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	// Pull the checksum manifest first so a release that is half-published
 	// (archives uploaded but checksums.txt not yet) fails before we eat the
 	// archive's bandwidth.
-	timeout := updateDownloadTimeoutOrDefault(downloadTimeout)
-	manifestData, err := fetchURLBytes(manifestAsset.BrowserDownloadURL, timeout)
+	manifestData, err := fetchURLBytes(manifestAsset.BrowserDownloadURL, downloadTimeout)
 	if err != nil {
 		return "", fmt.Errorf("download checksum manifest: %w", err)
 	}
@@ -290,7 +257,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	// requirement), so this is not a new memory cost on Windows. For tar.gz
 	// it adds a single in-RAM copy, which is preferable to running the
 	// untrusted bytes through gzip+tar extraction before the SHA-256 check.
-	archiveData, err := fetchURLBytes(downloadURL, timeout)
+	archiveData, err := fetchURLBytes(downloadURL, downloadTimeout)
 	if err != nil {
 		return "", fmt.Errorf("download failed: %w", err)
 	}
@@ -327,27 +294,30 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	tmpPath := tmpFile.Name()
 
 	if _, err := tmpFile.Write(binaryData); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("write temp file: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("close temp file: %w", err)
+	}
 
 	// Preserve original file permissions.
 	info, err := os.Stat(exePath)
 	if err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("stat original binary: %w", err)
 	}
 	if err := os.Chmod(tmpPath, info.Mode()); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("chmod temp file: %w", err)
 	}
 
 	// Replace the original binary. On Windows this moves the running executable
 	// aside first; on Unix a plain rename over the running inode is fine.
 	if err := replaceBinary(tmpPath, exePath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("replace binary: %w", err)
 	}
 
@@ -361,7 +331,7 @@ func extractBinaryFromTarGz(r io.Reader, name string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gzip reader: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
 	for {
@@ -403,11 +373,13 @@ func extractBinaryFromZip(r io.Reader, name string) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("open zip entry: %w", err)
 			}
-			defer rc.Close()
-
 			data, err := io.ReadAll(rc)
 			if err != nil {
+				_ = rc.Close()
 				return nil, fmt.Errorf("read binary: %w", err)
+			}
+			if err := rc.Close(); err != nil {
+				return nil, fmt.Errorf("close zip entry: %w", err)
 			}
 			return data, nil
 		}

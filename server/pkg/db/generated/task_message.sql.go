@@ -11,13 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createTaskMessage = `-- name: CreateTaskMessage :one
+const createTaskMessageIdempotent = `-- name: CreateTaskMessageIdempotent :one
 INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at
+ON CONFLICT (task_id, seq) DO UPDATE SET task_id = EXCLUDED.task_id
+RETURNING task_message.id, task_message.task_id, task_message.seq, task_message.type, task_message.tool, task_message.content, task_message.input, task_message.output, task_message.created_at, (xmax = 0) AS inserted
 `
 
-type CreateTaskMessageParams struct {
+type CreateTaskMessageIdempotentParams struct {
 	TaskID  pgtype.UUID `json:"task_id"`
 	Seq     int32       `json:"seq"`
 	Type    string      `json:"type"`
@@ -27,8 +28,21 @@ type CreateTaskMessageParams struct {
 	Output  pgtype.Text `json:"output"`
 }
 
-func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessageParams) (TaskMessage, error) {
-	row := q.db.QueryRow(ctx, createTaskMessage,
+type CreateTaskMessageIdempotentRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	TaskID    pgtype.UUID        `json:"task_id"`
+	Seq       int32              `json:"seq"`
+	Type      string             `json:"type"`
+	Tool      pgtype.Text        `json:"tool"`
+	Content   pgtype.Text        `json:"content"`
+	Input     []byte             `json:"input"`
+	Output    pgtype.Text        `json:"output"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Inserted  bool               `json:"inserted"`
+}
+
+func (q *Queries) CreateTaskMessageIdempotent(ctx context.Context, arg CreateTaskMessageIdempotentParams) (CreateTaskMessageIdempotentRow, error) {
+	row := q.db.QueryRow(ctx, createTaskMessageIdempotent,
 		arg.TaskID,
 		arg.Seq,
 		arg.Type,
@@ -37,7 +51,7 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		arg.Input,
 		arg.Output,
 	)
-	var i TaskMessage
+	var i CreateTaskMessageIdempotentRow
 	err := row.Scan(
 		&i.ID,
 		&i.TaskID,
@@ -48,6 +62,7 @@ func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessagePa
 		&i.Input,
 		&i.Output,
 		&i.CreatedAt,
+		&i.Inserted,
 	)
 	return i, err
 }

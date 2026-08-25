@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { Camera, ImagePlus, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { cn } from "@multica/ui/lib/utils";
@@ -36,7 +35,7 @@ interface AvatarPickerProps {
 export function AvatarPicker({ value, onChange, size = 56 }: AvatarPickerProps) {
   const { t } = useT("agents");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
+  const { upload, uploading } = useFileUpload();
   const [previewError, setPreviewError] = useState(false);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,7 +50,7 @@ export function AvatarPicker({ value, onChange, size = 56 }: AvatarPickerProps) 
       const result = await upload(file);
       if (!result) return;
       setPreviewError(false);
-      onChange(result.link);
+      onChange(result.url);
     } catch (err) {
       toast.error(
         err instanceof Error

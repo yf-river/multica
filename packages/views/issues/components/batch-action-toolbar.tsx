@@ -35,6 +35,7 @@ export function BatchActionToolbar({
   const { t } = useT("issues");
   const selectedIds = useIssueSelectionStore((s) => s.selectedIds);
   const clear = useIssueSelectionStore((s) => s.clear);
+  const deselect = useIssueSelectionStore((s) => s.deselect);
   const count = selectedIds.size;
 
   const [statusOpen, setStatusOpen] = useState(false);
@@ -51,8 +52,16 @@ export function BatchActionToolbar({
 
   const handleBatchUpdate = async (updates: Partial<UpdateIssueRequest>) => {
     try {
-      await batchUpdate.mutateAsync({ ids, updates });
-      toast.success(t(($) => $.batch.update_success, { count }));
+      const result = await batchUpdate.mutateAsync({ ids, updates });
+      const failed = (result.failed?.length ?? 0) + (result.blocked?.length ?? 0);
+      if (failed === 0 && result.updated === ids.length) {
+        toast.success(t(($) => $.batch.update_success, { count: result.updated }));
+      } else {
+        toast.error(t(($) => $.batch.update_partial, {
+          updated: result.updated,
+          failed,
+        }));
+      }
     } catch (err) {
       toast.error(
         err instanceof Error && err.message
@@ -64,9 +73,19 @@ export function BatchActionToolbar({
 
   const handleBatchDelete = async () => {
     try {
-      await batchDelete.mutateAsync(ids);
-      clear();
-      toast.success(t(($) => $.batch.delete_success, { count }));
+      const result = await batchDelete.mutateAsync(ids);
+      const failedIds = new Set(result.failed?.map((failure) => failure.issue_id));
+      const deletedIds = ids.filter((id) => !failedIds.has(id));
+      if (failedIds.size === 0) {
+        clear();
+        toast.success(t(($) => $.batch.delete_success, { count: result.deleted }));
+      } else {
+        deselect(deletedIds);
+        toast.error(t(($) => $.batch.delete_partial, {
+          deleted: result.deleted,
+          failed: failedIds.size,
+        }));
+      }
     } catch (err) {
       toast.error(
         err instanceof Error && err.message
@@ -173,4 +192,3 @@ export function BatchActionToolbar({
     </>
   );
 }
-

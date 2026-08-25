@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 )
 
-const defaultCLIConfigPath = ".multica/config.json"
-
 // CLIConfig holds persistent CLI settings.
 type CLIConfig struct {
 	ServerURL   string `json:"server_url,omitempty"`
@@ -17,32 +15,33 @@ type CLIConfig struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Token       string `json:"token,omitempty"`
 
-	// ProfileCommandOverrides is a per-machine map of custom runtime
-	// profile_id -> absolute executable path (MUL-3284). A workspace custom
-	// runtime profile records the command_name the daemon resolves on PATH,
-	// but the same logical profile may live at a different path on each
-	// machine (or not be on PATH at all). This map lets an operator pin the
-	// exact binary for a profile on this host via
-	// `multica runtime profile set-path`; the daemon prefers it over the
-	// PATH lookup in appendProfileRuntimes. Empty / absent means "resolve the
-	// profile's command_name on PATH" — the default behavior. The mapping is
-	// intentionally local-only (it is never sent to the server) because the
-	// path is a property of this machine, not of the shared profile.
+	// Backends contains optional machine-local backend discovery overrides.
+	Backends *backendOverrides `json:"backends,omitempty"`
+
+	// ProfileCommandOverrides maps runtime profile IDs to local executables.
 	ProfileCommandOverrides map[string]string `json:"profile_command_overrides,omitempty"`
+}
+
+type backendOverrides struct {
+	OpenClaw *OpenClawOverride `json:"openclaw,omitempty"`
+}
+
+// OpenClawOverride configures its local binary and native state directory.
+// Explicit MULTICA_OPENCLAW_PATH and OPENCLAW_STATE_DIR values take precedence.
+type OpenClawOverride struct {
+	BinaryPath string `json:"binary_path,omitempty"`
+	StateDir   string `json:"state_dir,omitempty"`
 }
 
 // CLIConfigPathForProfile returns the config file path for the given profile.
 // An empty profile returns the default path (~/.multica/config.json).
 // A named profile returns ~/.multica/profiles/<name>/config.json.
 func CLIConfigPathForProfile(profile string) (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := ProfileDir(profile)
 	if err != nil {
-		return "", fmt.Errorf("resolve CLI config path: %w", err)
+		return "", err
 	}
-	if profile == "" {
-		return filepath.Join(home, defaultCLIConfigPath), nil
-	}
-	return filepath.Join(home, ".multica", "profiles", profile, "config.json"), nil
+	return filepath.Join(dir, "config.json"), nil
 }
 
 // ProfileDir returns the base directory for a profile's state files (pid, log).
@@ -100,20 +99,20 @@ func SaveCLIConfigForProfile(cfg CLIConfig, profile string) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write temp config file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close temp config file: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("chmod temp config file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename config file: %w", err)
 	}
 	return nil

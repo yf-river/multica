@@ -1,54 +1,53 @@
-import { describe, expect, it } from "vitest";
-import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, TaskTraceEvent } from "@multica/core/types";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setApiInstance } from "@multica/core/api";
+import type { ApiClient } from "@multica/core/api";
+import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueExecutionTreeResponse, IssueTimelineNode, IssueTimelineSummary, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
+import { createIssueReviewDraftCase } from "./run-review-draft-case";
 import {
-  artifactDownloadHref,
-  artifactXlsxHyperlinkHref,
-  buildAgentNodeRows,
-  buildIssueReviewDraftCaseRequest,
-  buildRunReviewDurationSummary,
-  buildRunReviewDurationTooltipRows,
-  buildRunReviewLiveSummary,
-  buildRunReviewLiveTimelineNodes,
-  buildRunReviewNodeXlsxSheets,
+  buildEventTaskLabelById,
   buildRunReviewEventGroups,
   buildRunReviewEventRows,
-  buildRunReviewOptimizerHref,
-  buildRunReviewRawEventsXlsxSheets,
-  buildEventTaskLabelById,
-  buildTimelineBarRows,
-  buildTimelineAgentRows,
-  cacheReuseRate,
   filterVisibleRunReviewEventRows,
-  issueRunRowActivityLabel,
-  issueRunRowMetaLabels,
+} from "./run-review-events";
+import {
+  artifactDownloadHref,
+  buildRunReviewNodeXlsxSheets,
+  buildRunReviewRawEventsXlsxSheets,
+} from "./run-review-export";
+import { cacheReuseRate } from "./run-review-format";
+import {
+  buildRunReviewDurationSummary,
+  buildRunReviewLiveSummary,
+  buildRunReviewLiveTimelineNodes,
   runReviewMessageRefreshDelayMs,
   runReviewTotalDurationMs,
-  shouldShowTimelineSegmentText,
   shouldRefreshRunReviewForTaskEvent,
-  timelineTiming,
+} from "./run-review-live";
+import {
+  buildAgentNodeRows,
+  buildTimelineAgentRows,
+  buildTimelineBarRows,
   timelineSegmentStyle,
   timelineSegmentTooltipRows,
-  timelineSegmentWidthPercent,
-} from "./run-reviews-page";
+} from "./run-review-timeline";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
+
+afterEach(() => {
+  setApiInstance(undefined as unknown as ApiClient);
+});
 
 function trace(overrides: Partial<TaskTraceEvent> = {}): TaskTraceEvent {
   return {
     id: "trace-1",
-    workspace_id: "workspace-1",
     task_id: "task-1",
-    issue_id: "issue-1",
     agent_id: "agent-1",
     runtime_id: "runtime-1",
-    squad_id: null,
-    project_id: null,
     source: "task_service",
     event_type: "task.failed",
     event_name: "任务已失败",
     status: "failed",
-    attempt: 1,
     duration_ms: 1200,
     queue_wait_ms: null,
     run_ms: null,
@@ -61,9 +60,6 @@ function trace(overrides: Partial<TaskTraceEvent> = {}): TaskTraceEvent {
     cache_write_tokens: 0,
     failure_reason: "provider timeout",
     error_type: "provider_network",
-    trigger_comment_id: null,
-    autopilot_run_id: null,
-    chat_session_id: null,
     metadata: { phase: "verify", stderr: "timeout" },
     created_at: "2026-06-09T10:03:00.000Z",
     ...overrides,
@@ -94,10 +90,8 @@ function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEva
     input: { url: "/health" },
     output: "Error: HTTP 500 from upstream",
     duration_ms: 900,
-    result_category: "异常线索",
     failure_signal: true,
     failure_reason: "HTTP 500 from upstream",
-    summary: "工具 curl-check 已配对：调用 #1，结果 #2",
     created_at: "2026-06-09T10:01:00.000Z",
     completed_at: "2026-06-09T10:02:30.000Z",
     ...overrides,
@@ -106,7 +100,6 @@ function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEva
 
 function timelineNode(overrides: Partial<IssueTimelineNode> = {}): IssueTimelineNode {
   return {
-    issue_id: "issue-1",
     node_id: "task:task-1",
     node_type: "agent_task",
     agent_id: "agent-1",
@@ -129,6 +122,19 @@ function timelineNode(overrides: Partial<IssueTimelineNode> = {}): IssueTimeline
   };
 }
 
+function timelineSummary(overrides: Partial<IssueTimelineSummary> = {}): IssueTimelineSummary {
+  return {
+    total_duration_ms: 0,
+    total_input_tokens: 0,
+    total_output_tokens: 0,
+    total_cache_read_tokens: 0,
+    total_cache_write_tokens: 0,
+    agent_turn_count: 0,
+    acceptance_status: "done",
+    ...overrides,
+  };
+}
+
 function task(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
     id: "task-1",
@@ -136,7 +142,6 @@ function task(overrides: Partial<AgentTask> = {}): AgentTask {
     runtime_id: "runtime-1",
     issue_id: "issue-1",
     status: "completed",
-    priority: 0,
     dispatched_at: "2026-06-09T10:00:00.000Z",
     started_at: "2026-06-09T10:00:00.000Z",
     completed_at: "2026-06-09T10:02:00.000Z",
@@ -151,14 +156,9 @@ function task(overrides: Partial<AgentTask> = {}): AgentTask {
 function artifact(overrides: Partial<AgentTaskArtifact> = {}): AgentTaskArtifact {
   return {
     id: "att-1",
-    task_id: "task-1",
-    comment_id: "comment-1",
-    issue_id: "issue-1",
     filename: "01-需求澄清.md",
     title: "01-需求澄清",
     kind: "stage_markdown",
-    content_type: "text/markdown",
-    size_bytes: 128,
     download_url: "/api/attachments/att-1/download",
     markdown_url: "/api/attachments/att-1/download",
     created_at: "2026-06-09T10:01:00.000Z",
@@ -166,75 +166,29 @@ function artifact(overrides: Partial<AgentTaskArtifact> = {}): AgentTaskArtifact
   };
 }
 
-describe("buildRunReviewOptimizerHref", () => {
-  it("keeps issue context on the visible test suites route", () => {
-    expect(buildRunReviewOptimizerHref((view) => `/acme/evaluation/${view}`, "issue with space")).toBe(
-      "/acme/evaluation/runs?issue=issue%20with%20space",
-    );
-  });
-});
-
 describe("run review duration summary", () => {
   it("uses agent execution plus recorded waiting time instead of wall clock duration", () => {
-    const summary = {
-      issue_id: "issue-1",
-      node_count: 1,
+    const summary = timelineSummary({
       total_duration_ms: 120000,
-      wall_clock_duration_ms: 300000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 180000,
       child_issue_wait_duration_ms: 60000,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
-      acceptance_status: "done",
-      full_analysis_deep_link: "",
-    };
+    });
 
     expect(runReviewTotalDurationMs(summary)).toBe(360000);
     expect(buildRunReviewDurationSummary(summary)).toBe("Agent 执行 2m · 人工确认 3m · 子任务等待 1m");
-    expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
-      ["Agent 执行耗时", "2m"],
-      ["人工确认耗时", "3m"],
-      ["子任务等待耗时", "1m"],
-    ]);
   });
 
   it("ignores wall clock duration even when unclassified idle gaps exist", () => {
-    const summary = {
-      issue_id: "issue-1",
-      node_count: 1,
+    const summary = timelineSummary({
       total_duration_ms: 120000,
-      wall_clock_duration_ms: 600000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 60000,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
-      acceptance_status: "done",
-      full_analysis_deep_link: "",
-    };
+    });
 
     expect(runReviewTotalDurationMs(summary)).toBe(180000);
   });
 
-  it("does not show artificial waiting time when timing data is missing", () => {
-    expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([
-      ["Agent 执行耗时", "0m"],
-      ["人工确认耗时", "未记录"],
-      ["子任务等待耗时", "未记录"],
-    ]);
-  });
 });
 
 describe("run review cache metrics", () => {
@@ -268,25 +222,14 @@ describe("run review realtime helpers", () => {
       started_at: "2026-06-09T10:00:00.000Z",
       completed_at: null,
     });
-    const runningNode = {
-      issue_id: "issue-1",
+    const runningNode = timelineNode({
       node_id: "task:task-1",
-      node_type: "agent_task",
       status: "running",
       started_at: "2026-06-09T10:01:00.000Z",
       completed_at: "",
       duration_ms: 15_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "running",
-      evidence_refs: [],
-    } as IssueTimelineNode;
+    });
     const completedNode = {
       ...runningNode,
       node_id: "task:task-2",
@@ -294,23 +237,11 @@ describe("run review realtime helpers", () => {
       completed_at: "2026-06-09T10:02:00.000Z",
       duration_ms: 60_000,
     } as IssueTimelineNode;
-    const summary = {
-      issue_id: "issue-1",
-      node_count: 2,
+    const summary = timelineSummary({
       total_duration_ms: 60_000,
       agent_execution_duration_ms: 60_000,
-      wall_clock_duration_ms: 60_000,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
       acceptance_status: "running",
-      full_analysis_deep_link: "",
-    };
+    });
 
     expect(buildRunReviewLiveSummary(summary, [runningTask], [runningNode, completedNode], nowMs)).toMatchObject({
       total_duration_ms: 180_000,
@@ -333,23 +264,12 @@ describe("run review realtime helpers", () => {
       duration_ms: 0,
       summary: "等待用户确认密码策略边界",
     });
-    const summary = {
-      issue_id: "issue-1",
-      node_count: 2,
+    const summary = timelineSummary({
       total_duration_ms: 60_000,
       agent_execution_duration_ms: 60_000,
       human_confirmation_duration_ms: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
       acceptance_status: "running",
-      full_analysis_deep_link: "",
-    };
+    });
 
     expect(buildRunReviewLiveSummary(summary, [], [pendingHumanNode], nowMs)).toMatchObject({
       total_duration_ms: 300_000,
@@ -359,44 +279,6 @@ describe("run review realtime helpers", () => {
     expect(buildRunReviewLiveTimelineNodes([pendingHumanNode], nowMs).map((node) => node.duration_ms)).toEqual([
       240_000,
     ]);
-  });
-});
-
-describe("issue run review list row labels", () => {
-  it("keeps project and status while hiding empty child progress", () => {
-    const issue = {
-      project: { id: "project-1", title: "goal-test", icon: null },
-      status: "todo",
-      child_progress: { done: 0, total: 0 },
-    } as Issue;
-
-    expect(issueRunRowMetaLabels(issue)).toEqual(["goal-test", "状态 待办"]);
-  });
-
-  it("shows child progress only when an issue has children", () => {
-    const issue = {
-      project: null,
-      status: "in_progress",
-      child_progress: { done: 1, total: 3 },
-    } as Issue;
-
-    expect(issueRunRowMetaLabels(issue)).toEqual(["未绑定项目", "状态 进行中", "子任务 1/3"]);
-  });
-
-  it("only shows special activity labels and omits the default review label", () => {
-    const activity = (runningCount: number, queuedCount: number): Pick<Issue, "agent_activity"> => ({
-      agent_activity: { running_count: runningCount, queued_count: queuedCount, agent_ids: [] },
-    });
-
-    expect(issueRunRowActivityLabel(activity(0, 0))).toBeNull();
-    expect(issueRunRowActivityLabel(activity(2, 1))).toEqual({
-      label: "运行 2",
-      tone: "running",
-    });
-    expect(issueRunRowActivityLabel(activity(0, 3))).toEqual({
-      label: "排队 3",
-      tone: "queued",
-    });
   });
 });
 
@@ -454,6 +336,27 @@ describe("buildRunReviewEventRows", () => {
       }),
     ]);
     expect(rows.find((row) => row.kind === "trace")?.tokenTotal).toBe(30);
+  });
+
+  it("preserves agent mentions in readable detail and raw evidence", () => {
+    const dispatch = "handoff: mention://agent/02-design 请继续方案设计并保留真实调度内容";
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [message({ seq: 3, type: "text", content: dispatch, output: "" })],
+        trace_events: [],
+        tool_call_chains: [],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const [row] = buildRunReviewEventRows(tree, []);
+    const [rawSheet] = buildRunReviewRawEventsXlsxSheets(row ? [row] : []);
+
+    expect(row?.summary).toContain("mention://agent/02-design");
+    expect(row?.detail).toContain(dispatch);
+    expect(row?.rawPayload).toMatchObject({ content: dispatch });
+    expect(String(rawSheet?.rows[1]?.at(-2))).toContain("mention://agent/02-design");
   });
 
   it("deduplicates source fetch timeline nodes when a source trace already exists", () => {
@@ -1146,19 +1049,6 @@ describe("buildRunReviewEventRows", () => {
     }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
   });
 
-  it("builds absolute Excel artifact hyperlinks so desktop spreadsheet apps can open them", () => {
-    expect(artifactXlsxHyperlinkHref(artifact({
-      download_url: "/uploads/workspaces/ws-1/stale.md",
-      markdown_url: "/uploads/workspaces/ws-1/stale.md",
-    }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
-
-    expect(artifactXlsxHyperlinkHref(artifact({
-      id: "",
-      download_url: "/uploads/workspaces/ws-1/01-clarify.md",
-      markdown_url: "/uploads/workspaces/ws-1/01-clarify.md",
-    }), "https://api.example.test")).toBe("https://api.example.test/uploads/workspaces/ws-1/01-clarify.md");
-  });
-
   it("exports node XLSX sheet with Chinese summary, compact rows, and artifact links", () => {
     const issue = {
       id: "issue-1",
@@ -1168,7 +1058,6 @@ describe("buildRunReviewEventRows", () => {
     } as Issue;
     const summary = {
       issue_id: "issue-1",
-      node_count: 1,
       total_duration_ms: 120000,
       total_input_tokens: 10,
       total_output_tokens: 20,
@@ -1182,7 +1071,6 @@ describe("buildRunReviewEventRows", () => {
       trace_event_count: 1,
       usage_unavailable: false,
       acceptance_status: "done",
-      full_analysis_deep_link: "",
     };
     const node = {
       issue_id: "issue-1",
@@ -1210,11 +1098,11 @@ describe("buildRunReviewEventRows", () => {
           markdown_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
         }),
         artifact({
-          id: "att-2",
+          id: "",
           filename: "02-design.md",
           title: "02-design",
-          download_url: "/api/attachments/att-2/download",
-          markdown_url: "/api/attachments/att-2/download",
+          download_url: "/uploads/workspaces/ws-1/02-design.md",
+          markdown_url: "/uploads/workspaces/ws-1/02-design.md",
         }),
       ],
     } as IssueTimelineNode;
@@ -1310,11 +1198,11 @@ describe("buildRunReviewEventRows", () => {
     expect(artifactSheet?.rows).toEqual([
       ["节点", "Agent", "产物", "链接"],
       ["01-需求澄清", "01-clarify", "01-需求澄清", "http://localhost:3000/api/attachments/att-1/download"],
-      ["01-需求澄清", "01-clarify", "02-design", "http://localhost:3000/api/attachments/att-2/download"],
+      ["01-需求澄清", "01-clarify", "02-design", "http://localhost:3000/uploads/workspaces/ws-1/02-design.md"],
     ]);
     expect(artifactSheet?.hyperlinks).toEqual([
       { row: 1, col: 2, target: "http://localhost:3000/api/attachments/att-1/download", tooltip: "01-需求澄清" },
-      { row: 2, col: 2, target: "http://localhost:3000/api/attachments/att-2/download", tooltip: "02-design" },
+      { row: 2, col: 2, target: "http://localhost:3000/uploads/workspaces/ws-1/02-design.md", tooltip: "02-design" },
     ]);
     expect(sheet?.rows.flat()).not.toContain("row_type");
     expect(sheet?.rows.flat()).not.toContain("issue_id");
@@ -1327,34 +1215,23 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("aggregates repeated runs from the same agent node", () => {
-    const baseNode = {
-      issue_id: "issue-1",
+    const baseNode = timelineNode({
       node_id: "task:base",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm run",
-      evidence_refs: [],
       artifacts: [artifact({
         id: "att-old",
-        task_id: "task-1",
         filename: "handoff.md",
         title: "handoff",
         created_at: "2026-06-09T10:01:00.000Z",
       })],
-    } as IssueTimelineNode;
+    });
 
     const rows = buildAgentNodeRows([
       { ...baseNode, node_id: "task:task-1" },
@@ -1368,7 +1245,6 @@ describe("buildRunReviewEventRows", () => {
         agent_turn_count: 1,
         artifacts: [artifact({
           id: "att-new",
-          task_id: "task-2",
           filename: "handoff.md",
           title: "handoff",
           created_at: "2026-06-09T10:03:00.000Z",
@@ -1392,28 +1268,18 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("keeps repeated PM runs on one horizontal timeline row while keeping node aggregation available", () => {
-    const baseNode = {
-      issue_id: "issue-1",
+    const baseNode = timelineNode({
       node_id: "task:pm-1",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm run",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode;
+    });
 
     const timelineRows = buildTimelineAgentRows([
       baseNode,
@@ -1437,67 +1303,37 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("keeps human confirmation and child waits on dedicated horizontal timeline rows", () => {
-    const agentNode = {
-      issue_id: "issue-1",
+    const agentNode = timelineNode({
       node_id: "task:pm-1",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm run",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode;
-    const waitNode = {
-      issue_id: "issue-1",
+    });
+    const waitNode = timelineNode({
       node_id: "human_confirmation:comment-1:pm-2",
       node_type: "human_confirmation",
-      status: "completed",
       started_at: "2026-06-09T10:01:00.000Z",
       completed_at: "2026-06-09T10:06:00.000Z",
       duration_ms: 300_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "等待人工确认：确认继续",
       evidence_refs: [{ type: "comment", id: "comment-1" }],
-    } as IssueTimelineNode;
-    const childNode = {
-      issue_id: "issue-1",
+    });
+    const childNode = timelineNode({
       node_id: "child_issue_ref:child-1",
       node_type: "child_issue_ref",
-      child_issue_id: "child-1",
       status: "done",
       started_at: "2026-06-09T10:06:00.000Z",
       completed_at: "2026-06-09T10:10:00.000Z",
       duration_ms: 240_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "跨项目验收标记：gateway request id / middleware acceptance marker",
       evidence_refs: [{ type: "child_issue", id: "child-1" }],
-    } as IssueTimelineNode;
+    });
 
     const rows = buildTimelineBarRows(
       buildTimelineAgentRows([agentNode]),
@@ -1548,29 +1384,19 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("uses agent responsibility windows without separate dispatch wait segments", () => {
-    const firstRun = {
-      issue_id: "issue-1",
+    const firstRun = timelineNode({
       node_id: "task:pm-1",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
       actual_started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 1,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm first run",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode;
+    });
     const secondRun = {
       ...firstRun,
       node_id: "task:pm-2",
@@ -1604,43 +1430,30 @@ describe("buildRunReviewEventRows", () => {
     const shortRunStart = 0;
     const shortRunEnd = 20_108;
 
-    const width = timelineSegmentWidthPercent(shortRunStart, shortRunEnd, spanMs);
+    const style = timelineSegmentStyle(shortRunStart, shortRunEnd, 0, spanMs);
 
-    expect(width).toBeCloseTo(2.67, 2);
-    expect(timelineSegmentStyle(shortRunStart, shortRunEnd, 0, spanMs)).toMatchObject({
+    expect(Number.parseFloat(style.width)).toBeCloseTo(2.67, 2);
+    expect(style).toMatchObject({
       left: "0%",
-      width: `${width}%`,
     });
-    expect(shouldShowTimelineSegmentText(width)).toBe(false);
-    expect(shouldShowTimelineSegmentText(10.76)).toBe(true);
   });
 
   it("does not inflate short timeline runs to one minute", () => {
-    const timing = timelineTiming({
-      issue_id: "issue-1",
+    const node = timelineNode({
       node_id: "task:short-run",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
       started_at: "2026-06-09T10:00:00.000Z",
       completed_at: "2026-06-09T10:00:20.000Z",
       duration_ms: 20_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode);
+    });
+    const [row] = buildTimelineBarRows([{ key: "short", label: "Short", node }], [], [node]);
+    const timing = row?.segments[0];
 
-    expect(timing.durationMs).toBe(20_000);
-    expect((timing.endMs ?? 0) - (timing.startMs ?? 0)).toBe(20_000);
+    expect(timing?.durationMs).toBe(20_000);
+    expect((timing?.endMs ?? 0) - (timing?.startMs ?? 0)).toBe(20_000);
   });
 
   it("exports raw event XLSX rows with detail, metadata, and raw evidence", () => {
@@ -1680,7 +1493,7 @@ describe("buildRunReviewEventRows", () => {
     expect(String(sheet?.rows[1]?.at(-1))).toContain("关联 task_message #1 文本");
   });
 
-  it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", () => {
+  it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", async () => {
     const issue = {
       id: "issue-1",
       identifier: "ISS-1",
@@ -1695,7 +1508,7 @@ describe("buildRunReviewEventRows", () => {
           message({
             seq: 1,
             type: "text",
-            content: "01 阶段输入：用户希望事件流可诊断。handoff: 已明确验收口径。",
+            content: "01 阶段输入：用户希望事件流可诊断。handoff: mention://agent/02-design 已明确验收口径。",
           }),
         ],
         trace_events: [trace({ event_type: "task.completed", event_name: "任务完成", status: "completed", failure_reason: "", error_type: "" })],
@@ -1721,7 +1534,6 @@ describe("buildRunReviewEventRows", () => {
       },
       issue_summary: {
         issue_id: "issue-1",
-        node_count: 1,
         total_duration_ms: 120000,
         total_input_tokens: 10,
         total_output_tokens: 20,
@@ -1732,7 +1544,6 @@ describe("buildRunReviewEventRows", () => {
         trace_event_count: 1,
         usage_unavailable: false,
         acceptance_status: "done",
-        full_analysis_deep_link: "",
       },
       timeline_nodes: [
         {
@@ -1773,20 +1584,31 @@ describe("buildRunReviewEventRows", () => {
       },
     ];
 
-    const request = buildIssueReviewDraftCaseRequest({
+    const createPromptEvaluationCase = vi.fn(async (request: CreatePromptEvaluationCaseRequest) => ({
+      id: "case-1",
+      ...request,
+    }));
+    setApiInstance({
+      listPromptEvaluationAssets: vi.fn().mockResolvedValue([
+        { id: "asset-1", name: "Issue 复盘评测 Draft", prompt_id: null },
+      ]),
+      createPromptEvaluationCase,
+    } as unknown as ApiClient);
+
+    await createIssueReviewDraftCase(
       issue,
       tree,
-      stageRows: stageRows as never,
-      childLanes: [],
-      assetId: "asset-1",
-      promptId: null,
-    });
+      stageRows as never,
+      [],
+    );
+    const request = createPromptEvaluationCase.mock.calls[0]![0];
     const input = request.input as Record<string, unknown>;
     const expected = request.expected as Record<string, unknown>;
     const runSnapshot = input.run_snapshot as Record<string, unknown>;
     const stages = runSnapshot.stages as Array<Record<string, unknown>>;
     const toolEvidence = runSnapshot.tool_evidence as Array<Record<string, unknown>>;
     const promptSnapshots = runSnapshot.prompt_skill_snapshots as Array<Record<string, unknown>>;
+    const firstStage = stages[0] as Record<string, unknown>;
     const assertions = expected.assertions as Record<string, unknown>;
 
     expect(request.status).toBe("draft");
@@ -1797,6 +1619,7 @@ describe("buildRunReviewEventRows", () => {
       input_summary: expect.stringContaining("用户要求优化"),
       output_summary: expect.stringContaining("需求边界明确"),
     });
+    expect(firstStage.handoff_summary).toContain("mention://agent/02-design");
     expect(toolEvidence[0]).toMatchObject({
       category: "搜索",
       action: "搜索代码：生成评测用例",

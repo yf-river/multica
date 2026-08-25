@@ -3,16 +3,79 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
-// TestListSkills_OmitsContent guards the fix for GH multica-ai/multica#2174:
-// the workspace skill list endpoint must not ship the SKILL.md `content`
-// blob, which used to bloat the payload past CLI timeouts on workspaces with
-// many large skills. The detail endpoint still returns content (covered by
-// TestGetSkill_IncludesContent below).
+func TestCreateSkillRejectsNonObjectConfig(t *testing.T) {
+	name := "invalid-config-" + uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM skill WHERE name = $1`, name)
+	})
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/skills?workspace_id="+testWorkspaceID, map[string]any{
+		"name":    name,
+		"content": "# Invalid config fixture",
+		"config":  []any{"not", "an", "object"},
+	})
+	testHandler.CreateSkill(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateSkill non-object config: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int FROM skill WHERE workspace_id = $1 AND name = $2
+	`, testWorkspaceID, name).Scan(&count); err != nil {
+		t.Fatalf("count invalid-config skill: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("CreateSkill persisted %d invalid-config rows", count)
+	}
+}
+
+func TestUpdateSkillRejectsNonObjectConfig(t *testing.T) {
+	skillID := insertHandlerTestSkill(t, "update-invalid-config", "# Existing skill")
+	w := httptest.NewRecorder()
+	req := newRequest("PATCH", "/api/skills/"+skillID+"?workspace_id="+testWorkspaceID, map[string]any{
+		"config": []any{"not", "an", "object"},
+	})
+	req = withURLParam(req, "id", skillID)
+	testHandler.UpdateSkill(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateSkill non-object config: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var config string
+	if err := testPool.QueryRow(context.Background(), `SELECT config::text FROM skill WHERE id = $1`, skillID).Scan(&config); err != nil {
+		t.Fatalf("read skill config: %v", err)
+	}
+	if config != "{}" {
+		t.Fatalf("UpdateSkill changed config to %s", config)
+	}
+}
+
+func TestDecodeSkillConfigRejectsNonObjectValues(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := decodeSkillConfig(raw); err == nil {
+			t.Fatalf("decodeSkillConfig(%s) expected an error", raw)
+		}
+	}
+	config, err := decodeSkillConfig([]byte(`{"origin":{"type":"manual"}}`))
+	if err != nil {
+		t.Fatalf("decode object config: %v", err)
+	}
+	if _, ok := config["origin"]; !ok {
+		t.Fatalf("decoded config = %#v, want origin", config)
+	}
+}
+
 func TestListSkills_OmitsContent(t *testing.T) {
 	skillID := insertHandlerTestSkill(t, "list-omits-content", strings.Repeat("a", 4096))
 
@@ -23,38 +86,9 @@ func TestListSkills_OmitsContent(t *testing.T) {
 		t.Fatalf("ListSkills: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Decode into a generic shape so we can prove the wire format has no
-	// `content` field at all — not "content present but empty", which would
-	// still leave the bytes on the wire.
-	var rows []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
-		t.Fatalf("ListSkills: failed to decode body: %v", err)
-	}
-
-	var found bool
-	for _, row := range rows {
-		if row["id"] != skillID {
-			continue
-		}
-		found = true
-		if _, ok := row["content"]; ok {
-			t.Fatalf("ListSkills: response must not include `content` field, got: %v", row)
-		}
-		// Other expected list fields should still be present.
-		for _, key := range []string{"id", "name", "description", "config", "created_at", "updated_at", "workspace_id"} {
-			if _, ok := row[key]; !ok {
-				t.Fatalf("ListSkills: missing expected field %q in response: %v", key, row)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("ListSkills: inserted skill %s not in response", skillID)
-	}
+	assertSkillListSummary(t, "ListSkills", w, skillID)
 }
 
-// TestGetSkill_IncludesContent confirms the detail endpoint still ships the
-// full SKILL.md body — the list-summary change must not regress single-skill
-// reads.
 func TestGetSkill_IncludesContent(t *testing.T) {
 	body := "# detail body\nstill served on /api/skills/{id}"
 	skillID := insertHandlerTestSkill(t, "detail-includes-content", body)
@@ -76,9 +110,6 @@ func TestGetSkill_IncludesContent(t *testing.T) {
 	}
 }
 
-// TestListAgentSkills_OmitsContent: same constraint for the agent-scoped
-// listing — gpt-boy review of the original fix flagged this as a sister case
-// because `multica agent skills list` follows the same shape rules.
 func TestListAgentSkills_OmitsContent(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Handler Skill Summary Test", nil)
 	skillID := insertHandlerTestSkill(t, "agent-skill-omits-content", strings.Repeat("b", 1024))
@@ -97,26 +128,9 @@ func TestListAgentSkills_OmitsContent(t *testing.T) {
 		t.Fatalf("ListAgentSkills: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var rows []map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
-		t.Fatalf("ListAgentSkills: failed to decode body: %v", err)
-	}
-	if len(rows) == 0 {
-		t.Fatalf("ListAgentSkills: expected at least 1 skill")
-	}
-	for _, row := range rows {
-		if _, ok := row["content"]; ok {
-			t.Fatalf("ListAgentSkills: response must not include `content` field, got: %v", row)
-		}
-	}
+	assertSkillListSummary(t, "ListAgentSkills", w, skillID)
 }
 
-// TestGetSkill_MalformedUUIDReturns400 guards the handler UUID parsing
-// convention (CLAUDE.md → "Backend Handler UUID Parsing Convention"): raw
-// `id` URL params on the request boundary must be validated with
-// parseUUIDOrBadRequest, not the panic-prone parseUUID. Before the fix
-// the malformed input panicked in MustParseUUID and was rescued by the
-// chi Recoverer middleware as a 500.
 func TestGetSkill_MalformedUUIDReturns400(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("GET", "/api/skills/not-a-uuid", nil)
@@ -127,9 +141,29 @@ func TestGetSkill_MalformedUUIDReturns400(t *testing.T) {
 	}
 }
 
-// insertHandlerTestSkill writes a skill row directly via SQL and registers a
-// cleanup hook. We bypass the create handler to keep the test focused on the
-// list/detail wire shape and to make it easy to inject a large body.
+func assertSkillListSummary(t *testing.T, operation string, w *httptest.ResponseRecorder, skillID string) {
+	t.Helper()
+	var rows []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("%s: failed to decode body: %v", operation, err)
+	}
+	for _, row := range rows {
+		if row["id"] != skillID {
+			continue
+		}
+		if _, ok := row["content"]; ok {
+			t.Fatalf("%s: response must not include content: %v", operation, row)
+		}
+		for _, key := range []string{"id", "name", "description", "config", "created_at", "updated_at", "workspace_id"} {
+			if _, ok := row[key]; !ok {
+				t.Fatalf("%s: missing expected field %q: %v", operation, key, row)
+			}
+		}
+		return
+	}
+	t.Fatalf("%s: inserted skill %s not in response", operation, skillID)
+}
+
 func insertHandlerTestSkill(t *testing.T, namePrefix, content string) string {
 	t.Helper()
 	name := namePrefix + "-" + t.Name()
@@ -142,7 +176,7 @@ func insertHandlerTestSkill(t *testing.T, namePrefix, content string) string {
 		t.Fatalf("insert skill: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM skill WHERE id = $1`, id)
+		mustExec(t, context.Background(), `DELETE FROM skill WHERE id = $1`, id)
 	})
 	return id
 }

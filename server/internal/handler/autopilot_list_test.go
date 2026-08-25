@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// insertListTestAutopilot creates a bare autopilot row and registers cleanup.
-// Triggers/runs cascade on delete.
 func insertListTestAutopilot(t *testing.T, agentID, title string) string {
 	t.Helper()
 	var id string
@@ -23,44 +21,34 @@ func insertListTestAutopilot(t *testing.T, agentID, title string) string {
 		t.Fatalf("failed to insert test autopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, id)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, id)
 	})
 	return id
 }
 
-// TestListAutopilots_DerivedFields guards the three list-only derived
-// columns added for the list UI (trigger badges, next run, last-run
-// outcome): trigger_kinds/next_run_at must consider ENABLED triggers only,
-// last_run_status must be the most recent run's status, and all three must
-// be omitted entirely when there is nothing to derive (the optional-field
-// contract older clients rely on).
 func TestListAutopilots_DerivedFields(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	agentID := createHandlerTestAgent(t, "autopilot-list-derived-agent", []byte(`[]`))
+	agentID := createHandlerTestAgent(t, "autopilot-list-derived-agent", nil)
 	withData := insertListTestAutopilot(t, agentID, "list-derived-with-data")
 	bare := insertListTestAutopilot(t, agentID, "list-derived-bare")
 
-	// Enabled schedule (carries next_run_at), enabled webhook, and a
-	// DISABLED api trigger that must not leak into trigger_kinds.
 	for _, q := range []string{
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled, cron_expression, timezone, next_run_at)
 		 VALUES ($1, 'schedule', true, '0 9 * * *', 'UTC', now() + interval '1 hour')`,
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled, webhook_token)
 		 VALUES ($1, 'webhook', true, 'list-derived-tok')`,
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled)
-		 VALUES ($1, 'api', false)`,
+		 VALUES ($1, 'schedule', false)`,
 	} {
 		if _, err := testPool.Exec(ctx, q, withData); err != nil {
 			t.Fatalf("failed to insert trigger: %v", err)
 		}
 	}
 
-	// Older completed run, newer failed run — last_run_status must be the
-	// newest by triggered_at, not insertion order.
 	for _, q := range []string{
 		`INSERT INTO autopilot_run (autopilot_id, source, status, triggered_at)
 		 VALUES ($1, 'schedule', 'failed', now() - interval '1 hour')`,

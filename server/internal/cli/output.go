@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"text/tabwriter"
 )
@@ -11,11 +12,19 @@ import (
 // PrintTable writes a simple table with headers and rows to w.
 func PrintTable(w io.Writer, headers []string, rows [][]string) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, strings.Join(headers, "\t"))
-	for _, row := range rows {
-		fmt.Fprintln(tw, strings.Join(row, "\t"))
+	if _, err := fmt.Fprintln(tw, strings.Join(headers, "\t")); err != nil {
+		slog.Warn("write table header failed", "error", err)
+		return
 	}
-	tw.Flush()
+	for _, row := range rows {
+		if _, err := fmt.Fprintln(tw, strings.Join(row, "\t")); err != nil {
+			slog.Warn("write table row failed", "error", err)
+			return
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		slog.Warn("flush table output failed", "error", err)
+	}
 }
 
 // PrintJSON writes v as indented JSON to w.

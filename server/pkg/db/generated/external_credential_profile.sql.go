@@ -13,19 +13,21 @@ import (
 
 const createExternalCredentialProfile = `-- name: CreateExternalCredentialProfile :one
 INSERT INTO external_credential_profile (
-    user_id, provider, name, secret_ref, encrypted_secret, secret_hint,
-    capabilities, status, last_verified_at, last_error
+    id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint,
+    capabilities, status, last_verified_at, last_error, idempotency_key, request_hash
 ) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, COALESCE($7::jsonb, '{}'::jsonb),
-    COALESCE($8::text, 'unverified'),
-    $9,
-    COALESCE($10::text, '')
+    $1, $2, $3, $4, $5, $6,
+    $7, COALESCE($8::jsonb, '{}'::jsonb),
+    COALESCE($9::text, 'unverified'),
+    $10,
+    COALESCE($11::text, ''),
+    $12, $13
 )
-RETURNING id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at
+RETURNING id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at, idempotency_key, request_hash
 `
 
 type CreateExternalCredentialProfileParams struct {
+	ID              pgtype.UUID        `json:"id"`
 	UserID          pgtype.UUID        `json:"user_id"`
 	Provider        string             `json:"provider"`
 	Name            string             `json:"name"`
@@ -36,10 +38,13 @@ type CreateExternalCredentialProfileParams struct {
 	Status          pgtype.Text        `json:"status"`
 	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
 	LastError       pgtype.Text        `json:"last_error"`
+	IdempotencyKey  pgtype.UUID        `json:"idempotency_key"`
+	RequestHash     pgtype.Text        `json:"request_hash"`
 }
 
 func (q *Queries) CreateExternalCredentialProfile(ctx context.Context, arg CreateExternalCredentialProfileParams) (ExternalCredentialProfile, error) {
 	row := q.db.QueryRow(ctx, createExternalCredentialProfile,
+		arg.ID,
 		arg.UserID,
 		arg.Provider,
 		arg.Name,
@@ -50,6 +55,8 @@ func (q *Queries) CreateExternalCredentialProfile(ctx context.Context, arg Creat
 		arg.Status,
 		arg.LastVerifiedAt,
 		arg.LastError,
+		arg.IdempotencyKey,
+		arg.RequestHash,
 	)
 	var i ExternalCredentialProfile
 	err := row.Scan(
@@ -66,6 +73,8 @@ func (q *Queries) CreateExternalCredentialProfile(ctx context.Context, arg Creat
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }
@@ -86,7 +95,7 @@ func (q *Queries) DeleteExternalCredentialProfile(ctx context.Context, arg Delet
 }
 
 const getDefaultExternalCredentialProfileForUser = `-- name: GetDefaultExternalCredentialProfileForUser :one
-SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at FROM external_credential_profile
+SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at, idempotency_key, request_hash FROM external_credential_profile
 WHERE user_id = $1
   AND provider = $2
   AND status <> 'disabled'
@@ -118,12 +127,47 @@ func (q *Queries) GetDefaultExternalCredentialProfileForUser(ctx context.Context
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+	)
+	return i, err
+}
+
+const getExternalCredentialProfileByCreateRequest = `-- name: GetExternalCredentialProfileByCreateRequest :one
+SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at, idempotency_key, request_hash FROM external_credential_profile
+WHERE user_id = $1 AND idempotency_key = $2
+`
+
+type GetExternalCredentialProfileByCreateRequestParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+}
+
+func (q *Queries) GetExternalCredentialProfileByCreateRequest(ctx context.Context, arg GetExternalCredentialProfileByCreateRequestParams) (ExternalCredentialProfile, error) {
+	row := q.db.QueryRow(ctx, getExternalCredentialProfileByCreateRequest, arg.UserID, arg.IdempotencyKey)
+	var i ExternalCredentialProfile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.Name,
+		&i.SecretRef,
+		&i.EncryptedSecret,
+		&i.SecretHint,
+		&i.Capabilities,
+		&i.Status,
+		&i.LastVerifiedAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }
 
 const getExternalCredentialProfileForUser = `-- name: GetExternalCredentialProfileForUser :one
-SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at FROM external_credential_profile
+SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at, idempotency_key, request_hash FROM external_credential_profile
 WHERE id = $1 AND user_id = $2
 `
 
@@ -149,12 +193,14 @@ func (q *Queries) GetExternalCredentialProfileForUser(ctx context.Context, arg G
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }
 
 const listExternalCredentialProfilesByUser = `-- name: ListExternalCredentialProfilesByUser :many
-SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at FROM external_credential_profile
+SELECT id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at, idempotency_key, request_hash FROM external_credential_profile
 WHERE user_id = $1
   AND ($2::text IS NULL OR provider = $2)
 ORDER BY provider ASC, name ASC, created_at DESC
@@ -188,6 +234,8 @@ func (q *Queries) ListExternalCredentialProfilesByUser(ctx context.Context, arg 
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IdempotencyKey,
+			&i.RequestHash,
 		); err != nil {
 			return nil, err
 		}
@@ -215,7 +263,7 @@ SET
     last_error = COALESCE($8, last_error),
     updated_at = now()
 WHERE id = $9 AND user_id = $10
-RETURNING id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at
+RETURNING id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint, capabilities, status, last_verified_at, last_error, created_at, updated_at, idempotency_key, request_hash
 `
 
 type UpdateExternalCredentialProfileParams struct {
@@ -259,6 +307,8 @@ func (q *Queries) UpdateExternalCredentialProfile(ctx context.Context, arg Updat
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }

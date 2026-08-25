@@ -11,6 +11,11 @@ INSERT INTO "user" (name, account, avatar_url)
 VALUES ($1, $2, $3)
 RETURNING *;
 
+-- name: CreateUserWithPassword :one
+INSERT INTO "user" (name, account, password_hash)
+VALUES ($1, $2, $3)
+RETURNING *;
+
 -- name: UpdateUser :one
 -- Patches the user-controlled profile fields. Each parameter follows
 -- COALESCE-on-NULL semantics so the handler can omit any field it
@@ -35,22 +40,4 @@ UPDATE "user" SET
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING *;
-
--- name: MarkUserOnboarded :one
-UPDATE "user" SET
-    onboarded_at = COALESCE(onboarded_at, now()),
-    updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- name: PatchUserOnboarding :one
--- Partial update of the user's onboarding decision fields. Currently only the
--- questionnaire JSONB is patchable — the v2 attempt at persisting Step 3
--- runtime choice on the user row was reverted; that state now lives in a
--- frontend Zustand transient store.
-UPDATE "user" SET
-    onboarding_questionnaire = COALESCE(sqlc.narg('questionnaire'), onboarding_questionnaire),
-    updated_at = now()
-WHERE id = sqlc.arg('id')
 RETURNING *;

@@ -1,14 +1,7 @@
-import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/zh-Hans/common.json";
-import enWorkspace from "../locales/zh-Hans/workspace.json";
+import { screen, fireEvent } from "@testing-library/react";
+import { renderWithI18n } from "../test/i18n";
 import { NoAccessPage } from "./no-access-page";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { common: enCommon, workspace: enWorkspace },
-};
 
 const navigate = vi.fn();
 const logout = vi.fn();
@@ -22,17 +15,6 @@ vi.mock("../auth", () => ({
   useLogout: () => logout,
 }));
 
-vi.mock("@multica/core/paths", async () => {
-  const actual =
-    await vi.importActual<typeof import("@multica/core/paths")>(
-      "@multica/core/paths",
-    );
-  return {
-    ...actual,
-    useHasOnboarded: () => true,
-  };
-});
-
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: mockWorkspaces }),
 }));
@@ -41,16 +23,8 @@ vi.mock("@multica/core/workspace/queries", () => ({
   workspaceListOptions: () => ({ queryKey: ["workspaces", "list"] }),
 }));
 
-function I18nWrapper({ children }: { children: ReactNode }) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      {children}
-    </I18nProvider>
-  );
-}
-
 function renderPage() {
-  return render(<NoAccessPage />, { wrapper: I18nWrapper });
+  return renderWithI18n(<NoAccessPage />);
 }
 
 describe("NoAccessPage", () => {
@@ -75,9 +49,6 @@ describe("NoAccessPage", () => {
   it("clears last_workspace_slug cookie on mount so the proxy stops looping us back", () => {
     document.cookie = "last_workspace_slug=stale; path=/";
     renderPage();
-    // Assert empty value, not just absence of "stale" — the proxy reads any
-    // truthy value as a redirect target, so a buggy clear that left e.g.
-    // `last_workspace_slug=other` would still trap users.
     const value = document.cookie.match(/last_workspace_slug=([^;]*)/)?.[1];
     expect(value ?? "").toBe("");
   });
@@ -88,8 +59,6 @@ describe("NoAccessPage", () => {
       screen.getByRole("button", { name: /使用其他账号登录/ }),
     );
     expect(logout).toHaveBeenCalledTimes(1);
-    // Should NOT just navigate to /login — that would leave the session
-    // cookie + auth state intact and AuthInitializer would re-auth.
     expect(navigate).not.toHaveBeenCalledWith("/login");
   });
 });

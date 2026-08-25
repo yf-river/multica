@@ -43,7 +43,7 @@ export function collectThreadReplies(
  * one): root wins; otherwise the reply with the latest resolved_at is THE
  * resolution. No write-side "clear the others" is needed — display picks one.
  */
-export type ThreadResolution =
+type ThreadResolution =
   | { kind: "none" }
   | { kind: "root" }
   | { kind: "reply"; resolutionId: string };

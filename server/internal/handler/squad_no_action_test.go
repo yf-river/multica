@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -16,6 +17,15 @@ type runningSquadLeaderTaskFixture struct {
 	LeaderID         string
 	TaskID           string
 	TriggerCommentID string
+}
+
+func (fx runningSquadLeaderTaskFixture) postTaskComment(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodPost, "/api/issues/"+fx.IssueID+"/comments", body), "id", fx.IssueID)
+	setTaskTokenActor(request, fx.LeaderID, fx.TaskID)
+	testHandler.CreateComment(response, request)
+	return response
 }
 
 func newRunningSquadLeaderTaskFixture(t *testing.T) runningSquadLeaderTaskFixture {
@@ -45,15 +55,15 @@ func newRunningSquadLeaderTaskFixture(t *testing.T) runningSquadLeaderTaskFixtur
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, trigger_comment_id,
-			status, priority, started_at
+			status, priority, started_at, is_leader_task
 		)
-		VALUES ($1, $2, $3, $4, 'running', 0, now())
+		VALUES ($1, $2, $3, $4, 'running', 0, now(), true)
 		RETURNING id
 	`, fx.LeaderID, runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
 		t.Fatalf("create running squad leader task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
 	return runningSquadLeaderTaskFixture{
@@ -69,7 +79,7 @@ func recordSquadLeaderEvaluationForTask(t *testing.T, fx runningSquadLeaderTaskF
 	recordSquadLeaderEvaluationForTaskWithHeader(t, fx, outcome, fx.TaskID)
 }
 
-func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadLeaderTaskFixture, outcome, taskIDHeader string) {
+func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadLeaderTaskFixture, outcome, taskIDHeader string) map[string]string {
 	t.Helper()
 
 	w := httptest.NewRecorder()
@@ -78,12 +88,126 @@ func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadL
 		"reason":  "test reason",
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", taskIDHeader)
+	setTaskTokenActor(r, fx.LeaderID, taskIDHeader)
 
 	testHandler.RecordSquadLeaderEvaluation(w, r)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("RecordSquadLeaderEvaluation: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var response map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode evaluation response: %v", err)
+	}
+	return response
+}
+
+func TestRecordSquadLeaderEvaluationPreservesCanceledSquadLookup(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	fx := newRunningSquadLeaderTaskFixture(t)
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin blocker: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if _, err := tx.Exec(context.Background(), `LOCK TABLE squad IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("lock squad table: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	r := newRequest(http.MethodPost, "/api/issues/"+fx.IssueID+"/squad-evaluated", map[string]any{
+		"outcome": "no_action",
+		"reason":  "cancel test",
+	}).WithContext(ctx)
+	r = withURLParam(r, "id", fx.IssueID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
+	w := httptest.NewRecorder()
+	testHandler.RecordSquadLeaderEvaluation(w, r)
+
+	if w.Code != 499 {
+		t.Fatalf("canceled squad lookup = %d %s, want 499 instead of false not-found", w.Code, w.Body.String())
+	}
+}
+
+func TestRecordSquadLeaderEvaluation_RetryReplaysSingleActivity(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	first := recordSquadLeaderEvaluationForTaskWithHeader(t, fx, "no_action", fx.TaskID)
+	second := recordSquadLeaderEvaluationForTaskWithHeader(t, fx, "no_action", fx.TaskID)
+
+	if first["id"] != second["id"] {
+		t.Fatalf("retry created a different activity: first=%s second=%s", first["id"], second["id"])
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM activity_log
+		WHERE action = 'squad_leader_evaluated' AND details->>'task_id' = $1
+	`, fx.TaskID).Scan(&count); err != nil {
+		t.Fatalf("count squad leader evaluations: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("retry must preserve one evaluation activity, got %d", count)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM domain_event_outbox
+		WHERE event_type = 'activity:created' AND task_id = $1
+	`, fx.TaskID).Scan(&count); err != nil {
+		t.Fatalf("count squad leader evaluation events: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("retry must preserve one durable activity event, got %d", count)
+	}
+}
+
+func TestRecordSquadLeaderEvaluation_RejectsDifferentRetry(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	recordSquadLeaderEvaluationForTaskWithHeader(t, fx, "no_action", fx.TaskID)
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/squad-evaluated", map[string]any{
+		"outcome": "action",
+		"reason":  "changed after an ambiguous response",
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
+	testHandler.RecordSquadLeaderEvaluation(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("different retry: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRecordSquadLeaderEvaluation_RejectsNonLeaderTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	mustExec(t, context.Background(), `
+		UPDATE agent_task_queue SET is_leader_task = false WHERE id = $1
+	`, fx.TaskID)
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/squad-evaluated", map[string]any{
+		"outcome": "no_action",
+		"reason":  "ordinary task must not project a leader decision",
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
+	testHandler.RecordSquadLeaderEvaluation(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-leader task: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -91,7 +215,7 @@ func completeRunningTask(t *testing.T, fx runningSquadLeaderTaskFixture, output 
 	t.Helper()
 
 	w := httptest.NewRecorder()
-	r := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fx.TaskID+"/complete",
+	r := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fx.TaskID+"/complete",
 		map[string]any{"output": output},
 		testWorkspaceID, "legit-daemon")
 	rctx := chi.NewRouteContext()
@@ -169,16 +293,10 @@ func TestCreateComment_SquadLeaderNoActionRejectsComment(t *testing.T) {
 	fx := newRunningSquadLeaderTaskFixture(t)
 	recordSquadLeaderEvaluationForTask(t, fx, "no_action")
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content":   "No action needed.",
 		"parent_id": fx.TriggerCommentID,
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("CreateComment: expected 409, got %d: %s", w.Code, w.Body.String())
 	}
@@ -203,16 +321,10 @@ func TestCreateComment_SquadLeaderNoActionAllowsMentionDispatch(t *testing.T) {
 	fx := newRunningSquadLeaderTaskFixture(t)
 	recordSquadLeaderEvaluationForTask(t, fx, "no_action")
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content":   "继续调度 [@PM-项目经理](mention://agent/" + fx.LeaderID + ") 处理。",
 		"parent_id": fx.TriggerCommentID,
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -228,15 +340,9 @@ func TestCreateComment_CommentTriggeredAgentAllowsTopLevelFallback(t *testing.T)
 
 	fx := newRunningSquadLeaderTaskFixture(t)
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content": "Recovered with a top-level result comment after the thread reply failed.",
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -260,16 +366,10 @@ func TestCreateComment_CommentTriggeredAgentRejectsWrongParent(t *testing.T) {
 		t.Fatalf("create other comment: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+	w := fx.postTaskComment(t, map[string]any{
 		"content":   "This should not be allowed on a different thread.",
 		"parent_id": otherCommentID,
 	})
-	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
-
-	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("CreateComment: expected 409, got %d: %s", w.Code, w.Body.String())
 	}

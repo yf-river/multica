@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -172,15 +173,10 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runAutopilotList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, _, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	if _, err := requireWorkspaceID(cmd); err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	path := "/api/autopilots"
@@ -196,8 +192,7 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list autopilots: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -220,26 +215,18 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	var resp map[string]any
 	if err := client.GetJSON(ctx, "/api/autopilots/"+autopilotRef.ID, &resp); err != nil {
 		return fmt.Errorf("get autopilot: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -259,13 +246,11 @@ func runAutopilotGet(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, _, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	if _, err := requireWorkspaceID(cmd); err != nil {
-		return err
-	}
+	defer cancel()
 
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" {
@@ -283,10 +268,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--mode must be create_issue or run_only")
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	agentID, err := resolveAgent(ctx, client, agent)
+	agentID, err := resolveAgentID(ctx, client, agent)
 	if err != nil {
 		return fmt.Errorf("resolve agent: %w", err)
 	}
@@ -296,13 +278,8 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		"assignee_id":    agentID,
 		"execution_mode": mode,
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
-	if cmd.Flags().Changed("priority") {
-		v, _ := cmd.Flags().GetString("priority")
-		body["priority"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
+	applyChangedStringFlag(cmd, body, "priority", "priority")
 	if v, _ := cmd.Flags().GetString("project"); v != "" {
 		projectRef, err := resolveProjectID(ctx, client, v)
 		if err != nil {
@@ -310,12 +287,10 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		}
 		body["project_id"] = projectRef.ID
 	}
-	if v, _ := cmd.Flags().GetString("issue-title-template"); v != "" {
-		body["issue_title_template"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "issue-title-template", "issue_title_template")
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/autopilots", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/autopilots", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create autopilot: %w", err)
 	}
 
@@ -323,31 +298,18 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
-
 	body := map[string]any{}
-	if cmd.Flags().Changed("title") {
-		v, _ := cmd.Flags().GetString("title")
-		body["title"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "title", "title")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	if cmd.Flags().Changed("agent") {
 		v, _ := cmd.Flags().GetString("agent")
-		agentID, resolveErr := resolveAgent(ctx, client, v)
+		agentID, resolveErr := resolveAgentID(ctx, client, v)
 		if resolveErr != nil {
 			return fmt.Errorf("resolve agent: %w", resolveErr)
 		}
@@ -365,14 +327,8 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 			body["project_id"] = projectRef.ID
 		}
 	}
-	if cmd.Flags().Changed("priority") {
-		v, _ := cmd.Flags().GetString("priority")
-		body["priority"] = v
-	}
-	if cmd.Flags().Changed("status") {
-		v, _ := cmd.Flags().GetString("status")
-		body["status"] = v
-	}
+	applyChangedStringFlag(cmd, body, "priority", "priority")
+	applyChangedStringFlag(cmd, body, "status", "status")
 	if cmd.Flags().Changed("mode") {
 		v, _ := cmd.Flags().GetString("mode")
 		if v != "create_issue" && v != "run_only" {
@@ -380,13 +336,10 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["execution_mode"] = v
 	}
-	if cmd.Flags().Changed("issue-title-template") {
-		v, _ := cmd.Flags().GetString("issue-title-template")
-		body["issue_title_template"] = v
-	}
+	applyChangedStringFlag(cmd, body, "issue-title-template", "issue_title_template")
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use flags like --title, --description, --agent, --status, --mode, etc.")
+		return fmt.Errorf("no fields to update; use flags like --title, --description, --agent, --status, --mode, etc")
 	}
 
 	var result map[string]any
@@ -398,18 +351,11 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/autopilots/"+autopilotRef.ID); err != nil {
 		return fmt.Errorf("delete autopilot: %w", err)
@@ -437,8 +383,7 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("trigger autopilot: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, run)
 	}
 	fmt.Printf("Autopilot triggered: run %s (status: %s)\n", strVal(run, "id"), strVal(run, "status"))
@@ -446,18 +391,11 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotRuns(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, autopilotRef, err := newResolvedAPIClientContext(cmd, args[0], "autopilot", resolveAutopilotID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
 
 	params := url.Values{}
 	if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
@@ -479,8 +417,7 @@ func runAutopilotRuns(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list runs: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -501,15 +438,13 @@ func runAutopilotRuns(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	kind, _ := cmd.Flags().GetString("kind")
-	if kind == "" {
-		kind = "schedule"
-	}
 	if kind != "schedule" && kind != "webhook" {
 		return fmt.Errorf("--kind must be schedule or webhook")
 	}
@@ -529,12 +464,9 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	body := map[string]any{"kind": kind}
 	if kind == "schedule" {
 		body["cron_expression"] = cron
-		copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", false)
+		applyNonEmptyStringFlag(cmd, body, "timezone", "timezone")
 	}
-	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", false)
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
+	applyNonEmptyStringFlag(cmd, body, "label", "label")
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
 	if err != nil {
@@ -542,12 +474,11 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/autopilots/"+autopilotRef.ID+"/triggers", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/autopilots/"+autopilotRef.ID+"/triggers", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create trigger: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Trigger created: %s (kind=%s)\n", strVal(result, "id"), strVal(result, "kind"))
@@ -572,12 +503,10 @@ func printWebhookURL(client *cli.APIClient, trigger map[string]any) {
 }
 
 func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
@@ -603,12 +532,11 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	path := "/api/autopilots/" + autopilotRef.ID + "/triggers/" + triggerRef.ID + "/rotate-webhook-token"
-	if err := client.PostJSON(ctx, path, nil, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, path, nil, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("rotate webhook url: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Webhook URL rotated for trigger %s\n", strVal(result, "id"))
@@ -617,25 +545,23 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	body := map[string]any{}
 	if cmd.Flags().Changed("enabled") {
 		v, _ := cmd.Flags().GetBool("enabled")
 		body["enabled"] = v
 	}
-	copyAutopilotTriggerStringFlag(cmd, body, "cron", "cron_expression", true)
-	copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", true)
-	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", true)
+	applyChangedStringFlag(cmd, body, "cron", "cron_expression")
+	applyChangedStringFlag(cmd, body, "timezone", "timezone")
+	applyChangedStringFlag(cmd, body, "label", "label")
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --enabled, --cron, --timezone, or --label")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
 	if err != nil {
@@ -648,23 +574,11 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update trigger: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Trigger updated: %s\n", strVal(result, "id"))
 	return nil
-}
-
-func copyAutopilotTriggerStringFlag(cmd *cobra.Command, body map[string]any, flagName, bodyKey string, changedOnly bool) {
-	if changedOnly && !cmd.Flags().Changed(flagName) {
-		return
-	}
-	v, _ := cmd.Flags().GetString(flagName)
-	if !changedOnly && v == "" {
-		return
-	}
-	body[bodyKey] = v
 }
 
 func resolveAutopilotTriggerRefs(ctx context.Context, client *cli.APIClient, autopilotArg, triggerArg string) (resolvedID, resolvedID, error) {
@@ -680,12 +594,10 @@ func resolveAutopilotTriggerRefs(ctx context.Context, client *cli.APIClient, aut
 }
 
 func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
@@ -708,42 +620,13 @@ func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
 // uuidRegexp matches a canonical UUID (8-4-4-4-12 hex).
 var uuidRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// resolveAgent accepts either a UUID or an agent name (case-insensitive substring)
-// and returns the agent's UUID. Errors on no match or ambiguous match.
-func resolveAgent(ctx context.Context, client *cli.APIClient, nameOrID string) (string, error) {
+// resolveAgentID preserves the direct UUID input accepted by Agent-only flags;
+// names use the canonical assignee resolver so matching and ambiguity rules
+// have one owner across the CLI.
+func resolveAgentID(ctx context.Context, client *cli.APIClient, nameOrID string) (string, error) {
 	if uuidRegexp.MatchString(nameOrID) {
 		return nameOrID, nil
 	}
-	if client.WorkspaceID == "" {
-		return "", fmt.Errorf("workspace ID is required to resolve agents; use --workspace-id or set MULTICA_WORKSPACE_ID")
-	}
-
-	var agents []map[string]any
-	agentPath := "/api/agents?" + url.Values{"workspace_id": {client.WorkspaceID}}.Encode()
-	if err := client.GetJSON(ctx, agentPath, &agents); err != nil {
-		return "", fmt.Errorf("fetch agents: %w", err)
-	}
-
-	nameLower := strings.ToLower(nameOrID)
-	type match struct{ ID, Name string }
-	var matches []match
-	for _, a := range agents {
-		aName := strVal(a, "name")
-		if strings.Contains(strings.ToLower(aName), nameLower) {
-			matches = append(matches, match{ID: strVal(a, "id"), Name: aName})
-		}
-	}
-
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("no agent found matching %q", nameOrID)
-	case 1:
-		return matches[0].ID, nil
-	default:
-		var parts []string
-		for _, m := range matches {
-			parts = append(parts, fmt.Sprintf("  %q (%s)", m.Name, truncateID(m.ID)))
-		}
-		return "", fmt.Errorf("ambiguous agent %q; matches:\n%s", nameOrID, strings.Join(parts, "\n"))
-	}
+	_, agentID, err := resolveAssignee(ctx, client, nameOrID, assigneeKinds{agent: true})
+	return agentID, err
 }

@@ -15,15 +15,7 @@
       "created_description": "我创建的任务",
       "agents_label": "我的智能体和小队",
       "agents_description": "分配给我的智能体的任务"
-    },
-    "grouping": "分组",
-    "group_status": "状态",
-    "group_assignee": "负责人",
-    "ordering": "排序",
-    "ascending": "升序",
-    "descending": "降序",
-    "card_properties": "卡片属性",
-    "sort_manual": "手动"
+    }
   },
   "errors": {
     "move_failed": "移动任务失败"

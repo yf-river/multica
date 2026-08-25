@@ -9,11 +9,6 @@ import (
 
 var taskDurationBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1200, 3600, 7200}
 
-type activeTaskLabels struct {
-	source      string
-	runtimeMode string
-}
-
 type BusinessMetrics struct {
 	taskEnqueued     *prometheus.CounterVec
 	taskDispatched   *prometheus.CounterVec
@@ -35,9 +30,9 @@ type BusinessMetrics struct {
 	taskLeaseExpired  *prometheus.CounterVec
 
 	activeMu    sync.Mutex
-	activeTasks map[string]activeTaskLabels
+	activeTasks map[string]taskRunningKey
 
-	// PR3 funnel / community / commercial counters. See business_events.go
+	// Product and operational event counters. See business_events.go.
 	// for the field-level docs and labels.
 	events *businessEventMetrics
 }
@@ -145,7 +140,7 @@ func NewBusinessMetrics() *BusinessMetrics {
 			Name:      "lease_expired_total",
 			Help:      "Total dispatched or running task leases expired by the scheduler.",
 		}, metricLabels("multica_task_lease_expired_total")),
-		activeTasks: map[string]activeTaskLabels{},
+		activeTasks: map[string]taskRunningKey{},
 		events:      newBusinessEventMetrics(),
 	}
 	m.prewarmFailureReasons()
@@ -177,15 +172,15 @@ func (m *BusinessMetrics) RecordTaskEnqueued(source, runtimeMode string) {
 	if m == nil {
 		return
 	}
-	m.taskEnqueued.WithLabelValues(NormalizeTaskSource(source), NormalizeRuntimeMode(runtimeMode)).Inc()
+	m.taskEnqueued.WithLabelValues(taskSourceLabels.normalize(source), runtimeModeLabels.normalize(runtimeMode)).Inc()
 }
 
 func (m *BusinessMetrics) RecordTaskDispatched(taskID, source, runtimeMode string, queueWaitSeconds float64) {
 	if m == nil {
 		return
 	}
-	source = NormalizeTaskSource(source)
-	runtimeMode = NormalizeRuntimeMode(runtimeMode)
+	source = taskSourceLabels.normalize(source)
+	runtimeMode = runtimeModeLabels.normalize(runtimeMode)
 	m.taskDispatched.WithLabelValues(source, runtimeMode).Inc()
 	if queueWaitSeconds >= 0 {
 		m.taskQueueWait.WithLabelValues(source, runtimeMode).Observe(queueWaitSeconds)
@@ -198,9 +193,9 @@ func (m *BusinessMetrics) RecordTaskStarted(source, runtimeMode, provider string
 		return
 	}
 	m.taskStarted.WithLabelValues(
-		NormalizeTaskSource(source),
-		NormalizeRuntimeMode(runtimeMode),
-		NormalizeRuntimeProvider(provider),
+		taskSourceLabels.normalize(source),
+		runtimeModeLabels.normalize(runtimeMode),
+		runtimeProviderLabels.normalize(provider),
 	).Inc()
 }
 
@@ -208,9 +203,9 @@ func (m *BusinessMetrics) RecordTaskTerminal(taskID, source, runtimeMode, termin
 	if m == nil {
 		return
 	}
-	source = NormalizeTaskSource(source)
-	runtimeMode = NormalizeRuntimeMode(runtimeMode)
-	terminalStatus = NormalizeTerminalStatus(terminalStatus)
+	source = taskSourceLabels.normalize(source)
+	runtimeMode = runtimeModeLabels.normalize(runtimeMode)
+	terminalStatus = terminalStatusLabels.normalize(terminalStatus)
 	m.taskTerminal.WithLabelValues(source, runtimeMode, terminalStatus).Inc()
 	if runSeconds >= 0 {
 		m.taskRunSeconds.WithLabelValues(source, runtimeMode, terminalStatus).Observe(runSeconds)
@@ -230,9 +225,9 @@ func (m *BusinessMetrics) RecordTaskFailed(source, runtimeMode, failureReason st
 		return
 	}
 	m.taskFailed.WithLabelValues(
-		NormalizeTaskSource(source),
-		NormalizeRuntimeMode(runtimeMode),
-		NormalizeFailureReason(failureReason),
+		taskSourceLabels.normalize(source),
+		runtimeModeLabels.normalize(runtimeMode),
+		normalizeFailureReason(failureReason),
 	).Inc()
 }
 
@@ -240,26 +235,26 @@ func (m *BusinessMetrics) RecordTaskQueuedExpired(source, runtimeMode string) {
 	if m == nil {
 		return
 	}
-	m.taskQueuedExpired.WithLabelValues(NormalizeTaskSource(source), NormalizeRuntimeMode(runtimeMode)).Inc()
+	m.taskQueuedExpired.WithLabelValues(taskSourceLabels.normalize(source), runtimeModeLabels.normalize(runtimeMode)).Inc()
 }
 
 func (m *BusinessMetrics) RecordTaskLeaseExpired(source string) {
 	if m == nil {
 		return
 	}
-	m.taskLeaseExpired.WithLabelValues(NormalizeTaskSource(source)).Inc()
+	m.taskLeaseExpired.WithLabelValues(taskSourceLabels.normalize(source)).Inc()
 }
 
 func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) {
 	if m == nil {
 		return
 	}
-	source = NormalizeTaskSource(source)
-	runtimeMode = NormalizeRuntimeMode(runtimeMode)
+	source = taskSourceLabels.normalize(source)
+	runtimeMode = runtimeModeLabels.normalize(runtimeMode)
 	price, priced := PriceForProviderModel(rawProvider, modelAlias)
 	if !priced {
-		provider := NormalizeRuntimeProvider(rawProvider)
-		alias := NormalizeModelAlias(modelAlias)
+		provider := runtimeProviderLabels.normalize(rawProvider)
+		alias := normalizeModelAlias(modelAlias)
 		m.recordUnpricedTokens(provider, alias, "input", inputTokens)
 		m.recordUnpricedTokens(provider, alias, "output", outputTokens)
 		m.recordUnpricedTokens(provider, alias, "cache_read", cacheReadTokens)
@@ -269,7 +264,6 @@ func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, model
 	}
 
 	if isCodeBuddyUsage(rawProvider, modelAlias) {
-		inputTokens = codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens)
 		uncachedInputTokens := inputTokens - cacheReadTokens
 		if uncachedInputTokens < 0 {
 			uncachedInputTokens = 0
@@ -292,7 +286,7 @@ func (m *BusinessMetrics) recordPricedTokens(provider, model, tokenType, runtime
 	if tokens <= 0 {
 		return
 	}
-	tokenType = NormalizeTokenType(tokenType)
+	tokenType = tokenTypeLabels.normalize(tokenType)
 	m.llmTokens.WithLabelValues(provider, model, tokenType, runtimeMode, source).Add(float64(tokens))
 	if cost > 0 {
 		m.llmCostUSD.WithLabelValues(provider, model, tokenType, runtimeMode, source).Add(cost)
@@ -303,7 +297,7 @@ func (m *BusinessMetrics) recordUnpricedTokens(provider, modelAlias, tokenType s
 	if tokens <= 0 {
 		return
 	}
-	m.llmUnpricedTokens.WithLabelValues(provider, modelAlias, NormalizeTokenType(tokenType)).Add(float64(tokens))
+	m.llmUnpricedTokens.WithLabelValues(provider, modelAlias, tokenTypeLabels.normalize(tokenType)).Add(float64(tokens))
 }
 
 func (m *BusinessMetrics) markTaskInProgress(taskID, source, runtimeMode string) {
@@ -316,7 +310,7 @@ func (m *BusinessMetrics) markTaskInProgress(taskID, source, runtimeMode string)
 	if _, ok := m.activeTasks[taskID]; ok {
 		return
 	}
-	m.activeTasks[taskID] = activeTaskLabels{source: source, runtimeMode: runtimeMode}
+	m.activeTasks[taskID] = taskRunningKey{source: source, runtimeMode: runtimeMode}
 	m.taskInProgress.WithLabelValues(source, runtimeMode).Inc()
 }
 

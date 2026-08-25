@@ -63,6 +63,7 @@ services:
       ATTACHMENT_DOWNLOAD_URL_TTL: ${ATTACHMENT_DOWNLOAD_URL_TTL:-30m}
       CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DOMAIN:-}
       CLOUDFRONT_KEY_PAIR_ID: ${CLOUDFRONT_KEY_PAIR_ID:-}
+      CLOUDFRONT_PRIVATE_KEY_SECRET: ${CLOUDFRONT_PRIVATE_KEY_SECRET:-}
       CLOUDFRONT_PRIVATE_KEY: ${CLOUDFRONT_PRIVATE_KEY:-}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       APP_ENV: ${APP_ENV:-production}
@@ -72,25 +73,31 @@ services:
       DISABLE_WORKSPACE_CREATION: ${DISABLE_WORKSPACE_CREATION:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
-      # API 从公网可达的公开 URL，无尾斜杠。用于为 autopilot webhook
-      # 触发器铸造绝对 webhook URL。在 same-origin 反向代理之后
-      # （如纯 localhost 开发）留空；那种情况下前端会用
-      # window.origin + webhook_path 组合 URL。刻意不用 header 派生该值，
-      # 避免代理未加固时的 Host / X-Forwarded-Host 欺骗。
+      MULTICA_EXTERNAL_CREDENTIAL_KEY: ${MULTICA_EXTERNAL_CREDENTIAL_KEY:-}
+      # Public URL the API is reachable at from the open internet, no
+      # trailing slash. Used to mint absolute webhook URLs for autopilot
+      # webhook triggers. Leave unset behind a same-origin reverse proxy
+      # (e.g. plain localhost dev); the frontend will compose the URL
+      # from window.origin + webhook_path in that case. Headers are
+      # intentionally NOT used to derive this value, to avoid Host /
+      # X-Forwarded-Host spoofing on misconfigured proxies.
       MULTICA_PUBLIC_URL: ${MULTICA_PUBLIC_URL:-}
       # 逗号分隔的 CIDR，允许其源 IP 为 webhook per-IP 限流器设置
       # X-Forwarded-For / X-Real-IP。空默认 = 忽略 header，用 RemoteAddr。
       # 如 same-host 反向代理用 "127.0.0.1/32"。
       MULTICA_TRUSTED_PROXIES: ${MULTICA_TRUSTED_PROXIES:-}
-      # 飞书 / Lark 机器人集成。MULTICA_LARK_SECRET_KEY 是启用开关：
-      # 未设 = 集成禁用。国内飞书与国际 Lark 按安装自动检测，并存服务，
-      # 所以两个 base-URL 旋钮通常留空。它们是可选的部署级覆盖，强制
-      # 每个安装走单一 host（代理 / mock / 单云 staging）。从用过
-      # https://open.larksuite.com 的设置升级？server 首次启动会把已有
-      # 安装重标为 region=lark，之后可清空。见 docs/lark-bot-integration。
+      # Lark / Feishu bot integration. MULTICA_LARK_SECRET_KEY is the
+      # opt-in: unset = integration disabled. Mainland 飞书 and international
+      # Lark are auto-detected per installation and served side by side, so
+      # the two base-URL knobs should normally stay EMPTY. They are optional
+      # deployment-wide overrides that force every installation onto one host
+      # (proxy / mock / single-cloud staging).
+      # See docs/lark-bot-integration.
       MULTICA_LARK_SECRET_KEY: ${MULTICA_LARK_SECRET_KEY:-}
       MULTICA_LARK_HTTP_BASE_URL: ${MULTICA_LARK_HTTP_BASE_URL:-}
       MULTICA_LARK_CALLBACK_BASE_URL: ${MULTICA_LARK_CALLBACK_BASE_URL:-}
+      MULTICA_LARK_REGISTRATION_DOMAIN: ${MULTICA_LARK_REGISTRATION_DOMAIN:-}
+      MULTICA_LARK_REGISTRATION_LARK_DOMAIN: ${MULTICA_LARK_REGISTRATION_LARK_DOMAIN:-}
     restart: unless-stopped
 
   frontend:

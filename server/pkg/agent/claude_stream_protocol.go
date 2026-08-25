@@ -1,0 +1,156 @@
+package agent
+
+import (
+	"encoding/json"
+	"strings"
+)
+
+// Claude and CodeBuddy currently expose the same stream-json wire protocol.
+// Process lifecycle and provider-specific control behavior stay in each
+// backend; this file owns only the shared decoded data contract.
+type claudeStreamMessage struct {
+	Type      string          `json:"type"`
+	Message   json.RawMessage `json:"message,omitempty"`
+	Subtype   string          `json:"subtype,omitempty"`
+	SessionID string          `json:"session_id,omitempty"`
+	Model     string          `json:"model,omitempty"`
+
+	ResultText string                                  `json:"result,omitempty"`
+	IsError    bool                                    `json:"is_error,omitempty"`
+	DurationMs float64                                 `json:"duration_ms,omitempty"`
+	NumTurns   int                                     `json:"num_turns,omitempty"`
+	Usage      *claudeStreamUsage                      `json:"usage,omitempty"`
+	ModelUsage map[string]claudeStreamResultModelUsage `json:"modelUsage,omitempty"`
+
+	Log *claudeStreamLogEntry `json:"log,omitempty"`
+
+	RequestID string          `json:"request_id,omitempty"`
+	Request   json.RawMessage `json:"request,omitempty"`
+}
+
+type claudeStreamLogEntry struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
+}
+
+type claudeStreamMessageContent struct {
+	Role    string                     `json:"role"`
+	Model   string                     `json:"model"`
+	Content []claudeStreamContentBlock `json:"content"`
+	Usage   *claudeStreamUsage         `json:"usage,omitempty"`
+}
+
+type claudeStreamUsage struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+}
+
+type claudeStreamResultModelUsage struct {
+	InputTokens              int64 `json:"inputTokens"`
+	OutputTokens             int64 `json:"outputTokens"`
+	CacheReadInputTokens     int64 `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
+}
+
+type claudeStreamContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
+}
+
+type claudeStreamControlRequest struct {
+	Subtype  string          `json:"subtype"`
+	ToolName string          `json:"tool_name,omitempty"`
+	Input    json.RawMessage `json:"input,omitempty"`
+}
+
+func claudeStreamResultUsage(msg claudeStreamMessage, fallbackModel string) map[string]TokenUsage {
+	if len(msg.ModelUsage) > 0 {
+		usage := make(map[string]TokenUsage, len(msg.ModelUsage))
+		for model, item := range msg.ModelUsage {
+			itemUsage := TokenUsage{
+				InputTokens:      item.InputTokens,
+				OutputTokens:     item.OutputTokens,
+				CacheReadTokens:  item.CacheReadInputTokens,
+				CacheWriteTokens: item.CacheCreationInputTokens,
+			}
+			if model == "" || !itemUsage.hasTokens() {
+				continue
+			}
+			usage[model] = itemUsage
+		}
+		if len(usage) > 0 {
+			return usage
+		}
+	}
+
+	model := msg.Model
+	if model == "" {
+		model = fallbackModel
+	}
+	if msg.Usage == nil || model == "" {
+		return nil
+	}
+	usage := TokenUsage{
+		InputTokens:      msg.Usage.InputTokens,
+		OutputTokens:     msg.Usage.OutputTokens,
+		CacheReadTokens:  msg.Usage.CacheReadInputTokens,
+		CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
+	}
+	if !usage.hasTokens() {
+		return nil
+	}
+	return map[string]TokenUsage{model: usage}
+}
+
+func handleClaudeStreamAssistant(
+	msg claudeStreamMessage,
+	ch chan<- Message,
+	output *strings.Builder,
+	usage map[string]TokenUsage,
+) {
+	var content claudeStreamMessageContent
+	if err := json.Unmarshal(msg.Message, &content); err != nil {
+		return
+	}
+
+	if content.Usage != nil && content.Model != "" {
+		current := usage[content.Model]
+		current.InputTokens += content.Usage.InputTokens
+		current.OutputTokens += content.Usage.OutputTokens
+		current.CacheReadTokens += content.Usage.CacheReadInputTokens
+		current.CacheWriteTokens += content.Usage.CacheCreationInputTokens
+		usage[content.Model] = current
+	}
+
+	for _, block := range content.Content {
+		switch block.Type {
+		case "text":
+			if block.Text != "" {
+				output.WriteString(block.Text)
+				trySend(ch, Message{Type: MessageText, Content: block.Text})
+			}
+		case "thinking":
+			if block.Text != "" {
+				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
+			}
+		case "tool_use":
+			var input map[string]any
+			if block.Input != nil {
+				_ = json.Unmarshal(block.Input, &input)
+			}
+			trySend(ch, Message{
+				Type:   MessageToolUse,
+				Tool:   block.Name,
+				CallID: block.ID,
+				Input:  input,
+			})
+		}
+	}
+}

@@ -1,124 +1,40 @@
 ---
-title: 生产演示与观测验收
-description: 用调试与评估、真实智能体、SOP trace 和健康检查证明 Multica 已经能给团队内部生产使用。
+title: 部署验证与运行观测
+description: 验证 Multica 服务就绪，并从当前页面和 API 检查任务、评测、trace 与用量证据。
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
+部署完成后，先确认服务就绪，再用实际工作区验证 Agent 和评测链路。不要只把“进程已启动”当成可用证据。
 
-这页不是功能介绍，而是上线前和领导演示前的验收 runbook。目标是拿到可复查的证据：页面能看、API 能查、真实智能体能跑、日志和数据库能互相印证。
+## 健康与就绪检查
 
-## 演示入口
+```bash
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/login
+```
 
-进入工作区后打开：
+`/health` 只表示 backend 进程仍在响应；`/readyz` 还会检查数据库和 migration。只有就绪检查通过后，才继续验证业务流程。
+
+如果 shell 配置了 HTTP 代理，而你正在访问内网地址，可以给 `curl` 加 `--noproxy '*'`，避免请求被代理转发。
+
+## 页面验证
+
+登录工作区后打开：
 
 ```text
 /{workspaceSlug}/evaluation/runs
 ```
 
-页面名称是 **评估 → 评测记录**。它把训练评估运行证据集中到一处：
+在**评估 → 评测记录**中检查最近一次真实运行。展开记录后应能看到运行状态、触发来源、创建者、开始和结束时间、任务标识、模型、运行时、用例结果、任务消息、trace 事件和 token 用量。失败的运行必须显示真实失败原因，不能表现为成功。
 
-| 区域 | 证明什么 |
-|---|---|
-| 训练评估闭环 | 提示词、数据集、测试套件、评测运行、通过率、token、成本已经结构化记录 |
-| SOP 与任务观测 | SOP run、SOP event、任务 trace、耗时、token、成本、失败原因已经聚合 |
-| 验收证据 | 结构化用例、真实智能体任务/trace、优化候选、最近运行是否存在 |
-| 演示状态 | Codex 运行时、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
+对当前部署做最小回归时，至少实际完成一次：
 
-演示时不要只打开一个静态页面。至少要能在 **评测记录** 展开一条智能体执行记录，看到触发来源、创建者、开始/结束时间、任务标识、模型、运行时、token、trace、用例明细和完整运行证据 JSON。
+1. 创建或选择一个可用 Agent。
+2. 创建一条 issue 并分配给该 Agent。
+3. 等待任务被 daemon 领取并完成或明确失败。
+4. 检查 issue 评论、任务状态、运行证据和用量记录是否对应同一次执行。
 
-## Opik 语义映射
-
-Multica 的调试与评估模块以 `/data/ida/opik-local-demo` 的 Opik 语义为对照，但落点必须服务团队内部任务、SOP、小队和真实 Codex runtime：
-
-| Opik 功能 | Multica 对应 | 验收证据 |
-|---|---|---|
-| 提示词库 | 调试 → 提示词库 | `prompt_library_item`、版本历史、`/debug/prompts` |
-| 用例库 | 评估 → 用例库 | `prompt_evaluation_asset`、数据集行、结构化用例 |
-| 测试套件 | 评估 → 测试套件 | 测试套件用例、断言、trial |
-| 优化运行 | 评估 → 评测记录 | 优化运行资产、失败用例、优化候选、人工发布版本 |
-| Traces / Spans | 运行历史证据面板 | `task_trace_event`、任务消息、用量、服务端证据快照 |
-
-## 最小验收标准
-
-上线或演示前，至少满足这些条件：
-
-| 项 | 通过标准 |
-|---|---|
-| 后端健康 | `/health` 返回 `{"status":"ok"}` |
-| 后端就绪 | `/readyz` 返回 DB 和 schema 都是 `ok` |
-| 前端可访问 | 登录页返回 HTTP 200 |
-| 真实智能体运行时 | 运行看板显示 Codex 运行时已就绪 |
-| 训练评估运行 | 运行历史里至少有一条 `Agent执行` 且状态为 `通过` 或明确失败原因 |
-| 证据链 | 运行证据能看到触发来源、创建者、开始/结束时间、trial、任务消息、trace 事件、token、耗时 |
-| 优化闭环 | 失败用例能生成优化候选，候选必须人工确认后发布，不能自动替换生产版本 |
-| 观测完整性 | 运行看板显示观测摘要 `完整`；如果是 `可能截断`，演示前要缩小范围或说明采样限制 |
-
-## 健康检查命令
-
-本机或服务器上执行：
-
-```bash
-curl -fsS http://127.0.0.1:8080/health
-curl -fsS http://127.0.0.1:8080/readyz
-curl -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://127.0.0.1:3000/login
-```
-
-如果用服务器外网 IP 验证，并且 shell 配了 HTTP 代理，先绕过代理：
-
-```bash
-curl --noproxy '*' -fsS http://<server-ip>:8080/health
-curl --noproxy '*' -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://<server-ip>:3000/login
-```
-
-`/health` 只证明进程活着；`/readyz` 才证明数据库和 schema 状态能支撑生产请求。
-
-## 自动生成验收包
-
-上线前生成一次验收包，避免最后交付只靠口头描述：
-
-```bash
-pnpm acceptance:evidence
-```
-
-`acceptance:evidence` 默认只读检查健康接口、登录页、演示账号权限、数据库运行证据、git commit 和 worktree 状态，并在 `artifacts/acceptance/` 下生成：
-
-```text
-production-acceptance-<timestamp>.json
-production-acceptance-<timestamp>.md
-```
-
-需要把关键命令也写入验收包时执行：
-
-```bash
-pnpm acceptance:verify
-```
-
-`acceptance:verify` 会执行 typecheck、build、核心单测、代理测试、公开 API curl E2E 和部署浏览器 E2E。公开 API E2E 会从登录开始，创建真实 Codex 智能体、小队、任务、提示词、数据集、测试套件、实验、智能体运行、trial 和优化候选，并把 runtime id、task id、trace 事件、token 和发布版本写入验收包。部署浏览器 E2E 使用演示账号打开 **训练与评估 → 运行看板**，确认真实智能体证据、服务端证据快照和运行历史证据可以在已部署页面中看到。
-
-如果要额外把导航、命令面板等较慢 Playwright 主链路纳入报告：
-
-```bash
-ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
-```
-
-常用环境变量：
-
-| 变量 | 用途 |
-|---|---|
-| `ACCEPTANCE_FRONTEND_URL` | 覆盖前端访问地址，例如 `http://9.134.129.162:13680` |
-| `ACCEPTANCE_API_URL` | 覆盖后端地址，例如 `http://9.134.129.162:18760` |
-| `ACCEPTANCE_DEMO_ACCOUNT` | 演示账号 |
-| `ACCEPTANCE_DEMO_PASSWORD` | 演示账号密码；报告只记录“已配置”，不打印明文 |
-| `ACCEPTANCE_WORKSPACE_SLUG` | 领导演示工作区 slug |
-| `ACCEPTANCE_INCLUDE_E2E` | 设为 `1` 后额外执行导航和命令面板 E2E |
-| `DATABASE_URL` | 用于只读抽查演示工作区的训练、评估、任务、trace 和小队 SOP 数据；未配置时报告会明确标记跳过 |
-| `ACCEPTANCE_SERVER_LOG` | 覆盖服务日志路径；默认读取 `artifacts/logs/server-goal-test.log` 并抽查最近错误、健康检查和 daemon 心跳 |
-
-验收包会抽查 `prompt_evaluation_run`、`prompt_evaluation_trial`、`prompt_evaluation_case`、`prompt_evaluation_optimization_candidate`、`prompt_evaluation_evidence_snapshot`、`agent_task_queue`、`task_usage`、`task_trace_event`、`squad_sop_run` 和 `squad_sop_step_event` 等核心表。验收包必须和运行看板导出的 `multica.production_demo_evidence.v1` JSON 一起留存：前者证明部署、账号、commit、数据库证据和测试命令，后者证明业务闭环、运行证据、trace、token 和观测指标。
-
-## 观测摘要 API
-
-运行看板使用同一个后端接口：
+## 工作区观测摘要
 
 ```bash
 curl -fsS \
@@ -126,189 +42,53 @@ curl -fsS \
   "http://<server-host>:8080/api/workspaces/<workspace_id>/observability/summary"
 ```
 
-可选过滤：
+可选过滤参数为 `since`、`squad_id`、`project_id` 和 `agent_id`。响应汇总 SOP 执行、任务状态、队列和执行耗时、token、预估成本、失败原因、模型及运行时分布。
 
-```text
-since=<RFC3339 时间>
-squad_id=<小队 id>
-project_id=<项目 id>
-agent_id=<Agent id>
-```
+## 评测与运行证据 API
 
-关键字段：
-
-| 字段 | 含义 |
-|---|---|
-| `指标.SOP 执行数` | 当前范围内的 SOP run 数 |
-| `指标.SOP 事件数` | SOP step event 数 |
-| `指标.队列等待` / `指标.执行耗时` / `指标.总耗时` | 可用于解释任务慢在哪里 |
-| `指标.输入 token` / `指标.输出 token` / `指标.预估成本` | 用量与成本口径 |
-| `指标.失败原因` | 失败归因列表 |
-| `summary_completeness.状态` | `完整` 或 `可能截断` |
-| `model_breakdown` / `runtime_breakdown` | 模型和运行时维度的任务数、token、成本 |
-
-<Callout type="warning">
-观测摘要有采样上限。看到 `可能截断` 时，不要把这个数字当成全量汇报。缩小时间、小队、项目或 Agent 范围后再导出证据。
-</Callout>
-
-## 训练评估摘要 API
-
-训练与评估模块使用：
+工作区上下文由当前认证和 `X-Workspace-ID` 决定：
 
 ```bash
 curl -fsS \
   -H "Authorization: Bearer <PAT>" \
+  -H "X-Workspace-ID: <workspace_id>" \
   "http://<server-host>:8080/api/prompt-evaluation-summary"
-```
-
-可选加时间窗口，运行看板的时间范围就是用这个口径：
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer <PAT>" \
-  "http://<server-host>:8080/api/prompt-evaluation-summary?since=<RFC3339 时间>"
-```
-
-它证明提示词、资产、结构化用例、运行历史和优化候选不是前端假展示。重点看：
-
-| 字段 | 含义 |
-|---|---|
-| `指标.运行总数` | 本工作区训练评估运行数 |
-| `指标.智能体运行数` | 真实智能体执行类运行数 |
-| `指标.通过率` | 通过用例占比 |
-| `资产统计.结构化用例` | 数据集/测试套件中可复用的评测用例数 |
-| `优化候选.待确认` / `优化候选.已发布` / `优化候选.已拒绝` | 人工确认闭环状态 |
-
-## 训练运行证据 API
-
-运行历史不是前端假数据。可以直接拉运行列表和完整证据：
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer <PAT>" \
-  "http://<server-host>:8080/api/prompt-evaluation-runs?limit=20&since=<RFC3339 时间>"
 
 curl -fsS \
   -H "Authorization: Bearer <PAT>" \
+  -H "X-Workspace-ID: <workspace_id>" \
+  "http://<server-host>:8080/api/prompt-evaluation-runs?limit=20"
+
+curl -fsS \
+  -H "Authorization: Bearer <PAT>" \
+  -H "X-Workspace-ID: <workspace_id>" \
   "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence"
 ```
 
-重点字段：
+运行证据包含 `run`、`trials`、`task_usage`、`task_messages` 和 `trace_events`。这些对象应指向同一条运行和任务；缺失数据应以明确的空结果或失败状态表示，而不是由前端补造成功证据。
 
-| 字段 | 含义 |
-|---|---|
-| `run.trigger_source` | 触发来源，例如 `智能体调试场`、`优化运行`、`手动` |
-| `run.created_by` | 谁触发了这次运行 |
-| `run.started_at` / `run.completed_at` | 开始和结束时间，用于核对耗时 |
-| `run.task_id` / `run.chat_session_id` | 真实智能体任务标识和会话证据入口 |
-| `trials` | 每个结构化用例的输入、输出、失败原因和证据 |
-| `task_usage` | provider、model、输入/输出 token、缓存读写 token、预估成本 |
-| `task_messages` | Agent 的原始消息证据 |
-| `trace_events` | 任务入队、领取、开始、失败/完成等生命周期事件 |
-
-页面上的 **完整运行证据 JSON** 展示的就是这组对象。导出的演示证据 JSON 也会把最近运行、运行证据、任务用量、任务消息和 trace 事件一起带出，方便归档给领导或复盘。
-
-需要把某次运行固化成服务端证据时，使用运行证据快照接口：
+需要持久化某次运行证据时，可以创建并读取服务端快照：
 
 ```bash
 curl -fsS -X POST \
   -H "Authorization: Bearer <PAT>" \
-  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots?snapshot_type=验收归档"
+  -H "X-Workspace-ID: <workspace_id>" \
+  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots?snapshot_type=manual"
 
 curl -fsS \
   -H "Authorization: Bearer <PAT>" \
+  -H "X-Workspace-ID: <workspace_id>" \
   "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots"
 ```
 
-快照会保存完整 `运行证据` 和中文 `summary`，验收包会抽查最近快照。这样领导演示后的证据不依赖浏览器下载文件，数据库里也能复核运行状态、失败原因、trace/task id、token 和上下文完整性。
+## 日志检查
 
-## 真实智能体 E2E
-
-常规 E2E 会用受控 fixture 快速覆盖 UI 和数据库路径。要证明本机 Codex daemon 真的执行，需要跑 opt-in 真实 E2E：
+自部署环境可直接查看当前服务日志：
 
 ```bash
-RUN_REAL_AGENT_E2E=1 \
-REAL_AGENT_E2E_ACCOUNT=<daemon-account> \
-REAL_AGENT_E2E_WORKSPACE=<workspace-slug> \
-MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=codebuddy \
-MULTICA_PROMPT_EVALUATION_AGENT_MODEL=deepseek-v4-pro-ioa \
-PLAYWRIGHT_BASE_URL=http://localhost:3000 \
-FRONTEND_ORIGIN=http://localhost:3000 \
-NEXT_PUBLIC_API_URL=http://localhost:8080 \
-NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws \
-pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
-```
-
-如果 `deepseek-v4-pro-ioa` 额度不足，真实 E2E 不允许假成功。页面应该在运行历史证据里显示 **外部依赖失败：模型额度不足**，`task_messages` 里能看到容量或额度错误，`trace_events` 里能看到失败事件，且这次运行不会产生 `task_usage`。验收报告里要写清楚这是外部额度依赖，不是 Multica 运行链路缺失。
-
-降级命令：
-
-```bash
-MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=codebuddy \
-MULTICA_PROMPT_EVALUATION_AGENT_MODEL=deepseek-v4-pro-ioa \
-pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
-```
-
-通过后应记录：
-
-| 证据 | 来源 |
-|---|---|
-| 运行标识 | Playwright 输出或 `/api/prompt-evaluation-runs` |
-| 任务标识 | 运行历史或 evidence API |
-| 模型/运行时 | 运行历史、运行看板、evidence API |
-| 任务消息 | evidence API |
-| trace 事件 | evidence API |
-| token/耗时/成本 | evidence API 与观测摘要 |
-| 外部依赖失败 | 运行历史外部依赖提示、任务消息、trace 事件 |
-
-## 部署后浏览器验收
-
-1. 打开登录页，确认没有外部营销弹窗或外部留资引导。
-2. 用演示账号登录，进入目标工作区。
-3. 打开 **训练与评估 → 运行看板**，确认看板不是空数据。
-4. 打开 **运行历史**，展开最近一条智能体执行，确认运行证据里有触发来源、创建者、开始/结束时间、任务、trace、token、模型、运行时。
-5. 展开 **完整运行证据 JSON**，确认能看到 `run`、`trials`、`task_usage`、`task_messages`、`trace_events`。
-6. 打开 **优化运行**，确认待确认候选必须人工发布或拒绝。
-7. 打开项目/小队/Agent 详情页，确认对应观测摘要能按范围聚合。
-
-## 日志与数据库抽查
-
-日志至少看三类：
-
-```bash
-# self-host compose
 docker compose -f docker-compose.selfhost.yml logs --tail=200 backend
 docker compose -f docker-compose.selfhost.yml logs --tail=200 frontend
 multica daemon logs --lines 200
 ```
 
-数据库抽查建议看这些表：
-
-| 表 | 证明什么 |
-|---|---|
-| `prompt_evaluation_run` | 训练评估运行、智能体任务绑定、模型/运行时、token、成本 |
-| `prompt_evaluation_trial` | 每个用例的执行结果 |
-| `prompt_evaluation_case` | 数据集/测试套件的结构化用例 |
-| `prompt_evaluation_optimization_candidate` | 优化候选的人工确认状态 |
-| `agent_task_queue` | 真实智能体任务状态 |
-| `task_usage` | token、成本、模型、运行时上报 |
-| `task_message` | Agent 输出消息证据 |
-| `task_trace_event` | 任务生命周期和用量 trace |
-| `squad_sop_run` / `squad_sop_step_event` | 小队 SOP 执行和阶段证据 |
-
-## 演示结论模板
-
-演示结束时，用这几句话收束：
-
-```text
-本次演示的工作区是 <workspace>。
-训练评估共有 <运行总数> 次运行，智能体执行 <智能体运行数> 次，通过率 <通过率>。
-最近一条真实智能体运行的任务标识是 <task_id>，模型是 <model>，运行时是 <runtime>。
-该运行的触发来源是 <trigger_source>，由 <created_by> 触发，开始时间 <started_at>，结束时间 <completed_at>。
-该运行已采集 token、耗时、任务消息、trace 事件、结构化用例结果和完整运行证据 JSON。
-如果模型额度不足，本次演示已明确显示外部依赖失败，没有把额度失败伪装成成功运行。
-SOP/任务观测摘要当前状态是 <完整/可能截断>，如果截断，汇报口径只代表采样范围。
-失败用例不会自动替换生产提示词，只会生成候选，由人工确认发布或拒绝。
-```
-
-这段话里的每个变量都必须能在运行看板、运行历史、evidence API 或观测摘要 API 中找到。
+把日志时间窗口对准刚才执行的业务流程，确认没有 panic、重复派发、权限拒绝、事务半完成或持续重试。涉及外部 provider 的失败，应同时保留 provider 错误、任务失败状态和 trace 证据。

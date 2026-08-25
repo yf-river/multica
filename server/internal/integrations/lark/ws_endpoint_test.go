@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,9 +37,6 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 			"data":{
 				"URL":"wss://lark.example/ws/foo?device_id=dev-1&service_id=42",
 				"ClientConfig":{
-					"ReconnectCount":-1,
-					"ReconnectInterval":120,
-					"ReconnectNonce":30,
 					"PingInterval":120
 				}
 			}
@@ -49,7 +46,6 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 
 	f, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{
 		BaseURL: srv.URL,
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatalf("constructor: %v", err)
@@ -67,14 +63,12 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 	if ep.PingInterval != 120*time.Second {
 		t.Errorf("PingInterval = %s; want 120s", ep.PingInterval)
 	}
-	if ep.ReconnectInterval != 120*time.Second {
-		t.Errorf("ReconnectInterval = %s", ep.ReconnectInterval)
-	}
-	if ep.ReconnectNonce != 30*time.Second {
-		t.Errorf("ReconnectNonce = %s", ep.ReconnectNonce)
-	}
-	if ep.ReconnectCount != -1 {
-		t.Errorf("ReconnectCount = %d", ep.ReconnectCount)
+}
+
+func TestNewHTTPConnectionTokenFetcherRejectsInvalidBaseURL(t *testing.T) {
+	t.Parallel()
+	if _, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{BaseURL: "not-a-url"}); err == nil {
+		t.Fatal("expected invalid callback base URL to be rejected")
 	}
 }
 
@@ -95,7 +89,7 @@ func TestHTTPConnectionTokenFetcherSurfacesLarkErrorCode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-zero Lark code")
 	}
-	if !contains(err.Error(), "app type not supported") {
+	if !strings.Contains(err.Error(), "app type not supported") {
 		t.Errorf("error should surface Lark msg: %v", err)
 	}
 }
@@ -143,17 +137,4 @@ func TestHTTPConnectionTokenFetcherRejectsURLWithoutServiceID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when service_id is missing from response URL")
 	}
-}
-
-func contains(s, sub string) bool {
-	return s != "" && sub != "" && (s == sub || (len(s) > len(sub) && indexOf(s, sub) >= 0))
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

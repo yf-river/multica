@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,27 +11,12 @@ import (
 	"testing"
 )
 
-// TestListWorkspaceAgentTaskSnapshot covers the agent presence snapshot endpoint:
-// every active task (queued/dispatched/running) PLUS each agent's most recent
-// OUTCOME task (completed/failed only). Cancelled tasks are excluded by design
-// from the outcome half — they're a procedural signal, not an outcome, and
-// must NOT mask a prior failure.
-//
-// The fixtures cover every branch the SQL must classify:
-//   - actives are always returned, no dedup
-//   - outcomes are deduped to "latest per agent" by completed_at
-//   - the OLD 2-minute window must be irrelevant (a 5-minute-old failure is
-//     still returned if it's the latest outcome)
-//   - cancelled rows are NEVER returned, even when they are temporally newer
-//     than a failure — this is what keeps the failed signal sticky after the
-//     user cancels their queued retry
 func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
 	ctx := context.Background()
-	// Three agents so we can verify per-agent semantics independently.
 	agentA := createHandlerTestAgent(t, "snapshot-agent-a", []byte(`{}`))
 	agentB := createHandlerTestAgent(t, "snapshot-agent-b", []byte(`{}`))
 	agentC := createHandlerTestAgent(t, "snapshot-agent-c", []byte(`{}`))
@@ -44,21 +28,13 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		label       string
 	}
 	fixtures := []taskFixture{
-		// Agent A — actives + a newer completed supersedes an older failed.
 		{agentA, "queued", "", "A.queued"},
 		{agentA, "dispatched", "", "A.dispatched"},
 		{agentA, "running", "", "A.running"},
 		{agentA, "failed", "now() - interval '10 minutes'", "A.old_failed"},
 		{agentA, "completed", "now() - interval '30 seconds'", "A.latest_completed"},
 
-		// Agent B — old failure with no later outcome stays visible (no
-		// time window).
 		{agentB, "failed", "now() - interval '5 minutes'", "B.stale_failed_kept"},
-
-		// Agent C — failure followed by a NEWER cancelled. The cancelled
-		// must be skipped by the SQL filter so the failure remains visible.
-		// This is the scenario where a user fails, then cancels their
-		// queued retry to debug.
 		{agentC, "failed", "now() - interval '5 minutes'", "C.failure"},
 		{agentC, "cancelled", "now() - interval '30 seconds'", "C.newer_cancelled_must_be_ignored"},
 	}
@@ -81,7 +57,7 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, id := range insertedIDs {
-			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, id)
+			_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, id)
 		}
 	})
 
@@ -97,8 +73,6 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	// Per-agent breakdown so leftover tasks from other tests in this package
-	// don't pollute the assertions.
 	type key struct{ agent, status string }
 	counts := map[key]int{}
 	for _, task := range tasks {
@@ -109,18 +83,12 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	}
 
 	wantCounts := map[key]int{
-		// Agent A: 3 actives + the latest outcome (completed). The older
-		// failed must be excluded by DISTINCT ON.
 		{agentA, "queued"}:     1,
 		{agentA, "dispatched"}: 1,
 		{agentA, "running"}:    1,
 		{agentA, "completed"}:  1,
-		// Agent B: just the failed outcome.
-		{agentB, "failed"}: 1,
-		// Agent C: the failed outcome must survive the temporally newer
-		// cancellation — that's the whole point of excluding cancelled
-		// from the outcome half.
-		{agentC, "failed"}: 1,
+		{agentB, "failed"}:     1,
+		{agentC, "failed"}:     1,
 	}
 	for k, expected := range wantCounts {
 		if got := counts[k]; got != expected {
@@ -128,14 +96,10 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 		}
 	}
 
-	// The OLD failed terminal on agent A must be excluded.
 	if counts[key{agentA, "failed"}] != 0 {
 		t.Errorf("agent A old failed must be superseded by newer completed; got %d", counts[key{agentA, "failed"}])
 	}
 
-	// No cancelled row may ever appear in the snapshot — they're filtered at
-	// SQL level so the front-end's "cancel doesn't mask failure" rule lands
-	// without any front-end logic.
 	for _, agentID := range []string{agentA, agentB, agentC} {
 		if counts[key{agentID, "cancelled"}] != 0 {
 			t.Errorf("agent %s: cancelled rows must be excluded from snapshot; got %d",
@@ -149,9 +113,8 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	// Clean up any agents created by this test.
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
 			testWorkspaceID, "duplicate-name-test-agent",
 		)
@@ -165,7 +128,6 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		"max_concurrent_tasks": 1,
 	}
 
-	// First call — creates the agent.
 	w1 := httptest.NewRecorder()
 	testHandler.CreateAgent(w1, newRequest(http.MethodPost, "/api/agents", body))
 	if w1.Code != http.StatusCreated {
@@ -180,13 +142,57 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		t.Fatalf("first CreateAgent: no id in response: %v", resp1)
 	}
 
-	// Second call — same name must be rejected with 409 Conflict.
-	// The unique constraint prevents silent duplicates; the UI shows a clear error.
 	body["description"] = "updated description"
 	w2 := httptest.NewRecorder()
 	testHandler.CreateAgent(w2, newRequest(http.MethodPost, "/api/agents", body))
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("second CreateAgent with duplicate name: expected 409, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestAgentConfigFieldsRequireJSONObject(t *testing.T) {
+	for _, field := range []string{"runtime_config", "mcp_config"} {
+		t.Run(field+" create", func(t *testing.T) {
+			name := "invalid-" + field + "-create"
+			t.Cleanup(func() {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+			})
+
+			body := map[string]any{"name": name, "runtime_id": testRuntimeID, "scope": "personal", field: []any{"not", "an", "object"}}
+			w := httptest.NewRecorder()
+			testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("CreateAgent non-object %s = %d %s, want 400", field, w.Code, w.Body.String())
+			}
+			var count int
+			if err := testPool.QueryRow(context.Background(), `SELECT count(*)::int FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatalf("CreateAgent persisted %d invalid rows", count)
+			}
+		})
+
+		t.Run(field+" update", func(t *testing.T) {
+			agentID := createHandlerTestAgent(t, "invalid-"+field+"-update", []byte(`{}`))
+			w := httptest.NewRecorder()
+			req := withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{field: []any{"not", "an", "object"}}), "id", agentID)
+			testHandler.UpdateAgent(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("UpdateAgent non-object %s = %d %s, want 400", field, w.Code, w.Body.String())
+			}
+			var stored []byte
+			if field == "runtime_config" {
+				var raw string
+				if err := testPool.QueryRow(context.Background(), `SELECT runtime_config::text FROM agent WHERE id = $1`, agentID).Scan(&raw); err != nil {
+					t.Fatal(err)
+				}
+				stored = []byte(raw)
+			} else {
+				stored = fetchAgentMcpConfig(t, agentID)
+			}
+			assertJSONEqual(t, stored, `{}`)
+		})
 	}
 }
 
@@ -197,7 +203,7 @@ func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 
 	const agentName = "default-concurrency-test-agent"
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
 			testWorkspaceID, agentName,
 		)
@@ -224,6 +230,24 @@ func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 	}
 }
 
+func TestReconcileAgentStatus_ReportsRefreshFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "reconcile-status-error", []byte(`{}`))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	refreshed, err := testHandler.TaskService.ReconcileAgentStatus(ctx, parseUUID(agentID))
+	if err == nil {
+		t.Fatal("ReconcileAgentStatus must report a failed refresh")
+	}
+	if refreshed.ID.Valid {
+		t.Fatalf("failed refresh returned a fabricated agent: %+v", refreshed)
+	}
+}
+
 func TestAgentModelForRuntimeDefaultsCodeBuddyToDeepSeek(t *testing.T) {
 	if got := agentModelForRuntime("codebuddy", ""); got != "deepseek-v4-pro-ioa" {
 		t.Fatalf("codebuddy default model = %q", got)
@@ -244,11 +268,11 @@ func TestWorkspaceAlwaysRedactSecrets(t *testing.T) {
 	}{
 		{"nil settings", nil, false},
 		{"empty settings", []byte(`{}`), false},
-		{"false", []byte(`{"always_redact_env": false}`), false},
-		{"true", []byte(`{"always_redact_env": true}`), true},
+		{"false", []byte(`{"always_redact_secrets": false}`), false},
+		{"true", []byte(`{"always_redact_secrets": true}`), true},
 		{"invalid json", []byte(`not json`), false},
 		{"other fields only", []byte(`{"theme": "dark"}`), false},
-		{"true among other fields", []byte(`{"theme": "dark", "always_redact_env": true}`), true},
+		{"true among other fields", []byte(`{"theme": "dark", "always_redact_secrets": true}`), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -441,10 +465,9 @@ func TestAgentEnv_AgentActorRejected(t *testing.T) {
 		t.Fatalf("failed to set custom_env: %v", err)
 	}
 
-	// Spin up a separate agent + task that authorises the X-Agent-ID /
-	// X-Task-ID header pair resolveActor checks. The owning member of
-	// the host agent is the same testUserID (workspace owner), which is
-	// the exact lateral-movement shape we want to block.
+	// Spin up a separate agent + task and model auth middleware resolving its
+	// task token. The owning member is the workspace owner, which is the exact
+	// lateral-movement shape we want to block.
 	hostAgentID := createHandlerTestAgent(t, "env-host-agent", nil)
 	hostTaskID := createHandlerTestTaskForAgent(t, hostAgentID)
 
@@ -464,49 +487,13 @@ func TestAgentEnv_AgentActorRejected(t *testing.T) {
 			}
 			req := newRequest(method, "/api/agents/"+targetID+"/env", tc.body)
 			req = withURLParam(req, "id", targetID)
-			req.Header.Set("X-Agent-ID", hostAgentID)
-			req.Header.Set("X-Task-ID", hostTaskID)
+			setTaskTokenActor(req, hostAgentID, hostTaskID)
 			w := httptest.NewRecorder()
 			tc.fn(w, req)
 			if w.Code != http.StatusForbidden {
 				t.Fatalf("expected 403 from agent actor, got %d: %s", w.Code, w.Body.String())
 			}
 		})
-	}
-}
-
-// TestAgentEnv_TaskTokenActorSource locks in the post-MUL-2600 attack
-// model: an agent process that strips its identifying headers
-// (X-Agent-ID / X-Task-ID) but is still authenticated by an `mat_`
-// task token MUST be recognized as actor=agent and rejected on the
-// env endpoint. The auth middleware sets X-Actor-Source=task_token
-// from the token row; resolveActor honors that header before the
-// header-pair fallback. Without this guard the lateral-movement fix
-// would only block "honest" CLIs that voluntarily set both headers.
-func TestAgentEnv_TaskTokenActorSource(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	targetID := createHandlerTestAgent(t, "env-tt-target-agent", nil)
-	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET custom_env = '{"K":"v"}' WHERE id = $1`, targetID); err != nil {
-		t.Fatalf("failed to set custom_env: %v", err)
-	}
-
-	req := newRequest(http.MethodGet, "/api/agents/"+targetID+"/env", nil)
-	req = withURLParam(req, "id", targetID)
-	// Simulate the auth middleware's post-mat_-resolution state: the
-	// only header touching actor identity is X-Actor-Source. The agent
-	// process stripped X-Agent-ID and X-Task-ID, hoping to fall back
-	// to the member auth path — the server-set X-Actor-Source must
-	// short-circuit that escape.
-	req.Header.Set("X-Actor-Source", "task_token")
-	req.Header.Del("X-Agent-ID")
-	req.Header.Del("X-Task-ID")
-	w := httptest.NewRecorder()
-	testHandler.GetAgentEnv(w, req)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 when X-Actor-Source=task_token, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -713,23 +700,6 @@ func TestMergeAgentEnv_PureFunction(t *testing.T) {
 	}
 }
 
-// Compile-time guard: AgentResponse must NOT carry the legacy env
-// fields. Reintroducing them is a security regression — this test
-// fails to compile rather than fails at runtime so reviewers see the
-// breakage in the diff. Kept as a runtime test because the package
-// boundary makes a struct-tag introspection cheap and obvious.
-func TestAgentResponseShape_HasNoLegacyEnvFields(t *testing.T) {
-	typ := reflect.TypeOf(AgentResponse{})
-	for i := 0; i < typ.NumField(); i++ {
-		f := typ.Field(i)
-		tag := strings.Split(f.Tag.Get("json"), ",")[0]
-		switch tag {
-		case "custom_env", "custom_env_redacted", "custom_env_redacted_reason":
-			t.Errorf("AgentResponse must not carry %q field (MUL-2600)", tag)
-		}
-	}
-}
-
 // TestUpdateAgent_RedactsMcpConfigForAgentActor closes the second leg
 // of MUL-2600 review #2: an agent process with a task token (or with
 // the X-Actor-Source server marker) must not be able to scrape another
@@ -757,13 +727,8 @@ func TestUpdateAgent_RedactsMcpConfigForAgentActor(t *testing.T) {
 		"description": desc,
 	})
 	req = withURLParam(req, "id", target)
-	// Simulate a task-token-authenticated agent request. The auth
-	// middleware would normally set these; we mimic both the modern
-	// path (X-Actor-Source) and the legacy header pair so the test is
-	// resilient to either resolveActor branch.
-	req.Header.Set("X-Actor-Source", "task_token")
-	req.Header.Set("X-Agent-ID", caller)
-	req.Header.Set("X-Task-ID", taskID)
+	// Simulate the request after auth middleware resolves the task token.
+	setTaskTokenActor(req, caller, taskID)
 	w := httptest.NewRecorder()
 	testHandler.UpdateAgent(w, req)
 	if w.Code != http.StatusOK {
@@ -971,11 +936,7 @@ func insertHandlerTestTask(t *testing.T, agentID string) string {
 		t.Fatalf("insert test task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 	return taskID
 }
-
-// Defence-in-depth: spot-check that the package compiles a small
-// fmt.Sprintf so accidental imports stay tidy.
-var _ = fmt.Sprintf

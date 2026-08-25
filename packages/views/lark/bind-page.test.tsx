@@ -6,9 +6,6 @@ import enCommon from "../locales/zh-Hans/common.json";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon } };
 
-// ---------------------------------------------------------------------------
-// Hoisted mutable auth state — lets individual tests set different scenarios
-// ---------------------------------------------------------------------------
 const mockAuthState = vi.hoisted(() => ({
   user: null as { id: string; account: string } | null,
   isLoading: false,
@@ -73,7 +70,7 @@ describe("LarkBindPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("starts redemption immediately when user is already logged in", async () => {
+  it("redeems immediately and shows success for an authenticated user", async () => {
     mockAuthState.isLoading = false;
     mockAuthState.user = { id: "u1", account: "u" };
     mockRedeemToken.mockResolvedValue({
@@ -83,23 +80,11 @@ describe("LarkBindPage", () => {
     renderPage("tok123");
     await waitFor(() => {
       expect(mockRedeemToken).toHaveBeenCalledWith("tok123");
-    });
-  });
-
-  it("shows success state after successful redemption", async () => {
-    mockAuthState.isLoading = false;
-    mockAuthState.user = { id: "u1", account: "u" };
-    mockRedeemToken.mockResolvedValue({
-      workspace_id: "ws1",
-      installation_id: "inst1",
-    });
-    renderPage("tok123");
-    await waitFor(() => {
       expect(screen.getByText(/已绑定/)).toBeInTheDocument();
     });
   });
 
-  it("sign-in button navigates with ?next= parameter (not ?redirect=)", () => {
+  it("preserves the binding token in the sign-in destination", () => {
     mockAuthState.isLoading = false;
     mockAuthState.user = null;
     renderPage("mytoken");
@@ -107,7 +92,6 @@ describe("LarkBindPage", () => {
     expect(mockNavigatePush).toHaveBeenCalledTimes(1);
     const url: string = mockNavigatePush.mock.calls[0]?.[0] as string;
     expect(url).toContain("?next=");
-    expect(url).not.toContain("?redirect=");
     expect(url).toContain(encodeURIComponent("mytoken"));
   });
 

@@ -10,8 +10,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// LarkJSONFrameDecoder decodes the JSON event payload Lark nests
-// inside a long-conn data Frame. The outer binary Frame envelope
+// DecodeLarkFrame decodes the JSON event payload Lark nests inside a
+// long-conn data Frame. The outer binary Frame envelope
 // (ws_frame.go) is stripped by the connector; the decoder only sees
 // the bytes from Frame.Payload, which Lark formats as the standard
 // event-subscription envelope: {schema, header, event}.
@@ -29,14 +29,8 @@ import (
 //     connection stays up because one bad payload shouldn't amplify
 //     into a reconnect storm.
 //
-// The decoder is stateless and goroutine-safe — a single instance
-// serves every supervisor goroutine.
-type LarkJSONFrameDecoder struct{}
-
-func NewLarkJSONFrameDecoder() *LarkJSONFrameDecoder { return &LarkJSONFrameDecoder{} }
-
-// Decode implements FrameDecoder.
-func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error) {
+// The decoder is stateless and goroutine-safe.
+func DecodeLarkFrame(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error) {
 	if len(payload) == 0 {
 		return InboundMessage{}, false, nil
 	}
@@ -45,6 +39,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 		return InboundMessage{}, false, fmt.Errorf("envelope: %w", err)
 	}
 
+	// Lark long-connection data frames use the schema 2.0 event envelope.
 	if env.Schema != "2.0" {
 		return InboundMessage{}, false, nil
 	}
@@ -54,7 +49,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 	}
 
 	if env.Event == nil {
-		return InboundMessage{}, false, errors.New("event_callback with empty event payload")
+		return InboundMessage{}, false, errors.New("schema 2.0 envelope with empty event payload")
 	}
 	var evt larkMessageReceiveEvent
 	if err := json.Unmarshal(env.Event, &evt); err != nil {
@@ -71,12 +66,9 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 		SenderOpenID: OpenID(evt.Sender.SenderID.OpenID),
 		MessageType:  evt.Message.MessageType,
 		CreateTime:   evt.Message.CreateTime,
-		// parent_id / root_id are populated by Lark only in reply
-		// scenarios. The enricher keys quoted-reply expansion off
-		// ParentID (the directly quoted message); RootID is carried for
-		// completeness / future thread handling.
+		// parent_id is populated by Lark for replies. The enricher keys
+		// quoted-reply expansion off the directly quoted message.
 		ParentID: evt.Message.ParentID,
-		RootID:   evt.Message.RootID,
 	}
 
 	botUnionID := ""
@@ -117,11 +109,9 @@ type larkEventEnvelope struct {
 }
 
 type larkEventHeader struct {
-	EventID    string `json:"event_id"`
-	EventType  string `json:"event_type"`
-	CreateTime string `json:"create_time"`
-	AppID      string `json:"app_id"`
-	TenantKey  string `json:"tenant_key"`
+	EventID   string `json:"event_id"`
+	EventType string `json:"event_type"`
+	AppID     string `json:"app_id"`
 }
 
 // larkMessageReceiveEvent is the documented payload of
@@ -129,12 +119,8 @@ type larkEventHeader struct {
 type larkMessageReceiveEvent struct {
 	Sender struct {
 		SenderID struct {
-			OpenID  string `json:"open_id"`
-			UnionID string `json:"union_id"`
-			UserID  string `json:"user_id"`
+			OpenID string `json:"open_id"`
 		} `json:"sender_id"`
-		SenderType string `json:"sender_type"`
-		TenantKey  string `json:"tenant_key"`
 	} `json:"sender"`
 	Message struct {
 		MessageID   string        `json:"message_id"`
@@ -144,11 +130,8 @@ type larkMessageReceiveEvent struct {
 		Content     string        `json:"content"`
 		Mentions    []larkMention `json:"mentions"`
 		CreateTime  string        `json:"create_time"`
-		// ParentID / RootID are only present when the message is a
-		// reply / quote. ParentID is the directly quoted message;
-		// RootID is the root of the reply tree.
+		// ParentID is present when the message quotes another message.
 		ParentID string `json:"parent_id"`
-		RootID   string `json:"root_id"`
 	} `json:"message"`
 }
 
@@ -157,7 +140,6 @@ type larkMention struct {
 	ID  struct {
 		OpenID  string `json:"open_id"`
 		UnionID string `json:"union_id"`
-		UserID  string `json:"user_id"`
 	} `json:"id"`
 	Name string `json:"name"`
 }
@@ -247,10 +229,19 @@ func resolveMentions(text string, mentions []larkMention, botUnionID string) str
 
 // isBotMention identifies whether a payload mention refers to THIS
 // bot. Stays in lockstep with containsMention: when union_id is
-// known we trust it exclusively because open_id is structurally inverted in
-// multi-bot groups.
-func isBotMention(m larkMention, botUnionID string) bool {
-	return botUnionID != "" && m.ID.UnionID == botUnionID
+// known we trust it exclusively (open_id is structurally inverted
+// in multi-bot groups — matching on it would re-introduce the
+// MUL-2671 routing bug). When union_id is unavailable because the
+// installation cannot read the contact scope, open_id remains the
+// current single-bot boundary.
+func isBotMention(m larkMention, botOpenID, botUnionID string) bool {
+	if botUnionID != "" {
+		return m.ID.UnionID == botUnionID
+	}
+	if botOpenID == "" {
+		return false
+	}
+	return m.ID.OpenID == botOpenID
 }
 
 func extractTextBody(content string) string {
@@ -294,15 +285,18 @@ func normalizeChatType(t string) ChatType {
 //     compare against `mentions[].id.union_id`. This is the correct
 //     path and is unambiguous in multi-bot deployments.
 //
+//  2. When `union_id` is unknown because a contact-scope-restricted
+//     operator denied the /contact/v3/users lookup, fall back to the
+//     per-app `open_id` comparison. This is structurally inverted
+//     in multi-bot group chats but is fine for the p2p/single-bot
+//     case the WS sees most of the time.
+//
 // Empty inputs short-circuit to false rather than matching every
 // mention; that defends against an installation row that somehow
 // has both identifiers blank.
-func containsMention(mentions []larkMention, botUnionID string) bool {
-	if botUnionID == "" {
-		return false
-	}
+func containsMention(mentions []larkMention, botOpenID, botUnionID string) bool {
 	for _, m := range mentions {
-		if m.ID.UnionID == botUnionID {
+		if isBotMention(m, botOpenID, botUnionID) {
 			return true
 		}
 	}

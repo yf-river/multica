@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -31,20 +33,15 @@ const (
 	feedbackBodyLimit = 64 * 1024
 )
 
-type CreateFeedbackRequest struct {
+type createFeedbackRequest struct {
 	Message string `json:"message"`
 	URL     string `json:"url"`
-	// Kind is the coarse category the feedback picker stamps. The metric
-	// label `multica_feedback_submitted_total{kind=...}` reads it via the
-	// fixed allow-list in metrics.NormalizeFeedbackKind ("bug", "feature",
-	// "general", "praise"); anything outside collapses to "other". Empty /
-	// missing falls back to "general" so legacy clients that don't send the
-	// field don't blackhole the metric.
+	// Kind is the current feedback category and is validated before persistence.
 	Kind        string  `json:"kind"`
 	WorkspaceID *string `json:"workspace_id,omitempty"`
 }
 
-type FeedbackResponse struct {
+type feedbackResponse struct {
 	ID        string `json:"id"`
 	CreatedAt string `json:"created_at"`
 }
@@ -54,11 +51,14 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, feedbackBodyLimit)
-	var req CreateFeedbackRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	var req createFeedbackRequest
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -69,6 +69,13 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(message) > feedbackMaxMessageLen {
 		writeError(w, http.StatusBadRequest, "message too long")
+		return
+	}
+	kind := strings.TrimSpace(req.Kind)
+	switch kind {
+	case "bug", "feature", "general", "praise":
+	default:
+		writeError(w, http.StatusBadRequest, "kind must be bug, feature, general, or praise")
 		return
 	}
 
@@ -89,6 +96,7 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	platform, version, clientOS := middleware.ClientMetadataFromContext(r.Context())
 	metadata := map[string]any{
 		"url":        req.URL,
+		"kind":       kind,
 		"platform":   platform,
 		"version":    version,
 		"os":         clientOS,
@@ -96,10 +104,9 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 	metaBytes, err := json.Marshal(metadata)
 	if err != nil {
-		// Impossible in practice — map[string]any with primitive values never
-		// fails to marshal — but fall through with an empty object rather than
-		// 500ing on a non-critical field.
-		metaBytes = []byte("{}")
+		slog.Error("encode feedback metadata failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to prepare feedback")
+		return
 	}
 
 	var workspaceID pgtype.UUID
@@ -108,27 +115,55 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		if _, ok := h.requireWorkspaceMember(w, r, *req.WorkspaceID, "workspace not found"); !ok {
+			return
+		}
 		workspaceID = ws
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		Message     string      `json:"message"`
+		Kind        string      `json:"kind"`
+		URL         string      `json:"url"`
+		WorkspaceID pgtype.UUID `json:"workspace_id"`
+	}{message, kind, req.URL, workspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint feedback")
+		return
+	}
+	if existing, err := h.Queries.GetFeedbackByCreateRequest(r.Context(), db.GetFeedbackByCreateRequestParams{
+		UserID: parseUUID(userID), IdempotencyKey: idempotencyKey,
+	}); err == nil {
+		h.writeFeedbackReplay(w, existing, requestHash)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load feedback request")
+		return
 	}
 
 	fb, err := h.Queries.CreateFeedback(r.Context(), db.CreateFeedbackParams{
-		UserID:      parseUUID(userID),
-		Message:     message,
-		Metadata:    metaBytes,
-		WorkspaceID: workspaceID,
+		UserID:         parseUUID(userID),
+		Message:        message,
+		Metadata:       metaBytes,
+		WorkspaceID:    workspaceID,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    pgtype.Text{String: requestHash, Valid: true},
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			existing, replayErr := h.Queries.GetFeedbackByCreateRequest(r.Context(), db.GetFeedbackByCreateRequestParams{
+				UserID: parseUUID(userID), IdempotencyKey: idempotencyKey,
+			})
+			if replayErr == nil {
+				h.writeFeedbackReplay(w, existing, requestHash)
+				return
+			}
+		}
 		slog.Warn("create feedback failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to submit feedback")
 		return
 	}
 
 	slog.Info("feedback submitted", append(logger.RequestAttrs(r), "feedback_id", uuidToString(fb.ID))...)
-
-	kind := strings.TrimSpace(req.Kind)
-	if kind == "" {
-		kind = "general"
-	}
 
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.FeedbackSubmitted(
 		userID,
@@ -140,8 +175,18 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 		version,
 	))
 
-	writeJSON(w, http.StatusCreated, FeedbackResponse{
+	writeJSON(w, http.StatusCreated, feedbackResponse{
 		ID:        uuidToString(fb.ID),
 		CreatedAt: timestampToString(fb.CreatedAt),
+	})
+}
+
+func (h *Handler) writeFeedbackReplay(w http.ResponseWriter, feedback db.Feedback, requestHash string) {
+	if !feedback.RequestHash.Valid || feedback.RequestHash.String != requestHash {
+		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
+		return
+	}
+	writeIdempotencyReplayJSON(w, http.StatusCreated, feedbackResponse{
+		ID: uuidToString(feedback.ID), CreatedAt: timestampToString(feedback.CreatedAt),
 	})
 }

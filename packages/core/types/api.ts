@@ -18,6 +18,14 @@ export interface CreateIssueRequest {
   metadata?: IssueMetadata;
 }
 
+export interface CreateCommentRequest {
+  content: string;
+  type?: string;
+  parent_id?: string;
+  attachment_ids?: string[];
+  suppress_agent_ids?: string[];
+}
+
 export interface UpdateIssueRequest {
   title?: string;
   description?: string;
@@ -36,14 +44,11 @@ export interface UpdateIssueRequest {
   attachment_ids?: string[];
 }
 
-export interface ListIssuesParams {
+interface IssueListQueryParams {
   limit?: number;
   offset?: number;
   workspace_id?: string;
-  status?: IssueStatus;
-  priority?: IssuePriority;
   assignee_id?: string;
-  assignee_ids?: string[];
   creator_id?: string;
   project_id?: string;
   /**
@@ -57,14 +62,6 @@ export interface ListIssuesParams {
   involves_user_id?: string;
   /** JSONB containment filter on `issue.metadata`. AND across keys. */
   metadata?: IssueMetadata;
-  open_only?: boolean;
-  /**
-   * Restrict the result to issues with at least one of `start_date` /
-   * `due_date` set. Used by the Project Gantt view so it doesn't have to
-   * page through every issue on the project just to discard the unscheduled
-   * majority on the client.
-   */
-  scheduled?: boolean;
   date_field?: "created_at" | "updated_at";
   date_start?: string;
   date_end?: string;
@@ -72,27 +69,28 @@ export interface ListIssuesParams {
   sort_direction?: "asc" | "desc";
 }
 
-export interface IssueActorRef {
+export interface ListIssuesParams extends IssueListQueryParams {
+  status?: IssueStatus;
+  priority?: IssuePriority;
+  /**
+   * Restrict the result to issues with at least one of `start_date` /
+   * `due_date` set. Used by the Project Gantt view so it doesn't have to
+   * page through every issue on the project just to discard the unscheduled
+   * majority on the client.
+   */
+  scheduled?: boolean;
+}
+
+interface IssueActorRef {
   type: IssueAssigneeType;
   id: string;
 }
 
-export interface ListGroupedIssuesParams {
+export interface ListGroupedIssuesParams extends IssueListQueryParams {
   group_by: "assignee";
-  limit?: number;
-  offset?: number;
-  workspace_id?: string;
   statuses?: IssueStatus[];
   priorities?: IssuePriority[];
   assignee_types?: IssueAssigneeType[];
-  assignee_id?: string;
-  assignee_ids?: string[];
-  creator_id?: string;
-  project_id?: string;
-  /** See `ListIssuesParams.involves_user_id` — same semantics. */
-  involves_user_id?: string;
-  /** JSONB containment filter on `issue.metadata`. AND across keys. */
-  metadata?: IssueMetadata;
   assignee_filters?: IssueActorRef[];
   include_no_assignee?: boolean;
   creator_filters?: IssueActorRef[];
@@ -101,11 +99,6 @@ export interface ListGroupedIssuesParams {
   label_ids?: string[];
   group_assignee_type?: IssueAssigneeType | "none";
   group_assignee_id?: string;
-  date_field?: "created_at" | "updated_at";
-  date_start?: string;
-  date_end?: string;
-  sort_by?: "position" | "priority" | "title" | "created_at" | "start_date" | "due_date";
-  sort_direction?: "asc" | "desc";
 }
 
 /** Raw backend response shape for `GET /api/issues`. */
@@ -148,14 +141,8 @@ export interface ListIssueBucketsResponse {
 }
 
 export interface SearchIssueResult extends Issue {
-  match_source: "title" | "description" | "comment";
   matched_description_snippet?: string;
   matched_comment_snippet?: string;
-}
-
-export interface SearchIssuesResponse {
-  issues: SearchIssueResult[];
-  total: number;
 }
 
 export interface SearchProjectResult extends Project {
@@ -163,9 +150,34 @@ export interface SearchProjectResult extends Project {
   matched_snippet?: string;
 }
 
-export interface SearchProjectsResponse {
-  projects: SearchProjectResult[];
-  total: number;
+export interface QuickCreateIssueRequest {
+  agent_id?: string;
+  squad_id?: string;
+  prompt: string;
+  project_id?: string | null;
+  parent_issue_id?: string | null;
+  status?: string;
+  priority?: string;
+  start_date?: string | null;
+  due_date?: string | null;
+  attachment_ids?: string[];
+}
+
+export interface ChildIssueProgressResponse {
+  progress: Array<{ parent_issue_id: string; total: number; done: number }>;
+}
+
+export interface BatchUpdateIssuesResponse {
+  updated: number;
+  blocked?: unknown[];
+  failed?: unknown[];
+}
+
+export interface BatchDeleteIssuesResponse {
+  deleted: number;
+  failed?: Array<{
+    issue_id: string;
+  }>;
 }
 
 export interface UpdateMeRequest {
@@ -186,29 +198,4 @@ export interface CreateMemberRequest {
 
 export interface UpdateMemberRequest {
   role: MemberRole;
-}
-
-// Personal Access Tokens
-export interface PersonalAccessToken {
-  id: string;
-  name: string;
-  token_prefix: string;
-  expires_at: string | null;
-  last_used_at: string | null;
-  created_at: string;
-}
-
-export interface CreatePersonalAccessTokenRequest {
-  name: string;
-  expires_in_days?: number;
-}
-
-export interface CreatePersonalAccessTokenResponse extends PersonalAccessToken {
-  token: string;
-}
-
-// Pagination
-export interface PaginationParams {
-  limit?: number;
-  offset?: number;
 }

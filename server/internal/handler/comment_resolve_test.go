@@ -13,10 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// resolveCommentHTTP drives the POST /api/comments/{id}/resolve handler and
-// returns the decoded response. Mirrors the resolve path the web/desktop client
-// hits.
-func resolveCommentHTTP(t *testing.T, commentID string) CommentResponse {
+func resolveCommentHTTP(t *testing.T, commentID string) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/comments/"+commentID+"/resolve", nil)
@@ -29,23 +26,13 @@ func resolveCommentHTTP(t *testing.T, commentID string) CommentResponse {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode resolve response: %v", err)
 	}
-	return resp
 }
 
-// commentResolved reports whether a comment currently has resolved_at set,
-// read straight from the row so the assertion sees committed state.
 func commentResolved(t *testing.T, id string) bool {
 	t.Helper()
-	var resolvedAt *time.Time
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT resolved_at FROM comment WHERE id = $1`, id,
-	).Scan(&resolvedAt); err != nil {
-		t.Fatalf("query resolved_at for %s: %v", id, err)
-	}
-	return resolvedAt != nil
+	return commentResolvedAt(t, id) != nil
 }
 
-// commentResolvedAt returns the raw resolved_at timestamp (nil when cleared).
 func commentResolvedAt(t *testing.T, id string) *time.Time {
 	t.Helper()
 	var resolvedAt *time.Time
@@ -57,9 +44,6 @@ func commentResolvedAt(t *testing.T, id string) *time.Time {
 	return resolvedAt
 }
 
-// commentEventCapture records comment:resolved / comment:unresolved events for a
-// single issue. The handler bus has no Unsubscribe, so the closure filters by
-// issue id; events for other tests' issues are ignored.
 type commentEventCapture struct {
 	mu     sync.Mutex
 	events []struct {
@@ -104,14 +88,6 @@ func (c *commentEventCapture) countFor(eventType, commentID string) int {
 	return n
 }
 
-// resolveTestFixture seeds an issue with two independent threads so the tests
-// can prove the single-resolution invariant is thread-scoped, not issue-scoped:
-//
-//	root1
-//	├── a1
-//	└── b1
-//	root2 (separate thread)
-//	└── a2
 type resolveTestFixture struct {
 	IssueID string
 	Root1   string
@@ -134,24 +110,16 @@ func newResolveTestFixture(t *testing.T) resolveTestFixture {
 	return resolveTestFixture{IssueID: seed.IssueID, Root1: root1, A1: a1, B1: b1, Root2: root2, A2: a2}
 }
 
-// TestResolveComment_ReplacesPriorThreadResolution is the core regression for
-// MUL-3180: a thread must have at most one resolved comment, and resolving a new
-// one atomically clears the previous resolution (instead of leaving two resolved
-// rows that the UI only papered over).
 func TestResolveComment_ReplacesPriorThreadResolution(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newResolveTestFixture(t)
 	cap := captureCommentEvents(t, fx.IssueID)
 
-	// Resolve a1 → it is the resolution.
 	resolveCommentHTTP(t, fx.A1)
 	if !commentResolved(t, fx.A1) {
 		t.Fatalf("a1 should be resolved after first resolve")
 	}
 
-	// Resolve b1 → b1 becomes the resolution and a1 is cleared in the same write.
 	resolveCommentHTTP(t, fx.B1)
 	if !commentResolved(t, fx.B1) {
 		t.Fatalf("b1 should be resolved")
@@ -160,8 +128,6 @@ func TestResolveComment_ReplacesPriorThreadResolution(t *testing.T) {
 		t.Fatalf("a1 should have been cleared when b1 was resolved (single-resolution invariant)")
 	}
 
-	// The cleared sibling must broadcast comment:unresolved so granular realtime
-	// consumers drop the stale resolution; b1 must broadcast comment:resolved.
 	if got := cap.countFor(protocol.EventCommentUnresolved, fx.A1); got != 1 {
 		t.Fatalf("expected exactly 1 comment:unresolved for a1, got %d", got)
 	}
@@ -170,16 +136,12 @@ func TestResolveComment_ReplacesPriorThreadResolution(t *testing.T) {
 	}
 }
 
-// TestResolveComment_ScopedToThread proves the clear never reaches across into a
-// sibling thread on the same issue.
 func TestResolveComment_ScopedToThread(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newResolveTestFixture(t)
 
-	resolveCommentHTTP(t, fx.B1) // thread 1 resolution
-	resolveCommentHTTP(t, fx.A2) // thread 2 resolution — must NOT touch thread 1
+	resolveCommentHTTP(t, fx.B1)
+	resolveCommentHTTP(t, fx.A2)
 	if !commentResolved(t, fx.B1) {
 		t.Fatalf("b1 (thread 1) must stay resolved when a separate thread is resolved")
 	}
@@ -187,8 +149,6 @@ func TestResolveComment_ScopedToThread(t *testing.T) {
 		t.Fatalf("a2 (thread 2) should be resolved")
 	}
 
-	// Resolving the root of thread 1 overrides the reply resolution (override
-	// works in both directions: reply→reply and reply→root).
 	resolveCommentHTTP(t, fx.Root1)
 	if !commentResolved(t, fx.Root1) {
 		t.Fatalf("root1 should be resolved")
@@ -201,13 +161,8 @@ func TestResolveComment_ScopedToThread(t *testing.T) {
 	}
 }
 
-// TestResolveComment_ReResolveIsIdempotent pins the COALESCE idempotency +
-// event suppression: re-resolving the current resolution keeps its original
-// timestamp and emits no second comment:resolved event.
 func TestResolveComment_ReResolveIsIdempotent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newResolveTestFixture(t)
 	cap := captureCommentEvents(t, fx.IssueID)
 
@@ -217,7 +172,7 @@ func TestResolveComment_ReResolveIsIdempotent(t *testing.T) {
 		t.Fatalf("a1 should be resolved")
 	}
 
-	resolveCommentHTTP(t, fx.A1) // re-resolve same comment
+	resolveCommentHTTP(t, fx.A1)
 	second := commentResolvedAt(t, fx.A1)
 	if second == nil || !second.Equal(*first) {
 		t.Fatalf("re-resolve must keep the original resolved_at (got %v, want %v)", second, first)

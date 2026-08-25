@@ -55,3 +55,40 @@ func TestCloudFrontSignedURLWithContentDisposition(t *testing.T) {
 		t.Fatalf("policy did not include signed response-content-disposition: %s", policy)
 	}
 }
+
+func TestNewCloudFrontSignerFromEnvRejectsPartialSigningConfig(t *testing.T) {
+	clear := func(t *testing.T) {
+		t.Helper()
+		for _, key := range []string{
+			"CLOUDFRONT_KEY_PAIR_ID", "CLOUDFRONT_DOMAIN", "COOKIE_DOMAIN",
+			"CLOUDFRONT_PRIVATE_KEY_SECRET", "CLOUDFRONT_PRIVATE_KEY",
+		} {
+			t.Setenv(key, "")
+		}
+	}
+
+	t.Run("private key without key pair", func(t *testing.T) {
+		clear(t)
+		t.Setenv("CLOUDFRONT_PRIVATE_KEY", "configured")
+		if _, err := NewCloudFrontSignerFromEnv(); err == nil || !strings.Contains(err.Error(), "KEY_PAIR_ID") {
+			t.Fatalf("NewCloudFrontSignerFromEnv error = %v, want key-pair error", err)
+		}
+	})
+
+	t.Run("key pair without domain", func(t *testing.T) {
+		clear(t)
+		t.Setenv("CLOUDFRONT_KEY_PAIR_ID", "K123")
+		if _, err := NewCloudFrontSignerFromEnv(); err == nil || !strings.Contains(err.Error(), "DOMAIN") {
+			t.Fatalf("NewCloudFrontSignerFromEnv error = %v, want domain error", err)
+		}
+	})
+
+	t.Run("public CDN domain alone does not opt into signing", func(t *testing.T) {
+		clear(t)
+		t.Setenv("CLOUDFRONT_DOMAIN", "cdn.example.test")
+		signer, err := NewCloudFrontSignerFromEnv()
+		if err != nil || signer != nil {
+			t.Fatalf("NewCloudFrontSignerFromEnv = (%v, %v), want (nil, nil)", signer, err)
+		}
+	})
+}

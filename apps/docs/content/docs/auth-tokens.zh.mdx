@@ -1,34 +1,29 @@
 ---
 title: 认证与令牌
-description: Multica 有三种令牌——浏览器、CLI、守护进程各用一种。什么场景用哪种。
+description: Multica 的浏览器会话与个人访问令牌，以及各自适用的场景。
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica 有三种令牌，对应三种使用场景：浏览器 Web UI、命令行 / 脚本、守护进程（daemon）。三种都代表同一个你，但作用域和有效期不同。
+Multica 使用浏览器 JWT 会话和个人访问令牌（PAT）。CLI、脚本和 daemon 都使用当前登录用户的 PAT。
 
-## 三种令牌
+## 两种令牌
 
 | 令牌 | 格式 | 用在哪 | 有效期 |
 |---|---|---|---|
 | **JWT Cookie** | `multica_auth` cookie（HttpOnly） | Web 浏览器 | 30 天 |
-| **个人访问令牌（PAT）** | 以 `mul_` 开头 | CLI / 脚本 / 直接调 API | 默认不过期；用 API 创建时可选传 `expires_in_days` |
-| **守护进程令牌（Daemon Token）** | 以 `mdt_` 开头 | Daemon 内部和 server 通信 | 由 daemon 自己管理 |
+| **个人访问令牌（PAT）** | 以 `mul_` 开头 | CLI / 脚本 / 直接调 API | API 创建时可选有效期；CLI 登录签发 90 天并在临近过期时续期 |
 
-日常使用你只会直接接触前两种。**[守护进程](/daemon-runtimes)令牌**是 `multica daemon login` 自动生成和刷新的，你不用关心。
+## 各类凭证能访问哪些 API
 
-## 三种令牌能访问哪些 API
+| API 路由 | JWT Cookie | PAT |
+|---|---|---|
+| `/api/user/*`（用户级操作） | ✓ | ✓ |
+| `/api/workspaces/:id/*`（工作区级） | ✓ | ✓ |
+| `/api/daemon/*`（daemon 专用） | ✗ | ✓ |
+| WebSocket `/ws`（实时推送） | ✓（cookie） | ✓（首条消息认证） |
 
-| API 路由 | JWT Cookie | PAT | Daemon Token |
-|---|---|---|---|
-| `/api/user/*`（用户级操作） | ✓ | ✓ | ✗ |
-| `/api/workspaces/:id/*`（工作区级） | ✓ | ✓ | ✗ |
-| `/api/daemon/*`（daemon 专用） | ✗ | ✓ | ✓ |
-| WebSocket `/ws`（实时推送） | ✓（cookie） | ✓（首条消息认证） | ✗ |
-
-**PAT 几乎什么都能命中**——它代表"完整的你"。Daemon Token 能做的事非常有限，只够 daemon 拉任务和汇报结果。
-
-**同样是访问 `/api/daemon/*`，两者作用域不同**：PAT 代表**一整个用户**——进来之后能看到你所有的工作区；daemon token 在创建时就绑死一个工作区，只能动这一个工作区的资源。生产部署用 daemon token 跑 daemon，不要图方便用 PAT——权限会被放大。
+PAT 代表完整的当前用户身份。Daemon 访问每个工作区前仍会执行成员权限检查；用户退出或被移出工作区后，该 daemon 不能继续访问其中的资源。
 
 ## 登录
 
@@ -44,7 +39,9 @@ Multica 有三种令牌，对应三种使用场景：浏览器 Web UI、命令�
 **创建**有两种方式：
 
 - **Web UI**：Settings → Personal Access Tokens → New token
-- **CLI**：`multica login` 在本地没有 PAT 时会自动创建一个
+- **CLI**：`multica login` 会创建一个 90 天有效的 PAT；daemon 会在剩余有效期进入续期窗口时调用续期接口
+
+直接调用 API 时可以传 `expires_in_days`。省略该字段会创建不设到期时间的 PAT；生产凭证建议明确设置有效期并定期轮换。
 
 <Callout type="warning">
 **PAT 创建时完整内容只显示一次。** 刷新页面或关闭对话框之后就看不到了。

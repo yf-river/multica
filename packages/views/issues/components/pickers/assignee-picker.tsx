@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { Lock, UserMinus } from "lucide-react";
-import type { Agent, IssueAssigneeType, UpdateIssueRequest } from "@multica/core/types";
+import type { IssueAssigneeType, UpdateIssueRequest } from "@multica/core/types";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { canAssignAgentToIssue, resolveCurrentMember } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions, squadListOptions, assigneeFrequencyOptions } from "@multica/core/workspace/queries";
 import { ActorAvatar } from "../../../common/actor-avatar";
 import {
@@ -17,25 +17,7 @@ import {
   PickerEmpty,
 } from "./property-picker";
 import { useT } from "../../../i18n";
-import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
-
-/**
- * Legacy boolean shape kept around for callers (e.g. `use-issue-actions.ts`)
- * that haven't migrated to the new `canAssignAgentToIssue` Decision API yet.
- * Internally redirects to the canonical rule so behaviour stays in sync.
- */
-export function canAssignAgent(
-  agent: Agent,
-  userId: string | undefined,
-  memberRole: string | undefined,
-): boolean {
-  return canAssignAgentToIssue(agent, {
-    userId: userId ?? null,
-    role: memberRole === "owner" || memberRole === "admin" || memberRole === "member"
-      ? memberRole
-      : null,
-  }).allowed;
-}
+import { matchesTextQuery } from "../../../editor/extensions/pinyin-match";
 
 export function AssigneePicker({
   assigneeType,
@@ -43,6 +25,7 @@ export function AssigneePicker({
   onUpdate,
   trigger: customTrigger,
   triggerRender,
+  triggerNativeButton,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   align,
@@ -52,6 +35,7 @@ export function AssigneePicker({
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
   trigger?: React.ReactNode;
   triggerRender?: React.ReactElement;
+  triggerNativeButton?: boolean;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
@@ -61,8 +45,8 @@ export function AssigneePicker({
   const open = controlledOpen ?? internalOpen;
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
   const [filter, setFilter] = useState("");
-  const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
+  const userId = useAuthStore((state) => state.user?.id ?? null);
   const pickerDataEnabled = open && !!wsId;
   const { data: members = [] } = useQuery({
     ...memberListOptions(wsId),
@@ -86,9 +70,7 @@ export function AssigneePicker({
     agents: shouldResolveTriggerLabel && assigneeType === "agent",
     squads: shouldResolveTriggerLabel && assigneeType === "squad",
   });
-
-  const currentMember = members.find((m) => m.user_id === user?.id);
-  const memberRole = currentMember?.role;
+  const { role: memberRole } = resolveCurrentMember(members, userId);
 
   // Build a lookup map from frequency data for sorting.
   const freqMap = useMemo(() => {
@@ -103,13 +85,13 @@ export function AssigneePicker({
 
   const query = filter.trim().toLowerCase();
   const filteredMembers = members
-    .filter((m) => m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query))
+    .filter((m) => matchesTextQuery(m.name, query))
     .sort((a, b) => getFreq("member", b.user_id) - getFreq("member", a.user_id));
   const filteredAgents = agents
-    .filter((a) => !a.archived_at && (a.name.toLowerCase().includes(query) || matchesPinyin(a.name, query)))
+    .filter((a) => !a.archived_at && matchesTextQuery(a.name, query))
     .sort((a, b) => getFreq("agent", b.id) - getFreq("agent", a.id));
   const filteredSquads = squads
-    .filter((s) => !s.archived_at && (s.name.toLowerCase().includes(query) || matchesPinyin(s.name, query)))
+    .filter((s) => !s.archived_at && matchesTextQuery(s.name, query))
     .sort((a, b) => getFreq("squad", b.id) - getFreq("squad", a.id));
 
   const isSelected = (type: string, id: string) =>
@@ -133,6 +115,7 @@ export function AssigneePicker({
       searchPlaceholder={t(($) => $.pickers.assignee.search_placeholder)}
       onSearchChange={setFilter}
       triggerRender={triggerRender}
+      triggerNativeButton={triggerNativeButton}
       trigger={
         customTrigger ? customTrigger : assigneeType && assigneeId ? (
           <>
@@ -185,7 +168,7 @@ export function AssigneePicker({
         <PickerSection label={t(($) => $.pickers.assignee.agents_group)}>
           {filteredAgents.map((a) => {
             const decision = canAssignAgentToIssue(a, {
-              userId: user?.id ?? null,
+              userId,
               role:
                 memberRole === "owner" ||
                 memberRole === "admin" ||

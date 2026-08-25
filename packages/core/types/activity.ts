@@ -19,7 +19,6 @@ export interface TimelineEntry {
   // Comment fields
   content?: string;
   parent_id?: string | null;
-  updated_at?: string;
   comment_type?: string;
   reactions?: Reaction[];
   attachments?: Attachment[];

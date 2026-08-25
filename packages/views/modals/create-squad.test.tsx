@@ -2,31 +2,20 @@
 
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { I18nProvider } from "@multica/core/i18n/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Agent, MemberWithUser, Squad } from "@multica/core/types";
-import enCommon from "../locales/zh-Hans/common.json";
-import enModals from "../locales/zh-Hans/modals.json";
-import enAgents from "../locales/zh-Hans/agents.json";
-import enIssues from "../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { common: enCommon, modals: enModals, agents: enAgents, issues: enIssues },
-};
+import { renderWithI18n } from "../test/i18n";
 
 const ME = "user-me";
 const OTHER = "user-other";
 
-// Hoisted so each test can override mock return values per case.
 const mocks = vi.hoisted(() => ({
   agents: [] as Agent[],
   members: [] as MemberWithUser[],
   createSquad: vi.fn(),
-  addSquadMember: vi.fn(),
   navigationPush: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
-  toastWarning: vi.fn(),
   invalidate: vi.fn(),
 }));
 
@@ -50,11 +39,11 @@ vi.mock("@multica/core/workspace/queries", () => ({
   workspaceKeys: { squads: (id: string) => ["squads", id] },
 }));
 
-vi.mock("@multica/core/api", () => ({
-  api: {
-    createSquad: (...args: unknown[]) => mocks.createSquad(...args),
-    addSquadMember: (...args: unknown[]) => mocks.addSquadMember(...args),
-  },
+vi.mock("@multica/core/squads", () => ({
+  useCreateSquad: () => ({
+    mutateAsync: (...args: unknown[]) => mocks.createSquad(...args),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -62,11 +51,8 @@ vi.mock("@multica/core/auth", () => ({
     selector({ user: { id: ME } }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-1",
   useWorkspacePaths: () => ({
     squadDetail: (id: string) => `/test-ws/squads/${id}`,
   }),
@@ -113,9 +99,6 @@ vi.mock("../agents/components/char-counter", () => ({
   ),
 }));
 
-// Render Popover/PopoverContent inline so the picker rows are queryable
-// without simulating a Base UI portal — we still drive the open prop via
-// PopoverTrigger clicks but the content is always in the DOM.
 vi.mock("@multica/ui/components/ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   PopoverTrigger: ({
@@ -129,8 +112,6 @@ vi.mock("@multica/ui/components/ui/popover", () => ({
     onClick?: () => void;
     render?: ReactNode;
   }) => {
-    // Base UI's `render` prop replaces the trigger with the provided element.
-    // The mock just renders it as-is so its children stay queryable in tests.
     if (render !== undefined) return <>{render}</>;
     return (
       <button type="button" className={className} onClick={onClick}>
@@ -180,14 +161,13 @@ vi.mock("@multica/ui/components/ui/label", () => ({
 }));
 
 vi.mock("../editor/extensions/pinyin-match", () => ({
-  matchesPinyin: () => false,
+  matchesTextQuery: () => true,
 }));
 
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => mocks.toastSuccess(...args),
     error: (...args: unknown[]) => mocks.toastError(...args),
-    warning: (...args: unknown[]) => mocks.toastWarning(...args),
   },
 }));
 
@@ -195,7 +175,6 @@ import { CreateSquadModal } from "./create-squad";
 
 function makeAgent(overrides: Partial<Agent> & { id: string; name: string; owner_id: string | null }): Agent {
   return {
-    workspace_id: "ws-1",
     runtime_id: "rt-1",
     description: "",
     instructions: "",
@@ -203,15 +182,17 @@ function makeAgent(overrides: Partial<Agent> & { id: string; name: string; owner
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
+    custom_env_key_count: 0,
+    mcp_config: null,
+    mcp_config_redacted: false,
     scope: "personal",
-    status: "idle",
     max_concurrent_tasks: 1,
     model: "",
+    thinking_level: "",
     skills: [],
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }
@@ -220,23 +201,19 @@ function makeMember(user_id: string, name: string): MemberWithUser {
   return {
     id: `m-${user_id}`,
     user_id,
-    workspace_id: "ws-1",
     role: "member",
     name,
     account: user_id,
     avatar_url: null,
-    created_at: "2026-01-01T00:00:00Z",
   };
 }
 
 function makeSquad(overrides: Partial<Squad> = {}): Squad {
   return {
     id: "sq-new",
-    workspace_id: "ws-1",
     name: "New Squad",
     description: "",
     instructions: "",
-    sop_profile: {},
     avatar_url: null,
     scope: "workspace",
     leader_id: "agent-mine-1",
@@ -244,13 +221,10 @@ function makeSquad(overrides: Partial<Squad> = {}): Squad {
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }
 
-// "创建小队" is both the dialog title and the submit button label. Always
-// pick by role so tests don't depend on DOM order between the two.
 function getSubmitButton(): HTMLButtonElement {
   const btn = screen
     .getAllByRole("button")
@@ -259,27 +233,29 @@ function getSubmitButton(): HTMLButtonElement {
   return btn as HTMLButtonElement;
 }
 
-// getAllByText is typed to never return undefined slots, but the indexed
-// access goes through `noUncheckedIndexedAccess` so we narrow explicitly.
-function firstMatch(label: string): HTMLElement {
+function match(label: string, position: "first" | "last"): HTMLElement {
   const matches = screen.getAllByText(label);
   if (matches.length === 0) throw new Error(`no match for "${label}"`);
-  return matches[0]!;
+  return position === "first" ? matches[0]! : matches[matches.length - 1]!;
 }
 
-function lastMatch(label: string): HTMLElement {
-  const matches = screen.getAllByText(label);
-  if (matches.length === 0) throw new Error(`no match for "${label}"`);
-  return matches[matches.length - 1]!;
+function submitSquad(name: string) {
+  fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
+    target: { value: name },
+  });
+  fireEvent.click(getSubmitButton());
+}
+
+async function addSecondAgent() {
+  fireEvent.click(match("MineAgentTwo", "last"));
+  await waitFor(() => {
+    expect(screen.getAllByText("MineAgentTwo").length).toBeGreaterThanOrEqual(2);
+  });
 }
 
 function renderModal() {
   const onClose = vi.fn();
-  render(
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <CreateSquadModal onClose={onClose} />
-    </I18nProvider>,
-  );
+  renderWithI18n(<CreateSquadModal onClose={onClose} />);
   return { onClose };
 }
 
@@ -304,23 +280,16 @@ describe("CreateSquadModal", () => {
     const desc = screen.getByPlaceholderText(/描述这个小队/i) as HTMLInputElement;
     fireEvent.change(desc, { target: { value: "We own infra" } });
     expect(desc.value).toBe("We own infra");
-    // Char counter reflects the typed length.
     expect(screen.getByTestId("char-counter").textContent).toMatch(/^12\//);
   });
 
   it("renders the leader picker with 'My Agents' before 'Workspace Agents'", () => {
     renderModal();
-    // The leader group headers come from the LeaderPicker — agent name "MineAgentOne"
-    // appears under the My Agents section, "OtherAgentOne" under Workspace Agents.
     const myGroupLabels = screen.getAllByText("我的智能体");
     const wsGroupLabels = screen.getAllByText("工作区智能体");
     expect(myGroupLabels.length).toBeGreaterThanOrEqual(1);
     expect(wsGroupLabels.length).toBeGreaterThanOrEqual(1);
 
-    // Verify ordering: the first occurrence of My Agents appears before the
-    // first occurrence of Workspace Agents in the DOM (leader picker shows
-    // both sections; the additional-members picker also has them, but both
-    // pickers follow the same order so the assertion holds either way).
     const all = Array.from(document.querySelectorAll("*"));
     const myIdx = all.findIndex((n) => n.textContent === "我的智能体");
     const wsIdx = all.findIndex((n) => n.textContent === "工作区智能体");
@@ -329,61 +298,30 @@ describe("CreateSquadModal", () => {
 
   it("auto-clears an additional-members entry when the same agent is picked as leader", async () => {
     renderModal();
-    // Find the "MineAgentTwo" row inside the additional-members picker (the
-    // leader picker also has it; clicking either toggles its respective
-    // state). We pick it as an additional member via the second occurrence,
-    // then promote it to leader via the first.
-    // The additional-members picker's MineAgentTwo row is the LAST occurrence —
-    // leader picker renders earlier in the tree.
-    fireEvent.click(lastMatch("MineAgentTwo"));
+    await addSecondAgent();
 
-    // Chip should appear (the trigger now lists MineAgentTwo).
-    await waitFor(() => {
-      expect(screen.getAllByText("MineAgentTwo").length).toBeGreaterThanOrEqual(2);
-    });
+    fireEvent.click(match("MineAgentTwo", "first"));
 
-    // Promote MineAgentTwo to leader by clicking the first occurrence.
-    fireEvent.click(firstMatch("MineAgentTwo"));
-
-    // Wire up the rest of the submit path so we can verify the sanitized
-    // payload sent to addSquadMember (none — leader was the only pick).
     mocks.createSquad.mockResolvedValue(makeSquad({ leader_id: "agent-mine-2" }));
-    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
-      target: { value: "Platform" },
-    });
-    fireEvent.click(getSubmitButton());
+    submitSquad("Platform");
 
     await waitFor(() => {
       expect(mocks.createSquad).toHaveBeenCalledTimes(1);
     });
-    // addSquadMember must NOT be called for the agent we promoted to leader.
-    expect(mocks.addSquadMember).not.toHaveBeenCalled();
+    expect(mocks.createSquad).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [] }),
+    );
   });
 
   it("removes a member promoted to leader from selectedMembers so switching leader away does not resurrect it", async () => {
     renderModal();
-    // 1. Add MineAgentTwo as an additional member.
-    fireEvent.click(lastMatch("MineAgentTwo"));
-    await waitFor(() => {
-      expect(screen.getAllByText("MineAgentTwo").length).toBeGreaterThanOrEqual(2);
-    });
+    await addSecondAgent();
 
-    // 2. Promote MineAgentTwo to leader (first occurrence is the leader picker row).
-    fireEvent.click(firstMatch("MineAgentTwo"));
+    fireEvent.click(match("MineAgentTwo", "first"));
+    fireEvent.click(match("MineAgentOne", "first"));
 
-    // 3. Switch leader back to MineAgentOne. With MineAgentTwo now the leader,
-    //    the additional-members picker filters it out, so MineAgentOne only
-    //    appears twice (leader picker + members picker) and firstMatch hits
-    //    the leader picker row.
-    fireEvent.click(firstMatch("MineAgentOne"));
-
-    // 4. Submit and assert MineAgentTwo is NOT submitted as a member — the
-    //    promotion must have permanently dropped it from selectedMembers.
     mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-3", leader_id: "agent-mine-1" }));
-    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
-      target: { value: "Swap Squad" },
-    });
-    fireEvent.click(getSubmitButton());
+    submitSquad("Swap Squad");
 
     await waitFor(() => {
       expect(mocks.createSquad).toHaveBeenCalledWith({
@@ -392,22 +330,18 @@ describe("CreateSquadModal", () => {
         leader_id: "agent-mine-1",
         avatar_url: undefined,
         scope: "workspace",
+        members: [],
       });
     });
-    expect(mocks.addSquadMember).not.toHaveBeenCalled();
   });
 
   it("on success with no additional members fires exactly one success toast and navigates", async () => {
     renderModal();
-    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
-      target: { value: "Solo Squad" },
-    });
-    // Click MineAgentOne in the leader picker (first occurrence is leader picker row).
-    fireEvent.click(firstMatch("MineAgentOne"));
+    fireEvent.click(match("MineAgentOne", "first"));
 
     mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-1", leader_id: "agent-mine-1" }));
 
-    fireEvent.click(getSubmitButton());
+    submitSquad("Solo Squad");
 
     await waitFor(() => {
       expect(mocks.createSquad).toHaveBeenCalledWith({
@@ -416,58 +350,51 @@ describe("CreateSquadModal", () => {
         leader_id: "agent-mine-1",
         avatar_url: undefined,
         scope: "workspace",
+        members: [],
       });
     });
     await waitFor(() => {
       expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.addSquadMember).not.toHaveBeenCalled();
-    expect(mocks.toastWarning).not.toHaveBeenCalled();
     expect(mocks.navigationPush).toHaveBeenCalledWith("/test-ws/squads/sq-1");
   });
 
-  it("on success with partial member failure shows success + warning toasts and still navigates", async () => {
+  it("creates the squad and all initial members with one request", async () => {
     renderModal();
-    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
-      target: { value: "Mixed Squad" },
-    });
-    fireEvent.click(firstMatch("MineAgentOne"));
-
-    // Add two additional members: the workspace pal (member) + OtherAgentOne (agent).
-    // Locate them in the additional-members picker (last occurrence of each).
-    fireEvent.click(lastMatch("OtherAgentOne"));
-    fireEvent.click(lastMatch("Workspace Pal"));
+    fireEvent.click(match("MineAgentOne", "first"));
+    fireEvent.click(match("OtherAgentOne", "last"));
+    fireEvent.click(match("Workspace Pal", "last"));
 
     mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-2", leader_id: "agent-mine-1" }));
-    mocks.addSquadMember
-      .mockResolvedValueOnce({}) // first call succeeds
-      .mockRejectedValueOnce(new Error("boom")); // second fails
 
-    fireEvent.click(getSubmitButton());
+    submitSquad("Mixed Squad");
 
     await waitFor(() => {
-      expect(mocks.createSquad).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(mocks.addSquadMember).toHaveBeenCalledTimes(2);
+      expect(mocks.createSquad).toHaveBeenCalledWith({
+        name: "Mixed Squad",
+        description: undefined,
+        leader_id: "agent-mine-1",
+        avatar_url: undefined,
+        scope: "workspace",
+        members: [
+          { member_type: "agent", member_id: "agent-other-1" },
+          { member_type: "member", member_id: "user-other" },
+        ],
+      });
     });
     await waitFor(() => {
       expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.toastWarning).toHaveBeenCalledTimes(1);
     expect(mocks.navigationPush).toHaveBeenCalledWith("/test-ws/squads/sq-2");
   });
 
   it("submits personal scope when selected", async () => {
     renderModal();
-    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
-      target: { value: "Personal Squad" },
-    });
     fireEvent.click(screen.getByText("个人"));
-    fireEvent.click(firstMatch("MineAgentOne"));
+    fireEvent.click(match("MineAgentOne", "first"));
     mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-personal", scope: "personal" }));
 
-    fireEvent.click(getSubmitButton());
+    submitSquad("Personal Squad");
 
     await waitFor(() => {
       expect(mocks.createSquad).toHaveBeenCalledWith({
@@ -476,27 +403,23 @@ describe("CreateSquadModal", () => {
         leader_id: "agent-mine-1",
         avatar_url: undefined,
         scope: "personal",
+        members: [],
       });
     });
   });
 
   it("on createSquad failure shows an error toast, does not navigate, and re-enables submit", async () => {
     renderModal();
-    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
-      target: { value: "Boom Squad" },
-    });
-    fireEvent.click(firstMatch("MineAgentOne"));
+    fireEvent.click(match("MineAgentOne", "first"));
 
     mocks.createSquad.mockRejectedValueOnce(new Error("server down"));
 
-    fireEvent.click(getSubmitButton());
+    submitSquad("Boom Squad");
 
     await waitFor(() => {
       expect(mocks.toastError).toHaveBeenCalledTimes(1);
     });
     expect(mocks.navigationPush).not.toHaveBeenCalled();
-    // Submit button is re-enabled (textContent reads "创建小队" again,
-    // not "Creating...").
     const button = getSubmitButton();
     expect(button.disabled).toBe(false);
   });

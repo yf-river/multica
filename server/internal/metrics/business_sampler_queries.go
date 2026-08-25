@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// SQL bodies for BusinessSamplerCollector. Kept in a separate file so the
+// SQL bodies for the business sampler. Kept in a separate file so the
 // orchestration logic in business_sampler.go stays readable. Every query:
 //   - is parameterised; never concatenates user / label input
 //   - uses an explicit `LIMIT 100` belt-and-braces (the result set is
@@ -29,7 +29,7 @@ import (
 // and report a wrong active-user value. The result row count is already
 // pinned to 1 (the COUNT scalar). Cardinality of the *output metric* is
 // bounded by the fixed `samplerWindows` allow-list, not by the SQL shape.
-func (c *BusinessSamplerCollector) queryActiveUsers(
+func (c *businessSamplerCollector) queryActiveUsers(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	const stmt = `
@@ -66,7 +66,7 @@ SELECT count(DISTINCT user_id) FROM (
 // activity in the short window. Mirrors queryActiveUsers and intentionally
 // has no inner LIMIT for the same reason: a LIMIT inside the distinct
 // subquery would truncate the COUNT and report a wrong value.
-func (c *BusinessSamplerCollector) queryActiveWorkspaces(
+func (c *businessSamplerCollector) queryActiveWorkspaces(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	const stmt = `
@@ -101,7 +101,7 @@ SELECT count(DISTINCT workspace_id) FROM (
 // queryTaskQueued counts agent_task_queue rows in `queued` status, grouped
 // by inferred source. The CASE expression here mirrors the source
 // derivation in service/task.go so sampler and event-time metrics agree.
-func (c *BusinessSamplerCollector) queryTaskQueued(
+func (c *businessSamplerCollector) queryTaskQueued(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	const stmt = `
@@ -129,7 +129,7 @@ LIMIT 100
 		if err := rows.Scan(&rawSource, &n); err != nil {
 			return fmt.Errorf("task_queued scan: %w", err)
 		}
-		snap.taskQueued[NormalizeTaskSource(rawSource)] += float64(n)
+		snap.taskQueued[taskSourceLabels.normalize(rawSource)] += float64(n)
 	}
 	return rows.Err()
 }
@@ -138,12 +138,12 @@ LIMIT 100
 // `running` status, grouped by source × runtime_mode. runtime_mode comes
 // from the joined agent_runtime row; values outside the allow-list collapse
 // to "unknown".
-func (c *BusinessSamplerCollector) queryTaskRunning(
+func (c *businessSamplerCollector) queryTaskRunning(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	// Keep dispatched and running in separate UNION ALL branches so
-	// Postgres can match the dispatched and running partial indexes
-	// independently.
+	// Postgres can match the existing dispatched partial index and the
+	// current running-only partial index independently.
 	const stmt = `
 WITH in_flight AS (
   SELECT chat_session_id, autopilot_run_id, issue_id, runtime_id
@@ -180,8 +180,8 @@ LIMIT 100
 			return fmt.Errorf("task_running scan: %w", err)
 		}
 		key := taskRunningKey{
-			source:      NormalizeTaskSource(rawSource),
-			runtimeMode: NormalizeRuntimeMode(rawMode),
+			source:      taskSourceLabels.normalize(rawSource),
+			runtimeMode: runtimeModeLabels.normalize(rawMode),
 		}
 		snap.taskRunning[key] += float64(n)
 	}
@@ -190,7 +190,7 @@ LIMIT 100
 
 // queryTaskStuck counts `running` agent_task_queue rows whose started_at
 // crosses the stuck threshold, grouped by inferred source.
-func (c *BusinessSamplerCollector) queryTaskStuck(
+func (c *businessSamplerCollector) queryTaskStuck(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	stmt := `
@@ -220,7 +220,7 @@ LIMIT 100
 		if err := rows.Scan(&rawSource, &n); err != nil {
 			return fmt.Errorf("task_stuck scan: %w", err)
 		}
-		snap.taskStuck[NormalizeTaskSource(rawSource)] += float64(n)
+		snap.taskStuck[taskSourceLabels.normalize(rawSource)] += float64(n)
 	}
 	return rows.Err()
 }
@@ -229,7 +229,7 @@ LIMIT 100
 // the online window, grouped by runtime_mode × provider. Both labels go
 // through the BusinessMetrics whitelists so a misbehaving runtime registering
 // itself with an exotic provider name cannot inflate the series space.
-func (c *BusinessSamplerCollector) queryRuntimeOnline(
+func (c *businessSamplerCollector) queryRuntimeOnline(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	const stmt = `
@@ -252,8 +252,8 @@ LIMIT 100
 			return fmt.Errorf("runtime_online scan: %w", err)
 		}
 		key := runtimeOnlineKey{
-			runtimeMode: NormalizeRuntimeMode(rawMode),
-			provider:    NormalizeRuntimeProvider(rawProvider),
+			runtimeMode: runtimeModeLabels.normalize(rawMode),
+			provider:    runtimeProviderLabels.normalize(rawProvider),
 		}
 		snap.runtimeOnline[key] += float64(n)
 	}
@@ -264,7 +264,7 @@ LIMIT 100
 // We pull at most 100 rows and bucketise in Go because Postgres does not
 // return histogram-shaped output. Rows older than 15 minutes are dropped —
 // they are clearly offline and would just smear the tail of the histogram.
-func (c *BusinessSamplerCollector) queryRuntimeHeartbeatAge(
+func (c *businessSamplerCollector) queryRuntimeHeartbeatAge(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	const stmt = `
@@ -291,7 +291,7 @@ LIMIT 100
 		if age < 0 {
 			age = 0
 		}
-		mode := NormalizeRuntimeMode(rawMode)
+		mode := runtimeModeLabels.normalize(rawMode)
 		perMode[mode] = append(perMode[mode], age)
 	}
 	if err := rows.Err(); err != nil {
@@ -321,7 +321,7 @@ LIMIT 100
 
 // queryWorkspaceTotal exposes a lifetime workspace count. Single integer,
 // no labels — useful for sizing dashboards and capacity planning.
-func (c *BusinessSamplerCollector) queryWorkspaceTotal(
+func (c *businessSamplerCollector) queryWorkspaceTotal(
 	ctx context.Context, tx pgx.Tx, snap *samplerSnapshot,
 ) error {
 	const stmt = `SELECT count(*) FROM workspace LIMIT 100`

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestReleaseAssetName(t *testing.T) {
@@ -17,7 +16,7 @@ func TestReleaseAssetName(t *testing.T) {
 		wantAsset     string
 	}{
 		{
-			name:          "darwin",
+			name:          "darwin versioned archive",
 			targetVersion: "v1.2.3",
 			goos:          "darwin",
 			goarch:        "arm64",
@@ -41,8 +40,7 @@ func TestReleaseAssetName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := releaseAssetName(tt.targetVersion, tt.goos, tt.goarch)
-			if got != tt.wantAsset {
+			if got := releaseAssetName(tt.targetVersion, tt.goos, tt.goarch); got != tt.wantAsset {
 				t.Fatalf("releaseAssetName() = %q, want %q", got, tt.wantAsset)
 			}
 		})
@@ -50,9 +48,8 @@ func TestReleaseAssetName(t *testing.T) {
 }
 
 func TestFindReleaseAsset(t *testing.T) {
-	t.Run("finds versioned asset", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica_darwin_amd64.tar.gz", BrowserDownloadURL: "old"},
+	t.Run("finds the current versioned asset", func(t *testing.T) {
+		assets := []githubReleaseAsset{
 			{Name: "multica-cli-1.2.3-darwin-amd64.tar.gz", BrowserDownloadURL: "new"},
 		}
 
@@ -66,7 +63,7 @@ func TestFindReleaseAsset(t *testing.T) {
 	})
 
 	t.Run("returns error when no candidate matches", func(t *testing.T) {
-		_, err := findReleaseAsset([]GitHubReleaseAsset{{Name: "checksums.txt"}}, "1.2.3", "linux", "amd64")
+		_, err := findReleaseAsset([]githubReleaseAsset{{Name: "checksums.txt"}}, "1.2.3", "linux", "amd64")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -75,7 +72,7 @@ func TestFindReleaseAsset(t *testing.T) {
 
 func TestFindChecksumManifestAsset(t *testing.T) {
 	t.Run("finds checksums.txt among assets", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
+		assets := []githubReleaseAsset{
 			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
 			{Name: "checksums.txt", BrowserDownloadURL: "https://example/checksums.txt"},
 			{Name: "multica-cli-1.2.3-linux-amd64.tar.gz"},
@@ -90,7 +87,7 @@ func TestFindChecksumManifestAsset(t *testing.T) {
 	})
 
 	t.Run("returns error when manifest missing", func(t *testing.T) {
-		_, err := findChecksumManifestAsset([]GitHubReleaseAsset{
+		_, err := findChecksumManifestAsset([]githubReleaseAsset{
 			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
 		})
 		if err == nil {
@@ -106,7 +103,7 @@ func TestParseChecksumManifest(t *testing.T) {
 		"aaaa1111  multica-cli-1.2.3-darwin-arm64.tar.gz",
 		"bbbb2222  multica-cli-1.2.3-darwin-amd64.tar.gz",
 		"cccc3333\tmulti-tab-separator.tar.gz",
-		"DDDD4444  multica_linux_amd64.tar.gz",
+		"DDDD4444  multica-cli-1.2.3-windows-amd64.zip",
 	}, "\n"))
 
 	t.Run("returns lowercase sha for matched entry", func(t *testing.T) {
@@ -130,7 +127,7 @@ func TestParseChecksumManifest(t *testing.T) {
 	})
 
 	t.Run("downcases an uppercase entry", func(t *testing.T) {
-		got, err := parseChecksumManifest(manifest, "multica_linux_amd64.tar.gz")
+		got, err := parseChecksumManifest(manifest, "multica-cli-1.2.3-windows-amd64.zip")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -187,37 +184,4 @@ func TestVerifyAssetSHA256(t *testing.T) {
 			t.Fatal("expected error for empty expected sha")
 		}
 	})
-}
-
-func TestUpdateDownloadTimeoutOrDefault(t *testing.T) {
-	tests := []struct {
-		name    string
-		timeout time.Duration
-		want    time.Duration
-	}{
-		{
-			name:    "uses default for zero",
-			timeout: 0,
-			want:    DefaultUpdateDownloadTimeout,
-		},
-		{
-			name:    "uses default for negative",
-			timeout: -1 * time.Second,
-			want:    DefaultUpdateDownloadTimeout,
-		},
-		{
-			name:    "keeps explicit timeout",
-			timeout: 10 * time.Minute,
-			want:    10 * time.Minute,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := updateDownloadTimeoutOrDefault(tt.timeout)
-			if got != tt.want {
-				t.Fatalf("timeout = %s, want %s", got, tt.want)
-			}
-		})
-	}
 }

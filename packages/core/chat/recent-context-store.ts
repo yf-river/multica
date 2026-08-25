@@ -3,13 +3,14 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../platform/storage";
+import { registerAccountPersistStore } from "../platform/workspace-storage";
 import type { IssueStatus, ProjectStatus } from "../types";
 
 const MAX_RECENT_CONTEXTS = 20;
 const MAX_WORKSPACES = 50;
 const EMPTY: RecentContextEntry[] = [];
 
-export type RecentContextType = "issue" | "project";
+type RecentContextType = "issue" | "project";
 
 export interface RecentContextEntry {
   type: RecentContextType;
@@ -104,10 +105,11 @@ export const useRecentContextStore = create<RecentContextState>()(
       storage: createJSONStorage(() => defaultStorage),
       partialize: (state) => ({ byWorkspace: state.byWorkspace }),
       version: 1,
-      migrate: () => ({ byWorkspace: {} }),
     },
   ),
 );
+
+registerAccountPersistStore(useRecentContextStore);
 
 export function selectRecentContexts(wsId: string | null) {
   return (state: RecentContextState) =>

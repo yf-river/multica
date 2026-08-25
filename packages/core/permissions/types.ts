@@ -18,20 +18,17 @@ export interface PermissionContext {
  * different copy / disabled states / banner variants without parsing the
  * `message` string. Tests assert on `reason`.
  */
-export type DecisionReason =
+type DecisionReason =
   | "allowed"
   | "not_authenticated"
   | "not_member"
-  | "not_owner_role"
-  | "not_admin_role"
   | "not_resource_owner"
-  | "last_owner"
   | "private_visibility"
   | "unknown";
 
-export interface Decision {
+export interface Decision<Reason extends DecisionReason = DecisionReason> {
   allowed: boolean;
-  reason: DecisionReason;
+  reason: Reason;
   /**
    * Human-readable copy for tooltips / banners. Centralised here so view code
    * doesn't drift. UI may still wrap it for emphasis but should not invent
@@ -41,12 +38,15 @@ export interface Decision {
 }
 
 /** Builder helpers — keeps rules.ts tight. */
-export const ALLOW: Decision = {
+export const ALLOW: Decision<"allowed"> = {
   allowed: true,
   reason: "allowed",
   message: "",
 };
 
-export function deny(reason: DecisionReason, message: string): Decision {
+export function deny<Reason extends Exclude<DecisionReason, "allowed">>(
+  reason: Reason,
+  message: string,
+): Decision<Reason> {
   return { allowed: false, reason, message };
 }

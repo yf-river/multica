@@ -12,52 +12,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Options configure a Manager. Defaults are set in NewManager so all
-// fields are optional for callers.
-type Options struct {
-	// RunnerID identifies this process in audit rows. Empty defaults
-	// to a fresh UUID — readable enough for short-lived debugging,
-	// still unique across replicas.
-	RunnerID string
-
-	// TickInterval is how often the manager wakes up to evaluate due
-	// plans across all registered jobs. Should be smaller than the
-	// shortest job cadence; defaults to 30 * time.Second.
-	TickInterval time.Duration
-
-	// Logger is used for structured logs. nil defaults to
-	// slog.Default().
-	Logger *slog.Logger
-}
-
 // Manager is the per-process scheduler. Register one or more jobs and
 // call Run with a cancellable context.
 type Manager struct {
-	pool   *pgxpool.Pool
-	opts   Options
-	jobs   map[string]*JobSpec
-	mu     sync.RWMutex
-	logger *slog.Logger
+	pool         *pgxpool.Pool
+	jobs         map[string]*JobSpec
+	mu           sync.RWMutex
+	runnerID     string
+	tickInterval time.Duration
+	logger       *slog.Logger
 }
 
 // NewManager constructs a Manager. The pool MUST point at the database
 // containing the sys_cron_executions table. The manager does not start
 // any goroutine until Run is called.
-func NewManager(pool *pgxpool.Pool, opts Options) *Manager {
-	if opts.RunnerID == "" {
-		opts.RunnerID = uuid.NewString()
-	}
-	if opts.TickInterval <= 0 {
-		opts.TickInterval = 30 * time.Second
-	}
-	if opts.Logger == nil {
-		opts.Logger = slog.Default()
-	}
+func NewManager(pool *pgxpool.Pool) *Manager {
+	runnerID := uuid.NewString()
 	return &Manager{
-		pool:   pool,
-		opts:   opts,
-		jobs:   make(map[string]*JobSpec),
-		logger: opts.Logger.With("component", "scheduler", "runner_id", opts.RunnerID),
+		pool:         pool,
+		jobs:         make(map[string]*JobSpec),
+		runnerID:     runnerID,
+		tickInterval: 30 * time.Second,
+		logger:       slog.Default().With("component", "scheduler", "runner_id", runnerID),
 	}
 }
 
@@ -90,11 +66,11 @@ func (m *Manager) snapshot() []*JobSpec {
 	return out
 }
 
-// Run blocks until ctx is cancelled, ticking every Options.TickInterval.
+// Run blocks until ctx is cancelled, ticking every 30 seconds.
 // Returns the cause of ctx termination (typically context.Canceled).
 func (m *Manager) Run(ctx context.Context) error {
 	m.logger.Info("scheduler starting",
-		"tick_interval", m.opts.TickInterval.String(),
+		"tick_interval", m.tickInterval.String(),
 		"jobs", len(m.snapshot()))
 
 	// First tick immediately so a fresh start does not wait a full
@@ -103,7 +79,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		m.logger.Warn("scheduler tick error", "error", err)
 	}
 
-	t := time.NewTicker(m.opts.TickInterval)
+	t := time.NewTicker(m.tickInterval)
 	defer t.Stop()
 	for {
 		select {
@@ -141,28 +117,9 @@ func (m *Manager) runJob(ctx context.Context, job *JobSpec, now time.Time) error
 		return fmt.Errorf("scheduler: scope provider for %q: %w", job.Name, err)
 	}
 
-	// Close out abandoned RUNNING leases before planning. We run this
-	// for EVERY job, regardless of AllowStaleReentry, because:
-	//
-	//   * Non-reentrant jobs (AllowStaleReentry=false) need the FAILED
-	//     audit row + alert; this was the original motivation.
-	//
-	//   * Reentrant jobs (AllowStaleReentry=true) running in
-	//     `latest_only` mode never re-claim historical plan_times, so
-	//     a stuck RUNNING row from a crashed pod would otherwise sit
-	//     in the table forever and pin
-	//     `scheduler_running_stale_total > 0`. Marking it FAILED keeps
-	//     the gauge truthful and (because tryClaim's
-	//     retry-from-FAILED branch is still eligible at the same
-	//     plan_time when attempts remain) preserves the retry path.
-	//
-	//   * Reentrant `every_plan` jobs would otherwise rely on the
-	//     stale-steal branch in tryClaim — but that only fires when
-	//     the same plan_time is being attempted again, which races
-	//     this sweep harmlessly: whichever wins, the row leaves
-	//     RUNNING.
-	//
-	// MUL-2957 review: see张大彪's blocker #1.
+	// Close abandoned RUNNING leases before planning. This keeps audit/metrics
+	// truthful for latest-only jobs and preserves retry eligibility; every-plan
+	// claims may race safely because either path transitions the row from RUNNING.
 	if affected, err := markStaleAsFailed(ctx, m.pool, job.Name, now); err != nil {
 		m.logger.Warn("scheduler: mark stale failed",
 			"job", job.Name, "error", err)
@@ -197,11 +154,6 @@ func (m *Manager) plansForTick(
 ) ([]time.Time, error) {
 	eligible := now.Add(-job.ScheduleDelay)
 	latest := FloorPlan(eligible, job.Cadence)
-	if latest.After(eligible) {
-		// Truncate landed in the future — only happens at very small
-		// cadences with rounding; nothing is due yet.
-		return nil, nil
-	}
 
 	switch job.CatchUpMode {
 	case CatchUpLatestOnly:
@@ -258,9 +210,6 @@ func (m *Manager) plansForTick(
 	}
 }
 
-// (legacy wrapper removed; the previous latestPlan_ shim is no longer
-// needed because plansForTick renames its bucket variable to `latest`.)
-
 // processPlan owns one (job, scope, plan_time) attempt: claim → run
 // handler with heartbeat → terminal update.
 func (m *Manager) processPlan(
@@ -270,21 +219,16 @@ func (m *Manager) processPlan(
 	planTime time.Time,
 	now time.Time,
 ) {
-	c, err := tryClaim(ctx, m.pool, job, scope, planTime, now, m.opts.RunnerID)
+	c, err := tryClaim(ctx, m.pool, job, scope, planTime, now, m.runnerID)
 	if err != nil {
 		m.logger.Warn("scheduler claim error",
 			"job", job.Name, "scope", scope.String(),
 			"plan_time", planTime.Format(time.RFC3339), "error", err)
 		return
 	}
-	if c.Conflicted && !c.Won && !c.Stole {
+	if !c.Won && !c.Stole {
 		// Another runner owns this plan, or it is already terminal.
 		// Silent no-op is the expected case.
-		return
-	}
-	if !c.Won && !c.Stole {
-		// Defensive — should not be reachable but covers future SQL
-		// changes that add a fourth path.
 		return
 	}
 
@@ -344,7 +288,7 @@ func (m *Manager) runClaimed(
 			Scope:    scope,
 			PlanTime: planTime,
 			Attempt:  c.Attempt,
-			RunnerID: m.opts.RunnerID,
+			RunnerID: m.runnerID,
 			Heartbeat: func(ctx context.Context) error {
 				return heartbeat(ctx, m.pool, c.ID, c.LeaseToken, job.StaleTimeout)
 			},

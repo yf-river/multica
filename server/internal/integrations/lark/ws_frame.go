@@ -47,11 +47,10 @@ const (
 // FrameHeaderType enumerates the values Lark puts in the Frame
 // header keyed `type`. These drive per-frame routing logic.
 const (
-	FrameHeaderTypeKey   = "type"
-	FrameHeaderTypeEvent = "event"
-	FrameHeaderTypeCard  = "card"
-	FrameHeaderTypePing  = "ping"
-	FrameHeaderTypePong  = "pong"
+	FrameHeaderTypeKey  = "type"
+	FrameHeaderTypeCard = "card"
+	FrameHeaderTypePing = "ping"
+	FrameHeaderTypePong = "pong"
 
 	// FrameHeaderMessageIDKey is the dedup / chunk key Lark sets on
 	// each data frame; reused as-is in the ACK so server can correlate.
@@ -66,9 +65,9 @@ const (
 	FrameHeaderSeqKey = "seq"
 )
 
-// FrameHeader is one (key, value) pair in Frame.Headers. Equivalent to
+// frameHeader is one (key, value) pair in Frame.Headers. Equivalent to
 // the SDK's pbbp2.Header.
-type FrameHeader struct {
+type frameHeader struct {
 	Key   string
 	Value string
 }
@@ -87,7 +86,7 @@ type Frame struct {
 	LogID           uint64        // proto field 2 (req)
 	Service         int32         // proto field 3 (req)
 	Method          int32         // proto field 4 (req)
-	Headers         []FrameHeader // proto field 5 (rep)
+	Headers         []frameHeader // proto field 5 (rep)
 	PayloadEncoding string        // proto field 6 (opt)
 	PayloadType     string        // proto field 7 (opt)
 	Payload         []byte        // proto field 8 (opt)
@@ -132,7 +131,7 @@ func (f *Frame) Marshal() []byte {
 	buf = protowire.AppendTag(buf, 4, protowire.VarintType)
 	buf = protowire.AppendVarint(buf, uint64(uint32(f.Method)))
 
-	// Repeated headers — emit one length-prefixed entry per FrameHeader.
+	// Repeated headers — emit one length-prefixed entry per frameHeader.
 	// Empty Headers list emits nothing, matching the SDK guard.
 	for _, h := range f.Headers {
 		buf = protowire.AppendTag(buf, 5, protowire.BytesType)
@@ -169,7 +168,7 @@ func (f *Frame) Marshal() []byte {
 	return buf
 }
 
-func headerSize(h FrameHeader) int {
+func headerSize(h frameHeader) int {
 	// Both fields are req and always emitted; their byte cost is
 	// tag + length-prefix(len) + len.
 	return protowire.SizeTag(1) + protowire.SizeBytes(len(h.Key)) +
@@ -300,39 +299,39 @@ func UnmarshalFrame(b []byte) (*Frame, error) {
 	return f, nil
 }
 
-func unmarshalHeader(b []byte) (FrameHeader, error) {
-	var h FrameHeader
+func unmarshalHeader(b []byte) (frameHeader, error) {
+	var h frameHeader
 	for len(b) > 0 {
 		num, typ, n := protowire.ConsumeTag(b)
 		if err := protowire.ParseError(n); err != nil {
-			return FrameHeader{}, fmt.Errorf("ws frame: header tag: %w", err)
+			return frameHeader{}, fmt.Errorf("ws frame: header tag: %w", err)
 		}
 		b = b[n:]
 		switch num {
 		case 1:
 			if typ != protowire.BytesType {
-				return FrameHeader{}, fmt.Errorf("ws frame: header.key expects bytes, got %v", typ)
+				return frameHeader{}, fmt.Errorf("ws frame: header.key expects bytes, got %v", typ)
 			}
 			s, m := protowire.ConsumeString(b)
 			if err := protowire.ParseError(m); err != nil {
-				return FrameHeader{}, fmt.Errorf("ws frame: header.key: %w", err)
+				return frameHeader{}, fmt.Errorf("ws frame: header.key: %w", err)
 			}
 			h.Key = s
 			b = b[m:]
 		case 2:
 			if typ != protowire.BytesType {
-				return FrameHeader{}, fmt.Errorf("ws frame: header.value expects bytes, got %v", typ)
+				return frameHeader{}, fmt.Errorf("ws frame: header.value expects bytes, got %v", typ)
 			}
 			s, m := protowire.ConsumeString(b)
 			if err := protowire.ParseError(m); err != nil {
-				return FrameHeader{}, fmt.Errorf("ws frame: header.value: %w", err)
+				return frameHeader{}, fmt.Errorf("ws frame: header.value: %w", err)
 			}
 			h.Value = s
 			b = b[m:]
 		default:
 			m := protowire.ConsumeFieldValue(num, typ, b)
 			if err := protowire.ParseError(m); err != nil {
-				return FrameHeader{}, fmt.Errorf("ws frame: skip header field %d: %w", num, err)
+				return frameHeader{}, fmt.Errorf("ws frame: skip header field %d: %w", num, err)
 			}
 			b = b[m:]
 		}
@@ -348,7 +347,7 @@ func NewPingFrame(serviceID int32) *Frame {
 	return &Frame{
 		Method:  FrameMethodControl,
 		Service: serviceID,
-		Headers: []FrameHeader{{Key: FrameHeaderTypeKey, Value: FrameHeaderTypePing}},
+		Headers: []frameHeader{{Key: FrameHeaderTypeKey, Value: FrameHeaderTypePing}},
 	}
 }
 
@@ -358,7 +357,7 @@ func NewPongFrame(serviceID int32) *Frame {
 	return &Frame{
 		Method:  FrameMethodControl,
 		Service: serviceID,
-		Headers: []FrameHeader{{Key: FrameHeaderTypeKey, Value: FrameHeaderTypePong}},
+		Headers: []frameHeader{{Key: FrameHeaderTypeKey, Value: FrameHeaderTypePong}},
 	}
 }
 

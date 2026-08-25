@@ -2,33 +2,29 @@
 
 import { memo, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AppLink } from "../../navigation";
 import type { Issue } from "@multica/core/types";
-import { formatDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly } from "@multica/core/issues/date";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { PriorityIcon } from "./priority-icon";
 import { ProgressRing } from "./progress-ring";
-import { IssueActionsContextMenu } from "../actions";
+import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { TAPDSourceBadge } from "./tapd-source-badge";
+import { issueAnimateLayoutChanges } from "../utils/drag-utils";
 
 export interface ChildProgress {
   done: number;
   total: number;
-}
-
-function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 function ListRowContent({
@@ -143,12 +139,12 @@ function ListRowContent({
           )}
           {showStartDate && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              {formatDate(issue.start_date!)}
+              {formatShortDateOnly(issue.start_date, "zh-CN")}
             </span>
           )}
           {showDueDate && (
             <span className="shrink-0 text-xs text-muted-foreground">
-              {formatDate(issue.due_date!)}
+              {formatShortDateOnly(issue.due_date, "zh-CN")}
             </span>
           )}
           {showAssignee && (
@@ -177,12 +173,6 @@ export const ListRow = memo(function ListRow({
   return <ListRowContent issue={issue} childProgress={childProgress} />;
 });
 
-const animateLayoutChanges: AnimateLayoutChanges = (args) => {
-  const { isSorting, wasDragging } = args;
-  if (isSorting || wasDragging) return false;
-  return defaultAnimateLayoutChanges(args);
-};
-
 const stopDrag = (e: React.SyntheticEvent) => {
   e.stopPropagation();
 };
@@ -206,7 +196,7 @@ export const DraggableListRow = memo(function DraggableListRow({
   } = useSortable({
     id: issue.id,
     data: { status: issue.status },
-    animateLayoutChanges,
+    animateLayoutChanges: issueAnimateLayoutChanges,
     disabled: disableSorting ? { droppable: true } : undefined,
   });
 

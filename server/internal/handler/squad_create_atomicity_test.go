@@ -1,0 +1,141 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+func requestCreateSquad(t *testing.T, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest(http.MethodPost, "/api/squads", body), "workspaceId", testWorkspaceID)
+	testHandler.CreateSquad(response, request)
+	return response
+}
+
+func installSquadMemberInsertFailure(t *testing.T, squadName, condition string) {
+	t.Helper()
+	suffix := uuid.NewString()
+	functionName := quoteIdentifier("fail_squad_member_" + suffix)
+	triggerName := quoteIdentifier("fail_squad_member_trigger_" + suffix)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF %s THEN RAISE EXCEPTION 'forced squad membership failure'; END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE INSERT ON squad_member
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, condition, triggerName, functionName)); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON squad_member`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, squadName)
+	})
+}
+
+func assertSquadCreateRolledBack(t *testing.T, squadName string) {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, squadName).Scan(&count); err != nil {
+		t.Fatalf("count squads: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("failed membership left %d squad rows", count)
+	}
+}
+
+func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
+	requireHandlerDatabase(t)
+	leaderID := createHandlerTestAgent(t, "squad initial leader "+uuid.NewString(), nil)
+	memberID := createHandlerTestAgent(t, "squad initial member "+uuid.NewString(), nil)
+	title := "squad initial members " + uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title)
+	})
+
+	w := requestCreateSquad(t, map[string]any{
+		"name":      title,
+		"leader_id": leaderID,
+		"scope":     "personal",
+		"members": []map[string]any{{
+			"member_type": "agent",
+			"member_id":   memberID,
+			"role":        "reviewer",
+		}},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s, want 201", w.Code, w.Body.String())
+	}
+	var resp squadResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MemberCount != 2 || len(resp.MemberPreview) != 2 {
+		t.Fatalf("member summary = count %d preview %#v, want leader and initial member", resp.MemberCount, resp.MemberPreview)
+	}
+	if resp.MemberPreview[0].MemberID != leaderID || resp.MemberPreview[0].Role != "leader" {
+		t.Fatalf("leader preview = %#v", resp.MemberPreview[0])
+	}
+	if resp.MemberPreview[1].MemberID != memberID || resp.MemberPreview[1].Role != "reviewer" {
+		t.Fatalf("initial member preview = %#v", resp.MemberPreview[1])
+	}
+
+	var memberCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad_member WHERE squad_id = $1`, resp.ID).Scan(&memberCount); err != nil {
+		t.Fatalf("count members: %v", err)
+	}
+	if memberCount != 2 {
+		t.Fatalf("persisted member count = %d, want 2", memberCount)
+	}
+}
+
+func TestCreateSquad_LeaderMembershipFailureRollsBackSquad(t *testing.T) {
+	requireHandlerDatabase(t)
+	leaderID := createHandlerTestAgent(
+		t,
+		"squad atomic leader "+uuid.NewString(),
+		nil,
+	)
+	title := "squad atomic failure " + uuid.NewString()
+	installSquadMemberInsertFailure(t, title, fmt.Sprintf("EXISTS (SELECT 1 FROM squad WHERE id = NEW.squad_id AND name = %s)", quoteSQLLiteral(title)))
+	w := requestCreateSquad(t, map[string]any{
+		"name":      title,
+		"leader_id": leaderID,
+		"scope":     "personal",
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("create = %d %s, want 500", w.Code, w.Body.String())
+	}
+	assertSquadCreateRolledBack(t, title)
+}
+
+func TestCreateSquad_InitialMemberFailureRollsBackSquadAndLeader(t *testing.T) {
+	requireHandlerDatabase(t)
+	leaderID := createHandlerTestAgent(t, "squad rollback leader "+uuid.NewString(), nil)
+	memberID := createHandlerTestAgent(t, "squad rollback member "+uuid.NewString(), nil)
+	title := "squad initial member failure " + uuid.NewString()
+	installSquadMemberInsertFailure(t, title, fmt.Sprintf("NEW.member_id = %s::uuid", quoteSQLLiteral(memberID)))
+	w := requestCreateSquad(t, map[string]any{
+		"name":      title,
+		"leader_id": leaderID,
+		"scope":     "personal",
+		"members": []map[string]any{{
+			"member_type": "agent",
+			"member_id":   memberID,
+		}},
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("create = %d %s, want 500", w.Code, w.Body.String())
+	}
+	assertSquadCreateRolledBack(t, title)
+}

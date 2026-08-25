@@ -1,12 +1,16 @@
 package repocache
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testLogger() *slog.Logger {
@@ -59,6 +63,55 @@ func TestGitEnv(t *testing.T) {
 	}
 	if !envHas(env, "GIT_CONFIG_VALUE_0=*") {
 		t.Error("gitEnv() must include GIT_CONFIG_VALUE_0=*")
+	}
+}
+
+func TestRemoteGitCommandHonorsCancellation(t *testing.T) {
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	if err := os.WriteFile(gitPath, []byte("#!/bin/sh\nexec /bin/sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runRemoteGitContext(ctx, "fetch", "origin")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v; want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("cancelled git command returned after %s", elapsed)
+	}
+}
+
+func TestSyncFailsWhenRemoteDefaultBranchRefreshFails(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	wrapper := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  *"remote set-head origin --auto"*) echo "set-head blocked" >&2; exit 42 ;;
+esac
+exec %q "$@"
+`, realGit)
+	if err := os.WriteFile(gitPath, []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	err = cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}})
+	if err == nil || !strings.Contains(err.Error(), "refresh remote default branch") {
+		t.Fatalf("Sync error=%v; want explicit default-branch refresh failure", err)
+	}
+	if cached := cache.Lookup("ws-1", sourceRepo); cached != "" {
+		t.Fatalf("failed clone remained visible in cache: %s", cached)
 	}
 }
 
@@ -196,7 +249,9 @@ func TestIsBareRepo(t *testing.T) {
 
 	// A directory with a HEAD file should be detected as bare.
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if !isBareRepo(dir) {
 		t.Error("expected bare repo to be detected")
 	}
@@ -212,6 +267,29 @@ func TestIsBareRepo(t *testing.T) {
 func createTestRepo(t *testing.T) string {
 	t.Helper()
 	return createTestRepoAt(t, t.TempDir())
+}
+
+func createSyncedCache(t *testing.T) (*Cache, string) {
+	t.Helper()
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	return cache, sourceRepo
+}
+
+func issueWorktreeParams(t *testing.T, sourceRepo string) WorktreeParams {
+	t.Helper()
+	return WorktreeParams{
+		WorkspaceID:        "ws-1",
+		RepoURL:            sourceRepo,
+		WorkDir:            t.TempDir(),
+		AgentName:          "PM",
+		TaskID:             "task-1",
+		BranchNameOverride: "agent/issue/issue123",
+		PreserveExisting:   true,
+	}
 }
 
 // createTestRepoAt initializes a git repo at the given directory (which
@@ -427,13 +505,7 @@ func gitHead(t *testing.T, repoPath string) string {
 
 func TestWorktreeFromCache(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	if barePath == "" {
@@ -446,7 +518,7 @@ func TestWorktreeFromCache(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("worktree add failed: %s: %v", out, err)
 	}
-	defer exec.Command("git", "-C", barePath, "worktree", "remove", "--force", worktreeDir).Run()
+	defer func() { _ = exec.Command("git", "-C", barePath, "worktree", "remove", "--force", worktreeDir).Run() }()
 
 	// Verify worktree exists and is on the right branch.
 	cmd = exec.Command("git", "-C", worktreeDir, "branch", "--show-current")
@@ -461,13 +533,7 @@ func TestWorktreeFromCache(t *testing.T) {
 
 func TestCreateWorktree(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -502,26 +568,85 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeFailsWhenRemoteCannotBeRefreshed(t *testing.T) {
+	cache, sourceRepo := createSyncedCache(t)
+	offlinePath := sourceRepo + "-offline"
+	if err := os.Rename(sourceRepo, offlinePath); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Rename(offlinePath, sourceRepo) })
+	workDir := t.TempDir()
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     workDir,
+		AgentName:   "Reviewer",
+		TaskID:      "task-fetch-failure",
+	})
+	if err == nil || result != nil || !strings.Contains(err.Error(), "fetch repo before checkout") {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	entries, readErr := os.ReadDir(workDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("failed checkout left worktree entries=%v err=%v", entries, readErr)
+	}
+}
+
+func TestManagedWorktreePathRejectsOutsideAndSymlinkParents(t *testing.T) {
+	managedRoot := t.TempDir()
+	cacheRoot := filepath.Join(managedRoot, ".repos")
+	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := New(cacheRoot, testLogger())
+	workDir := filepath.Join(managedRoot, "workspace", "task")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.managedWorktreePath(workDir, "https://github.com/acme/repo.git")
+	if err != nil || path != filepath.Join(workDir, "repo") {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+	if _, err := cache.managedWorktreePath(t.TempDir(), "https://github.com/acme/repo.git"); err == nil {
+		t.Fatal("outside worktree parent was accepted")
+	}
+	if _, err := cache.managedWorktreePath(filepath.Join(cacheRoot, "work"), "https://github.com/acme/repo.git"); err == nil {
+		t.Fatal("repo-cache child was accepted as worktree parent")
+	}
+	outside := t.TempDir()
+	symlinkParent := filepath.Join(managedRoot, "symlink-parent")
+	if err := os.Symlink(outside, symlinkParent); err == nil {
+		if _, err := cache.managedWorktreePath(symlinkParent, "https://github.com/acme/repo.git"); err == nil {
+			t.Fatal("symlinked outside parent was accepted")
+		}
+	}
+	if _, err := cache.managedWorktreePath(workDir, "https://github.com/acme/.."); err == nil {
+		t.Fatal("unsafe derived repository directory was accepted")
+	}
+}
+
+func TestWorkspaceCacheDirRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	cache := New(root, testLogger())
+	path, err := cache.workspaceCacheDir("workspace-1")
+	if err != nil || path != filepath.Join(root, "workspace-1") {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+	for _, invalid := range []string{"", ".", "..", "../outside", "nested/workspace"} {
+		if _, err := cache.workspaceCacheDir(invalid); err == nil {
+			t.Fatalf("invalid workspace segment %q was accepted", invalid)
+		}
+		if got := cache.Lookup(invalid, "https://github.com/acme/repo.git"); got != "" {
+			t.Fatalf("Lookup(%q) escaped cache: %q", invalid, got)
+		}
+	}
+}
+
 func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
+	cache, sourceRepo := createSyncedCache(t)
 
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-
-	workDir := t.TempDir()
-	params := WorktreeParams{
-		WorkspaceID:        "ws-1",
-		RepoURL:            sourceRepo,
-		WorkDir:            workDir,
-		AgentName:          "PM",
-		TaskID:             "task-1",
-		BranchNameOverride: "agent/issue/issue123",
-		PreserveExisting:   true,
-	}
+	params := issueWorktreeParams(t, sourceRepo)
 	result, err := cache.CreateWorktree(params)
 	if err != nil {
 		t.Fatalf("CreateWorktree first call failed: %v", err)
@@ -546,26 +671,97 @@ func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeReportsExistingWorktreeExcludeFailure(t *testing.T) {
+	cache, sourceRepo := createSyncedCache(t)
+
+	params := WorktreeParams{
+		WorkspaceID:      "ws-1",
+		RepoURL:          sourceRepo,
+		WorkDir:          t.TempDir(),
+		AgentName:        "PM",
+		TaskID:           "exclude-failure",
+		PreserveExisting: true,
+	}
+	result, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("initial CreateWorktree failed: %v", err)
+	}
+
+	gitDir := resolveGitDir(t, result.Path)
+	infoPath := filepath.Join(gitDir, "info")
+	if err := os.RemoveAll(infoPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(infoPath, []byte("blocks exclude directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := cache.CreateWorktree(params)
+	if err == nil || got != nil || !strings.Contains(err.Error(), "configure git exclude") {
+		t.Fatalf("result=%#v err=%v; want explicit exclude configuration failure", got, err)
+	}
+}
+
+func TestCreateWorktreeRollsBackWhenHookConfigurationFails(t *testing.T) {
+	cache, sourceRepo := createSyncedCache(t)
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	hooksPath := filepath.Join(barePath, "hooks")
+	if err := os.RemoveAll(hooksPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksPath, []byte("blocks hooks directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	branchesBefore := gitAgentBranches(t, barePath)
+	workDir := t.TempDir()
+
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID:         "ws-1",
+		RepoURL:             sourceRepo,
+		WorkDir:             workDir,
+		AgentName:           "Test Agent",
+		TaskID:              "hook-failure",
+		CoAuthoredByEnabled: true,
+	})
+	if err == nil || result != nil || !strings.Contains(err.Error(), "configure co-authored-by hook") {
+		t.Fatalf("result=%#v err=%v; want explicit hook configuration failure", result, err)
+	}
+	entries, readErr := os.ReadDir(workDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("failed checkout left worktree entries=%v err=%v", entries, readErr)
+	}
+	if branchesAfter := gitAgentBranches(t, barePath); branchesAfter != branchesBefore {
+		t.Fatalf("failed checkout leaked branch: before=%q after=%q", branchesBefore, branchesAfter)
+	}
+}
+
+func resolveGitDir(t *testing.T, worktreePath string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-dir").Output()
+	if err != nil {
+		t.Fatalf("resolve git dir: %v", err)
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(worktreePath, gitDir)
+	}
+	return filepath.Clean(gitDir)
+}
+
+func gitAgentBranches(t *testing.T, barePath string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", barePath, "for-each-ref", "--format=%(refname)", "refs/heads/agent/").Output()
+	if err != nil {
+		t.Fatalf("list agent branches: %v", err)
+	}
+	return string(out)
+}
+
 func TestCreateWorktreePreserveExistingRestoresIssueBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
+	cache, sourceRepo := createSyncedCache(t)
 
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-
-	workDir := t.TempDir()
-	params := WorktreeParams{
-		WorkspaceID:        "ws-1",
-		RepoURL:            sourceRepo,
-		WorkDir:            workDir,
-		AgentName:          "PM",
-		TaskID:             "task-1",
-		BranchNameOverride: "agent/issue/issue123",
-		PreserveExisting:   true,
-	}
+	params := issueWorktreeParams(t, sourceRepo)
 	result, err := cache.CreateWorktree(params)
 	if err != nil {
 		t.Fatalf("CreateWorktree first call failed: %v", err)
@@ -594,13 +790,7 @@ func TestCreateWorktreePreserveExistingRestoresIssueBranch(t *testing.T) {
 
 func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	result, err := cache.CreateWorktree(WorktreeParams{
 		WorkspaceID: "ws-1",
@@ -619,13 +809,7 @@ func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
 
 func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -664,6 +848,19 @@ func gitInfoExclude(t *testing.T, worktreePath string) string {
 		t.Fatalf("read .git/info/exclude failed: %v", err)
 	}
 	return string(data)
+}
+
+func TestHasGitExcludePatternMatchesWholeLines(t *testing.T) {
+	contents := []byte(".agent_context_old\n# CLAUDE.md backup\nartifacts\n")
+	if hasGitExcludePattern(contents, ".agent_context") {
+		t.Fatal("substring was treated as an existing exclude pattern")
+	}
+	if hasGitExcludePattern(contents, "CLAUDE.md") {
+		t.Fatal("comment was treated as an existing exclude pattern")
+	}
+	if !hasGitExcludePattern(contents, "artifacts") {
+		t.Fatal("exact exclude line was not recognized")
+	}
 }
 
 func TestCreateWorktreeNotCached(t *testing.T) {
@@ -789,11 +986,7 @@ func TestCreateWorktreeWithRequestedTagRef(t *testing.T) {
 
 func TestCreateWorktreeWithUnknownRequestedRef(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cache := New(t.TempDir(), testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	_, err := cache.CreateWorktree(WorktreeParams{
 		WorkspaceID: "ws-1",
@@ -856,13 +1049,8 @@ func runGitAuthored(t *testing.T, repoPath string, args ...string) {
 	}
 }
 
-// TestCreateWorktreeFetchesDespiteAgentBranchOnRemote reproduces the original
-// stale-cache bug. Under the legacy mirror refspec (+refs/heads/*:refs/heads/*)
-// the sequence below would break on the second CreateWorktree because `git
-// fetch` tries to overwrite refs/heads/agent/... which is locked by the first
-// worktree, and the whole fetch aborts — silently discarding the main-branch
-// update too. Under the modern remote-tracking refspec, fetched heads land in
-// refs/remotes/origin/* and no longer collide with worktree-locked refs.
+// Agent branches and fetched remote branches occupy separate namespaces, so a
+// pushed Agent branch cannot block a later default-branch refresh.
 func TestCreateWorktreeFetchesDespiteAgentBranchOnRemote(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
@@ -896,7 +1084,7 @@ func TestCreateWorktreeFetchesDespiteAgentBranchOnRemote(t *testing.T) {
 
 	// Simulate the agent pushing its branch back to origin (i.e. opening a PR).
 	// Now sourceRepo has refs/heads/agent/... matching the locked ref in the
-	// bare cache, which is the condition that triggered the legacy bug.
+	// bare cache, exercising the namespace separation invariant.
 	if err := os.WriteFile(filepath.Join(result1.Path, "hello.txt"), []byte("hi\n"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -911,10 +1099,7 @@ func TestCreateWorktreeFetchesDespiteAgentBranchOnRemote(t *testing.T) {
 	sourceHead := gitRefCommit(t, sourceRepo, "refs/heads/"+defaultBranch)
 	runGitAuthored(t, sourceRepo, "checkout", "--detach", "HEAD")
 
-	// Second worktree: CreateWorktree fetches first. Under the legacy refspec
-	// this fetch would fail (refusing to fetch into locked refs/heads/agent/...)
-	// and the worktree would be based on the stale snapshot. Under the modern
-	// refspec this succeeds and the new worktree sees sourceHead.
+	// Second worktree: CreateWorktree fetches first and must see sourceHead.
 	workDir2 := t.TempDir()
 	result2, err := cache.CreateWorktree(WorktreeParams{
 		WorkspaceID: "ws-1",
@@ -947,6 +1132,26 @@ func currentBranchName(t *testing.T, repoPath string) string {
 	return name
 }
 
+func TestValidateBareCloneLayoutRejectsNonCurrentRefspec(t *testing.T) {
+	t.Parallel()
+	cache, sourceRepo := createSyncedCache(t)
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	if err := validateBareCloneLayout(barePath); err != nil {
+		t.Fatalf("new clone did not establish current layout: %v", err)
+	}
+
+	if err := setFetchRefspec(barePath, "+refs/heads/*:refs/heads/*"); err != nil {
+		t.Fatalf("set non-current refspec: %v", err)
+	}
+	err := validateBareCloneLayout(barePath)
+	if err == nil || !strings.Contains(err.Error(), "unsupported repo cache layout") {
+		t.Fatalf("validateBareCloneLayout error=%v", err)
+	}
+	if err := gitFetch(barePath); err == nil || !strings.Contains(err.Error(), "remove the cache and sync again") {
+		t.Fatalf("gitFetch did not reject non-current cache: %v", err)
+	}
+}
+
 // TestCreateWorktreePathCollisionDoesNotLeakBranch verifies the secondary bug
 // fix: when the worktree path already exists as a non-worktree (e.g. a plain
 // directory), createWorktree must fail cleanly without leaking a branch into
@@ -955,12 +1160,7 @@ func currentBranchName(t *testing.T, repoPath string) string {
 // timestamp-suffixed branch before hitting the same path error.
 func TestCreateWorktreePathCollisionDoesNotLeakBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	// Pre-create the target worktree path as a plain non-empty directory.
@@ -996,23 +1196,16 @@ func TestCreateWorktreePathCollisionDoesNotLeakBranch(t *testing.T) {
 	}
 }
 
-// TestGetRemoteDefaultBranchScansForCustomDefault verifies fallback (3) of
-// getRemoteDefaultBranch: when the cache has refs/remotes/origin/<custom>
-// (e.g. develop, trunk) but no refs/remotes/origin/HEAD and no main/master,
-// the function picks the custom branch instead of returning empty.
-func TestGetRemoteDefaultBranchScansForCustomDefault(t *testing.T) {
+// A branch ref alone is not evidence that it is the remote default. Current
+// caches require the origin/HEAD established by a successful remote refresh.
+func TestGetRemoteDefaultBranchRequiresOriginHeadForCustomBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	// Resolve the existing default branch's commit so we can repoint a
 	// custom-named ref at it, then wipe the standard refs to force the
-	// fallback path.
+	// missing-origin/HEAD rejection path.
 	existing := getRemoteDefaultBranch(barePath)
 	if existing == "" {
 		t.Fatalf("precondition: cache should have a default branch right after sync")
@@ -1028,9 +1221,28 @@ func TestGetRemoteDefaultBranchScansForCustomDefault(t *testing.T) {
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/main").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/master").Run()
 
-	got := getRemoteDefaultBranch(barePath)
-	if got != "refs/remotes/origin/develop" {
-		t.Fatalf("getRemoteDefaultBranch = %q, want refs/remotes/origin/develop", got)
+	if got := getRemoteDefaultBranch(barePath); got != "" {
+		t.Fatalf("getRemoteDefaultBranch = %q, want no guessed custom branch", got)
+	}
+}
+
+func TestGetRemoteDefaultBranchRejectsLocalBareHead(t *testing.T) {
+	t.Parallel()
+	cache, sourceRepo := createSyncedCache(t)
+	barePath := cache.Lookup("ws-1", sourceRepo)
+
+	// Remove current remote metadata while leaving an unrelated local HEAD.
+	if err := exec.Command("sh", "-c", "rm -rf '"+filepath.Join(barePath, "refs", "remotes")+"'").Run(); err != nil {
+		t.Fatalf("wipe refs/remotes: %v", err)
+	}
+
+	// Sanity: origin/* is gone, HEAD is still a symbolic ref to refs/heads/*.
+	if out, err := exec.Command("git", "-C", barePath, "for-each-ref", "refs/remotes/origin/").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("precondition failed: refs/remotes/origin/* should be empty, got %s", out)
+	}
+
+	if got := getRemoteDefaultBranch(barePath); got != "" {
+		t.Fatalf("getRemoteDefaultBranch = %q, want no local-head guess", got)
 	}
 }
 
@@ -1089,20 +1301,9 @@ func TestGitFetchRefreshesOriginHeadAfterDefaultChange(t *testing.T) {
 	}
 }
 
-// TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault verifies step 3
-// of the resolver: when the cache has a non-standard default branch name
-// (trunk, develop, …) and `git remote set-head origin --auto` didn't
-// populate refs/remotes/origin/HEAD, the resolver must use the bare repo's
-// own HEAD as a hint to pick refs/remotes/origin/<same name> — NOT fall
-// through to a refname-order scan that would pick the wrong branch.
-func TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault(t *testing.T) {
+func TestGetRemoteDefaultBranchDoesNotUseBareHeadHint(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	existing := getRemoteDefaultBranch(barePath)
@@ -1124,15 +1325,13 @@ func TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault(t *testing.T) {
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/trunk", commit)
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/feature-alpha", commit)
 
-	// Knock out the ahead-of-step-3 fallbacks so resolution must rely on
-	// the bare-HEAD hint.
+	// Remove origin/HEAD; local and same-name refs must not replace it.
 	_ = exec.Command("git", "-C", barePath, "symbolic-ref", "-d", "refs/remotes/origin/HEAD").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/main").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/master").Run()
 
-	got := getRemoteDefaultBranch(barePath)
-	if got != "refs/remotes/origin/trunk" {
-		t.Fatalf("getRemoteDefaultBranch = %q, want refs/remotes/origin/trunk (via bare-HEAD hint)", got)
+	if got := getRemoteDefaultBranch(barePath); got != "" {
+		t.Fatalf("getRemoteDefaultBranch = %q, want no bare-HEAD guess", got)
 	}
 }
 
@@ -1141,13 +1340,7 @@ func TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault(t *testing.T) {
 // for the Multica Agent to every commit made in the worktree.
 func TestCreateWorktreeInstallsCoAuthoredByHook(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -1185,13 +1378,7 @@ func TestCreateWorktreeInstallsCoAuthoredByHook(t *testing.T) {
 // duplicate Co-authored-by trailer if one is already present in the message.
 func TestCoAuthoredByHookIdempotent(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -1235,13 +1422,7 @@ func TestCoAuthoredByHookIdempotent(t *testing.T) {
 // workspace setting.
 func TestCreateWorktreeRemovesCoAuthoredByHookWhenDisabled(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	// First worktree: setting enabled → hook installed in the bare cache's
 	// shared hooks dir.
@@ -1305,13 +1486,7 @@ func TestCreateWorktreeRemovesCoAuthoredByHookWhenDisabled(t *testing.T) {
 // untouched even when CoAuthoredByEnabled=false.
 func TestRemoveCoAuthoredByHookPreservesUserHook(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	hooksDir := filepath.Join(barePath, "hooks")
@@ -1345,6 +1520,37 @@ func TestRemoveCoAuthoredByHookPreservesUserHook(t *testing.T) {
 	}
 }
 
+func TestInstallCoAuthoredByHookDoesNotOverwriteUserHook(t *testing.T) {
+	cache, sourceRepo := createSyncedCache(t)
+
+	barePath := cache.Lookup("ws-1", sourceRepo)
+	hookPath := filepath.Join(barePath, "hooks", "prepare-commit-msg")
+	userHook := "#!/bin/sh\n# user hook, not Multica\nexit 0\n"
+	if err := os.WriteFile(hookPath, []byte(userHook), 0o755); err != nil {
+		t.Fatalf("seed user hook: %v", err)
+	}
+	workDir := t.TempDir()
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID:         "ws-1",
+		RepoURL:             sourceRepo,
+		WorkDir:             workDir,
+		AgentName:           "Test Agent",
+		TaskID:              "user-hook-conflict",
+		CoAuthoredByEnabled: true,
+	})
+	if err == nil || result != nil || !strings.Contains(err.Error(), "not managed by Multica") {
+		t.Fatalf("result=%#v err=%v; want user-hook conflict", result, err)
+	}
+	got, readErr := os.ReadFile(hookPath)
+	if readErr != nil || string(got) != userHook {
+		t.Fatalf("user hook changed: got=%q err=%v", string(got), readErr)
+	}
+	entries, readErr := os.ReadDir(workDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("failed checkout left worktree entries=%v err=%v", entries, readErr)
+	}
+}
+
 // TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty verifies step 4's
 // safe-scan gating: when the cache has multiple refs/remotes/origin/*
 // entries, none match the common defaults, and none match the bare HEAD
@@ -1353,12 +1559,7 @@ func TestRemoveCoAuthoredByHookPreservesUserHook(t *testing.T) {
 // on an arbitrary refname-order-first candidate.
 func TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	existing := getRemoteDefaultBranch(barePath)
@@ -1367,23 +1568,14 @@ func TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty(t *testing.T) {
 	}
 	commit := gitRefCommit(t, barePath, existing)
 
-	// Populate two unrelated origin branches (none of which match any of
-	// the step 1-3 fallbacks).
+	// Populate two unrelated origin branches.
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/feature-a", commit)
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/feature-b", commit)
 
-	// Wipe every ref a step 1-3 fallback could pick up:
-	//   step 1: origin/HEAD
-	//   step 2: origin/main, origin/master
-	//   step 3: the origin/<bareHEAD-name> bridge
+	// Remove the required origin/HEAD and common branch refs.
 	_ = exec.Command("git", "-C", barePath, "symbolic-ref", "-d", "refs/remotes/origin/HEAD").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/main").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/master").Run()
-	if bareRef := bareHeadBranch(barePath); bareRef != "" {
-		sameName := strings.TrimPrefix(bareRef, "refs/heads/")
-		_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/"+sameName).Run()
-	}
-
 	got := getRemoteDefaultBranch(barePath)
 	if got != "" {
 		t.Fatalf("getRemoteDefaultBranch = %q, want \"\" (ambiguous origin/* must not guess)", got)

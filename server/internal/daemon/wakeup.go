@@ -79,7 +79,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	}
 
 	headers := http.Header{}
-	if token := d.client.Token(); token != "" {
+	if token := d.client.token; token != "" {
 		headers.Set("Authorization", "Bearer "+token)
 	}
 	if d.client.platform != "" {
@@ -97,11 +97,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	// HTTP heartbeats resume the moment WS detaches so the freshness window
-	// from a previous connection cannot keep them silenced past disconnect.
-	defer d.clearWSHeartbeatAcks()
-
+	defer func() { _ = conn.Close() }()
 	d.logger.Info("task wakeup websocket connected", "runtimes", len(runtimeIDs))
 	signalTaskWakeup(taskWakeups, "")
 
@@ -165,10 +161,16 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 func (d *Daemon) runWSWriter(conn *websocket.Conn, writes <-chan []byte, done chan<- struct{}) {
 	defer close(done)
 	for frame := range writes {
-		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			d.logger.Debug("task wakeup websocket deadline failed", "error", err)
+			_ = conn.Close()
+			for range writes {
+			}
+			return
+		}
 		if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
 			d.logger.Debug("task wakeup websocket write failed", "error", err)
-			conn.Close()
+			_ = conn.Close()
 			// Drain remaining frames so the producers don't block forever
 			// while waiting for runTaskWakeupConnection to close the channel.
 			for range writes {
@@ -207,10 +209,10 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 		if ctx.Err() != nil {
 			return
 		}
-		frame, err := json.Marshal(protocol.Message{
-			Type:    protocol.EventDaemonHeartbeat,
-			Payload: marshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: rid}),
-		})
+		frame, err := protocol.MarshalMessage(
+			protocol.EventDaemonHeartbeat,
+			protocol.DaemonHeartbeatRequestPayload{RuntimeID: rid},
+		)
 		if err != nil {
 			d.logger.Debug("ws heartbeat marshal failed", "error", err, "runtime_id", rid)
 			continue
@@ -227,14 +229,6 @@ func (d *Daemon) sendWSHeartbeats(ctx context.Context, runtimeIDs []string, writ
 	}
 }
 
-func marshalRaw(v any) json.RawMessage {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	return data
-}
-
 // handleWSHeartbeatAck dispatches one heartbeat_ack received over the WS
 // task-wakeup connection. Extracted from readTaskWakeupMessages so tests can
 // exercise the branching logic without a real WebSocket.
@@ -242,12 +236,9 @@ func marshalRaw(v any) json.RawMessage {
 // A RuntimeGone=true ack is the WebSocket twin of an HTTP 404 "runtime not
 // found": it tells the daemon the runtime row was deleted server-side. We
 // route it through the same self-heal entry point as the HTTP path and do
-// NOT record a heartbeat freshness mark — pretending the runtime is alive
-// would let HTTP keep skipping its own heartbeat against the dead UUID.
-//
 // handleRuntimeGone uses the daemon root context for its register call, so
 // this function can safely pass any caller context here.
-func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatResponse) {
+func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *protocol.DaemonHeartbeatAckPayload) {
 	if ack == nil || ack.RuntimeID == "" {
 		return
 	}
@@ -255,7 +246,6 @@ func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatRespons
 		go d.handleRuntimeGone(ack.RuntimeID)
 		return
 	}
-	d.recordWSHeartbeatAck(ack.RuntimeID)
 	d.handleHeartbeatActions(ctx, ack.RuntimeID, ack)
 }
 
@@ -296,7 +286,7 @@ func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<-
 			}
 			go d.handleRuntimeProfilesChanged(payload)
 		case protocol.EventDaemonHeartbeatAck:
-			var ack HeartbeatResponse
+			var ack protocol.DaemonHeartbeatAckPayload
 			if err := json.Unmarshal(msg.Payload, &ack); err != nil {
 				d.logger.Debug("ws heartbeat ack invalid payload", "error", err)
 				continue

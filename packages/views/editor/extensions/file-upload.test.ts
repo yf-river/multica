@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import { ImageExtension } from "./index";
+import type { Attachment } from "@multica/core/types";
+import { createEditorExtensions } from "./index";
 import { uploadAndInsertFile } from "./file-upload";
+
+const ImageExtension = createEditorExtensions({}).find(
+  ({ name }) => name === "image",
+)!;
 
 const BLOB_URL = "blob:test-image";
 const FINAL_URL = "https://cdn.example.com/photo.png";
@@ -39,32 +43,19 @@ function deferred<T>() {
 }
 
 function makeUpload(
-  overrides: Partial<UploadResult> & {
+  overrides: Partial<Attachment> & {
     id: string;
-    link: string;
+    url: string;
     filename: string;
   },
-): UploadResult {
+): Attachment {
   return {
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "user-1",
-    url: overrides.link,
-    download_url: overrides.link,
-    markdown_url: overrides.link,
     content_type: "image/png",
     size_bytes: 1,
-    created_at: new Date(0).toISOString(),
-    // markdownLink defaults to the same value as `link` so legacy tests
-    // continue to assert the previous URL shape unless they pass an
-    // explicit override. Real callers always set it to the stable
-    // `/api/attachments/<id>/download` path via useFileUpload.
-    markdownLink: overrides.link,
     ...overrides,
+    url: overrides.url,
+    download_url: overrides.download_url ?? overrides.url,
+    markdown_url: overrides.markdown_url ?? overrides.url,
   };
 }
 
@@ -121,7 +112,7 @@ function firstImageAttrs(editor: Editor): Record<string, unknown> | null {
 describe("uploadAndInsertFile", () => {
   it("lets typing continue in the trailing paragraph after pasted image upload preview", async () => {
     const editor = makeEditor();
-    const upload = deferred<UploadResult | null>();
+    const upload = deferred<Attachment | null>();
     const handler = vi.fn(() => upload.promise);
     const file = new File(["image"], "photo.png", { type: "image/png" });
 
@@ -136,7 +127,7 @@ describe("uploadAndInsertFile", () => {
     );
 
     upload.resolve(
-      makeUpload({ id: "attachment-1", link: FINAL_URL, filename: "photo.png" }),
+      makeUpload({ id: "attachment-1", url: FINAL_URL, filename: "photo.png" }),
     );
     await uploadTask;
 
@@ -159,7 +150,7 @@ describe("uploadAndInsertFile", () => {
 
     try {
       const editor = makeEditor();
-      const upload = deferred<UploadResult | null>();
+      const upload = deferred<Attachment | null>();
       const handler = vi.fn(() => upload.promise);
       const file = new File(["image"], "photo.png", { type: "image/png" });
 
@@ -176,7 +167,7 @@ describe("uploadAndInsertFile", () => {
       expect(close).toHaveBeenCalled();
 
       upload.resolve(
-        makeUpload({ id: "attachment-1", link: FINAL_URL, filename: "photo.png" }),
+        makeUpload({ id: "attachment-1", url: FINAL_URL, filename: "photo.png" }),
       );
       await uploadTask;
 
@@ -193,21 +184,17 @@ describe("uploadAndInsertFile", () => {
     }
   });
 
-  it("persists markdownLink (the stable per-attachment URL) into the markdown body, not the short-lived storage URL", async () => {
-    // Regression pin for MUL-3130 review feedback. useFileUpload returns
-    // both `link` (= att.url, short-lived signed `/uploads/<key>?exp&sig`
-    // on LocalStorage) and `markdownLink` (= /api/attachments/<id>/download).
-    // The editor must persist `markdownLink` so the comment doesn't
-    // capture a 30-min signature, while non-markdown callers (avatar
-    // pickers, logo upload) keep using `link` for backward compatibility.
+  it("persists markdown_url into the markdown body, not the short-lived storage URL", async () => {
+    // The upload response carries a short-lived display URL and a durable
+    // markdown URL. Persist only the durable URL in editor content.
     const editor = makeEditor();
     const SIGNED_URL = "/uploads/workspaces/ws-1/photo.png?exp=42&sig=fake";
     const STABLE_URL = "/api/attachments/attachment-7/download";
     const handler = vi.fn(async () =>
       makeUpload({
         id: "attachment-7",
-        link: SIGNED_URL,
-        markdownLink: STABLE_URL,
+        url: SIGNED_URL,
+        markdown_url: STABLE_URL,
         filename: "photo.png",
       }),
     );

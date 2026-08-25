@@ -59,6 +59,7 @@ func newProfileCreateTestCmd() *cobra.Command {
 	cmd.Flags().String("command-name", "", "")
 	cmd.Flags().String("display-name", "", "")
 	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("fixed-args", "", "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
 }
@@ -69,6 +70,7 @@ func newProfileUpdateTestCmd() *cobra.Command {
 	cmd.Flags().String("display-name", "", "")
 	cmd.Flags().String("command-name", "", "")
 	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("fixed-args", "", "")
 	cmd.Flags().Bool("enabled", true, "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
@@ -137,6 +139,9 @@ func TestRunRuntimeProfileList(t *testing.T) {
 
 func TestRunRuntimeProfileCreate(t *testing.T) {
 	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, got *runtimeProfileRequest) {
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		_ = json.NewDecoder(r.Body).Decode(&got.body)
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1", "display_name": "Company Codex"})
@@ -146,6 +151,7 @@ func TestRunRuntimeProfileCreate(t *testing.T) {
 	_ = cmd.Flags().Set("protocol-family", "codex")
 	_ = cmd.Flags().Set("command-name", "company-codex")
 	_ = cmd.Flags().Set("display-name", "Company Codex")
+	_ = cmd.Flags().Set("fixed-args", `["--profile-mode","team"]`)
 
 	if err := runRuntimeProfileCreate(cmd, nil); err != nil {
 		t.Fatalf("runRuntimeProfileCreate: %v", err)
@@ -159,10 +165,8 @@ func TestRunRuntimeProfileCreate(t *testing.T) {
 	if got.body["protocol_family"] != "codex" || got.body["command_name"] != "company-codex" || got.body["display_name"] != "Company Codex" {
 		t.Errorf("unexpected body: %#v", got.body)
 	}
-	// fixed_args is intentionally NOT exposed by the CLI in v1 (the daemon does
-	// not yet wire it into the launch command), so it must never be sent.
-	if _, present := got.body["fixed_args"]; present {
-		t.Errorf("fixed_args must not be sent by the CLI, got %#v", got.body["fixed_args"])
+	if gotArgs, ok := got.body["fixed_args"].([]any); !ok || len(gotArgs) != 2 || gotArgs[0] != "--profile-mode" || gotArgs[1] != "team" {
+		t.Errorf("fixed_args = %#v", got.body["fixed_args"])
 	}
 	// visibility is intentionally NOT exposed by the CLI in v1 (server forces
 	// 'workspace'), so it must never be sent.
@@ -189,6 +193,18 @@ func TestRunRuntimeProfileCreateRequiresFlags(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeProfileFixedArgs(t *testing.T) {
+	for _, raw := range []string{`not-json`, `null`, `{"flag":true}`, `["--ok",""]`} {
+		if _, err := parseRuntimeProfileFixedArgs(raw); err == nil {
+			t.Errorf("parseRuntimeProfileFixedArgs(%q) succeeded", raw)
+		}
+	}
+	args, err := parseRuntimeProfileFixedArgs(`[]`)
+	if err != nil || len(args) != 0 {
+		t.Fatalf("explicit clear: args=%v err=%v", args, err)
+	}
+}
+
 func TestRunRuntimeProfileUpdateOnlySendsChangedFlags(t *testing.T) {
 	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, got *runtimeProfileRequest) {
 		_ = json.NewDecoder(r.Body).Decode(&got.body)
@@ -199,6 +215,7 @@ func TestRunRuntimeProfileUpdateOnlySendsChangedFlags(t *testing.T) {
 	cmd := newProfileUpdateTestCmd()
 	_ = cmd.Flags().Set("command-name", "new-codex")
 	_ = cmd.Flags().Set("enabled", "false")
+	_ = cmd.Flags().Set("fixed-args", `[]`)
 
 	if err := runRuntimeProfileUpdate(cmd, []string{"prof-1"}); err != nil {
 		t.Fatalf("runRuntimeProfileUpdate: %v", err)
@@ -209,7 +226,10 @@ func TestRunRuntimeProfileUpdateOnlySendsChangedFlags(t *testing.T) {
 	if got.path != "/api/workspaces/ws-123/runtime-profiles/prof-1" {
 		t.Errorf("path = %q, want .../runtime-profiles/prof-1", got.path)
 	}
-	// Only the two changed flags must be present.
+	if gotArgs, ok := got.body["fixed_args"].([]any); !ok || len(gotArgs) != 0 {
+		t.Errorf("fixed_args clear = %#v", got.body["fixed_args"])
+	}
+	// Only the changed flags must be present.
 	if got.body["command_name"] != "new-codex" {
 		t.Errorf("command_name = %v, want new-codex", got.body["command_name"])
 	}

@@ -23,8 +23,8 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
-import { api, ApiError } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { ApiError } from "@multica/core/api";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
@@ -32,15 +32,11 @@ import {
   useQuickCreateStore,
   type QuickCreateActorType,
 } from "@multica/core/issues/stores/quick-create-store";
-import {
-  runtimeListOptions,
-  checkQuickCreateCliVersion,
-  readRuntimeCliVersion,
-  MIN_QUICK_CREATE_CLI_VERSION,
-} from "@multica/core/runtimes";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { issueDetailOptions } from "@multica/core/issues/queries";
+import { quickCreateIssueWithRecovery, type CreateIssueSeed } from "@multica/core/issues";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
+import { canAssignAgentToIssue } from "@multica/core/permissions";
 import {
   contentReferencesAttachment,
   type Agent,
@@ -52,16 +48,19 @@ import {
 import { ActorAvatar } from "../common/actor-avatar";
 import { PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
-import { canAssignAgent } from "../issues/components/pickers/assignee-picker";
-import { DueDatePicker, PriorityPicker, StartDatePicker, StatusPicker } from "../issues/components";
+import {
+  DueDatePicker,
+  PriorityPicker,
+  StartDatePicker,
+  StatusPicker,
+} from "../issues/components/pickers";
 import {
   PropertyPicker,
   PickerItem,
   PickerSection,
   PickerEmpty,
 } from "../issues/components/pickers/property-picker";
-import { useAuthStore } from "@multica/core/auth";
-import { memberListOptions } from "@multica/core/workspace/queries";
+import { useCurrentMember } from "@multica/core/permissions";
 import {
   ContentEditor,
   type ContentEditorRef,
@@ -71,19 +70,15 @@ import {
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 
 type ActorSelection =
   | { type: "agent"; id: string }
   | { type: "squad"; id: string };
 
-// AgentCreatePanel — agent-mode body of the create-issue dialog. Renders
+// AgentCreatePanel is the body of the create-issue dialog. It renders
 // only the inner content; the surrounding `<Dialog>` AND `<DialogContent>`
-// (Portal + Overlay + Popup) are owned by CreateIssueDialog so mode-switching
-// swaps only this body. Lifting the Portal is what eliminates the close→open
-// animation flash — Base UI replays Popup enter/exit when DialogContent is
-// remounted, even inside a still-open Dialog Root.
-//
+// (Portal + Overlay + Popup) are owned by CreateIssueDialog.
 export function AgentCreatePanel({
   onClose,
   data,
@@ -91,18 +86,15 @@ export function AgentCreatePanel({
   setIsExpanded,
 }: {
   onClose: () => void;
-  data?: Record<string, unknown> | null;
-  /** Lifted to the shell so DialogContent's mode-aware className can react —
-   *  same pattern as ManualCreatePanel. Shared across modes so the user's
-   *  expand preference persists when switching between agent and manual. */
+  data?: CreateIssueSeed | null;
+  /** Lifted to the shell so DialogContent can resize without remounting. */
   isExpanded: boolean;
   setIsExpanded: (v: boolean) => void;
 }) {
   const { t } = useT("modals");
   const workspaceName = useCurrentWorkspace()?.name;
   const wsId = useWorkspaceId();
-  const userId = useAuthStore((s) => s.user?.id);
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { userId, role: memberRole } = useCurrentMember(wsId);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: squads = [] } = useQuery(squadListOptions(wsId));
   // Pull `isSuccess` so the stale-id sweep below can distinguish "still
@@ -112,11 +104,6 @@ export function AgentCreatePanel({
     projectListOptions(wsId),
   );
 
-  const memberRole = useMemo(
-    () => members.find((m) => m.user_id === userId)?.role,
-    [members, userId],
-  );
-
   // Visible = not archived AND assignable by this user. Squads inherit
   // their leader agent's reachability: the backend always routes a squad
   // pick to the leader, so hiding squads whose leader isn't visible keeps
@@ -124,7 +111,12 @@ export function AgentCreatePanel({
   const visibleAgents = useMemo(
     () =>
       agents.filter(
-        (a) => !a.archived_at && canAssignAgent(a, userId, memberRole),
+        (a) =>
+          !a.archived_at &&
+          canAssignAgentToIssue(a, {
+            userId,
+            role: memberRole,
+          }).allowed,
       ),
     [agents, userId, memberRole],
   );
@@ -151,7 +143,6 @@ export function AgentCreatePanel({
   const setLastProjectId = useQuickCreateStore((s) => s.setLastProjectId);
   const promptDraft = useQuickCreateStore((s) => s.prompt);
   const setPrompt = useQuickCreateStore((s) => s.setPrompt);
-  const clearPrompt = useQuickCreateStore((s) => s.clearPrompt);
   const keepOpen = useQuickCreateStore((s) => s.keepOpen);
   const setKeepOpen = useQuickCreateStore((s) => s.setKeepOpen);
   const hasExplicitActorSeed = Boolean(data?.agent_id || data?.squad_id);
@@ -162,7 +153,7 @@ export function AgentCreatePanel({
   // through to the next seed in the chain.
   const resolveActor = useCallback(
     (
-      type: QuickCreateActorType | "agent" | "squad" | null | undefined,
+      type: QuickCreateActorType | null | undefined,
       id: string | null | undefined,
     ): ActorSelection | null => {
       if (!type || !id) return null;
@@ -182,8 +173,8 @@ export function AgentCreatePanel({
     // `squad_id`). When a persisted preference points at the PM squad's
     // leader agent, upgrade it to the squad so dispatch receives the squad
     // briefing instead of a direct-agent task.
-    const dataAgent = data?.agent_id as string | undefined;
-    const dataSquad = data?.squad_id as string | undefined;
+    const dataAgent = data?.agent_id;
+    const dataSquad = data?.squad_id;
     const explicitActor =
       resolveActor("agent", dataAgent) || resolveActor("squad", dataSquad);
     if (explicitActor) return explicitActor;
@@ -249,35 +240,33 @@ export function AgentCreatePanel({
   // override (e.g. a future "+ Issue" button on a project page); it does NOT
   // replace the persisted default.
   const [projectId, setProjectId] = useState<string | null>(() => {
-    const seed = (data?.project_id as string | undefined) ?? lastProjectId;
+    const seed = data?.project_id ?? lastProjectId;
     return seed ?? null;
   });
   const [status, setStatus] = useState<IssueStatus>(
-    (data?.status as IssueStatus | undefined) ?? "todo",
+    data?.status ?? "todo",
   );
   const [priority, setPriority] = useState<IssuePriority>(
-    (data?.priority as IssuePriority | undefined) ?? "none",
+    data?.priority ?? "none",
   );
   const [startDate, setStartDate] = useState<string | null>(
-    (data?.start_date as string | null | undefined) ?? null,
+    data?.start_date ?? null,
   );
   const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
   const [dueDate, setDueDate] = useState<string | null>(
-    (data?.due_date as string | null | undefined) ?? null,
+    data?.due_date ?? null,
   );
   const [dueDatePickerOpen, setDueDatePickerOpen] = useState(false);
 
-  // Parent-issue context — seeded by `openCreateSubIssue` when the modal is
-  // opened from the "Add sub issue" entry on an existing issue. We carry it
-  // through (not as an editable form field) so a manual→agent flip preserves
-  // the sub-issue intent; the agent panel never exposes this as a picker.
+  // Parent-issue context is seeded by `openCreateSubIssue` when the modal is
+  // opened from an existing issue.
   // Identifier is best-effort display context only — the UUID is the
   // authoritative reference the backend/agent uses for `--parent <uuid>`.
   const [parentIssueId, setParentIssueId] = useState<string | null>(
-    (data?.parent_issue_id as string | undefined) ?? null,
+    data?.parent_issue_id ?? null,
   );
   const [parentIssueIdentifier, setParentIssueIdentifier] = useState<string>(
-    (data?.parent_issue_identifier as string | undefined) ?? "",
+    data?.parent_issue_identifier ?? "",
   );
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const { data: parentIssue } = useQuery({
@@ -299,30 +288,7 @@ export function AgentCreatePanel({
     if (lastProjectId === projectId) setLastProjectId(null);
   }, [projectsLoaded, projects, projectId, lastProjectId, setLastProjectId]);
 
-  // Daemon CLI version gate. The agent-create flow needs the runtime's
-  // bundled multica CLI to be ≥ MIN_QUICK_CREATE_CLI_VERSION; older
-  // daemons handle attachments and partial-failure retries incorrectly
-  // (see PR #1851 / MUL-1496). Pre-check on the picker so the user gets
-  // immediate feedback instead of waiting for the inbox failure; the
-  // server re-validates as the trust boundary. Dev-built daemons
-  // (git-describe shape) are exempted inside checkQuickCreateCliVersion
-  // — frontend and server share the same signal there, so they agree by
-  // construction across web/desktop/staging without comparing env flags.
-  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
-  const selectedRuntime = useMemo(
-    () =>
-      selectedAgent?.runtime_id
-        ? runtimes.find((r) => r.id === selectedAgent.runtime_id)
-        : undefined,
-    [runtimes, selectedAgent?.runtime_id],
-  );
-  const versionCheck = useMemo(
-    () => checkQuickCreateCliVersion(readRuntimeCliVersion(selectedRuntime?.metadata)),
-    [selectedRuntime?.metadata],
-  );
-  const versionBlocked = versionCheck.state !== "ok";
-
-  const initialPrompt = (data?.prompt as string) || promptDraft;
+  const initialPrompt = data?.prompt || promptDraft;
   // The editor is uncontrolled — we read the latest markdown via the ref at
   // submit/switch time. `hasContent` mirrors emptiness so the Create button
   // can disable correctly without a controlled-input rerender on every keystroke.
@@ -337,7 +303,7 @@ export function AgentCreatePanel({
   // Image paste/drop support: route uploads through the same helper Advanced
   // uses, so users can paste screenshots straight into the prompt and the
   // agent receives them as embedded markdown image URLs in the prompt.
-  const { uploadWithToast, uploading } = useFileUpload(api);
+  const { uploadWithToast, uploading } = useFileUpload();
   const handleUploadFile = useCallback(async (file: File) => {
     const result = await uploadWithToast(file);
     if (result) {
@@ -361,14 +327,14 @@ export function AgentCreatePanel({
 
   const submit = async () => {
     const md = editorRef.current?.getMarkdown()?.trim() ?? "";
-    if (!md || !actor || submitting || versionBlocked || uploading) return;
+    if (!md || !actor || submitting || uploading) return;
     const activeAttachmentIds = pendingAttachments
       .filter((a) => contentReferencesAttachment(md, a))
       .map((a) => a.id);
     setSubmitting(true);
     setError(null);
     try {
-      await api.quickCreateIssue({
+      await quickCreateIssueWithRecovery({
         ...(actor.type === "agent"
           ? { agent_id: actor.id }
           : { squad_id: actor.id }),
@@ -383,7 +349,7 @@ export function AgentCreatePanel({
       });
       setLastActor(actor.type, actor.id);
       setLastProjectId(projectId);
-      clearPrompt();
+      setPrompt("");
       toast.success(t(($) => $.create_issue.agent.toast_sent), {
         duration: 4000,
       });
@@ -409,26 +375,9 @@ export function AgentCreatePanel({
         const body = e.body as {
           code?: string;
           reason?: string;
-          current_version?: string;
-          min_version?: string;
         };
         if (body.code === "agent_unavailable") {
           setError(body.reason || t(($) => $.create_issue.agent.error_agent_unavailable_fallback));
-          setSubmitting(false);
-          return;
-        }
-        if (body.code === "daemon_version_unsupported") {
-          // Race fallback: the picker pre-check should normally catch this,
-          // but a runtime can silently re-register with an older CLI between
-          // pre-check and submit. Same wording as the inline notice for
-          // consistency.
-          const cur = body.current_version || "unknown";
-          setError(
-            t(($) => $.create_issue.agent.error_daemon_version, {
-              current: cur,
-              min: body.min_version || MIN_QUICK_CREATE_CLI_VERSION,
-            }),
-          );
           setSubmitting(false);
           return;
         }
@@ -498,17 +447,6 @@ export function AgentCreatePanel({
             t={t}
           />
         </div>
-
-        {selectedAgent && versionBlocked && (
-          <div className="mx-5 mb-2 shrink-0 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            {versionCheck.state === "missing"
-              ? t(($) => $.create_issue.agent.version_missing, { min: versionCheck.min })
-              : t(($) => $.create_issue.agent.version_below, {
-                  current: versionCheck.current,
-                  min: versionCheck.min,
-                })}
-          </div>
-        )}
 
         {/* Prompt — same rich editor Advanced uses, so paste/drop images,
             mentions, and formatting all work. The dropZone wrapper enables
@@ -690,12 +628,7 @@ export function AgentCreatePanel({
             <Button
               size="sm"
               onClick={submit}
-              disabled={!hasContent || !actor || submitting || versionBlocked || uploading}
-              title={
-                versionBlocked
-                  ? t(($) => $.create_issue.agent.version_blocked_tooltip, { min: versionCheck.min })
-                  : undefined
-              }
+              disabled={!hasContent || !actor || submitting || uploading}
               className={justSent ? "min-w-28 !bg-emerald-600 !text-white" : "min-w-28"}
             >
               {submitting ? t(($) => $.create_issue.agent.sending) : uploading ? t(($) => $.create_issue.agent.uploading) : justSent ? (
@@ -735,11 +668,11 @@ function ActorPicker({
   const query = filter.trim().toLowerCase();
 
   const filteredAgents = useMemo(
-    () => visibleAgents.filter((a) => a.name.toLowerCase().includes(query) || matchesPinyin(a.name, query)),
+    () => visibleAgents.filter((a) => matchesTextQuery(a.name, query)),
     [visibleAgents, query],
   );
   const filteredSquads = useMemo(
-    () => visibleSquads.filter((s) => s.name.toLowerCase().includes(query) || matchesPinyin(s.name, query)),
+    () => visibleSquads.filter((s) => matchesTextQuery(s.name, query)),
     [visibleSquads, query],
   );
 

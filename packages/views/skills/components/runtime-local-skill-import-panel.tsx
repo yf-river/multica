@@ -20,7 +20,7 @@ import type {
   Skill,
 } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   runtimeListOptions,
   runtimeLocalSkillsKeys,
@@ -50,10 +50,6 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { useT } from "../../i18n";
 import { isNameConflictError } from "../lib/utils";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 type BulkImportResult = {
   key: string;
@@ -88,17 +84,9 @@ const INITIAL_BULK_STATE: BulkImportState = {
   results: [],
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /**
- * Max concurrent imports. Higher = faster but more daemon/network pressure.
- *
- * Timeout invariant: IMPORT_CONCURRENCY × heartbeat period (~15s) must stay
- * within runtimeLocalSkillPendingTimeout (server/internal/handler/runtime_local_skills.go)
- * and IMPORT_POLL_TIMEOUT_MS (packages/core/runtimes/local-skills.ts).
- * See also maxLocalSkillImportBatch in server/internal/handler/daemon.go.
+ * Match maxLocalSkillImportBatch in handler/daemon_lifecycle.go so one
+ * heartbeat claims every request in the client concurrency window.
  */
 const IMPORT_CONCURRENCY = 10;
 
@@ -124,10 +112,6 @@ function ResultIcon({ status }: { status: BulkImportResult["status"] }) {
       return <AlertCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Skill row with checkbox
-// ---------------------------------------------------------------------------
 
 function SkillItem({
   skill,
@@ -224,65 +208,59 @@ function SkillItem({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Summary view (shown after bulk import completes)
-// ---------------------------------------------------------------------------
-
 function BulkImportSummary({ results }: { results: BulkImportResult[] }) {
   const { t } = useT("skills");
-  const created = results.filter((r) => r.status === "created");
-  const updated = results.filter((r) => r.status === "updated");
-  const conflicts = results.filter((r) => r.status === "conflict");
-  const skipped = results.filter((r) => r.status === "skipped");
-  const failed = results.filter((r) => r.status === "failed");
+  const counts = { created: 0, updated: 0, conflict: 0, skipped: 0, failed: 0 };
+  for (const result of results) counts[result.status] += 1;
+  const summaries = [
+    {
+      status: "created",
+      className: "bg-green-50 dark:bg-green-950/30",
+      countClassName: "text-green-700 dark:text-green-400",
+      label: t(($) => $.runtime_import.bulk_summary_created),
+    },
+    {
+      status: "updated",
+      className: "bg-blue-50 dark:bg-blue-950/30",
+      countClassName: "text-blue-700 dark:text-blue-400",
+      label: t(($) => $.runtime_import.bulk_summary_updated),
+    },
+    {
+      status: "conflict",
+      className: "bg-amber-50 dark:bg-amber-950/30",
+      countClassName: "text-amber-700 dark:text-amber-400",
+      label: t(($) => $.runtime_import.bulk_summary_conflicts),
+    },
+    {
+      status: "skipped",
+      className: "bg-yellow-50 dark:bg-yellow-950/30",
+      countClassName: "text-yellow-700 dark:text-yellow-400",
+      label: t(($) => $.runtime_import.bulk_summary_skipped),
+    },
+    {
+      status: "failed",
+      className: "bg-red-50 dark:bg-red-950/30",
+      countClassName: "text-red-700 dark:text-red-400",
+      label: t(($) => $.runtime_import.bulk_summary_failed),
+    },
+  ] as const;
 
   return (
     <div className="space-y-4 py-2">
-      {/* Summary counts */}
       <div className="grid grid-cols-2 gap-2 text-center sm:grid-cols-5">
-        <div className="rounded-md bg-green-50 px-3 py-2 dark:bg-green-950/30">
-          <div className="text-lg font-semibold text-green-700 dark:text-green-400">
-            {created.length}
+        {summaries.map((summary) => (
+          <div
+            key={summary.status}
+            className={`rounded-md px-3 py-2 ${summary.className}`}
+          >
+            <div className={`text-lg font-semibold ${summary.countClassName}`}>
+              {counts[summary.status]}
+            </div>
+            <div className="text-xs text-muted-foreground">{summary.label}</div>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {t(($) => $.runtime_import.bulk_summary_created)}
-          </div>
-        </div>
-        <div className="rounded-md bg-blue-50 px-3 py-2 dark:bg-blue-950/30">
-          <div className="text-lg font-semibold text-blue-700 dark:text-blue-400">
-            {updated.length}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {t(($) => $.runtime_import.bulk_summary_updated)}
-          </div>
-        </div>
-        <div className="rounded-md bg-amber-50 px-3 py-2 dark:bg-amber-950/30">
-          <div className="text-lg font-semibold text-amber-700 dark:text-amber-400">
-            {conflicts.length}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {t(($) => $.runtime_import.bulk_summary_conflicts)}
-          </div>
-        </div>
-        <div className="rounded-md bg-yellow-50 px-3 py-2 dark:bg-yellow-950/30">
-          <div className="text-lg font-semibold text-yellow-700 dark:text-yellow-400">
-            {skipped.length}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {t(($) => $.runtime_import.bulk_summary_skipped)}
-          </div>
-        </div>
-        <div className="rounded-md bg-red-50 px-3 py-2 dark:bg-red-950/30">
-          <div className="text-lg font-semibold text-red-700 dark:text-red-400">
-            {failed.length}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {t(($) => $.runtime_import.bulk_summary_failed)}
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* Detailed results list */}
       <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
         {results.map((r) => (
           <div
@@ -475,10 +453,6 @@ function ConflictResolutionPanel({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Panel
-// ---------------------------------------------------------------------------
-
 export function RuntimeLocalSkillImportPanel({
   onImported,
   onBulkDone,
@@ -509,7 +483,6 @@ export function RuntimeLocalSkillImportPanel({
     Record<string, ConflictResolutionState>
   >({});
   const cancelRef = useRef(false);
-  // Single-select inline edit fields (shown when exactly 1 skill is checked)
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
 
@@ -541,20 +514,16 @@ export function RuntimeLocalSkillImportPanel({
     [skillsQuery.data],
   );
 
-  // The single selected skill (for inline editing). Only valid when exactly 1.
   const singleSelectedSkill =
     selectedKeys.size === 1
       ? runtimeSkills.find((s) => selectedKeys.has(s.key))
       : undefined;
-
-  // -- Selection helpers --
 
   const toggleSkill = (key: string) => {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      // Seed edit fields when toggling to exactly-one selection
       if (next.size === 1) {
         const only = runtimeSkills.find((s) => next.has(s.key));
         if (only) {
@@ -597,6 +566,23 @@ export function RuntimeLocalSkillImportPanel({
     setConflictResolutions((prev) => ({ ...prev, [key]: next }));
   };
 
+  const setAllConflictResolutions = (action: "overwrite" | "skip") => {
+    setConflictResolutions((prev) => {
+      const next = { ...prev };
+      for (const result of pendingConflicts) {
+        if (action === "overwrite" && !result.conflict?.can_overwrite) {
+          continue;
+        }
+        next[result.key] = {
+          action,
+          renameName:
+            prev[result.key]?.renameName ?? defaultRenameName(result.name),
+        };
+      }
+      return next;
+    });
+  };
+
   const seedConflictResolutions = (results: BulkImportResult[]) => {
     const next: Record<string, ConflictResolutionState> = {};
     for (const r of results) {
@@ -628,8 +614,6 @@ export function RuntimeLocalSkillImportPanel({
     }
   };
 
-  // -- Bulk import handler --
-
   const handleBulkImport = async () => {
     if (!selectedRuntimeId || selectedKeys.size === 0) return;
 
@@ -648,7 +632,6 @@ export function RuntimeLocalSkillImportPanel({
     const results: BulkImportResult[] = [];
 
     const importOne = async (skill: RuntimeLocalSkillSummary) => {
-      // Single-select: use the user-edited name/description
       const importName =
         total === 1 ? editName.trim() || skill.name : skill.name;
       const importDescription =
@@ -660,7 +643,6 @@ export function RuntimeLocalSkillImportPanel({
           skill_key: skill.key,
           name: importName,
           description: importDescription,
-          supports_conflict: true,
         });
         if (result.status === "conflict") {
           results.push({
@@ -698,7 +680,6 @@ export function RuntimeLocalSkillImportPanel({
       }));
     };
 
-    // Concurrent pool — up to IMPORT_CONCURRENCY in-flight at once
     const executing = new Set<Promise<void>>();
     for (const skill of skillsToImport) {
       if (cancelRef.current) break;
@@ -782,7 +763,6 @@ export function RuntimeLocalSkillImportPanel({
               ? resolution.renameName.trim()
               : r.name,
           description: r.description,
-          supports_conflict: true,
           ...(resolution.action === "overwrite" && r.conflict
             ? {
                 action: "overwrite" as const,
@@ -855,10 +835,7 @@ export function RuntimeLocalSkillImportPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
 
-  // -- Middle content --
-
   const middle = (() => {
-    // Progress view during bulk import
     if (bulkState.phase === "importing") {
       const pct =
         bulkState.total > 0
@@ -876,7 +853,6 @@ export function RuntimeLocalSkillImportPanel({
             </p>
           </div>
           <Progress value={pct} />
-          {/* Live result feed */}
           <div className="max-h-48 space-y-1 overflow-y-auto">
             {bulkState.results.map((r) => (
               <div
@@ -892,7 +868,6 @@ export function RuntimeLocalSkillImportPanel({
       );
     }
 
-    // Summary view after bulk import (complete or cancelled)
     if (bulkState.phase === "done" || bulkState.phase === "cancelled") {
       return <BulkImportSummary results={bulkState.results} />;
     }
@@ -907,36 +882,11 @@ export function RuntimeLocalSkillImportPanel({
             setConflictResolution(key, next);
             void handleApplyConflictResolutions({ [key]: next });
           }}
-          onOverwriteAll={() => {
-            setConflictResolutions((prev) => {
-              const next = { ...prev };
-              for (const r of pendingConflicts) {
-                if (!r.conflict?.can_overwrite) continue;
-                next[r.key] = {
-                  action: "overwrite",
-                  renameName: prev[r.key]?.renameName ?? defaultRenameName(r.name),
-                };
-              }
-              return next;
-            });
-          }}
-          onSkipAll={() => {
-            setConflictResolutions((prev) => {
-              const next = { ...prev };
-              for (const r of pendingConflicts) {
-                next[r.key] = {
-                  action: "skip",
-                  renameName: prev[r.key]?.renameName ?? defaultRenameName(r.name),
-                };
-              }
-              return next;
-            });
-          }}
+          onOverwriteAll={() => setAllConflictResolutions("overwrite")}
+          onSkipAll={() => setAllConflictResolutions("skip")}
         />
       );
     }
-
-    // --- Idle phase: skill selection list ---
 
     if (localRuntimes.length === 0) {
       return (

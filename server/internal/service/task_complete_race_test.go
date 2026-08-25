@@ -24,7 +24,10 @@ func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	steps := parseSquadSOPProfileSteps(raw)
+	steps, err := parseSquadSOPProfileSteps(raw)
+	if err != nil {
+		t.Fatalf("parse SOP profile: %v", err)
+	}
 	step, index, ok := matchSquadSOPStepForAgent(steps, "02-design")
 	if !ok {
 		t.Fatal("expected 02-design agent to match profile step")
@@ -94,8 +97,12 @@ func (r *mockRow) Scan(dest ...any) error {
 // mockDBTX routes QueryRow calls: complete/fail queries return ErrNoRows,
 // getAgentTask returns the stored task.
 type mockDBTX struct {
+	pgx.Tx
 	task db.AgentTaskQueue
 }
+
+func (m *mockDBTX) Commit(context.Context) error   { return nil }
+func (m *mockDBTX) Rollback(context.Context) error { return nil }
 
 func (m *mockDBTX) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
 	return pgconn.NewCommandTag(""), nil
@@ -113,6 +120,10 @@ func (m *mockDBTX) QueryRow(_ context.Context, sql string, _ ...interface{}) pgx
 	// GetAgentTask — return the existing task
 	return &mockRow{task: &m.task}
 }
+
+type mockTxStarter struct{ tx pgx.Tx }
+
+func (m mockTxStarter) Begin(context.Context) (pgx.Tx, error) { return m.tx, nil }
 
 func testUUID(b byte) pgtype.UUID {
 	var u pgtype.UUID
@@ -143,8 +154,9 @@ func runAlreadyFinalizedTaskCases(t *testing.T, run func(*TaskService, pgtype.UU
 				Status:  tt.status,
 			}}
 			svc := &TaskService{
-				Queries: db.New(mock),
-				Bus:     events.New(),
+				Queries:   db.New(mock),
+				TxStarter: mockTxStarter{tx: mock},
+				Bus:       events.New(),
 			}
 
 			got, err := run(svc, taskID)
@@ -178,30 +190,26 @@ func TestFailTask_AlreadyFinalized(t *testing.T) {
 
 func TestTaskFailureClassifiers(t *testing.T) {
 	cases := []struct {
-		reason       string
-		wantType     string
-		wantResumeOK bool
-		wantRetry    bool
+		reason    string
+		wantType  string
+		wantRetry bool
 	}{
-		{reason: "timeout", wantType: "timeout", wantResumeOK: true, wantRetry: true},
-		{reason: "codex_semantic_inactivity", wantType: "timeout", wantResumeOK: false, wantRetry: true},
-		{reason: "runtime_recovery", wantType: "runtime", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.provider_capacity_or_rate_limit", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.provider_server_error", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.provider_network", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.model_not_found_or_unavailable", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
-		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
-		{reason: "agent_error", wantType: "agent_error", wantResumeOK: true, wantRetry: false},
+		{reason: "timeout", wantType: "timeout", wantRetry: true},
+		{reason: "codex_semantic_inactivity", wantType: "timeout", wantRetry: true},
+		{reason: "runtime_recovery", wantType: "runtime", wantRetry: true},
+		{reason: "agent_error.provider_capacity_or_rate_limit", wantType: "agent_error", wantRetry: true},
+		{reason: "agent_error.provider_server_error", wantType: "agent_error", wantRetry: true},
+		{reason: "agent_error.provider_network", wantType: "agent_error", wantRetry: true},
+		{reason: "agent_error.model_not_found_or_unavailable", wantType: "agent_error", wantRetry: true},
+		{reason: "iteration_limit", wantType: "agent_output", wantRetry: false},
+		{reason: "api_invalid_request", wantType: "agent_error", wantRetry: false},
+		{reason: "agent_error", wantType: "agent_error", wantRetry: false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.reason, func(t *testing.T) {
 			if got := taskErrorType(tc.reason); got != tc.wantType {
 				t.Fatalf("taskErrorType(%q) = %q, want %q", tc.reason, got, tc.wantType)
-			}
-			if got := !resumeUnsafeFailureReason(tc.reason); got != tc.wantResumeOK {
-				t.Fatalf("resume-safe(%q) = %v, want %v", tc.reason, got, tc.wantResumeOK)
 			}
 			if got := retryableReasons[tc.reason]; got != tc.wantRetry {
 				t.Fatalf("retryableReasons[%q] = %v, want %v", tc.reason, got, tc.wantRetry)
@@ -229,56 +237,41 @@ func TestTaskIssueStatusAutomationPredicates(t *testing.T) {
 	}
 
 	cases := []struct {
-		name      string
-		task      db.AgentTaskQueue
-		wantStart bool
-		wantBlock bool
+		name string
+		task db.AgentTaskQueue
+		want bool
 	}{
 		{
-			name:      "ordinary assignment task",
-			task:      baseTask,
-			wantStart: true,
-			wantBlock: true,
+			name: "ordinary assignment task",
+			task: baseTask,
+			want: true,
 		},
 		{
-			name:      "comment-triggered task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.TriggerCommentID = commentID; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "comment-triggered task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.TriggerCommentID = commentID; return t }(),
 		},
 		{
-			name:      "chat task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.ChatSessionID = chatID; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "chat task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.ChatSessionID = chatID; return t }(),
 		},
 		{
-			name:      "autopilot task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.AutopilotRunID = autopilotRunID; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "autopilot task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.AutopilotRunID = autopilotRunID; return t }(),
 		},
 		{
-			name:      "source summary task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.Context = sourceContext; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "source summary task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.Context = sourceContext; return t }(),
 		},
 		{
-			name:      "quick create style task without issue",
-			task:      db.AgentTaskQueue{ID: testUUID(21), AgentID: agentID},
-			wantStart: false,
-			wantBlock: false,
+			name: "quick create style task without issue",
+			task: db.AgentTaskQueue{ID: testUUID(21), AgentID: agentID},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldAutoStartIssueForTask(tc.task); got != tc.wantStart {
-				t.Fatalf("shouldAutoStartIssueForTask = %v, want %v", got, tc.wantStart)
-			}
-			if got := shouldAutoBlockIssueForTaskFailure(tc.task); got != tc.wantBlock {
-				t.Fatalf("shouldAutoBlockIssueForTaskFailure = %v, want %v", got, tc.wantBlock)
+			if got := isAssignmentIssueTaskForStatusAutomation(tc.task); got != tc.want {
+				t.Fatalf("isAssignmentIssueTaskForStatusAutomation = %v, want %v", got, tc.want)
 			}
 		})
 	}

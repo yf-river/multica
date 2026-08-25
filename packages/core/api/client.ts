@@ -1,13 +1,19 @@
+import type { ZodType } from "zod";
 import type {
   Issue,
   CreateIssueRequest,
+  CreateCommentRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
   IssueStatus,
   ListIssueBucketsResponse,
   ListIssuesResponse,
-  SearchIssuesResponse,
-  SearchProjectsResponse,
+  SearchIssueResult,
+  SearchProjectResult,
+  QuickCreateIssueRequest,
+  ChildIssueProgressResponse,
+  BatchUpdateIssuesResponse,
+  BatchDeleteIssuesResponse,
   UpdateMeRequest,
   CreateMemberRequest,
   UpdateMemberRequest,
@@ -32,6 +38,7 @@ import type {
   Reaction,
   IssueReaction,
   Workspace,
+  WorkspaceSettings,
   WorkspaceRepo,
   WorkspaceRepoProbeResponse,
   MemberWithUser,
@@ -41,23 +48,16 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
-  PersonalAccessToken,
-  CreatePersonalAccessTokenRequest,
-  CreatePersonalAccessTokenResponse,
   RuntimeUsage,
-  IssueUsageSummary,
   IssueTaskTraceResponse,
   IssueExecutionTreeResponse,
-  ListIssueSOPRunsResponse,
-  CreateSOPRunRequest,
-  CreateSOPStepEventRequest,
   SquadSOPRun,
-  SquadSOPStepEvent,
   ObservabilitySummary,
-  RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
-  RuntimeUsageByHour,
+  DashboardUsageDaily,
+  DashboardAgentRunTime,
+  DashboardRunTimeDaily,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
@@ -67,7 +67,6 @@ import type {
   TaskMessagePayload,
   Attachment,
   ChatSession,
-  ChatMessage,
   ChatMessagesPage,
   ChatPendingTask,
   PendingChatTasksResponse,
@@ -76,16 +75,12 @@ import type {
   Project,
   CreateProjectRequest,
   UpdateProjectRequest,
-  ListProjectsResponse,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
-  ListProjectResourcesResponse,
   Label,
   CreateLabelRequest,
   UpdateLabelRequest,
-  ListLabelsResponse,
-  IssueLabelsResponse,
   PinnedItem,
   CreatePinRequest,
   PinnedItemType,
@@ -94,15 +89,12 @@ import type {
   AutopilotTrigger,
   AutopilotRun,
   CreateAutopilotRequest,
+  CreateAutopilotResponse,
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
-  ListAutopilotsResponse,
   GetAutopilotResponse,
-  ListAutopilotRunsResponse,
-  ListWebhookDeliveriesResponse,
   WebhookDelivery,
-  NotificationPreferenceResponse,
   NotificationPreferences,
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
@@ -113,285 +105,260 @@ import type {
   RedeemLarkBindingTokenResponse,
   Squad,
   SquadMember,
-  SquadMemberStatusListResponse,
+  SquadMemberStatus,
   InternalSquadTemplateKey,
   EnsureInternalSquadTemplateRequest,
   InternalSquadTemplateResponse,
   CreateSquadRequest,
   UpdateSquadRequest,
   PromptLibraryItem,
-  PromptLibraryTrial,
   PromptLibraryVersion,
+  PromptLibraryTrial,
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
   PromptEvaluationAssetEvidenceArchivePackage,
-  PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,
   PromptEvaluationStructuredCase,
-  PromptEvaluationAgentRunResponse,
   CreatePromptEvaluationDatasetFromTracesRequest,
-  PromptEvaluationDatasetExportResponse,
-  ImportPromptEvaluationDatasetRequest,
-  ImportPromptEvaluationDatasetResponse,
   CreatePromptEvaluationDatasetVersionRequest,
-  PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
-  PromptEvaluationDatasetVersionDiff,
-  RestorePromptEvaluationDatasetVersionRequest,
-  RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationOptimizationCandidate,
-  UpdatePromptEvaluationOptimizationCandidateRequest,
-  PublishPromptEvaluationOptimizationCandidateResponse,
+  PromptEvaluationOptimizationCandidateStatus,
+  RejectPromptEvaluationOptimizationCandidateRequest,
   ApplyPromptEvaluationSkillCandidateRequest,
   CheckPromptEvaluationSkillFreshnessRequest,
-  CreatePromptEvaluationSkillCaseDraftsRequest,
-  CreatePromptEvaluationSkillInventoryRequest,
-  CreatePromptEvaluationSkillSnapshotRequest,
   PreparePromptEvaluationSkillReEvalRequest,
   RunPromptEvaluationSkillReEvalRequest,
-  PromptEvaluationSkillApplyCandidateResponse,
-  PromptEvaluationSkillCaseDraftsResult,
   PromptEvaluationSkillFreshnessResult,
-  PromptEvaluationSkillInventoryResponse,
-  PromptEvaluationSkillReEvalAssetResponse,
-  PromptEvaluationSkillReEvalRunResponse,
-  PromptEvaluationSkillSnapshotResult,
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
-  ListPromptEvaluationCaseTagSummariesParams,
-  ListPromptEvaluationCaseTagDatasetSummariesParams,
-  ListPromptEvaluationCaseOperationsParams,
-  ListPromptEvaluationDatasetVersionTagTrendsParams,
-  ListPromptEvaluationDimensionScoresParams,
-  ListPromptEvaluationDimensionScoreSummariesParams,
-  ListPromptEvaluationDimensionScoreTrendsParams,
   ListPromptEvaluationOptimizationCandidatesParams,
-  ListPromptEvaluationAssetsResponse,
-  ListPromptEvaluationDatasetVersionRowsResponse,
-  ListPromptEvaluationDatasetVersionTagTrendsResponse,
-  ListPromptEvaluationDatasetVersionsResponse,
-  ListPromptEvaluationRunsResponse,
-  ListPromptEvaluationTrialsResponse,
-  ListPromptEvaluationEvidenceSnapshotsResponse,
-  ListPromptEvaluationCasesResponse,
-  ListPromptEvaluationCaseTagSummariesResponse,
-  ListPromptEvaluationCaseTagDatasetSummariesResponse,
-  ListPromptEvaluationCaseOperationsResponse,
-  ListPromptEvaluationDimensionScoresResponse,
-  ListPromptEvaluationDimensionScoreSummariesResponse,
-  ListPromptEvaluationDimensionScoreTrendsResponse,
-  ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
   ReviewPromptEvaluationRunRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
-  BulkUpdatePromptEvaluationCaseTagsRequest,
-  BulkUpdatePromptEvaluationCaseTagsResponse,
   ListPromptLibraryItemsParams,
-  ListPromptLibraryItemsResponse,
-  ListPromptLibraryTrialsResponse,
-  ListPromptLibraryVersionsResponse,
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryVersionRequest,
   CreatePromptLibraryVersionResponse,
   CreatePromptLibraryTrialRequest,
-  UpdatePromptLibraryItemRequest,
   AgentPlaygroundDetail,
   ListAgentPlaygroundExperimentsResponse,
   CreateAgentPlaygroundExperimentRequest,
   JudgeAgentPlaygroundExperimentRequest,
   ExternalCredentialProvider,
   ExternalCredentialProfile,
-  ListExternalCredentialProfilesResponse,
   CreateExternalCredentialProfileRequest,
   UpdateExternalCredentialProfileRequest,
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
 } from "../types";
-import type { OnboardingCompletionPath } from "../onboarding/types";
-import { type Logger, noopLogger } from "../logger";
-import { createRequestId } from "../utils";
-import { getCurrentSlug } from "../platform/workspace-storage";
-import { parseWithFallback } from "./schema";
+import { generateUUID } from "../utils";
+import { parseOrThrow, parseWithFallback } from "./schema";
 import {
+  ApiError,
+  ApiTransport,
+} from "./transport";
+export {
+  ApiError,
+  ApiTransportError,
+  type ApiClientOptions,
+} from "./transport";
+import {
+  AgentSchema,
+  AgentListSchema,
+  AgentEnvResponseSchema,
+  AgentTaskCancellationCountSchema,
+  AgentTaskListSchema,
+  AgentTaskSchema,
+  AgentActivityBucketListSchema,
+  AgentRunCountListSchema,
+  TaskMessageListSchema,
+  IssueTaskTraceResponseSchema,
+  IssueExecutionTreeResponseSchema,
+  SearchIssuesSchema,
+  QuickCreateIssueResponseSchema,
+  FeedbackResponseSchema,
+  ChildIssueProgressResponseSchema,
+  BatchUpdateIssuesResponseSchema,
+  BatchDeleteIssuesResponseSchema,
+  AssigneeFrequencyListSchema,
+  AttachmentListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChildIssuesResponseSchema,
-  CommentsListSchema,
   CommentTriggerPreviewSchema,
+  DashboardAgentRunTimeListSchema,
+  DashboardRunTimeDailyListSchema,
+  DashboardUsageByAgentListSchema,
+  DashboardUsageDailyListSchema,
+  EMPTY_AGENT,
+  EMPTY_AGENT_ACTIVITY_BUCKETS,
+  EMPTY_AGENT_RUN_COUNTS,
+  EMPTY_TASK_MESSAGES,
+  EMPTY_ISSUE_TASK_TRACE_RESPONSE,
+  EMPTY_ISSUE_EXECUTION_TREE,
+  EMPTY_SEARCH_ISSUES,
+  EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE,
+  EMPTY_ASSIGNEE_FREQUENCY,
+  EMPTY_ATTACHMENTS,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUE_BUCKETS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_ISSUE,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
-  EMPTY_SQUAD_MEMBER_STATUS_LIST,
-  EMPTY_SQUAD_SOP_RUN,
-  EMPTY_ISSUE_SOP_RUNS_RESPONSE,
   EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
-  EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
-  EMPTY_PROMPT_LIBRARY_ITEM,
-  EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
-  EMPTY_PROMPT_LIBRARY_TRIAL,
-  EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE,
-  EMPTY_PROMPT_LIBRARY_VERSION,
-  EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
+  EMPTY_NOTIFICATION_PREFERENCES,
+  EMPTY_CHAT_MESSAGES_PAGE,
+  EMPTY_CHAT_PENDING_TASK,
+  EMPTY_PENDING_CHAT_TASKS_RESPONSE,
+  EMPTY_PROJECT_RESOURCES,
+  EMPTY_LARK_INSTALLATION_LIST_RESPONSE,
+  EMPTY_GITHUB_CONNECT_RESPONSE,
+  EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
+  EMPTY_WEBHOOK_DELIVERIES,
   EMPTY_AGENT_PLAYGROUND_DETAIL,
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_ASSET,
-  EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_RUN,
-  EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
-  EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
-  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE,
-  EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE,
-  EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
-  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT,
-  EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
-  EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT,
-  EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
-  EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
   ListIssueBucketsResponseSchema,
-  ListAutopilotsResponseSchema,
-  EMPTY_LIST_AUTOPILOTS_RESPONSE,
+  AutopilotListSchema,
+  EMPTY_AUTOPILOTS,
+  AutopilotSchema,
+  CreateAutopilotResponseSchema,
+  AutopilotTriggerSchema,
+  AutopilotRunSchema,
+  GetAutopilotResponseSchema,
+  AutopilotRunListSchema,
+  EMPTY_AUTOPILOT_RUN,
+  EMPTY_GET_AUTOPILOT_RESPONSE,
+  EMPTY_AUTOPILOT_RUNS,
   ListIssuesResponseSchema,
-  ListWebhookDeliveriesResponseSchema,
-  RuntimeHourlyActivityListSchema,
+  IssueSchema,
+  CommentSchema,
+  ReactionSchema,
+  IssueReactionSchema,
+  WebhookDeliveryListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByTaskListSchema,
-  RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
-  PromptEvaluationAssetSchema,
+  RuntimeProfileListResponseSchema,
+  RuntimeProfileSchema,
+  RuntimeDeviceListSchema,
+  RuntimeDeviceSchema,
+  RuntimeCascadeDeleteResponseSchema,
+  RuntimeModelListRequestSchema,
+  RuntimeLocalSkillListRequestSchema,
+  RuntimeLocalSkillImportRequestSchema,
+  PromptEvaluationAssetMutationResultSchema,
   PromptEvaluationAssetListResponseSchema,
-  PromptEvaluationDatasetExportResponseSchema,
-  ImportPromptEvaluationDatasetResponseSchema,
   PromptEvaluationDatasetFromTracesResponseSchema,
-  PromptEvaluationDatasetVersionDiffSchema,
   PromptEvaluationDatasetVersionListResponseSchema,
-  PromptEvaluationDatasetVersionRowListResponseSchema,
-  PromptEvaluationDatasetVersionTagTrendListResponseSchema,
-  PromptEvaluationDatasetVersionSchema,
-  RestorePromptEvaluationDatasetVersionResponseSchema,
+  PromptEvaluationDatasetVersionMutationResultSchema,
   PromptEvaluationRunListResponseSchema,
-  PromptEvaluationRunSchema,
-  PromptEvaluationTrialListResponseSchema,
+  PromptEvaluationRunIDSchema,
+  PromptEvaluationRunReviewResultSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
-  PromptEvaluationEvidenceSnapshotSchema,
+  PromptEvaluationEvidenceSnapshotCreateResultSchema,
   PromptEvaluationEvidenceSnapshotListResponseSchema,
-  PromptEvaluationCaseSchema,
+  PromptEvaluationCaseMutationResultSchema,
   PromptEvaluationCaseListResponseSchema,
-  PromptEvaluationCaseTagSummaryListResponseSchema,
-  PromptEvaluationCaseTagDatasetSummaryListResponseSchema,
-  PromptEvaluationCaseOperationListResponseSchema,
-  BulkUpdatePromptEvaluationCaseTagsResponseSchema,
-  PromptEvaluationDimensionScoreListResponseSchema,
-  PromptEvaluationDimensionScoreSummaryListResponseSchema,
-  PromptEvaluationDimensionScoreTrendListResponseSchema,
-  PromptEvaluationOptimizationCandidateSchema,
+  PromptEvaluationOptimizationCandidateCreateResultSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
-  PromptEvaluationSkillApplyCandidateResponseSchema,
-  PromptEvaluationSkillCaseDraftsResultSchema,
+  PublishPromptEvaluationOptimizationCandidateNameSchema,
+  PromptEvaluationOptimizationCandidateDecisionStatusSchema,
+  PromptEvaluationSkillApplyStatusSchema,
   PromptEvaluationSkillFreshnessResultSchema,
-  PromptEvaluationSkillInventoryResponseSchema,
-  PromptEvaluationSkillReEvalAssetResponseSchema,
-  PromptEvaluationSkillReEvalRunResponseSchema,
-  PromptEvaluationSkillSnapshotResultSchema,
-  PublishPromptEvaluationOptimizationCandidateResponseSchema,
+  PromptEvaluationSkillReEvalAssetResultSchema,
+  PromptEvaluationSkillReEvalRunStatusSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryTrialListResponseSchema,
   PromptLibraryTrialSchema,
-  PromptLibraryVersionSchema,
   PromptLibraryVersionListResponseSchema,
+  CreatePromptLibraryVersionResponseSchema,
   AgentPlaygroundDetailSchema,
   AgentPlaygroundExperimentListResponseSchema,
   IssueSOPRunsResponseSchema,
   ObservabilitySummarySchema,
   SquadSchema,
-  SquadSOPRunSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
+  LoginResponseSchema,
+  CliTokenResponseSchema,
+  WorkspaceListSchema,
+  WorkspaceSchema,
+  WorkspaceRepoSchema,
+  WorkspaceRepoProbeResponseSchema,
+  MemberWithUserListSchema,
+  MemberWithUserSchema,
+  InboxListSchema,
+  InboxItemSchema,
+  InboxCountResponseSchema,
+  NotificationPreferenceResponseSchema,
+  ChatSessionListSchema,
+  ChatSessionSchema,
+  ChatMessagesPageSchema,
+  SendChatMessageResponseSchema,
+  ChatPendingTaskSchema,
+  PendingChatTasksResponseSchema,
+  ProjectResourceSchema,
+  ProjectResourceListSchema,
+  ProjectSchema,
+  ProjectListSchema,
+  SearchProjectListSchema,
+  SkillSchema,
+  SkillSummaryListSchema,
+  LabelSchema,
+  LabelListSchema,
+  IssueLabelListSchema,
+  PinnedItemSchema,
+  PinnedItemListSchema,
+  SquadMemberSchema,
+  SquadMemberListSchema,
+  InternalSquadTemplateResponseSchema,
+  EMPTY_PROJECT,
+  EMPTY_PROJECTS,
+  EMPTY_SEARCH_PROJECTS,
+  EMPTY_SKILL,
+  EMPTY_SKILL_SUMMARIES,
+  EMPTY_LABELS,
+  EMPTY_PINNED_ITEM_LIST,
+  EMPTY_SQUAD_MEMBERS,
+  ExternalCredentialProfileSchema,
+  ExternalCredentialProfileListResponseSchema,
+  TestExternalCredentialProfileResponseSchema,
+  LarkInstallationListResponseSchema,
+  BeginLarkInstallResponseSchema,
+  LarkInstallStatusResponseSchema,
+  RedeemLarkBindingTokenResponseSchema,
+  GitHubConnectResponseSchema,
+  GitHubInstallationListResponseSchema,
+  GitHubPullRequestListResponseSchema,
   WebhookDeliveryResponseSchema,
-  EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
-
-/** Identifies the calling client to the server.
- *  Sent on every HTTP request as X-Client-Platform / X-Client-Version /
- *  X-Client-OS so the backend can log, gate, or split metrics by client.
- *  See server/internal/middleware/client.go for the receiving end. */
-export interface ApiClientIdentity {
-  /** Logical client kind. Server expects: "web" | "desktop" | "cli" | "daemon". */
-  platform?: string;
-  /** Client/app version string (e.g. "0.1.0", git tag, commit). */
-  version?: string;
-  /** Operating system the client is running on: "macos" | "windows" | "linux". */
-  os?: string;
-}
-
-export interface ApiClientOptions {
-  logger?: Logger;
-  onUnauthorized?: () => void;
-  /** Identifies the client to the server. Sent as X-Client-* headers. */
-  identity?: ApiClientIdentity;
-}
 
 export interface LoginResponse {
   token: string;
   user: User;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly statusText: string;
-  // Raw decoded JSON body (when the server returned one). Carries structured
-  // error fields like `code` so callers can branch on machine-readable
-  // identifiers instead of pattern-matching the human-readable message.
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, statusText: string, body?: unknown) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.statusText = statusText;
-    this.body = body;
-  }
 }
 
 // Thrown by getAttachmentTextContent when the server refuses to inline a
@@ -405,7 +372,7 @@ export class PreviewTooLargeError extends Error {
 }
 
 // Thrown by getAttachmentTextContent when the server's text whitelist
-// rejects the content type. Normally the client's isPreviewable() guard
+// rejects the content type. Normally the client's preview-kind guard
 // catches this earlier, but the two whitelists can drift — surfacing the
 // 415 as a typed error makes the drift visible.
 export class PreviewUnsupportedError extends Error {
@@ -413,6 +380,44 @@ export class PreviewUnsupportedError extends Error {
     super("attachment type not supported for inline preview");
     this.name = "PreviewUnsupportedError";
   }
+}
+
+type UsageQueryParams = { days?: number; project_id?: string | null; tz?: string };
+
+function usageSearchParams(params?: UsageQueryParams) {
+  const search = new URLSearchParams();
+  if (params?.days) search.set("days", String(params.days));
+  if (params?.project_id) search.set("project_id", params.project_id);
+  if (params?.tz) search.set("tz", params.tz);
+  return search;
+}
+
+function parseRuntimeRequest<T extends { id: string; runtime_id: string }>(
+  data: unknown,
+  schema: ZodType<T>,
+  runtimeId: string,
+  requestId: string | undefined,
+  endpoint: string,
+  mayHaveCommitted: boolean,
+): T {
+  const matchesIdentity = (request: T) =>
+    request.runtime_id === runtimeId && (requestId === undefined || request.id === requestId);
+  const validatedSchema = requestId === undefined
+    ? schema.refine(matchesIdentity, {
+        path: ["runtime_id"],
+        message: "runtime request identity does not match request",
+      })
+    : schema.refine(matchesIdentity, {
+        message: "runtime request identity does not match request",
+      });
+  return parseOrThrow(data, validatedSchema, {
+    endpoint,
+    mayHaveCommitted,
+  });
+}
+
+function issueSubscriptionBody(userId?: string, userType?: string) {
+  return JSON.stringify({ user_id: userId || undefined, user_type: userType || undefined });
 }
 
 function issueSearchParams(params?: ListIssuesParams) {
@@ -423,14 +428,12 @@ function issueSearchParams(params?: ListIssuesParams) {
   if (params?.status) search.set("status", params.status);
   if (params?.priority) search.set("priority", params.priority);
   if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
-  if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
   if (params?.creator_id) search.set("creator_id", params.creator_id);
   if (params?.project_id) search.set("project_id", params.project_id);
   if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
   if (params?.metadata && Object.keys(params.metadata).length > 0) {
     search.set("metadata", JSON.stringify(params.metadata));
   }
-  if (params?.open_only) search.set("open_only", "true");
   if (params?.scheduled) search.set("scheduled", "true");
   if (params?.date_field) search.set("date_field", params.date_field);
   if (params?.date_start) search.set("date_start", params.date_start);
@@ -440,137 +443,17 @@ function issueSearchParams(params?: ListIssuesParams) {
   return search;
 }
 
-export class ApiClient {
-  private baseUrl: string;
-  private token: string | null = null;
-  private logger: Logger;
-  private options: ApiClientOptions;
-
-  constructor(baseUrl: string, options?: ApiClientOptions) {
-    this.baseUrl = baseUrl;
-    this.options = options ?? {};
-    this.logger = options?.logger ?? noopLogger;
-  }
-
-  getBaseUrl(): string {
-    return this.baseUrl;
-  }
-
-  setToken(token: string | null) {
-    this.token = token;
-  }
-
-  private readCsrfToken(): string | null {
-    if (typeof document === "undefined") return null;
-    const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("multica_csrf="));
-    return match ? match.split("=")[1] ?? null : null;
-  }
-
-  private authHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
-    const slug = getCurrentSlug();
-    if (slug) headers["X-Workspace-Slug"] = slug;
-    const csrf = this.readCsrfToken();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-    const id = this.options.identity;
-    if (id?.platform) headers["X-Client-Platform"] = id.platform;
-    if (id?.version) headers["X-Client-Version"] = id.version;
-    if (id?.os) headers["X-Client-OS"] = id.os;
-    return headers;
-  }
-
-  private handleUnauthorized() {
-    this.token = null;
-    // Workspace id is owned by the URL-driven workspace-storage singleton
-    // (set by [workspaceSlug]/layout.tsx). On 401, the auth flow navigates
-    // to /login which leaves the workspace route, and the next workspace
-    // entry will overwrite the id. No clear needed here.
-    this.options.onUnauthorized?.();
-  }
-
-  private async parseErrorMessage(res: Response, fallback: string): Promise<string> {
-    try {
-      const data = await res.json() as { error?: string };
-      if (typeof data.error === "string" && data.error) return data.error;
-    } catch {
-      // Ignore non-JSON error bodies.
-    }
-    return fallback;
-  }
-
-  // Reads the response body once for both human-readable error message and
-  // structured fields. The Response stream can only be consumed once, so
-  // both pieces have to come from a single read.
-  private async parseErrorBody(res: Response, fallback: string): Promise<{ message: string; body: unknown }> {
-    try {
-      const data = await res.json() as { error?: string };
-      const message = typeof data.error === "string" && data.error ? data.error : fallback;
-      return { message, body: data };
-    } catch {
-      return { message: fallback, body: undefined };
-    }
-  }
-
-  // Sends the request with the standard headers (auth, CSRF, request id,
-  // client identity) and runs the shared error path (401 → handleUnauthorized,
-  // structured ApiError, status-aware log level). Returns the raw Response so
-  // callers can decide how to decode the body — JSON for the typed `fetch<T>`
-  // path, plain text for the attachment-preview proxy, etc.
-  private async fetchRaw(
-    path: string,
-    init?: RequestInit & { extraHeaders?: Record<string, string> },
-  ): Promise<Response> {
-    const rid = createRequestId();
-    const start = Date.now();
-    const method = init?.method ?? "GET";
-
-    const headers: Record<string, string> = {
-      "X-Request-ID": rid,
-      ...this.authHeaders(),
-      ...(init?.extraHeaders ?? {}),
-      ...((init?.headers as Record<string, string>) ?? {}),
-    };
-
-    this.logger.info(`→ ${method} ${path}`, { rid });
-
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
-
-    if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
-      const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
-      const logLevel = res.status >= 500 ? "error" : "warn";
-      this.logger[logLevel](`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
-      throw new ApiError(message, res.status, res.statusText, body);
-    }
-
-    this.logger.info(`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms` });
-    return res;
-  }
-
-  private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await this.fetchRaw(path, {
-      ...init,
-      extraHeaders: { "Content-Type": "application/json" },
-    });
-    // Handle 204 No Content
-    if (res.status === 204) {
-      return undefined as T;
-    }
-    return res.json() as Promise<T>;
-  }
-
+// Flat endpoint registry. Transport/auth/error semantics live in transport.ts;
+// docs/architecture/domain-flows.md records the ownership boundary.
+export class ApiClient extends ApiTransport {
   // Auth
   async login(account: string, password: string): Promise<LoginResponse> {
-    return this.fetch("/auth/login", {
+    const raw = await this.fetch<unknown>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ account, password }),
+    });
+    return parseOrThrow(raw, LoginResponseSchema, {
+      endpoint: "POST /auth/login",
     });
   }
 
@@ -579,7 +462,10 @@ export class ApiClient {
   }
 
   async issueCliToken(): Promise<{ token: string }> {
-    return this.fetch("/api/cli-token", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/cli-token", { method: "POST" });
+    return parseOrThrow(raw, CliTokenResponseSchema, {
+      endpoint: "POST /api/cli-token",
+    });
   }
 
   async getMe(): Promise<User> {
@@ -589,37 +475,12 @@ export class ApiClient {
     });
   }
 
-  async markOnboardingComplete(payload: {
-    completion_path: OnboardingCompletionPath;
-    workspace_id?: string;
-  }): Promise<User> {
-    const raw = await this.fetch<unknown>("/api/me/onboarding/complete", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
-      endpoint: "POST /api/me/onboarding/complete",
-    });
-  }
-
-  async patchOnboarding(payload: {
-    questionnaire?: Record<string, unknown>;
-  }): Promise<User> {
-    const raw = await this.fetch<unknown>("/api/me/onboarding", {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
-      endpoint: "PATCH /api/me/onboarding",
-    });
-  }
-
   async updateMe(data: UpdateMeRequest): Promise<User> {
     const raw = await this.fetch<unknown>("/api/me", {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
+    return parseOrThrow(raw, UserSchema, {
       endpoint: "PATCH /api/me",
     });
   }
@@ -645,21 +506,11 @@ export class ApiClient {
   }
 
   async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
-    const search = new URLSearchParams({ group_by: params.group_by });
-    if (params.limit) search.set("limit", String(params.limit));
-    if (params.offset) search.set("offset", String(params.offset));
-    if (params.workspace_id) search.set("workspace_id", params.workspace_id);
+    const search = issueSearchParams(params);
+    search.set("group_by", params.group_by);
     if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
     if (params.priorities?.length) search.set("priorities", params.priorities.join(","));
     if (params.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
-    if (params.assignee_id) search.set("assignee_id", params.assignee_id);
-    if (params.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
-    if (params.creator_id) search.set("creator_id", params.creator_id);
-    if (params.project_id) search.set("project_id", params.project_id);
-    if (params.involves_user_id) search.set("involves_user_id", params.involves_user_id);
-    if (params.metadata && Object.keys(params.metadata).length > 0) {
-      search.set("metadata", JSON.stringify(params.metadata));
-    }
     if (params.assignee_filters?.length) {
       search.set("assignee_filters", params.assignee_filters.map((f) => `${f.type}:${f.id}`).join(","));
     }
@@ -672,82 +523,114 @@ export class ApiClient {
     if (params.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
     if (params.group_assignee_type) search.set("group_assignee_type", params.group_assignee_type);
     if (params.group_assignee_id) search.set("group_assignee_id", params.group_assignee_id);
-    if (params.date_field) search.set("date_field", params.date_field);
-    if (params.date_start) search.set("date_start", params.date_start);
-    if (params.date_end) search.set("date_end", params.date_end);
-    if (params.sort_by) search.set("sort", params.sort_by);
-    if (params.sort_direction) search.set("direction", params.sort_direction);
     const raw = await this.fetch<unknown>(`/api/issues/grouped?${search}`);
     return parseWithFallback(raw, GroupedIssuesResponseSchema, EMPTY_GROUPED_ISSUES_RESPONSE, {
       endpoint: "GET /api/issues/grouped",
     });
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssueResult[]> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
-    return this.fetch(`/api/issues/search?${search}`, params.signal ? { signal: params.signal } : undefined);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/search?${search}`,
+      params.signal ? { signal: params.signal } : undefined,
+    );
+    return parseWithFallback(raw, SearchIssuesSchema, EMPTY_SEARCH_ISSUES, {
+      endpoint: "GET /api/issues/search",
+    });
   }
 
-  async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectsResponse> {
+  async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectResult[]> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
-    return this.fetch(`/api/projects/search?${search}`, params.signal ? { signal: params.signal } : undefined);
+    const raw = await this.fetch<unknown>(
+      `/api/projects/search?${search}`,
+      params.signal ? { signal: params.signal } : undefined,
+    );
+    return parseWithFallback(
+      raw,
+      SearchProjectListSchema,
+      EMPTY_SEARCH_PROJECTS,
+      { endpoint: "GET /api/projects/search" },
+    );
   }
 
   async getIssue(id: string): Promise<Issue> {
-    return this.fetch(`/api/issues/${id}`);
-  }
-
-  async createIssue(data: CreateIssueRequest): Promise<Issue> {
-    return this.fetch("/api/issues", {
-      method: "POST",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>(`/api/issues/${id}`);
+    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+      endpoint: "GET /api/issues/:id",
     });
   }
 
-  async quickCreateIssue(data: {
-    agent_id?: string;
-    squad_id?: string;
-    prompt: string;
-    project_id?: string | null;
-    parent_issue_id?: string | null;
-    status?: string;
-    priority?: string;
-    start_date?: string | null;
-    due_date?: string | null;
-    attachment_ids?: string[];
-  }): Promise<{
-    task_id?: string;
-    issue_id?: string;
-    identifier?: string;
-    source_fetch_status?: string;
-  }> {
-    return this.fetch("/api/issues/quick-create", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+  async createIssue(
+    data: CreateIssueRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Issue> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/issues", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Issue>(raw, IssueSchema, {
+        endpoint: "POST /api/issues",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
+  async quickCreateIssue(
+    data: QuickCreateIssueRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<void> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/issues/quick-create", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      parseOrThrow(
+        raw,
+        QuickCreateIssueResponseSchema,
+        { endpoint: "POST /api/issues/quick-create", mayHaveCommitted: true },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async createFeedback(data: {
     message: string;
+    kind: "bug" | "feature" | "general" | "praise";
     url?: string;
     workspace_id?: string;
-  }): Promise<{ id: string; created_at: string }> {
-    return this.fetch("/api/feedback", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+  }, idempotencyKey = generateUUID()): Promise<void> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      parseOrThrow(raw, FeedbackResponseSchema, {
+        endpoint: "POST /api/feedback",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateIssue(id: string, data: UpdateIssueRequest): Promise<Issue> {
-    return this.fetch(`/api/issues/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, IssueSchema, {
+      endpoint: "PUT /api/issues/:id",
     });
   }
 
@@ -771,54 +654,61 @@ export class ApiClient {
     });
   }
 
-  async getChildIssueProgress(): Promise<{ progress: { parent_issue_id: string; total: number; done: number }[] }> {
-    return this.fetch("/api/issues/child-progress");
+  async getChildIssueProgress(): Promise<ChildIssueProgressResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/child-progress");
+    return parseWithFallback(
+      raw,
+      ChildIssueProgressResponseSchema,
+      EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE,
+      { endpoint: "GET /api/issues/child-progress" },
+    );
   }
 
   async deleteIssue(id: string): Promise<void> {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
-    return this.fetch("/api/issues/batch-update", {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<BatchUpdateIssuesResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-update", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
+    return parseOrThrow(raw, BatchUpdateIssuesResponseSchema, {
+      endpoint: "POST /api/issues/batch-update",
+      mayHaveCommitted: true,
+    });
   }
 
-  async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
-    return this.fetch("/api/issues/batch-delete", {
+  async batchDeleteIssues(issueIds: string[]): Promise<BatchDeleteIssuesResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-delete", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds }),
+    });
+    return parseOrThrow(raw, BatchDeleteIssuesResponseSchema, {
+      endpoint: "POST /api/issues/batch-delete",
+      mayHaveCommitted: true,
     });
   }
 
   // Comments
-  async listComments(issueId: string): Promise<Comment[]> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`);
-    return parseWithFallback(raw, CommentsListSchema, [], {
-      endpoint: "GET /api/issues/:id/comments",
-    });
-  }
-
   async createComment(
     issueId: string,
-    content: string,
-    type?: string,
-    parentId?: string,
-    attachmentIds?: string[],
-    suppressAgentIds?: string[],
+    data: CreateCommentRequest,
+    idempotencyKey = generateUUID(),
   ): Promise<Comment> {
-    return this.fetch(`/api/issues/${issueId}/comments`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        type: type ?? "comment",
-        ...(parentId ? { parent_id: parentId } : {}),
-        ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
-        ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
-      }),
-    });
+    const request = { ...data, type: data.type ?? "comment" };
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`, {
+        method: "POST",
+        body: JSON.stringify(request),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Comment>(raw, CommentSchema, {
+        endpoint: "POST /api/issues/:id/comments",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async previewCommentTriggers(issueId: string, content: string, parentId?: string, editingCommentId?: string): Promise<CommentTriggerPreview> {
@@ -845,17 +735,23 @@ export class ApiClient {
   }
 
   async getAssigneeFrequency(): Promise<AssigneeFrequencyEntry[]> {
-    return this.fetch("/api/assignee-frequency");
+    const raw = await this.fetch<unknown>("/api/assignee-frequency");
+    return parseWithFallback(raw, AssigneeFrequencyListSchema, EMPTY_ASSIGNEE_FREQUENCY, {
+      endpoint: "GET /api/assignee-frequency",
+    });
   }
 
-  async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}`, {
+  async updateComment(commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[]): Promise<Comment> {
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}`, {
       method: "PUT",
       body: JSON.stringify({
         content,
         attachment_ids: attachmentIds,
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
+    });
+    return parseOrThrow(raw, CommentSchema, {
+      endpoint: "PUT /api/comments/:id",
     });
   }
 
@@ -864,17 +760,26 @@ export class ApiClient {
   }
 
   async resolveComment(commentId: string): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "POST" });
+    return parseOrThrow(raw, CommentSchema, {
+      endpoint: "POST /api/comments/:id/resolve",
+    });
   }
 
   async unresolveComment(commentId: string): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
+    return parseOrThrow(raw, CommentSchema, {
+      endpoint: "DELETE /api/comments/:id/resolve",
+    });
   }
 
   async addReaction(commentId: string, emoji: string): Promise<Reaction> {
-    return this.fetch(`/api/comments/${commentId}/reactions`, {
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/reactions`, {
       method: "POST",
       body: JSON.stringify({ emoji }),
+    });
+    return parseOrThrow(raw, ReactionSchema, {
+      endpoint: "POST /api/comments/:id/reactions",
     });
   }
 
@@ -886,9 +791,12 @@ export class ApiClient {
   }
 
   async addIssueReaction(issueId: string, emoji: string): Promise<IssueReaction> {
-    return this.fetch(`/api/issues/${issueId}/reactions`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/reactions`, {
       method: "POST",
       body: JSON.stringify({ emoji }),
+    });
+    return parseOrThrow(raw, IssueReactionSchema, {
+      endpoint: "POST /api/issues/:id/reactions",
     });
   }
 
@@ -908,22 +816,16 @@ export class ApiClient {
   }
 
   async subscribeToIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
-    const body: Record<string, string> = {};
-    if (userId) body.user_id = userId;
-    if (userType) body.user_type = userType;
     await this.fetch(`/api/issues/${issueId}/subscribe`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: issueSubscriptionBody(userId, userType),
     });
   }
 
   async unsubscribeFromIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
-    const body: Record<string, string> = {};
-    if (userId) body.user_id = userId;
-    if (userType) body.user_type = userType;
     await this.fetch(`/api/issues/${issueId}/unsubscribe`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: issueSubscriptionBody(userId, userType),
     });
   }
 
@@ -932,29 +834,44 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
-    return this.fetch(`/api/agents?${search}`);
+    const raw = await this.fetch<unknown>(`/api/agents?${search}`);
+    return parseWithFallback(raw, AgentListSchema, [], { endpoint: "GET /api/agents" });
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`);
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`);
+    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "GET /api/agents/:id" });
   }
 
-  async createAgent(data: CreateAgentRequest): Promise<Agent> {
-    return this.fetch("/api/agents", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+  async createAgent(
+    data: CreateAgentRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Agent> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/agents", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Agent>(raw, AgentSchema, {
+        endpoint: "POST /api/agents",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
+    return parseOrThrow(raw, AgentSchema, { endpoint: "PUT /api/agents/:id" });
   }
 
   async archiveAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/archive`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/archive`, { method: "POST" });
+    return parseOrThrow(raw, AgentSchema, { endpoint: "POST /api/agents/:id/archive" });
   }
 
   /**
@@ -964,7 +881,18 @@ export class ApiClient {
    * MUL-2600.
    */
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
-    return this.fetch(`/api/agents/${id}/env`);
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/env`);
+    return parseOrThrow(
+      raw,
+      AgentEnvResponseSchema.refine((response) => response.agent_id === id, {
+        path: ["agent_id"],
+        message: "agent id does not match request",
+      }),
+      {
+        endpoint: "GET /api/agents/:id/env",
+        mayHaveCommitted: false,
+      },
+    );
   }
 
   /**
@@ -976,14 +904,23 @@ export class ApiClient {
    * MUL-2600.
    */
   async updateAgentEnv(id: string, data: UpdateAgentEnvRequest): Promise<AgentEnvResponse> {
-    return this.fetch(`/api/agents/${id}/env`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/env`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
+    return parseOrThrow(
+      raw,
+      AgentEnvResponseSchema.refine((response) => response.agent_id === id, {
+        path: ["agent_id"],
+        message: "agent id does not match request",
+      }),
+      { endpoint: "PUT /api/agents/:id/env" },
+    );
   }
 
   async restoreAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/restore`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/restore`, { method: "POST" });
+    return parseOrThrow(raw, AgentSchema, { endpoint: "POST /api/agents/:id/restore" });
   }
 
   // Bulk-cancel every active task (queued/dispatched/running) for the agent.
@@ -991,14 +928,18 @@ export class ApiClient {
   // count of cancelled rows; broadcasts task:cancelled for each so other
   // surfaces can clear their live cards.
   async cancelAgentTasks(id: string): Promise<{ cancelled: number }> {
-    return this.fetch(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
+    return parseOrThrow(raw, AgentTaskCancellationCountSchema, { endpoint: "POST /api/agents/:id/cancel-tasks" });
   }
 
   async listRuntimes(params?: { workspace_id?: string; owner?: "me" }): Promise<AgentRuntime[]> {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
-    return this.fetch(`/api/runtimes?${search}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes?${search}`);
+    return parseWithFallback(raw, RuntimeDeviceListSchema, [], {
+      endpoint: "GET /api/runtimes",
+    }) as AgentRuntime[];
   }
 
   async deleteRuntime(runtimeId: string): Promise<void> {
@@ -1017,20 +958,33 @@ export class ApiClient {
     runtimeId: string,
     expectedActiveAgentIds: string[],
   ): Promise<{ status: string; agents_archived: number; tasks_cancelled: number }> {
-    return this.fetch(`/api/runtimes/${runtimeId}/archive-agents-and-delete`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/archive-agents-and-delete`, {
       method: "POST",
       body: JSON.stringify({ expected_active_agent_ids: expectedActiveAgentIds }),
     });
+    return parseOrThrow(
+      raw,
+      RuntimeCascadeDeleteResponseSchema,
+      { endpoint: "POST /api/runtimes/:id/archive-agents-and-delete" },
+    );
   }
 
   async updateRuntime(
     runtimeId: string,
     patch: { scope?: "personal" | "workspace" },
   ): Promise<AgentRuntime> {
-    return this.fetch(`/api/runtimes/${runtimeId}`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
+    return parseOrThrow(
+      raw,
+      RuntimeDeviceSchema.refine((runtime) => runtime.id === runtimeId, {
+        path: ["id"],
+        message: "runtime id does not match request",
+      }),
+      { endpoint: "PATCH /api/runtimes/:id" },
+    ) as AgentRuntime;
   }
 
   // ---------------------------------------------------------------------
@@ -1039,28 +993,24 @@ export class ApiClient {
   // ---------------------------------------------------------------------
 
   async listRuntimeProfiles(workspaceId: string): Promise<RuntimeProfile[]> {
-    const res = await this.fetch<{ runtime_profiles?: RuntimeProfile[] }>(
+    const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/runtime-profiles`,
     );
-    return res.runtime_profiles ?? [];
-  }
-
-  async getRuntimeProfile(
-    workspaceId: string,
-    profileId: string,
-  ): Promise<RuntimeProfile> {
-    return this.fetch(
-      `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
-    );
+    return parseWithFallback(raw, RuntimeProfileListResponseSchema, [], {
+      endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles",
+    });
   }
 
   async createRuntimeProfile(
     workspaceId: string,
     body: CreateRuntimeProfileRequest,
   ): Promise<RuntimeProfile> {
-    return this.fetch(`/api/workspaces/${workspaceId}/runtime-profiles`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/runtime-profiles`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+    return parseOrThrow(raw, RuntimeProfileSchema, {
+      endpoint: "POST /api/workspaces/:workspaceId/runtime-profiles",
     });
   }
 
@@ -1069,13 +1019,16 @@ export class ApiClient {
     profileId: string,
     patch: UpdateRuntimeProfileRequest,
   ): Promise<RuntimeProfile> {
-    return this.fetch(
+    const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
       {
         method: "PATCH",
         body: JSON.stringify(patch),
       },
     );
+    return parseOrThrow(raw, RuntimeProfileSchema, {
+      endpoint: "PATCH /api/workspaces/:workspaceId/runtime-profiles/:profileId",
+    });
   }
 
   async deleteRuntimeProfile(
@@ -1092,12 +1045,10 @@ export class ApiClient {
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsage[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
+    const search = usageSearchParams(params);
     // `tz` drives the calendar-day boundary for the trend chart (Viewing
     // layer). Caller-supplied; the backend falls back to user.timezone /
     // UTC if omitted.
-    if (params?.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage?${search}`,
     );
@@ -1106,32 +1057,11 @@ export class ApiClient {
     });
   }
 
-  async getRuntimeTaskActivity(
-    runtimeId: string,
-    params?: { tz?: string },
-  ): Promise<RuntimeHourlyActivity[]> {
-    // Hour-of-day heatmap follows the viewer's tz, like the other reports on
-    // this page. Pass the viewer's IANA zone so the server buckets correctly.
-    const search = new URLSearchParams();
-    if (params?.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(
-      `/api/runtimes/${runtimeId}/activity?${search}`,
-    );
-    return parseWithFallback<RuntimeHourlyActivity[]>(
-      raw,
-      RuntimeHourlyActivityListSchema,
-      [],
-      { endpoint: "GET /api/runtimes/:id/activity" },
-    );
-  }
-
   async getRuntimeUsageByAgent(
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsageByAgent[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
-    if (params?.tz) search.set("tz", params.tz);
+    const search = usageSearchParams(params);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage/by-agent?${search}`,
     );
@@ -1147,9 +1077,7 @@ export class ApiClient {
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsageByTask[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
-    if (params?.tz) search.set("tz", params.tz);
+    const search = usageSearchParams(params);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage/by-task?${search}`,
     );
@@ -1161,69 +1089,179 @@ export class ApiClient {
     );
   }
 
-  async getRuntimeUsageByHour(
-    runtimeId: string,
-    params?: { days?: number; tz?: string },
-  ): Promise<RuntimeUsageByHour[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
-    if (params?.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(
-      `/api/runtimes/${runtimeId}/usage/by-hour?${search}`,
-    );
-    return parseWithFallback<RuntimeUsageByHour[]>(
+  // ---------------------------------------------------------------------------
+  // Workspace dashboard — three independent rollups for `/{slug}/dashboard`.
+  // Each accepts an optional `project_id` to narrow the scope to one project.
+  // Cost fields are computed server-side from the maintained pricing catalog
+  // (same contract as the per-runtime endpoints above).
+  // ---------------------------------------------------------------------------
+
+  async getDashboardUsageDaily(
+    params: { days?: number; project_id?: string | null; tz?: string },
+  ): Promise<DashboardUsageDaily[]> {
+    const search = usageSearchParams(params);
+    const raw = await this.fetch<unknown>(`/api/dashboard/usage/daily?${search}`);
+    return parseWithFallback<DashboardUsageDaily[]>(
       raw,
-      RuntimeUsageByHourListSchema,
+      DashboardUsageDailyListSchema,
       [],
-      { endpoint: "GET /api/runtimes/:id/usage/by-hour" },
+      { endpoint: "GET /api/dashboard/usage/daily" },
     );
   }
 
-  async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/models`, { method: "POST" });
+  async getDashboardUsageByAgent(
+    params: { days?: number; project_id?: string | null; tz?: string },
+  ): Promise<RuntimeUsageByAgent[]> {
+    const search = usageSearchParams(params);
+    const raw = await this.fetch<unknown>(`/api/dashboard/usage/by-agent?${search}`);
+    return parseWithFallback<RuntimeUsageByAgent[]>(
+      raw,
+      DashboardUsageByAgentListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/usage/by-agent" },
+    );
+  }
+
+  async getDashboardAgentRunTime(
+    params: { days?: number; project_id?: string | null; tz?: string },
+  ): Promise<DashboardAgentRunTime[]> {
+    const search = usageSearchParams(params);
+    // `tz` aligns the "last N days" cutoff with the viewer's calendar,
+    // matching the per-agent token card.
+    const raw = await this.fetch<unknown>(`/api/dashboard/agent-runtime?${search}`);
+    return parseWithFallback<DashboardAgentRunTime[]>(
+      raw,
+      DashboardAgentRunTimeListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/agent-runtime" },
+    );
+  }
+
+  async getDashboardRunTimeDaily(
+    params: { days?: number; project_id?: string | null; tz?: string },
+  ): Promise<DashboardRunTimeDaily[]> {
+    const search = usageSearchParams(params);
+    // `tz` cuts the day buckets in the viewer's calendar so Time / Tasks
+    // align with the Cost / Tokens charts.
+    const raw = await this.fetch<unknown>(`/api/dashboard/runtime/daily?${search}`);
+    return parseWithFallback<DashboardRunTimeDaily[]>(
+      raw,
+      DashboardRunTimeDailyListSchema,
+      [],
+      { endpoint: "GET /api/dashboard/runtime/daily" },
+    );
+  }
+
+  async initiateListModels(runtimeId: string, idempotencyKey = generateUUID()): Promise<RuntimeModelListRequest> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
+        method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseRuntimeRequest(
+        raw,
+        RuntimeModelListRequestSchema,
+        runtimeId,
+        undefined,
+        "POST /api/runtimes/:id/models",
+        true,
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getListModelsResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeModelListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/models/${requestId}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models/${requestId}`);
+    return parseRuntimeRequest(
+      raw,
+      RuntimeModelListRequestSchema,
+      runtimeId,
+      requestId,
+      "GET /api/runtimes/:id/models/:requestId",
+      false,
+    );
   }
 
   async initiateListLocalSkills(
     runtimeId: string,
+    idempotencyKey = generateUUID(),
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills`, {
-      method: "POST",
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills`, {
+        method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseRuntimeRequest(
+        raw,
+        RuntimeLocalSkillListRequestSchema,
+        runtimeId,
+        undefined,
+        "POST /api/runtimes/:id/local-skills",
+        true,
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getListLocalSkillsResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
+    return parseRuntimeRequest(
+      raw,
+      RuntimeLocalSkillListRequestSchema,
+      runtimeId,
+      requestId,
+      "GET /api/runtimes/:id/local-skills/:requestId",
+      false,
+    );
   }
 
   async initiateImportLocalSkill(
     runtimeId: string,
     data: CreateRuntimeLocalSkillImportRequest,
+    idempotencyKey = generateUUID(),
   ): Promise<RuntimeLocalSkillImportRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseRuntimeRequest(
+        raw,
+        RuntimeLocalSkillImportRequestSchema,
+        runtimeId,
+        undefined,
+        "POST /api/runtimes/:id/local-skills/import",
+        true,
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getImportLocalSkillResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeLocalSkillImportRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
+    return parseRuntimeRequest(
+      raw,
+      RuntimeLocalSkillImportRequestSchema,
+      runtimeId,
+      requestId,
+      "GET /api/runtimes/:id/local-skills/import/:requestId",
+      false,
+    );
   }
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/agents/${agentId}/tasks`);
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/tasks`);
+    return parseWithFallback(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/agents/:id/tasks",
+    }) as AgentTask[];
   }
 
   // Workspace-scoped agent task snapshot: every active task
@@ -1232,7 +1270,10 @@ export class ApiClient {
   // derivation; one fetch backs every per-agent presence read in the app.
   // Workspace is resolved server-side from the X-Workspace-Slug header.
   async getAgentTaskSnapshot(): Promise<AgentTask[]> {
-    return this.fetch(`/api/agent-task-snapshot`);
+    const raw = await this.fetch<unknown>(`/api/agent-task-snapshot`);
+    return parseWithFallback(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/agent-task-snapshot",
+    }) as AgentTask[];
   }
 
   // Per-agent daily activity for the last 30 days, anchored on
@@ -1240,106 +1281,120 @@ export class ApiClient {
   // sparkline (uses trailing 7 buckets) and the agent detail "Last 30
   // days" panel (uses all 30).
   async getWorkspaceAgentActivity30d(): Promise<AgentActivityBucket[]> {
-    return this.fetch(`/api/agent-activity-30d`);
+    const raw = await this.fetch<unknown>(`/api/agent-activity-30d`);
+    return parseWithFallback(raw, AgentActivityBucketListSchema, EMPTY_AGENT_ACTIVITY_BUCKETS, {
+      endpoint: "GET /api/agent-activity-30d",
+    });
   }
 
   // Per-agent 30-day total run count for the Agents-list RUNS column.
   async getWorkspaceAgentRunCounts(): Promise<AgentRunCount[]> {
-    return this.fetch(`/api/agent-run-counts`);
-  }
-
-  async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {
-    return this.fetch(`/api/issues/${issueId}/active-task`);
+    const raw = await this.fetch<unknown>(`/api/agent-run-counts`);
+    return parseWithFallback(raw, AgentRunCountListSchema, EMPTY_AGENT_RUN_COUNTS, {
+      endpoint: "GET /api/agent-run-counts",
+    });
   }
 
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
-    return this.fetch(`/api/tasks/${taskId}/messages`);
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/messages`);
+    return parseWithFallback(raw, TaskMessageListSchema, EMPTY_TASK_MESSAGES, {
+      endpoint: "GET /api/tasks/:id/messages",
+    });
   }
 
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/issues/${issueId}/task-runs`);
-  }
-
-  async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
-    return this.fetch(`/api/issues/${issueId}/usage`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/task-runs`);
+    return parseWithFallback(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/issues/:id/task-runs",
+    }) as AgentTask[];
   }
 
   async listIssueTaskTraceEvents(issueId: string): Promise<IssueTaskTraceResponse> {
-    return this.fetch(`/api/issues/${issueId}/trace`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/trace`);
+    return parseWithFallback(
+      raw,
+      IssueTaskTraceResponseSchema,
+      EMPTY_ISSUE_TASK_TRACE_RESPONSE,
+      { endpoint: "GET /api/issues/:id/trace" },
+    );
   }
 
   async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
-    return this.fetch(`/api/issues/${issueId}/execution-tree`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/execution-tree`);
+    return parseWithFallback(
+      raw,
+      IssueExecutionTreeResponseSchema,
+      EMPTY_ISSUE_EXECUTION_TREE,
+      { endpoint: "GET /api/issues/:id/execution-tree" },
+    );
   }
 
-  async listIssueSOPRuns(issueId: string): Promise<ListIssueSOPRunsResponse> {
+  async listIssueSOPRuns(issueId: string): Promise<SquadSOPRun[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`);
-    return parseWithFallback(raw, IssueSOPRunsResponseSchema, EMPTY_ISSUE_SOP_RUNS_RESPONSE, {
+    return parseWithFallback(raw, IssueSOPRunsResponseSchema, [], {
       endpoint: "GET /api/issues/:id/sop-runs",
-    }) as ListIssueSOPRunsResponse;
-  }
-
-  async createIssueSOPRun(issueId: string, data: CreateSOPRunRequest = {}): Promise<SquadSOPRun> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, SquadSOPRunSchema, EMPTY_SQUAD_SOP_RUN, {
-      endpoint: "POST /api/issues/:id/sop-runs",
-    }) as SquadSOPRun;
-  }
-
-  async recordSOPStepEvent(runId: string, stepId: string, data: CreateSOPStepEventRequest): Promise<SquadSOPStepEvent> {
-    return this.fetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
-      method: "POST",
-      body: JSON.stringify(data),
     });
   }
 
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
-    return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
+    });
+    return parseOrThrow(raw, AgentTaskSchema, {
+      endpoint: "POST /api/issues/:id/tasks/:taskId/cancel",
+      mayHaveCommitted: true,
     });
   }
 
-  async rerunIssue(issueId: string, taskId?: string): Promise<AgentTask> {
-    return this.fetch(`/api/issues/${issueId}/rerun`, {
-      method: "POST",
-      body: JSON.stringify(taskId ? { task_id: taskId } : {}),
-    });
+  async rerunIssue(issueId: string, taskId: string, idempotencyKey = generateUUID()): Promise<AgentTask> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/issues/${issueId}/rerun`, {
+        method: "POST",
+        body: JSON.stringify({ task_id: taskId }),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<AgentTask>(raw, AgentTaskSchema, {
+        endpoint: "POST /api/issues/:id/rerun",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Inbox
   async listInbox(): Promise<InboxItem[]> {
-    return this.fetch("/api/inbox");
+    const raw = await this.fetch<unknown>("/api/inbox");
+    return parseWithFallback(raw, InboxListSchema, [], { endpoint: "GET /api/inbox" });
   }
 
   async markInboxRead(id: string): Promise<InboxItem> {
-    return this.fetch(`/api/inbox/${id}/read`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/inbox/${id}/read`, { method: "POST" });
+    return parseOrThrow(raw, InboxItemSchema, { endpoint: "POST /api/inbox/:id/read" });
   }
 
   async archiveInbox(id: string): Promise<InboxItem> {
-    return this.fetch(`/api/inbox/${id}/archive`, { method: "POST" });
-  }
-
-  async getUnreadInboxCount(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/unread-count");
+    const raw = await this.fetch<unknown>(`/api/inbox/${id}/archive`, { method: "POST" });
+    return parseOrThrow(raw, InboxItemSchema, { endpoint: "POST /api/inbox/:id/archive" });
   }
 
   async markAllInboxRead(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/mark-all-read", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/mark-all-read", { method: "POST" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/mark-all-read" });
   }
 
   async archiveAllInbox(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/archive-all", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/archive-all", { method: "POST" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/archive-all" });
   }
 
   async archiveAllReadInbox(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/archive-all-read", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/archive-all-read", { method: "POST" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/archive-all-read" });
   }
 
   async archiveCompletedInbox(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/archive-completed", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/archive-completed", { method: "POST" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/archive-completed" });
   }
 
   // Notification preferences
@@ -1348,18 +1403,29 @@ export class ApiClient {
   // follows the active workspace) so a caller can read a SPECIFIC workspace's
   // preferences — e.g. honoring the mute setting of the workspace an inbox
   // notification came from while the user is viewing a different one (#3766).
-  async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferenceResponse> {
-    return this.fetch(
+  async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferences> {
+    const raw = await this.fetch<unknown>(
       "/api/notification-preferences",
       workspaceSlug ? { headers: { "X-Workspace-Slug": workspaceSlug } } : undefined,
     );
+    return parseWithFallback(
+      raw,
+      NotificationPreferenceResponseSchema,
+      { preferences: EMPTY_NOTIFICATION_PREFERENCES },
+      { endpoint: "GET /api/notification-preferences" },
+    ).preferences;
   }
 
-  async updateNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferenceResponse> {
-    return this.fetch("/api/notification-preferences", {
+  async updateNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferences> {
+    const raw = await this.fetch<unknown>("/api/notification-preferences", {
       method: "PUT",
       body: JSON.stringify({ preferences }),
     });
+    return parseOrThrow<{ preferences: NotificationPreferences }>(
+      raw,
+      NotificationPreferenceResponseSchema,
+      { endpoint: "PUT /api/notification-preferences" },
+    ).preferences;
   }
 
   // App Config
@@ -1372,11 +1438,10 @@ export class ApiClient {
 
   // Workspaces
   async listWorkspaces(): Promise<Workspace[]> {
-    return this.fetch("/api/workspaces");
-  }
-
-  async getWorkspace(id: string): Promise<Workspace> {
-    return this.fetch(`/api/workspaces/${id}`);
+    const raw = await this.fetch<unknown>("/api/workspaces");
+    return parseWithFallback(raw, WorkspaceListSchema, [], {
+      endpoint: "GET /api/workspaces",
+    });
   }
 
   async getWorkspaceObservabilitySummary(id: string, paramsInput?: { since?: string; squad_id?: string; project_id?: string; agent_id?: string }): Promise<ObservabilitySummary> {
@@ -1391,50 +1456,93 @@ export class ApiClient {
     }) as ObservabilitySummary;
   }
 
-  async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }): Promise<Workspace> {
-    return this.fetch("/api/workspaces", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+  async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }, idempotencyKey = generateUUID()): Promise<Workspace> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Workspace>(raw, WorkspaceSchema, {
+        endpoint: "POST /api/workspaces",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
-    return this.fetch(`/api/workspaces/${id}`, {
+  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: WorkspaceSettings; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, WorkspaceSchema, {
+      endpoint: "PATCH /api/workspaces/:id",
     });
   }
 
   async resolveWorkspaceRepo(workspaceId: string, data: { url: string; default_branch?: string }): Promise<WorkspaceRepo> {
-    return this.fetch(`/api/workspaces/${workspaceId}/repos/resolve`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/resolve`, {
       method: "POST",
+      responseMayHaveCommitted: false,
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, WorkspaceRepoSchema, {
+      endpoint: "POST /api/workspaces/:workspaceId/repos/resolve",
+      mayHaveCommitted: false,
     });
   }
 
   async probeWorkspaceRepo(workspaceId: string, data: { url: string }): Promise<WorkspaceRepoProbeResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/repos/probe`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/probe`, {
       method: "POST",
+      responseMayHaveCommitted: false,
       body: JSON.stringify(data),
     });
+    return parseOrThrow(
+      raw,
+      WorkspaceRepoProbeResponseSchema,
+      {
+        endpoint: "POST /api/workspaces/:workspaceId/repos/probe",
+        mayHaveCommitted: false,
+      },
+    );
   }
 
   // Members
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members`);
-  }
-
-  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<MemberWithUser> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members`, {
-      method: "POST",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`);
+    return parseWithFallback(raw, MemberWithUserListSchema, [], {
+      endpoint: "GET /api/workspaces/:workspaceId/members",
     });
   }
 
+  async createMember(
+    workspaceId: string,
+    data: CreateMemberRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<MemberWithUser> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<MemberWithUser>(raw, MemberWithUserSchema, {
+        endpoint: "POST /api/workspaces/:workspaceId/members",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
   async updateMember(workspaceId: string, memberId: string, data: UpdateMemberRequest): Promise<MemberWithUser> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, MemberWithUserSchema, {
+      endpoint: "PATCH /api/workspaces/:workspaceId/members/:memberId",
     });
   }
 
@@ -1458,24 +1566,45 @@ export class ApiClient {
 
   // Skills
   async listSkills(): Promise<SkillSummary[]> {
-    return this.fetch("/api/skills");
-  }
-
-  async getSkill(id: string): Promise<Skill> {
-    return this.fetch(`/api/skills/${id}`);
-  }
-
-  async createSkill(data: CreateSkillRequest): Promise<Skill> {
-    return this.fetch("/api/skills", {
-      method: "POST",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>("/api/skills");
+    return parseWithFallback(raw, SkillSummaryListSchema, EMPTY_SKILL_SUMMARIES, {
+      endpoint: "GET /api/skills",
     });
   }
 
+  async getSkill(id: string): Promise<Skill> {
+    const raw = await this.fetch<unknown>(`/api/skills/${id}`);
+    return parseWithFallback(raw, SkillSchema, EMPTY_SKILL, {
+      endpoint: "GET /api/skills/:id",
+    });
+  }
+
+  async createSkill(
+    data: CreateSkillRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Skill> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/skills", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Skill>(raw, SkillSchema, {
+        endpoint: "POST /api/skills",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
   async updateSkill(id: string, data: UpdateSkillRequest): Promise<Skill> {
-    return this.fetch(`/api/skills/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/skills/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SkillSchema, {
+      endpoint: "PUT /api/skills/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -1483,22 +1612,19 @@ export class ApiClient {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
-  async importSkill(data: { url: string }): Promise<Skill> {
-    const result = await this.fetch<{ status: string; skill?: Skill }>(
-      "/api/skills/import",
-      {
-      method: "POST",
-        body: JSON.stringify({ ...data, on_conflict: "fail" }),
-      },
-    );
-    if (result.status !== "created" || !result.skill) {
-      throw new Error(`Unexpected skill import result: ${result.status}`);
-    }
-    return result.skill;
-  }
-
-  async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
-    return this.fetch(`/api/agents/${agentId}/skills`);
+  async importSkill(data: { url: string }, idempotencyKey = generateUUID()): Promise<Skill> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/skills/import", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Skill>(raw, SkillSchema, {
+        endpoint: "POST /api/skills/import",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
@@ -1518,73 +1644,52 @@ export class ApiClient {
     });
   }
 
-  // Personal Access Tokens
-  async listPersonalAccessTokens(): Promise<PersonalAccessToken[]> {
-    return this.fetch("/api/tokens");
-  }
-
-  async createPersonalAccessToken(data: CreatePersonalAccessTokenRequest): Promise<CreatePersonalAccessTokenResponse> {
-    return this.fetch("/api/tokens", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
-  async revokePersonalAccessToken(id: string): Promise<void> {
-    await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
-  }
-
   // File Upload & Attachments
   async uploadFile(
     file: File,
     opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
+    idempotencyKey = generateUUID(),
   ): Promise<Attachment> {
-    const formData = new FormData();
-    formData.append("file", file);
-    if (opts?.issueId) formData.append("issue_id", opts.issueId);
-    if (opts?.commentId) formData.append("comment_id", opts.commentId);
-    if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
+    const attempt = async () => {
+      // Rebuild FormData for every attempt. Browsers may consume a request
+      // body stream even when the response is lost; the File itself remains
+      // reusable and the server fingerprints its bytes under one request key.
+      const formData = new FormData();
+      formData.append("file", file);
+      if (opts?.issueId) formData.append("issue_id", opts.issueId);
+      if (opts?.commentId) formData.append("comment_id", opts.commentId);
+      if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
 
-    const rid = createRequestId();
-    const start = Date.now();
-    this.logger.info("→ POST /api/upload-file", { rid });
-
-    const res = await fetch(`${this.baseUrl}/api/upload-file`, {
-      method: "POST",
-      headers: this.authHeaders(),
-      body: formData,
-      credentials: "include",
-    });
-
-    if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
-      const message = await this.parseErrorMessage(res, `Upload failed: ${res.status}`);
-      this.logger.error(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms`, error: message });
-      throw new Error(message);
-    }
-
-    this.logger.info(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms` });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
-      endpoint: "POST /api/upload-file",
-    });
+      const response = await this.fetchRaw("/api/upload-file", {
+        method: "POST",
+        body: formData,
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      const raw = await this.parseSuccessJson<unknown>(response, "POST /api/upload-file", true);
+      return parseOrThrow<Attachment>(raw, AttachmentResponseSchema, {
+        endpoint: "POST /api/upload-file",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Chat Sessions
-  async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
-    const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`);
+  async listChatSessions(): Promise<ChatSession[]> {
+    const raw = await this.fetch<unknown>("/api/chat/sessions");
+    return parseWithFallback(raw, ChatSessionListSchema, [], { endpoint: "GET /api/chat/sessions" });
   }
 
-  async getChatSession(id: string): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`);
-  }
-
-  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
-    return this.fetch("/api/chat/sessions", {
+  async createChatSession(
+    data: { agent_id: string; title?: string },
+    idempotencyKey: string,
+  ): Promise<ChatSession> {
+    const raw = await this.fetch<unknown>("/api/chat/sessions", {
       method: "POST",
+      extraHeaders: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(data),
     });
+    return parseOrThrow(raw, ChatSessionSchema, { endpoint: "POST /api/chat/sessions" });
   }
 
   async deleteChatSession(id: string): Promise<void> {
@@ -1592,14 +1697,11 @@ export class ApiClient {
   }
 
   async updateChatSession(id: string, data: { title: string }): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-  }
-
-  async listChatMessages(sessionId: string): Promise<ChatMessage[]> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`);
+    return parseOrThrow(raw, ChatSessionSchema, { endpoint: "PATCH /api/chat/sessions/:id" });
   }
 
   async listChatMessagesPage(
@@ -1612,48 +1714,42 @@ export class ApiClient {
       query.set("before_created_at", params.before.created_at);
       query.set("before_id", params.before.id);
     }
-    try {
-      return await this.fetch(
-        `/api/chat/sessions/${sessionId}/messages/page?${query.toString()}`,
-      );
-    } catch (err) {
-      // Deployment-order compatibility: a backend deployed before this endpoint
-      // existed returns 404 for the unknown route. Fall back to the legacy
-      // full-list endpoint so chat never white-screens regardless of whether
-      // the server or the client deploys first. Only the initial (cursorless)
-      // page falls back — the legacy endpoint returns every message at once, so
-      // the fallback page reports has_more: false and there is no follow-up
-      // request to translate. A 404 on a cursor request is an unexpected state
-      // and propagates instead of duplicating the whole list.
-      if (err instanceof ApiError && err.status === 404 && !params.before) {
-        const messages = await this.listChatMessages(sessionId);
-        return { messages, limit, has_more: false, next_cursor: null };
-      }
-      throw err;
-    }
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/messages/page?${query.toString()}`,
+    );
+    return parseWithFallback(raw, ChatMessagesPageSchema, EMPTY_CHAT_MESSAGES_PAGE, {
+      endpoint: "GET /api/chat/sessions/:id/messages/page",
+    });
   }
 
   async sendChatMessage(
     sessionId: string,
     content: string,
+    idempotencyKey: string,
     attachmentIds?: string[],
   ): Promise<SendChatMessageResponse> {
     const body: { content: string; attachment_ids?: string[] } = { content };
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
+      extraHeaders: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(body),
+    });
+    return parseOrThrow(raw, SendChatMessageResponseSchema, {
+      endpoint: "POST /api/chat/sessions/:id/messages",
     });
   }
 
   async getPendingChatTask(sessionId: string): Promise<ChatPendingTask> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/pending-task`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/pending-task`);
+    return parseWithFallback(raw, ChatPendingTaskSchema, EMPTY_CHAT_PENDING_TASK, { endpoint: "GET /api/chat/sessions/:id/pending-task" });
   }
 
   async listPendingChatTasks(): Promise<PendingChatTasksResponse> {
-    return this.fetch(`/api/chat/pending-tasks`);
+    const raw = await this.fetch<unknown>(`/api/chat/pending-tasks`);
+    return parseWithFallback(raw, PendingChatTasksResponseSchema, EMPTY_PENDING_CHAT_TASKS_RESPONSE, { endpoint: "GET /api/chat/pending-tasks" });
   }
 
   async markChatSessionRead(sessionId: string): Promise<void> {
@@ -1662,13 +1758,16 @@ export class ApiClient {
 
   async cancelTaskById(taskId: string): Promise<CancelTaskResponse> {
     const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
-    return parseWithFallback(raw, CancelTaskResponseSchema, EMPTY_CANCEL_TASK_RESPONSE, {
+    return parseOrThrow(raw, CancelTaskResponseSchema, {
       endpoint: "POST /api/tasks/{taskId}/cancel",
     });
   }
 
   async listAttachments(issueId: string): Promise<Attachment[]> {
-    return this.fetch(`/api/issues/${issueId}/attachments`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/attachments`);
+    return parseWithFallback(raw, AttachmentListSchema, EMPTY_ATTACHMENTS, {
+      endpoint: "GET /api/issues/:id/attachments",
+    });
   }
 
   // Fetches a fresh attachment metadata record. The server re-signs
@@ -1680,10 +1779,6 @@ export class ApiClient {
     return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
       endpoint: "GET /api/attachments/{id}",
     });
-  }
-
-  async deleteAttachment(id: string): Promise<void> {
-    await this.fetch(`/api/attachments/${id}`, { method: "DELETE" });
   }
 
   // Fetches the raw bytes of a text-previewable attachment.
@@ -1719,27 +1814,48 @@ export class ApiClient {
   }
 
   // Projects
-  async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
+  async listProjects(params?: { status?: string }): Promise<Project[]> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
-    return this.fetch(`/api/projects?${search}`);
-  }
-
-  async getProject(id: string): Promise<Project> {
-    return this.fetch(`/api/projects/${id}`);
-  }
-
-  async createProject(data: CreateProjectRequest): Promise<Project> {
-    return this.fetch("/api/projects", {
-      method: "POST",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>(`/api/projects?${search}`);
+    return parseWithFallback(raw, ProjectListSchema, EMPTY_PROJECTS, {
+      endpoint: "GET /api/projects",
     });
   }
 
+  async getProject(id: string): Promise<Project> {
+    const raw = await this.fetch<unknown>(`/api/projects/${id}`);
+    return parseWithFallback(raw, ProjectSchema, EMPTY_PROJECT, {
+      endpoint: "GET /api/projects/:id",
+    });
+  }
+
+  async createProject(
+    data: CreateProjectRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Project> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/projects", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<Project>(raw, ProjectSchema, {
+        endpoint: "POST /api/projects",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
   async updateProject(id: string, data: UpdateProjectRequest): Promise<Project> {
-    return this.fetch(`/api/projects/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectSchema, {
+      endpoint: "PUT /api/projects/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -1748,83 +1864,76 @@ export class ApiClient {
   }
 
   // Prompt library
-  async listPromptLibraryItems(params?: ListPromptLibraryItemsParams): Promise<ListPromptLibraryItemsResponse> {
+  async listPromptLibraryItems(params?: ListPromptLibraryItemsParams): Promise<PromptLibraryItem[]> {
     const search = new URLSearchParams();
     if (params?.project_id) search.set("project_id", params.project_id);
     if (params?.prompt_type) search.set("prompt_type", params.prompt_type);
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-library${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, EMPTY_PROMPT_LIBRARY_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, [], {
       endpoint: "GET /api/prompt-library",
-    }) as ListPromptLibraryItemsResponse;
+    });
   }
 
-  async getPromptLibraryItem(id: string): Promise<PromptLibraryItem> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`);
-    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-      endpoint: "GET /api/prompt-library/:id",
-    }) as PromptLibraryItem;
-  }
-
-  async listPromptLibraryVersions(id: string): Promise<ListPromptLibraryVersionsResponse> {
+  async listPromptLibraryVersions(id: string): Promise<PromptLibraryVersion[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
-    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, [], {
       endpoint: "GET /api/prompt-library/:id/versions",
-    }) as ListPromptLibraryVersionsResponse;
+    });
   }
 
-  async listPromptLibraryTrials(id: string): Promise<ListPromptLibraryTrialsResponse> {
+  async listPromptLibraryTrials(id: string): Promise<PromptLibraryTrial[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/trials`);
-    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, [], {
       endpoint: "GET /api/prompt-library/:id/trials",
-    }) as ListPromptLibraryTrialsResponse;
+    });
   }
 
-  async createPromptLibraryItem(data: CreatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
-    const raw = await this.fetch<unknown>("/api/prompt-library", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-      endpoint: "POST /api/prompt-library",
-    }) as PromptLibraryItem;
-  }
-
-  async createPromptLibraryVersion(id: string, data: CreatePromptLibraryVersionRequest): Promise<CreatePromptLibraryVersionResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    const response = raw && typeof raw === "object" ? raw as { item?: unknown; version?: unknown } : {};
-    return {
-      item: parseWithFallback(response.item, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-        endpoint: "POST /api/prompt-library/:id/versions.item",
-      }) as PromptLibraryItem,
-      version: parseWithFallback(response.version, PromptLibraryVersionSchema, EMPTY_PROMPT_LIBRARY_VERSION, {
-        endpoint: "POST /api/prompt-library/:id/versions.version",
-      }) as PromptLibraryVersion,
+  async createPromptLibraryItem(data: CreatePromptLibraryItemRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryItem> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/prompt-library", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptLibraryItemSchema, {
+        endpoint: "POST /api/prompt-library",
+        mayHaveCommitted: true,
+      }) as PromptLibraryItem;
     };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest): Promise<PromptLibraryTrial> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions/${versionId}/trials`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
-      endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
-    }) as PromptLibraryTrial;
+  async createPromptLibraryVersion(id: string, data: CreatePromptLibraryVersionRequest, idempotencyKey = generateUUID()): Promise<CreatePromptLibraryVersionResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        CreatePromptLibraryVersionResponseSchema,
+        { endpoint: "POST /api/prompt-library/:id/versions", mayHaveCommitted: true },
+      ) as CreatePromptLibraryVersionResponse;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async updatePromptLibraryItem(id: string, data: UpdatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-      endpoint: "PUT /api/prompt-library/:id",
-    }) as PromptLibraryItem;
+  async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryTrial> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions/${versionId}/trials`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptLibraryTrialSchema, {
+        endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
+        mayHaveCommitted: true,
+      }) as PromptLibraryTrial;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async deletePromptLibraryItem(id: string): Promise<void> {
@@ -1846,252 +1955,150 @@ export class ApiClient {
     }) as AgentPlaygroundDetail;
   }
 
-  async createAgentPlaygroundExperiment(data: CreateAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
-    const raw = await this.fetch<unknown>("/api/agent-playground-experiments", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
-      endpoint: "POST /api/agent-playground-experiments",
-    }) as AgentPlaygroundDetail;
+  async createAgentPlaygroundExperiment(
+    data: CreateAgentPlaygroundExperimentRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<AgentPlaygroundDetail> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/agent-playground-experiments", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
+        endpoint: "POST /api/agent-playground-experiments",
+        mayHaveCommitted: true,
+      }) as AgentPlaygroundDetail;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
-    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
-      endpoint: "POST /api/agent-playground-experiments/:id/run",
-    }) as AgentPlaygroundDetail;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
+        endpoint: "POST /api/agent-playground-experiments/:id/run",
+        mayHaveCommitted: true,
+      }) as AgentPlaygroundDetail;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async syncAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
     const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/sync`, { method: "POST" });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+    return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
       endpoint: "POST /api/agent-playground-experiments/:id/sync",
     }) as AgentPlaygroundDetail;
   }
 
   async judgeAgentPlaygroundExperiment(id: string, data?: JudgeAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
-    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/judge`, {
-      method: "POST",
-      body: JSON.stringify(data ?? {}),
-    });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
-      endpoint: "POST /api/agent-playground-experiments/:id/judge",
-    }) as AgentPlaygroundDetail;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/judge`, {
+        method: "POST",
+        body: JSON.stringify(data ?? {}),
+      });
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
+        endpoint: "POST /api/agent-playground-experiments/:id/judge",
+        mayHaveCommitted: true,
+      }) as AgentPlaygroundDetail;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Prompt evaluation assets
-  async listPromptEvaluationAssets(params?: ListPromptEvaluationAssetsParams): Promise<ListPromptEvaluationAssetsResponse> {
+  async listPromptEvaluationAssets(params?: ListPromptEvaluationAssetsParams): Promise<PromptEvaluationAsset[]> {
     const search = new URLSearchParams();
     if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
     if (params?.asset_type) search.set("asset_type", params.asset_type);
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-assets",
-    }) as ListPromptEvaluationAssetsResponse;
+    }) as PromptEvaluationAsset[];
   }
 
-  async getPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`);
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id",
-    }) as PromptEvaluationAsset;
+  async createPromptEvaluationAsset(
+    data: CreatePromptEvaluationAssetRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<{ id: string; prompt_id: string | null }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<{ id: string; prompt_id: string | null }>(raw, PromptEvaluationAssetMutationResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-assets",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async createPromptEvaluationAsset(data: CreatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-      endpoint: "POST /api/prompt-evaluation-assets",
-    }) as PromptEvaluationAsset;
-  }
-
-  async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
+  async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<{ id: string; prompt_id: string | null }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+    return parseOrThrow(raw, PromptEvaluationAssetMutationResultSchema, {
       endpoint: "PUT /api/prompt-evaluation-assets/:id",
-    }) as PromptEvaluationAsset;
+    });
   }
 
   async deletePromptEvaluationAsset(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
   }
 
-  async createPromptEvaluationSkillInventory(
-    id: string,
-    data: CreatePromptEvaluationSkillInventoryRequest,
-  ): Promise<PromptEvaluationSkillInventoryResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-inventory`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationSkillInventoryResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-inventory",
-    }) as PromptEvaluationSkillInventoryResponse;
-  }
-
-  async createPromptEvaluationSkillSnapshot(
-    id: string,
-    data: CreatePromptEvaluationSkillSnapshotRequest,
-  ): Promise<PromptEvaluationSkillSnapshotResult> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-snapshot`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationSkillSnapshotResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-snapshot",
-    }) as PromptEvaluationSkillSnapshotResult;
-  }
-
-  async createPromptEvaluationSkillCaseDrafts(
-    id: string,
-    data: CreatePromptEvaluationSkillCaseDraftsRequest,
-  ): Promise<PromptEvaluationSkillCaseDraftsResult> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-case-drafts`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationSkillCaseDraftsResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-case-drafts",
-    }) as PromptEvaluationSkillCaseDraftsResult;
-  }
-
-  async exportPromptEvaluationDataset(id: string): Promise<PromptEvaluationDatasetExportResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-export`);
-    return parseWithFallback(raw, PromptEvaluationDatasetExportResponseSchema, {
-      schema: "multica.prompt_evaluation.dataset_export.v1",
-      exported_at: "",
-      source_asset_id: id,
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      case_count: 0,
-      cases: [],
-      payload: {},
-    }, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-export",
-    }) as PromptEvaluationDatasetExportResponse;
-  }
-
-  async importPromptEvaluationDataset(data: ImportPromptEvaluationDatasetRequest): Promise<ImportPromptEvaluationDatasetResponse> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets/dataset-import", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, ImportPromptEvaluationDatasetResponseSchema, {
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      source_asset_id: data.export.source_asset_id,
-      case_count: 0,
-      cases: [],
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/dataset-import",
-    }) as ImportPromptEvaluationDatasetResponse;
-  }
-
   async createPromptEvaluationDatasetFromTraces(
     id: string,
     data: CreatePromptEvaluationDatasetFromTracesRequest = {},
-  ): Promise<PromptEvaluationDatasetFromTracesResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      cases: [],
-      trace_events: [],
-      created_count: 0,
-      skipped_count: 0,
-      source: "trace",
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
-    }) as PromptEvaluationDatasetFromTracesResponse;
+    idempotencyKey = generateUUID(),
+  ): Promise<{ created_count: number }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<{ created_count: number }>(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<ListPromptEvaluationDatasetVersionsResponse> {
+  async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<PromptEvaluationDatasetVersion[]> {
     const search = new URLSearchParams();
     if (limit) search.set("limit", String(limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions",
-    }) as ListPromptEvaluationDatasetVersionsResponse;
-  }
-
-  async listPromptEvaluationDatasetVersionTagTrends(id: string, params?: ListPromptEvaluationDatasetVersionTagTrendsParams): Promise<ListPromptEvaluationDatasetVersionTagTrendsResponse> {
-    const search = new URLSearchParams();
-    if (params?.version_limit) search.set("version_limit", String(params.version_limit));
-    if (params?.limit) search.set("limit", String(params.limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/tag-trends${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionTagTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/tag-trends",
-    }) as ListPromptEvaluationDatasetVersionTagTrendsResponse;
+    }) as PromptEvaluationDatasetVersion[];
   }
 
   async createPromptEvaluationDatasetVersion(
     id: string,
     data: CreatePromptEvaluationDatasetVersionRequest = {},
-  ): Promise<PromptEvaluationDatasetVersion> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionSchema, {
-      id: "",
-      workspace_id: "",
-      dataset_asset_id: id,
-      version: 0,
-      version_label: "",
-      row_count: 0,
-      row_fingerprint: "",
-      metadata: {},
-      created_by: null,
-      created_at: "",
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
-    }) as PromptEvaluationDatasetVersion;
+    idempotencyKey = generateUUID(),
+  ): Promise<{ version: number }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<{ version: number }>(raw, PromptEvaluationDatasetVersionMutationResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listPromptEvaluationDatasetVersionRows(id: string, versionId: string): Promise<ListPromptEvaluationDatasetVersionRowsResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/rows`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionRowListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/rows",
-    }) as ListPromptEvaluationDatasetVersionRowsResponse;
-  }
-
-  async diffPromptEvaluationDatasetVersion(
-    id: string,
-    baseVersionId: string,
-    targetVersionId: string,
-  ): Promise<PromptEvaluationDatasetVersionDiff> {
-    const search = new URLSearchParams({ target_version_id: targetVersionId });
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionDiffSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/diff",
-    }) as PromptEvaluationDatasetVersionDiff;
-  }
-
-  async restorePromptEvaluationDatasetVersion(
-    id: string,
-    versionId: string,
-    data: RestorePromptEvaluationDatasetVersionRequest = {},
-  ): Promise<RestorePromptEvaluationDatasetVersionResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/restore`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, RestorePromptEvaluationDatasetVersionResponseSchema, EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/restore",
-    }) as RestorePromptEvaluationDatasetVersionResponse;
-  }
-
-  async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {
+  async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<PromptEvaluationStructuredCase[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
@@ -2104,149 +2111,44 @@ export class ApiClient {
     if (params?.sort_direction) search.set("sort_direction", params.sort_direction);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-cases",
-    }) as ListPromptEvaluationCasesResponse;
+    }) as PromptEvaluationStructuredCase[];
   }
 
-  async listPromptEvaluationCaseTagSummaries(params?: ListPromptEvaluationCaseTagSummariesParams): Promise<ListPromptEvaluationCaseTagSummariesResponse> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.source) search.set("source", params.source);
-    if (params?.keyword) search.set("keyword", params.keyword);
-    if (params?.limit) search.set("limit", String(params.limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-summaries${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseTagSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-cases/tag-summaries",
-    }) as ListPromptEvaluationCaseTagSummariesResponse;
+  async createPromptEvaluationCase(
+    data: CreatePromptEvaluationCaseRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<{ id: string; case_name: string }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<{ id: string; case_name: string }>(raw, PromptEvaluationCaseMutationResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-cases",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listPromptEvaluationCaseTagDatasetSummaries(params?: ListPromptEvaluationCaseTagDatasetSummariesParams): Promise<ListPromptEvaluationCaseTagDatasetSummariesResponse> {
-    const search = new URLSearchParams();
-    if (params?.status) search.set("status", params.status);
-    if (params?.source) search.set("source", params.source);
-    if (params?.keyword) search.set("keyword", params.keyword);
-    if (params?.limit) search.set("limit", String(params.limit));
-    if (params?.top_dataset_limit) search.set("top_dataset_limit", String(params.top_dataset_limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-dataset-summaries${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseTagDatasetSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-cases/tag-dataset-summaries",
-    }) as ListPromptEvaluationCaseTagDatasetSummariesResponse;
-  }
-
-  async listPromptEvaluationCaseOperations(id: string, params?: ListPromptEvaluationCaseOperationsParams): Promise<ListPromptEvaluationCaseOperationsResponse> {
-    const search = new URLSearchParams();
-    if (params?.limit) search.set("limit", String(params.limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/case-operations${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseOperationListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/case-operations",
-    }) as ListPromptEvaluationCaseOperationsResponse;
-  }
-
-  async createPromptEvaluationCase(data: CreatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
-      endpoint: "POST /api/prompt-evaluation-cases",
-    }) as PromptEvaluationStructuredCase;
-  }
-
-  async bulkUpdatePromptEvaluationCaseTags(data: BulkUpdatePromptEvaluationCaseTagsRequest): Promise<BulkUpdatePromptEvaluationCaseTagsResponse> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases/bulk-tags", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, BulkUpdatePromptEvaluationCaseTagsResponseSchema, EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-cases/bulk-tags",
-    }) as BulkUpdatePromptEvaluationCaseTagsResponse;
-  }
-
-  async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
+  async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<{ id: string; case_name: string }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+    return parseOrThrow(raw, PromptEvaluationCaseMutationResultSchema, {
       endpoint: "PUT /api/prompt-evaluation-cases/:id",
-    }) as PromptEvaluationStructuredCase;
+    });
   }
 
   async deletePromptEvaluationCase(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
   }
 
-  async listPromptEvaluationDimensionScores(params?: ListPromptEvaluationDimensionScoresParams): Promise<ListPromptEvaluationDimensionScoresResponse> {
-    const search = new URLSearchParams();
-    if (params?.run_id) search.set("run_id", params.run_id);
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-scores${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDimensionScoreListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-dimension-scores",
-    }) as ListPromptEvaluationDimensionScoresResponse;
-  }
-
-  async listPromptEvaluationDimensionScoreSummaries(params?: ListPromptEvaluationDimensionScoreSummariesParams): Promise<ListPromptEvaluationDimensionScoreSummariesResponse> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-summaries${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDimensionScoreSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-dimension-score-summaries",
-    }) as ListPromptEvaluationDimensionScoreSummariesResponse;
-  }
-
-  async listPromptEvaluationDimensionScoreTrends(params?: ListPromptEvaluationDimensionScoreTrendsParams): Promise<ListPromptEvaluationDimensionScoreTrendsResponse> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.since) search.set("since", params.since);
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-trends${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDimensionScoreTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-dimension-score-trends",
-    }) as ListPromptEvaluationDimensionScoreTrendsResponse;
-  }
-
-  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/run",
-    }) as PromptEvaluationAsset;
-  }
-
-  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
-    const data = raw as Partial<PromptEvaluationAgentRunResponse>;
-    return {
-      asset: parseWithFallback(data.asset, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.asset",
-      }) as PromptEvaluationAsset,
-      run: parseWithFallback(data.run, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
-        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.run",
-      }) as PromptEvaluationRun,
-      task_id: data.task_id ?? "",
-      chat_session_id: data.chat_session_id ?? "",
-      agent_id: data.agent_id ?? "",
-      runtime_id: data.runtime_id ?? "",
-      model: data.model ?? "",
-      status: data.status ?? "",
-      message: data.message ?? "",
-    };
-  }
-
-  async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<ListPromptEvaluationRunsResponse> {
+  async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<PromptEvaluationRun[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
@@ -2255,16 +2157,9 @@ export class ApiClient {
     if (params?.offset) search.set("offset", String(params.offset));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-runs",
-    }) as ListPromptEvaluationRunsResponse;
-  }
-
-  async listPromptEvaluationRunTrials(runId: string): Promise<ListPromptEvaluationTrialsResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/trials`);
-    return parseWithFallback(raw, PromptEvaluationTrialListResponseSchema, EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-runs/:id/trials",
-    }) as ListPromptEvaluationTrialsResponse;
+    }) as PromptEvaluationRun[];
   }
 
   async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
@@ -2274,30 +2169,53 @@ export class ApiClient {
     }) as PromptEvaluationRunEvidence;
   }
 
-  async listPromptEvaluationEvidenceSnapshots(runId: string, limit?: number): Promise<ListPromptEvaluationEvidenceSnapshotsResponse> {
+  async listPromptEvaluationEvidenceSnapshots(runId: string, limit?: number): Promise<PromptEvaluationEvidenceSnapshot[]> {
     const search = new URLSearchParams();
     if (limit) search.set("limit", String(limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots",
-    }) as ListPromptEvaluationEvidenceSnapshotsResponse;
+    }) as PromptEvaluationEvidenceSnapshot[];
   }
 
-  async createPromptEvaluationEvidenceSnapshot(runId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "手动归档"): Promise<PromptEvaluationEvidenceSnapshot> {
+  async createPromptEvaluationEvidenceSnapshot(
+    runId: string,
+    snapshotType: PromptEvaluationEvidenceSnapshotType = "手动归档",
+    idempotencyKey = generateUUID(),
+  ): Promise<{ run_id: string }> {
     const search = new URLSearchParams({ snapshot_type: snapshotType });
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
-    }) as PromptEvaluationEvidenceSnapshot;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?${search.toString()}`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<{ run_id: string }>(raw, PromptEvaluationEvidenceSnapshotCreateResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async createPromptEvaluationAssetEvidenceSnapshots(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
+  async createPromptEvaluationAssetEvidenceSnapshots(
+    assetId: string,
+    snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档",
+    limit = 20,
+    idempotencyKey = generateUUID(),
+  ): Promise<{ created_count: number; skipped_count: number; items: Array<{ run_id: string }> }> {
     const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
-    }) as PromptEvaluationAssetEvidenceSnapshotResponse;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<{ created_count: number; skipped_count: number; items: Array<{ run_id: string }> }>(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getPromptEvaluationAssetEvidenceArchivePackage(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceArchivePackage> {
@@ -2308,38 +2226,42 @@ export class ApiClient {
     }) as PromptEvaluationAssetEvidenceArchivePackage;
   }
 
-  async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
-      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots/:snapshotId",
-    }) as PromptEvaluationEvidenceSnapshot;
-  }
-
-  async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+  async syncPromptEvaluationRun(runId: string): Promise<{ id: string }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+    return parseOrThrow(raw, PromptEvaluationRunIDSchema, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
-    }) as PromptEvaluationRun;
-  }
-
-  async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
-    }) as PromptEvaluationRun;
-  }
-
-  async reviewPromptEvaluationRun(runId: string, data: ReviewPromptEvaluationRunRequest): Promise<PromptEvaluationRun> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
-      method: "POST",
-      body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/review",
-    }) as PromptEvaluationRun;
   }
 
-  async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<ListPromptEvaluationOptimizationCandidatesResponse> {
+  async cancelPromptEvaluationRun(runId: string): Promise<{ id: string }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
+      return parseOrThrow<{ id: string }>(raw, PromptEvaluationRunIDSchema, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
+  async reviewPromptEvaluationRun(
+    runId: string,
+    data: ReviewPromptEvaluationRunRequest,
+  ): Promise<Pick<PromptEvaluationRun, "id" | "review_decision" | "status">> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      return parseOrThrow<Pick<PromptEvaluationRun, "id" | "review_decision" | "status">>(raw, PromptEvaluationRunReviewResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/review",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
+  async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<PromptEvaluationOptimizationCandidate[]> {
     const search = new URLSearchParams();
     if (params?.run_id) search.set("run_id", params.run_id);
     if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
@@ -2347,33 +2269,66 @@ export class ApiClient {
     if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-optimization-candidates",
-    }) as ListPromptEvaluationOptimizationCandidatesResponse;
+    }) as PromptEvaluationOptimizationCandidate[];
   }
 
-  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
-    }) as PromptEvaluationOptimizationCandidate;
+  async createPromptEvaluationOptimizationCandidate(
+    runId: string,
+    requestId = generateUUID(),
+  ): Promise<{ id: string }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow<{ id: string }>(raw, PromptEvaluationOptimizationCandidateCreateResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest): Promise<PromptEvaluationOptimizationCandidate> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
-      endpoint: "PUT /api/prompt-evaluation-optimization-candidates/:id",
-    }) as PromptEvaluationOptimizationCandidate;
+  async publishPromptEvaluationOptimizationCandidate(
+    candidateId: string,
+    requestId = generateUUID(),
+  ): Promise<string> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow<string>(
+        raw,
+        PublishPromptEvaluationOptimizationCandidateNameSchema,
+        {
+          endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
+          mayHaveCommitted: true,
+        },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async publishPromptEvaluationOptimizationCandidate(candidateId: string): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, { method: "POST" });
-    return parseWithFallback(raw, PublishPromptEvaluationOptimizationCandidateResponseSchema, EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
-    }) as PublishPromptEvaluationOptimizationCandidateResponse;
+  async rejectPromptEvaluationOptimizationCandidate(
+    candidateId: string,
+    data: RejectPromptEvaluationOptimizationCandidateRequest = {},
+    requestId = generateUUID(),
+  ): Promise<PromptEvaluationOptimizationCandidateStatus> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow<PromptEvaluationOptimizationCandidateStatus>(raw, PromptEvaluationOptimizationCandidateDecisionStatusSchema, {
+        endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async checkPromptEvaluationSkillCandidateFreshness(
@@ -2384,7 +2339,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillFreshnessResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT, {
+    return parseOrThrow(raw, PromptEvaluationSkillFreshnessResultSchema, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-freshness",
     }) as PromptEvaluationSkillFreshnessResult;
   }
@@ -2392,66 +2347,83 @@ export class ApiClient {
   async applyPromptEvaluationSkillCandidate(
     candidateId: string,
     data: ApplyPromptEvaluationSkillCandidateRequest,
-  ): Promise<PromptEvaluationSkillApplyCandidateResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationSkillApplyCandidateResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
-    }) as PromptEvaluationSkillApplyCandidateResponse;
+    requestId = generateUUID(),
+  ): Promise<"dry_run" | "applied" | "blocked" | "conflict"> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow<"dry_run" | "applied" | "blocked" | "conflict">(raw, PromptEvaluationSkillApplyStatusSchema, {
+        endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async preparePromptEvaluationSkillReEvalAsset(
     candidateId: string,
     data: PreparePromptEvaluationSkillReEvalRequest = {},
-  ): Promise<PromptEvaluationSkillReEvalAssetResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
-    }) as PromptEvaluationSkillReEvalAssetResponse;
+    requestId = generateUUID(),
+  ): Promise<{ assetId: string; caseCount: number }> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow<{ assetId: string; caseCount: number }>(raw, PromptEvaluationSkillReEvalAssetResultSchema, {
+        endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async runPromptEvaluationSkillReEval(
     candidateId: string,
     data: RunPromptEvaluationSkillReEvalRequest = {},
-  ): Promise<PromptEvaluationSkillReEvalRunResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseWithFallback(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
-    }) as PromptEvaluationSkillReEvalRunResponse;
-  }
-
-  async rejectPromptEvaluationOptimizationCandidate(candidateId: string, reason?: string): Promise<PromptEvaluationOptimizationCandidate> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
-      method: "POST",
-      body: JSON.stringify({ reason: reason ?? "" }),
-    });
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
-    }) as PromptEvaluationOptimizationCandidate;
+    requestId = generateUUID(),
+  ): Promise<PromptEvaluationRun["status"]> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow<PromptEvaluationRun["status"]>(raw, PromptEvaluationSkillReEvalRunStatusSchema, {
+        endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Project resources
   async listProjectResources(
     projectId: string,
-  ): Promise<ListProjectResourcesResponse> {
-    return this.fetch(`/api/projects/${projectId}/resources`);
+  ): Promise<ProjectResource[]> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`);
+    return parseWithFallback(
+      raw,
+      ProjectResourceListSchema,
+      EMPTY_PROJECT_RESOURCES,
+      { endpoint: "GET /api/projects/:id/resources" },
+    );
   }
 
   async createProjectResource(
     projectId: string,
     data: CreateProjectResourceRequest,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectResourceSchema, {
+      endpoint: "POST /api/projects/:id/resources",
     });
   }
 
@@ -2460,9 +2432,12 @@ export class ApiClient {
     resourceId: string,
     data: UpdateProjectResourceRequest,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectResourceSchema, {
+      endpoint: "PUT /api/projects/:id/resources/:resourceId",
     });
   }
 
@@ -2470,8 +2445,11 @@ export class ApiClient {
     projectId: string,
     resourceId: string,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
       method: "POST",
+    });
+    return parseOrThrow(raw, ProjectResourceSchema, {
+      endpoint: "POST /api/projects/:id/resources/:resourceId/sync",
     });
   }
 
@@ -2486,39 +2464,68 @@ export class ApiClient {
 
   async listExternalCredentialProfiles(
     provider?: ExternalCredentialProvider,
-  ): Promise<ListExternalCredentialProfilesResponse> {
+  ): Promise<ExternalCredentialProfile[]> {
     const search = new URLSearchParams();
     if (provider) search.set("provider", provider);
     const query = search.toString();
-    return this.fetch(`/api/external-credential-profiles${query ? `?${query}` : ""}`);
+    const raw = await this.fetch<unknown>(
+      `/api/external-credential-profiles${query ? `?${query}` : ""}`,
+    );
+    return parseWithFallback(raw, ExternalCredentialProfileListResponseSchema, [], {
+      endpoint: "GET /api/external-credential-profiles",
+    });
+  }
+
+  async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`);
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, {
+      endpoint: "GET /api/external-credential-profiles/:id",
+    });
   }
 
   async createExternalCredentialProfile(
     data: CreateExternalCredentialProfileRequest,
+    idempotencyKey = generateUUID(),
   ): Promise<ExternalCredentialProfile> {
-    return this.fetch("/api/external-credential-profiles", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/external-credential-profiles", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<ExternalCredentialProfile>(raw, ExternalCredentialProfileSchema, {
+        endpoint: "POST /api/external-credential-profiles",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateExternalCredentialProfile(
     id: string,
     data: UpdateExternalCredentialProfileRequest,
   ): Promise<ExternalCredentialProfile> {
-    return this.fetch(`/api/external-credential-profiles/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, {
+      endpoint: "PUT /api/external-credential-profiles/:id",
     });
   }
 
   async testExternalCredentialProfile(
     data: TestExternalCredentialProfileRequest,
   ): Promise<TestExternalCredentialProfileResponse> {
-    return this.fetch("/api/external-credential-profiles/test", {
+    const raw = await this.fetch<unknown>("/api/external-credential-profiles/test", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseOrThrow(
+      raw,
+      TestExternalCredentialProfileResponseSchema,
+      { endpoint: "POST /api/external-credential-profiles/test" },
+    );
   }
 
   async deleteExternalCredentialProfile(id: string): Promise<void> {
@@ -2528,25 +2535,32 @@ export class ApiClient {
   }
 
   // Labels
-  async listLabels(): Promise<ListLabelsResponse> {
-    return this.fetch(`/api/labels`);
-  }
-
-  async getLabel(id: string): Promise<Label> {
-    return this.fetch(`/api/labels/${id}`);
+  async listLabels(): Promise<Label[]> {
+    const raw = await this.fetch<unknown>(`/api/labels`);
+    return parseWithFallback(raw, LabelListSchema, EMPTY_LABELS, {
+      endpoint: "GET /api/labels",
+    });
   }
 
   async createLabel(data: CreateLabelRequest): Promise<Label> {
-    return this.fetch(`/api/labels`, {
+    const raw = await this.fetch<unknown>(`/api/labels`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LabelSchema, {
+      endpoint: "POST /api/labels",
+      mayHaveCommitted: true,
     });
   }
 
   async updateLabel(id: string, data: UpdateLabelRequest): Promise<Label> {
-    return this.fetch(`/api/labels/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/labels/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LabelSchema, {
+      endpoint: "PUT /api/labels/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2554,32 +2568,50 @@ export class ApiClient {
     await this.fetch(`/api/labels/${id}`, { method: "DELETE" });
   }
 
-  async listLabelsForIssue(issueId: string): Promise<IssueLabelsResponse> {
-    return this.fetch(`/api/issues/${issueId}/labels`);
-  }
-
-  async attachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
-    return this.fetch(`/api/issues/${issueId}/labels`, {
-      method: "POST",
-      body: JSON.stringify({ label_id: labelId }),
+  async listLabelsForIssue(issueId: string): Promise<Label[]> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`);
+    return parseWithFallback(raw, IssueLabelListSchema, EMPTY_LABELS, {
+      endpoint: "GET /api/issues/:id/labels",
     });
   }
 
-  async detachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
-    return this.fetch(`/api/issues/${issueId}/labels/${labelId}`, {
+  async attachLabel(issueId: string, labelId: string): Promise<Label[]> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`, {
+      method: "POST",
+      body: JSON.stringify({ label_id: labelId }),
+    });
+    return parseOrThrow(raw, IssueLabelListSchema, {
+      endpoint: "POST /api/issues/:id/labels",
+      mayHaveCommitted: true,
+    });
+  }
+
+  async detachLabel(issueId: string, labelId: string): Promise<Label[]> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels/${labelId}`, {
       method: "DELETE",
+    });
+    return parseOrThrow(raw, IssueLabelListSchema, {
+      endpoint: "DELETE /api/issues/:id/labels/:labelId",
+      mayHaveCommitted: true,
     });
   }
 
   // Pins
   async listPins(): Promise<PinnedItem[]> {
-    return this.fetch("/api/pins");
+    const raw = await this.fetch<unknown>("/api/pins");
+    return parseWithFallback(raw, PinnedItemListSchema, EMPTY_PINNED_ITEM_LIST, {
+      endpoint: "GET /api/pins",
+    });
   }
 
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {
-    return this.fetch("/api/pins", {
+    const raw = await this.fetch<unknown>("/api/pins", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, PinnedItemSchema, {
+      endpoint: "POST /api/pins",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2612,25 +2644,41 @@ export class ApiClient {
     }) as Squad;
   }
 
-  async createSquad(data: CreateSquadRequest): Promise<Squad> {
-    const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
-    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
-      endpoint: "POST /api/squads",
-    }) as Squad;
+  async createSquad(
+    data: CreateSquadRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Squad> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/squads", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, SquadSchema, {
+        endpoint: "POST /api/squads",
+        mayHaveCommitted: true,
+      }) as Squad;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {
     const body =
       typeof template === "string" ? { template_key: template } : template;
-    return this.fetch("/api/squads/internal-template", {
+    const raw = await this.fetch<unknown>("/api/squads/internal-template", {
       method: "POST",
       body: JSON.stringify(body),
     });
+    return parseOrThrow(
+      raw,
+      InternalSquadTemplateResponseSchema,
+      { endpoint: "POST /api/squads/internal-template", mayHaveCommitted: true },
+    );
   }
 
   async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
-    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, {
       endpoint: "PUT /api/squads/:id",
     }) as Squad;
   }
@@ -2641,17 +2689,27 @@ export class ApiClient {
 
   async restoreSquad(id: string): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}/restore`, { method: "POST" });
-    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, {
       endpoint: "POST /api/squads/:id/restore",
     }) as Squad;
   }
 
   async listSquadMembers(squadId: string): Promise<SquadMember[]> {
-    return this.fetch(`/api/squads/${squadId}/members`);
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members`);
+    return parseWithFallback(raw, SquadMemberListSchema, EMPTY_SQUAD_MEMBERS, {
+      endpoint: "GET /api/squads/:id/members",
+    });
   }
 
   async addSquadMember(squadId: string, data: { member_type: string; member_id: string; role?: string }): Promise<SquadMember> {
-    return this.fetch(`/api/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(data) });
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SquadMemberSchema, {
+      endpoint: "POST /api/squads/:id/members",
+      mayHaveCommitted: true,
+    });
   }
 
   async removeSquadMember(squadId: string, data: { member_type: string; member_id: string }): Promise<void> {
@@ -2659,48 +2717,81 @@ export class ApiClient {
   }
 
   async updateSquadMemberRole(squadId: string, data: { member_type: string; member_id: string; role: string }): Promise<SquadMember> {
-    return this.fetch(`/api/squads/${squadId}/members/role`, { method: "PATCH", body: JSON.stringify(data) });
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/role`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SquadMemberSchema, {
+      endpoint: "PATCH /api/squads/:id/members/role",
+      mayHaveCommitted: true,
+    });
   }
 
   // Per-squad members status snapshot: one row per member with derived
   // working/idle/offline/unstable plus the issues each agent is currently
   // running. Parsed with a lenient schema so a new server-side status
   // value or extra field can't white-screen the Squad page (#2143).
-  async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatusListResponse> {
+  async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatus[]> {
     const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/status`);
-    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, EMPTY_SQUAD_MEMBER_STATUS_LIST, {
+    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, [], {
       endpoint: "GET /api/squads/:id/members/status",
-    }) as SquadMemberStatusListResponse;
+    });
   }
 
   // Autopilots
-  async listAutopilots(params?: { status?: string }): Promise<ListAutopilotsResponse> {
+  async listAutopilots(params?: { status?: string }): Promise<Autopilot[]> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     const raw = await this.fetch<unknown>(`/api/autopilots?${search}`);
     return parseWithFallback(
       raw,
-      ListAutopilotsResponseSchema,
-      EMPTY_LIST_AUTOPILOTS_RESPONSE as ListAutopilotsResponse,
+      AutopilotListSchema,
+      EMPTY_AUTOPILOTS,
       { endpoint: "GET /api/autopilots" },
     );
   }
 
   async getAutopilot(id: string): Promise<GetAutopilotResponse> {
-    return this.fetch(`/api/autopilots/${id}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`);
+    return parseWithFallback(
+      raw,
+      GetAutopilotResponseSchema,
+      EMPTY_GET_AUTOPILOT_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id" },
+    );
   }
 
-  async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
-    return this.fetch("/api/autopilots", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
+  async createAutopilot(
+    data: CreateAutopilotRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<CreateAutopilotResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/autopilots", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<CreateAutopilotResponse>(
+        raw,
+        CreateAutopilotResponseSchema,
+        {
+          endpoint: "POST /api/autopilots",
+          mayHaveCommitted: true,
+        },
+      );
+    };
+
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateAutopilot(id: string, data: UpdateAutopilotRequest): Promise<Autopilot> {
-    return this.fetch(`/api/autopilots/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, AutopilotSchema, {
+      endpoint: "PATCH /api/autopilots/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2708,35 +2799,70 @@ export class ApiClient {
     await this.fetch(`/api/autopilots/${id}`, { method: "DELETE" });
   }
 
-  async triggerAutopilot(id: string): Promise<AutopilotRun> {
-    return this.fetch(`/api/autopilots/${id}/trigger`, { method: "POST" });
+  async triggerAutopilot(
+    id: string,
+    idempotencyKey = generateUUID(),
+  ): Promise<AutopilotRun> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<AutopilotRun>(raw, AutopilotRunSchema, {
+        endpoint: "POST /api/autopilots/:id/trigger",
+        mayHaveCommitted: true,
+      });
+    };
+
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
+  async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<AutopilotRun[]> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
-    return this.fetch(`/api/autopilots/${id}/runs?${search}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/runs?${search}`);
+    return parseWithFallback(
+      raw,
+      AutopilotRunListSchema,
+      EMPTY_AUTOPILOT_RUNS,
+      { endpoint: "GET /api/autopilots/:id/runs" },
+    );
   }
 
   // Returns a single run including its full trigger_payload. List responses
   // omit trigger_payload to keep them small (a webhook envelope can be
   // up to 256 KiB × limit rows), so the detail view fetches via this route.
   async getAutopilotRun(autopilotId: string, runId: string): Promise<AutopilotRun> {
-    return this.fetch(`/api/autopilots/${autopilotId}/runs/${runId}`);
-  }
-
-  async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
-      method: "POST",
-      body: JSON.stringify(data),
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/runs/${runId}`);
+    return parseWithFallback(raw, AutopilotRunSchema, EMPTY_AUTOPILOT_RUN, {
+      endpoint: "GET /api/autopilots/:id/runs/:runId",
     });
   }
 
+  async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest, idempotencyKey = generateUUID()): Promise<AutopilotTrigger> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<AutopilotTrigger>(raw, AutopilotTriggerSchema, {
+        endpoint: "POST /api/autopilots/:id/triggers",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
   async updateAutopilotTrigger(autopilotId: string, triggerId: string, data: UpdateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, AutopilotTriggerSchema, {
+      endpoint: "PATCH /api/autopilots/:id/triggers/:triggerId",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2747,11 +2873,19 @@ export class ApiClient {
   async rotateAutopilotTriggerWebhookToken(
     autopilotId: string,
     triggerId: string,
+    idempotencyKey = generateUUID(),
   ): Promise<AutopilotTrigger> {
-    return this.fetch(
-      `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
-      { method: "POST" },
-    );
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(
+        `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
+        { method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey } },
+      );
+      return parseOrThrow<AutopilotTrigger>(raw, AutopilotTriggerSchema, {
+        endpoint: "POST /api/autopilots/:id/triggers/:triggerId/rotate-webhook-token",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Webhook deliveries — list is slim (no raw_body / selected_headers /
@@ -2762,7 +2896,7 @@ export class ApiClient {
   async listAutopilotDeliveries(
     autopilotId: string,
     params?: { limit?: number; offset?: number },
-  ): Promise<ListWebhookDeliveriesResponse> {
+  ): Promise<WebhookDelivery[]> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
@@ -2771,8 +2905,8 @@ export class ApiClient {
     );
     return parseWithFallback(
       raw,
-      ListWebhookDeliveriesResponseSchema,
-      EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+      WebhookDeliveryListSchema,
+      EMPTY_WEBHOOK_DELIVERIES,
       { endpoint: "GET /api/autopilots/:id/deliveries" },
     );
   }
@@ -2787,7 +2921,7 @@ export class ApiClient {
     return parseWithFallback(
       raw,
       WebhookDeliveryResponseSchema,
-      { ...EMPTY_WEBHOOK_DELIVERY, id: deliveryId, autopilot_id: autopilotId },
+      { ...EMPTY_WEBHOOK_DELIVERY, id: deliveryId },
       { endpoint: "GET /api/autopilots/:id/deliveries/:deliveryId" },
     );
   }
@@ -2799,26 +2933,38 @@ export class ApiClient {
   async replayAutopilotDelivery(
     autopilotId: string,
     deliveryId: string,
+    idempotencyKey = generateUUID(),
   ): Promise<WebhookDelivery> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
-      { method: "POST" },
-    );
-    return parseWithFallback(
-      raw,
-      WebhookDeliveryResponseSchema,
-      { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },
-      { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay" },
-    );
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(
+        `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
+        { method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey } },
+      );
+      return parseOrThrow<WebhookDelivery>(
+        raw,
+        WebhookDeliveryResponseSchema,
+        { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay", mayHaveCommitted: true },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // GitHub integration
   async getGitHubConnectURL(workspaceId: string): Promise<GitHubConnectResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/connect`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/connect`);
+    return parseWithFallback(raw, GitHubConnectResponseSchema, EMPTY_GITHUB_CONNECT_RESPONSE, {
+      endpoint: "GET /api/workspaces/:id/github/connect",
+    });
   }
 
   async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/installations`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/installations`);
+    return parseWithFallback(
+      raw,
+      GitHubInstallationListResponseSchema,
+      EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/github/installations" },
+    );
   }
 
   async deleteGitHubInstallation(workspaceId: string, installationId: string): Promise<void> {
@@ -2827,13 +2973,25 @@ export class ApiClient {
     });
   }
 
-  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
-    return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  async listIssuePullRequests(issueId: string): Promise<GitHubPullRequest[]> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`);
+    return parseWithFallback(
+      raw,
+      GitHubPullRequestListResponseSchema,
+      [],
+      { endpoint: "GET /api/issues/:id/pull-requests" },
+    );
   }
 
   // Lark integration
   async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/installations`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations`);
+    return parseWithFallback(
+      raw,
+      LarkInstallationListResponseSchema,
+      EMPTY_LARK_INSTALLATION_LIST_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/lark/installations" },
+    );
   }
 
   async beginLarkInstall(
@@ -2845,18 +3003,29 @@ export class ApiClient {
     // vs "Bind to Lark"), and the backend POSTs the device-flow `begin`
     // against the corresponding accounts host (accounts.feishu.cn vs
     // accounts.larksuite.com) so the QR renders against the right
-    // cloud up front. Empty / omitted region still resolves to Feishu
-    // server-side (RegionOrDefault) — we surface region as a required
-    // arg here so every call site is forced to make a deliberate
-    // choice rather than silently defaulting to mainland.
+    // cloud up front. Region is required across the full request chain so
+    // every call site makes a deliberate choice.
     const search = new URLSearchParams({ agent_id: agentId, region });
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
-      method: "POST",
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
+        method: "POST",
+      });
+      return parseOrThrow<BeginLarkInstallResponse>(raw, BeginLarkInstallResponseSchema, {
+        endpoint: "POST /api/workspaces/:id/lark/install/begin",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getLarkInstallStatus(workspaceId: string, sessionId: string): Promise<LarkInstallStatusResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`);
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`,
+    );
+    return parseOrThrow(raw, LarkInstallStatusResponseSchema, {
+      endpoint: "GET /api/workspaces/:id/lark/install/:sessionId/status",
+      mayHaveCommitted: false,
+    });
   }
 
   async deleteLarkInstallation(workspaceId: string, installationId: string): Promise<void> {
@@ -2865,10 +3034,22 @@ export class ApiClient {
     });
   }
 
-  async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
-    return this.fetch(`/api/lark/binding/redeem`, {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    });
+  async redeemLarkBindingToken(
+    token: string,
+    idempotencyKey = generateUUID(),
+  ): Promise<RedeemLarkBindingTokenResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/lark/binding/redeem`, {
+        method: "POST",
+        body: JSON.stringify({ token }),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow<RedeemLarkBindingTokenResponse>(
+        raw,
+        RedeemLarkBindingTokenResponseSchema,
+        { endpoint: "POST /api/lark/binding/redeem", mayHaveCommitted: true },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 }

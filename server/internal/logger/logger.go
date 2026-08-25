@@ -27,26 +27,22 @@ func isTerminal(f *os.File) bool {
 // is a terminal and disabled otherwise. Reads LOG_LEVEL env var (debug,
 // info, warn, error). Default: debug.
 func Init() {
-	level := parseLevel(os.Getenv("LOG_LEVEL"))
-	handler := tint.NewHandler(os.Stderr, &tint.Options{
-		Level:      level,
-		TimeFormat: "15:04:05.000",
-		NoColor:    !isTerminal(os.Stderr),
-	})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(newHandler()))
 }
 
 // NewLogger creates a named slog logger. Colors follow the same
 // TTY-detection rule as Init. Useful for standalone processes (daemon,
 // migrate) that want a component prefix.
 func NewLogger(component string) *slog.Logger {
-	level := parseLevel(os.Getenv("LOG_LEVEL"))
-	handler := tint.NewHandler(os.Stderr, &tint.Options{
-		Level:      level,
+	return slog.New(newHandler()).With("component", component)
+}
+
+func newHandler() slog.Handler {
+	return tint.NewHandler(os.Stderr, &tint.Options{
+		Level:      parseLevel(os.Getenv("LOG_LEVEL")),
 		TimeFormat: "15:04:05.000",
 		NoColor:    !isTerminal(os.Stderr),
 	})
-	return slog.New(handler).With("component", component)
 }
 
 // RequestAttrs extracts request_id, user_id, and X-Client-* metadata from

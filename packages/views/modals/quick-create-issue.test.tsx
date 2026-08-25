@@ -7,7 +7,6 @@ const mockQuickCreateIssue = vi.hoisted(() => vi.fn());
 const mockSetLastActor = vi.hoisted(() => vi.fn());
 const mockSetLastProjectId = vi.hoisted(() => vi.fn());
 const mockSetPrompt = vi.hoisted(() => vi.fn());
-const mockClearPrompt = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockUploadWithToast = vi.hoisted(() => vi.fn());
@@ -20,9 +19,14 @@ const mockQuickCreateStore = {
   setLastProjectId: mockSetLastProjectId,
   prompt: "Persisted draft prompt",
   setPrompt: mockSetPrompt,
-  clearPrompt: mockClearPrompt,
   keepOpen: false,
   setKeepOpen: mockSetKeepOpen,
+  pending: undefined as
+    | { request: Record<string, unknown>; requestKey: string; createdAt: number }
+    | undefined,
+  setPending: vi.fn((pending) => {
+    mockQuickCreateStore.pending = pending;
+  }),
 };
 
 // Per-test override for the projects query, so tests can swap between
@@ -54,8 +58,6 @@ vi.mock("@tanstack/react-query", () => ({
         return {
           data: [{ id: "agent-1", name: "Bohan", archived_at: null, runtime_id: "runtime-1" }],
         };
-      case "runtimes":
-        return { data: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] };
       case "projects":
         return mockProjectsQuery;
       default:
@@ -66,18 +68,15 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
-    quickCreateIssue: mockQuickCreateIssue,
+    quickCreateIssue: (request: unknown) => mockQuickCreateIssue(request),
   },
   ApiError: class ApiError extends Error {
     body?: unknown;
   },
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-test",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-test",
   useCurrentWorkspace: () => ({ name: "Test Workspace" }),
 }));
 
@@ -100,29 +99,22 @@ vi.mock("@multica/core/issues/queries", () => ({
   }),
 }));
 
-vi.mock("@multica/core/issues/stores/quick-create-store", () => ({
-  useQuickCreateStore: (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
-    (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
-}));
+vi.mock("@multica/core/issues/stores/quick-create-store", () => {
+  const useQuickCreateStore = Object.assign(
+    (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
+      (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
+    { getState: () => mockQuickCreateStore },
+  );
+  return { useQuickCreateStore };
+});
 
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector?: (state: { user: { id: string } }) => unknown) =>
     (selector ? selector({ user: { id: "user-1" } }) : { user: { id: "user-1" } }),
 }));
 
-vi.mock("@multica/core/runtimes", () => ({
-  runtimeListOptions: () => ({ queryKey: ["runtimes"] }),
-  checkQuickCreateCliVersion: () => ({ state: "ok", min: "1.0.0" }),
-  readRuntimeCliVersion: () => "1.2.3",
-  MIN_QUICK_CREATE_CLI_VERSION: "1.0.0",
-}));
-
 vi.mock("@multica/core/hooks/use-file-upload", () => ({
   useFileUpload: () => ({ uploadWithToast: mockUploadWithToast, uploading: false }),
-}));
-
-vi.mock("../issues/components/pickers/assignee-picker", () => ({
-  canAssignAgent: () => true,
 }));
 
 vi.mock("../common/actor-avatar", () => ({
@@ -292,6 +284,8 @@ import enModals from "../locales/zh-Hans/modals.json";
 import { AgentCreatePanel } from "./quick-create-issue";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, modals: enModals } };
+const PROMPT_PLACEHOLDER = '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"';
+const PM_SQUAD = { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null };
 
 function renderPanel(props: React.ComponentProps<typeof AgentCreatePanel>) {
   return render(
@@ -299,6 +293,17 @@ function renderPanel(props: React.ComponentProps<typeof AgentCreatePanel>) {
       <AgentCreatePanel {...props} />
     </I18nProvider>,
   );
+}
+
+function promptEditor() {
+  return screen.getByPlaceholderText(PROMPT_PLACEHOLDER);
+}
+
+async function enterPromptAndSubmit(user: ReturnType<typeof userEvent.setup>, prompt: string) {
+  const editor = promptEditor();
+  await user.clear(editor);
+  await user.type(editor, prompt);
+  await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 }
 
 describe("AgentCreatePanel", () => {
@@ -309,6 +314,7 @@ describe("AgentCreatePanel", () => {
     mockQuickCreateStore.lastProjectId = null;
     mockQuickCreateStore.prompt = "Persisted draft prompt";
     mockQuickCreateStore.keepOpen = false;
+    mockQuickCreateStore.pending = undefined;
     mockProjectsQuery.data = [];
     mockProjectsQuery.isSuccess = true;
     mockSquadsData.list = [];
@@ -338,11 +344,7 @@ describe("AgentCreatePanel", () => {
   it("loads the persisted prompt draft when no transient prompt is provided", () => {
     renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
 
-    expect(
-      screen.getByPlaceholderText(
-        '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-      ),
-    ).toHaveValue("Persisted draft prompt");
+    expect(promptEditor()).toHaveValue("Persisted draft prompt");
   });
 
   it("writes prompt changes back to the draft store and clears them after submit", async () => {
@@ -351,9 +353,7 @@ describe("AgentCreatePanel", () => {
 
     renderPanel({ onClose, isExpanded: false, setIsExpanded: vi.fn() });
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
+    const editor = promptEditor();
 
     await user.clear(editor);
     await user.type(editor, "New agent prompt");
@@ -375,7 +375,7 @@ describe("AgentCreatePanel", () => {
     // No project picked → persisted project preference is cleared so the
     // store stays in sync with the actual outgoing request.
     expect(mockSetLastProjectId).toHaveBeenCalledWith(null);
-    expect(mockClearPrompt).toHaveBeenCalled();
+    expect(mockSetPrompt).toHaveBeenLastCalledWith("");
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -388,9 +388,7 @@ describe("AgentCreatePanel", () => {
     await user.click(screen.getByRole("button", { name: "Mock editor upload" }));
     await waitFor(() => expect(mockUploadWithToast).toHaveBeenCalled());
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
+    const editor = promptEditor();
     await user.clear(editor);
     fireEvent.change(editor, {
       target: {
@@ -412,21 +410,19 @@ describe("AgentCreatePanel", () => {
     });
   });
 
-  it("defaults to the visible pm squad so SOP quick-create uses squad dispatch", async () => {
-    mockSquadsData.list = [
-      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
-    ];
-    const user = userEvent.setup();
+  it.each([
+    ["defaults to the visible pm squad so SOP quick-create uses squad dispatch", false],
+    ["upgrades a persisted PM leader agent preference to the pm squad", true],
+  ])("%s", async (_name, persistedAgent) => {
+    if (persistedAgent) {
+      mockQuickCreateStore.lastActorType = "agent";
+      mockQuickCreateStore.lastActorId = "agent-1";
+    }
+    mockSquadsData.list = [PM_SQUAD];
 
     renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Create a TAPD requirement");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+    await enterPromptAndSubmit(userEvent.setup(), "Create a TAPD requirement");
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -440,35 +436,6 @@ describe("AgentCreatePanel", () => {
     expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-pm");
   });
 
-  it("upgrades a persisted PM leader agent preference to the pm squad", async () => {
-    mockQuickCreateStore.lastActorType = "agent";
-    mockQuickCreateStore.lastActorId = "agent-1";
-    mockSquadsData.list = [
-      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
-    ];
-    const user = userEvent.setup();
-
-    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
-
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Create a TAPD requirement");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
-
-    await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        squad_id: "squad-pm",
-        prompt: "Create a TAPD requirement",
-        project_id: undefined,
-        status: "todo",
-        priority: "none",
-      });
-    });
-  });
-
   it("promotes the selected PM leader agent once the pm squad list loads", async () => {
     mockQuickCreateStore.lastActorType = "agent";
     mockQuickCreateStore.lastActorId = "agent-1";
@@ -479,9 +446,7 @@ describe("AgentCreatePanel", () => {
 
     expect(screen.getByRole("button", { name: "Bohan" })).toBeInTheDocument();
 
-    mockSquadsData.list = [
-      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
-    ];
+    mockSquadsData.list = [PM_SQUAD];
     view.rerender(
       <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <AgentCreatePanel {...props} />
@@ -492,13 +457,7 @@ describe("AgentCreatePanel", () => {
       expect(screen.getByRole("button", { name: "pm" })).toBeInTheDocument();
     });
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Create a TAPD requirement");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+    await enterPromptAndSubmit(user, "Create a TAPD requirement");
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -512,9 +471,7 @@ describe("AgentCreatePanel", () => {
   });
 
   it("keeps an explicit agent seed even when a pm squad is visible", async () => {
-    mockSquadsData.list = [
-      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
-    ];
+    mockSquadsData.list = [PM_SQUAD];
     const user = userEvent.setup();
 
     renderPanel({
@@ -524,13 +481,7 @@ describe("AgentCreatePanel", () => {
       data: { agent_id: "agent-1" },
     });
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Create with explicit agent");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+    await enterPromptAndSubmit(user, "Create with explicit agent");
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -560,13 +511,7 @@ describe("AgentCreatePanel", () => {
     // squad row directly.
     await user.click(screen.getByRole("button", { name: /Frontend Squad/ }));
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Investigate the regression");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+    await enterPromptAndSubmit(user, "Investigate the regression");
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -624,12 +569,8 @@ describe("AgentCreatePanel", () => {
     expect(mockSetLastProjectId).not.toHaveBeenCalled();
   });
 
-  // When the modal was opened from "Add sub issue" on an existing issue,
-  // the manual panel transfers parent_issue_id through the `data` payload
-  // on switch-to-agent. The agent panel must forward that UUID to the
-  // quick-create API silently — without surfacing a parent picker — so the
-  // new issue is filed as a sub-issue. Dropping parent_issue_id here was
-  // the original bug; this locks the wiring in.
+  // When the modal is opened from "Add sub issue" on an existing issue, the
+  // parent id is carried directly into the agent request.
   it("forwards parent_issue_id from the carry payload to the quick-create API", async () => {
     const user = userEvent.setup();
 
@@ -647,13 +588,7 @@ describe("AgentCreatePanel", () => {
     // will be filed as a sub-issue.
     expect(screen.getByTestId("agent-sub-issue-chip")).toBeInTheDocument();
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Investigate the regression");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+    await enterPromptAndSubmit(user, "Investigate the regression");
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -682,13 +617,7 @@ describe("AgentCreatePanel", () => {
       },
     });
 
-    const editor = screen.getByPlaceholderText(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await user.clear(editor);
-    await user.type(editor, "Investigate the regression");
-
-    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+    await enterPromptAndSubmit(user, "Investigate the regression");
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({

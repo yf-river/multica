@@ -7,9 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// FlagOrEnv returns the flag value if set, otherwise the environment variable value,
-// otherwise the fallback.
-func FlagOrEnv(cmd *cobra.Command, flagName, envKey, fallback string) string {
+// FlagOrEnv returns the flag value if set, otherwise the environment value.
+func FlagOrEnv(cmd *cobra.Command, flagName, envKey string) string {
 	if cmd.Flags().Changed(flagName) {
 		val, _ := cmd.Flags().GetString(flagName)
 		return val
@@ -17,5 +16,5 @@ func FlagOrEnv(cmd *cobra.Command, flagName, envKey, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
 		return v
 	}
-	return fallback
+	return ""
 }

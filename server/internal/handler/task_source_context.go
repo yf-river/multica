@@ -3,11 +3,15 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -16,24 +20,27 @@ const (
 	gongfengMCPServerName = "gongfeng"
 )
 
-func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, credentialUserID pgtype.UUID) *TaskSourceContext {
+func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, credentialUserID pgtype.UUID) (*protocol.TaskSourceContext, error) {
 	metadata := decodeIssueMetadataObject(issue.Metadata)
 	provider := strings.ToLower(metadataStringValue(metadata, "source_provider"))
 	if provider == "" {
-		return nil
+		return nil, nil
 	}
 
-	source := &TaskSourceContext{
+	source := &protocol.TaskSourceContext{
 		Provider:            provider,
 		URL:                 metadataStringValue(metadata, "source_url"),
-		ExternalCredentials: map[string]TaskExternalCredentialContext{},
+		ExternalCredentials: map[string]protocol.TaskExternalCredentialContext{},
 	}
 
 	switch provider {
 	case externalCredentialProviderTAPD:
 		fetchStatus := metadataStringValue(metadata, "source_fetch_status")
 		fetchError := metadataStringValue(metadata, "source_fetch_error")
-		credential := h.sourceCredentialContext(ctx, credentialUserID, externalCredentialProviderTAPD, tapdMCPServerName)
+		credential, err := h.sourceCredentialContext(ctx, credentialUserID, externalCredentialProviderTAPD, tapdMCPServerName)
+		if err != nil {
+			return nil, err
+		}
 		source.ExternalCredentials[externalCredentialProviderTAPD] = credential
 		if fetchStatus == "" {
 			if credential.Configured {
@@ -43,10 +50,10 @@ func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, c
 				fetchError = "no usable account-level TAPD credential profile for task creator or trigger user"
 			}
 		}
-		source.TAPD = &TAPDTaskSourceContext{
-			WorkspaceID:   firstNonEmpty(metadataStringValue(metadata, "tapd_workspace_id"), metadataStringValue(metadata, "tapd_workspace")),
-			ResourceType:  firstNonEmpty(metadataStringValue(metadata, "tapd_resource_type"), metadataStringValue(metadata, "tapd_type")),
-			ResourceID:    firstNonEmpty(metadataStringValue(metadata, "tapd_resource_id"), metadataStringValue(metadata, "tapd_wiki_id")),
+		source.TAPD = &protocol.TAPDTaskSourceContext{
+			WorkspaceID:   metadataStringValue(metadata, "tapd_workspace_id"),
+			ResourceType:  metadataStringValue(metadata, "tapd_resource_type"),
+			ResourceID:    metadataStringValue(metadata, "tapd_resource_id"),
 			FetchProvider: firstNonEmpty(metadataStringValue(metadata, "source_fetch_provider"), "tapd_mcp"),
 			FetchStatus:   fetchStatus,
 			FetchError:    fetchError,
@@ -56,19 +63,23 @@ func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, c
 			Version:       metadataStringValue(metadata, "source_fetch_version"),
 		}
 	case externalCredentialProviderGongfeng:
-		source.ExternalCredentials[externalCredentialProviderGongfeng] = h.sourceCredentialContext(ctx, credentialUserID, externalCredentialProviderGongfeng, gongfengMCPServerName)
+		credential, err := h.sourceCredentialContext(ctx, credentialUserID, externalCredentialProviderGongfeng, gongfengMCPServerName)
+		if err != nil {
+			return nil, err
+		}
+		source.ExternalCredentials[externalCredentialProviderGongfeng] = credential
 	default:
-		return source
+		return source, nil
 	}
 
 	if len(source.ExternalCredentials) == 0 {
 		source.ExternalCredentials = nil
 	}
-	return source
+	return source, nil
 }
 
-func (h *Handler) sourceCredentialContext(ctx context.Context, userID pgtype.UUID, provider, mcpServer string) TaskExternalCredentialContext {
-	out := TaskExternalCredentialContext{
+func (h *Handler) sourceCredentialContext(ctx context.Context, userID pgtype.UUID, provider, mcpServer string) (protocol.TaskExternalCredentialContext, error) {
+	out := protocol.TaskExternalCredentialContext{
 		Provider:    provider,
 		Scope:       "account",
 		Inheritance: taskSourceInheritance,
@@ -76,27 +87,37 @@ func (h *Handler) sourceCredentialContext(ctx context.Context, userID pgtype.UUI
 		MCPServer:   mcpServer,
 	}
 	if !userID.Valid {
-		return out
+		return out, nil
 	}
 	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
 		UserID:   userID,
 		Provider: provider,
 	})
 	if err != nil {
-		return out
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, nil
+		}
+		return protocol.TaskExternalCredentialContext{}, fmt.Errorf("load %s credential profile: %w", provider, err)
 	}
 	out.ProfileID = uuidToString(profile.ID)
 	out.ProfileName = profile.Name
 	out.ProfileStatus = profile.Status
-	out.Configured = len(h.externalCredentialProfileEnv(profile)) > 0
-	return out
+	env, err := h.externalCredentialProfileEnv(profile)
+	if err != nil {
+		return protocol.TaskExternalCredentialContext{}, err
+	}
+	out.Configured = len(env) > 0
+	return out, nil
 }
 
-func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig json.RawMessage, source *TaskSourceContext) json.RawMessage {
+func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig json.RawMessage, source *protocol.TaskSourceContext) (json.RawMessage, error) {
 	if source == nil || len(source.ExternalCredentials) == 0 {
-		return mcpConfig
+		return mcpConfig, nil
 	}
-	config := normalizeMCPConfigForInjection(mcpConfig)
+	config, err := normalizeMCPConfigForInjection(mcpConfig)
+	if err != nil {
+		return nil, err
+	}
 	changed := false
 	for provider, credential := range source.ExternalCredentials {
 		if !credential.Configured || credential.MCPServer == "" || credential.UserID == "" {
@@ -110,10 +131,16 @@ func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig js
 			UserID:   userID,
 			Provider: provider,
 		})
-		if err != nil || profile.Status == "disabled" {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("reload %s credential profile: %w", provider, err)
 		}
-		env := h.externalCredentialProfileEnv(profile)
+		if profile.Status == "disabled" {
+			return nil, fmt.Errorf("%s credential profile became disabled", provider)
+		}
+		env, err := h.externalCredentialProfileEnv(profile)
+		if err != nil {
+			return nil, err
+		}
 		if len(env) == 0 {
 			continue
 		}
@@ -122,19 +149,21 @@ func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig js
 		}
 	}
 	if !changed {
-		return mcpConfig
+		return mcpConfig, nil
 	}
 	out, err := json.Marshal(config)
 	if err != nil {
-		return mcpConfig
+		return nil, fmt.Errorf("encode source credential MCP config: %w", err)
 	}
-	return json.RawMessage(out)
+	return json.RawMessage(out), nil
 }
 
-func normalizeMCPConfigForInjection(raw json.RawMessage) map[string]any {
+func normalizeMCPConfigForInjection(raw json.RawMessage) (map[string]any, error) {
 	var config map[string]any
 	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &config)
+		if err := json.Unmarshal(raw, &config); err != nil || config == nil {
+			return nil, errors.New("agent MCP config must be a JSON object")
+		}
 	}
 	if config == nil {
 		config = map[string]any{}
@@ -144,7 +173,7 @@ func normalizeMCPConfigForInjection(raw json.RawMessage) map[string]any {
 		servers = map[string]any{}
 		config["mcpServers"] = servers
 	}
-	return config
+	return config, nil
 }
 
 func mergeMCPServerEnv(config map[string]any, serverName string, env map[string]string) bool {
@@ -203,18 +232,20 @@ func ensureDefaultMCPServerEntry(serverName string, entry map[string]any) bool {
 	}
 }
 
-func (h *Handler) externalCredentialProfileEnv(profile db.ExternalCredentialProfile) map[string]string {
-	token := h.resolveExternalCredentialToken(profile)
+func (h *Handler) externalCredentialProfileEnv(profile db.ExternalCredentialProfile) (map[string]string, error) {
+	token, err := h.resolveExternalCredentialToken(profile)
+	if err != nil {
+		return nil, err
+	}
 	switch profile.Provider {
 	case externalCredentialProviderTAPD:
 		if token == "" {
-			return nil
+			return nil, nil
 		}
-		return map[string]string{"TAPD_ACCESS_TOKEN": token}
+		return map[string]string{"TAPD_ACCESS_TOKEN": token}, nil
 	case externalCredentialProviderGongfeng:
 		env := map[string]string{}
 		if token != "" {
-			env["GONGFENG_ACCESS_TOKEN"] = token
 			env["GONGFENG_PRIVATE_TOKEN"] = token
 		}
 		for _, key := range []string{"GONGFENG_API_BASE", "GONGFENG_WORKDIR", "GONGFENG_SSH_KEY_PATH", "GONGFENG_KNOWN_HOSTS_PATH"} {
@@ -223,37 +254,38 @@ func (h *Handler) externalCredentialProfileEnv(profile db.ExternalCredentialProf
 			}
 		}
 		if len(env) == 0 {
-			return nil
+			return nil, nil
 		}
-		return env
+		return env, nil
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
-func (h *Handler) resolveExternalCredentialToken(profile db.ExternalCredentialProfile) string {
-	if len(profile.EncryptedSecret) > 0 && h.ExternalCredentialBox != nil {
-		plain, err := h.ExternalCredentialBox.Open(profile.EncryptedSecret)
-		if err == nil {
-			return strings.TrimSpace(string(plain))
+func (h *Handler) resolveExternalCredentialToken(profile db.ExternalCredentialProfile) (string, error) {
+	if len(profile.EncryptedSecret) > 0 {
+		if h.ExternalCredentialBox == nil {
+			return "", errors.New("external credential decryptor is not configured")
 		}
+		plain, err := h.ExternalCredentialBox.Open(profile.EncryptedSecret)
+		if err != nil {
+			return "", fmt.Errorf("decrypt external credential: %w", err)
+		}
+		return strings.TrimSpace(string(plain)), nil
 	}
 	ref := strings.TrimSpace(profile.SecretRef)
 	if strings.HasPrefix(ref, "env:") {
-		return strings.TrimSpace(os.Getenv(strings.TrimSpace(strings.TrimPrefix(ref, "env:"))))
+		return strings.TrimSpace(os.Getenv(strings.TrimSpace(strings.TrimPrefix(ref, "env:")))), nil
 	}
 	if strings.HasPrefix(ref, "server-managed:") {
 		parts := strings.Split(ref, ":")
 		if len(parts) >= 2 {
-			switch parts[1] {
-			case externalCredentialProviderTAPD:
-				return strings.TrimSpace(os.Getenv("TAPD_ACCESS_TOKEN"))
-			case externalCredentialProviderGongfeng:
-				return firstNonEmpty(os.Getenv("GONGFENG_ACCESS_TOKEN"), os.Getenv("GONGFENG_PRIVATE_TOKEN"))
+			if key := externalCredentialProviderEnvKey(parts[1]); key != "" {
+				return strings.TrimSpace(os.Getenv(key)), nil
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func decodeIssueMetadataObject(raw []byte) map[string]any {

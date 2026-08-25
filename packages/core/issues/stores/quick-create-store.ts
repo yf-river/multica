@@ -2,8 +2,10 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
+import type { QuickCreateIssueRequest } from "../../types";
+import type { PendingCreateOperation } from "../../platform/recoverable-operation-store";
 
 export type QuickCreateActorType = "agent" | "squad";
 
@@ -12,15 +14,10 @@ export type QuickCreateActorType = "agent" | "squad";
 // open so frequent users skip the pickers entirely — without this, anyone
 // targeting a single project ends up retyping "in project A" on every
 // prompt. Persisted with the workspace-aware StateStorage so switching
-// workspaces shows the right default automatically. Per-user scoping comes
-// for free from localStorage being browser-profile-local — matches how
-// draft-store / issues-scope-store / comment-collapse-store already
-// namespace themselves.
-//
-// lastActorType + lastActorId replace the prior `lastAgentId` field once
-// squads became selectable. Users who had a persisted agent preference
-// land back on whatever the picker shows first; a one-time re-pick is
-// preferable to the type-tag ambiguity of overloading a single UUID.
+// workspaces shows the right default automatically. Account logout clears
+// the namespace so another user on the same browser profile cannot inherit
+// these choices. Actor type and id stay paired so an agent UUID is never
+// interpreted as a squad UUID (or vice versa).
 interface QuickCreateState {
   lastActorType: QuickCreateActorType | null;
   lastActorId: string | null;
@@ -29,9 +26,10 @@ interface QuickCreateState {
   setLastProjectId: (id: string | null) => void;
   prompt: string;
   setPrompt: (prompt: string) => void;
-  clearPrompt: () => void;
   keepOpen: boolean;
   setKeepOpen: (v: boolean) => void;
+  pending?: PendingCreateOperation<QuickCreateIssueRequest>;
+  setPending: (pending?: PendingCreateOperation<QuickCreateIssueRequest>) => void;
 }
 
 export const useQuickCreateStore = create<QuickCreateState>()(
@@ -44,15 +42,15 @@ export const useQuickCreateStore = create<QuickCreateState>()(
       setLastProjectId: (id) => set({ lastProjectId: id }),
       prompt: "",
       setPrompt: (prompt) => set({ prompt }),
-      clearPrompt: () => set({ prompt: "" }),
       keepOpen: false,
       setKeepOpen: (v) => set({ keepOpen: v }),
+      setPending: (pending) => set({ pending }),
     }),
     {
-      name: "multica_quick_create",
+      name: "multica_quick_create_state",
       storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
     },
   ),
 );
 
-registerForWorkspaceRehydration(() => useQuickCreateStore.persist.rehydrate());
+registerWorkspacePersistStore(useQuickCreateStore);

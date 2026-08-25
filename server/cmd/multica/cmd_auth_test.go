@@ -1,18 +1,24 @@
 package main
 
 import (
+	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 func TestMain(m *testing.M) {
-	os.Unsetenv("MULTICA_AGENT_ID")
-	os.Unsetenv("MULTICA_TASK_ID")
-	os.Unsetenv("MULTICA_TOKEN")
+	_ = os.Unsetenv("MULTICA_AGENT_ID")
+	_ = os.Unsetenv("MULTICA_TASK_ID")
+	_ = os.Unsetenv("MULTICA_TOKEN")
 	os.Exit(m.Run())
 }
 
@@ -31,19 +37,96 @@ func TestResolveAppURL(t *testing.T) {
 		t.Setenv("MULTICA_APP_URL", "http://localhost:14000")
 		t.Setenv("FRONTEND_ORIGIN", "http://localhost:13000")
 
-		if got := resolveAppURL(cmd); got != "http://localhost:14000" {
+		got, err := resolveAppURL(cmd)
+		if err != nil {
+			t.Fatalf("resolveAppURL: %v", err)
+		}
+		if got != "http://localhost:14000" {
 			t.Fatalf("resolveAppURL() = %q, want %q", got, "http://localhost:14000")
 		}
 	})
 
-	t.Run("falls back to FRONTEND_ORIGIN", func(t *testing.T) {
-		t.Setenv("MULTICA_APP_URL", "")
-		t.Setenv("FRONTEND_ORIGIN", "http://localhost:13026")
+}
 
-		if got := resolveAppURL(cmd); got != "http://localhost:13026" {
-			t.Fatalf("resolveAppURL() = %q, want %q", got, "http://localhost:13026")
+func TestAuthCommandsPreserveUnreadableConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_SERVER_URL", "")
+	t.Setenv("MULTICA_APP_URL", "")
+	t.Setenv("FRONTEND_ORIGIN", "")
+	t.Setenv("MULTICA_TOKEN", "")
+	t.Setenv("MULTICA_WORKSPACE_ID", "")
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	path, err := cli.CLIConfigPathForProfile("")
+	if err != nil {
+		t.Fatalf("CLIConfigPathForProfile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	const invalidConfig = `{"token":`
+	if err := os.WriteFile(path, []byte(invalidConfig), 0o600); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+
+	if _, err := newAPIClient(testCmd()); err == nil || !strings.Contains(err.Error(), "load CLI config") {
+		t.Fatalf("newAPIClient error = %v, want unreadable config error", err)
+	}
+	if err := runAuthLogout(testCmd(), nil); err == nil || !strings.Contains(err.Error(), "load CLI config") {
+		t.Fatalf("runAuthLogout error = %v, want unreadable config error", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config after rejected logout: %v", err)
+	}
+	if string(content) != invalidConfig {
+		t.Fatalf("unreadable config was overwritten: %q", content)
+	}
+}
+
+func TestCompleteAuthenticationOwnsCredentialPersistence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/me" {
+			http.NotFound(w, r)
+			return
 		}
-	})
+		_, _ = w.Write([]byte(`{"name":"CLI User","account":"cli-user"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{
+		AppURL:      "https://existing.example",
+		WorkspaceID: "stale-workspace",
+	}, ""); err != nil {
+		t.Fatalf("seed CLI config: %v", err)
+	}
+
+	cmd := testCmd()
+	client := cli.NewAPIClient(server.URL, "", "mul_current")
+	if err := completeAuthentication(context.Background(), cmd, client, "mul_current", server.URL, "", "invalid credential"); err != nil {
+		t.Fatalf("complete token authentication: %v", err)
+	}
+	cfg, err := cli.LoadCLIConfigForProfile("")
+	if err != nil {
+		t.Fatalf("load token login config: %v", err)
+	}
+	if cfg.Token != "mul_current" || cfg.ServerURL != server.URL || cfg.WorkspaceID != "" || cfg.AppURL != "https://existing.example" {
+		t.Fatalf("token login config = %+v", cfg)
+	}
+
+	if err := completeAuthentication(context.Background(), cmd, client, "mul_browser", server.URL, "https://app.example", "invalid credential"); err != nil {
+		t.Fatalf("complete browser authentication: %v", err)
+	}
+	cfg, err = cli.LoadCLIConfigForProfile("")
+	if err != nil {
+		t.Fatalf("load browser login config: %v", err)
+	}
+	if cfg.Token != "mul_browser" || cfg.AppURL != "https://app.example" || cfg.WorkspaceID != "" {
+		t.Fatalf("browser login config = %+v", cfg)
+	}
 }
 
 func TestResolveCallbackBinding(t *testing.T) {
@@ -128,8 +211,8 @@ func TestResolveCallbackBinding(t *testing.T) {
 	}
 }
 
-// TestLoginTokenFlagWiring asserts the production loginCmd flag requires an
-// explicit string value.
+// TestLoginTokenFlagWiring pins the current explicit-value contract. A bare
+// --token is rejected by pflag rather than entering a second prompt flow.
 func TestLoginTokenFlagWiring(t *testing.T) {
 	tokenFlag := loginCmd.Flags().Lookup("token")
 	if tokenFlag == nil {
@@ -139,12 +222,12 @@ func TestLoginTokenFlagWiring(t *testing.T) {
 		t.Fatalf("loginCmd --token type = %q, want %q (regressed to bool?)", got, "string")
 	}
 	if tokenFlag.NoOptDefVal != "" {
-		t.Fatalf("loginCmd --token unexpectedly accepts a missing value: %q", tokenFlag.NoOptDefVal)
+		t.Fatalf("loginCmd --token unexpectedly accepts a missing value: NoOptDefVal=%q", tokenFlag.NoOptDefVal)
 	}
 }
 
-// TestLoginTokenFlagParsing exercises the two supported token forms and
-// verifies that a missing value is rejected by Cobra.
+// TestLoginTokenFlagParsing exercises the accepted value forms and rejects a
+// missing value.
 func TestLoginTokenFlagParsing(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -163,9 +246,14 @@ func TestLoginTokenFlagParsing(t *testing.T) {
 			wantToken: "mul_yyy",
 		},
 		{
-			name:    "missing value",
+			name:    "missing value is rejected",
 			argv:    []string{"--token"},
 			wantErr: true,
+		},
+		{
+			name:      "explicit empty value stays empty",
+			argv:      []string{"--token="},
+			wantToken: "",
 		},
 	}
 
@@ -174,11 +262,10 @@ func TestLoginTokenFlagParsing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{Use: "login"}
 			cmd.Flags().String("token", "", "")
-
 			err := cmd.ParseFlags(tc.argv)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("ParseFlags(%v) succeeded, want error", tc.argv)
+					t.Fatalf("ParseFlags(%v) unexpectedly succeeded", tc.argv)
 				}
 				return
 			}

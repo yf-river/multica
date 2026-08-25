@@ -11,7 +11,7 @@ import (
 
 func newRedisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
-	return testutil.NewRedisTestClient(t)
+	return testutil.NewRedisTestClient(t, testutil.RedisDBAuth)
 }
 
 func TestPATCache_NilSafe(t *testing.T) {
@@ -108,10 +108,6 @@ func TestTTLForExpiry(t *testing.T) {
 	}
 }
 
-// TestPATCache_Set_RespectsClampedTTL is the regression test for the
-// review finding: a PAT expiring in <AuthCacheTTL must NOT be cached for
-// the full AuthCacheTTL window, otherwise it would continue passing auth
-// on cache hit after expires_at.
 func TestPATCache_Set_RespectsClampedTTL(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	c := NewPATCache(rdb)

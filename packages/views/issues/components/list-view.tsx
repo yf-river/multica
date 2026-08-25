@@ -14,7 +14,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import type { Issue, IssueStatus } from "@multica/core/types";
 import { useLoadMoreByStatus } from "@multica/core/issues/mutations";
 import type { IssueSortParam, MyIssuesFilter } from "@multica/core/issues/queries";
-import { useModalStore } from "@multica/core/modals";
+import { openCreateIssue } from "@multica/core/issues";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { StatusHeading } from "./status-heading";
@@ -24,21 +24,12 @@ import { useIssueDragColumns } from "./use-issue-drag-columns";
 import { useT } from "../../i18n";
 import {
   type DragMoveUpdates,
+  buildStatusGroups,
   statusGroupId,
 } from "../utils/drag-utils";
-import type { BoardColumnGroup } from "./board-column";
 
 const EMPTY_PROGRESS_MAP = new Map<string, ChildProgress>();
 const EMPTY_IDS: string[] = [];
-
-function buildListGroups(visibleStatuses: IssueStatus[]): BoardColumnGroup[] {
-  return visibleStatuses.map((status) => ({
-    id: statusGroupId(status),
-    title: status,
-    status,
-    createData: { status },
-  }));
-}
 
 export function ListView({
   issues,
@@ -88,7 +79,7 @@ export function ListView({
   const dragEnabled = !!onMoveIssue;
 
   const groups = useMemo(
-    () => buildListGroups(visibleStatuses),
+    () => buildStatusGroups(visibleStatuses),
     [visibleStatuses],
   );
   const {
@@ -269,9 +260,10 @@ function StatusAccordionItem({
                   size="icon-sm"
                   className="rounded-full text-muted-foreground opacity-0 group-hover/header:opacity-100 transition-opacity"
                   onClick={() =>
-                    useModalStore
-                      .getState()
-                      .open("create-issue", { status, ...(projectId ? { project_id: projectId } : {}) })
+                    openCreateIssue({
+                      status,
+                      ...(projectId ? { project_id: projectId } : {}),
+                    })
                   }
                 />
               }

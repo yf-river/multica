@@ -36,11 +36,10 @@ INSERT INTO runtime_profile (
     command_name,
     description,
     fixed_args,
-    visibility,
     created_by,
     enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at
 `
 
 type CreateRuntimeProfileParams struct {
@@ -50,13 +49,13 @@ type CreateRuntimeProfileParams struct {
 	CommandName    string      `json:"command_name"`
 	Description    pgtype.Text `json:"description"`
 	FixedArgs      []byte      `json:"fixed_args"`
-	Visibility     string      `json:"visibility"`
 	CreatedBy      pgtype.UUID `json:"created_by"`
 	Enabled        bool        `json:"enabled"`
 }
 
-// Workspace-level definitions of custom runtimes. Relational integrity for
-// workspace and created_by is enforced in the application layer.
+// Custom Runtime profiles (MUL-3284). Workspace-level definitions of a custom
+// runtime. Relational integrity (workspace,
+// created_by) is enforced in the application layer — there are no DB FKs.
 func (q *Queries) CreateRuntimeProfile(ctx context.Context, arg CreateRuntimeProfileParams) (RuntimeProfile, error) {
 	row := q.db.QueryRow(ctx, createRuntimeProfile,
 		arg.WorkspaceID,
@@ -65,7 +64,6 @@ func (q *Queries) CreateRuntimeProfile(ctx context.Context, arg CreateRuntimePro
 		arg.CommandName,
 		arg.Description,
 		arg.FixedArgs,
-		arg.Visibility,
 		arg.CreatedBy,
 		arg.Enabled,
 	)
@@ -78,7 +76,6 @@ func (q *Queries) CreateRuntimeProfile(ctx context.Context, arg CreateRuntimePro
 		&i.CommandName,
 		&i.Description,
 		&i.FixedArgs,
-		&i.Visibility,
 		&i.CreatedBy,
 		&i.Enabled,
 		&i.CreatedAt,
@@ -101,9 +98,10 @@ type DeleteAgentRuntimesByProfileRow struct {
 	Provider    string      `json:"provider"`
 }
 
-// The profile-delete path removes registered runtime instances itself so it can
-// broadcast and audit each deletion. It runs in the same transaction as
-// DeleteRuntimeProfile.
+// Application-layer cascade: the current schema has no DB ON DELETE CASCADE, so
+// the profile-delete path must remove the profile's registered runtime
+// instances itself. Returns the deleted rows so the caller can broadcast /
+// audit. Runs inside the same transaction as DeleteRuntimeProfile.
 func (q *Queries) DeleteAgentRuntimesByProfile(ctx context.Context, profileID pgtype.UUID) ([]DeleteAgentRuntimesByProfileRow, error) {
 	rows, err := q.db.Query(ctx, deleteAgentRuntimesByProfile, profileID)
 	if err != nil {
@@ -145,33 +143,8 @@ func (q *Queries) DeleteRuntimeProfile(ctx context.Context, arg DeleteRuntimePro
 	return err
 }
 
-const getRuntimeProfile = `-- name: GetRuntimeProfile :one
-SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at FROM runtime_profile
-WHERE id = $1
-`
-
-func (q *Queries) GetRuntimeProfile(ctx context.Context, id pgtype.UUID) (RuntimeProfile, error) {
-	row := q.db.QueryRow(ctx, getRuntimeProfile, id)
-	var i RuntimeProfile
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.DisplayName,
-		&i.ProtocolFamily,
-		&i.CommandName,
-		&i.Description,
-		&i.FixedArgs,
-		&i.Visibility,
-		&i.CreatedBy,
-		&i.Enabled,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getRuntimeProfileForWorkspace = `-- name: GetRuntimeProfileForWorkspace :one
-SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at FROM runtime_profile
+SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at FROM runtime_profile
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -191,7 +164,6 @@ func (q *Queries) GetRuntimeProfileForWorkspace(ctx context.Context, arg GetRunt
 		&i.CommandName,
 		&i.Description,
 		&i.FixedArgs,
-		&i.Visibility,
 		&i.CreatedBy,
 		&i.Enabled,
 		&i.CreatedAt,
@@ -231,7 +203,7 @@ func (q *Queries) ListAgentRuntimeIDsByProfile(ctx context.Context, profileID pg
 }
 
 const listEnabledRuntimeProfilesForWorkspace = `-- name: ListEnabledRuntimeProfilesForWorkspace :many
-SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at FROM runtime_profile
+SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at FROM runtime_profile
 WHERE workspace_id = $1 AND enabled = true
 ORDER BY created_at ASC
 `
@@ -255,7 +227,6 @@ func (q *Queries) ListEnabledRuntimeProfilesForWorkspace(ctx context.Context, wo
 			&i.CommandName,
 			&i.Description,
 			&i.FixedArgs,
-			&i.Visibility,
 			&i.CreatedBy,
 			&i.Enabled,
 			&i.CreatedAt,
@@ -272,7 +243,7 @@ func (q *Queries) ListEnabledRuntimeProfilesForWorkspace(ctx context.Context, wo
 }
 
 const listRuntimeProfiles = `-- name: ListRuntimeProfiles :many
-SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at FROM runtime_profile
+SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at FROM runtime_profile
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -294,7 +265,6 @@ func (q *Queries) ListRuntimeProfiles(ctx context.Context, workspaceID pgtype.UU
 			&i.CommandName,
 			&i.Description,
 			&i.FixedArgs,
-			&i.Visibility,
 			&i.CreatedBy,
 			&i.Enabled,
 			&i.CreatedAt,
@@ -316,11 +286,10 @@ SET display_name = COALESCE($1, display_name),
     command_name = COALESCE($2, command_name),
     description  = COALESCE($3, description),
     fixed_args   = COALESCE($4, fixed_args),
-    visibility   = COALESCE($5, visibility),
-    enabled      = COALESCE($6, enabled),
+    enabled      = COALESCE($5, enabled),
     updated_at   = now()
-WHERE id = $7 AND workspace_id = $8
-RETURNING id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, visibility, created_by, enabled, created_at, updated_at
+WHERE id = $6 AND workspace_id = $7
+RETURNING id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at
 `
 
 type UpdateRuntimeProfileParams struct {
@@ -328,7 +297,6 @@ type UpdateRuntimeProfileParams struct {
 	CommandName pgtype.Text `json:"command_name"`
 	Description pgtype.Text `json:"description"`
 	FixedArgs   []byte      `json:"fixed_args"`
-	Visibility  pgtype.Text `json:"visibility"`
 	Enabled     pgtype.Bool `json:"enabled"`
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
@@ -344,7 +312,6 @@ func (q *Queries) UpdateRuntimeProfile(ctx context.Context, arg UpdateRuntimePro
 		arg.CommandName,
 		arg.Description,
 		arg.FixedArgs,
-		arg.Visibility,
 		arg.Enabled,
 		arg.ID,
 		arg.WorkspaceID,
@@ -358,7 +325,6 @@ func (q *Queries) UpdateRuntimeProfile(ctx context.Context, arg UpdateRuntimePro
 		&i.CommandName,
 		&i.Description,
 		&i.FixedArgs,
-		&i.Visibility,
 		&i.CreatedBy,
 		&i.Enabled,
 		&i.CreatedAt,

@@ -31,24 +31,14 @@ func injectedRuntimeConfigContent(t *testing.T, provider string, ctx TaskContext
 	return fileName, string(data)
 }
 
-// TestBuildCommentReplyInstructionsCodexLinux pins that the Linux/macOS
-// reply template now mandates `--content-file` (post-#4182). The previous
-// `--content-stdin` + HEREDOC mandate (#1795 / #1851 / MUL-2904) was kept
-// for years to defend against backtick / `$()` substitution in the body,
-// but the heredoc/flag boundary turned out to be fragile in its own right:
-// when a model wrapped extra flags around the heredoc on `multica issue
-// create`, the flags got swallowed into stdin and silently dropped (OXY-78,
-// OXY-76). The file path defeats both classes — the body never reaches the
-// shell, and all flags live on one shell-token line.
-//
 // Not parallel: mutates the package-level runtimeGOOS.
-func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
+func TestBuildCommentReplyInstructionsLinux(t *testing.T) {
 	setRuntimeGOOS(t, "linux")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
 
-	got := BuildCommentReplyInstructions("codex", issueID, triggerID)
+	got := BuildCommentReplyInstructions(issueID, triggerID)
 
 	for _, want := range []string{
 		"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file ./reply.md",
@@ -61,7 +51,7 @@ func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
 		"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("codex/linux reply instructions missing %q\n---\n%s", want, got)
+			t.Fatalf("linux reply instructions missing %q\n---\n%s", want, got)
 		}
 	}
 
@@ -72,82 +62,11 @@ func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
 		"--parent " + triggerID + " --content-stdin",
 	} {
 		if strings.Contains(got, banned) {
-			t.Fatalf("codex/linux reply instructions should not contain %q\n---\n%s", banned, got)
+			t.Fatalf("linux reply instructions should not contain %q\n---\n%s", banned, got)
 		}
 	}
 }
 
-// TestBuildCommentReplyInstructionsNonCodexLinux pins that EVERY provider on
-// Linux/macOS — not just Codex — gets the `--content-file` template. Two
-// shell-driven failure classes motivate the uniform file path:
-//   - MUL-2904 / OKK-497: an agent inlined a backtick-wrapped table name into
-//     `--content`; the shell ran it as a command substitution, silently deleted
-//     it, the stored comment no longer matched the model's intent, and the
-//     model retried forever.
-//   - GitHub #4182 (OXY-78 / OXY-76): an agent wrapped extra flags around an
-//     `--content-stdin` HEREDOC; the bash heredoc/flag boundary swallowed
-//     `--assignee` / `--project` into stdin or dropped them as failed
-//     standalone shell statements, while the create still exited 0 with nulls.
-//
-// Both classes are shell-driven, so the guardrail is uniform across providers
-// and across hosts.
-//
-// Not parallel: mutates the package-level runtimeGOOS.
-func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-
-	issueID := "11111111-1111-1111-1111-111111111111"
-	triggerID := "22222222-2222-2222-2222-222222222222"
-
-	for _, host := range []string{"linux", "darwin"} {
-		for _, provider := range []string{"claude", "opencode", "hermes", "kimi", "kiro", "cursor", "gemini"} {
-			name := provider + "/" + host
-			t.Run(name, func(t *testing.T) {
-				runtimeGOOS = host
-				got := BuildCommentReplyInstructions(provider, issueID, triggerID)
-
-				for _, want := range []string{
-					"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file ./reply.md",
-					"Write the reply body to a UTF-8 file",
-					"`--content-file`",
-					"#4182",
-					"rm ./reply.md",
-					"do NOT reuse --parent values from previous turns",
-					"If you decide to reply",
-					"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
-				} {
-					if !strings.Contains(got, want) {
-						t.Errorf("%s reply instructions missing %q\n---\n%s", name, want, got)
-					}
-				}
-
-				// The two regressions: agent-authored comments must never be
-				// steered at shell-inline bodies (MUL-2904) and never at
-				// `--content-stdin` HEREDOC on multi-flag commands (#4182).
-				for _, banned := range []string{
-					"--content \"...\"",
-					"<<'COMMENT'",
-					"cat <<",
-					"--parent " + triggerID + " --content-stdin",
-				} {
-					if strings.Contains(got, banned) {
-						t.Errorf("%s reply instructions still contains %q\n---\n%s", name, banned, got)
-					}
-				}
-			})
-		}
-	}
-}
-
-// TestBuildCommentReplyInstructionsWindowsUsesContentFile pins that on
-// Windows every provider — Codex AND non-Codex — gets the
-// `--content-file` template. The bug is shell-layer, not provider-layer:
-// any agent on Windows piping HEREDOC through PowerShell loses non-ASCII
-// bytes (PS 5.1's `$OutputEncoding` defaults to ASCIIEncoding). Issues
-// #2198 (Chinese, Codex), #2236 (Chinese, Codex), #2376 (Cyrillic,
-// non-Codex agent name) all match this signature.
-//
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 	setRuntimeGOOS(t, "windows")
@@ -155,41 +74,35 @@ func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
 
-	for _, provider := range []string{"codex", "claude", "opencode", "hermes", "kimi", "kiro", "cursor", "gemini"} {
-		t.Run(provider+"/windows", func(t *testing.T) {
-			got := BuildCommentReplyInstructions(provider, issueID, triggerID)
-			for _, want := range []string{
-				"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file",
-				"On Windows, write the reply body to a UTF-8 file",
-				"Do NOT pipe via `--content-stdin`",
-				"silently drops non-ASCII",
-				"$OutputEncoding",
-				"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
-			} {
-				if !strings.Contains(got, want) {
-					t.Errorf("%s reply instructions missing %q\n---\n%s", provider, want, got)
-				}
-			}
-			for _, banned := range []string{
-				"<<'COMMENT'",
-				"--parent " + triggerID + " --content-stdin",
-				"cat <<",
-			} {
-				if strings.Contains(got, banned) {
-					t.Errorf("%s/windows reply instructions should not contain %q\n---\n%s", provider, banned, got)
-				}
-			}
-		})
+	got := BuildCommentReplyInstructions(issueID, triggerID)
+	for _, want := range []string{
+		"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file",
+		"On Windows, write the reply body to a UTF-8 file",
+		"Do NOT pipe via `--content-stdin`",
+		"silently drops non-ASCII",
+		"$OutputEncoding",
+		"Do not add --attachment for markdown artifacts saved under the managed artifact directory",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("windows reply instructions missing %q\n---\n%s", want, got)
+		}
+	}
+	for _, banned := range []string{
+		"<<'COMMENT'",
+		"--parent " + triggerID + " --content-stdin",
+		"cat <<",
+	} {
+		if strings.Contains(got, banned) {
+			t.Errorf("windows reply instructions should not contain %q\n---\n%s", banned, got)
+		}
 	}
 }
 
 func TestBuildCommentReplyInstructionsEmptyWhenNoTrigger(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"codex", "claude", "opencode"} {
-		if got := BuildCommentReplyInstructions(provider, "issue-id", ""); got != "" {
-			t.Fatalf("expected empty string when triggerCommentID is empty for %s, got %q", provider, got)
-		}
+	if got := BuildCommentReplyInstructions("issue-id", ""); got != "" {
+		t.Fatalf("expected empty string when triggerCommentID is empty, got %q", got)
 	}
 }
 

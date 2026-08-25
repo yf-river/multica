@@ -1,11 +1,11 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -16,11 +16,11 @@ import (
 
 // ── Response types ──────────────────────────────────────────────────────────
 
-// WebhookDeliveryResponse is the authenticated-API view of webhook_delivery.
+// webhookDeliveryResponse is the authenticated-API view of webhook_delivery.
 // The list endpoint returns these without `RawBody` / `SelectedHeaders`
 // populated; the detail endpoint includes both for debugging. We never echo
 // the signing secret or token through this surface.
-type WebhookDeliveryResponse struct {
+type webhookDeliveryResponse struct {
 	ID                     string  `json:"id"`
 	WorkspaceID            string  `json:"workspace_id"`
 	AutopilotID            string  `json:"autopilot_id"`
@@ -50,7 +50,7 @@ type WebhookDeliveryResponse struct {
 }
 
 func setDeliveryOptionalFields(
-	resp *WebhookDeliveryResponse,
+	resp *webhookDeliveryResponse,
 	responseStatus pgtype.Int4,
 	autopilotRunID pgtype.UUID,
 	replayedFromDeliveryID pgtype.UUID,
@@ -76,8 +76,8 @@ func setDeliveryOptionalFields(
 
 // slimDeliveryToResponse maps the projected list row (no raw_body /
 // selected_headers / response_body) into the wire response shape.
-func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDeliveryResponse {
-	resp := WebhookDeliveryResponse{
+func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) webhookDeliveryResponse {
+	resp := webhookDeliveryResponse{
 		ID:              uuidToString(d.ID),
 		WorkspaceID:     uuidToString(d.WorkspaceID),
 		AutopilotID:     uuidToString(d.AutopilotID),
@@ -98,8 +98,8 @@ func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDel
 	return resp
 }
 
-func deliveryToResponse(d db.WebhookDelivery, detail bool) WebhookDeliveryResponse {
-	resp := WebhookDeliveryResponse{
+func deliveryToResponse(d db.WebhookDelivery, detail bool) webhookDeliveryResponse {
+	resp := webhookDeliveryResponse{
 		ID:              uuidToString(d.ID),
 		WorkspaceID:     uuidToString(d.WorkspaceID),
 		AutopilotID:     uuidToString(d.AutopilotID),
@@ -147,21 +147,7 @@ func (h *Handler) ListAutopilotDeliveries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	limit := int32(20)
-	offset := int32(0)
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = int32(v)
-		}
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = int32(v)
-		}
-	}
+	limit, offset := autopilotListPagination(r)
 
 	rows, err := h.Queries.ListWebhookDeliveriesByAutopilot(r.Context(), db.ListWebhookDeliveriesByAutopilotParams{
 		AutopilotID: autopilot.ID,
@@ -175,7 +161,7 @@ func (h *Handler) ListAutopilotDeliveries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	resp := make([]WebhookDeliveryResponse, len(rows))
+	resp := make([]webhookDeliveryResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = slimDeliveryToResponse(row)
 	}
@@ -217,6 +203,11 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	autopilotID := chi.URLParam(r, "id")
 	deliveryID := chi.URLParam(r, "deliveryId")
 	workspaceID := h.resolveWorkspaceID(r)
+	requestKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(requestUserID(r))
 
 	autopilot, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
 	if !ok {
@@ -224,6 +215,19 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	}
 	original, ok := h.loadDeliveryForAutopilot(w, r, autopilot, deliveryID)
 	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		AutopilotID string `json:"autopilot_id"`
+		DeliveryID  string `json:"delivery_id"`
+	}{autopilotID, deliveryID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint replay request")
+		return
+	}
+	existing, replayFound, err := h.loadWebhookReplayRequest(r.Context(), autopilot.WorkspaceID, actorID, requestKey, requestHash)
+	if err != nil {
+		writeWebhookReplayRequestError(w, err)
 		return
 	}
 	if original.Status == deliveryStatusRejected || original.SignatureStatus == sigStatusInvalid {
@@ -242,7 +246,7 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 
 	trigRow, err := h.Queries.GetAutopilotTrigger(r.Context(), original.TriggerID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "trigger not found")
+		writeEntityLoadError(w, err, "trigger", "trigger_id", uuidToString(original.TriggerID), "delivery_id", deliveryID)
 		return
 	}
 	if !trigRow.Enabled {
@@ -269,34 +273,55 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	if original.ContentType.Valid {
 		contentType = original.ContentType.String
 	}
-	replay, err := h.Queries.CreateWebhookDelivery(r.Context(), db.CreateWebhookDeliveryParams{
-		WorkspaceID:            autopilot.WorkspaceID,
-		AutopilotID:            autopilot.ID,
-		TriggerID:              original.TriggerID,
-		Provider:               original.Provider,
-		Event:                  envelope.Event,
-		SignatureStatus:        sigStatusNotRequired,
-		Status:                 deliveryStatusQueued,
-		SelectedHeaders:        original.SelectedHeaders,
-		ContentType:            pgtype.Text{String: contentType, Valid: contentType != ""},
-		RawBody:                original.RawBody,
-		ReplayedFromDeliveryID: original.ID,
-	})
+	replay := existing
+	if !replayFound {
+		replay, err = h.Queries.CreateWebhookDelivery(r.Context(), db.CreateWebhookDeliveryParams{
+			WorkspaceID:            autopilot.WorkspaceID,
+			AutopilotID:            autopilot.ID,
+			TriggerID:              original.TriggerID,
+			Provider:               original.Provider,
+			Event:                  envelope.Event,
+			SignatureStatus:        sigStatusNotRequired,
+			Status:                 deliveryStatusQueued,
+			SelectedHeaders:        original.SelectedHeaders,
+			ContentType:            pgtype.Text{String: contentType, Valid: contentType != ""},
+			RawBody:                original.RawBody,
+			ReplayedFromDeliveryID: original.ID,
+			ReplayActorID:          actorID,
+			ReplayRequestKey:       requestKey,
+			ReplayRequestHash:      pgtype.Text{String: requestHash, Valid: true},
+		})
+	}
 	if err != nil {
-		slog.Error("replay: insert delivery failed",
-			"error", err,
-			"original_delivery_id", uuidToString(original.ID),
-		)
-		writeError(w, http.StatusInternalServerError, "failed to create replay delivery")
+		if isUniqueViolation(err) {
+			replay, replayFound, err = h.loadWebhookReplayRequest(
+				r.Context(), autopilot.WorkspaceID, actorID, requestKey, requestHash,
+			)
+			if err != nil || !replayFound {
+				writeWebhookReplayRequestError(w, err)
+				return
+			}
+		} else {
+			slog.Error("replay: insert delivery failed",
+				"error", err,
+				"original_delivery_id", uuidToString(original.ID),
+			)
+			writeError(w, http.StatusInternalServerError, "failed to create replay delivery")
+			return
+		}
+	}
+	if replay.Status != deliveryStatusQueued {
+		writeWebhookReplayResponse(w, replay)
 		return
 	}
 
-	run, dispatchErr := h.AutopilotService.DispatchAutopilot(
+	run, dispatchErr := h.AutopilotService.DispatchAutopilotOnce(
 		r.Context(),
 		autopilot,
 		trigRow.ID,
 		"webhook",
 		envelopeBytes,
+		requestKey,
 	)
 	if dispatchErr != nil {
 		respBody := map[string]any{"error": "failed to dispatch autopilot"}
@@ -341,6 +366,47 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, deliveryToResponse(final, true))
+}
+
+var errWebhookReplayConflict = errors.New("webhook replay idempotency conflict")
+
+func (h *Handler) loadWebhookReplayRequest(ctx context.Context, workspaceID, actorID, key pgtype.UUID, requestHash string) (db.WebhookDelivery, bool, error) {
+	delivery, err := h.Queries.GetWebhookReplayByRequest(ctx, db.GetWebhookReplayByRequestParams{
+		WorkspaceID:      workspaceID,
+		ReplayActorID:    actorID,
+		ReplayRequestKey: key,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.WebhookDelivery{}, false, nil
+	}
+	if err != nil {
+		return db.WebhookDelivery{}, false, err
+	}
+	if !delivery.ReplayRequestHash.Valid || delivery.ReplayRequestHash.String != requestHash {
+		return db.WebhookDelivery{}, false, errWebhookReplayConflict
+	}
+	return delivery, true, nil
+}
+
+func writeWebhookReplayRequestError(w http.ResponseWriter, err error) {
+	writeIdempotencyReplayError(
+		w, err, errWebhookReplayConflict,
+		"Idempotency-Key was already used with a different request",
+		"failed to load replay request",
+	)
+}
+
+func writeWebhookReplayResponse(w http.ResponseWriter, delivery db.WebhookDelivery) {
+	w.Header().Set("Idempotency-Replayed", "true")
+	if delivery.ResponseStatus.Valid && delivery.ResponseStatus.Int32 >= http.StatusBadRequest {
+		message := "failed to replay delivery"
+		if delivery.Error.Valid && delivery.Error.String != "" {
+			message = delivery.Error.String
+		}
+		writeError(w, int(delivery.ResponseStatus.Int32), message)
+		return
+	}
+	writeJSON(w, http.StatusCreated, deliveryToResponse(delivery, true))
 }
 
 // loadDeliveryForAutopilot returns the delivery row when it exists in the

@@ -13,14 +13,11 @@ import (
 )
 
 // registerListeners wires up event bus listeners for WS broadcasting.
-// Personal events are sent only to the target user via
-// SendToUser. All other events are broadcast to the workspace room.
+// Personal events are sent only to the target user. All other events are
+// broadcast to the workspace room.
 //
-// The broadcaster parameter is intentionally typed as the realtime.Broadcaster
-// interface (not *realtime.Hub) so that this layer can later be swapped out
-// for a Redis-backed relay or a feature-flagged dual-write implementation
-// without touching any of the event listeners below. This is Phase 0 of the
-// horizontal-scaling plan tracked in MUL-1138.
+// The broadcaster interface keeps listener routing identical for the local Hub
+// and the Redis dual-write implementation used by multi-node deployments.
 func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	// Personal events should NOT be broadcast to the whole workspace.
 	personalEvents := map[string]bool{
@@ -32,7 +29,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	}
 
 	// Helper: marshal event and send to a specific user.
-	sendToRecipient := func(b realtime.Broadcaster, e events.Event, recipientID string) {
+	sendToRecipient := func(e events.Event, recipientID string) {
 		if recipientID == "" {
 			return
 		}
@@ -41,7 +38,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 		realtime.M.RecordEvent(e.Type)
-		b.SendToUser(recipientID, data)
+		b.BroadcastToUser(recipientID, "", data)
 	}
 
 	// inbox:new — extract recipient from nested item
@@ -55,7 +52,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 		recipientID, _ := item["recipient_id"].(string)
-		sendToRecipient(b, e, recipientID)
+		sendToRecipient(e, recipientID)
 	})
 
 	// inbox:read, inbox:archived, inbox:batch-read, inbox:batch-archived
@@ -70,13 +67,13 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 				return
 			}
 			recipientID, _ := payload["recipient_id"].(string)
-			sendToRecipient(b, e, recipientID)
+			sendToRecipient(e, recipientID)
 		})
 	}
 
 	// member:added — also send to the added user so they discover the new workspace.
 	// Pass excludeWorkspace so clients already in the target room (reached via
-	// BroadcastToWorkspace in SubscribeAll) don't receive the event twice.
+	// workspace broadcast in SubscribeAll) don't receive the event twice.
 	bus.Subscribe(protocol.EventMemberAdded, func(e events.Event) {
 		payload, ok := e.Payload.(map[string]any)
 		if !ok {
@@ -99,7 +96,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 		realtime.M.RecordEvent(e.Type)
-		b.SendToUser(userID, data, e.WorkspaceID)
+		b.BroadcastToUser(userID, e.WorkspaceID, data)
 	})
 
 	// SubscribeAll handles workspace-broadcast for non-personal events.
@@ -121,25 +118,12 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 
-		// Phase 1 (MUL-1138): the per-resource scope routing for high-frequency
-		// task/chat events is intentionally NOT enabled yet. The server-side
-		// pieces — Hub.subscribe/unsubscribe protocol, ScopeAuthorizer, Redis
-		// Streams relay — have all landed, but the client (WSClient + the
-		// per-page chat/task hooks) does not yet send `subscribe` frames or
-		// replay subscriptions on reconnect. Routing these events through
-		// `BroadcastToScope("task"|"chat", ...)` today would silently drop
-		// every chat/task message on the floor, breaking the live chat
-		// timeline, chat unread badges, and pending-task UI.
-		//
-		// Until the client lands its scope-subscription PR, we keep
-		// task/chat events on workspace fanout (same behavior as before this
-		// PR). The `Event.TaskID` / `Event.ChatSessionID` hints are still
-		// populated by producers so that flipping the switch later is a
-		// one-line change here. See review on PR #1429 for context.
+		// Current clients subscribe only to workspace/user rooms, so task and
+		// chat events stay on workspace fanout to avoid dropping live updates.
 
 		if e.WorkspaceID != "" {
 			realtime.M.RecordEvent(e.Type)
-			b.BroadcastToWorkspace(e.WorkspaceID, data)
+			b.BroadcastToScope(realtime.ScopeWorkspace, e.WorkspaceID, data)
 		} else if strings.HasPrefix(e.Type, "daemon:") {
 			realtime.M.RecordEvent(e.Type)
 			b.Broadcast(data)

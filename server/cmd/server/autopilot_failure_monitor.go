@@ -7,25 +7,19 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// failureMonitorConfig is the tunable knob set for the autopilot failure
-// monitor. Defaults match the proposal in MUL-1336 §6 action item #2:
-// pause autopilots whose recent run history is dominated by failures and that
-// have run enough times that the failure rate is statistically meaningful.
-//
-// All values can be overridden via env vars (see envFailureMonitorConfig).
-// Setting Interval <= 0 disables the monitor entirely.
+// failureMonitorConfig is kept explicit so the monitor policy can be tested
+// without waiting on production intervals.
 type failureMonitorConfig struct {
 	Interval     time.Duration
 	Lookback     time.Duration
@@ -34,7 +28,7 @@ type failureMonitorConfig struct {
 	StartupDelay time.Duration
 }
 
-func defaultFailureMonitorConfig() failureMonitorConfig {
+func productionFailureMonitorConfig() failureMonitorConfig {
 	return failureMonitorConfig{
 		Interval:     24 * time.Hour,
 		Lookback:     7 * 24 * time.Hour,
@@ -44,36 +38,13 @@ func defaultFailureMonitorConfig() failureMonitorConfig {
 	}
 }
 
-func envFailureMonitorConfig() failureMonitorConfig {
-	cfg := defaultFailureMonitorConfig()
-	cfg.Interval = envDurationOrZero("AUTOPILOT_FAIL_MONITOR_INTERVAL", cfg.Interval)
-	cfg.Lookback = envDurationPositive("AUTOPILOT_FAIL_MONITOR_LOOKBACK", cfg.Lookback)
-	cfg.StartupDelay = envDurationNonNegative("AUTOPILOT_FAIL_MONITOR_STARTUP_DELAY", cfg.StartupDelay)
-	if v, ok := envInt64Positive("AUTOPILOT_FAIL_MONITOR_MIN_RUNS"); ok {
-		cfg.MinRuns = v
-	}
-	if v, ok := envFloatInUnitInterval("AUTOPILOT_FAIL_MONITOR_FAIL_RATIO"); ok {
-		cfg.FailRatio = v
-	}
-	return cfg
-}
-
 // runAutopilotFailureMonitor periodically pauses autopilots whose recent run
-// history exceeds the configured failure threshold. This stops runaway
-// scheduled autopilots from burning tasks/tokens on a hot loop (e.g. the
-// `Registro de ls cada 5 min` case in MUL-1336: 1,475 / 1,476 runs failed
-// over 7 days, still firing every 5 min). The monitor leaves a
+// history exceeds the failure threshold. This stops runaway scheduled
+// autopilots from burning tasks or tokens on a hot loop. The monitor leaves a
 // `severity=attention` inbox notification for the autopilot's creator (or the
 // agent's owner if the autopilot was created by an agent) so somebody human
 // learns that auto-pause happened.
-//
-// Disable with `AUTOPILOT_FAIL_MONITOR_INTERVAL=0`.
 func runAutopilotFailureMonitor(ctx context.Context, queries *db.Queries, bus *events.Bus, cfg failureMonitorConfig) {
-	if cfg.Interval <= 0 {
-		slog.Info("autopilot failure monitor: disabled (interval <= 0)")
-		return
-	}
-
 	slog.Info(
 		"autopilot failure monitor: starting",
 		"interval", cfg.Interval.String(),
@@ -82,8 +53,7 @@ func runAutopilotFailureMonitor(ctx context.Context, queries *db.Queries, bus *e
 		"fail_ratio", cfg.FailRatio,
 	)
 
-	// Stagger startup so we don't all-or-nothing hit the DB the moment the
-	// process boots — important during a fleet rolling restart.
+	// Stagger startup so all nodes do not hit the database together.
 	if cfg.StartupDelay > 0 {
 		select {
 		case <-ctx.Done():
@@ -137,7 +107,7 @@ func tickAutopilotFailureMonitor(ctx context.Context, queries *db.Queries, bus *
 			// pgx returns ErrNoRows when the WHERE status='active' clause
 			// matched zero rows — i.e. another caller (manual UI action,
 			// concurrent monitor) paused it first. Treat as a benign no-op.
-			if isNoRows(err) {
+			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
 			slog.Warn("autopilot failure monitor: pause failed",
@@ -260,7 +230,7 @@ func emitAutopilotPausedNotifications(
 			WorkspaceID: workspaceID,
 			ActorType:   "system",
 			ActorID:     "",
-			Payload:     map[string]any{"item": inboxItemToResponse(item)},
+			Payload:     map[string]any{"item": service.InboxItemFields(item)},
 		})
 	}
 }
@@ -327,14 +297,6 @@ func autopilotEventPayload(a db.Autopilot) map[string]any {
 	}
 }
 
-// isNoRows wraps the sentinel for pgx :one queries that match no rows. The
-// SystemPauseAutopilot UPDATE returns no rows when the autopilot was already
-// paused/archived, which we want to treat as a benign no-op rather than an
-// error to log.
-func isNoRows(err error) bool {
-	return errors.Is(err, pgx.ErrNoRows)
-}
-
 func formatLookback(d time.Duration) string {
 	if d <= 0 {
 		return "0s"
@@ -354,72 +316,4 @@ func formatLookback(d time.Duration) string {
 		return fmt.Sprintf("%d hours", hours)
 	}
 	return d.String()
-}
-
-// envDurationOrZero parses a duration env var. An explicit 0/negative is
-// honored (used to disable the monitor); empty returns the default; an
-// unparseable value warns and returns the default.
-func envDurationOrZero(name string, def time.Duration) time.Duration {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := time.ParseDuration(raw)
-	if err != nil {
-		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
-		return def
-	}
-	return v
-}
-
-func envDurationPositive(name string, def time.Duration) time.Duration {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := time.ParseDuration(raw)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
-		return def
-	}
-	return v
-}
-
-func envDurationNonNegative(name string, def time.Duration) time.Duration {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := time.ParseDuration(raw)
-	if err != nil || v < 0 {
-		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
-		return def
-	}
-	return v
-}
-
-func envInt64Positive(name string) (int64, bool) {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return 0, false
-	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid env var, ignored", "name", name, "value", raw, "error", err)
-		return 0, false
-	}
-	return v, true
-}
-
-func envFloatInUnitInterval(name string) (float64, bool) {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return 0, false
-	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v <= 0 || v > 1 {
-		slog.Warn("invalid env var (must be in (0,1]), ignored", "name", name, "value", raw, "error", err)
-		return 0, false
-	}
-	return v, true
 }

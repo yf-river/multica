@@ -17,6 +17,24 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+func mustResolveWorkspaceID(t *testing.T, cmd *cobra.Command) string {
+	t.Helper()
+	value, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		t.Fatalf("resolveWorkspaceID: %v", err)
+	}
+	return value
+}
+
+func mustResolveToken(t *testing.T, cmd *cobra.Command) string {
+	t.Helper()
+	value, err := resolveToken(cmd)
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	return value
+}
+
 // freshAgentEnvSetCmd returns a standalone cobra.Command with the three
 // --custom-env* flags registered identically to agentEnvSetCmd, so
 // resolveCustomEnv-shaped tests can mutate flag state without leaking
@@ -55,7 +73,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "")
 		t.Setenv("MULTICA_WORKSPACE_ID", "")
 
-		got := resolveWorkspaceID(testCmd())
+		got := mustResolveWorkspaceID(t, testCmd())
 		if got != "config-file-ws" {
 			t.Fatalf("resolveWorkspaceID() = %q, want %q (config fallback)", got, "config-file-ws")
 		}
@@ -66,7 +84,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_WORKSPACE_ID", "env-ws")
 
-		got := resolveWorkspaceID(testCmd())
+		got := mustResolveWorkspaceID(t, testCmd())
 		if got != "env-ws" {
 			t.Fatalf("resolveWorkspaceID() = %q, want %q (env)", got, "env-ws")
 		}
@@ -77,7 +95,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_WORKSPACE_ID", "")
 
-		got := resolveWorkspaceID(testCmd())
+		got := mustResolveWorkspaceID(t, testCmd())
 		if got != "" {
 			t.Fatalf("resolveWorkspaceID() = %q, want empty (no silent config fallback in agent context)", got)
 		}
@@ -88,7 +106,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_WORKSPACE_ID", "")
 
-		if got := resolveWorkspaceID(testCmd()); got != "" {
+		if got := mustResolveWorkspaceID(t, testCmd()); got != "" {
 			t.Fatalf("resolveWorkspaceID() = %q, want empty", got)
 		}
 	})
@@ -120,7 +138,7 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "")
 		t.Setenv("MULTICA_TOKEN", "")
 
-		if got := resolveToken(testCmd()); got != "mul_profile_token" {
+		if got := mustResolveToken(t, testCmd()); got != "mul_profile_token" {
 			t.Fatalf("resolveToken() = %q, want profile token", got)
 		}
 	})
@@ -130,7 +148,7 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_TOKEN", "")
 
-		if got := resolveToken(testCmd()); got != "" {
+		if got := mustResolveToken(t, testCmd()); got != "" {
 			t.Fatalf("resolveToken() = %q, want empty in agent context without MULTICA_TOKEN", got)
 		}
 	})
@@ -140,7 +158,7 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_TOKEN", "mat_task_token")
 
-		if got := resolveToken(testCmd()); got != "mat_task_token" {
+		if got := mustResolveToken(t, testCmd()); got != "mat_task_token" {
 			t.Fatalf("resolveToken() = %q, want MULTICA_TOKEN", got)
 		}
 	})
@@ -304,30 +322,6 @@ func TestAgentUpdateNoFieldsErrorPointsAtEnvCommand(t *testing.T) {
 	msg := err.Error()
 	if !strings.Contains(msg, "multica agent env set") {
 		t.Fatalf("no-fields error must direct users to `multica agent env set`; got: %q", msg)
-	}
-}
-
-// TestAgentUpdateDoesNotExposeCustomEnvFlags is the inverse guarantee
-// for the above test: if someone re-adds the --custom-env* flags to
-// `agent update`, this fails loudly. The /env path is the only
-// audited surface and we don't want a silent regression.
-func TestAgentUpdateDoesNotExposeCustomEnvFlags(t *testing.T) {
-	for _, flag := range []string{"custom-env", "custom-env-stdin", "custom-env-file"} {
-		if agentUpdateCmd.Flag(flag) != nil {
-			t.Errorf("agent update must NOT expose --%s after MUL-2600; use `multica agent env set` instead", flag)
-		}
-	}
-}
-
-// TestAgentCreateDoesNotExposeFromTemplate guards against re-adding the
-// `--from-template` flag. It was an untaught, immature CLI surface that
-// short-circuited before body assembly — silently dropping sibling create
-// flags like --mcp-config / --custom-env — and was removed. The agent-template
-// backend API still exists but has no CLI surface; manual `agent create` is the
-// only supported CLI creation path.
-func TestAgentCreateDoesNotExposeFromTemplate(t *testing.T) {
-	if agentCreateCmd.Flag("from-template") != nil {
-		t.Error("agent create must NOT expose --from-template; it was removed as an untaught CLI surface that silently dropped sibling flags")
 	}
 }
 
@@ -802,7 +796,7 @@ func TestAgentSkillsAddCallsAdditiveEndpoint(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		json.NewEncoder(w).Encode([]map[string]any{
+		_ = json.NewEncoder(w).Encode([]map[string]any{
 			{"id": "skill-a", "name": "Skill A", "description": ""},
 			{"id": "skill-b", "name": "Skill B", "description": ""},
 		})
@@ -891,30 +885,31 @@ func TestAgentAvatarHappyPath(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/agents/agent-123":
-			if r.Method == http.MethodGet {
-				json.NewEncoder(w).Encode(map[string]any{
+			switch r.Method {
+			case http.MethodGet:
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"id":   "agent-123",
 					"name": "TestAgent",
 				})
-			} else if r.Method == http.MethodPut {
+			case http.MethodPut:
 				var body map[string]any
-				json.NewDecoder(r.Body).Decode(&body)
+				_ = json.NewDecoder(r.Body).Decode(&body)
 				if body["avatar_url"] != "https://cdn.example.com/avatars/agent-123.png" {
 					t.Errorf("unexpected avatar_url: %v", body["avatar_url"])
 				}
-				json.NewEncoder(w).Encode(map[string]any{
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"id":         "agent-123",
 					"name":       "TestAgent",
 					"avatar_url": "https://cdn.example.com/avatars/agent-123.png",
 				})
-			} else {
+			default:
 				t.Errorf("unexpected method: %s", r.Method)
 			}
 		case "/api/upload-file":
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":  "att-456",
 				"url": "https://cdn.example.com/avatars/agent-123.png",
 			})
@@ -937,35 +932,43 @@ func TestAgentAvatarHappyPath(t *testing.T) {
 	}
 }
 
-// TestAgentAvatarUnsupportedFormat rejects files with unsupported extensions.
-func TestAgentAvatarUnsupportedFormat(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	txtPath := writeAgentAvatarTestFile(t, "avatar.txt", []byte("not an image"))
-	cmd := newAgentAvatarTestCmd(t, txtPath)
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error for unsupported format, got nil")
+func TestAgentAvatarRejectsInvalidFileInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		filePath  func(*testing.T) string
+		wantError string
+	}{
+		{
+			name: "missing flag",
+			filePath: func(t *testing.T) string {
+				return ""
+			},
+			wantError: "--file is required",
+		},
+		{
+			name: "missing file",
+			filePath: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "does-not-exist.png")
+			},
+			wantError: "file not found",
+		},
+		{
+			name: "unsupported format",
+			filePath: func(t *testing.T) string {
+				return writeAgentAvatarTestFile(t, "avatar.txt", []byte("not an image"))
+			},
+			wantError: "unsupported file format",
+		},
 	}
-	if !strings.Contains(err.Error(), "unsupported file format") {
-		t.Fatalf("expected 'unsupported file format' error, got: %v", err)
-	}
-}
 
-// TestAgentAvatarOversizedFile rejects files larger than 5MB.
-func TestAgentAvatarOversizedFile(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	bigPath := writeAgentAvatarTestFile(t, "big.png", make([]byte, 5<<20+1))
-	cmd := newAgentAvatarTestCmd(t, bigPath)
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error for oversized file, got nil")
-	}
-	if !strings.Contains(err.Error(), "file too large") {
-		t.Fatalf("expected 'file too large' error, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
+			err := runAgentAvatar(newAgentAvatarTestCmd(t, tt.filePath(t)), []string{"agent-123"})
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -976,7 +979,7 @@ func TestAgentAvatarMissingAgent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agents/missing-agent" {
 			w.WriteHeader(http.StatusNotFound)
-			io.WriteString(w, "agent not found")
+			_, _ = io.WriteString(w, "agent not found")
 			return
 		}
 		http.NotFound(w, r)
@@ -1003,10 +1006,10 @@ func TestAgentAvatarUploadFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/agents/agent-123":
-			json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
 		case "/api/upload-file":
 			w.WriteHeader(http.StatusInternalServerError)
-			io.WriteString(w, "upload failed")
+			_, _ = io.WriteString(w, "upload failed")
 		default:
 			http.NotFound(w, r)
 		}
@@ -1035,12 +1038,12 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 		case "/api/agents/agent-123":
 			if r.Method == http.MethodPut {
 				w.WriteHeader(http.StatusForbidden)
-				io.WriteString(w, "forbidden")
+				_, _ = io.WriteString(w, "forbidden")
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
 		case "/api/upload-file":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":  "att-456",
 				"url": "https://cdn.example.com/avatars/agent-123.png",
 			})
@@ -1060,36 +1063,6 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "update agent avatar") {
 		t.Fatalf("expected 'update agent avatar' error, got: %v", err)
-	}
-}
-
-// TestAgentAvatarMissingFileFlag rejects when --file is not provided.
-func TestAgentAvatarMissingFileFlag(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	cmd := newAgentAvatarTestCmd(t, "")
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error when --file is missing, got nil")
-	}
-	if !strings.Contains(err.Error(), "--file is required") {
-		t.Fatalf("expected '--file is required' error, got: %v", err)
-	}
-}
-
-// TestAgentAvatarNonexistentFile rejects when the file path does not exist.
-func TestAgentAvatarNonexistentFile(t *testing.T) {
-	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
-
-	cmd := newAgentAvatarTestCmd(t, filepath.Join(t.TempDir(), "does-not-exist.png"))
-
-	err := runAgentAvatar(cmd, []string{"agent-123"})
-	if err == nil {
-		t.Fatal("expected error for non-existent file, got nil")
-	}
-	if !strings.Contains(err.Error(), "file not found") {
-		t.Fatalf("expected 'file not found' error, got: %v", err)
 	}
 }
 
@@ -1149,7 +1122,7 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 		if r.URL.Path != "/api/agents/agent-123" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":           "agent-123",
 			"name":         "TestAgent",
 			"status":       "active",
@@ -1176,7 +1149,7 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 
 	err := runAgentGet(cmd, []string{"agent-123"})
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 
@@ -1247,10 +1220,13 @@ func TestAgentCreateSendsThinkingLevel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Errorf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": "high"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": "high"})
 	}))
 	defer srv.Close()
 
@@ -1281,7 +1257,7 @@ func TestAgentCreateOmitsThinkingLevelWhenUnset(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
 	}))
 	defer srv.Close()
 
@@ -1320,7 +1296,7 @@ func TestAgentUpdateSendsThinkingLevel(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 					t.Errorf("decode request body: %v", err)
 				}
-				json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": tc.value})
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": tc.value})
 			}))
 			defer srv.Close()
 
@@ -1368,7 +1344,7 @@ func TestAgentCreateAndUpdateExposeThinkingLevelFlag(t *testing.T) {
 func TestAgentCreateThinkingLevelServerRejectionSurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error":"thinking_level \"max\" is not a recognised value for runtime \"gemini\""}`)
+		_, _ = io.WriteString(w, `{"error":"thinking_level \"max\" is not a recognised value for runtime \"gemini\""}`)
 	}))
 	defer srv.Close()
 

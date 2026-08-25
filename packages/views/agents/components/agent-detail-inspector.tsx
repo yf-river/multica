@@ -12,7 +12,6 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
-import { api } from "@multica/core/api";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { useTimeAgo } from "../../i18n";
@@ -50,7 +49,7 @@ interface InspectorProps {
   members: MemberWithUser[];
   currentUserId: string | null;
   /**
-   * Computed by the parent via `useAgentPermissions(agent).canEdit.allowed`.
+   * Computed by the parent via `useAgentEditPermission(agent).allowed`.
    * When false the inspector renders all editable surfaces as static
    * read-only displays — pickers become text/badges, name/description lose
    * their pencil affordance, the avatar is no longer clickable, and the
@@ -126,17 +125,17 @@ export function AgentDetailInspector({
         <PropRow label={t(($) => $.inspector.prop_model)} interactive={false}>
           <ModelPicker
             runtimeId={agent.runtime_id}
-            runtimeOnline={!!isOnline}
-            value={agent.model ?? ""}
+            runtimeOnline={isOnline}
+            value={agent.model}
             canEdit={canEdit}
             onChange={(m) => update({ model: m })}
           />
         </PropRow>
         <ThinkingPropRow
           runtimeId={agent.runtime_id}
-          runtimeOnline={!!isOnline}
-          model={agent.model ?? ""}
-          value={agent.thinking_level ?? ""}
+          runtimeOnline={isOnline}
+          model={agent.model}
+          value={agent.thinking_level}
           canEdit={canEdit}
           onChange={(v) => update({ thinking_level: v })}
         />
@@ -271,7 +270,7 @@ function AvatarEditor({
 }) {
   const { t } = useT("agents");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
+  const { upload, uploading } = useFileUpload();
 
   if (!canEdit) {
     return (
@@ -293,7 +292,7 @@ function AvatarEditor({
     try {
       const result = await upload(file);
       if (!result) return;
-      await onUpdate({ avatar_url: result.link });
+      await onUpdate({ avatar_url: result.url });
       toast.success(t(($) => $.inspector.avatar_updated_toast));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t(($) => $.inspector.avatar_upload_failed_toast));
@@ -389,7 +388,7 @@ function NameAndDescription({
       </InlineEditPopover>
 
       <DescriptionEditor
-        value={agent.description ?? ""}
+        value={agent.description}
         onSave={(v) => onUpdate({ description: v })}
       />
     </div>
@@ -526,10 +525,6 @@ function DescriptionEditorBody({
   );
 }
 
-
-// ---------------------------------------------------------------------------
-// Presence badge — unchanged from the previous version
-// ---------------------------------------------------------------------------
 
 function PresenceBadge({
   presence,

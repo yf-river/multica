@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -50,12 +51,8 @@ type InboundMessage struct {
 	// ParentID is the message_id of the message this one quote-replies
 	// to, taken verbatim from the receive event's `parent_id`. Empty
 	// when the message is not a reply. The enricher fetches it and
-	// prepends a <quoted_message> block. RootID is the thread/root
-	// anchor Lark also reports; we keep it for completeness but the
-	// quoted-reply expansion keys off ParentID (the immediate parent),
-	// not the root.
+	// prepends a <quoted_message> block.
 	ParentID string
-	RootID   string
 
 	// CommandBody is the user's OWN typed text (the decoded Body before
 	// the enricher prepends any <quoted_message> / <forwarded_messages>
@@ -80,9 +77,8 @@ const (
 
 	// OutcomeNeedsBinding — the open_id is unbound; the WS adapter
 	// should mint a binding token via BindingTokenService and send
-	// the "click here to bind" card. DispatchResult.SenderOpenID and
-	// .InstallationID are populated so the adapter can target the
-	// reply.
+	// the "click here to bind" card. DispatchResult.SenderOpenID is
+	// populated so the adapter can target the reply.
 	OutcomeNeedsBinding Outcome = "needs_binding"
 
 	// OutcomeIngested — the message landed in chat_session and an
@@ -91,23 +87,10 @@ const (
 	// issue's UUID).
 	OutcomeIngested Outcome = "ingested"
 
-	// OutcomeAgentOffline — the message landed in chat_session, but
-	// the agent has no runtime bound at all (agent.runtime_id IS
-	// NULL). The adapter should reply with "agent offline, will run
-	// on next online." The chat_message row remains so the agent
-	// picks it up on resume.
-	//
-	// IMPORTANT: this is NOT triggered when a daemon is merely
-	// disconnected. If agent.runtime_id IS set, the chat task is
-	// enqueued and waits for the daemon to claim it on next online;
-	// that path returns OutcomeIngested with a TaskID.
-	OutcomeAgentOffline Outcome = "agent_offline"
-
 	// OutcomeAgentArchived — the message landed in chat_session, but
 	// the agent has been archived. The adapter should reply with a
 	// distinct copy ("this agent has been archived; ask an admin to
-	// unarchive or rebind"). Kept separate from OutcomeAgentOffline
-	// because the user-facing remediation differs.
+	// unarchive or rebind").
 	OutcomeAgentArchived Outcome = "agent_archived"
 )
 
@@ -115,20 +98,12 @@ const (
 // (the WS adapter) consume this to drive their outbound side; nothing
 // here implies the adapter MUST reply, only that it CAN.
 type DispatchResult struct {
-	Outcome        Outcome
-	DropReason     DropReason
-	InstallationID pgtype.UUID
-	ChatSessionID  pgtype.UUID
-	SenderOpenID   OpenID
-	// TaskID was populated when the dispatcher enqueued the chat task
-	// synchronously. With the short-window debounce (MUL-2968) the run is
-	// triggered asynchronously at flush time, so Handle no longer knows a
-	// task id — this field is left zero for the chat path. Kept on the
-	// struct because the emit contract still carries it for any future
-	// synchronous enqueue (e.g. /issue follow-ups).
-	TaskID      pgtype.UUID
-	IssueID     pgtype.UUID
-	IssueNumber int32
+	Outcome       Outcome
+	DropReason    DropReason
+	ChatSessionID pgtype.UUID
+	SenderOpenID  OpenID
+	IssueID       pgtype.UUID
+	IssueNumber   int32
 	// IssueIdentifier is the workspace-qualified human key for the
 	// created issue ("MUL-42"). Populated only when /issue produced a
 	// new row. The OutcomeReplier uses this verbatim in the "Created
@@ -138,21 +113,6 @@ type DispatchResult struct {
 	// in the confirmation message so the chat history reads naturally
 	// even when the Multica deep link is not reachable.
 	IssueTitle string
-}
-
-// IssueCreator is the narrow subset of service.IssueService the
-// Dispatcher needs. Declared here as an interface so this package can
-// be unit-tested without bringing the full service graph along.
-type IssueCreator interface {
-	Create(ctx context.Context, p service.IssueCreateParams, opts service.IssueCreateOpts) (service.IssueCreateResult, error)
-}
-
-// ChatTaskEnqueuer is the narrow subset of service.TaskService the
-// Dispatcher needs. It exists for the same reason as IssueCreator:
-// the Dispatcher is small enough that depending on the whole
-// TaskService struct is gratuitous.
-type ChatTaskEnqueuer interface {
-	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID) (db.AgentTaskQueue, error)
 }
 
 // DispatcherQueries is the narrow subset of *db.Queries the Dispatcher
@@ -201,11 +161,11 @@ type DispatcherQueries interface {
 // design's §4.3 safety property ("unbound users never reach
 // chat_session") true at runtime.
 type Dispatcher struct {
-	Queries      DispatcherQueries
-	Chat         ChatSessionService
-	Audit        AuditLogger
-	IssueService IssueCreator
-	TaskService  ChatTaskEnqueuer
+	Queries         DispatcherQueries
+	Chat            ChatSessionService
+	RecordDrop      func(context.Context, AuditDropParams) error
+	CreateIssue     func(context.Context, service.IssueCreateParams, service.IssueCreateOpts) (service.IssueCreateResult, error)
+	EnqueueChatTask func(context.Context, db.ChatSession, pgtype.UUID) (db.AgentTaskQueue, error)
 
 	// FlushReply emits the offline/archived notice that EnqueueChatTask
 	// now produces only at debounce-flush time. Before MUL-2968 those
@@ -213,25 +173,22 @@ type Dispatcher struct {
 	// OutcomeReplier sent the card; with the run trigger debounced, the
 	// verdict is not known until the window closes, so the dispatcher
 	// drives the reply itself via this callback. Wired to
-	// OutcomeReplier.Reply in production; nil disables the notice (the
-	// message is still durable, only the card is skipped).
-	FlushReply FlushReplyFunc
+	// LarkOutcomeReplier.Reply in production.
+	FlushReply ReplyFunc
 
 	// Logger is used by the detached flush path, which cannot return
 	// errors to a caller and must log them. Defaults to slog.Default().
 	Logger *slog.Logger
 
-	// batcher debounces the per-session run trigger. Installed via
-	// EnableRunBatching in production; when nil (unit tests / degenerate
-	// config) the run fires inline with no debounce — a zero-length
-	// window, not a separate code path.
-	batcher *pendingBatcher
+	// batcher debounces the per-session run trigger. Its zero value is the
+	// production configuration, with the default silence window and real timer.
+	batcher pendingBatcher
 }
 
-// FlushReplyFunc matches OutcomeReplier.Reply so the production replier can
-// be injected directly. It is invoked from the debounced flush goroutine
-// to deliver the agent-offline / agent-archived notice.
-type FlushReplyFunc func(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult)
+// ReplyFunc is the outbound half of the EventEmitter contract. The Hub and
+// the debounced dispatcher flush both invoke the production replier through
+// this exact callback instead of maintaining parallel one-method interfaces.
+type ReplyFunc func(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult)
 
 // chatRunFlushTimeout bounds the detached flush (session reload +
 // EnqueueChatTask + offline/archived notice). The flush runs on its own
@@ -239,23 +196,12 @@ type FlushReplyFunc func(ctx context.Context, inst db.LarkInstallation, msg Inbo
 // time the window closes.
 const chatRunFlushTimeout = 10 * time.Second
 
-// EnableRunBatching installs the in-memory debouncer in front of the
-// per-session run trigger. Call once at boot. A non-positive window uses
-// DefaultChatRunBatchWindow. Without this, the dispatcher triggers runs
-// inline (used by unit tests that assert the immediate effect).
-func (d *Dispatcher) EnableRunBatching(window time.Duration) {
-	d.batcher = newPendingBatcher(window)
-}
-
 // FlushPendingRuns drains every still-pending run trigger immediately and
 // blocks until in-flight flushes finish. The hub calls this on graceful
 // shutdown, after inbound delivery has stopped, so a normal restart does
-// not silently drop a window's worth of messages. No-op when batching is
-// disabled.
+// not silently drop a window's worth of messages.
 func (d *Dispatcher) FlushPendingRuns() {
-	if d.batcher != nil {
-		d.batcher.FlushAll()
-	}
+	d.batcher.FlushAll()
 }
 
 func (d *Dispatcher) logger() *slog.Logger {
@@ -293,19 +239,21 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 	inst, err := d.Queries.GetLarkInstallationByAppID(ctx, msg.AppID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			_ = d.Audit.RecordDrop(ctx, AuditDropParams{
+			if err := d.RecordDrop(ctx, AuditDropParams{
 				EventType:     msg.EventType,
 				LarkEventID:   msg.EventID,
 				LarkMessageID: msg.MessageID,
 				ChatID:        msg.ChatID,
 				Reason:        DropReasonInvalidEvent,
-			})
+			}); err != nil {
+				return DispatchResult{}, fmt.Errorf("record invalid-event drop: %w", err)
+			}
 			return DispatchResult{Outcome: OutcomeDropped, DropReason: DropReasonInvalidEvent}, nil
 		}
 		return DispatchResult{}, fmt.Errorf("load installation: %w", err)
 	}
-	if InstallationStatus(inst.Status) != InstallationActive {
-		return d.drop(ctx, msg, inst.ID, DropReasonRevokedInstallation), nil
+	if inst.Status != installationStatusActive {
+		return d.drop(ctx, msg, inst.ID, DropReasonRevokedInstallation)
 	}
 
 	// 2. Two-phase dedup claim with owner fencing. Spec §4.3 puts this
@@ -340,7 +288,7 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 				// (terminal) or another worker is actively
 				// processing. Either way, the right behavior is to
 				// drop without re-doing the work.
-				return d.drop(ctx, msg, inst.ID, DropReasonDuplicate), nil
+				return d.drop(ctx, msg, inst.ID, DropReasonDuplicate)
 			}
 			return DispatchResult{}, fmt.Errorf("dedup claim: %w", err)
 		}
@@ -359,7 +307,7 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 	// nothing else needs to happen, and the audit row was already
 	// written by the in-tx rollback path's caller (see processClaimed).
 	if errors.Is(err, ErrClaimLost) {
-		return d.drop(ctx, msg, inst.ID, DropReasonDuplicate), nil
+		return d.drop(ctx, msg, inst.ID, DropReasonDuplicate)
 	}
 
 	return res, err
@@ -412,7 +360,11 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	//    never produces an "you need to bind" reply card spam — the
 	//    Bot is not addressed, so we say nothing.
 	if msg.ChatType == ChatTypeGroup && !msg.AddressedToBot {
-		return d.drop(ctx, msg, inst.ID, DropReasonNotAddressedInGroup), finalizeMark, nil
+		res, err := d.drop(ctx, msg, inst.ID, DropReasonNotAddressedInGroup)
+		if err != nil {
+			return DispatchResult{}, finalizeRelease, err
+		}
+		return res, finalizeMark, nil
 	}
 
 	// 4. Identity check. A row in lark_user_binding means the open_id
@@ -424,19 +376,20 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			_ = d.Audit.RecordDrop(ctx, AuditDropParams{
+			if err := d.RecordDrop(ctx, AuditDropParams{
 				InstallationID: inst.ID,
 				ChatID:         msg.ChatID,
 				EventType:      msg.EventType,
 				LarkEventID:    msg.EventID,
 				LarkMessageID:  msg.MessageID,
 				Reason:         DropReasonUnboundUser,
-			})
+			}); err != nil {
+				return DispatchResult{}, finalizeRelease, fmt.Errorf("record unbound-user drop: %w", err)
+			}
 			return DispatchResult{
-				Outcome:        OutcomeNeedsBinding,
-				DropReason:     DropReasonUnboundUser,
-				InstallationID: inst.ID,
-				SenderOpenID:   msg.SenderOpenID,
+				Outcome:      OutcomeNeedsBinding,
+				DropReason:   DropReasonUnboundUser,
+				SenderOpenID: msg.SenderOpenID,
 			}, finalizeMark, nil
 		}
 		return DispatchResult{}, finalizeRelease, fmt.Errorf("load user binding: %w", err)
@@ -496,32 +449,17 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 		return DispatchResult{}, finalizeRelease, fmt.Errorf("append user message: %w", err)
 	}
 
-	// Post-AppendUserMessage paths must NOT Release the claim, because
-	// the chat_message + dedup Mark are already committed. Mark-again
-	// is a no-op (the in-tx Mark already landed), so finalizeNone.
-	postAppendFinalize := finalizeNone
-	if !appendRes.DedupMarked {
-		// Defensive: the dispatcher always passes a valid claim token,
-		// but if a future caller wires AppendUserMessage with an
-		// invalid token the Mark would not have run in-tx. Fall back
-		// to the post-pipeline Mark so the row still terminates.
-		postAppendFinalize = finalizeMark
-	}
-
 	res := DispatchResult{
-		Outcome:        OutcomeIngested,
-		InstallationID: inst.ID,
-		ChatSessionID:  sessionID,
-		SenderOpenID:   msg.SenderOpenID,
+		Outcome:       OutcomeIngested,
+		ChatSessionID: sessionID,
 	}
 
 	// 7. /issue command, if present. chat_message is already durable
-	//    above; from here all error returns must signal finalizeNone
-	//    (or finalizeMark in the defensive fallback above).
+	//    above; from here all error returns must signal finalizeNone.
 	if appendRes.IssueCommand != nil {
 		issueRes, err := d.createIssueFromCommand(ctx, inst, binding.MulticaUserID, sessionID, *appendRes.IssueCommand)
 		if err != nil {
-			return DispatchResult{}, postAppendFinalize, fmt.Errorf("create issue from command: %w", err)
+			return DispatchResult{}, finalizeNone, fmt.Errorf("create issue from command: %w", err)
 		}
 		res.IssueID = issueRes.Issue.ID
 		res.IssueNumber = issueRes.Issue.Number
@@ -543,8 +481,7 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	//    already durable; the agent run reads the WHOLE session at
 	//    execution time, so a burst of messages in this session is
 	//    collapsed into ONE run by deferring EnqueueChatTask behind a
-	//    short silence window (MUL-2968). The synchronous outcome is
-	//    OutcomeIngested with NO TaskID — the task row is created later,
+	//    short silence window (MUL-2968). The task row is created later,
 	//    at flush. EnqueueChatTask's productizable verdicts (agent
 	//    offline / archived) and infra errors are now handled inside the
 	//    flush (see flushChatRun), not returned here.
@@ -558,31 +495,23 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	// in a multi-sender silence window the last sender wins, matching the
 	// "latest message in a window wins" rule above. See MUL-2645.
 	d.scheduleRun(inst, msg, sessionID, binding.MulticaUserID)
-	return res, postAppendFinalize, nil
+	return res, finalizeNone, nil
 }
 
-// scheduleRun hands the per-session run trigger to the debouncer (or fires
-// it inline when batching is disabled). The flush closure captures this
-// message's installation + InboundMessage so the offline/archived notice,
-// if any, targets the right chat; the latest message in a window wins.
+// scheduleRun hands the per-session run trigger to the debouncer. The flush
+// closure captures this message's installation + InboundMessage so an archived
+// notice targets the right chat; the latest message in a window wins.
 func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, initiatorUserID pgtype.UUID) {
 	flush := func() { d.flushChatRun(inst, msg, sessionID, initiatorUserID) }
-	if d.batcher == nil {
-		// Batching disabled (unit tests / degenerate config): trigger the
-		// run immediately. Production always installs a batcher via
-		// EnableRunBatching, so this branch does not run in prod.
-		flush()
-		return
-	}
-	d.batcher.Schedule(keyForSession(sessionID), flush)
+	d.batcher.Schedule(string(sessionID.Bytes[:]), flush)
 }
 
 // flushChatRun is the debounced run-trigger. It runs once per silence
 // window per chat session, detached from the inbound path (on its own
 // goroutine and fresh context). It reloads the session, enqueues exactly
 // one chat task for the whole window's worth of messages, and — because
-// EnqueueChatTask's offline/archived verdict is only known here now —
-// emits the corresponding notice itself via FlushReply. Errors cannot be
+// EnqueueChatTask's archived verdict is only known here now — emits the
+// corresponding notice itself via FlushReply. Errors cannot be
 // returned to a caller (the message is already ACKed and durable), so they
 // are logged: a failed enqueue leaves the message in the session to be
 // picked up by the next message's run.
@@ -593,24 +522,22 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 	session, err := d.Queries.GetChatSession(ctx, sessionID)
 	if err != nil {
 		d.logger().Error("lark dispatcher: flush reload chat session failed",
-			"chat_session_id", uuidString(sessionID),
+			"chat_session_id", util.UUIDToString(sessionID),
 			"err", err.Error(),
 		)
 		return
 	}
-	if _, err := d.TaskService.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
+	if _, err := d.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
 		switch {
-		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
-			d.emitFlushReply(ctx, inst, msg, sessionID, OutcomeAgentOffline)
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
-			d.emitFlushReply(ctx, inst, msg, sessionID, OutcomeAgentArchived)
+			d.emitFlushReply(ctx, inst, msg, OutcomeAgentArchived)
 		default:
 			// Infra failure (DB down, etc.). Nothing to retry against —
 			// the inbound frame was ACKed long ago. Log so the gap is
 			// visible; the next message in this session re-triggers a run
 			// that will read this message too.
 			d.logger().Error("lark dispatcher: flush enqueue chat task failed",
-				"chat_session_id", uuidString(sessionID),
+				"chat_session_id", util.UUIDToString(sessionID),
 				"err", err.Error(),
 			)
 		}
@@ -618,22 +545,10 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 }
 
 // emitFlushReply delivers an offline/archived notice for a flushed run.
-func (d *Dispatcher) emitFlushReply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, outcome Outcome) {
-	if d.FlushReply == nil {
-		return
-	}
+func (d *Dispatcher) emitFlushReply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, outcome Outcome) {
 	d.FlushReply(ctx, inst, msg, DispatchResult{
-		Outcome:        outcome,
-		InstallationID: inst.ID,
-		ChatSessionID:  sessionID,
-		SenderOpenID:   msg.SenderOpenID,
+		Outcome: outcome,
 	})
-}
-
-// keyForSession is the batcher key. chat_session_id is a globally-unique
-// UUID, so it alone disambiguates sessions across installations.
-func keyForSession(sessionID pgtype.UUID) string {
-	return string(sessionID.Bytes[:])
 }
 
 // applyFinalize flips the in-flight claim row to its terminal state,
@@ -649,37 +564,48 @@ func keyForSession(sessionID pgtype.UUID) string {
 func (d *Dispatcher) applyFinalize(ctx context.Context, installationID pgtype.UUID, messageID string, claimToken pgtype.UUID, action dedupFinalize) {
 	switch action {
 	case finalizeMark:
-		_, _ = d.Queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
+		rows, err := d.Queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
 			InstallationID: installationID,
 			MessageID:      messageID,
 			ClaimToken:     claimToken,
 		})
+		if err != nil {
+			d.logger().Error("lark dispatcher: finalize dedup mark failed", "installation_id", util.UUIDToString(installationID), "message_id", messageID, "err", err)
+		} else if rows == 0 {
+			d.logger().Warn("lark dispatcher: finalize dedup mark lost claim", "installation_id", util.UUIDToString(installationID), "message_id", messageID)
+		}
 	case finalizeRelease:
-		_, _ = d.Queries.ReleaseLarkInboundDedup(ctx, db.ReleaseLarkInboundDedupParams{
+		rows, err := d.Queries.ReleaseLarkInboundDedup(ctx, db.ReleaseLarkInboundDedupParams{
 			InstallationID: installationID,
 			MessageID:      messageID,
 			ClaimToken:     claimToken,
 		})
+		if err != nil {
+			d.logger().Error("lark dispatcher: finalize dedup release failed", "installation_id", util.UUIDToString(installationID), "message_id", messageID, "err", err)
+		} else if rows == 0 {
+			d.logger().Warn("lark dispatcher: finalize dedup release lost claim", "installation_id", util.UUIDToString(installationID), "message_id", messageID)
+		}
 	case finalizeNone:
 		// AppendUserMessage already finalized the row in-tx, or our
 		// claim was lost to a concurrent reclaim. Do not touch it.
 	}
 }
 
-func (d *Dispatcher) drop(ctx context.Context, msg InboundMessage, instID pgtype.UUID, reason DropReason) DispatchResult {
-	_ = d.Audit.RecordDrop(ctx, AuditDropParams{
+func (d *Dispatcher) drop(ctx context.Context, msg InboundMessage, instID pgtype.UUID, reason DropReason) (DispatchResult, error) {
+	if err := d.RecordDrop(ctx, AuditDropParams{
 		InstallationID: instID,
 		ChatID:         msg.ChatID,
 		EventType:      msg.EventType,
 		LarkEventID:    msg.EventID,
 		LarkMessageID:  msg.MessageID,
 		Reason:         reason,
-	})
-	return DispatchResult{
-		Outcome:        OutcomeDropped,
-		DropReason:     reason,
-		InstallationID: instID,
+	}); err != nil {
+		return DispatchResult{}, fmt.Errorf("record %s drop: %w", reason, err)
 	}
+	return DispatchResult{
+		Outcome:    OutcomeDropped,
+		DropReason: reason,
+	}, nil
 }
 
 func (d *Dispatcher) createIssueFromCommand(
@@ -692,10 +618,10 @@ func (d *Dispatcher) createIssueFromCommand(
 	// Empty title at this point means the /issue alone fallback found
 	// no previous user message either. The product copy ("请填标题")
 	// belongs in the WS adapter's reply card; we surface this to the
-	// caller as ErrEmptyIssueTitle so the dispatcher can short-circuit
+	// caller as errEmptyIssueTitle so the dispatcher can short-circuit
 	// without paying the IssueService cost.
 	if cmd.Title == "" {
-		return service.IssueCreateResult{}, ErrEmptyIssueTitle
+		return service.IssueCreateResult{}, errEmptyIssueTitle
 	}
 	params := service.IssueCreateParams{
 		WorkspaceID:  inst.WorkspaceID,
@@ -710,7 +636,7 @@ func (d *Dispatcher) createIssueFromCommand(
 		OriginType:   pgtype.Text{String: originLarkChat, Valid: true},
 		OriginID:     sessionID,
 	}
-	return d.IssueService.Create(ctx, params, service.IssueCreateOpts{})
+	return d.CreateIssue(ctx, params, service.IssueCreateOpts{})
 }
 
 // originLarkChat is the issue.origin_type label written for issues
@@ -721,8 +647,8 @@ func (d *Dispatcher) createIssueFromCommand(
 // it.
 const originLarkChat = "lark_chat"
 
-// ErrEmptyIssueTitle is returned by createIssueFromCommand when the
+// errEmptyIssueTitle is returned by createIssueFromCommand when the
 // caller invoked /issue with no title AND the previous-user-message
 // fallback found nothing usable. The WS adapter translates this into
 // the "please supply a title" reply card per §2.3.
-var ErrEmptyIssueTitle = errors.New("issue title is empty")
+var errEmptyIssueTitle = errors.New("issue title is empty")

@@ -39,27 +39,34 @@ func TestEnsureDaemonID_Persists(t *testing.T) {
 	}
 }
 
-func TestEnsureDaemonID_SharedAcrossProfiles(t *testing.T) {
+func TestEnsureDaemonID_IgnoresProfileScopedFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	defaultID, err := EnsureDaemonID()
-	if err != nil {
-		t.Fatalf("default profile: %v", err)
+	profileID := uuid.Must(uuid.NewV7()).String()
+	profileDir := filepath.Join(home, ".multica", "profiles", "staging")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatalf("mkdir profile: %v", err)
 	}
-	stagingID, err := EnsureDaemonID()
-	if err != nil {
-		t.Fatalf("staging profile: %v", err)
-	}
-	if defaultID != stagingID {
-		t.Fatalf("profiles should share one machine id, got default=%s staging=%s", defaultID, stagingID)
+	profileFile := filepath.Join(profileDir, "daemon.id")
+	if err := os.WriteFile(profileFile, []byte(profileID+"\n"), 0o600); err != nil {
+		t.Fatalf("seed profile id: %v", err)
 	}
 
-	// Profile-scoped file must not be created under the new layout — the
-	// only source of truth is ~/.multica/daemon.id.
-	profileFile := filepath.Join(home, ".multica", "profiles", "staging", "daemon.id")
-	if _, err := os.Stat(profileFile); !os.IsNotExist(err) {
-		t.Fatalf("profile-scoped daemon.id should not be created, stat err: %v", err)
+	got, err := EnsureDaemonID()
+	if err != nil {
+		t.Fatalf("EnsureDaemonID: %v", err)
+	}
+	if got == profileID {
+		t.Fatalf("machine identity must not be sourced from profile file %s", profileFile)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".multica", "daemon.id"))
+	if err != nil {
+		t.Fatalf("read canonical file: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != got {
+		t.Fatalf("canonical file %q != generated id %q", data, got)
 	}
 }
 

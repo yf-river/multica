@@ -1,7 +1,1 @@
-"use client";
-
-import { ProjectsPage } from "@multica/views/projects/components";
-
-export default function Page() {
-  return <ProjectsPage />;
-}
+export { ProjectsPage as default } from "@multica/views/projects/components";

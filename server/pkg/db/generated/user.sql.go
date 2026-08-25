@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO "user" (name, account, avatar_url)
 VALUES ($1, $2, $3)
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash
 `
 
 type CreateUserParams struct {
@@ -35,7 +35,37 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
+		&i.ProfileDescription,
+		&i.Timezone,
+		&i.PasswordHash,
+	)
+	return i, err
+}
+
+const createUserWithPassword = `-- name: CreateUserWithPassword :one
+INSERT INTO "user" (name, account, password_hash)
+VALUES ($1, $2, $3)
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash
+`
+
+type CreateUserWithPasswordParams struct {
+	Name         string      `json:"name"`
+	Account      string      `json:"account"`
+	PasswordHash pgtype.Text `json:"password_hash"`
+}
+
+func (q *Queries) CreateUserWithPassword(ctx context.Context, arg CreateUserWithPasswordParams) (User, error) {
+	row := q.db.QueryRow(ctx, createUserWithPassword, arg.Name, arg.Account, arg.PasswordHash)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Account,
+		&i.AvatarUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OnboardedAt,
+		&i.OnboardingQuestionnaire,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -44,7 +74,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash FROM "user"
+SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash FROM "user"
 WHERE id = $1
 `
 
@@ -60,7 +90,6 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -69,7 +98,7 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 }
 
 const getUserByAccount = `-- name: GetUserByAccount :one
-SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash FROM "user"
+SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash FROM "user"
 WHERE account = $1
 `
 
@@ -85,72 +114,6 @@ func (q *Queries) GetUserByAccount(ctx context.Context, account string) (User, e
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
-		&i.ProfileDescription,
-		&i.Timezone,
-		&i.PasswordHash,
-	)
-	return i, err
-}
-
-const markUserOnboarded = `-- name: MarkUserOnboarded :one
-UPDATE "user" SET
-    onboarded_at = COALESCE(onboarded_at, now()),
-    updated_at = now()
-WHERE id = $1
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
-`
-
-func (q *Queries) MarkUserOnboarded(ctx context.Context, id pgtype.UUID) (User, error) {
-	row := q.db.QueryRow(ctx, markUserOnboarded, id)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Account,
-		&i.AvatarUrl,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.OnboardedAt,
-		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
-		&i.ProfileDescription,
-		&i.Timezone,
-		&i.PasswordHash,
-	)
-	return i, err
-}
-
-const patchUserOnboarding = `-- name: PatchUserOnboarding :one
-UPDATE "user" SET
-    onboarding_questionnaire = COALESCE($1, onboarding_questionnaire),
-    updated_at = now()
-WHERE id = $2
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
-`
-
-type PatchUserOnboardingParams struct {
-	Questionnaire []byte      `json:"questionnaire"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-// Partial update of the user's onboarding decision fields. Currently only the
-// questionnaire JSONB is patchable — the v2 attempt at persisting Step 3
-// runtime choice on the user row was reverted; that state now lives in a
-// frontend Zustand transient store.
-func (q *Queries) PatchUserOnboarding(ctx context.Context, arg PatchUserOnboardingParams) (User, error) {
-	row := q.db.QueryRow(ctx, patchUserOnboarding, arg.Questionnaire, arg.ID)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Account,
-		&i.AvatarUrl,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.OnboardedAt,
-		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -170,7 +133,7 @@ UPDATE "user" SET
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash
 `
 
 type UpdateUserParams struct {
@@ -211,7 +174,6 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,

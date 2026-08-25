@@ -1,5 +1,13 @@
-import type { StateStorage } from "zustand/middleware";
+import { create } from "zustand";
+import {
+  createJSONStorage,
+  persist,
+  type PersistOptions,
+  type PersistStorage,
+} from "zustand/middleware";
+import type { StoreApi } from "zustand/vanilla";
 import type { StorageAdapter } from "../types/storage";
+import { defaultStorage } from "./storage";
 
 // Paired module vars — always set/cleared together by the workspace layout.
 // _currentSlug is the primary identifier (matches the URL segment).
@@ -8,7 +16,23 @@ import type { StorageAdapter } from "../types/storage";
 let _currentSlug: string | null = null;
 let _currentWsId: string | null = null;
 
-const _rehydrateFns: Array<() => void> = [];
+interface WorkspaceStoreLifecycle {
+  rehydrate: () => void;
+  reset: () => void;
+}
+
+interface PersistedClientStore<State, PersistedState> extends StoreApi<State> {
+  persist: {
+    rehydrate: () => Promise<void> | void;
+    getOptions: () => Partial<PersistOptions<State, PersistedState>>;
+    setOptions: (
+      options: Partial<PersistOptions<State, PersistedState>>,
+    ) => void;
+  };
+}
+
+const _workspaceStores = new Set<WorkspaceStoreLifecycle>();
+const _accountStateResetters = new Set<() => void>();
 const _slugSubscribers = new Set<(slug: string | null) => void>();
 let _pendingNotify = false;
 let _pendingRehydrate = false;
@@ -56,8 +80,9 @@ export function setCurrentWorkspace(slug: string | null, wsId: string | null) {
     _pendingRehydrate = true;
     queueMicrotask(() => {
       _pendingRehydrate = false;
-      for (const fn of _rehydrateFns) {
-        fn();
+      for (const store of _workspaceStores) {
+        store.reset();
+        store.rehydrate();
       }
     });
   }
@@ -86,9 +111,65 @@ export function subscribeToCurrentSlug(
   };
 }
 
-/** Register a persist store's rehydrate function to be called on workspace switch. */
-export function registerForWorkspaceRehydration(fn: () => void) {
-  _rehydrateFns.push(fn);
+/** Register state owned by the active workspace. */
+export function registerWorkspaceStoreLifecycle(
+  lifecycle: WorkspaceStoreLifecycle,
+): () => void {
+  _workspaceStores.add(lifecycle);
+  _accountStateResetters.add(lifecycle.reset);
+  return () => {
+    _workspaceStores.delete(lifecycle);
+    _accountStateResetters.delete(lifecycle.reset);
+  };
+}
+
+/** Register a Zustand persist store without letting lifecycle resets write. */
+export function registerWorkspacePersistStore<State, PersistedState>(
+  store: PersistedClientStore<State, PersistedState>,
+): () => void {
+  return registerWorkspaceStoreLifecycle({
+    rehydrate: () => store.persist.rehydrate(),
+    reset: () => resetPersistedStore(store),
+  });
+}
+
+/** Register a global persist store whose contents belong to the account. */
+export function registerAccountPersistStore<State, PersistedState>(
+  store: PersistedClientStore<State, PersistedState>,
+): () => void {
+  const reset = () => resetPersistedStore(store);
+  _accountStateResetters.add(reset);
+  return () => _accountStateResetters.delete(reset);
+}
+
+/** Reset every loaded client store that can contain account-owned data. */
+export function resetAccountState(): void {
+  for (const reset of _accountStateResetters) reset();
+}
+
+function resetPersistedStore<State, PersistedState>(
+  store: PersistedClientStore<State, PersistedState>,
+): void {
+  const storage = store.persist.getOptions().storage;
+  if (!storage) {
+    store.setState(store.getInitialState(), true);
+    return;
+  }
+
+  // Zustand setState normally writes through persist. Use a discard storage
+  // for the synchronous reset so switching to workspace B cannot overwrite
+  // B's saved state before rehydration reads it.
+  const discardStorage: PersistStorage<PersistedState> = {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+  store.persist.setOptions({ storage: discardStorage });
+  try {
+    store.setState(store.getInitialState(), true);
+  } finally {
+    store.persist.setOptions({ storage });
+  }
 }
 
 /**
@@ -103,7 +184,7 @@ export function registerForWorkspaceRehydration(fn: () => void) {
  * workspaces. Persisted stores get a real read once setCurrentWorkspace
  * triggers their registered rehydrate fn.
  */
-export function createWorkspaceAwareStorage(adapter: StorageAdapter): StateStorage {
+export function createWorkspaceAwareStorage(adapter: StorageAdapter): StorageAdapter {
   return {
     getItem: (key) =>
       _currentSlug ? adapter.getItem(`${key}:${_currentSlug}`) : null,
@@ -114,4 +195,34 @@ export function createWorkspaceAwareStorage(adapter: StorageAdapter): StateStora
       if (_currentSlug) adapter.removeItem(`${key}:${_currentSlug}`);
     },
   };
+}
+
+export interface WorkspaceDraftState<Draft extends object> {
+  draft: Draft;
+  setDraft: (patch: Partial<Draft>) => void;
+  clearDraft: () => void;
+}
+
+export function createWorkspaceDraftStore<Draft extends object>(
+  name: string,
+  emptyDraft: Draft,
+) {
+  const store = create<WorkspaceDraftState<Draft>>()(
+    persist(
+      (set) => ({
+        draft: { ...emptyDraft },
+        setDraft: (patch) =>
+          set((state) => ({ draft: { ...state.draft, ...patch } })),
+        clearDraft: () => set({ draft: { ...emptyDraft } }),
+      }),
+      {
+        name,
+        storage: createJSONStorage(() =>
+          createWorkspaceAwareStorage(defaultStorage),
+        ),
+      },
+    ),
+  );
+  registerWorkspacePersistStore(store);
+  return store;
 }

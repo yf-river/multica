@@ -11,17 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countProjectResources = `-- name: CountProjectResources :one
-SELECT count(*) FROM project_resource WHERE project_id = $1
-`
-
-func (q *Queries) CountProjectResources(ctx context.Context, projectID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countProjectResources, projectID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createProjectResource = `-- name: CreateProjectResource :one
 INSERT INTO project_resource (
     project_id, workspace_id, resource_type, resource_ref, label, position, created_by
@@ -204,6 +193,30 @@ func (q *Queries) ListProjectResources(ctx context.Context, projectID pgtype.UUI
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockProjectForResourcePosition = `-- name: LockProjectForResourcePosition :one
+SELECT id FROM project WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockProjectForResourcePosition(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockProjectForResourcePosition, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const nextProjectResourcePosition = `-- name: NextProjectResourcePosition :one
+SELECT (COALESCE(MAX(position), -1) + 1)::int
+FROM project_resource
+WHERE project_id = $1
+`
+
+func (q *Queries) NextProjectResourcePosition(ctx context.Context, projectID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, nextProjectResourcePosition, projectID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateProjectResource = `-- name: UpdateProjectResource :one

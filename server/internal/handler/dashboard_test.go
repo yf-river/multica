@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func loadDashboardRuntimeAgent(t *testing.T, ctx context.Context) (string, string) {
@@ -22,56 +24,178 @@ func loadDashboardRuntimeAgent(t *testing.T, ctx context.Context) (string, strin
 	return runtimeID, agentID
 }
 
-// TestDashboardEndpoints covers the workspace-dashboard rollups:
-//   - daily token usage with and without project filter
-//   - per-agent token usage with and without project filter
-//   - per-agent run time
-//
-// Asserts that (1) tasks belonging to a project show up under the workspace
-// view, (2) the project filter excludes tasks tied to issues without a
-// matching project_id, and (3) run-time aggregation accumulates the
-// completed_at − started_at delta correctly.
-func TestDashboardEndpoints(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
+func insertDashboardIssue(t *testing.T, ctx context.Context, title, projectID string) string {
+	t.Helper()
+	return insertDashboardIssueWithDB(t, ctx, testPool, title, projectID)
+}
+
+func insertDashboardIssueWithDB(t *testing.T, ctx context.Context, db dashboardQueryRower, title, projectID string) string {
+	t.Helper()
+	var issueID string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_id, creator_type, project_id, number)
+		VALUES (
+			$1, $2, $3, 'member', NULLIF($4, '')::uuid,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1)
+		)
+		RETURNING id
+	`, testWorkspaceID, title, testUserID, projectID).Scan(&issueID); err != nil {
+		t.Fatalf("insert dashboard issue: %v", err)
 	}
+	return issueID
+}
+
+func insertDashboardProject(t *testing.T, ctx context.Context, title string) string {
+	t.Helper()
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, title).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	return projectID
+}
+
+type dashboardQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func insertDashboardTask(t *testing.T, ctx context.Context, db dashboardQueryRower, agentID, issueID, runtimeID string, createdAt time.Time) string {
+	t.Helper()
+	var taskID string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, context, created_at)
+		VALUES ($1, NULLIF($2, '')::uuid, $3, 'completed', '{}'::jsonb, $4)
+		RETURNING id
+	`, agentID, issueID, runtimeID, createdAt).Scan(&taskID); err != nil {
+		t.Fatalf("insert dashboard task: %v", err)
+	}
+	return taskID
+}
+
+func rollupDashboardUsage(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	if _, err := testPool.Exec(ctx, `
+		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
+	`); err != nil {
+		t.Fatalf("roll up dashboard usage: %v", err)
+	}
+}
+
+type dashboardDailyRow struct {
+	Date        string `json:"date"`
+	Model       string `json:"model"`
+	InputTokens int64  `json:"input_tokens"`
+}
+
+func dashboardViewerDates(t *testing.T, instant time.Time) (string, string) {
+	t.Helper()
+	utcDate := instant.UTC().Format("2006-01-02")
+	location, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("load Los Angeles location: %v", err)
+	}
+	losAngelesDate := instant.In(location).Format("2006-01-02")
+	if utcDate == losAngelesDate {
+		t.Fatalf("test setup: UTC and Los Angeles dates must differ, both %s", utcDate)
+	}
+	return utcDate, losAngelesDate
+}
+
+func readDashboardDailyModel(t *testing.T, timezone, model string) dashboardDailyRow {
+	t.Helper()
+	rows := readDashboardDailyRows(t, "/api/dashboard/usage/daily?days=10&tz="+timezone)
+	for _, row := range rows {
+		if row.Model == model {
+			return row
+		}
+	}
+	t.Fatalf("tz=%s: model %s not found in %v", timezone, model, rows)
+	return dashboardDailyRow{}
+}
+
+func readDashboardDailyRows(t *testing.T, path string) []dashboardDailyRow {
+	t.Helper()
+	response := httptest.NewRecorder()
+	testHandler.GetDashboardUsageDaily(response, newRequest(http.MethodGet, path, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("daily usage: expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var rows []dashboardDailyRow
+	if err := json.NewDecoder(response.Body).Decode(&rows); err != nil {
+		t.Fatalf("decode daily usage: %v", err)
+	}
+	return rows
+}
+
+func dashboardDailyTokenTotal(rows []dashboardDailyRow, model string) int64 {
+	var total int64
+	for _, row := range rows {
+		if row.Model == model {
+			total += row.InputTokens
+		}
+	}
+	return total
+}
+
+func beginDashboardRollupTransaction(t *testing.T, ctx context.Context) pgx.Tx {
+	t.Helper()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin rollup transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	return tx
+}
+
+func resetDashboardRollupState(t *testing.T, ctx context.Context, tx pgx.Tx, watermark time.Time, lastError any) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM task_usage_hourly_dirty;
+		DELETE FROM task_usage_hourly;
+		DELETE FROM task_usage;
+	`); err != nil {
+		t.Fatalf("clear rollup tables: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE task_usage_hourly_rollup_state
+		SET watermark_at = $1, last_error = $2
+		WHERE id = 1
+	`, watermark, lastError); err != nil {
+		t.Fatalf("reset rollup watermark: %v", err)
+	}
+}
+
+func insertDashboardTransactionUsage(t *testing.T, ctx context.Context, tx pgx.Tx, taskID, model string, inputTokens int64, createdAt time.Time) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO task_usage (
+			task_id, provider, model, input_tokens, output_tokens, created_at, updated_at
+		)
+		VALUES ($1, 'claude', $2, $3, 0, $4, $4)
+	`, taskID, model, inputTokens, createdAt); err != nil {
+		t.Fatalf("insert dashboard usage: %v", err)
+	}
+}
+
+func TestDashboardEndpoints(t *testing.T) {
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	// Two issues: one bound to a project, one not.
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title)
-		VALUES ($1, 'dashboard test project')
-		RETURNING id
-	`, testWorkspaceID).Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := insertDashboardProject(t, ctx, "dashboard test project")
 
-	// issue.number is `UNIQUE (workspace_id, number)` and
-	// defaults to 0. Two inserts into the same workspace would collide on the
-	// default; allocate `MAX(number) + 1` per row to stay sequential and
-	// avoid stepping on rows other tests have left behind in the shared
-	// fixture workspace.
 	mkIssue := func(withProject bool) string {
-		var id string
-		var pid any
+		pid := ""
 		if withProject {
 			pid = projectID
 		}
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO issue (workspace_id, title, creator_id, creator_type, project_id, number)
-			VALUES (
-				$1, 'dashboard test', $2, 'member', $3,
-				(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1)
-			)
-			RETURNING id
-		`, testWorkspaceID, testUserID, pid).Scan(&id); err != nil {
-			t.Fatalf("insert issue: %v", err)
-		}
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id) })
+		id := insertDashboardIssue(t, ctx, "dashboard test", pid)
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id) })
 		return id
 	}
 	projectIssueID := mkIssue(true)
@@ -96,27 +220,14 @@ func TestDashboardEndpoints(t *testing.T) {
 		`, taskID, tokens); err != nil {
 			t.Fatalf("insert task_usage: %v", err)
 		}
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 	}
 
 	mkTaskWithUsage(projectIssueID, "completed", 1000)
 	mkTaskWithUsage(otherIssueID, "completed", 500)
 
-	// All dashboard endpoints now read from task_usage_hourly (post-RFC
-	// Phase 3). Drive the underlying window function directly so the
-	// freshly inserted fixture rows are aggregated before assertions —
-	// in production the cron tick handles this with a 5-min lag.
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup window: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 
-	type dailyRow struct {
-		Date        string `json:"date"`
-		Model       string `json:"model"`
-		InputTokens int64  `json:"input_tokens"`
-	}
 	type byAgentRow struct {
 		AgentID     string `json:"agent_id"`
 		Model       string `json:"model"`
@@ -130,19 +241,7 @@ func TestDashboardEndpoints(t *testing.T) {
 
 	// daily — workspace-wide
 	{
-		w := httptest.NewRecorder()
-		testHandler.GetDashboardUsageDaily(w, newRequest("GET", "/api/dashboard/usage/daily?days=1", nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("daily ws: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		var rows []dailyRow
-		_ = json.NewDecoder(w.Body).Decode(&rows)
-		var total int64
-		for _, r := range rows {
-			if r.Model == "claude-3-5-sonnet" {
-				total += r.InputTokens
-			}
-		}
+		total := dashboardDailyTokenTotal(readDashboardDailyRows(t, "/api/dashboard/usage/daily?days=1"), "claude-3-5-sonnet")
 		if total < 1500 {
 			t.Errorf("daily ws: expected >=1500 tokens (1000+500), got %d", total)
 		}
@@ -150,19 +249,7 @@ func TestDashboardEndpoints(t *testing.T) {
 
 	// daily — project-scoped
 	{
-		w := httptest.NewRecorder()
-		testHandler.GetDashboardUsageDaily(w, newRequest("GET", "/api/dashboard/usage/daily?days=1&project_id="+projectID, nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("daily project: expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		var rows []dailyRow
-		_ = json.NewDecoder(w.Body).Decode(&rows)
-		var total int64
-		for _, r := range rows {
-			if r.Model == "claude-3-5-sonnet" {
-				total += r.InputTokens
-			}
-		}
+		total := dashboardDailyTokenTotal(readDashboardDailyRows(t, "/api/dashboard/usage/daily?days=1&project_id="+projectID), "claude-3-5-sonnet")
 		// Project filter must exclude the 500-token "other" issue. Token total
 		// for this project must be >= 1000 (our task) and < 1500 (would only
 		// reach 1500 if filter leaked).
@@ -250,20 +337,14 @@ func TestDashboardEndpoints(t *testing.T) {
 	}
 }
 
-// TestDashboardUsageDailyBucketsByViewerTimezone proves the `?tz=` query
-// param drives the calendar-day boundary: the same UTC instant lands under
-// a different `date` for a UTC viewer vs an America/Los_Angeles viewer.
-// This is the core promise of the timezone-architecture RFC.
 func TestDashboardUsageDailyBucketsByViewerTimezone(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'tz-bucket-test'`, runtimeID)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'tz-bucket-test'`, runtimeID)
 	})
 	// One bucket at 04:00 UTC two days ago. 04:00 UTC is still the
 	// previous evening in America/Los_Angeles (UTC-7/-8), so the UTC
@@ -287,69 +368,24 @@ func TestDashboardUsageDailyBucketsByViewerTimezone(t *testing.T) {
 		t.Fatalf("seed hourly row: %v", err)
 	}
 
-	utcDate := bucketHour.UTC().Format("2006-01-02")
-	laLoc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		t.Fatalf("load LA location: %v", err)
-	}
-	laDate := bucketHour.In(laLoc).Format("2006-01-02")
-	if utcDate == laDate {
-		t.Fatalf("test setup: UTC and LA dates must differ, both %s", utcDate)
-	}
-
-	readDate := func(tz string) string {
-		w := httptest.NewRecorder()
-		testHandler.GetDashboardUsageDaily(w, newRequest("GET", "/api/dashboard/usage/daily?days=10&tz="+tz, nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("tz=%s: expected 200, got %d: %s", tz, w.Code, w.Body.String())
-		}
-		var rows []struct {
-			Date  string `json:"date"`
-			Model string `json:"model"`
-		}
-		_ = json.NewDecoder(w.Body).Decode(&rows)
-		for _, r := range rows {
-			if r.Model == "tz-bucket-model" {
-				return r.Date
-			}
-		}
-		t.Fatalf("tz=%s: tz-bucket-model row not found in %v", tz, rows)
-		return ""
-	}
-
-	if got := readDate("UTC"); got != utcDate {
+	utcDate, laDate := dashboardViewerDates(t, bucketHour)
+	if got := readDashboardDailyModel(t, "UTC", "tz-bucket-model").Date; got != utcDate {
 		t.Errorf("UTC viewer: expected date %s, got %s", utcDate, got)
 	}
-	if got := readDate("America/Los_Angeles"); got != laDate {
+	if got := readDashboardDailyModel(t, "America/Los_Angeles", "tz-bucket-model").Date; got != laDate {
 		t.Errorf("LA viewer: expected date %s, got %s", laDate, got)
 	}
 }
 
-// TestDashboardRunTimeDailyBucketsByViewerTimezone proves the `?tz=` query
-// param drives the calendar-day boundary of the Time / Tasks dashboard tab:
-// GetDashboardRunTimeDaily applies `@tz` to `completed_at AT TIME ZONE @tz`
-// on agent_task_queue. A task completed at 04:00 UTC is still the previous
-// evening in America/Los_Angeles (UTC-7/-8), so the LA viewer must see the
-// row under the prior calendar date relative to a UTC viewer.
 func TestDashboardRunTimeDailyBucketsByViewerTimezone(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	// Issue tagged so we can clean up just this test's rows.
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'runtime-daily tz test', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "runtime-daily tz test", "")
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	// completed_at at 04:00 UTC two days ago — still the prior evening in LA.
 	// started_at 10 minutes earlier so the run has a non-zero duration.
@@ -367,17 +403,9 @@ func TestDashboardRunTimeDailyBucketsByViewerTimezone(t *testing.T) {
 	`, agentID, issueID, runtimeID).Scan(&taskID, &completedAt); err != nil {
 		t.Fatalf("insert completed task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
-	utcDate := completedAt.UTC().Format("2006-01-02")
-	laLoc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		t.Fatalf("load LA location: %v", err)
-	}
-	laDate := completedAt.In(laLoc).Format("2006-01-02")
-	if utcDate == laDate {
-		t.Fatalf("test setup: UTC and LA dates must differ, both %s", utcDate)
-	}
+	utcDate, laDate := dashboardViewerDates(t, completedAt)
 
 	readRow := func(tz string) (string, int64, int32) {
 		w := httptest.NewRecorder()
@@ -414,37 +442,16 @@ func TestDashboardRunTimeDailyBucketsByViewerTimezone(t *testing.T) {
 	}
 }
 
-// TestRollupTaskUsageHourlyIdempotentAndWatermark covers two pipeline
-// invariants the deleted runtime_rollup_test.go used to guard for the
-// legacy daily rollup: (1) re-running the window function over the same
-// range produces identical totals, and (2) the cron entry point advances
-// the rollup-state watermark and clears last_error.
 func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
-	var issueID, taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'rollup idempotency', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "rollup idempotency", "")
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', now() - interval '20 minutes') RETURNING id
-	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, issueID, runtimeID, time.Now().UTC().Add(-20*time.Minute))
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at)
@@ -465,12 +472,8 @@ func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
 	}
 
 	// Idempotency: two passes over the same range must not double-count.
-	for i := 0; i < 2; i++ {
-		if _, err := testPool.Exec(ctx, `
-			SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-		`); err != nil {
-			t.Fatalf("rollup pass %d: %v", i, err)
-		}
+	for range 2 {
+		rollupDashboardUsage(t, ctx)
 	}
 	if got := readTotal(); got != 3333 {
 		t.Errorf("idempotency: expected exactly 3333 tokens after two passes, got %d", got)
@@ -509,48 +512,28 @@ func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
 }
 
 func TestRollupTaskUsageHourlyFastForwardsEmptyHistory(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
-	tx, err := testPool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin tx: %v", err)
-	}
-	defer tx.Rollback(ctx)
+	tx := beginDashboardRollupTransaction(t, ctx)
 
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM task_usage_hourly_dirty;
-		DELETE FROM task_usage_hourly;
-		DELETE FROM task_usage;
-		UPDATE task_usage_hourly_rollup_state
-		   SET watermark_at = '1970-01-01'::timestamptz,
-		       last_error = 'stale'
-		 WHERE id = 1
-	`); err != nil {
-		t.Fatalf("prepare empty rollup state: %v", err)
-	}
+	resetDashboardRollupState(t, ctx, tx, time.Unix(0, 0).UTC(), "stale")
 
 	if _, err := tx.Exec(ctx, `SELECT rollup_task_usage_hourly()`); err != nil {
 		t.Fatalf("rollup_task_usage_hourly: %v", err)
 	}
 
 	var ageSeconds float64
-	var rows int64
 	var lastError *string
 	if err := tx.QueryRow(ctx, `
-		SELECT EXTRACT(EPOCH FROM (now() - watermark_at)), last_run_rows, last_error
+		SELECT EXTRACT(EPOCH FROM (now() - watermark_at)), last_error
 		  FROM task_usage_hourly_rollup_state
 		 WHERE id = 1
-	`).Scan(&ageSeconds, &rows, &lastError); err != nil {
+	`).Scan(&ageSeconds, &lastError); err != nil {
 		t.Fatalf("read rollup state: %v", err)
 	}
 	if age := time.Duration(ageSeconds) * time.Second; age > 10*time.Minute {
 		t.Fatalf("empty history should fast-forward near now()-5min, got age %s", age)
-	}
-	if rows != 0 {
-		t.Fatalf("empty history should affect 0 rows, got %d", rows)
 	}
 	if lastError != nil {
 		t.Fatalf("expected last_error cleared, got %q", *lastError)
@@ -558,55 +541,19 @@ func TestRollupTaskUsageHourlyFastForwardsEmptyHistory(t *testing.T) {
 }
 
 func TestRollupTaskUsageHourlyFastForwardsToFirstUsage(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
-	tx, err := testPool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin tx: %v", err)
-	}
-	defer tx.Rollback(ctx)
+	tx := beginDashboardRollupTransaction(t, ctx)
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 	usageAt := time.Now().UTC().Add(-20 * time.Minute)
 	const model = "rollup-fast-forward-model"
 
-	var issueID, taskID string
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM task_usage_hourly_dirty;
-		DELETE FROM task_usage_hourly;
-		DELETE FROM task_usage;
-		UPDATE task_usage_hourly_rollup_state
-		   SET watermark_at = '1970-01-01'::timestamptz,
-		       last_error = 'stale'
-		 WHERE id = 1
-	`); err != nil {
-		t.Fatalf("prepare rollup state: %v", err)
-	}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'rollup fast-forward', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("insert issue: %v", err)
-	}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', $4) RETURNING id
-	`, agentID, issueID, runtimeID, usageAt).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO task_usage (
-			task_id, provider, model, input_tokens, output_tokens, created_at, updated_at
-		)
-		VALUES ($1, 'claude', $2, 1234, 0, $3, $3)
-	`, taskID, model, usageAt); err != nil {
-		t.Fatalf("insert usage: %v", err)
-	}
+	resetDashboardRollupState(t, ctx, tx, time.Unix(0, 0).UTC(), "stale")
+	issueID := insertDashboardIssueWithDB(t, ctx, tx, "rollup fast-forward", "")
+	taskID := insertDashboardTask(t, ctx, tx, agentID, issueID, runtimeID, usageAt)
+	insertDashboardTransactionUsage(t, ctx, tx, taskID, model, 1234, usageAt)
 
 	if _, err := tx.Exec(ctx, `SELECT rollup_task_usage_hourly()`); err != nil {
 		t.Fatalf("rollup_task_usage_hourly: %v", err)
@@ -625,17 +572,8 @@ func TestRollupTaskUsageHourlyFastForwardsToFirstUsage(t *testing.T) {
 	}
 }
 
-// TestRollupTaskUsageHourlyReassignBetweenRuntimes ports the invalidation
-// coverage the deleted runtime_rollup_test.go held for the legacy daily
-// rollup. Reassigning a task between runtimes (the runtime-merge path) must
-// move its usage: the `trg_atq_dirty_hourly` trigger enqueues both the old
-// and new runtime buckets, and the next window run drains the queue,
-// empties the old bucket, and fills the new one. Without this the rollup
-// keeps attributing usage to the merged-away runtime.
 func TestRollupTaskUsageHourlyReassignBetweenRuntimes(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	oldRuntimeID := handlerTestRuntimeID(t)
@@ -649,32 +587,17 @@ func TestRollupTaskUsageHourlyReassignBetweenRuntimes(t *testing.T) {
 	`, testWorkspaceID).Scan(&newRuntimeID); err != nil {
 		t.Fatalf("create dest runtime: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID) })
 
 	var agentID string
 	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
 		t.Fatalf("fetch agent: %v", err)
 	}
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'reassign hourly test', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "reassign hourly test", "")
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	usageAt := time.Date(2021, 3, 14, 1, 0, 0, 0, time.UTC)
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', $4) RETURNING id
-	`, agentID, issueID, oldRuntimeID, usageAt).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, issueID, oldRuntimeID, usageAt)
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at, updated_at)
 		VALUES ($1, 'claude', 'm-reassign-hourly', 700, 70, $2, $2)
@@ -682,8 +605,8 @@ func TestRollupTaskUsageHourlyReassignBetweenRuntimes(t *testing.T) {
 		t.Fatalf("insert task_usage: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE model = 'm-reassign-hourly'`)
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly_dirty WHERE model = 'm-reassign-hourly'`)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly WHERE model = 'm-reassign-hourly'`)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly_dirty WHERE model = 'm-reassign-hourly'`)
 	})
 
 	runWindow := func(label string) {
@@ -695,10 +618,12 @@ func TestRollupTaskUsageHourlyReassignBetweenRuntimes(t *testing.T) {
 	}
 	runtimeTotal := func(rt string) int64 {
 		var total int64
-		testPool.QueryRow(ctx, `
+		if err := testPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
 			WHERE runtime_id = $1 AND model = 'm-reassign-hourly'
-		`, rt).Scan(&total)
+		`, rt).Scan(&total); err != nil {
+			t.Fatalf("runtime total: %v", err)
+		}
 		return total
 	}
 
@@ -713,7 +638,7 @@ func TestRollupTaskUsageHourlyReassignBetweenRuntimes(t *testing.T) {
 		t.Fatalf("reassign task: %v", err)
 	}
 	var dirtyCount int
-	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE model = 'm-reassign-hourly'`).Scan(&dirtyCount)
+	_ = testPool.QueryRow(ctx, `SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE model = 'm-reassign-hourly'`).Scan(&dirtyCount)
 	if dirtyCount != 2 {
 		t.Fatalf("expected 2 dirty entries (old+new runtime), got %d", dirtyCount)
 	}
@@ -724,35 +649,25 @@ func TestRollupTaskUsageHourlyReassignBetweenRuntimes(t *testing.T) {
 	}
 	// The window function must drain every queue row whose enqueued_at
 	// predates p_to — a regression on that DELETE pins recomputes forever.
-	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE model = 'm-reassign-hourly'`).Scan(&dirtyCount)
+	_ = testPool.QueryRow(ctx, `SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE model = 'm-reassign-hourly'`).Scan(&dirtyCount)
 	if dirtyCount != 0 {
 		t.Errorf("expected dirty queue drained, got %d entries", dirtyCount)
 	}
 }
 
-// TestRollupTaskUsageHourlyWorkspaceMismatch constructs an atq row whose
-// agent.workspace_id differs from issue.workspace_id and verifies the
-// hourly rollup resolves workspace_id consistently from `agent` across the
-// trigger, dirty_from_updates, and the recompute join. If any path leaked
-// back to issue.workspace_id the dirty key would miss the recompute join
-// and the bucket would be dropped or mis-attributed across tenants. The
-// schema does not enforce the two workspace_ids match, so this canary
-// keeps the alignment honest.
 func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	var foreignWorkspaceID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO workspace (name, slug)
-		VALUES ('ws-mismatch-hourly', 'ws-mismatch-hourly-' || gen_random_uuid()::text)
+		INSERT INTO workspace (name, slug, issue_prefix)
+		VALUES ('ws-mismatch-hourly', 'ws-mismatch-hourly-' || gen_random_uuid()::text, 'WMH')
 		RETURNING id
 	`).Scan(&foreignWorkspaceID); err != nil {
 		t.Fatalf("create foreign workspace: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID) })
 
 	var foreignRuntimeID string
 	if err := testPool.QueryRow(ctx, `
@@ -771,7 +686,7 @@ func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
 			runtime_id, scope, max_concurrent_tasks, owner_id,
 			instructions, custom_env, custom_args, mcp_config
 		)
-		VALUES ($1, 'mismatch-agent-hourly', '', 'cloud', '{}'::jsonb, $2, 'personal', 1, $3, '', '{}'::jsonb, '[]'::jsonb, '[]'::jsonb)
+		VALUES ($1, 'mismatch-agent-hourly', '', 'cloud', '{}'::jsonb, $2, 'personal', 1, $3, '', '{}'::jsonb, '[]'::jsonb, NULL)
 		RETURNING id
 	`, foreignWorkspaceID, foreignRuntimeID, testUserID).Scan(&foreignAgentID); err != nil {
 		t.Fatalf("create foreign agent: %v", err)
@@ -779,25 +694,11 @@ func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
 
 	// Issue lives in the primary test workspace; the agent lives in the
 	// foreign one — so agent.workspace_id != issue.workspace_id.
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'mismatch hourly test', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "mismatch hourly test", "")
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	usageAt := time.Date(2021, 9, 9, 1, 0, 0, 0, time.UTC)
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', $4) RETURNING id
-	`, foreignAgentID, issueID, foreignRuntimeID, usageAt).Scan(&taskID); err != nil {
-		t.Fatalf("insert atq: %v", err)
-	}
+	taskID := insertDashboardTask(t, ctx, testPool, foreignAgentID, issueID, foreignRuntimeID, usageAt)
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at, updated_at)
 		VALUES ($1, 'claude', 'm-mismatch-hourly', 333, 33, $2, $2)
@@ -805,8 +706,8 @@ func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
 		t.Fatalf("insert task_usage: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE model = 'm-mismatch-hourly'`)
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly_dirty WHERE model = 'm-mismatch-hourly'`)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly WHERE model = 'm-mismatch-hourly'`)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly_dirty WHERE model = 'm-mismatch-hourly'`)
 	})
 
 	if _, err := testPool.Exec(ctx, `
@@ -817,10 +718,12 @@ func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
 
 	wsTotal := func(ws string) int64 {
 		var total int64
-		testPool.QueryRow(ctx, `
+		if err := testPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
 			WHERE workspace_id = $1 AND model = 'm-mismatch-hourly'
-		`, ws).Scan(&total)
+		`, ws).Scan(&total); err != nil {
+			t.Fatalf("workspace total: %v", err)
+		}
 		return total
 	}
 	if got := wsTotal(foreignWorkspaceID); got != 333 {
@@ -831,51 +734,19 @@ func TestRollupTaskUsageHourlyWorkspaceMismatch(t *testing.T) {
 	}
 }
 
-// TestDashboardRollupReattributesOnProjectChange verifies the trigger that
-// fires on `UPDATE issue SET project_id` enqueues both old + new project
-// buckets so the next rollup tick re-attributes the affected tokens.
-// Uses the rollup window function directly to drain the dirty queue,
-// then asserts the rollup table reflects the new project_id.
 func TestDashboardRollupReattributesOnProjectChange(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
-	mkProject := func(name string) string {
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
-		`, testWorkspaceID, name).Scan(&id); err != nil {
-			t.Fatalf("create project: %v", err)
-		}
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, id) })
-		return id
-	}
-	projectA := mkProject("dashboard reattr A")
-	projectB := mkProject("dashboard reattr B")
+	projectA := insertDashboardProject(t, ctx, "dashboard reattr A")
+	projectB := insertDashboardProject(t, ctx, "dashboard reattr B")
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, project_id, number)
-		VALUES ($1, 'reattr issue', $2, 'member', $3,
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID, projectA).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "reattr issue", projectA)
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', now()) RETURNING id
-	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, issueID, runtimeID, time.Now().UTC())
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at)
@@ -885,11 +756,7 @@ func TestDashboardRollupReattributesOnProjectChange(t *testing.T) {
 	}
 
 	// First rollup pass: tokens attributed to project A.
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup A: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 	var aTokens int64
 	if err := testPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
@@ -907,11 +774,7 @@ func TestDashboardRollupReattributesOnProjectChange(t *testing.T) {
 	}
 	// Second rollup pass: A bucket drops to zero (deleted_empty), B
 	// bucket gets the tokens.
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup B: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 
 	var bTokens, aTokensAfter int64
 	if err := testPool.QueryRow(ctx, `
@@ -934,46 +797,18 @@ func TestDashboardRollupReattributesOnProjectChange(t *testing.T) {
 	}
 }
 
-// TestDashboardRollupClearsOnIssueDelete verifies that deleting an issue
-// (which cascades to its tasks and task_usage rows) also clears the
-// dashboard rollup row attributed to that issue's project. The
-// `issue BEFORE DELETE` trigger has to fire ahead of the cascade so the
-// dirty queue captures the original project_id while the issue row is
-// still readable.
 func TestDashboardRollupClearsOnIssueDelete(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, 'dashboard cascade test') RETURNING id
-	`, testWorkspaceID).Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := insertDashboardProject(t, ctx, "dashboard cascade test")
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, project_id, number)
-		VALUES ($1, 'cascade issue', $2, 'member', $3,
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID, projectID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
+	issueID := insertDashboardIssue(t, ctx, "cascade issue", projectID)
 	// No t.Cleanup deleting the issue — that's what the test exercises.
 
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', now()) RETURNING id
-	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, issueID, runtimeID, time.Now().UTC())
 	// Don't bother cleaning up taskID either; cascade will take it.
 
 	if _, err := testPool.Exec(ctx, `
@@ -984,11 +819,7 @@ func TestDashboardRollupClearsOnIssueDelete(t *testing.T) {
 	}
 
 	// First rollup: project bucket exists with 4242 tokens.
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup before delete: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 	var before int64
 	if err := testPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
@@ -1007,11 +838,7 @@ func TestDashboardRollupClearsOnIssueDelete(t *testing.T) {
 		t.Fatalf("delete issue: %v", err)
 	}
 
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup after delete: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 	var after int64
 	if err := testPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
@@ -1024,28 +851,14 @@ func TestDashboardRollupClearsOnIssueDelete(t *testing.T) {
 	}
 }
 
-// TestDashboardRollupReattributesOnLinkTaskToIssue verifies that
-// `LinkTaskToIssue` (which UPDATEs `agent_task_queue.issue_id` from NULL
-// to a real issue id) re-attributes existing rollup rows from the
-// no-project bucket to the linked issue's project bucket. Mirrors the
-// quick-create flow in `service.task.LinkTaskToIssue`.
 func TestDashboardRollupReattributesOnLinkTaskToIssue(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	// Quick-create task: issue_id is NULL at creation time.
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, context, created_at)
-		VALUES ($1, NULL, $2, 'completed', '{}'::jsonb, now()) RETURNING id
-	`, agentID, runtimeID).Scan(&taskID); err != nil {
-		t.Fatalf("insert quick-create task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, "", runtimeID, time.Now().UTC())
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at)
@@ -1055,11 +868,7 @@ func TestDashboardRollupReattributesOnLinkTaskToIssue(t *testing.T) {
 	}
 
 	// First rollup: tokens attributed to the no-project bucket (NULL).
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup pre-link: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 	var nullBefore int64
 	if err := testPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
@@ -1075,24 +884,10 @@ func TestDashboardRollupReattributesOnLinkTaskToIssue(t *testing.T) {
 	// uses. The atq trigger should enqueue OLD (NULL project) AND NEW
 	// (the project's id) so the next rollup tick zeroes the NULL bucket
 	// and populates the project bucket.
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, 'dashboard link test') RETURNING id
-	`, testWorkspaceID).Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := insertDashboardProject(t, ctx, "dashboard link test")
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, project_id, number)
-		VALUES ($1, 'link test issue', $2, 'member', $3,
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID, projectID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "link test issue", projectID)
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	// Mirror LinkTaskToIssue's UPDATE shape.
 	if _, err := testPool.Exec(ctx, `
@@ -1101,11 +896,7 @@ func TestDashboardRollupReattributesOnLinkTaskToIssue(t *testing.T) {
 		t.Fatalf("link task to issue: %v", err)
 	}
 
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup post-link: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 
 	var projectAfter, nullAfter int64
 	if err := testPool.QueryRow(ctx, `
@@ -1128,22 +919,15 @@ func TestDashboardRollupReattributesOnLinkTaskToIssue(t *testing.T) {
 	}
 }
 
-// TestPruneTaskUsageHourlyDirty covers the dirty-queue TTL. Both the RFC
-// (§7.1) and the rollup-pipeline migration call this THE most-easily-missed correctness
-// requirement of the hourly pipeline: without the prune, a row that escapes
-// the per-tick drain (crash mid-tick, worker paused during an incident)
-// pins its bucket's recompute forever and the queue grows unbounded.
 func TestPruneTaskUsageHourlyDirty(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	// task_usage_hourly_dirty carries no FKs (it is a queue), so synthetic
 	// UUIDs are fine. `provider` tags the rows for isolated cleanup.
 	const tag = "ttl-prune-test"
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly_dirty WHERE provider = $1`, tag)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly_dirty WHERE provider = $1`, tag)
 	})
 	seed := func(model, age string) {
 		if _, err := testPool.Exec(ctx, `
@@ -1161,10 +945,12 @@ func TestPruneTaskUsageHourlyDirty(t *testing.T) {
 	}
 	countModel := func(model string) int {
 		var n int
-		testPool.QueryRow(ctx,
+		if err := testPool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE provider = $1 AND model = $2`,
 			tag, model,
-		).Scan(&n)
+		).Scan(&n); err != nil {
+			t.Fatalf("count dirty model: %v", err)
+		}
 		return n
 	}
 
@@ -1205,63 +991,21 @@ func TestPruneTaskUsageHourlyDirty(t *testing.T) {
 	}
 }
 
-// TestRollupTaskUsageHourlyCapsWindowAtOneDay covers the catch-up cap
-// in rollup_task_usage_hourly(): when the watermark has
-// fallen far behind (worker paused for an incident or a migration freeze),
-// a single tick must advance it by at most one day, so a multi-week backlog
-// drains in bounded steps instead of one giant statement holding advisory
-// lock 4246. The existing watermark test only parks the watermark one hour
-// back, so the cap itself is never exercised there.
 func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
-	tx, err := testPool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin tx: %v", err)
-	}
-	defer tx.Rollback(ctx)
+	tx := beginDashboardRollupTransaction(t, ctx)
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 	now := time.Now().UTC()
 
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM task_usage_hourly_dirty;
-		DELETE FROM task_usage_hourly;
-		DELETE FROM task_usage;
-		UPDATE task_usage_hourly_rollup_state
-		   SET watermark_at = now(), last_error = NULL
-		 WHERE id = 1
-	`); err != nil {
-		t.Fatalf("prepare rollup tables: %v", err)
-	}
+	resetDashboardRollupState(t, ctx, tx, now, nil)
 
 	seedUsage := func(label string, usageAt time.Time) {
-		var issueID, taskID string
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-			VALUES ($1, $2, $3, 'member',
-			        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-			RETURNING id
-		`, testWorkspaceID, label, testUserID).Scan(&issueID); err != nil {
-			t.Fatalf("%s: insert issue: %v", label, err)
-		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-			VALUES ($1, $2, $3, 'completed', $4) RETURNING id
-		`, agentID, issueID, runtimeID, usageAt).Scan(&taskID); err != nil {
-			t.Fatalf("%s: insert task: %v", label, err)
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO task_usage (
-				task_id, provider, model, input_tokens, output_tokens, created_at, updated_at
-			)
-			VALUES ($1, 'claude', $2, 100, 0, $3, $3)
-		`, taskID, label, usageAt); err != nil {
-			t.Fatalf("%s: insert usage: %v", label, err)
-		}
+		issueID := insertDashboardIssueWithDB(t, ctx, tx, label, "")
+		taskID := insertDashboardTask(t, ctx, tx, agentID, issueID, runtimeID, usageAt)
+		insertDashboardTransactionUsage(t, ctx, tx, taskID, label, 100, usageAt)
 	}
 
 	seedUsage("rollup-cap-day-1", now.Add(-60*time.Hour))
@@ -1314,44 +1058,16 @@ func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
 	}
 }
 
-// TestDashboardUsageDailyCrossMidnightFullPipeline runs the WHOLE timezone
-// pipeline end to end: insert a raw `task_usage` row near UTC midnight →
-// run `rollup_task_usage_hourly_window` to bucket it → call
-// GetDashboardUsageDaily with a non-UTC viewer tz. It asserts the tokens
-// land on the viewer's correct calendar day and NOT on the UTC day.
-//
-// This is the #2822 bug class the RFC exists to prevent. The existing
-// TestDashboardUsageDailyBucketsByViewerTimezone seeds a pre-built
-// task_usage_hourly row and only exercises the SQL read path; here the
-// row travels from raw task_usage through the rollup, so a regression in
-// task_usage_hour_bucket or the recompute join is also caught.
 func TestDashboardUsageDailyCrossMidnightFullPipeline(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'cross-midnight pipeline test', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "cross-midnight pipeline test", "")
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', now()) RETURNING id
-	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, issueID, runtimeID, time.Now().UTC())
 
 	// Raw task_usage at 00:30 UTC two days ago — genuinely near UTC
 	// midnight. 00:30 UTC is still the PRIOR evening (~16:30/17:30) in
@@ -1370,93 +1086,40 @@ func TestDashboardUsageDailyCrossMidnightFullPipeline(t *testing.T) {
 		t.Fatalf("insert task_usage: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE model = 'cross-midnight-model'`)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly WHERE model = 'cross-midnight-model'`)
 	})
 
 	// Run the rollup so the raw row is aggregated into task_usage_hourly.
-	if _, err := testPool.Exec(ctx, `
-		SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-	`); err != nil {
-		t.Fatalf("rollup window: %v", err)
-	}
+	rollupDashboardUsage(t, ctx)
 
-	utcDate := usageAt.UTC().Format("2006-01-02")
-	laLoc, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		t.Fatalf("load LA location: %v", err)
+	utcDate, laDate := dashboardViewerDates(t, usageAt)
+	utcRow := readDashboardDailyModel(t, "UTC", "cross-midnight-model")
+	if utcRow.InputTokens != 8888 {
+		t.Errorf("UTC viewer: expected 8888 tokens, got %d", utcRow.InputTokens)
 	}
-	laDate := usageAt.In(laLoc).Format("2006-01-02")
-	if utcDate == laDate {
-		t.Fatalf("test setup: UTC and LA dates must differ, both %s", utcDate)
-	}
-
-	readDate := func(tz string) string {
-		w := httptest.NewRecorder()
-		testHandler.GetDashboardUsageDaily(w, newRequest("GET", "/api/dashboard/usage/daily?days=10&tz="+tz, nil))
-		if w.Code != http.StatusOK {
-			t.Fatalf("tz=%s: expected 200, got %d: %s", tz, w.Code, w.Body.String())
-		}
-		var rows []struct {
-			Date        string `json:"date"`
-			Model       string `json:"model"`
-			InputTokens int64  `json:"input_tokens"`
-		}
-		_ = json.NewDecoder(w.Body).Decode(&rows)
-		for _, r := range rows {
-			if r.Model == "cross-midnight-model" {
-				if r.InputTokens != 8888 {
-					t.Errorf("tz=%s: expected 8888 tokens, got %d", tz, r.InputTokens)
-				}
-				return r.Date
-			}
-		}
-		t.Fatalf("tz=%s: cross-midnight-model row not found in %v", tz, rows)
-		return ""
-	}
-
-	if got := readDate("UTC"); got != utcDate {
+	if got := utcRow.Date; got != utcDate {
 		t.Errorf("UTC viewer: expected date %s, got %s", utcDate, got)
 	}
-	if got := readDate("America/Los_Angeles"); got != laDate {
+	laRow := readDashboardDailyModel(t, "America/Los_Angeles", "cross-midnight-model")
+	if laRow.InputTokens != 8888 {
+		t.Errorf("LA viewer: expected 8888 tokens, got %d", laRow.InputTokens)
+	}
+	if got := laRow.Date; got != laDate {
 		t.Errorf("LA viewer: expected date %s, got %s; row must NOT land on the UTC day %s",
 			laDate, got, utcDate)
 	}
 }
 
-// TestRollupTaskUsageHourlyConvergesOnTaskUsageDelete covers the
-// `trg_tu_dirty_hourly` trigger — a BEFORE DELETE trigger on task_usage.
-// Migration 102 notes it has no production callers today and exists purely
-// as defensive convergence guard, so a single minimal test is enough:
-// seed a task_usage row, roll it up, DELETE the task_usage row directly,
-// roll up again, and assert the hourly bucket is recomputed down to zero.
-// Without the trigger the deleted row's bucket would never be re-enqueued.
 func TestRollupTaskUsageHourlyConvergesOnTaskUsageDelete(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
-		VALUES ($1, 'tu-delete trigger test', $2, 'member',
-		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	issueID := insertDashboardIssue(t, ctx, "tu-delete trigger test", "")
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
-		VALUES ($1, $2, $3, 'completed', now() - interval '30 minutes') RETURNING id
-	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
-		t.Fatalf("insert task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	taskID := insertDashboardTask(t, ctx, testPool, agentID, issueID, runtimeID, time.Now().UTC().Add(-30*time.Minute))
 
 	var usageID string
 	if err := testPool.QueryRow(ctx, `
@@ -1467,27 +1130,21 @@ func TestRollupTaskUsageHourlyConvergesOnTaskUsageDelete(t *testing.T) {
 		t.Fatalf("insert task_usage: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE model = 'tu-delete-model'`)
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly_dirty WHERE model = 'tu-delete-model'`)
+		_, _ = testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE model = 'tu-delete-model'`)
+		_, _ = testPool.Exec(ctx, `DELETE FROM task_usage_hourly_dirty WHERE model = 'tu-delete-model'`)
 	})
 
 	bucketTotal := func() int64 {
 		var total int64
-		testPool.QueryRow(ctx, `
+		if err := testPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(input_tokens), 0) FROM task_usage_hourly
 			WHERE runtime_id = $1 AND model = 'tu-delete-model'
-		`, runtimeID).Scan(&total)
+		`, runtimeID).Scan(&total); err != nil {
+			t.Fatalf("bucket total: %v", err)
+		}
 		return total
 	}
-	runWindow := func(label string) {
-		if _, err := testPool.Exec(ctx, `
-			SELECT rollup_task_usage_hourly_window('1970-01-01'::timestamptz, now() + interval '1 hour')
-		`); err != nil {
-			t.Fatalf("%s: %v", label, err)
-		}
-	}
-
-	runWindow("initial rollup")
+	rollupDashboardUsage(t, ctx)
 	if got := bucketTotal(); got != 5050 {
 		t.Fatalf("initial: expected bucket = 5050, got %d", got)
 	}
@@ -1498,12 +1155,12 @@ func TestRollupTaskUsageHourlyConvergesOnTaskUsageDelete(t *testing.T) {
 		t.Fatalf("delete task_usage: %v", err)
 	}
 	var dirtyCount int
-	testPool.QueryRow(ctx, `SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE model = 'tu-delete-model'`).Scan(&dirtyCount)
+	_ = testPool.QueryRow(ctx, `SELECT COUNT(*) FROM task_usage_hourly_dirty WHERE model = 'tu-delete-model'`).Scan(&dirtyCount)
 	if dirtyCount != 1 {
 		t.Fatalf("expected 1 dirty entry from task_usage DELETE trigger, got %d", dirtyCount)
 	}
 
-	runWindow("rollup after delete")
+	rollupDashboardUsage(t, ctx)
 	if got := bucketTotal(); got != 0 {
 		t.Errorf("after delete: expected bucket recomputed to 0, got %d", got)
 	}

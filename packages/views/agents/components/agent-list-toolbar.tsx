@@ -12,19 +12,17 @@ import {
   type AgentSortField,
 } from "@multica/core/agents/stores";
 import {
-  DropdownMenuCheckboxItem,
-} from "@multica/ui/components/ui/dropdown-menu";
-import {
-  ToolbarCountBadge,
+  countActiveFilters,
+  incrementCount,
+  incrementCountedOption,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterOption,
   ToolbarFilterSubmenu,
   ToolbarFrame,
-  ToolbarResultCount,
-  ToolbarScopeSelector,
+  ToolbarScopeAndResult,
 } from "../../common/list-toolbar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
-import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { availabilityConfig } from "../presence";
 import { useT } from "../../i18n";
 import type { AgentListRow } from "./agents-page";
@@ -46,15 +44,6 @@ const AVAILABILITY_VALUES: AgentAvailability[] = [
   "unstable",
   "offline",
 ];
-
-function countActiveFilterDimensions(filters: AgentListFilters): number {
-  let count = 0;
-  if (filters.availability.length > 0) count++;
-  if (filters.runtimes.length > 0) count++;
-  if (filters.owners.length > 0) count++;
-  if (filters.models.length > 0) count++;
-  return count;
-}
 
 export function AgentListToolbar({
   scope,
@@ -95,7 +84,7 @@ export function AgentListToolbar({
 }) {
   const { t } = useT("agents");
 
-  const activeCount = countActiveFilterDimensions(filters);
+  const activeCount = countActiveFilters(filters);
   const hasActiveFilters = activeCount > 0;
 
   // Option lists with counts, derived from the scope's unfiltered rows so
@@ -104,16 +93,11 @@ export function AgentListToolbar({
   const runtimeOptions = new Map<string, { name: string; count: number }>();
   for (const row of allRows) {
     if (row.presence) {
-      availabilityCounts.set(
-        row.presence.availability,
-        (availabilityCounts.get(row.presence.availability) ?? 0) + 1,
-      );
+      incrementCount(availabilityCounts, row.presence.availability);
     }
     const rt = row.runtime;
     if (rt) {
-      const entry = runtimeOptions.get(rt.id);
-      if (entry) entry.count += 1;
-      else runtimeOptions.set(rt.id, { name: rt.name, count: 1 });
+      incrementCountedOption(runtimeOptions, rt.id, { name: rt.name });
     }
   }
 
@@ -123,9 +107,9 @@ export function AgentListToolbar({
   const modelCounts = new Map<string, number>();
   for (const row of allRows) {
     const oid = row.agent.owner_id;
-    if (oid) ownerCounts.set(oid, (ownerCounts.get(oid) ?? 0) + 1);
+    if (oid) incrementCount(ownerCounts, oid);
     const model = row.agent.model;
-    if (model) modelCounts.set(model, (modelCounts.get(model) ?? 0) + 1);
+    if (model) incrementCount(modelCounts, model);
   }
 
   const SCOPE_LABELS: Record<AgentsScope, string> = {
@@ -154,37 +138,23 @@ export function AgentListToolbar({
   return (
     <ToolbarFrame
       left={
-        <>
-          {/* Scope mixes the ownership lens
-          (mine/all) with the archived lifecycle stage; no search box (scope
-          partitions the small set). Button styling and the <md dropdown
-          collapse follow the issues header's scope buttons. */}
-          <ToolbarScopeSelector
-            scopes={AGENT_SCOPES}
-            scope={scope}
-            scopeCounts={scopeCounts}
-            scopeLabels={SCOPE_LABELS}
-            onScopeChange={onScopeChange}
-          />
-
-          <ToolbarResultCount
-            active={hasActiveFilters}
-            title={t(($) => $.toolbar.result_count_title)}
-            visibleCount={visibleCount}
-            totalCount={allRows.length}
-          />
-        </>
+        <ToolbarScopeAndResult
+          scopes={AGENT_SCOPES}
+          scope={scope}
+          scopeCounts={scopeCounts}
+          scopeLabels={SCOPE_LABELS}
+          onScopeChange={onScopeChange}
+          resultActive={hasActiveFilters}
+          resultTitle={t(($) => $.toolbar.result_count_title)}
+          visibleCount={visibleCount}
+          totalCount={allRows.length}
+        />
       }
     >
       {/* Filter */}
       <ToolbarFilterDropdown
         hasActiveFilters={hasActiveFilters}
         activeCount={activeCount}
-        activeLabel={t(($) => $.toolbar.filter_active_count, {
-          count: activeCount,
-        })}
-        filterLabel={t(($) => $.toolbar.filter_label)}
-        clearLabel={t(($) => $.toolbar.clear_filters)}
         onClearFilters={onClearFilters}
       >
         {/* Availability */}
@@ -195,46 +165,42 @@ export function AgentListToolbar({
           {AVAILABILITY_VALUES.map((value) => {
             const visual = availabilityConfig[value];
             return (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={value}
                 checked={filters.availability.includes(value)}
-                onCheckedChange={() => onToggleFilter("availability", value)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("availability", value)}
+                count={availabilityCounts.get(value) ?? 0}
               >
-                <HoverCheck checked={filters.availability.includes(value)} />
                 <span
                   className={`size-1.5 shrink-0 rounded-full ${visual.dotClass}`}
                 />
                 {t(($) => $.availability[value])}
-                <ToolbarCountBadge count={availabilityCounts.get(value) ?? 0} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             );
           })}
         </ToolbarFilterSubmenu>
 
-          {/* Runtime */}
+        {/* Runtime */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_runtime)}
           selectedCount={filters.runtimes.length}
           contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
         >
           {[...runtimeOptions.entries()].map(([id, { name, count }]) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={id}
               checked={filters.runtimes.includes(id)}
-              onCheckedChange={() => onToggleFilter("runtimes", id)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("runtimes", id)}
+              count={count}
             >
-              <HoverCheck checked={filters.runtimes.includes(id)} />
               <span className="min-w-0 truncate">{name}</span>
-              <ToolbarCountBadge count={count} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Owner — the same person-axis as the Mine scope. Picking an
-                owner here leaves the clean "mine" view for "all" (store
-                rule), so Mine + owner never coexist. */}
+        {/* Owner — the same person-axis as the Mine scope. Picking an
+            owner here leaves the clean "mine" view for "all" (store
+            rule), so Mine + owner never coexist. */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_owner)}
           selectedCount={filters.owners.length}
@@ -243,13 +209,12 @@ export function AgentListToolbar({
           {[...ownerCounts.entries()].map(([userId, count]) => {
             const m = memberById.get(userId);
             return (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={userId}
                 checked={filters.owners.includes(userId)}
-                onCheckedChange={() => onToggleFilter("owners", userId)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("owners", userId)}
+                count={count}
               >
-                <HoverCheck checked={filters.owners.includes(userId)} />
                 <ActorAvatar
                   name={m?.name ?? userId.slice(0, 8)}
                   initials={(m?.name ?? "?").slice(0, 2).toUpperCase()}
@@ -259,30 +224,27 @@ export function AgentListToolbar({
                 <span className="min-w-0 truncate">
                   {m?.name ?? userId.slice(0, 8)}
                 </span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             );
           })}
         </ToolbarFilterSubmenu>
 
-          {/* Model — runtime-native model id (categorical column → filter) */}
-          {modelCounts.size > 0 && (
+        {/* Model — runtime-native model id (categorical column → filter) */}
+        {modelCounts.size > 0 && (
           <ToolbarFilterSubmenu
             label={t(($) => $.toolbar.section_model)}
             selectedCount={filters.models.length}
             contentClassName="max-h-72 w-auto min-w-44 overflow-y-auto"
           >
             {[...modelCounts.entries()].map(([model, count]) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={model}
                 checked={filters.models.includes(model)}
-                onCheckedChange={() => onToggleFilter("models", model)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("models", model)}
+                count={count}
               >
-                <HoverCheck checked={filters.models.includes(model)} />
                 <span className="min-w-0 truncate">{model}</span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ))}
           </ToolbarFilterSubmenu>
         )}
@@ -299,10 +261,6 @@ export function AgentListToolbar({
         columnLabels={COLUMN_LABELS}
         hiddenColumns={hiddenColumns}
         onToggleColumn={onToggleColumn}
-        displayLabel={t(($) => $.toolbar.display)}
-        sortByLabel={t(($) => $.toolbar.sort_by)}
-        directionAscLabel={t(($) => $.toolbar.direction_asc)}
-        directionDescLabel={t(($) => $.toolbar.direction_desc)}
         columnsLabel={t(($) => $.toolbar.section_columns)}
       />
     </ToolbarFrame>

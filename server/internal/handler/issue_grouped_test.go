@@ -48,21 +48,8 @@ func TestListGroupedIssuesAssigneePaginatesPerGroup(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
-	createIssue := func(title, assigneeType, assigneeID string, position float64) string {
+	createIssue := func(title, assigneeType, assigneeID string, position float64) {
 		t.Helper()
-		var number int32
-		if err := testPool.QueryRow(ctx, `
-			UPDATE workspace
-			SET issue_counter = GREATEST(
-				issue_counter,
-				(SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)
-			) + 1
-			WHERE id = $1
-			RETURNING issue_counter
-		`, testWorkspaceID).Scan(&number); err != nil {
-			t.Fatalf("next issue number: %v", err)
-		}
-
 		var id string
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO issue (
@@ -72,13 +59,12 @@ func TestListGroupedIssuesAssigneePaginatesPerGroup(t *testing.T) {
 			)
 			VALUES ($1, $2, NULL, 'todo', 'none', $3, $4, 'member', $5, $6, $7)
 			RETURNING id
-		`, testWorkspaceID, title, assigneeType, assigneeID, testUserID, position, number).Scan(&id); err != nil {
+		`, testWorkspaceID, title, assigneeType, assigneeID, testUserID, position, nextHandlerTestIssueNumber(t)).Scan(&id); err != nil {
 			t.Fatalf("create issue %q: %v", title, err)
 		}
 		t.Cleanup(func() {
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id)
 		})
-		return id
 	}
 
 	createIssue("Grouped member one", "member", assigneeID, 1)

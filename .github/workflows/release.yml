@@ -52,7 +52,8 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: Run tests
-        run: cd server && go test -race ./...
+        # Keep database-backed packages isolated from migration DDL locks.
+        run: cd server && go test -p 1 -race ./...
 
   release:
     needs: verify

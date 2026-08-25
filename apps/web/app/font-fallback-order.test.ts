@@ -21,12 +21,11 @@ function expectChineseFontsBeforeKoreanFonts(source: string) {
 }
 
 describe("CJK font fallback order", () => {
-  it("keeps web Chinese font fallbacks before Korean font fallbacks", () => {
-    const cssSource = readFileSync(
-      resolve(repoRoot, "apps/web/app/globals.css"),
-      "utf8",
-    );
-
-    expectChineseFontsBeforeKoreanFonts(cssSource);
+  it.each([
+    "apps/web/app/globals.css",
+    "apps/desktop/src/renderer/src/globals.css",
+    "apps/docs/app/global.css",
+  ])("keeps Chinese fallbacks before Korean fallbacks in %s", (path) => {
+    expectChineseFontsBeforeKoreanFonts(readFileSync(resolve(repoRoot, path), "utf8"));
   });
 });

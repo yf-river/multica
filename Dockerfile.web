@@ -9,8 +9,6 @@ WORKDIR /app
 # 复制 workspace 配置与所有 package.json 用于依赖解析
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json .npmrc ./
 COPY apps/web/package.json apps/web/
-# postinstall 运行 fumadocs-mdx，读 apps/web/source.config.ts
-COPY apps/web/source.config.ts apps/web/source.config.ts
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
 COPY packages/views/package.json packages/views/

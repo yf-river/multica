@@ -23,17 +23,6 @@ builds:
       - arm64
 
 archives:
-  # 保留旧归档名，让已发布的 CLI（其 `multica update` 查找
-  # `multica_{os}_{arch}.{ext}`）能继续自更新。这些版本不再使用后移除。
-  - id: legacy
-    formats:
-      - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
-  # 当前 CLI / 安装脚本使用的带版本归档名。
   - id: versioned
     formats:
       - tar.gz

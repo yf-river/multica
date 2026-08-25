@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-// DefaultChatRunBatchWindow is the silence window the inbound debouncer
+// defaultChatRunBatchWindow is the silence window the inbound debouncer
 // waits before triggering an agent run for a chat session. Owner-aligned
 // at 3s on MUL-2968: long enough to absorb a "forward a transcript, then
 // type a note" burst into one run, short enough that the bot's first
 // reply is not perceptibly late.
-const DefaultChatRunBatchWindow = 3 * time.Second
+const defaultChatRunBatchWindow = 3 * time.Second
 
 // stoppableTimer is the slice of *time.Timer the batcher depends on.
 // Pinned to an interface so unit tests inject a manually-fired fake
@@ -68,19 +68,6 @@ type pendingEntry struct {
 	gen   uint64
 }
 
-// newPendingBatcher returns a batcher with the given silence window. A
-// non-positive window falls back to DefaultChatRunBatchWindow.
-func newPendingBatcher(window time.Duration) *pendingBatcher {
-	if window <= 0 {
-		window = DefaultChatRunBatchWindow
-	}
-	return &pendingBatcher{
-		window:    window,
-		afterFunc: realAfterFunc,
-		pending:   make(map[string]*pendingEntry),
-	}
-}
-
 // realAfterFunc adapts time.AfterFunc to the stoppableTimer seam.
 func realAfterFunc(d time.Duration, fn func()) stoppableTimer {
 	return time.AfterFunc(d, fn)
@@ -99,6 +86,15 @@ func (b *pendingBatcher) Schedule(key string, flush func()) {
 		b.mu.Unlock()
 		flush()
 		return
+	}
+	if b.window <= 0 {
+		b.window = defaultChatRunBatchWindow
+	}
+	if b.afterFunc == nil {
+		b.afterFunc = realAfterFunc
+	}
+	if b.pending == nil {
+		b.pending = make(map[string]*pendingEntry)
 	}
 	b.seq++
 	gen := b.seq

@@ -10,19 +10,17 @@ import {
   type AutopilotSortField,
 } from "@multica/core/autopilots/stores";
 import { useActorName } from "@multica/core/workspace/hooks";
-import {
-  DropdownMenuCheckboxItem,
-} from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
-  ToolbarCountBadge,
+  countActiveFilters,
+  incrementCount,
+  incrementCountedOption,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterOption,
   ToolbarFilterSubmenu,
   ToolbarFrame,
-  ToolbarResultCount,
-  ToolbarScopeSelector,
+  ToolbarScopeAndResult,
 } from "../../common/list-toolbar";
 import { useT } from "../../i18n";
 
@@ -50,16 +48,7 @@ const SORT_FIELDS: AutopilotSortField[] = [
 ];
 
 const MODES = ["create_issue", "run_only"] as const;
-const TRIGGER_KINDS = ["schedule", "webhook", "api"] as const;
-
-function countActiveFilterDimensions(filters: AutopilotListFilters): number {
-  let count = 0;
-  if (filters.assignees.length > 0) count++;
-  if (filters.modes.length > 0) count++;
-  if (filters.triggerKinds.length > 0) count++;
-  if (filters.creators.length > 0) count++;
-  return count;
-}
+const TRIGGER_KINDS = ["schedule", "webhook"] as const;
 
 export function AutopilotListToolbar({
   scope,
@@ -99,7 +88,7 @@ export function AutopilotListToolbar({
   const { t } = useT("autopilots");
   const { getActorName } = useActorName();
 
-  const activeCount = countActiveFilterDimensions(filters);
+  const activeCount = countActiveFilters(filters);
   const hasActiveFilters = activeCount > 0;
 
   // Option lists with counts, derived from the scope's unfiltered rows so
@@ -116,29 +105,18 @@ export function AutopilotListToolbar({
   const triggerKindCounts = new Map<string, number>();
   for (const row of allRows) {
     const aKey = actorFilterValue(row.assignee_type, row.assignee_id);
-    const a = assigneeOptions.get(aKey);
-    if (a) a.count += 1;
-    else
-      assigneeOptions.set(aKey, {
-        type: row.assignee_type,
-        id: row.assignee_id,
-        count: 1,
-      });
+    incrementCountedOption(assigneeOptions, aKey, {
+      type: row.assignee_type,
+      id: row.assignee_id,
+    });
     const cKey = actorFilterValue(row.created_by_type, row.created_by_id);
-    const c = creatorOptions.get(cKey);
-    if (c) c.count += 1;
-    else
-      creatorOptions.set(cKey, {
-        type: row.created_by_type,
-        id: row.created_by_id,
-        count: 1,
-      });
-    modeCounts.set(
-      row.execution_mode,
-      (modeCounts.get(row.execution_mode) ?? 0) + 1,
-    );
+    incrementCountedOption(creatorOptions, cKey, {
+      type: row.created_by_type,
+      id: row.created_by_id,
+    });
+    incrementCount(modeCounts, row.execution_mode);
     for (const kind of row.trigger_kinds ?? []) {
-      triggerKindCounts.set(kind, (triggerKindCounts.get(kind) ?? 0) + 1);
+      incrementCount(triggerKindCounts, kind);
     }
   }
 
@@ -168,39 +146,23 @@ export function AutopilotListToolbar({
   return (
     <ToolbarFrame
       left={
-        <>
-          {/* Scope is the promoted status
-          dimension (it does NOT appear in the filter dropdown). No search
-          box: scope buttons already partition the (small) set, so search
-          was dropped by product call. The count only appears while filters
-          narrow the list. Button styling and the <md dropdown collapse
-          follow the issues header's scope buttons. */}
-          <ToolbarScopeSelector
-            scopes={AUTOPILOT_SCOPES}
-            scope={scope}
-            scopeCounts={scopeCounts}
-            scopeLabels={SCOPE_LABELS}
-            onScopeChange={onScopeChange}
-          />
-
-          <ToolbarResultCount
-            active={hasActiveFilters}
-            title={t(($) => $.toolbar.result_count_title)}
-            visibleCount={visibleCount}
-            totalCount={allRows.length}
-          />
-        </>
+        <ToolbarScopeAndResult
+          scopes={AUTOPILOT_SCOPES}
+          scope={scope}
+          scopeCounts={scopeCounts}
+          scopeLabels={SCOPE_LABELS}
+          onScopeChange={onScopeChange}
+          resultActive={hasActiveFilters}
+          resultTitle={t(($) => $.toolbar.result_count_title)}
+          visibleCount={visibleCount}
+          totalCount={allRows.length}
+        />
       }
     >
       {/* Filter */}
       <ToolbarFilterDropdown
         hasActiveFilters={hasActiveFilters}
         activeCount={activeCount}
-        activeLabel={t(($) => $.toolbar.filter_active_count, {
-          count: activeCount,
-        })}
-        filterLabel={t(($) => $.toolbar.filter_label)}
-        clearLabel={t(($) => $.toolbar.clear_filters)}
         onClearFilters={onClearFilters}
       >
         {/* Assignee */}
@@ -211,64 +173,58 @@ export function AutopilotListToolbar({
         >
           {[...assigneeOptions.entries()].map(
             ([value, { type, id, count }]) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={value}
                 checked={filters.assignees.includes(value)}
-                onCheckedChange={() => onToggleFilter("assignees", value)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("assignees", value)}
+                count={count}
               >
-                <HoverCheck checked={filters.assignees.includes(value)} />
                 <ActorAvatar actorType={type} actorId={id} size={16} />
                 <span className="min-w-0 truncate">
                   {getActorName(type, id)}
                 </span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
 
-          {/* Trigger kind */}
+        {/* Trigger kind */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_trigger)}
           selectedCount={filters.triggerKinds.length}
         >
           {TRIGGER_KINDS.filter((kind) => triggerKindCounts.has(kind)).map(
             (kind) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={kind}
                 checked={filters.triggerKinds.includes(kind)}
-                onCheckedChange={() => onToggleFilter("triggerKinds", kind)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("triggerKinds", kind)}
+                count={triggerKindCounts.get(kind) ?? 0}
               >
-                <HoverCheck checked={filters.triggerKinds.includes(kind)} />
                 {t(($) => $.trigger_kind[kind])}
-                <ToolbarCountBadge count={triggerKindCounts.get(kind) ?? 0} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
 
-          {/* Mode */}
+        {/* Mode */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_mode)}
           selectedCount={filters.modes.length}
         >
           {MODES.map((mode) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={mode}
               checked={filters.modes.includes(mode)}
-              onCheckedChange={() => onToggleFilter("modes", mode)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("modes", mode)}
+              count={modeCounts.get(mode) ?? 0}
             >
-              <HoverCheck checked={filters.modes.includes(mode)} />
               {t(($) => $.execution_mode[mode])}
-              <ToolbarCountBadge count={modeCounts.get(mode) ?? 0} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Creator */}
+        {/* Creator */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_creator)}
           selectedCount={filters.creators.length}
@@ -276,19 +232,17 @@ export function AutopilotListToolbar({
         >
           {[...creatorOptions.entries()].map(
             ([value, { type, id, count }]) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={value}
                 checked={filters.creators.includes(value)}
-                onCheckedChange={() => onToggleFilter("creators", value)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("creators", value)}
+                count={count}
               >
-                <HoverCheck checked={filters.creators.includes(value)} />
                 <ActorAvatar actorType={type} actorId={id} size={16} />
                 <span className="min-w-0 truncate">
                   {getActorName(type, id)}
                 </span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
@@ -305,10 +259,6 @@ export function AutopilotListToolbar({
         columnLabels={COLUMN_LABELS}
         hiddenColumns={hiddenColumns}
         onToggleColumn={onToggleColumn}
-        displayLabel={t(($) => $.toolbar.display)}
-        sortByLabel={t(($) => $.toolbar.sort_by)}
-        directionAscLabel={t(($) => $.toolbar.direction_asc)}
-        directionDescLabel={t(($) => $.toolbar.direction_desc)}
         columnsLabel={t(($) => $.toolbar.section_columns)}
       />
     </ToolbarFrame>

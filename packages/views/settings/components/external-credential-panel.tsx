@@ -21,7 +21,7 @@ import type {
 } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-export interface ExternalCredentialPanelConfig {
+interface ExternalCredentialPanelConfig {
   provider: ExternalCredentialProvider;
   testId: string;
   title: string;
@@ -48,7 +48,7 @@ export function ExternalCredentialPanel({ config }: { config: ExternalCredential
   const updateProfile = useUpdateExternalCredentialProfile(config.provider);
   const deleteProfile = useDeleteExternalCredentialProfile(config.provider);
   const testProfile = useTestExternalCredentialProfile();
-  const profiles = data?.profiles ?? [];
+  const profiles = data ?? [];
   const profile =
     profiles.find((item) => item.provider === config.provider && item.secret_binding?.configured) ??
     profiles.find((item) => item.provider === config.provider);

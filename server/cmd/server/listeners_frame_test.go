@@ -8,15 +8,11 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// TestRegisterListeners_FrameContainsActorType asserts that every WS frame
-// produced by registerListeners includes the top-level "actor_type" field.
-// This is a regression guard for the bug where agent operations appeared as
-// human in the web UI because the broadcast frame lacked actor_type.
 func TestRegisterListeners_FrameContainsActorType(t *testing.T) {
 	cases := []struct {
 		name      string
 		event     events.Event
-		checkUser bool // true = check SendToUser, false = check BroadcastToWorkspace
+		checkUser bool
 		userID    string
 	}{
 		{
@@ -56,14 +52,14 @@ func TestRegisterListeners_FrameContainsActorType(t *testing.T) {
 			var raw []byte
 			if tc.checkUser {
 				if len(fb.userCalls) == 0 {
-					t.Fatal("expected SendToUser call, got none")
+					t.Fatal("expected user broadcast call, got none")
 				}
 				raw = fb.userCalls[0].msg
 			} else {
-				if len(fb.workspaceCalls) == 0 {
-					t.Fatal("expected BroadcastToWorkspace call, got none")
+				if len(fb.scopeCalls) == 0 {
+					t.Fatal("expected workspace scope call, got none")
 				}
-				raw = fb.workspaceCalls[0].msg
+				raw = fb.scopeCalls[0].msg
 			}
 
 			var frame map[string]any

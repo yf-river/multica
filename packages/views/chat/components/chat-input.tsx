@@ -13,33 +13,13 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { useChatStore, newSessionDraftKey } from "@multica/core/chat";
 import { createLogger } from "@multica/core/logger";
-import { enterKey, formatShortcut, modKey } from "@multica/core/platform";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import { enterKey, formatShortcut, getCurrentSlug, modKey } from "@multica/core/platform";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
-import type { Attachment } from "@multica/core/types";
+import { contentReferencesAttachment, type Attachment } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 const logger = createLogger("chat.ui");
 const EMPTY_ATTACHMENTS: Attachment[] = [];
-
-function attachmentReferenceUrls(attachment: Attachment): string[] {
-  const withUploadFields = attachment as Attachment & {
-    markdownLink?: string;
-    link?: string;
-  };
-  return [
-    withUploadFields.markdownLink,
-    attachment.markdown_url,
-    attachment.download_url,
-    attachment.url,
-    withUploadFields.link,
-    attachment.id ? `/api/attachments/${attachment.id}/download` : "",
-  ].filter((url): url is string => !!url);
-}
-
-function isAttachmentReferenced(content: string, attachment: Attachment): boolean {
-  return attachmentReferenceUrls(attachment).some((url) => content.includes(url));
-}
 
 interface ChatInputProps {
   onSend: (
@@ -52,13 +32,8 @@ interface ChatInputProps {
     id: string;
     content: string;
     attachments?: Attachment[];
-    /**
-     * Draft slot this restore targets. When set, the restore only fires while
-     * the user is viewing that session — a fire-and-forget send that later
-     * fails restores into the session it was sent from, not whatever the user
-     * navigated to. Omit to restore into the current draft (legacy behavior).
-     */
-    sessionId?: string;
+    /** Draft slot this restore targets. */
+    sessionId: string;
   } | null;
   onRestoreDraftConsumed?: () => void;
   /** Receives a File and returns the attachment row (with id + CDN link).
@@ -67,13 +42,11 @@ interface ChatInputProps {
    *  about the upload result so it can map URL → id for back-fill on send.
    *  When unset, paste/drag/button still type into the editor but no upload
    *  fires (the editor's file-upload extension is a no-op without a handler). */
-  onUploadFile?: (file: File) => Promise<UploadResult | null>;
+  onUploadFile?: (file: File) => Promise<Attachment | null>;
   onStop?: () => void;
   isRunning?: boolean;
-  disabled?: boolean;
   /** True when the user has no agent available — disables the editor and
-   *  surfaces a distinct placeholder. Kept separate from `disabled` so
-   *  archived-session copy stays untouched. */
+   *  surfaces a distinct placeholder. */
   noAgent?: boolean;
   /** Name of the currently selected agent, used in the placeholder. */
   agentName?: string;
@@ -90,7 +63,6 @@ export function ChatInput({
   onUploadFile,
   onStop,
   isRunning,
-  disabled,
   noAgent,
   agentName,
   leftAdornment,
@@ -132,6 +104,7 @@ export function ChatInput({
   const setInputDraftAttachments = useChatStore((s) => s.setInputDraftAttachments);
   const addInputDraftAttachment = useChatStore((s) => s.addInputDraftAttachment);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
+  const clearInputDraftForWorkspace = useChatStore((s) => s.clearInputDraftForWorkspace);
   const [isEmpty, setIsEmpty] = useState(!inputDraft.trim());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editorRestore, setEditorRestore] = useState<{
@@ -154,14 +127,7 @@ export function ChatInput({
   // on send we can ask the server to bind only the attachments still
   // referenced in the message body. Cleared after every send. Mirrors
   // the comment-input flow exactly. The map key MUST match what the
-  // editor actually wrote into the markdown — that's `markdownLink`
-  // (the stable per-attachment URL) for normal post-MUL-3130 uploads
-  // and `link` (= att.url) for the no-workspace upload branch where
-  // there's no attachment-row id to address. Storing only `link` here
-  // would cause `content.includes(url)` to miss every new chat upload
-  // because the editor persists `markdownLink` instead, and the
-  // `onSend` call would silently drop `attachment_ids` so the
-  // attachment never binds to the chat message.
+  // editor actually wrote into the markdown: the stable `markdown_url`.
   const uploadMapRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
@@ -170,12 +136,10 @@ export function ChatInput({
       return;
     }
     if (consumedRestoreIdRef.current === restoreDraftRequest.id) return;
-    // Session-scoped restore: if this draft belongs to a specific session,
-    // wait until the user is actually viewing it. A fire-and-forget send that
-    // failed after the user navigated away must not dump its content into the
-    // session they're now looking at — the request stays pending until they
-    // return to the source session (draftKey then matches).
-    if (restoreDraftRequest.sessionId && restoreDraftRequest.sessionId !== draftKey) {
+    // Wait until the user is viewing the source session. A fire-and-forget
+    // failure must not dump its content into whichever session is open when
+    // the response arrives.
+    if (restoreDraftRequest.sessionId !== draftKey) {
       return;
     }
     consumedRestoreIdRef.current = restoreDraftRequest.id;
@@ -206,14 +170,13 @@ export function ChatInput({
   ]);
 
   const handleUpload = useCallback(
-    async (file: File): Promise<UploadResult | null> => {
+    async (file: File): Promise<Attachment | null> => {
       if (!onUploadFile) return null;
       setPendingUploads((n) => n + 1);
       try {
         const result = await onUploadFile(file);
         if (result) {
-          const persistedURL = result.markdownLink || result.link;
-          uploadMapRef.current.set(persistedURL, result.id);
+          uploadMapRef.current.set(result.markdown_url, result.id);
           if (result.id) addInputDraftAttachment(draftKey, result);
         }
         return result;
@@ -233,12 +196,11 @@ export function ChatInput({
 
   const handleSend = async () => {
     const content = editorRef.current?.getMarkdown()?.replace(/(\n\s*)+$/, "").trim();
-    if (!content || isRunning || isSubmitting || disabled || noAgent) {
+    if (!content || isRunning || isSubmitting || noAgent) {
       logger.debug("input.send skipped", {
         emptyContent: !content,
         isRunning,
         isSubmitting,
-        disabled,
         noAgent,
       });
       return;
@@ -261,13 +223,14 @@ export function ChatInput({
       if (content.includes(url)) activeIds.push(id);
     }
     for (const attachment of draftAttachments) {
-      if (isAttachmentReferenced(content, attachment)) activeIds.push(attachment.id);
+      if (contentReferencesAttachment(content, attachment)) activeIds.push(attachment.id);
     }
     const uniqueActiveIds = Array.from(new Set(activeIds));
     // Capture draft key BEFORE onSend — creating a new session mutates
     // activeSessionId synchronously, so reading it after onSend would point
     // at the new session and leave the old draft orphaned.
     const keyAtSend = draftKey;
+    const workspaceSlugAtSend = getCurrentSlug();
     let committed = false;
     const commitInput = (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => {
       if (committed) return;
@@ -292,9 +255,13 @@ export function ChatInput({
       }
       // The sent draft's data is cleared regardless — the message is on its
       // way, so its persisted draft must not resurface.
-      clearInputDraft(keyAtSend);
+      const clearCapturedDraft = (key: string) => {
+        if (workspaceSlugAtSend) clearInputDraftForWorkspace(workspaceSlugAtSend, key);
+        else clearInputDraft(key);
+      };
+      clearCapturedDraft(keyAtSend);
       for (const key of options?.extraDraftKeys ?? []) {
-        if (key !== keyAtSend) clearInputDraft(key);
+        if (key !== keyAtSend) clearCapturedDraft(key);
       }
       uploadMapRef.current.clear();
       setIsSubmitting(false);
@@ -327,13 +294,11 @@ export function ChatInput({
 
   const placeholder = noAgent
     ? t(($) => $.input.placeholder_no_agent)
-    : disabled
-      ? t(($) => $.input.placeholder_archived)
-      : agentName
-        ? t(($) => $.input.placeholder_named, { name: agentName })
-        : t(($) => $.input.placeholder_default);
+    : agentName
+      ? t(($) => $.input.placeholder_named, { name: agentName })
+      : t(($) => $.input.placeholder_default);
 
-  const uploadEnabled = !!onUploadFile && !disabled && !noAgent;
+  const uploadEnabled = !!onUploadFile && !noAgent;
 
   return (
     <div
@@ -373,7 +338,7 @@ export function ChatInput({
               setInputDraft(draftKey, md);
               if (draftAttachments.length > 0) {
                 const referenced = draftAttachments.filter((attachment) =>
-                  isAttachmentReferenced(md, attachment),
+                  contentReferencesAttachment(md, attachment),
                 );
                 if (referenced.length !== draftAttachments.length) {
                   setInputDraftAttachments(draftKey, referenced);
@@ -411,7 +376,7 @@ export function ChatInput({
           )}
           <SubmitButton
             onClick={handleSend}
-            disabled={isEmpty || isSubmitting || !!disabled || !!noAgent || pendingUploads > 0}
+            disabled={isEmpty || isSubmitting || !!noAgent || pendingUploads > 0}
             loading={isSubmitting}
             running={isRunning}
             onStop={onStop}

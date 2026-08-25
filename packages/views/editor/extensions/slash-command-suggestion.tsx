@@ -2,11 +2,7 @@
 
 import {
   forwardRef,
-  useCallback,
-  useEffect,
   useImperativeHandle,
-  useRef,
-  useState,
 } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import type { SuggestionOptions } from "@tiptap/suggestion";
@@ -14,19 +10,22 @@ import { PluginKey } from "@tiptap/pm/state";
 import { useAuthStore } from "@multica/core/auth";
 import { useChatStore } from "@multica/core/chat";
 import { getCurrentWsId } from "@multica/core/platform";
-import { canAssignAgentToIssue } from "@multica/core/permissions";
-import { isImeComposing } from "@multica/core/utils";
+import { canAssignAgentToIssue, resolveCurrentMember } from "@multica/core/permissions";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
-import { createSuggestionPopupRender } from "./suggestion-popup";
+import {
+  createSuggestionPopupRender,
+  useSuggestionSelection,
+  type SuggestionSelectionRef,
+} from "./suggestion-popup";
 
 const MAX_ITEMS = 20;
 
 /** Known built-in command ids — the keys under editor `slash_command.commands`. */
 type BuiltinCommandKey = "note";
 
-export interface SlashCommandItem {
+interface SlashCommandItem {
   id: string;
   label: string;
   /** Raw description (skill picker). Built-in commands use descriptionKey. */
@@ -53,56 +52,13 @@ interface SlashCommandListProps {
   hideOnEmpty?: boolean;
 }
 
-export interface SlashCommandListRef {
-  onKeyDown: (props: { event: KeyboardEvent }) => boolean;
-}
-
-export const SlashCommandList = forwardRef<
-  SlashCommandListRef,
+const SlashCommandList = forwardRef<
+  SuggestionSelectionRef,
   SlashCommandListProps
 >(function SlashCommandList({ items, query, command, hideOnEmpty = false }, ref) {
   const { t } = useT("editor");
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
-
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [items]);
-
-  useEffect(() => {
-    itemRefs.current[selectedIndex]?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex]);
-
-  const selectItem = useCallback(
-    (index: number) => {
-      const item = items[index];
-      if (!item) return;
-      command(item);
-    },
-    [items, command],
-  );
-
-  useImperativeHandle(ref, () => ({
-    onKeyDown: ({ event }) => {
-      if (isImeComposing(event)) return false;
-      if (event.key === "ArrowUp") {
-        if (items.length === 0) return false;
-        setSelectedIndex((i) => (i + items.length - 1) % items.length);
-        return true;
-      }
-      if (event.key === "ArrowDown") {
-        if (items.length === 0) return false;
-        setSelectedIndex((i) => (i + 1) % items.length);
-        return true;
-      }
-      if (event.key === "Enter") {
-        if (items.length === 0) return false;
-        selectItem(selectedIndex);
-        return true;
-      }
-      return false;
-    },
-  }));
+  const selection = useSuggestionSelection(items, command);
+  useImperativeHandle(ref, () => ({ onKeyDown: selection.onKeyDown }), [selection.onKeyDown]);
 
   if (items.length === 0) {
     if (hideOnEmpty) return null;
@@ -132,12 +88,12 @@ export const SlashCommandList = forwardRef<
           <button
             key={item.id}
             ref={(el) => {
-              itemRefs.current[index] = el;
+              selection.itemRefs.current[index] = el;
             }}
             className={`flex w-full flex-col gap-0.5 px-3 py-1.5 text-left text-xs transition-colors ${
-              selectedIndex === index ? "bg-accent" : "hover:bg-accent/50"
+              selection.selectedIndex === index ? "bg-accent" : "hover:bg-accent/50"
             }`}
-            onClick={() => selectItem(index)}
+            onClick={() => selection.selectItem(index)}
           >
             <span className="font-medium">/{item.label}</span>
             {description && (
@@ -163,7 +119,7 @@ function buildItems(qc: QueryClient, query: string): SlashCommandItem[] {
   // are intentional here.
   const { selectedAgentId } = useChatStore.getState();
   const userId = useAuthStore.getState().user?.id ?? null;
-  const memberRole = members.find((m) => m.user_id === userId)?.role ?? null;
+  const { role: memberRole } = resolveCurrentMember(members, userId);
 
   const availableAgents = agents.filter(
     (a) =>
@@ -222,16 +178,7 @@ export function createSlashCommandSuggestion(qc: QueryClient): Omit<
 
       window.getSelection()?.collapseToEnd();
     },
-    render: createSuggestionPopupRender<SlashCommandItem, SlashCommandItem, SlashCommandListRef, SlashCommandListProps>({
-      pluginKey,
-      component: SlashCommandList,
-      getProps: (props) => ({
-        items: props.items,
-        query: props.query,
-        command: props.command,
-      }),
-      onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
-    }),
+    render: createSlashCommandPopup(pluginKey),
   };
 }
 
@@ -246,14 +193,14 @@ export function createSlashCommandSuggestion(qc: QueryClient): Omit<
  * human-only note that won't trigger the assigned agent — mirrors the backend
  * `noteCommentPrefix` in server/internal/handler/comment.go.
  */
-export const BUILTIN_COMMANDS: SlashCommandItem[] = [
+const BUILTIN_COMMANDS: SlashCommandItem[] = [
   { id: "note", label: "note", descriptionKey: "note" },
 ];
 
 // Match on the command label as a prefix only — the description is for display,
 // not search. With a single command this keeps the menu predictable (typing
 // `/no` surfaces `note`; an unrelated `/deploy` shows nothing).
-export function buildBuiltinCommandItems(query: string): SlashCommandItem[] {
+function buildBuiltinCommandItems(query: string): SlashCommandItem[] {
   const q = query.toLowerCase();
   return BUILTIN_COMMANDS.filter((c) => c.label.toLowerCase().startsWith(q));
 }
@@ -281,16 +228,20 @@ export function createBuiltinCommandSuggestion(): Omit<
 
       window.getSelection()?.collapseToEnd();
     },
-    render: createSuggestionPopupRender<SlashCommandItem, SlashCommandItem, SlashCommandListRef, SlashCommandListProps>({
-      pluginKey,
-      component: SlashCommandList,
-      getProps: (props) => ({
-        items: props.items,
-        query: props.query,
-        command: props.command,
-        hideOnEmpty: true,
-      }),
-      onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
-    }),
+    render: createSlashCommandPopup(pluginKey, true),
   };
+}
+
+function createSlashCommandPopup(pluginKey: PluginKey, hideOnEmpty = false) {
+  return createSuggestionPopupRender<SlashCommandItem, SlashCommandItem, SuggestionSelectionRef, SlashCommandListProps>({
+    pluginKey,
+    component: SlashCommandList,
+    getProps: (props) => ({
+      items: props.items,
+      query: props.query,
+      command: props.command,
+      ...(hideOnEmpty ? { hideOnEmpty: true } : {}),
+    }),
+    onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
+  });
 }

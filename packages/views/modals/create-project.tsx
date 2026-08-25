@@ -10,7 +10,7 @@ import {
   PROJECT_STATUS_ORDER,
   PROJECT_PRIORITY_ORDER,
 } from "@multica/core/projects/config";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -33,7 +33,7 @@ import { PriorityIcon } from "../issues/components/priority-icon";
 import { ActorAvatar } from "../common/actor-avatar";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import {
   useProjectStatusLabels,
   useProjectPriorityLabels,
@@ -124,9 +124,9 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [leadFilter, setLeadFilter] = useState("");
 
   const leadQuery = leadFilter.toLowerCase();
-  const filteredMembers = members.filter((m) => m.name.toLowerCase().includes(leadQuery) || matchesPinyin(m.name, leadQuery));
+  const filteredMembers = members.filter((m) => matchesTextQuery(m.name, leadQuery));
   const filteredAgents = agents.filter(
-    (a) => !a.archived_at && (a.name.toLowerCase().includes(leadQuery) || matchesPinyin(a.name, leadQuery)),
+    (a) => !a.archived_at && matchesTextQuery(a.name, leadQuery),
   );
 
   const leadLabel =

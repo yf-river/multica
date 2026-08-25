@@ -13,60 +13,27 @@ import (
 
 const createPromptEvaluationCaseAssertion = `-- name: CreatePromptEvaluationCaseAssertion :one
 INSERT INTO prompt_evaluation_case_assertion (
-    workspace_id,
-    asset_id,
     case_id,
-    assertion_index,
-    assertion_type,
-    expected_text,
-    status,
-    source
+    assertion_index
 ) VALUES (
     $1,
-    $2,
-    $3,
-    $4,
-    COALESCE($6, '包含文本'),
-    $5,
-    COALESCE($7, '启用'),
-    COALESCE($8, 'expected_contains')
+    $2
 )
-RETURNING id, workspace_id, asset_id, case_id, assertion_index, assertion_type, expected_text, status, source, created_at
+RETURNING id, case_id, assertion_index, created_at
 `
 
 type CreatePromptEvaluationCaseAssertionParams struct {
-	WorkspaceID    pgtype.UUID `json:"workspace_id"`
-	AssetID        pgtype.UUID `json:"asset_id"`
 	CaseID         pgtype.UUID `json:"case_id"`
 	AssertionIndex int32       `json:"assertion_index"`
-	ExpectedText   string      `json:"expected_text"`
-	AssertionType  interface{} `json:"assertion_type"`
-	Status         interface{} `json:"status"`
-	Source         interface{} `json:"source"`
 }
 
 func (q *Queries) CreatePromptEvaluationCaseAssertion(ctx context.Context, arg CreatePromptEvaluationCaseAssertionParams) (PromptEvaluationCaseAssertion, error) {
-	row := q.db.QueryRow(ctx, createPromptEvaluationCaseAssertion,
-		arg.WorkspaceID,
-		arg.AssetID,
-		arg.CaseID,
-		arg.AssertionIndex,
-		arg.ExpectedText,
-		arg.AssertionType,
-		arg.Status,
-		arg.Source,
-	)
+	row := q.db.QueryRow(ctx, createPromptEvaluationCaseAssertion, arg.CaseID, arg.AssertionIndex)
 	var i PromptEvaluationCaseAssertion
 	err := row.Scan(
 		&i.ID,
-		&i.WorkspaceID,
-		&i.AssetID,
 		&i.CaseID,
 		&i.AssertionIndex,
-		&i.AssertionType,
-		&i.ExpectedText,
-		&i.Status,
-		&i.Source,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -74,42 +41,32 @@ func (q *Queries) CreatePromptEvaluationCaseAssertion(ctx context.Context, arg C
 
 const deletePromptEvaluationCaseAssertionsByCase = `-- name: DeletePromptEvaluationCaseAssertionsByCase :exec
 DELETE FROM prompt_evaluation_case_assertion
-WHERE workspace_id = $1 AND case_id = $2
+WHERE case_id = $1
 `
 
-type DeletePromptEvaluationCaseAssertionsByCaseParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	CaseID      pgtype.UUID `json:"case_id"`
-}
-
-func (q *Queries) DeletePromptEvaluationCaseAssertionsByCase(ctx context.Context, arg DeletePromptEvaluationCaseAssertionsByCaseParams) error {
-	_, err := q.db.Exec(ctx, deletePromptEvaluationCaseAssertionsByCase, arg.WorkspaceID, arg.CaseID)
+func (q *Queries) DeletePromptEvaluationCaseAssertionsByCase(ctx context.Context, caseID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deletePromptEvaluationCaseAssertionsByCase, caseID)
 	return err
 }
 
 const listPromptEvaluationCaseAssertions = `-- name: ListPromptEvaluationCaseAssertions :many
-SELECT id, workspace_id, asset_id, case_id, assertion_index, assertion_type, expected_text, status, source, created_at FROM prompt_evaluation_case_assertion
-WHERE workspace_id = $1
-  AND ($2::uuid IS NULL OR asset_id = $2)
-  AND ($3::uuid IS NULL OR case_id = $3)
-  AND ($4::text IS NULL OR status = $4)
-ORDER BY asset_id, case_id, assertion_index ASC, created_at ASC
+SELECT a.id, a.case_id, a.assertion_index, a.created_at
+FROM prompt_evaluation_case_assertion a
+JOIN prompt_evaluation_case c ON c.id = a.case_id
+WHERE c.workspace_id = $1
+  AND ($2::uuid IS NULL OR c.asset_id = $2)
+  AND ($3::text IS NULL OR c.status = $3)
+ORDER BY c.asset_id, a.case_id, a.assertion_index ASC, a.created_at ASC
 `
 
 type ListPromptEvaluationCaseAssertionsParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	AssetID     pgtype.UUID `json:"asset_id"`
-	CaseID      pgtype.UUID `json:"case_id"`
 	Status      pgtype.Text `json:"status"`
 }
 
 func (q *Queries) ListPromptEvaluationCaseAssertions(ctx context.Context, arg ListPromptEvaluationCaseAssertionsParams) ([]PromptEvaluationCaseAssertion, error) {
-	rows, err := q.db.Query(ctx, listPromptEvaluationCaseAssertions,
-		arg.WorkspaceID,
-		arg.AssetID,
-		arg.CaseID,
-		arg.Status,
-	)
+	rows, err := q.db.Query(ctx, listPromptEvaluationCaseAssertions, arg.WorkspaceID, arg.AssetID, arg.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +76,8 @@ func (q *Queries) ListPromptEvaluationCaseAssertions(ctx context.Context, arg Li
 		var i PromptEvaluationCaseAssertion
 		if err := rows.Scan(
 			&i.ID,
-			&i.WorkspaceID,
-			&i.AssetID,
 			&i.CaseID,
 			&i.AssertionIndex,
-			&i.AssertionType,
-			&i.ExpectedText,
-			&i.Status,
-			&i.Source,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

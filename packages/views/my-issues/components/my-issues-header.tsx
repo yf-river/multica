@@ -3,7 +3,10 @@
 import { useMemo } from "react";
 import { useStore } from "zustand";
 import type { Issue } from "@multica/core/types";
-import { myIssuesViewStore, type MyIssuesScope } from "@multica/core/issues/stores/my-issues-view-store";
+import {
+  myIssuesViewStore,
+  type MyIssuesScope,
+} from "@multica/core/issues/stores/scoped-issue-view-stores";
 import { useT } from "../../i18n";
 import { WorkspaceAgentWorkingChip } from "../../issues/components/workspace-agent-working-chip";
 import {

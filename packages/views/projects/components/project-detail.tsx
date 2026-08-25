@@ -2,17 +2,16 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { Check, ChevronRight, Link2, ListTodo, MoreHorizontal, PanelRight, Pin, PinOff, Plus, Trash2, UserMinus } from "lucide-react";
+import { ChevronRight, Link2, ListTodo, MoreHorizontal, PanelRight, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
-import type { Issue, IssueAssigneeGroup, ProjectStatus, ProjectPriority, UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, IssueAssigneeGroup } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
-import { pinListOptions } from "@multica/core/pins";
-import { useCreatePin, useDeletePin } from "@multica/core/pins";
+import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
 import {
   myIssueAssigneeGroupsOptions,
   myIssueListOptions,
@@ -22,25 +21,19 @@ import {
   type IssueSortParam,
   type MyIssuesFilter,
 } from "@multica/core/issues/queries";
-import { useUpdateIssue } from "@multica/core/issues/mutations";
-import { useModalStore } from "@multica/core/modals";
-import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { openCreateIssue } from "@multica/core/issues";
+import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { useRecentContextStore } from "@multica/core/chat";
-import { useWorkspacePaths } from "@multica/core/paths";
-import { useActorName } from "@multica/core/workspace/hooks";
-import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } from "@multica/core/projects/config";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { createIssueViewStore } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider, useViewStore } from "@multica/core/issues/stores/view-store-context";
-import { filterIssues } from "../../issues/utils/filter";
-import { getProjectIssueMetrics } from "./project-issue-metrics";
+import { filterIssues, projectIssueViews } from "../../issues/utils/filter";
 import { filterRunningAssigneeGroups } from "./project-issue-filters";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
-import { PriorityIcon } from "../../issues/components/priority-icon";
+import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
+import { ProjectLeadPicker } from "./project-lead-picker";
 import { ProjectResourcesSection } from "./project-resources-section";
 import { IssuesHeader } from "../../issues/components/issues-header";
 import { BoardView } from "../../issues/components/board-view";
@@ -88,8 +81,8 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { useT } from "../../i18n";
-import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { useMoveIssue } from "../../issues/hooks/use-move-issue";
+import { useRunningIssueIds } from "../../issues/hooks/use-running-issue-ids";
 
 // ---------------------------------------------------------------------------
 // Property row — sidebar property display
@@ -150,43 +143,39 @@ function ProjectIssuesContent({
   const labelFilters = useViewStore((s) => s.labelFilters);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
 
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const runningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const task of snapshot) {
-      if (task.status === "running" && task.issue_id) ids.add(task.issue_id);
-    }
-    return ids;
-  }, [snapshot]);
-
-  const issues = useMemo(
-    () => filterIssues(projectIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters: [], includeNoProject: false, labelFilters, agentRunningFilter, runningIssueIds }),
-    [projectIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, labelFilters, agentRunningFilter, runningIssueIds],
+  const runningIssueIds = useRunningIssueIds(projectIssues, wsId);
+  const {
+    issues,
+    swimlaneIssues,
+    activeFilters,
+    visibleStatuses,
+    hiddenStatuses,
+  } = useMemo(
+    () =>
+      projectIssueViews(projectIssues, {
+        statusFilters,
+        priorityFilters,
+        assigneeFilters,
+        includeNoAssignee,
+        creatorFilters,
+        projectFilters: [],
+        includeNoProject: false,
+        labelFilters,
+        agentRunningFilter,
+        runningIssueIds,
+      }),
+    [
+      projectIssues,
+      statusFilters,
+      priorityFilters,
+      assigneeFilters,
+      includeNoAssignee,
+      creatorFilters,
+      labelFilters,
+      agentRunningFilter,
+      runningIssueIds,
+    ],
   );
-
-  // Status-unfiltered companion for Swimlane.
-  const swimlaneIssues = useMemo(
-    () => filterIssues(projectIssues, { statusFilters: [], priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters: [], includeNoProject: false, labelFilters, agentRunningFilter, runningIssueIds }),
-    [projectIssues, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, labelFilters, agentRunningFilter, runningIssueIds],
-  );
-
-  const activeFilters = useMemo(() => ({
-    priorityFilters,
-    assigneeFilters,
-    includeNoAssignee,
-    creatorFilters,
-    projectFilters: [],
-    includeNoProject: false,
-    labelFilters,
-    agentRunningFilter,
-  }), [
-    priorityFilters,
-    assigneeFilters,
-    includeNoAssignee,
-    creatorFilters,
-    labelFilters,
-    agentRunningFilter,
-  ]);
 
   // Gantt rides its own dedicated query (scheduled-only) so it doesn't have
   // to wait for every status bucket to paginate in. View-store filters still
@@ -203,34 +192,8 @@ function ProjectIssuesContent({
 
   const { data: childProgressMap = new Map() } = useQuery(childIssueProgressOptions(wsId));
 
-  const visibleStatuses = useMemo(() => {
-    if (statusFilters.length > 0)
-      return BOARD_STATUSES.filter((s) => statusFilters.includes(s));
-    return BOARD_STATUSES;
-  }, [statusFilters]);
-
-  const hiddenStatuses = useMemo(
-    () => BOARD_STATUSES.filter((s) => !visibleStatuses.includes(s)),
-    [visibleStatuses],
-  );
-
-  const updateIssueMutation = useUpdateIssue();
-  const handleMoveIssue = useCallback(
-    (issueId: string, updates: Pick<UpdateIssueRequest, "status" | "assignee_type" | "assignee_id" | "position" | "parent_issue_id">, onSettled?: () => void) => {
-      updateIssueMutation.mutate(
-        { id: issueId, ...updates },
-        {
-          onError: (err) =>
-            toast.error(
-              err instanceof Error && err.message
-                ? err.message
-                : t(($) => $.detail.toast_move_issue_failed),
-            ),
-          onSettled: () => onSettled?.(),
-        },
-      );
-    },
-    [updateIssueMutation, t],
+  const handleMoveIssue = useMoveIssue(
+    t(($) => $.detail.toast_move_issue_failed),
   );
 
   // Gantt and Swimlane have their own data sources and empty states —
@@ -248,9 +211,7 @@ function ProjectIssuesContent({
           variant="outline"
           size="sm"
           className="mt-1"
-          onClick={() =>
-            useModalStore.getState().open("create-issue", { project_id: projectId })
-          }
+          onClick={() => openCreateIssue({ project_id: projectId })}
         >
           <Plus className="size-3.5 mr-1.5" />
           {t(($) => $.detail.empty_issues_new_button)}
@@ -415,34 +376,47 @@ function ProjectIssuesSurface({
 
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
-  const statusLabels = useProjectStatusLabels();
-  const priorityLabels = useProjectPriorityLabels();
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const router = useNavigation();
   const userId = useAuthStore((s) => s.user?.id);
   const { data: project, isLoading } = useQuery(projectDetailOptions(wsId, projectId));
   const recordRecentContext = useRecentContextStore((s) => s.recordVisit);
+  const recentProjectId = project?.id;
+  const recentProjectTitle = project?.title;
+  const recentProjectDescription = project?.description;
+  const recentProjectIcon = project?.icon;
+  const recentProjectStatus = project?.status;
   useEffect(() => {
-    if (project) {
-      recordRecentContext(wsId, {
-        type: "project",
-        id: project.id,
-        label: project.title,
-        subtitle: project.description ?? undefined,
-        icon: project.icon,
-        projectStatus: project.status,
-      });
-    }
-  }, [project?.id, project?.title, project?.description, project?.icon, project?.status, recordRecentContext, wsId]);
+    if (
+      !recentProjectId ||
+      !recentProjectTitle ||
+      recentProjectDescription === undefined ||
+      recentProjectIcon === undefined ||
+      !recentProjectStatus
+    ) return;
+    recordRecentContext(wsId, {
+      type: "project",
+      id: recentProjectId,
+      label: recentProjectTitle,
+      subtitle: recentProjectDescription ?? undefined,
+      icon: recentProjectIcon,
+      projectStatus: recentProjectStatus,
+    });
+  }, [
+    recentProjectDescription,
+    recentProjectIcon,
+    recentProjectId,
+    recentProjectStatus,
+    recentProjectTitle,
+    recordRecentContext,
+    wsId,
+  ]);
   const projectScope = `project:${projectId}`;
   const projectFilter = useMemo<MyIssuesFilter>(
     () => ({ project_id: projectId }),
     [projectId],
   );
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { getActorName } = useActorName();
   const updateProject = useUpdateProject();
   const deleteProject = useDeleteProject();
   const { data: pinnedItems = [] } = useQuery({
@@ -498,13 +472,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     else panel.collapse();
   }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
 
-  // Lead popover
-  const [leadOpen, setLeadOpen] = useState(false);
-  const [leadFilter, setLeadFilter] = useState("");
-  const leadQuery = leadFilter.toLowerCase();
-  const filteredMembers = members.filter((m) => m.name.toLowerCase().includes(leadQuery) || matchesPinyin(m.name, leadQuery));
-  const filteredAgents = agents.filter((a) => !a.archived_at && (a.name.toLowerCase().includes(leadQuery) || matchesPinyin(a.name, leadQuery)));
-
   const handleUpdateField = useCallback(
     (data: Parameters<typeof updateProject.mutate>[0] extends { id: string } & infer R ? R : never) => {
       if (!project) return;
@@ -538,9 +505,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     return <div className="flex items-center justify-center h-full text-muted-foreground">{t(($) => $.detail.not_found)}</div>;
   }
 
-  const issueMetrics = getProjectIssueMetrics(project);
-  const statusCfg = PROJECT_STATUS_CONFIG[project.status];
-
+  const totalIssueCount = project.issue_count;
+  const completedIssueCount = project.done_count;
   const sidebarContent = (
     <div className="space-y-5">
       {/* Icon + Title */}
@@ -590,127 +556,47 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
         </button>
         {propertiesOpen && <div className="space-y-0.5 pl-2">
           <PropRow label={t(($) => $.table.status)}>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button type="button" className="inline-flex items-center gap-1.5 text-xs hover:text-foreground transition-colors">
-                    <span className={cn("size-2 rounded-full", statusCfg.dotColor)} />
-                    <span>{statusLabels[project.status]}</span>
-                  </button>
-                }
-              />
-              <DropdownMenuContent align="start" className="w-44">
-                {PROJECT_STATUS_ORDER.map((s) => (
-                  <DropdownMenuItem key={s} onClick={() => handleUpdateField({ status: s as ProjectStatus })}>
-                    <span className={cn("size-2 rounded-full", PROJECT_STATUS_CONFIG[s].dotColor)} />
-                    <span>{statusLabels[s]}</span>
-                    {s === project.status && <Check className="ml-auto h-3.5 w-3.5" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ProjectStatusBadge
+              project={project}
+              handleUpdate={handleUpdateField}
+              align="start"
+              variant="plain"
+            />
           </PropRow>
           <PropRow label={t(($) => $.table.priority)}>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button type="button" className="inline-flex items-center gap-1.5 text-xs hover:text-foreground transition-colors">
-                    <PriorityIcon priority={project.priority} />
-                    <span>{priorityLabels[project.priority]}</span>
-                  </button>
-                }
-              />
-              <DropdownMenuContent align="start" className="w-44">
-                {PROJECT_PRIORITY_ORDER.map((p) => (
-                  <DropdownMenuItem key={p} onClick={() => handleUpdateField({ priority: p as ProjectPriority })}>
-                    <PriorityIcon priority={p} />
-                    <span>{priorityLabels[p]}</span>
-                    {p === project.priority && <Check className="ml-auto h-3.5 w-3.5" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ProjectPriorityBadge
+              project={project}
+              handleUpdate={handleUpdateField}
+              align="start"
+              variant="plain"
+            />
           </PropRow>
           <PropRow label={t(($) => $.table.lead)}>
-            <Popover open={leadOpen} onOpenChange={(v) => { setLeadOpen(v); if (!v) setLeadFilter(""); }}>
-              <PopoverTrigger
-                render={
-                  <button type="button" className="inline-flex items-center gap-1.5 text-xs hover:text-foreground transition-colors">
-                    {project.lead_type && project.lead_id ? (
-                      <>
-                        <ActorAvatar actorType={project.lead_type} actorId={project.lead_id} size={16} enableHoverCard showStatusDot />
-                        <span className="cursor-pointer">{getActorName(project.lead_type, project.lead_id)}</span>
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">{t(($) => $.lead.no_lead)}</span>
-                    )}
-                  </button>
-                }
-              />
-              <PopoverContent align="start" className="w-52 p-0">
-                <div className="px-2 py-1.5 border-b">
-                  <input
-                    type="text"
-                    value={leadFilter}
-                    onChange={(e) => setLeadFilter(e.target.value)}
-                    placeholder={t(($) => $.lead.assign_placeholder)}
-                    className="w-full bg-transparent text-sm placeholder:text-muted-foreground outline-none"
-                  />
-                </div>
-                <div className="p-1 max-h-60 overflow-y-auto">
-                  <button
-                    type="button"
-                    onClick={() => { handleUpdateField({ lead_type: null, lead_id: null }); setLeadOpen(false); }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors"
-                  >
-                    <UserMinus className="h-3.5 w-3.5 text-muted-foreground" />
+            <ProjectLeadPicker
+              project={project}
+              handleUpdate={handleUpdateField}
+              align="start"
+              listClassName="max-h-60"
+              renderTrigger={(leadName) => (
+                <button type="button" className="inline-flex items-center gap-1.5 text-xs hover:text-foreground transition-colors">
+                  {project.lead_type && project.lead_id ? (
+                    <>
+                      <ActorAvatar actorType={project.lead_type} actorId={project.lead_id} size={16} enableHoverCard showStatusDot />
+                      <span className="cursor-pointer">{leadName}</span>
+                    </>
+                  ) : (
                     <span className="text-muted-foreground">{t(($) => $.lead.no_lead)}</span>
-                  </button>
-                  {filteredMembers.length > 0 && (
-                    <>
-                      <div className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">{t(($) => $.lead.members_group)}</div>
-                      {filteredMembers.map((m) => (
-                        <button
-                          type="button"
-                          key={m.user_id}
-                          onClick={() => { handleUpdateField({ lead_type: "member", lead_id: m.user_id }); setLeadOpen(false); }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors"
-                        >
-                          <ActorAvatar actorType="member" actorId={m.user_id} size={16} />
-                          <span>{m.name}</span>
-                        </button>
-                      ))}
-                    </>
                   )}
-                  {filteredAgents.length > 0 && (
-                    <>
-                      <div className="px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">{t(($) => $.lead.agents_group)}</div>
-                      {filteredAgents.map((a) => (
-                        <button
-                          type="button"
-                          key={a.id}
-                          onClick={() => { handleUpdateField({ lead_type: "agent", lead_id: a.id }); setLeadOpen(false); }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors"
-                        >
-                          <ActorAvatar actorType="agent" actorId={a.id} size={16} showStatusDot />
-                          <span>{a.name}</span>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                  {filteredMembers.length === 0 && filteredAgents.length === 0 && leadFilter && (
-                    <div className="px-2 py-3 text-center text-sm text-muted-foreground">{t(($) => $.lead.no_results)}</div>
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
+                </button>
+              )}
+            />
           </PropRow>
         </div>}
       </div>
 
       {/* Progress */}
-      {issueMetrics.totalCount > 0 && (() => {
-        const pct = Math.round((issueMetrics.completedCount / issueMetrics.totalCount) * 100);
+      {totalIssueCount > 0 && (() => {
+        const pct = Math.round((completedIssueCount / totalIssueCount) * 100);
         return (
           <div>
             <button
@@ -729,7 +615,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 />
               </div>
               <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                {issueMetrics.completedCount}/{issueMetrics.totalCount}
+                {completedIssueCount}/{totalIssueCount}
               </span>
             </div>}
           </div>

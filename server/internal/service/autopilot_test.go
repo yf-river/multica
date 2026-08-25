@@ -9,23 +9,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestAutopilotErrorType(t *testing.T) {
-	cases := map[string]string{
-		"unknown execution_mode: nope": "configuration",
-		"issue blocked":                "issue_terminal",
-		"issue cancelled":              "issue_terminal",
-		"enqueue task: no runtime":     "dispatch_error",
-		"task failed":                  "task_error",
-		"unexpected":                   "autopilot_error",
-	}
-
-	for reason, want := range cases {
-		if got := autopilotErrorType(reason); got != want {
-			t.Fatalf("autopilotErrorType(%q) = %q, want %q", reason, got, want)
-		}
-	}
-}
-
 func TestTaskFailureReasonForAutopilotRun(t *testing.T) {
 	cases := []struct {
 		name string
@@ -69,7 +52,10 @@ func TestBuildIssueDescription_NoTriggerPayload(t *testing.T) {
 	ap := db.Autopilot{Description: pgtype.Text{String: "do the thing", Valid: true}}
 	run := db.AutopilotRun{Source: "schedule", TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 
-	got := s.buildIssueDescription(ap, run, "UTC")
+	got, err := s.buildIssueDescription(ap, run, "UTC")
+	if err != nil {
+		t.Fatalf("buildIssueDescription: %v", err)
+	}
 	if !strings.HasPrefix(got.String, "do the thing") {
 		t.Fatalf("description should preserve user description: %q", got.String)
 	}
@@ -89,7 +75,10 @@ func TestBuildIssueDescription_UsesTriggerTimezone(t *testing.T) {
 		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC), Valid: true},
 	}
 
-	got := s.buildIssueDescription(ap, run, "Asia/Tokyo")
+	got, err := s.buildIssueDescription(ap, run, "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("buildIssueDescription: %v", err)
+	}
 	if !strings.Contains(got.String, "Autopilot run triggered at 2026-05-26 09:00 Asia/Tokyo") {
 		t.Fatalf("description should use trigger timezone: %q", got.String)
 	}
@@ -98,9 +87,7 @@ func TestBuildIssueDescription_UsesTriggerTimezone(t *testing.T) {
 	}
 }
 
-// An invalid IANA timezone string must fall back to UTC instead of leaving the
-// timestamp half-formatted in the issue body.
-func TestBuildIssueDescription_InvalidTriggerTimezoneFallsBackToUTC(t *testing.T) {
+func TestBuildIssueDescription_RejectsInvalidTriggerTimezone(t *testing.T) {
 	s := &AutopilotService{}
 	ap := db.Autopilot{Description: pgtype.Text{String: "do the thing", Valid: true}}
 	run := db.AutopilotRun{
@@ -108,13 +95,12 @@ func TestBuildIssueDescription_InvalidTriggerTimezoneFallsBackToUTC(t *testing.T
 		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC), Valid: true},
 	}
 
-	got := s.buildIssueDescription(ap, run, "Foo/Bar")
-	if !strings.Contains(got.String, "Autopilot run triggered at 2026-05-26 00:00 UTC") {
-		t.Fatalf("invalid trigger timezone should fall back to UTC: %q", got.String)
+	if _, err := s.buildIssueDescription(ap, run, "Foo/Bar"); err == nil {
+		t.Fatal("invalid trigger timezone should fail")
 	}
 }
 
-func TestInterpolateTemplate_InvalidTriggerTimezoneFallsBackToUTC(t *testing.T) {
+func TestInterpolateTemplate_RejectsInvalidTriggerTimezone(t *testing.T) {
 	s := &AutopilotService{}
 	ap := db.Autopilot{
 		Title:              "fallback",
@@ -124,9 +110,8 @@ func TestInterpolateTemplate_InvalidTriggerTimezoneFallsBackToUTC(t *testing.T) 
 		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 23, 30, 0, 0, time.UTC), Valid: true},
 	}
 
-	got := s.interpolateTemplate(ap, run, "Foo/Bar")
-	if want := "report 2026-05-26"; got != want {
-		t.Fatalf("interpolateTemplate = %q, want %q", got, want)
+	if _, err := s.interpolateTemplate(ap, run, "Foo/Bar"); err == nil {
+		t.Fatal("invalid trigger timezone should fail")
 	}
 }
 
@@ -136,7 +121,10 @@ func TestBuildIssueDescription_WithWebhookPayload(t *testing.T) {
 	payload := []byte(`{"event":"github.pull_request.opened","eventPayload":{"number":7},"request":{"receivedAt":"2026-05-09T00:00:00Z","contentType":"application/json"}}`)
 	run := db.AutopilotRun{Source: "webhook", TriggerPayload: payload, TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 
-	got := s.buildIssueDescription(ap, run, "UTC")
+	got, err := s.buildIssueDescription(ap, run, "UTC")
+	if err != nil {
+		t.Fatalf("buildIssueDescription: %v", err)
+	}
 	if !strings.HasPrefix(got.String, "watch PRs") {
 		t.Fatalf("user description not preserved: %q", got.String)
 	}
@@ -163,9 +151,50 @@ func TestBuildIssueDescription_WebhookSourceMissingEnvelope(t *testing.T) {
 	payload := []byte(`{"raw":"missing envelope"}`)
 	run := db.AutopilotRun{Source: "webhook", TriggerPayload: payload, TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 
-	got := s.buildIssueDescription(ap, run, "UTC")
+	got, err := s.buildIssueDescription(ap, run, "UTC")
+	if err != nil {
+		t.Fatalf("buildIssueDescription: %v", err)
+	}
 	if !strings.Contains(got.String, "Webhook event:") {
 		t.Fatalf("should still emit webhook block: %q", got.String)
+	}
+}
+
+func TestBuildIssueDescription_RejectsMalformedPersistedWebhookPayload(t *testing.T) {
+	s := &AutopilotService{}
+	ap := db.Autopilot{Description: pgtype.Text{String: "thing", Valid: true}}
+	run := db.AutopilotRun{
+		Source:         "webhook",
+		TriggerPayload: []byte(`not-json`),
+		TriggeredAt:    pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	}
+
+	if _, err := s.buildIssueDescription(ap, run, "UTC"); err == nil {
+		t.Fatal("malformed persisted webhook payload should fail")
+	}
+}
+
+func TestValidateAutopilotTriggerPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload []byte
+		wantErr bool
+	}{
+		{name: "absent", payload: nil},
+		{name: "object", payload: []byte(`{"event":"manual"}`)},
+		{name: "array", payload: []byte(`[]`), wantErr: true},
+		{name: "scalar", payload: []byte(`true`), wantErr: true},
+		{name: "null", payload: []byte(`null`), wantErr: true},
+		{name: "malformed", payload: []byte(`{`), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateAutopilotTriggerPayload(test.payload)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateAutopilotTriggerPayload(%q) error = %v, wantErr %v", test.payload, err, test.wantErr)
+			}
+		})
 	}
 }
 
@@ -175,17 +204,15 @@ func TestBuildIssueDescription_NonWebhookSourceWithPayloadIgnored(t *testing.T) 
 	ap := db.Autopilot{Description: pgtype.Text{String: "thing", Valid: true}}
 	run := db.AutopilotRun{Source: "manual", TriggerPayload: []byte(`{"event":"x.y"}`), TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 
-	got := s.buildIssueDescription(ap, run, "UTC")
+	got, err := s.buildIssueDescription(ap, run, "UTC")
+	if err != nil {
+		t.Fatalf("buildIssueDescription: %v", err)
+	}
 	if strings.Contains(got.String, "Webhook event") {
 		t.Fatalf("non-webhook source should not include webhook block: %q", got.String)
 	}
 }
 
-// TestInterpolateTemplate covers the three behaviours that real autopilot
-// runs depend on: {{date}} substitution, falling back to Title when the
-// template is unset/empty, and leaving any non-{{date}} text alone (the
-// handler is the layer that prevents unknown tokens from being stored in
-// the first place — service-layer interpolation stays substitute-or-leave).
 func TestInterpolateTemplate(t *testing.T) {
 	s := &AutopilotService{}
 	run := db.AutopilotRun{TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
@@ -219,7 +246,11 @@ func TestInterpolateTemplate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := s.interpolateTemplate(tc.ap, run, "UTC"); got != tc.expect {
+			got, err := s.interpolateTemplate(tc.ap, run, "UTC")
+			if err != nil {
+				t.Fatalf("interpolateTemplate: %v", err)
+			}
+			if got != tc.expect {
 				t.Fatalf("interpolateTemplate = %q, want %q", got, tc.expect)
 			}
 		})
@@ -236,16 +267,15 @@ func TestInterpolateTemplate_UsesTriggerTimezoneForDate(t *testing.T) {
 		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 23, 30, 0, 0, time.UTC), Valid: true},
 	}
 
-	got := s.interpolateTemplate(ap, run, "Asia/Tokyo")
+	got, err := s.interpolateTemplate(ap, run, "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("interpolateTemplate: %v", err)
+	}
 	if want := "Tokyo report 2026-05-27"; got != want {
 		t.Fatalf("interpolateTemplate = %q, want %q", got, want)
 	}
 }
 
-// TestValidateIssueTitleTemplate locks down what create/update accept.
-// Reject path: anything inside {{...}} that is not in the supported set.
-// Accept path: empty, plain text, and the canonical {{date}} placeholder
-// in both compact and whitespace-padded forms.
 func TestValidateIssueTitleTemplate(t *testing.T) {
 	t.Run("accepts empty template", func(t *testing.T) {
 		if err := ValidateIssueTitleTemplate(""); err != nil {

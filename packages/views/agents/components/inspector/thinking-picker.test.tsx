@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { RuntimeModelThinkingLevel } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/zh-Hans/common.json";
@@ -38,13 +39,6 @@ function renderPicker(props: Partial<React.ComponentProps<typeof ThinkingPicker>
 }
 
 describe("ThinkingPicker", () => {
-  beforeEach(() => {
-    cleanup();
-  });
-  afterEach(() => {
-    cleanup();
-  });
-
   it('renders "跟随 CLI 配置" when value is empty', () => {
     renderPicker({ value: "" });
     // The trigger and the tooltip both carry the label. Empty value means
@@ -72,12 +66,13 @@ describe("ThinkingPicker", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("calls onChange with the picked value and skips when the user re-picks the current value", () => {
+  it("calls onChange with the picked value and skips when the user re-picks the current value", async () => {
+    const user = userEvent.setup();
     const { onChange } = renderPicker({ value: "low" });
-    fireEvent.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
 
     // Picking a new level fires onChange with the runtime-native value.
-    fireEvent.click(screen.getByText("高"));
+    await user.click(screen.getByText("高"));
     expect(onChange).toHaveBeenCalledWith("high");
 
     // Re-opening and clicking the already-selected value is a no-op so we
@@ -85,28 +80,30 @@ describe("ThinkingPicker", () => {
     // there are two matches in the DOM — target the listbox item by
     // selecting the option button explicitly.
     onChange.mockClear();
-    fireEvent.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
     const lowOption = screen
       .getAllByRole("button")
       .find((b) => b.getAttribute("data-picker-item") !== null && b.textContent?.includes("Low"));
     expect(lowOption).toBeDefined();
-    fireEvent.click(lowOption!);
+    await user.click(lowOption!);
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("clears to empty string via the footer button when a value is set", () => {
+  it("clears to empty string via the footer button when a value is set", async () => {
+    const user = userEvent.setup();
     const { onChange } = renderPicker({ value: "high" });
-    fireEvent.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
     // Footer copy resolves through i18n — match a substring so we don't
     // pin to the exact translated wording.
     const clearButton = screen.getByTitle(/清除覆盖/i);
-    fireEvent.click(clearButton);
+    await user.click(clearButton);
     expect(onChange).toHaveBeenCalledWith("");
   });
 
-  it("does not render the clear button when value is already empty", () => {
+  it("does not render the clear button when value is already empty", async () => {
+    const user = userEvent.setup();
     renderPicker({ value: "" });
-    fireEvent.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
     expect(screen.queryByTitle(/Clear and fall back/i)).toBeNull();
   });
 });

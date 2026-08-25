@@ -16,8 +16,7 @@ var frontmatterPattern = regexp.MustCompile(`(?s)\A---\r?\n(.*?\r?\n)---`)
 
 // ParseSkillFrontmatter extracts name and description from the YAML frontmatter
 // block of a SKILL.md file. Returns empty strings when the frontmatter is
-// absent or malformed so callers can keep treating missing metadata as a
-// non-fatal condition, matching the behaviour of the legacy line-based parser.
+// absent or malformed so missing metadata remains non-fatal.
 //
 // Values are decoded into a generic map and coerced per key (scalars via their
 // literal form, sequences/mappings via JSON) rather than unmarshalled into a

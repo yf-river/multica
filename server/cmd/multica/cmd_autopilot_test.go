@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -40,28 +39,113 @@ func newAutopilotUpdateTestCmd() *cobra.Command {
 	return cmd
 }
 
-func TestResolveAgent(t *testing.T) {
+func newAutopilotRotateTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "trigger-rotate-url"}
+	cmd.Flags().Bool("yes", true, "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	cmd.Flags().String("profile", "", "")
+	return cmd
+}
+
+func newAutopilotTriggerAddTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "trigger-add"}
+	cmd.Flags().String("kind", "webhook", "")
+	cmd.Flags().String("cron", "", "")
+	cmd.Flags().String("timezone", "", "")
+	cmd.Flags().String("label", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	cmd.Flags().String("profile", "", "")
+	return cmd
+}
+
+func TestRunAutopilotTriggerMutationsReuseRequestIdentityOnDecodeRetry(t *testing.T) {
+	const (
+		autopilotID = "11111111-1111-4111-8111-111111111111"
+		triggerID   = "22222222-2222-4222-8222-222222222222"
+	)
+	tests := []struct {
+		name     string
+		path     string
+		response map[string]any
+		run      func() error
+	}{
+		{
+			name: "add",
+			path: "/api/autopilots/" + autopilotID + "/triggers",
+			response: map[string]any{
+				"id": "trigger-1", "kind": "webhook", "webhook_token": "token-1",
+			},
+			run: func() error {
+				return runAutopilotTriggerAdd(newAutopilotTriggerAddTestCmd(), []string{autopilotID})
+			},
+		},
+		{
+			name: "rotate URL",
+			path: "/api/autopilots/" + autopilotID + "/triggers/" + triggerID + "/rotate-webhook-token",
+			response: map[string]any{
+				"id": triggerID, "webhook_token": "rotated-token",
+			},
+			run: func() error {
+				return runAutopilotTriggerRotateURL(newAutopilotRotateTestCmd(), []string{autopilotID, triggerID})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("MULTICA_TOKEN", "test-token")
+			t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
+			var keys []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.path {
+					t.Fatalf("path = %q, want %q", r.URL.Path, tt.path)
+				}
+				keys = append(keys, r.Header.Get("Idempotency-Key"))
+				w.Header().Set("Content-Type", "application/json")
+				if len(keys) == 1 {
+					_, _ = w.Write([]byte(`{"id":`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(tt.response)
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("MULTICA_SERVER_URL", srv.URL)
+
+			if _, err := captureStdout(t, tt.run); err != nil {
+				t.Fatal(err)
+			}
+			if len(keys) != 2 || len(keys[0]) != 36 || keys[1] != keys[0] {
+				t.Fatalf("request keys = %#v, want two matching UUIDs", keys)
+			}
+		})
+	}
+}
+
+func TestResolveAgentID(t *testing.T) {
 	agentsResp := []map[string]any{
 		{"id": "11111111-1111-1111-1111-111111111111", "name": "Lambda"},
-		{"id": "22222222-2222-2222-2222-222222222222", "name": "Codex Agent"},
-		{"id": "33333333-3333-3333-3333-333333333333", "name": "Claude Reviewer"},
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agents" {
-			json.NewEncoder(w).Encode(agentsResp)
+			_ = json.NewEncoder(w).Encode(agentsResp)
 			return
 		}
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
 
-	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
 	ctx := context.Background()
 
-	t.Run("passes through a UUID without lookup", func(t *testing.T) {
-		id := "44444444-4444-4444-4444-444444444444"
-		got, err := resolveAgent(ctx, client, id)
+	t.Run("UUID works without workspace lookup", func(t *testing.T) {
+		client := cli.NewAPIClient(srv.URL, "", "test-token")
+		id := "55555555-5555-5555-5555-555555555555"
+		got, err := resolveAgentID(ctx, client, id)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -70,60 +154,14 @@ func TestResolveAgent(t *testing.T) {
 		}
 	})
 
-	t.Run("exact name match", func(t *testing.T) {
-		got, err := resolveAgent(ctx, client, "Lambda")
+	t.Run("name delegates to the canonical Agent-only resolver", func(t *testing.T) {
+		client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
+		got, err := resolveAgentID(ctx, client, "Lambda")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got != "11111111-1111-1111-1111-111111111111" {
 			t.Errorf("got %q, want Lambda's UUID", got)
-		}
-	})
-
-	t.Run("case-insensitive substring", func(t *testing.T) {
-		got, err := resolveAgent(ctx, client, "codex")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != "22222222-2222-2222-2222-222222222222" {
-			t.Errorf("got %q, want Codex Agent's UUID", got)
-		}
-	})
-
-	t.Run("no match", func(t *testing.T) {
-		_, err := resolveAgent(ctx, client, "nobody")
-		if err == nil {
-			t.Fatal("expected error for no match")
-		}
-	})
-
-	t.Run("ambiguous match", func(t *testing.T) {
-		_, err := resolveAgent(ctx, client, "a") // matches Lambda, Codex Agent, Claude Reviewer
-		if err == nil {
-			t.Fatal("expected error for ambiguous match")
-		}
-		if !strings.Contains(err.Error(), "ambiguous") {
-			t.Errorf("expected ambiguous error, got: %v", err)
-		}
-	})
-
-	t.Run("missing workspace ID for name lookup", func(t *testing.T) {
-		noWSClient := cli.NewAPIClient(srv.URL, "", "test-token")
-		_, err := resolveAgent(ctx, noWSClient, "Lambda")
-		if err == nil {
-			t.Fatal("expected error when workspace ID is missing")
-		}
-	})
-
-	t.Run("UUID works without workspace ID", func(t *testing.T) {
-		noWSClient := cli.NewAPIClient(srv.URL, "", "test-token")
-		id := "55555555-5555-5555-5555-555555555555"
-		got, err := resolveAgent(ctx, noWSClient, id)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != id {
-			t.Errorf("got %q, want %q", got, id)
 		}
 	})
 }
@@ -143,14 +181,19 @@ func TestRunAutopilotCreateSendsProjectID(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Errorf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"id":         "autopilot-1",
 			"title":      "Daily planner",
 			"project_id": body["project_id"],
-		})
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -192,11 +235,13 @@ func TestRunAutopilotUpdateSendsProjectIDChanges(t *testing.T) {
 			t.Errorf("decode body: %v", err)
 		}
 		bodies = append(bodies, body)
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"id":         autopilotID,
 			"title":      "Daily planner",
 			"project_id": body["project_id"],
-		})
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer srv.Close()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -11,13 +12,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// subscriberTest helpers — reuse the integration test fixtures from TestMain
-// (testPool, testUserID, testWorkspaceID are set in integration_test.go).
-
-// createTestIssue inserts a minimal issue and returns its UUID string.
-// Picks the next per-workspace number to avoid colliding with the
-// uq_issue_workspace_number unique constraint when a single test creates
-// multiple issues.
 func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -34,7 +28,27 @@ func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	return issueID
 }
 
-// createTestUser inserts a user with the given account and returns the UUID string.
+func subscriberIssueResponse(issueID, status string, assigneeType, assigneeID *string) handler.IssueResponse {
+	return handler.IssueResponse{
+		ID: issueID, WorkspaceID: testWorkspaceID, Title: "test issue", Status: status,
+		Priority: "medium", CreatorType: "member", CreatorID: testUserID,
+		AssigneeType: assigneeType, AssigneeID: assigneeID,
+	}
+}
+
+func createTestComment(t *testing.T, issueID, authorType, authorID, content, commentType string) string {
+	t.Helper()
+	var commentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`, issueID, testWorkspaceID, authorType, authorID, content, commentType).Scan(&commentID); err != nil {
+		t.Fatalf("createTestComment: %v", err)
+	}
+	return commentID
+}
+
 func createTestUser(t *testing.T, account string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -52,27 +66,27 @@ func createTestUser(t *testing.T, account string) string {
 
 func cleanupTestIssue(t *testing.T, issueID string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
 func cleanupTestUser(t *testing.T, account string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
+	mustExec(t, context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
 }
 
-func isSubscribed(t *testing.T, issueID, userType, userID string) bool {
+func isSubscribed(t *testing.T, queries *db.Queries, issueID, userType, userID string) bool {
 	t.Helper()
-	var subscribed bool
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT EXISTS (
-			SELECT 1
-			FROM issue_subscriber
-			WHERE issue_id = $1 AND user_type = $2 AND user_id = $3
-		)
-	`, issueID, userType, userID).Scan(&subscribed); err != nil {
-		t.Fatalf("check issue subscriber: %v", err)
+	subscribers, err := queries.ListIssueSubscribers(context.Background(), util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("ListIssueSubscribers: %v", err)
 	}
-	return subscribed
+	wantUserID := util.MustParseUUID(userID)
+	for _, subscriber := range subscribers {
+		if subscriber.UserType == userType && subscriber.UserID == wantUserID {
+			return true
+		}
+	}
+	return false
 }
 
 func subscriberCount(t *testing.T, queries *db.Queries, issueID string) int {
@@ -84,45 +98,100 @@ func subscriberCount(t *testing.T, queries *db.Queries, issueID string) int {
 	return len(subs)
 }
 
-func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
+func publishSubscriberProjection(t *testing.T, queries *db.Queries, bus *events.Bus, event events.Event) {
+	t.Helper()
+	var (
+		emitted []events.Event
+		err     error
+	)
+	switch event.Type {
+	case protocol.EventIssueCreated:
+		emitted, err = consumeIssueCreatedAudience(context.Background(), queries, event)
+	case protocol.EventIssueUpdated:
+		emitted, err = consumeIssueUpdatedAudience(context.Background(), queries, event)
+	case protocol.EventCommentCreated:
+		emitted, err = consumeCommentCreatedAudience(context.Background(), queries, event)
+	default:
+		bus.Publish(event)
+		return
+	}
+	if err != nil {
+		t.Fatalf("project %s subscribers: %v", event.Type, err)
+	}
+	publishEventsForTest(bus, emitted)
+}
+
+func publishEventsForTest(bus *events.Bus, emitted []events.Event) {
+	for _, event := range emitted {
+		bus.Publish(event)
+	}
+}
+
+func TestSubscriberIssueCreated_CreatorProjection(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+	var subscriberEvents []events.Event
+	bus.Subscribe(protocol.EventSubscriberAdded, func(event events.Event) {
+		subscriberEvents = append(subscriberEvents, event)
+	})
 
-	// Publish issue:created event with no assignee
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-		},
+		Payload:     map[string]any{"issue": subscriberIssueResponse(issueID, "todo", nil, nil)},
 	})
 
-	if !isSubscribed(t, issueID, "member", testUserID) {
+	if !isSubscribed(t, queries, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed after issue:created")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
 		t.Fatalf("expected 1 subscriber, got %d", count)
+	}
+	if len(subscriberEvents) != 1 {
+		t.Fatalf("expected 1 subscriber:added event, got %d", len(subscriberEvents))
+	}
+	event := subscriberEvents[0]
+	if event.WorkspaceID != testWorkspaceID {
+		t.Fatalf("expected workspace_id %s, got %s", testWorkspaceID, event.WorkspaceID)
+	}
+	payload, ok := event.Payload.(map[string]any)
+	if !ok {
+		t.Fatal("expected map[string]any payload")
+	}
+	if payload["issue_id"] != issueID || payload["user_id"] != testUserID {
+		t.Fatalf("unexpected subscriber event payload: %+v", payload)
+	}
+}
+
+func TestAddSubscriberDeletedIssueIsAlreadyComplete(t *testing.T) {
+	queries := db.New(testPool)
+	missingIssueID := uuid.NewString()
+
+	_, created, err := addSubscriber(
+		context.Background(),
+		queries,
+		testWorkspaceID,
+		missingIssueID,
+		"member",
+		testUserID,
+		"creator",
+	)
+	if err != nil {
+		t.Fatalf("addSubscriber for deleted issue: %v", err)
+	}
+	if created {
+		t.Fatal("addSubscriber for deleted issue reported a projection event")
 	}
 }
 
 func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	assigneeAccount := "subscriber-assignee-test@multica"
 	assigneeID := createTestUser(t, assigneeAccount)
@@ -132,30 +201,18 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
+		Payload:     map[string]any{"issue": subscriberIssueResponse(issueID, "todo", &assigneeType, &assigneeID)},
 	})
 
-	if !isSubscribed(t, issueID, "member", testUserID) {
+	if !isSubscribed(t, queries, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed")
 	}
-	if !isSubscribed(t, issueID, "member", assigneeID) {
+	if !isSubscribed(t, queries, issueID, "member", assigneeID) {
 		t.Fatal("expected assignee to be subscribed")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 2 {
@@ -166,7 +223,6 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -174,7 +230,7 @@ func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *
 	squadType := "squad"
 	squadID := "11111111-2222-3333-4444-555555555555"
 	description := "[GOA-1](mention://issue/22222222-3333-4444-5555-666666666666) blocks this work"
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -195,7 +251,7 @@ func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *
 		},
 	})
 
-	if !isSubscribed(t, issueID, "member", testUserID) {
+	if !isSubscribed(t, queries, issueID, "member", testUserID) {
 		t.Fatal("expected creator to remain subscribed")
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
@@ -206,39 +262,25 @@ func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *
 func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	// Creator is also the assignee (self-assign)
 	assigneeType := "member"
 	assigneeID := testUserID
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
+		Payload:     map[string]any{"issue": subscriberIssueResponse(issueID, "todo", &assigneeType, &assigneeID)},
 	})
 
 	// Should only have 1 subscriber record (ON CONFLICT DO NOTHING handles idempotency)
 	if count := subscriberCount(t, queries, issueID); count != 1 {
 		t.Fatalf("expected 1 subscriber for self-assign, got %d", count)
 	}
-	if !isSubscribed(t, issueID, "member", testUserID) {
+	if !isSubscribed(t, queries, issueID, "member", testUserID) {
 		t.Fatal("expected creator/assignee to be subscribed")
 	}
 }
@@ -246,7 +288,6 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	assigneeAccount := "subscriber-new-assignee-test@multica"
 	assigneeID := createTestUser(t, assigneeAccount)
@@ -256,28 +297,18 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
+			"issue":            subscriberIssueResponse(issueID, "todo", &assigneeType, &assigneeID),
 			"assignee_changed": true,
 		},
 	})
 
-	if !isSubscribed(t, issueID, "member", assigneeID) {
+	if !isSubscribed(t, queries, issueID, "member", assigneeID) {
 		t.Fatal("expected new assignee to be subscribed after assignee change")
 	}
 }
@@ -285,120 +316,99 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 func TestSubscriberIssueUpdated_NoAssigneeChange(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	// Publish issue:updated without assignee_changed flag
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "test issue",
-				Status:      "in_progress",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
+			"issue":            subscriberIssueResponse(issueID, "in_progress", nil, nil),
 			"assignee_changed": false,
 			"status_changed":   true,
 		},
 	})
 
-	// No subscriber should have been added
 	if count := subscriberCount(t, queries, issueID); count != 0 {
 		t.Fatalf("expected 0 subscribers when assignee not changed, got %d", count)
 	}
 }
 
-func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
+func TestDurableCommentAudienceLoadsCommittedComment(t *testing.T) {
 	queries := db.New(testPool)
-	bus := events.New()
-	registerSubscriberListeners(bus, queries)
-
-	commenterAccount := "subscriber-commenter-test@multica"
+	commenterAccount := "durable-commenter-test@multica"
 	commenterID := createTestUser(t, commenterAccount)
 	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
-
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	bus.Publish(events.Event{
+	var commentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'member', $3, 'durable audience', 'comment')
+		RETURNING id
+	`, issueID, testWorkspaceID, commenterID).Scan(&commentID); err != nil {
+		t.Fatalf("insert comment: %v", err)
+	}
+	event := events.Event{
 		Type:        protocol.EventCommentCreated,
+		StreamKey:   "issue:" + issueID,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     commenterID,
 		Payload: map[string]any{
-			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
-				IssueID:    issueID,
-				AuthorType: "member",
-				AuthorID:   commenterID,
-				Content:    "test comment",
-				Type:       "comment",
+			"comment": map[string]any{
+				"id":          commentID,
+				"issue_id":    issueID,
+				"author_type": "member",
+				"author_id":   commenterID,
+				"content":     "durable audience",
 			},
+			"issue_title":  "subscriber test issue",
+			"issue_status": "todo",
 		},
-	})
-
-	if !isSubscribed(t, issueID, "member", commenterID) {
-		t.Fatal("expected commenter to be subscribed after comment:created")
+	}
+	emitted, err := consumeCommentCreatedAudience(context.Background(), queries, event)
+	if err != nil {
+		t.Fatalf("consume durable comment audience: %v", err)
+	}
+	if !isSubscribed(t, queries, issueID, "member", commenterID) {
+		t.Fatal("durable comment audience did not subscribe commenter")
+	}
+	if len(emitted) != 1 || emitted[0].Type != protocol.EventSubscriberAdded {
+		t.Fatalf("durable comment audience emitted %+v, want one subscriber event", emitted)
 	}
 }
 
-func TestSubscriberAddedEventPublished(t *testing.T) {
+func TestDurableCommentAudienceSkipsDeletedComment(t *testing.T) {
 	queries := db.New(testPool)
-	bus := events.New()
-	registerSubscriberListeners(bus, queries)
-
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
-
-	// Track subscriber:added events
-	var subscriberEvents []events.Event
-	bus.Subscribe(protocol.EventSubscriberAdded, func(e events.Event) {
-		subscriberEvents = append(subscriberEvents, e)
-	})
-
-	bus.Publish(events.Event{
-		Type:        protocol.EventIssueCreated,
+	commentID := "019f4c39-e1b4-7af0-8172-c0fd3623f1cd"
+	event := events.Event{
+		Type:        protocol.EventCommentCreated,
+		StreamKey:   "issue:" + issueID,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
+			"comment": map[string]any{
+				"id":          commentID,
+				"issue_id":    issueID,
+				"author_type": "member",
+				"author_id":   testUserID,
 			},
 		},
-	})
-
-	if len(subscriberEvents) != 1 {
-		t.Fatalf("expected 1 subscriber:added event, got %d", len(subscriberEvents))
 	}
-	evt := subscriberEvents[0]
-	if evt.WorkspaceID != testWorkspaceID {
-		t.Fatalf("expected workspace_id %s, got %s", testWorkspaceID, evt.WorkspaceID)
+	emitted, err := consumeCommentCreatedAudience(context.Background(), queries, event)
+	if err != nil {
+		t.Fatalf("deleted comment should not poison projection: %v", err)
 	}
-	payload, ok := evt.Payload.(map[string]any)
-	if !ok {
-		t.Fatal("expected map[string]any payload")
-	}
-	if payload["issue_id"] != issueID {
-		t.Fatalf("expected issue_id %s, got %v", issueID, payload["issue_id"])
-	}
-	if payload["user_id"] != testUserID {
-		t.Fatalf("expected user_id %s, got %v", testUserID, payload["user_id"])
+	if len(emitted) != 0 {
+		t.Fatalf("deleted comment emitted %d events, want 0", len(emitted))
 	}
 }
 
@@ -407,12 +417,11 @@ func TestSubscriberAddedEventPublished(t *testing.T) {
 func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -430,30 +439,7 @@ func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 		},
 	})
 
-	if !isSubscribed(t, issueID, "member", testUserID) {
+	if !isSubscribed(t, queries, issueID, "member", testUserID) {
 		t.Fatal("expected creator to be subscribed when autopilot publishes map payload")
 	}
-}
-
-// Verify parseUUID is consistent — the local helper should agree with util.MustParseUUID
-// for valid input, and panic on invalid input (the silent-zero behavior was removed
-// after #1661 to prevent silent SQL writes against a zero UUID).
-func TestParseUUIDConsistency(t *testing.T) {
-	uuid := "550e8400-e29b-41d4-a716-446655440000"
-	local := parseUUID(uuid)
-	utilResult := util.MustParseUUID(uuid)
-	if local != utilResult {
-		t.Fatalf("parseUUID inconsistency: local=%v, util=%v", local, utilResult)
-	}
-	if !local.Valid {
-		t.Fatal("expected valid UUID")
-	}
-
-	// Invalid input (empty string) must panic now — never silently return a zero UUID.
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected parseUUID(\"\") to panic, but it returned normally")
-		}
-	}()
-	_ = parseUUID("")
 }

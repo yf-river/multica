@@ -23,7 +23,7 @@ import {
   useDeleteProjectResource,
 } from "@multica/core/projects";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
@@ -62,7 +62,7 @@ function isGongfengURL(url: string): boolean {
   try {
     return new URL(url).hostname === "git.code.tencent.com";
   } catch {
-    return url.includes("git.code.tencent.com");
+    return false;
   }
 }
 
@@ -84,10 +84,6 @@ const GONGFENG_REPO_PRESETS = [
   { key: "ida-deployment", label: "ida-deployment", url: "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment" },
 ];
 const BRANCH_PICKER_RENDER_LIMIT = 100;
-
-function workspaceRepoList(workspace: Workspace | null | undefined): WorkspaceRepo[] {
-  return Array.isArray(workspace?.repos) ? workspace.repos : [];
-}
 
 export function ProjectGongfengRepositories() {
   const { t } = useT("settings");
@@ -120,11 +116,11 @@ export function ProjectGongfengRepositories() {
     }
 
     const rows: RepositoryLibraryRow[] = [];
-    for (const repo of workspaceRepoList(workspace)) {
+    for (const repo of workspace?.repos ?? []) {
       if (!isGongfengURL(repo.url)) continue;
       const resolved = resolvedReposByURL[repo.url];
       const merged = resolved ? { ...repo, ...resolved } : repo;
-      const projectPath = gongfengWorkspaceRepoProjectPath(merged);
+      const projectPath = merged.project_path?.trim() ?? "";
       rows.push({
         url: repo.url,
         repo: merged,
@@ -133,7 +129,7 @@ export function ProjectGongfengRepositories() {
       });
     }
     return rows.sort((a, b) => a.url.localeCompare(b.url));
-  }, [resolvedReposByURL, usages, workspace?.repos]);
+  }, [resolvedReposByURL, usages, workspace]);
 
   if (!workspace) return null;
 
@@ -211,8 +207,8 @@ function AddGongfengRepositoryDialog({
   const probeMatches = Boolean(probe && probe.url === trimmedURL);
   const canSubmit = Boolean(trimmedURL && selectedBranch && probeMatches) && !saving && !probing;
   const existingProjectPaths = new Set(
-    workspaceRepoList(workspace)
-      .map((repo) => gongfengWorkspaceRepoProjectPath(repo))
+    workspace.repos
+      .map((repo) => repo.project_path?.trim() ?? "")
       .filter(Boolean),
   );
 
@@ -263,7 +259,7 @@ function AddGongfengRepositoryDialog({
         url: trimmedURL,
         default_branch: selectedBranch,
       });
-      const repos = [...workspaceRepoList(workspace), resolved];
+      const repos = [...workspace.repos, resolved];
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
@@ -350,6 +346,7 @@ function AddGongfengRepositoryDialog({
               {t(($) => $.repositories.gongfeng_inventory.default_branch_field)}
             </span>
             <BranchPicker
+              ariaLabel={t(($) => $.repositories.gongfeng_inventory.default_branch_field)}
               branches={probe?.branches ?? []}
               value={selectedBranch}
               onChange={setSelectedBranch}
@@ -386,11 +383,13 @@ function AddGongfengRepositoryDialog({
 }
 
 function BranchPicker({
+  ariaLabel,
   branches,
   value,
   onChange,
   disabled,
 }: {
+  ariaLabel: string;
   branches: string[];
   value: string;
   onChange: (value: string) => void;
@@ -428,6 +427,7 @@ function BranchPicker({
       }}
     >
       <PopoverTrigger
+        aria-label={ariaLabel}
         type="button"
         disabled={disabled}
         className="flex h-9 w-full min-w-0 items-center gap-2 rounded-md border bg-background px-2 text-left font-mono text-sm outline-none transition-colors hover:bg-muted focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-70"
@@ -489,7 +489,7 @@ function GongfengRepositoryLibraryRow({
   const { t } = useT("settings");
   const qc = useQueryClient();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const defaultBranch = repositoryDefaultBranch(row);
+  const defaultBranch = row.repo?.default_branch?.trim() ?? "";
   const displayName = repositoryDisplayName(row);
   const removeBlocked = row.usages.length > 0;
   const showRemoveButton = row.inLibrary || row.usages.length > 0;
@@ -499,7 +499,7 @@ function GongfengRepositoryLibraryRow({
       toast.error(t(($) => $.repositories.gongfeng_inventory.remove_blocked));
       return;
     }
-    const repos = workspaceRepoList(workspace).filter((repo) => repo.url !== row.url);
+    const repos = workspace.repos.filter((repo) => repo.url !== row.url);
     try {
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
@@ -597,40 +597,20 @@ function RepositoryDetailsDialog({
 }) {
   const { t } = useT("settings");
   const qc = useQueryClient();
-  const [resolving, setResolving] = useState(false);
   const [editingBranch, setEditingBranch] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [savingBranch, setSavingBranch] = useState(false);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState("");
   const [branchError, setBranchError] = useState("");
-  const defaultBranch = repositoryDefaultBranch(row);
-  const projectPath = repositoryProjectPath(row);
-  const commitID = repositoryCommitID(row);
-  const needsResolve = row.inLibrary && !row.repo?.resolve_status;
+  const defaultBranch = row.repo?.default_branch?.trim() ?? "";
+  const projectPath = row.repo?.project_path?.trim() ?? "";
+  const commitID = [
+    row.repo?.head_commit,
+    ...row.usages.flatMap((usage) => [usage.resource_ref.head_commit, usage.resource_ref.commit_sha]),
+  ].map((value) => value?.trim()).find((value): value is string => Boolean(value)) ?? "";
   const branchChanged = Boolean(selectedBranch && selectedBranch !== defaultBranch);
   const canEditBranch = row.inLibrary;
-
-  const handleResolve = async () => {
-    if (!row.inLibrary || resolving) return;
-    setResolving(true);
-    try {
-      const resolved = await api.resolveWorkspaceRepo(workspace.id, { url: row.url });
-      const repos = workspaceRepoList(workspace).map((repo) =>
-        repo.url === row.url ? { ...repo, ...resolved } : repo,
-      );
-      onRepoResolved(resolved);
-      const updated = await api.updateWorkspace(workspace.id, { repos });
-      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
-        old?.map((ws) => (ws.id === updated.id ? updated : ws)),
-      );
-      toast.success(t(($) => $.repositories.gongfeng_inventory.resolve_success));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t(($) => $.repositories.gongfeng_inventory.resolve_failed));
-    } finally {
-      setResolving(false);
-    }
-  };
 
   const invalidateUsageQueries = (usages: GongfengResourceUsage[]) => {
     const projectIds = new Set(usages.map((usage) => usage.project.id));
@@ -675,7 +655,7 @@ function RepositoryDetailsDialog({
         url: row.url,
         default_branch: selectedBranch,
       });
-      const repos = workspaceRepoList(workspace).map((repo) =>
+      const repos = workspace.repos.map((repo) =>
         repo.url === row.url ? { ...repo, ...resolved } : repo,
       );
       onRepoResolved(resolved);
@@ -760,6 +740,7 @@ function RepositoryDetailsDialog({
               {editingBranch && (
                 <div className="space-y-2">
                   <BranchPicker
+                    ariaLabel={t(($) => $.repositories.gongfeng_inventory.change_branch)}
                     branches={branchOptions}
                     value={selectedBranch}
                     onChange={setSelectedBranch}
@@ -821,21 +802,6 @@ function RepositoryDetailsDialog({
               )}
             </div>
           )}
-          {needsResolve && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-              <span>{t(($) => $.repositories.gongfeng_inventory.resolve_hint)}</span>
-              <button
-                type="button"
-                className="inline-flex h-7 items-center justify-center rounded-md border border-amber-300 bg-background px-2 text-[11px] text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={resolving}
-                onClick={() => void handleResolve()}
-              >
-                {resolving
-                  ? t(($) => $.repositories.gongfeng_inventory.resolving)
-                  : t(($) => $.repositories.gongfeng_inventory.resolve)}
-              </button>
-            </div>
-          )}
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-medium">{t(($) => $.repositories.gongfeng_inventory.usages_title)}</div>
@@ -850,6 +816,7 @@ function RepositoryDetailsDialog({
                   <RepositoryUsageDetailRow
                     key={usage.id}
                     usage={usage}
+                    workspaceId={workspace.id}
                     href={projectHref(usage.project.id)}
                   />
                 ))}
@@ -889,15 +856,15 @@ function RepositoryPrimaryHealthButton({
     if (syncing) return;
     setSyncing(true);
     try {
-      const branch = repositoryDefaultBranch(row);
+      const branch = row.repo?.default_branch?.trim() ?? "";
       const resolved = await api.resolveWorkspaceRepo(workspace.id, {
         url: row.url,
         ...(branch ? { default_branch: branch } : {}),
       });
-      const exists = workspaceRepoList(workspace).some((repo) => repo.url === row.url);
+      const exists = workspace.repos.some((repo) => repo.url === row.url);
       const repos = exists
-        ? workspaceRepoList(workspace).map((repo) => (repo.url === row.url ? { ...repo, ...resolved } : repo))
-        : [...workspaceRepoList(workspace), resolved];
+        ? workspace.repos.map((repo) => (repo.url === row.url ? { ...repo, ...resolved } : repo))
+        : [...workspace.repos, resolved];
       onRepoResolved(resolved);
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
@@ -920,9 +887,17 @@ function RepositoryPrimaryHealthButton({
   );
 }
 
-function RepositoryUsageDetailRow({ usage, href }: { usage: GongfengResourceUsage; href: string }) {
+function RepositoryUsageDetailRow({
+  usage,
+  workspaceId,
+  href,
+}: {
+  usage: GongfengResourceUsage;
+  workspaceId: string;
+  href: string;
+}) {
   const { t } = useT("settings");
-  const deleteResource = useDeleteProjectResource(usage.workspace_id, usage.project.id);
+  const deleteResource = useDeleteProjectResource(workspaceId, usage.project.id);
   const pending = deleteResource.isPending;
 
   const handleDelete = async () => {
@@ -972,22 +947,6 @@ function MetaBadge({ children }: { children: ReactNode }) {
   );
 }
 
-function repositoryDefaultBranch(row: RepositoryLibraryRow): string {
-  const fromLibrary = row.repo?.default_branch?.trim();
-  if (fromLibrary) return fromLibrary;
-  return firstNonEmpty(row.usages.map((usage) => usage.resource_ref.branch || usage.resource_ref.ref));
-}
-
-function repositoryProjectPath(row: RepositoryLibraryRow): string {
-  return gongfengWorkspaceRepoProjectPath(row.repo) || inferProjectPathFromGongfengURL(row.url);
-}
-
-function gongfengWorkspaceRepoProjectPath(repo: WorkspaceRepo | undefined): string {
-  const fromLibrary = repo?.project_path?.trim();
-  if (fromLibrary) return fromLibrary;
-  return repo?.url ? inferProjectPathFromGongfengURL(repo.url) : "";
-}
-
 function gongfengResourceProjectPath(ref: GongfengRepoResourceRef): string {
   const fromRef = ref.project_path?.trim();
   if (fromRef) return fromRef;
@@ -995,17 +954,9 @@ function gongfengResourceProjectPath(ref: GongfengRepoResourceRef): string {
 }
 
 function repositoryDisplayName(row: RepositoryLibraryRow): string {
-  const projectPath = repositoryProjectPath(row);
+  const projectPath = row.repo?.project_path?.trim() ?? "";
   if (projectPath) return projectPath.split("/").filter(Boolean).pop() || projectPath;
   return inferRepoNameFromURL(row.url) || row.url;
-}
-
-function repositoryCommitID(row: RepositoryLibraryRow): string {
-  return firstNonEmpty([
-    row.repo?.head_commit,
-    row.repo?.commit_sha,
-    ...row.usages.flatMap((usage) => [usage.resource_ref.head_commit, usage.resource_ref.commit_sha]),
-  ]);
 }
 
 function buildBranchSyncedResourceRef(
@@ -1013,7 +964,7 @@ function buildBranchSyncedResourceRef(
   resolved: WorkspaceRepo,
 ): GongfengRepoResourceRef {
   const branch = resolved.default_branch?.trim() || current.branch || current.ref || "";
-  const commit = resolved.commit_sha || resolved.head_commit || "";
+  const commit = resolved.head_commit || "";
   return {
     ...current,
     provider: "gongfeng",
@@ -1040,10 +991,6 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
     out.push(trimmed);
   }
   return out;
-}
-
-function firstNonEmpty(values: Array<string | undefined>): string {
-  return values.map((value) => value?.trim()).find((value): value is string => Boolean(value)) ?? "";
 }
 
 type RepositoryHealth = {
@@ -1102,14 +1049,13 @@ function deriveRepositoryHealth(ref?: RepositoryHealthSource): RepositoryHealth 
   if (statuses.includes("auth_required")) {
     return { label: "需要凭据", summary, tone: "warning" };
   }
-  if (statuses.length > 0 && statuses.every(isPassingStatus)) {
+  if (
+    statuses.length > 0 &&
+    statuses.every((value) => ["ok", "passed", "connected", "synced", "reachable", "credential_backed"].includes(value))
+  ) {
     return { label: "通过", summary, tone: "success" };
   }
   return { label: "待验证", summary, tone: "warning" };
-}
-
-function isPassingStatus(value: string): boolean {
-  return ["ok", "passed", "connected", "synced", "reachable", "credential_backed"].includes(value);
 }
 
 function healthIcon(tone: RepositoryHealth["tone"]) {

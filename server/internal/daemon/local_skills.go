@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/skill"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -22,59 +23,19 @@ const (
 	maxLocalSkillDirDepth = 4
 )
 
-type runtimeLocalSkillSummary struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	SourcePath  string `json:"source_path"`
-	Provider    string `json:"provider"`
-	// Root classifies which discovery root surfaced this skill:
-	// localSkillRootProvider ("provider") for the runtime's own skill
-	// directory (e.g. ~/.claude/skills) or localSkillRootUniversal
-	// ("universal") for the cross-tool ~/.agents/skills fallback. The UI
-	// uses it to label a skill's origin and to hint, in the import dialog,
-	// whether a skill came from a provider-specific or a shared location.
-	// Older daemons that predate multi-root discovery omit the field; the
-	// server treats an empty value as "unknown" rather than a provider/
-	// universal assertion.
-	Root      string `json:"root,omitempty"`
-	FileCount int    `json:"file_count"`
-}
-
 type runtimeLocalSkillBundle struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Content     string          `json:"content"`
-	SourcePath  string          `json:"source_path"`
-	Provider    string          `json:"provider"`
-	Files       []SkillFileData `json:"files,omitempty"`
+	Name        string               `json:"name"`
+	Description string               `json:"description,omitempty"`
+	Content     string               `json:"content"`
+	SourcePath  string               `json:"source_path"`
+	Provider    string               `json:"provider"`
+	Files       []protocol.SkillFile `json:"files,omitempty"`
 }
-
-// localSkillRoot is a single discovery location plus a classifier for where
-// it came from. Roots are returned in priority order by
-// localSkillRootsForProvider; the kind is surfaced to the UI on each
-// discovered skill (see runtimeLocalSkillSummary.Root).
-type localSkillRoot struct {
-	path string
-	kind string
-}
-
-const (
-	// localSkillRootProvider marks a runtime's own skill directory (e.g.
-	// ~/.claude/skills). These take priority over the universal root.
-	localSkillRootProvider = "provider"
-	// localSkillRootUniversal marks the cross-tool ~/.agents/skills root,
-	// a convention shared by Codex, Gemini CLI, Augment and others as a
-	// universal home-level skill store. It is always searched last so a
-	// same-key skill in the provider directory keeps winning.
-	localSkillRootUniversal = "universal"
-)
 
 // localSkillRootsForProvider returns the ordered user-level skill roots
 // scanned for each runtime/provider. The slice is in priority order:
 //
-//  1. the runtime's provider-specific root (backward-compatible with the
-//     single-root behavior that predates ~/.agents/skills support), then
+//  1. the runtime's provider-specific root, then
 //  2. the cross-tool universal root ~/.agents/skills.
 //
 // Listing and import both walk the roots in this order and the first match of
@@ -99,7 +60,7 @@ const (
 // Longer-term this mapping would be better colocated with the provider
 // definitions under server/pkg/agent so adding a new runtime can't silently
 // miss the local-skills surface.
-func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error) {
+func localSkillRootsForProvider(provider string) ([]string, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve user home: %w", err)
@@ -133,9 +94,9 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 		return nil, false, nil
 	}
 
-	return []localSkillRoot{
-		{path: providerRoot, kind: localSkillRootProvider},
-		{path: filepath.Join(home, ".agents", "skills"), kind: localSkillRootUniversal},
+	return []string{
+		providerRoot,
+		filepath.Join(home, ".agents", "skills"),
 	}, true, nil
 }
 
@@ -196,8 +157,8 @@ func readLocalSkillMainFile(skillDir string) (string, error) {
 	return string(content), nil
 }
 
-func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileData, error) {
-	files := make([]SkillFileData, 0)
+func collectLocalSkillFiles(skillDir string, includeContent bool) ([]protocol.SkillFile, error) {
+	files := make([]protocol.SkillFile, 0)
 	var totalSize int64
 
 	// filepath.WalkDir does not follow a symlinked root, so when the runtime
@@ -254,7 +215,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 			return fmt.Errorf("local skill exceeds %d bytes in total", maxLocalSkillBundleSize)
 		}
 
-		file := SkillFileData{Path: filepath.ToSlash(rel)}
+		file := protocol.SkillFile{Path: filepath.ToSlash(rel)}
 		if includeContent {
 			content, err := os.ReadFile(path)
 			if err != nil {
@@ -275,7 +236,7 @@ func collectLocalSkillFiles(skillDir string, includeContent bool) ([]SkillFileDa
 	return files, nil
 }
 
-func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, error) {
+func listRuntimeLocalSkills(provider string) ([]protocol.RuntimeLocalSkillSummary, bool, error) {
 	roots, supported, err := localSkillRootsForProvider(provider)
 	if err != nil || !supported {
 		return nil, supported, err
@@ -290,16 +251,14 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 	//     `release/reporter/SKILL.md`, and `loadRuntimeLocalSkillBundle`
 	//     already accepts slash-delimited keys, so the list endpoint
 	//     must surface those nested skills too.
-	skills := make([]runtimeLocalSkillSummary, 0)
+	skills := make([]protocol.RuntimeLocalSkillSummary, 0)
 	// Dedupe strictly by Key. Roots are visited in priority order
 	// (provider-specific first, ~/.agents/skills last); the first
-	// occurrence of a Key wins. This keeps backward compatibility provable:
-	// every skill visible under the single-root behavior keeps its Key,
-	// SourcePath and FileCount, and we only ever *add* non-conflicting Keys
-	// discovered under the universal root.
+	// occurrence of a Key wins, so provider-specific skills take precedence
+	// and the universal root only contributes non-conflicting keys.
 	seenKeys := make(map[string]bool)
 	for _, root := range roots {
-		if _, err := os.Stat(root.path); err != nil {
+		if _, err := os.Stat(root); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -313,9 +272,9 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 		// root) and `foo` (agents root) are listed; a shared set would mark
 		// the resolved real path visited from the first root and silently
 		// drop the legitimate second entry.
-		rootSkills := make([]runtimeLocalSkillSummary, 0)
+		rootSkills := make([]protocol.RuntimeLocalSkillSummary, 0)
 		visited := make(map[string]bool)
-		enumerateLocalSkills(provider, root.kind, root.path, root.path, 0, visited, &rootSkills)
+		enumerateLocalSkills(provider, root, root, 0, visited, &rootSkills)
 
 		for _, s := range rootSkills {
 			if seenKeys[s.Key] {
@@ -345,10 +304,10 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 // EvalSymlinks up front. Errors from EvalSymlinks just stop the descent on
 // that branch — most often it's a dangling link, which we want to ignore.
 func enumerateLocalSkills(
-	provider, rootKind, walkRoot, currentDir string,
+	provider, walkRoot, currentDir string,
 	depth int,
 	visited map[string]bool,
-	skills *[]runtimeLocalSkillSummary,
+	skills *[]protocol.RuntimeLocalSkillSummary,
 ) {
 	if depth > maxLocalSkillDirDepth {
 		return
@@ -403,13 +362,12 @@ func enumerateLocalSkills(
 				continue
 			}
 
-			*skills = append(*skills, runtimeLocalSkillSummary{
+			*skills = append(*skills, protocol.RuntimeLocalSkillSummary{
 				Key:         key,
 				Name:        skillName,
 				Description: description,
 				SourcePath:  relativizeHomePath(path),
 				Provider:    provider,
-				Root:        rootKind,
 				// `files` is the supporting bundle (collectLocalSkillFiles
 				// intentionally excludes SKILL.md so the bundle's `Content`
 				// field can carry it without duplication on import). For the
@@ -421,7 +379,7 @@ func enumerateLocalSkills(
 		}
 
 		// No SKILL.md here — descend looking for nested skills.
-		enumerateLocalSkills(provider, rootKind, walkRoot, path, depth+1, visited, skills)
+		enumerateLocalSkills(provider, walkRoot, path, depth+1, visited, skills)
 	}
 }
 
@@ -447,7 +405,7 @@ func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillB
 	// returned, so we never silently substitute a different-content same-key
 	// skill from a lower-priority root.
 	for _, root := range roots {
-		skillDir := filepath.Join(root.path, filepath.FromSlash(key))
+		skillDir := filepath.Join(root, filepath.FromSlash(key))
 		info, err := os.Stat(skillDir)
 		if err != nil {
 			// IsNotExist => this root simply lacks the skill, try the next.

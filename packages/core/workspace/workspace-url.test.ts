@@ -12,7 +12,7 @@ describe("workspaceUrlHost", () => {
     expect(workspaceUrlHost("https://multica.example.com/")).toBe(
       "multica.example.com",
     );
-    expect(workspaceUrlHost("http://multica.example.com/app/onboarding")).toBe(
+    expect(workspaceUrlHost("http://multica.example.com/workspaces/new")).toBe(
       "multica.example.com",
     );
   });

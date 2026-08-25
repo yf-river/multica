@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -191,18 +192,13 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runProjectList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	params := url.Values{}
-	if client.WorkspaceID != "" {
-		params.Set("workspace_id", client.WorkspaceID)
-	}
 	if v, _ := cmd.Flags().GetString("status"); v != "" {
 		params.Set("status", v)
 	}
@@ -219,8 +215,7 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 
 	projectsRaw, _ := result["projects"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
 			return fmt.Errorf("load project resources: %w", err)
 		}
@@ -254,18 +249,11 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 }
 
 func runProjectGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
 
 	var project map[string]any
 	if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID, &project); err != nil {
@@ -305,27 +293,21 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--title is required")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{"title": title}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
 	if v, _ := cmd.Flags().GetString("status"); v != "" {
 		if err := validateProjectStatus(v); err != nil {
 			return err
 		}
 		body["status"] = v
 	}
-	if v, _ := cmd.Flags().GetString("icon"); v != "" {
-		body["icon"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "icon", "icon")
 	if v, _ := cmd.Flags().GetString("lead"); v != "" {
 		aType, aID, resolveErr := resolveAssignee(ctx, client, v, memberOrAgentKinds)
 		if resolveErr != nil {
@@ -357,7 +339,9 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/projects", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, "/api/projects", body, uuid.NewString(), &result,
+	); err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}
 
@@ -365,28 +349,15 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-
 	body := map[string]any{}
-	if cmd.Flags().Changed("title") {
-		v, _ := cmd.Flags().GetString("title")
-		body["title"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "title", "title")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	if cmd.Flags().Changed("status") {
 		v, _ := cmd.Flags().GetString("status")
 		if err := validateProjectStatus(v); err != nil {
@@ -394,10 +365,7 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["status"] = v
 	}
-	if cmd.Flags().Changed("icon") {
-		v, _ := cmd.Flags().GetString("icon")
-		body["icon"] = v
-	}
+	applyChangedStringFlag(cmd, body, "icon", "icon")
 	if cmd.Flags().Changed("lead") {
 		v, _ := cmd.Flags().GetString("lead")
 		aType, aID, resolveErr := resolveAssignee(ctx, client, v, memberOrAgentKinds)
@@ -421,34 +389,18 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func printProjectMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TITLE", "STATUS"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "title"),
-			strVal(result, "status"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "TITLE", "STATUS"},
+		[]string{strVal(result, "id"), strVal(result, "title"), strVal(result, "status")},
+	)
 }
 
 func runProjectDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/projects/"+projectRef.ID); err != nil {
 		return fmt.Errorf("delete project: %w", err)
@@ -466,18 +418,11 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, id, "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, id)
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
 
 	body := map[string]any{"status": status}
 	var result map[string]any
@@ -487,8 +432,7 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Project %s status changed to %s.\n", strVal(result, "title"), status)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	return nil
@@ -499,18 +443,11 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runProjectResourceList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/projects/"+projectRef.ID+"/resources", &result); err != nil {
@@ -518,8 +455,7 @@ func runProjectResourceList(cmd *cobra.Command, args []string) error {
 	}
 	resourcesRaw, _ := result["resources"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resourcesRaw)
 	}
 
@@ -595,36 +531,23 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 		body["label"] = label
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, args[0], "project", resolveProjectID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/projects/"+projectRef.ID+"/resources", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, "/api/projects/"+projectRef.ID+"/resources", body, uuid.NewString(), &result,
+	); err != nil {
 		return fmt.Errorf("add project resource: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TYPE", "REF"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "resource_type"),
-			summarizeResourceRef(result["resource_ref"]),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "TYPE", "REF"},
+		[]string{strVal(result, "id"), strVal(result, "resource_type"), summarizeResourceRef(result["resource_ref"])},
+	)
 }
 
 func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
@@ -701,32 +624,16 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update project resource: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TYPE", "REF", "LABEL"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "resource_type"),
-			summarizeResourceRef(result["resource_ref"]),
-			strVal(result, "label"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "TYPE", "REF", "LABEL"},
+		[]string{strVal(result, "id"), strVal(result, "resource_type"), summarizeResourceRef(result["resource_ref"]), strVal(result, "label")},
+	)
 }
 
 func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, resolvedID, error) {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, err := newResolvedAPIClientContext(cmd, projectArg, "project", resolveProjectID)
 	if err != nil {
 		return nil, nil, nil, resolvedID{}, resolvedID{}, err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	projectRef, err := resolveProjectID(ctx, client, projectArg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, resolvedID{}, fmt.Errorf("resolve project: %w", err)
 	}
 	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, resourceArg)
 	if err != nil {
@@ -943,37 +850,6 @@ func summarizeProjectResources(resourcesRaw []any) []map[string]any {
 		summaries = append(summaries, summary)
 	}
 	return summaries
-}
-
-func projectCandidateDetail(project map[string]any) string {
-	detail := strVal(project, "status")
-	resources, _ := project["resource_summaries"].([]map[string]any)
-	if len(resources) == 0 {
-		if raw, ok := project["resource_summaries"].([]any); ok {
-			for _, item := range raw {
-				if summary, ok := item.(map[string]any); ok {
-					resources = append(resources, summary)
-				}
-			}
-		}
-	}
-	parts := make([]string, 0, len(resources))
-	for _, r := range resources {
-		if projectPath, _ := r["project_path"].(string); projectPath != "" {
-			parts = append(parts, projectPath)
-			continue
-		}
-		if summary, _ := r["summary"].(string); summary != "" {
-			parts = append(parts, summary)
-		}
-	}
-	if len(parts) == 0 {
-		return detail
-	}
-	if detail == "" {
-		return strings.Join(parts, ", ")
-	}
-	return detail + " | " + strings.Join(parts, ", ")
 }
 
 // ---------------------------------------------------------------------------

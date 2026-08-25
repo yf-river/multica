@@ -1,31 +1,29 @@
-export type AutopilotStatus = "active" | "paused" | "archived";
+type AutopilotStatus = "active" | "paused" | "archived";
 
 export type AutopilotExecutionMode = "create_issue" | "run_only";
 
 // `assignee_type` selects which polymorphic actor backs the autopilot:
 // "agent" → assignee_id references agent(id); "squad" → assignee_id references
-// squad(id) and dispatch resolves to squad.leader_id at run time (MUL-2429,
-// Path A). Older servers omit this field — callers should default to "agent".
+// squad(id) and dispatch resolves to squad.leader_id at run time.
 export type AutopilotAssigneeType = "agent" | "squad";
 
-export type AutopilotTriggerKind = "schedule" | "webhook" | "api";
+type AutopilotTriggerKind = "schedule" | "webhook";
 
 // `skipped` is emitted by the backend pre-flight admission check
 // (assignee runtime offline at dispatch time, MUL-1899). The frontend MUST
 // handle it explicitly — falling through to a generic case used to show
 // the run as still-pending which masked the no-op.
-export type AutopilotRunStatus =
+type AutopilotRunStatus =
   | "issue_created"
   | "running"
   | "completed"
   | "failed"
   | "skipped";
 
-export type AutopilotRunSource = "schedule" | "manual" | "webhook" | "api";
+type AutopilotRunSource = "schedule" | "manual" | "webhook";
 
 export interface Autopilot {
   id: string;
-  workspace_id: string;
   title: string;
   description: string | null;
   project_id?: string | null;
@@ -33,21 +31,19 @@ export interface Autopilot {
   assignee_id: string;
   status: AutopilotStatus;
   execution_mode: AutopilotExecutionMode;
-  issue_title_template: string | null;
   created_by_type: string;
   created_by_id: string;
   last_run_at: string | null;
   created_at: string;
-  updated_at: string;
   // List-endpoint-only derived fields; absent on detail/create/update
-  // responses and on older servers. Enabled triggers only. `trigger_kinds`
+  // responses. Enabled triggers only. `trigger_kinds`
   // and `last_run_status` are server-driven strings — render unknown values
   // through a generic fallback, never an exhaustive switch.
   trigger_kinds?: string[];
   next_run_at?: string | null;
   last_run_status?: string | null;
   // List endpoint returns []; only the detail endpoint populates this.
-  // Treat undefined as empty on older servers.
+  // Treat an omitted field on non-detail responses as empty.
   subscribers?: AutopilotSubscriber[];
 }
 
@@ -59,12 +55,10 @@ export interface WebhookEventFilter {
 export interface AutopilotSubscriber {
   user_type: "member";
   user_id: string;
-  created_at: string;
 }
 
 export interface AutopilotTrigger {
   id: string;
-  autopilot_id: string;
   kind: AutopilotTriggerKind;
   enabled: boolean;
   cron_expression: string | null;
@@ -72,8 +66,8 @@ export interface AutopilotTrigger {
   next_run_at: string | null;
   webhook_token: string | null;
   // webhook_path is computed server-side from webhook_token (always
-  // "/api/webhooks/autopilots/{token}"). Optional so older servers can be
-  // talked to gracefully.
+  // "/api/webhooks/autopilots/{token}"). It remains optional at the Desktop
+  // response-drift boundary; clients can compose it from webhook_token.
   webhook_path?: string | null;
   // webhook_url is only present when MULTICA_PUBLIC_URL is configured
   // server-side. Clients fall back to composing from getBaseUrl/origin +
@@ -83,15 +77,11 @@ export interface AutopilotTrigger {
   // event_filters is only present for webhook triggers. Null/empty means
   // "accept all events".
   event_filters?: WebhookEventFilter[] | null;
-  last_fired_at: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface AutopilotRun {
   id: string;
   autopilot_id: string;
-  trigger_id: string | null;
   source: AutopilotRunSource;
   status: AutopilotRunStatus;
   issue_id: string | null;
@@ -100,13 +90,7 @@ export interface AutopilotRun {
   completed_at: string | null;
   failure_reason: string | null;
   trigger_payload: unknown;
-  result: unknown;
   created_at: string;
-}
-
-export interface AutopilotSubscriberInput {
-  user_type: "member";
-  user_id: string;
 }
 
 export interface CreateAutopilotRequest {
@@ -117,24 +101,22 @@ export interface CreateAutopilotRequest {
   assignee_id: string;
   execution_mode: AutopilotExecutionMode;
   issue_title_template?: string;
-  subscribers?: AutopilotSubscriberInput[];
+  subscribers?: AutopilotSubscriber[];
+  trigger: CreateAutopilotTriggerRequest;
 }
 
-export interface UpdateAutopilotRequest {
-  title?: string;
+export type CreateAutopilotResponse = Autopilot & {
+  initial_trigger: AutopilotTrigger;
+};
+
+// Assignee type and ID must still be sent together when changing assignee.
+export type UpdateAutopilotRequest = Partial<
+  Omit<CreateAutopilotRequest, "trigger" | "description" | "issue_title_template">
+> & {
   description?: string | null;
-  project_id?: string | null;
-  // Send `assignee_type` together with `assignee_id` whenever you change the
-  // assignee — the server requires both for a type swap.
-  assignee_type?: AutopilotAssigneeType;
-  assignee_id?: string;
   status?: AutopilotStatus;
-  execution_mode?: AutopilotExecutionMode;
   issue_title_template?: string | null;
-  // When present, fully replaces the autopilot's subscriber template;
-  // omit to leave it untouched.
-  subscribers?: AutopilotSubscriberInput[];
-}
+};
 
 export interface CreateAutopilotTriggerRequest {
   kind: AutopilotTriggerKind;
@@ -145,28 +127,17 @@ export interface CreateAutopilotTriggerRequest {
   event_filters?: WebhookEventFilter[];
 }
 
-export interface UpdateAutopilotTriggerRequest {
+export type UpdateAutopilotTriggerRequest = Partial<
+  Omit<CreateAutopilotTriggerRequest, "kind" | "event_filters">
+> & {
   enabled?: boolean;
-  cron_expression?: string;
-  timezone?: string;
-  label?: string;
   // event_filters is only meaningful for webhook triggers.
   event_filters?: WebhookEventFilter[] | null;
-}
-
-export interface ListAutopilotsResponse {
-  autopilots: Autopilot[];
-  total: number;
-}
+};
 
 export interface GetAutopilotResponse {
   autopilot: Autopilot;
   triggers: AutopilotTrigger[];
-}
-
-export interface ListAutopilotRunsResponse {
-  runs: AutopilotRun[];
-  total: number;
 }
 
 // Webhook delivery enum is server-canonical. The frontend MUST `default`
@@ -188,9 +159,6 @@ export type WebhookSignatureStatus =
 
 export interface WebhookDelivery {
   id: string;
-  workspace_id: string;
-  autopilot_id: string;
-  trigger_id: string;
   provider: string;
   event: string;
   dedupe_key: string | null;
@@ -200,7 +168,6 @@ export interface WebhookDelivery {
   attempt_count: number;
   content_type: string | null;
   response_status: number | null;
-  autopilot_run_id: string | null;
   replayed_from_delivery_id: string | null;
   error: string | null;
   received_at: string;
@@ -211,9 +178,4 @@ export interface WebhookDelivery {
   selected_headers?: Record<string, unknown> | null;
   raw_body?: string | null;
   response_body?: string | null;
-}
-
-export interface ListWebhookDeliveriesResponse {
-  deliveries: WebhookDelivery[];
-  total: number;
 }

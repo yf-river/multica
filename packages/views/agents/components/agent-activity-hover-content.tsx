@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { deriveAgentAvailability } from "@multica/core/agents";

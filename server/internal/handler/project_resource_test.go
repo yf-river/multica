@@ -9,11 +9,39 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func createProjectResourceTestProject(t *testing.T, title string) ProjectResponse {
+func TestCreateProjectResource_ReplaysCommittedResponse(t *testing.T) {
+	project := createProjectResourceTestProject(t, "Resource retry project")
+	key := uuid.NewString()
+	create := func() (int, ProjectResourceResponse) {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+			"resource_type": "github_repo",
+			"resource_ref":  map[string]any{"url": "https://github.com/example/retry-" + key[:8]},
+		})
+		req = withURLParam(req, "id", project.ID)
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.CreateProjectResource(w, req)
+		var response ProjectResourceResponse
+		_ = json.NewDecoder(w.Body).Decode(&response)
+		return w.Code, response
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'project_resource' AND idempotency_key = $1`, key)
+	})
+
+	firstStatus, first := create()
+	secondStatus, second := create()
+	if firstStatus != http.StatusCreated || secondStatus != http.StatusCreated || first.ID != second.ID {
+		t.Fatalf("resource replay = (%d, %s) then (%d, %s), want same 201 response", firstStatus, first.ID, secondStatus, second.ID)
+	}
+}
+
+func createProjectResourceTestProject(t *testing.T, title string) projectResponse {
 	t.Helper()
 
 	w := httptest.NewRecorder()
@@ -24,7 +52,7 @@ func createProjectResourceTestProject(t *testing.T, title string) ProjectRespons
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode CreateProject: %v", err)
 	}
@@ -35,6 +63,27 @@ func createProjectResourceTestProject(t *testing.T, title string) ProjectRespons
 	})
 
 	return project
+}
+
+func requireProjectTitleAbsent(t *testing.T, title string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/projects?workspace_id="+testWorkspaceID, nil)
+	testHandler.ListProjects(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
+	}
+	var list struct {
+		Projects []projectResponse `json:"projects"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
+		t.Fatalf("decode ListProjects: %v", err)
+	}
+	for _, project := range list.Projects {
+		if project.Title == title {
+			t.Fatalf("project %q survived rejected transaction as %s", title, project.ID)
+		}
+	}
 }
 
 func TestProjectResourceLifecycle(t *testing.T) {
@@ -146,6 +195,60 @@ func TestProjectResourceLifecycle(t *testing.T) {
 	}
 	if listResp.Total != 0 {
 		t.Errorf("post-delete list: total = %d, want 0", listResp.Total)
+	}
+}
+
+func TestProjectResourceImplicitPositionAppendsAtomically(t *testing.T) {
+	project := createProjectResourceTestProject(t, "Atomic resource ordering project")
+	explicitPosition := 10
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "github_repo",
+		"resource_ref":  map[string]any{"url": "https://github.com/multica-ai/atomic-explicit"},
+		"position":      explicitPosition,
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create explicit-position resource: %d %s", w.Code, w.Body.String())
+	}
+
+	const concurrentCreates = 8
+	results := make(chan string, concurrentCreates)
+	for i := range concurrentCreates {
+		go func() {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+				"resource_type": "github_repo",
+				"resource_ref":  map[string]any{"url": fmt.Sprintf("https://github.com/multica-ai/atomic-%d", i)},
+			})
+			req = withURLParam(req, "id", project.ID)
+			testHandler.CreateProjectResource(w, req)
+			if w.Code != http.StatusCreated {
+				results <- fmt.Sprintf("status=%d body=%s", w.Code, w.Body.String())
+				return
+			}
+			results <- ""
+		}()
+	}
+	for range concurrentCreates {
+		if failure := <-results; failure != "" {
+			t.Fatalf("concurrent implicit-position create failed: %s", failure)
+		}
+	}
+
+	resources, err := testHandler.Queries.ListProjectResources(context.Background(), parseUUID(project.ID))
+	if err != nil {
+		t.Fatalf("list project resources: %v", err)
+	}
+	if len(resources) != concurrentCreates+1 {
+		t.Fatalf("resource count = %d, want %d", len(resources), concurrentCreates+1)
+	}
+	for i, resource := range resources {
+		want := int32(explicitPosition + i)
+		if resource.Position != want {
+			t.Fatalf("resource position[%d] = %d, want %d; resources=%+v", i, resource.Position, want, resources)
+		}
 	}
 }
 
@@ -320,87 +423,6 @@ func TestProjectResourceGongfengLifecycle(t *testing.T) {
 	}
 }
 
-func TestProjectResourceGongfengSyncDropsLegacyDisabledState(t *testing.T) {
-	setHandlerTestWorkspaceRepos(t, []map[string]string{
-		{
-			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-			"provider":       "gongfeng",
-			"project_path":   "ChainWeaver/ida/user-center",
-			"default_branch": "v5.0.0_dev",
-		},
-	})
-
-	project := createProjectResourceTestProject(t, "Legacy disabled Gongfeng resource")
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
-		"resource_type": "gongfeng_repo",
-		"resource_ref": map[string]any{
-			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-		},
-	})
-	req = withURLParam(req, "id", project.ID)
-	testHandler.CreateProjectResource(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created ProjectResourceResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode CreateProjectResource: %v", err)
-	}
-
-	legacyRef := map[string]any{
-		"provider":          "gongfeng",
-		"url":               "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-		"project_path":      "ChainWeaver/ida/user-center",
-		"resource_kind":     "commits",
-		"ref":               "v5.0.0_dev",
-		"branch":            "v5.0.0_dev",
-		"disabled":          true,
-		"disabled_at":       "2026-07-01T00:00:00Z",
-		"connection_status": "disabled",
-		"sync_status":       "disabled",
-		"test_status":       "disabled",
-	}
-	legacyRaw, err := json.Marshal(legacyRef)
-	if err != nil {
-		t.Fatalf("marshal legacy ref: %v", err)
-	}
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE project_resource SET resource_ref = $1::jsonb WHERE id = $2
-	`, legacyRaw, created.ID); err != nil {
-		t.Fatalf("seed legacy disabled resource_ref: %v", err)
-	}
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources/"+created.ID+"/sync", nil)
-	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
-	testHandler.SyncProjectResource(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("SyncProjectResource: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var synced ProjectResourceResponse
-	if err := json.NewDecoder(w.Body).Decode(&synced); err != nil {
-		t.Fatalf("decode SyncProjectResource: %v", err)
-	}
-	var syncedRef map[string]any
-	if err := json.Unmarshal(synced.ResourceRef, &syncedRef); err != nil {
-		t.Fatalf("decode synced resource_ref: %v", err)
-	}
-	if _, ok := syncedRef["disabled"]; ok {
-		t.Fatalf("synced resource_ref retained disabled: %s", string(synced.ResourceRef))
-	}
-	if _, ok := syncedRef["disabled_at"]; ok {
-		t.Fatalf("synced resource_ref retained disabled_at: %s", string(synced.ResourceRef))
-	}
-	if syncedRef["connection_status"] == "disabled" || syncedRef["test_status"] == "disabled" {
-		t.Fatalf("synced resource_ref retained disabled statuses: %s", string(synced.ResourceRef))
-	}
-	if syncedRef["sync_status"] != "synced" {
-		t.Fatalf("sync_status = %v, want synced (ref=%s)", syncedRef["sync_status"], string(synced.ResourceRef))
-	}
-}
-
 func TestProjectResourceGongfengRequiresWorkspaceInventory(t *testing.T) {
 	setHandlerTestWorkspaceRepos(t, []map[string]string{})
 
@@ -465,7 +487,7 @@ func TestCreateProjectGongfengResourceRequiresWorkspaceInventory(t *testing.T) {
 		t.Fatalf("CreateProject inline registered project_path: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project struct {
-		ProjectResponse
+		projectResponse
 		Resources []ProjectResourceResponse `json:"resources"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
@@ -493,7 +515,7 @@ func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T)
 		db.ExternalCredentialProfile{
 			ID:        profileID,
 			Provider:  externalCredentialProviderGongfeng,
-			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			SecretRef: "env:GONGFENG_PRIVATE_TOKEN",
 			Status:    "unverified",
 		},
 		true,
@@ -511,7 +533,7 @@ func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T)
 		t.Fatalf("credential probe proof not recorded: %+v", ref)
 	}
 	raw := string(mustMarshalRaw(ref))
-	if strings.Contains(raw, "GONGFENG_ACCESS_TOKEN") {
+	if strings.Contains(raw, "GONGFENG_PRIVATE_TOKEN") {
 		t.Fatalf("resource_ref leaked secret ref name: %s", raw)
 	}
 	if !strings.Contains(raw, "secret_ref") {
@@ -574,7 +596,7 @@ func TestGongfengResourceProfileWithoutSuccessfulCredentialProbeStaysAuthRequire
 		db.ExternalCredentialProfile{
 			ID:        profileID,
 			Provider:  externalCredentialProviderGongfeng,
-			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			SecretRef: "env:GONGFENG_PRIVATE_TOKEN",
 			Status:    "unverified",
 		},
 		true,
@@ -797,31 +819,8 @@ func TestParsedGongfengWorkspaceRepoBranch(t *testing.T) {
 // local_path on different projects must be allowed — Bohan explicitly chose
 // not to add a UNIQUE(daemon_id, local_path) constraint.
 func TestProjectResourceLocalDirectoryLifecycle(t *testing.T) {
-	createProject := func(title string) ProjectResponse {
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-			"title": title,
-		})
-		testHandler.CreateProject(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("CreateProject(%s): %d %s", title, w.Code, w.Body.String())
-		}
-		var p ProjectResponse
-		if err := json.NewDecoder(w.Body).Decode(&p); err != nil {
-			t.Fatalf("decode CreateProject: %v", err)
-		}
-		return p
-	}
-	deleteProject := func(id string) {
-		r := newRequest("DELETE", "/api/projects/"+id, nil)
-		r = withURLParam(r, "id", id)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}
-
-	projectA := createProject("Local directory project A")
-	defer deleteProject(projectA.ID)
-	projectB := createProject("Local directory project B")
-	defer deleteProject(projectB.ID)
+	projectA := createProjectResourceTestProject(t, "Local directory project A")
+	projectB := createProjectResourceTestProject(t, "Local directory project B")
 
 	const (
 		daemonID  = "daemon-aaaa-bbbb-cccc"
@@ -1042,7 +1041,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("GetProject: %d %s", w.Code, w.Body.String())
 		}
-		var resp ProjectResponse
+		var resp projectResponse
 		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode GetProject: %v", err)
 		}
@@ -1074,7 +1073,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
 	}
 	var list struct {
-		Projects []ProjectResponse `json:"projects"`
+		Projects []projectResponse `json:"projects"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
 		t.Fatalf("decode ListProjects: %v", err)
@@ -1113,7 +1112,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		t.Fatalf("create project issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// UpdateProject must preserve the breadcrumb. A title-only PUT used to
@@ -1127,7 +1126,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("UpdateProject: %d %s", w.Code, w.Body.String())
 	}
-	var updated ProjectResponse
+	var updated projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode UpdateProject: %v", err)
 	}
@@ -1191,25 +1190,8 @@ func TestCreateProjectRollsBackOnInvalidResource(t *testing.T) {
 		t.Fatalf("CreateProject with invalid resource: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Confirm no project survived (transactional rollback). Listing all projects
-	// in the workspace and checking for the title is enough.
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/projects?workspace_id="+testWorkspaceID, nil)
-	testHandler.ListProjects(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
-	}
-	var list struct {
-		Projects []ProjectResponse `json:"projects"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	for _, p := range list.Projects {
-		if p.Title == "Project that should not exist" {
-			t.Errorf("invalid resource should have rolled back project create, but found %s", p.ID)
-		}
-	}
+	// Confirm no project survived the transactional rollback.
+	requireProjectTitleAbsent(t, "Project that should not exist")
 }
 
 // TestProjectResourceUpdateLifecycle covers the PUT endpoint added in MUL-2662:
@@ -1494,23 +1476,7 @@ func TestCreateProjectBundledLocalDirectoryDaemonConflict(t *testing.T) {
 	}
 
 	// Confirm the rollback: no project with the title should exist.
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/projects?workspace_id="+testWorkspaceID, nil)
-	testHandler.ListProjects(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
-	}
-	var list struct {
-		Projects []ProjectResponse `json:"projects"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	for _, p := range list.Projects {
-		if p.Title == "Bundled label shadow" {
-			t.Errorf("expected no project to survive bundled-create rejection, but found %s", p.ID)
-		}
-	}
+	requireProjectTitleAbsent(t, "Bundled label shadow")
 
 	// Two distinct paths on the same daemon must ALSO 400 — the invariant
 	// is "one local_directory per (project, daemon)", not "one per (project,

@@ -7,10 +7,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@multica/ui/components/ui/popover";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { cn } from "@multica/ui/lib/utils";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
+import {
+  agentTaskSnapshotOptions,
+  partitionActiveAgentTasks,
+} from "@multica/core/agents";
 import type { AgentTask } from "@multica/core/types";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { ActiveTaskRow } from "./execution-log-section";
@@ -46,24 +49,10 @@ export const IssueAgentHeaderChip = memo(function IssueAgentHeaderChip({
   const wsId = useWorkspaceId();
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
 
-  const { running, queued } = useMemo(() => {
-    const running: AgentTask[] = [];
-    const queued: AgentTask[] = [];
-    for (const task of snapshot) {
-      if (task.issue_id !== issueId) continue;
-      if (task.status === "running") running.push(task);
-      else if (
-        task.status === "queued" ||
-        task.status === "dispatched" ||
-        // Daemon-parked on a busy local_directory — still active, just
-        // waiting on a path lock. Belongs in the live chip, not dropped.
-        task.status === "waiting_local_directory"
-      )
-        queued.push(task);
-      // Terminal statuses are the execution log's story, not the live chip's.
-    }
-    return { running, queued };
-  }, [snapshot, issueId]);
+  const { running, queued } = useMemo(
+    () => partitionActiveAgentTasks(snapshot, (task) => task.issue_id === issueId),
+    [snapshot, issueId],
+  );
 
   // No active work → render nothing.
   if (running.length === 0 && queued.length === 0) return null;

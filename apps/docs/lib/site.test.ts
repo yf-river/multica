@@ -29,26 +29,17 @@ beforeEach(() => {
 });
 
 describe("docsAlternates", () => {
-  it("emits Chinese canonical alternates for a page", async () => {
+  it.each([
+    { slugs: ["agents"], url: "https://www.multica.ai/docs/agents" },
+    { slugs: [], url: "https://www.multica.ai/docs" },
+  ])("emits Chinese canonical alternates for $url", async ({ slugs, url }) => {
     const { docsAlternates } = await import("./site");
 
-    expect(docsAlternates(["agents"])).toEqual({
-      canonical: "https://www.multica.ai/docs/agents",
+    expect(docsAlternates(slugs)).toEqual({
+      canonical: url,
       languages: {
-        zh: "https://www.multica.ai/docs/agents",
-        "x-default": "https://www.multica.ai/docs/agents",
-      },
-    });
-  });
-
-  it("emits Chinese canonical alternates for the docs root", async () => {
-    const { docsAlternates } = await import("./site");
-
-    expect(docsAlternates([])).toEqual({
-      canonical: "https://www.multica.ai/docs",
-      languages: {
-        zh: "https://www.multica.ai/docs",
-        "x-default": "https://www.multica.ai/docs",
+        zh: url,
+        "x-default": url,
       },
     });
   });

@@ -2,13 +2,14 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { SquadMemberPreview } from "@multica/core/types";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   squadListOptions,
   agentListOptions,
   memberListOptions,
 } from "@multica/core/workspace/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -52,12 +53,7 @@ export function SquadProfileCard({ squadId }: SquadProfileCardProps) {
   }
 
   const isArchived = !!squad.archived_at;
-  const initials = squad.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(squad.name);
 
   const memberPreview = squad.member_preview ?? [];
   const memberCount = squad.member_count ?? memberPreview.length;

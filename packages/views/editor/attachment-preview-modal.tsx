@@ -6,7 +6,6 @@
  * Single modal for every previewable kind. Handles 7 PreviewKinds:
  *
  *   - image : <img className="object-contain"> centered in the modal frame.
- *             Replaces the previous standalone ImageLightbox.
  *   - pdf   : <iframe src={download_url}> — relies on Chromium's PDFium
  *             plugin.
  *   - video : <video controls src={download_url}>
@@ -43,7 +42,7 @@ import {
 } from "@multica/core/api";
 import { Download, ExternalLink, FileText, Loader2, X } from "lucide-react";
 import type { Attachment } from "@multica/core/types";
-import { paths, useWorkspaceSlug } from "@multica/core/paths";
+import { useWorkspaceSlug } from "@multica/core/paths";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
@@ -58,6 +57,7 @@ import { useDownloadAttachment } from "./use-download-attachment";
 import { useAttachmentHtmlText } from "./hooks/use-attachment-html-text";
 import { HtmlPreviewBody } from "./html-preview-body";
 import { CodeBlockStatic } from "./code-block-static";
+import { openAttachmentPreviewPage } from "./attachment-preview-navigation";
 
 // ---------------------------------------------------------------------------
 // Preview source — full attachment, or URL-only (media types only)
@@ -73,7 +73,7 @@ import { CodeBlockStatic } from "./code-block-static";
 // / audio) can be opened from a `url` source because those render directly
 // from the URL without hitting the text-content proxy.
 
-export type PreviewSource =
+type PreviewSource =
   | { kind: "full"; attachment: Attachment }
   | { kind: "url"; url: string; filename: string };
 
@@ -92,8 +92,7 @@ interface PreviewState {
 }
 
 function resolvePreviewMediaUrl(attachment: Attachment): string {
-  const raw =
-    attachment.download_url || attachment.markdown_url || attachment.url;
+  const raw = attachment.download_url || attachment.markdown_url;
   return resolvePublicFileUrl(raw) ?? raw;
 }
 
@@ -126,10 +125,10 @@ function normalize(source: PreviewSource): PreviewState {
 // Public props
 // ---------------------------------------------------------------------------
 
-interface AttachmentPreviewModalProps {
+interface ActivePreview {
   source: PreviewSource;
-  open: boolean;
-  onClose: () => void;
+  state: PreviewState;
+  kind: PreviewKind;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,15 +143,12 @@ interface AttachmentPreviewModalProps {
 // means each carries its own (collapsed) state — they never collide because
 // only one preview is open per user click.
 
-export interface AttachmentPreviewHandle {
+interface AttachmentPreviewHandle {
   /** Try to open a preview for the source. Returns false when the file type
    *  isn't previewable, OR when the source is URL-only but the kind requires
    *  a full attachment (text/markdown/html). Callers can fall back to a
    *  download flow. */
   tryOpen: (source: PreviewSource) => boolean;
-  /** Force-open a preview, skipping the previewable() guard. Use for cases
-   *  where the caller has already filtered. */
-  open: (source: PreviewSource) => void;
   /** Modal node to render somewhere in the caller's tree. Resolves to `null`
    *  when no preview is active. Safe to render inside any container — the
    *  modal portals to document.body. */
@@ -160,57 +156,57 @@ export interface AttachmentPreviewHandle {
 }
 
 export function useAttachmentPreview(): AttachmentPreviewHandle {
-  const [current, setCurrent] = useState<PreviewSource | null>(null);
+  const [current, setCurrent] = useState<ActivePreview | null>(null);
 
-  const open = useCallback((source: PreviewSource) => setCurrent(source), []);
   const tryOpen = useCallback((source: PreviewSource) => {
     const state = normalize(source);
     const kind = getPreviewKind(state.contentType, state.filename);
     if (!kind) return false;
     // URL-only sources cannot drive text kinds — the /content proxy is ID-keyed.
     if (source.kind === "url" && !URL_ONLY_KINDS.has(kind)) return false;
-    setCurrent(source);
+    setCurrent({ source, state, kind });
     return true;
   }, []);
 
-  const modal = current ? (
-    <AttachmentPreviewModal
-      source={current}
-      open
-      onClose={() => setCurrent(null)}
-    />
-  ) : null;
-
-  return useMemo(() => ({ open, tryOpen, modal }), [open, tryOpen, modal]);
+  return useMemo(
+    () => ({
+      tryOpen,
+      modal: current ? (
+        <AttachmentPreviewModal
+          preview={current}
+          onClose={() => setCurrent(null)}
+        />
+      ) : null,
+    }),
+    [current, tryOpen],
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Modal — frame + dispatch
 // ---------------------------------------------------------------------------
 
-export function AttachmentPreviewModal({
-  source,
-  open,
+function AttachmentPreviewModal({
+  preview: { source, state, kind },
   onClose,
-}: AttachmentPreviewModalProps) {
+}: {
+  preview: ActivePreview;
+  onClose: () => void;
+}) {
   const { t } = useT("editor");
   const download = useDownloadAttachment();
-  const state = normalize(source);
   // useWorkspaceSlug (not useWorkspacePaths) — returns null outside a
   // workspace route instead of throwing, so the new-tab button just hides.
   const slug = useWorkspaceSlug();
   const navigation = useNavigation();
 
   useEffect(() => {
-    if (!open) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [open, onClose]);
-
-  const kind = getPreviewKind(state.contentType, state.filename);
+  }, [onClose]);
 
   // Download dispatcher: re-sign through `getAttachment` when an id is
   // available; otherwise fall back to opening the (possibly stale) URL
@@ -228,22 +224,7 @@ export function AttachmentPreviewModal({
   // Gated on slug + attachmentId for the same reason — URL-only sources
   // can't address the /content proxy the page relies on.
   const canOpenInNewTab = kind === "html" && !!slug && !!state.attachmentId;
-  const handleOpenInNewTab = () => {
-    if (!slug || !state.attachmentId) return;
-    const nameQuery = state.filename
-      ? `?name=${encodeURIComponent(state.filename)}`
-      : "";
-    const path = `${paths.workspace(slug).attachmentPreview(state.attachmentId)}${nameQuery}`;
-    if (navigation.openInNewTab) {
-      navigation.openInNewTab(path, state.filename, { activate: true });
-    } else {
-      const url = navigation.getShareableUrl(path);
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-    onClose();
-  };
-
-  if (!open || typeof document === "undefined") return null;
+  if (typeof document === "undefined") return null;
 
   return createPortal(
     <div
@@ -274,7 +255,15 @@ export function AttachmentPreviewModal({
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 title={t(($) => $.attachment.open_in_new_tab)}
                 aria-label={t(($) => $.attachment.open_in_new_tab)}
-                onClick={handleOpenInNewTab}
+                onClick={() => {
+                  openAttachmentPreviewPage(
+                    navigation,
+                    slug!,
+                    state.attachmentId!,
+                    state.filename,
+                  );
+                  onClose();
+                }}
               >
                 <ExternalLink className="size-4" />
               </button>
@@ -326,39 +315,11 @@ function PreviewContent({
   state,
   onDownload,
 }: {
-  kind: PreviewKind | null;
+  kind: PreviewKind;
   source: PreviewSource;
   state: PreviewState;
   onDownload: () => void;
 }) {
-  const { t } = useT("editor");
-
-  if (kind === null) {
-    return (
-      <UnsupportedFallback
-        message={t(($) => $.attachment.preview_unsupported)}
-        onDownload={onDownload}
-      />
-    );
-  }
-
-  // Text kinds need the attachment id for the /content proxy. The tryOpen
-  // gate prevents URL-only sources from reaching here for text kinds, but
-  // be defensive — a direct mount of <AttachmentPreviewModal> with a URL
-  // source whose filename later resolves to a text kind would otherwise
-  // crash on a null id.
-  if (
-    (kind === "markdown" || kind === "html" || kind === "text") &&
-    !state.attachmentId
-  ) {
-    return (
-      <UnsupportedFallback
-        message={t(($) => $.attachment.preview_unsupported)}
-        onDownload={onDownload}
-      />
-    );
-  }
-
   switch (kind) {
     case "image":
       return (
@@ -523,7 +484,3 @@ function UnsupportedFallback({
     </div>
   );
 }
-
-// Re-export the predicate from the dispatch util so entry-point components
-// only need a single import to gate the Eye button.
-export { isPreviewable } from "./utils/preview";

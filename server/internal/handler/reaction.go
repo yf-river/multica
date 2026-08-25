@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -19,6 +19,28 @@ type ReactionResponse struct {
 	ActorID   string `json:"actor_id"`
 	Emoji     string `json:"emoji"`
 	CreatedAt string `json:"created_at"`
+}
+
+type reactionActor struct {
+	emoji     string
+	actorType string
+	actorID   string
+}
+
+func loadReactionActor(w http.ResponseWriter, r *http.Request, userID string) (reactionActor, bool) {
+	var req struct {
+		Emoji string `json:"emoji"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return reactionActor{}, false
+	}
+	if req.Emoji == "" {
+		writeError(w, http.StatusBadRequest, "emoji is required")
+		return reactionActor{}, false
+	}
+	actorType, actorID := resolveActor(r, userID)
+	return reactionActor{emoji: req.Emoji, actorType: actorType, actorID: actorID}, true
 }
 
 func reactionToResponse(r db.CommentReaction) ReactionResponse {
@@ -37,54 +59,28 @@ type reactionRequest struct {
 	workspaceID string
 	workspace   pgtype.UUID
 	comment     db.Comment
-	emoji       string
-	actorType   string
-	actorID     string
+	reactionActor
 }
 
 func (h *Handler) loadReactionRequest(w http.ResponseWriter, r *http.Request) (reactionRequest, bool) {
-	commentID := chi.URLParam(r, "commentId")
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return reactionRequest{}, false
 	}
-	workspaceID := h.resolveWorkspaceID(r)
-	commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment id")
+	comment, workspaceID, workspaceUUID, ok := h.loadCommentForRequest(w, r)
 	if !ok {
 		return reactionRequest{}, false
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	actor, ok := loadReactionActor(w, r, userID)
 	if !ok {
 		return reactionRequest{}, false
 	}
-	comment, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
-		ID:          commentUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "comment not found")
-		return reactionRequest{}, false
-	}
-	var req struct {
-		Emoji string `json:"emoji"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return reactionRequest{}, false
-	}
-	if req.Emoji == "" {
-		writeError(w, http.StatusBadRequest, "emoji is required")
-		return reactionRequest{}, false
-	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	return reactionRequest{
-		commentID:   commentID,
-		workspaceID: workspaceID,
-		workspace:   wsUUID,
-		comment:     comment,
-		emoji:       req.Emoji,
-		actorType:   actorType,
-		actorID:     actorID,
+		commentID:     uuidToString(comment.ID),
+		workspaceID:   workspaceID,
+		workspace:     workspaceUUID,
+		comment:       comment,
+		reactionActor: actor,
 	}, true
 }
 
@@ -94,7 +90,15 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reaction, err := h.Queries.AddReaction(r.Context(), db.AddReactionParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin comment reaction transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", reactionReq.commentID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	reaction, err := queries.AddReaction(r.Context(), db.AddReactionParams{
 		CommentID:   reactionReq.comment.ID,
 		WorkspaceID: reactionReq.workspace,
 		ActorType:   reactionReq.actorType,
@@ -109,23 +113,41 @@ func (h *Handler) AddReaction(w http.ResponseWriter, r *http.Request) {
 
 	resp := reactionToResponse(reaction)
 
-	// Look up issue title for inbox notifications.
+	// Load the issue inside the same transaction so the event cannot carry a
+	// partial notification context after a concurrent delete or database error.
 	issueID := uuidToString(reactionReq.comment.IssueID)
-	var issueTitle, issueStatus string
-	if issue, err := h.Queries.GetIssue(r.Context(), reactionReq.comment.IssueID); err == nil {
-		issueTitle = issue.Title
-		issueStatus = issue.Status
+	issue, err := queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+		ID:          reactionReq.comment.IssueID,
+		WorkspaceID: reactionReq.workspace,
+	})
+	if err != nil {
+		slog.Warn("load issue for comment reaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", reactionReq.commentID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
 	}
 
-	h.publish(protocol.EventReactionAdded, reactionReq.workspaceID, reactionReq.actorType, reactionReq.actorID, map[string]any{
+	event := domainEvent(protocol.EventReactionAdded, reactionReq.workspaceID, reactionReq.actorType, reactionReq.actorID, map[string]any{
 		"reaction":            resp,
 		"issue_id":            issueID,
-		"issue_title":         issueTitle,
-		"issue_status":        issueStatus,
+		"issue_title":         issue.Title,
+		"issue_status":        issue.Status,
 		"comment_id":          uuidToString(reactionReq.comment.ID),
 		"comment_author_type": reactionReq.comment.AuthorType,
 		"comment_author_id":   uuidToString(reactionReq.comment.AuthorID),
 	})
+	event.StreamKey = "issue:" + issueID
+	event, err = eventoutbox.Enqueue(r.Context(), queries, event)
+	if err != nil {
+		slog.Warn("enqueue comment reaction event failed", append(logger.RequestAttrs(r), "error", err, "comment_id", reactionReq.commentID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit comment reaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", reactionReq.commentID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -154,21 +176,4 @@ func (h *Handler) RemoveReaction(w http.ResponseWriter, r *http.Request) {
 		"actor_id":   reactionReq.actorID,
 	})
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// groupReactions fetches reactions for the given comment IDs and groups them by comment_id.
-func (h *Handler) groupReactions(r *http.Request, commentIDs []pgtype.UUID) map[string][]ReactionResponse {
-	if len(commentIDs) == 0 {
-		return nil
-	}
-	reactions, err := h.Queries.ListReactionsByCommentIDs(r.Context(), commentIDs)
-	if err != nil {
-		return nil
-	}
-	grouped := make(map[string][]ReactionResponse, len(commentIDs))
-	for _, rx := range reactions {
-		cid := uuidToString(rx.CommentID)
-		grouped[cid] = append(grouped[cid], reactionToResponse(rx))
-	}
-	return grouped
 }

@@ -31,7 +31,6 @@ if (typeof globalThis.localStorage?.clear !== "function") {
   });
 }
 
-// jsdom doesn't provide matchMedia; useIsMobile() relies on it.
 if (typeof window.matchMedia !== "function") {
   window.matchMedia = (query: string) =>
     ({
@@ -46,8 +45,6 @@ if (typeof window.matchMedia !== "function") {
     }) as MediaQueryList;
 }
 
-// jsdom doesn't provide ResizeObserver; stub it so layout-aware components can
-// render in tests.
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class ResizeObserver {
     observe() {}
@@ -56,7 +53,6 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
-// jsdom doesn't implement elementFromPoint; some interaction helpers expect it.
 if (typeof document.elementFromPoint !== "function") {
   document.elementFromPoint = () => null;
 }

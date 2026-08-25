@@ -7,23 +7,58 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 })
 
-func TestRateLimit_NilRedis(t *testing.T) {
-	mw := RateLimit(nil, 5, time.Minute, nil)
+func TestRateLimit_NilRedisUsesLocalFallback(t *testing.T) {
+	mw := RateLimit(nil, 1, time.Minute, nil)
 	handler := mw(okHandler)
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-	req.RemoteAddr = "1.2.3.4:12345"
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("nil redis should pass through; got status %d", rec.Code)
+	if rec := request(); rec.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", rec.Code)
+	}
+	if rec := request(); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("local fallback should return 429, got %d", rec.Code)
+	}
+}
+
+func TestRateLimit_RedisFailureUsesLocalFallback(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   -1,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+	handler := RateLimit(rdb, 1, time.Minute, nil)(okHandler)
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		req.RemoteAddr = "1.2.3.5:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := request(); rec.Code != http.StatusOK {
+		t.Fatalf("first fallback request: expected 200, got %d", rec.Code)
+	}
+	if rec := request(); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("local fallback should return 429, got %d", rec.Code)
 	}
 }
 
@@ -133,10 +168,6 @@ func TestRateLimit_DifferentIPs(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// X-Forwarded-For trust model tests
-// ---------------------------------------------------------------------------
-
 func mustParseCIDR(cidr string) *net.IPNet {
 	_, n, err := net.ParseCIDR(cidr)
 	if err != nil {
@@ -164,7 +195,6 @@ func TestExtractIP_TrustedProxy_HonorsXFF(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "198.51.100.42, 10.0.0.5")
 
 	ip := extractIP(req, trusted)
-	// Rightmost non-trusted: 198.51.100.42 (10.0.0.5 is trusted)
 	if ip != "198.51.100.42" {
 		t.Fatalf("expected rightmost non-trusted IP; got %q", ip)
 	}
@@ -174,7 +204,7 @@ func TestExtractIP_UntrustedSource_IgnoresXFF(t *testing.T) {
 	trusted := []*net.IPNet{mustParseCIDR("10.0.0.0/8")}
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-	req.RemoteAddr = "203.0.113.99:9000" // Not in trusted CIDR
+	req.RemoteAddr = "203.0.113.99:9000"
 	req.Header.Set("X-Forwarded-For", "198.51.100.1")
 
 	ip := extractIP(req, trusted)
@@ -221,25 +251,20 @@ func TestRateLimit_LuaScript_SetsTTL(t *testing.T) {
 	}
 }
 
-func TestParseTrustedProxies_Empty(t *testing.T) {
-	if nets := ParseTrustedProxies(""); nets != nil {
-		t.Fatalf("empty string should return nil, got %v", nets)
-	}
-	if nets := ParseTrustedProxies("  "); nets != nil {
-		t.Fatalf("whitespace should return nil, got %v", nets)
-	}
-}
-
-func TestParseTrustedProxies_Valid(t *testing.T) {
-	nets := ParseTrustedProxies("10.0.0.0/8, 172.16.0.0/12")
-	if len(nets) != 2 {
-		t.Fatalf("expected 2 CIDRs, got %d", len(nets))
-	}
-}
-
-func TestParseTrustedProxies_InvalidSkipped(t *testing.T) {
-	nets := ParseTrustedProxies("10.0.0.0/8, not-a-cidr, 172.16.0.0/12")
-	if len(nets) != 2 {
-		t.Fatalf("expected 2 valid CIDRs (invalid skipped), got %d", len(nets))
+func TestParseTrustedProxies(t *testing.T) {
+	for _, testCase := range []struct {
+		name, value string
+		want        int
+	}{
+		{name: "empty"},
+		{name: "whitespace", value: "  "},
+		{name: "valid", value: "10.0.0.0/8, 172.16.0.0/12", want: 2},
+		{name: "invalid skipped", value: "10.0.0.0/8, not-a-cidr, 172.16.0.0/12", want: 2},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := len(ParseTrustedProxies(testCase.value)); got != testCase.want {
+				t.Fatalf("parsed networks = %d, want %d", got, testCase.want)
+			}
+		})
 	}
 }

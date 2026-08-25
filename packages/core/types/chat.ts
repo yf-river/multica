@@ -2,20 +2,15 @@ import type { AgentTask } from "./agent";
 
 export interface ChatSession {
   id: string;
-  workspace_id: string;
   agent_id: string;
-  creator_id: string;
   title: string;
-  status: "active" | "archived";
   /** True when the session has any unread assistant replies. List-only. */
   has_unread: boolean;
-  created_at: string;
   updated_at: string;
 }
 
-export interface PendingChatTaskItem {
+interface PendingChatTaskItem {
   task_id: string;
-  status: string;
   chat_session_id: string;
 }
 
@@ -25,11 +20,9 @@ export interface PendingChatTasksResponse {
 
 export interface ChatMessage {
   id: string;
-  chat_session_id: string;
   role: "user" | "assistant";
   content: string;
   task_id: string | null;
-  created_at: string;
   /**
    * Attachments linked to this message via the attachment table's
    * chat_message_id FK. Populated by ListChatMessages. UI renders these
@@ -52,19 +45,18 @@ export interface ChatMessage {
    * state (completed/failed). Set by the server on assistant messages
    * synthesized by CompleteTask/FailTask. UI renders it as "Replied in
    * 38s" / "Failed after 12s" beneath the bubble. Null on user messages
-   * and on legacy assistant messages predating migration 063.
+   * and on persisted assistant messages that do not carry the timeline.
    */
   elapsed_ms?: number | null;
 }
 
-export interface ChatMessagesCursor {
+interface ChatMessagesCursor {
   created_at: string;
   id: string;
 }
 
 export interface ChatMessagesPage {
   messages: ChatMessage[];
-  limit: number;
   has_more: boolean;
   next_cursor?: ChatMessagesCursor | null;
 }
@@ -79,16 +71,11 @@ export interface SendChatMessageResponse {
    * timer "snaps backwards" later when WS events update the cache.
    */
   created_at: string;
-  /**
-   * Attachment ids the server actually bound to this message. The client
-   * diffs these against the ids it requested to warn when an attachment
-   * silently failed to bind — no extra fetch needed. Optional for forward
-   * compat with servers that predate the field.
-   */
-  attachment_ids?: string[];
+  /** Attachment ids the server actually bound to this message. */
+  attachment_ids: string[];
 }
 
-export interface CancelledChatMessage {
+interface CancelledChatMessage {
   chat_session_id: string;
   message_id: string;
   content: string;

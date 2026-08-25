@@ -45,16 +45,12 @@ const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } }
 function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
     id: "prof-1",
-    workspace_id: "ws-1",
     display_name: "Team Codex",
     protocol_family: "codex",
     command_name: "codex",
     description: null,
     fixed_args: [],
-    visibility: "workspace",
-    created_by: "user-1",
     enabled: true,
-    created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
     ...overrides,
   };
@@ -96,7 +92,7 @@ describe("RuntimeProfilesDialog", () => {
   });
 
   it("在折叠的内置参考区之前渲染自定义 profile", () => {
-    queryState.profiles = [profile()];
+    queryState.profiles = [profile({ fixed_args: ["--profile-mode", "team"] })];
 
     renderDialog();
 
@@ -113,6 +109,10 @@ describe("RuntimeProfilesDialog", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.queryByText("claude")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: /Team Codex/i }));
+    expect(screen.getByText("固定启动参数")).toBeInTheDocument();
+    expect(screen.getByText("--profile-mode")).toBeInTheDocument();
 
     fireEvent.click(builtinsToggle);
 

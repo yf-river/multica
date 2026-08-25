@@ -3,7 +3,6 @@ import { api } from "../api";
 import type {
   GroupedIssuesResponse,
   Issue,
-  IssueStatus,
   ListGroupedIssuesParams,
   ListIssuesParams,
   ListIssuesCache,
@@ -89,8 +88,6 @@ export const issueKeys = {
   subscribersAll: () => ["issues", "subscribers"] as const,
   subscribers: (issueId: string) =>
     [...issueKeys.subscribersAll(), issueId] as const,
-  usageAll: () => ["issues", "usage"] as const,
-  usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
   traceAll: () => ["issues", "trace"] as const,
   trace: (issueId: string) => [...issueKeys.traceAll(), issueId] as const,
   executionTreeAll: () => ["issues", "execution-tree"] as const,
@@ -113,7 +110,7 @@ export const issueKeys = {
 
 export type MyIssuesFilter = Pick<
   ListIssuesParams,
-  "assignee_id" | "assignee_ids" | "creator_id" | "project_id" | "involves_user_id"
+  "assignee_id" | "creator_id" | "project_id" | "involves_user_id"
 >;
 
 export type AssigneeGroupedIssuesFilter = Omit<
@@ -124,13 +121,10 @@ export type AssigneeGroupedIssuesFilter = Omit<
 /** Page size per status column. */
 export const ISSUE_PAGE_SIZE = 50;
 
-/** Statuses the issues/my-issues pages paginate. Cancelled is intentionally excluded — it has never been surfaced in the list/board views. */
-export const PAGINATED_STATUSES: readonly IssueStatus[] = BOARD_STATUSES;
-
 /** Flatten a bucketed response to a single Issue[] for consumers that want the whole list. */
 export function flattenIssueBuckets(data: ListIssuesCache) {
   const out = [];
-  for (const status of PAGINATED_STATUSES) {
+  for (const status of BOARD_STATUSES) {
     const bucket = data.byStatus[status];
     if (bucket) out.push(...bucket.issues);
   }
@@ -139,14 +133,14 @@ export function flattenIssueBuckets(data: ListIssuesCache) {
 
 async function fetchFirstPages(filter: MyIssuesFilter = {}, sort?: IssueSortParam): Promise<ListIssuesCache> {
   const response = await api.listIssueBuckets({
-    statuses: [...PAGINATED_STATUSES],
+    statuses: [...BOARD_STATUSES],
     limit: ISSUE_PAGE_SIZE,
     offset: 0,
     ...sort,
     ...filter,
   });
   const byStatus: ListIssuesCache["byStatus"] = {};
-  PAGINATED_STATUSES.forEach((status) => {
+  BOARD_STATUSES.forEach((status) => {
     byStatus[status] = response.by_status[status] ?? { issues: [], total: 0 };
   });
   return { byStatus };
@@ -177,7 +171,7 @@ async function fetchAllMyFirstPages(userId: string, sort?: IssueSortParam): Prom
     fetchFirstPages({ involves_user_id: userId }, sort),
   ]);
   const byStatus: ListIssuesCache["byStatus"] = {};
-  for (const status of PAGINATED_STATUSES) {
+  for (const status of BOARD_STATUSES) {
     const seen = new Set<string>();
     const merged: Issue[] = [];
     for (const cache of [byAssignee, byCreator, byInvolves]) {
@@ -317,7 +311,7 @@ export function myIssueListOptions(
  * scheduled issue (no client pagination), so this is just the chunk size we
  * use to walk the server's `(limit, offset)` window until we hit `total`.
  */
-export const PROJECT_GANTT_PAGE_LIMIT = 500;
+const PROJECT_GANTT_PAGE_LIMIT = 500;
 
 /**
  * Paranoia cap on the loop in {@link fetchProjectGanttIssues}. Real projects
@@ -325,7 +319,7 @@ export const PROJECT_GANTT_PAGE_LIMIT = 500;
  * issues is already a product problem, not a Gantt-rendering one — but the
  * guard prevents a buggy server `total` from spinning the loop forever.
  */
-export const PROJECT_GANTT_MAX_ISSUES = 10_000;
+const PROJECT_GANTT_MAX_ISSUES = 10_000;
 
 async function fetchProjectGanttIssues(projectId: string) {
   const issues = [];
@@ -423,7 +417,7 @@ export function childIssuesOptions(wsId: string, id: string) {
  * match `listChildrenByParentsLimit` in server/internal/handler/issue.go.
  * Exceeding it returns 400, so the client chunks larger requests.
  */
-export const CHILDREN_BY_PARENTS_CHUNK_SIZE = 200;
+const CHILDREN_BY_PARENTS_CHUNK_SIZE = 200;
 
 /**
  * Batched variant of {@link childIssuesOptions}: fetches children for all
@@ -514,13 +508,6 @@ export function issueSubscribersOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.subscribers(issueId),
     queryFn: () => api.listIssueSubscribers(issueId),
-  });
-}
-
-export function issueUsageOptions(issueId: string) {
-  return queryOptions({
-    queryKey: issueKeys.usage(issueId),
-    queryFn: () => api.getIssueUsage(issueId),
   });
 }
 

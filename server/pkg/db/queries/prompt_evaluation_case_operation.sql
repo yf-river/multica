@@ -38,6 +38,7 @@ SET status = '运行中',
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
+  AND status IN ('已入队', '失败')
 RETURNING *;
 
 -- name: CompletePromptEvaluationCaseOperation :one

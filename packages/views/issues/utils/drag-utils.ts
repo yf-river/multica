@@ -3,9 +3,23 @@ import {
   closestCenter,
   type CollisionDetection,
 } from "@dnd-kit/core";
+import {
+  defaultAnimateLayoutChanges,
+  type AnimateLayoutChanges,
+} from "@dnd-kit/sortable";
 import type { Issue, IssueAssigneeType, IssueStatus, UpdateIssueRequest } from "@multica/core/types";
+import type { CreateIssueSeed } from "@multica/core/issues";
 import type { IssueGrouping } from "@multica/core/issues/stores/view-store";
-import type { BoardColumnGroup } from "../components/board-column";
+
+export interface BoardColumnGroup {
+  id: string;
+  title: string;
+  status?: IssueStatus;
+  assigneeType?: IssueAssigneeType | null;
+  assigneeId?: string | null;
+  totalCount?: number;
+  createData?: CreateIssueSeed;
+}
 
 export type DragMoveUpdates = Pick<
   UpdateIssueRequest,
@@ -29,6 +43,20 @@ export function makeKanbanCollision(groupIds: Set<string>): CollisionDetection {
 export function statusGroupId(status: IssueStatus): string {
   return `status:${status}`;
 }
+
+export function buildStatusGroups(statuses: IssueStatus[]): BoardColumnGroup[] {
+  return statuses.map((status) => ({
+    id: statusGroupId(status),
+    title: status,
+    status,
+    createData: { status },
+  }));
+}
+
+export const issueAnimateLayoutChanges: AnimateLayoutChanges = (args) => {
+  const { isSorting, wasDragging } = args;
+  return isSorting || wasDragging ? false : defaultAnimateLayoutChanges(args);
+};
 
 export function assigneeGroupId(
   type: IssueAssigneeType | null,

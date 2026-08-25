@@ -71,7 +71,7 @@ func TestRegistrationClient_Begin_HappyPath(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "Ada - Multica", RegionFeishu)
+	res, err := c.begin(context.Background(), "Ada - Multica", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -111,6 +111,19 @@ func TestRegistrationClient_Begin_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRegistrationClient_Begin_RejectsMissingRegion(t *testing.T) {
+	fake := newRegistrationFake(t)
+	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
+
+	_, err := c.begin(context.Background(), "", "")
+	if err == nil || !strings.Contains(err.Error(), "region must be feishu or lark") {
+		t.Fatalf("Begin missing region error = %v", err)
+	}
+	if got := fake.beginN.Load(); got != 0 {
+		t.Fatalf("begin requests = %d, want 0", got)
+	}
+}
+
 // TestRegistrationClient_Begin_OmitsNameWhenPresetEmpty pins that an
 // empty preset leaves the `name` param off the QR URL entirely (rather
 // than emitting name= and pre-filling a blank), so the begin path is
@@ -123,7 +136,7 @@ func TestRegistrationClient_Begin_OmitsNameWhenPresetEmpty(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "", RegionFeishu)
+	res, err := c.begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -160,12 +173,12 @@ func TestRegistrationClient_Begin_RegionLarkBeginsOnLarksuite(t *testing.T) {
 		Domain:     feishuFake.URL(),
 		LarkDomain: larkFake.URL(),
 	})
-	res, err := c.Begin(context.Background(), "", RegionLark)
+	res, err := c.begin(context.Background(), "", RegionLark)
 	if err != nil {
 		t.Fatalf("Begin(region=lark): %v", err)
 	}
 	if res.Domain != larkFake.URL() {
-		t.Errorf("BeginResult.Domain: got %q want %q (LarkDomain) — subsequent polls must hit the larksuite host directly",
+		t.Errorf("beginResult.Domain: got %q want %q (LarkDomain) — subsequent polls must hit the larksuite host directly",
 			res.Domain, larkFake.URL())
 	}
 	if got := larkFake.beginN.Load(); got != 1 {
@@ -177,9 +190,8 @@ func TestRegistrationClient_Begin_RegionLarkBeginsOnLarksuite(t *testing.T) {
 }
 
 // TestRegistrationClient_Begin_RegionFeishuBeginsOnFeishu pins the
-// explicit-feishu side of the same split: passing region=feishu (or
-// the empty-string back-compat default) keeps the original mainland
-// host. Documenting both directions catches a future regression where
+// explicit-feishu side of the same split. Documenting both directions
+// catches a future regression where
 // the region selector accidentally inverts.
 func TestRegistrationClient_Begin_RegionFeishuBeginsOnFeishu(t *testing.T) {
 	feishuFake := newRegistrationFake(t)
@@ -198,12 +210,12 @@ func TestRegistrationClient_Begin_RegionFeishuBeginsOnFeishu(t *testing.T) {
 		Domain:     feishuFake.URL(),
 		LarkDomain: larkFake.URL(),
 	})
-	res, err := c.Begin(context.Background(), "", RegionFeishu)
+	res, err := c.begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin(region=feishu): %v", err)
 	}
 	if res.Domain != feishuFake.URL() {
-		t.Errorf("BeginResult.Domain: got %q want %q (Feishu)", res.Domain, feishuFake.URL())
+		t.Errorf("beginResult.Domain: got %q want %q (Feishu)", res.Domain, feishuFake.URL())
 	}
 	if got := feishuFake.beginN.Load(); got != 1 {
 		t.Errorf("Feishu begin POSTs: got %d want 1", got)
@@ -226,7 +238,7 @@ func TestRegistrationClient_Begin_DefaultsWhenServerOmitsTimers(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "", RegionFeishu)
+	res, err := c.begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -245,12 +257,12 @@ func TestRegistrationClient_Begin_LarkError(t *testing.T) {
 		"error_description": "missing archetype",
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Begin(context.Background(), "", RegionFeishu)
+	_, err := c.begin(context.Background(), "", RegionFeishu)
 	if err == nil {
 		t.Fatal("expected error from Lark error response")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) {
+	if !errors.As(err, &re) {
 		t.Fatalf("want *RegistrationError, got %T %v", err, err)
 	}
 	if re.Code != "invalid_request" {
@@ -265,12 +277,12 @@ func TestRegistrationClient_Begin_HTTPNon2xx(t *testing.T) {
 		_, _ = w.Write([]byte("server boom"))
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Begin(context.Background(), "", RegionFeishu)
+	_, err := c.begin(context.Background(), "", RegionFeishu)
 	if err == nil {
 		t.Fatal("want error on 500")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) || re.Code != "http_500" {
+	if !errors.As(err, &re) || re.Code != "http_500" {
 		t.Errorf("want http_500 RegistrationError, got %v", err)
 	}
 }
@@ -281,7 +293,7 @@ func TestRegistrationClient_Poll_AuthorizationPending(t *testing.T) {
 		writeJSON(w, map[string]any{"error": "authorization_pending"})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -313,7 +325,7 @@ func TestRegistrationClient_Poll_AuthorizationPendingHTTP400(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"authorization_pending","error_description":"","code":20094}`))
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -337,7 +349,7 @@ func TestRegistrationClient_Poll_AccessDeniedHTTP400(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"access_denied","error_description":"user cancelled"}`))
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -357,12 +369,12 @@ func TestRegistrationClient_Poll_HTTP500UnparseableIsTerminal(t *testing.T) {
 		_, _ = w.Write([]byte("<html><body>502 Bad Gateway</body></html>"))
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	_, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err == nil {
 		t.Fatal("want error on unparseable 502 body")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) || re.Code != "http_502" {
+	if !errors.As(err, &re) || re.Code != "http_502" {
 		t.Errorf("want http_502 RegistrationError, got %v", err)
 	}
 }
@@ -373,7 +385,7 @@ func TestRegistrationClient_Poll_SlowDown(t *testing.T) {
 		writeJSON(w, map[string]any{"error": "slow_down"})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -392,7 +404,7 @@ func TestRegistrationClient_Poll_EmptyBodyTreatedAsPending(t *testing.T) {
 		writeJSON(w, map[string]any{})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -417,7 +429,7 @@ func TestRegistrationClient_Poll_DomainSwitchOnLarkTenant(t *testing.T) {
 		Domain:     fake.URL(),
 		LarkDomain: "https://lark-international.test",
 	})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -454,7 +466,7 @@ func TestRegistrationClient_Poll_DomainSwitchOnFeishuTenant(t *testing.T) {
 		Domain:     "https://feishu-mainland.test",
 		LarkDomain: larkFake.URL(),
 	})
-	res, err := c.Poll(context.Background(), larkFake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), larkFake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -515,7 +527,7 @@ func TestRegistrationClient_Poll_NoSwitchWhenAlreadyOnMatchingHost(t *testing.T)
 				cfg.LarkDomain = fake.URL()
 			}
 			c := NewRegistrationClient(cfg)
-			res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+			res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 			if err != nil {
 				t.Fatalf("Poll: %v", err)
 			}
@@ -540,7 +552,7 @@ func TestRegistrationClient_Poll_Success(t *testing.T) {
 		})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -568,12 +580,12 @@ func TestRegistrationClient_Poll_SuccessMissingOpenIDIsProtocolError(t *testing.
 		})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	_, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err == nil {
 		t.Fatal("want error on success-without-open_id")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) || re.Code != "invalid_response" {
+	if !errors.As(err, &re) || re.Code != "invalid_response" {
 		t.Errorf("want invalid_response, got %v", err)
 	}
 }
@@ -587,7 +599,7 @@ func TestRegistrationClient_Poll_AccessDenied(t *testing.T) {
 		})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -602,7 +614,7 @@ func TestRegistrationClient_Poll_ExpiredToken(t *testing.T) {
 		writeJSON(w, map[string]any{"error": "expired_token"})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -617,7 +629,7 @@ func TestRegistrationClient_Poll_UnknownErrorPassesThrough(t *testing.T) {
 		writeJSON(w, map[string]any{"error": "rate_limited"})
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Poll(context.Background(), fake.URL(), "dc_x")
+	res, err := c.poll(context.Background(), fake.URL(), "dc_x")
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
@@ -628,11 +640,7 @@ func TestRegistrationClient_Poll_UnknownErrorPassesThrough(t *testing.T) {
 
 func TestRegistrationClient_Poll_MissingDeviceCode(t *testing.T) {
 	c := NewRegistrationClient(RegistrationConfig{})
-	if _, err := c.Poll(context.Background(), "", ""); err == nil {
+	if _, err := c.poll(context.Background(), "", ""); err == nil {
 		t.Fatal("want error on missing device_code")
 	}
 }
-
-// errorsAs is a tiny wrapper over errors.As so the test source stays
-// terse — call sites read `errorsAs(err, &re)`.
-func errorsAs(err error, target any) bool { return errors.As(err, target) }

@@ -38,10 +38,10 @@ func TestTaskContextEnvFallbackFeedsCLIAuthAndAttribution(t *testing.T) {
 	t.Setenv("MULTICA_TASK_ID", "")
 
 	cmd := rootCmd
-	if got := resolveToken(cmd); got != "mat_task_from_file" {
+	if got := mustResolveToken(t, cmd); got != "mat_task_from_file" {
 		t.Fatalf("resolveToken = %q", got)
 	}
-	if got := resolveWorkspaceID(cmd); got != "ws-file" {
+	if got := mustResolveWorkspaceID(t, cmd); got != "ws-file" {
 		t.Fatalf("resolveWorkspaceID = %q", got)
 	}
 	if !inAgentExecutionContext() {

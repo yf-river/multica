@@ -4,9 +4,7 @@ import * as React from "react";
 import {
   Markdown as MarkdownBase,
   type MarkdownProps as MarkdownBaseProps,
-  type RenderMode,
 } from "@multica/ui/markdown";
-import { useConfigStore } from "@multica/core/config";
 import type { Attachment as AttachmentRecord } from "@multica/core/types";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
@@ -17,9 +15,7 @@ import {
   AttachmentDownloadProvider,
 } from "../editor";
 
-export type { RenderMode };
-
-export interface MarkdownProps extends MarkdownBaseProps {
+interface MarkdownProps extends MarkdownBaseProps {
   /**
    * Attachments associated with the surrounding entity (chat message, skill
    * file). When passed, the renderer resolves inline image / file-card URLs
@@ -95,13 +91,11 @@ function renderFileCard({
 /**
  * App-level Markdown wrapper. Injects:
  *   - entity chips for issue/project mentions
- *   - cdnDomain from the config store (drives fileCard preprocessing)
  *   - unified <Attachment> as the image / file-card renderer
  *   - AttachmentDownloadProvider so url → record resolution works inside
  *     the injected <Attachment> components
  */
 export function Markdown(props: MarkdownProps): React.JSX.Element {
-  const cdnDomain = useConfigStore((s) => s.cdnDomain);
   const { attachments, ...rest } = props;
   return (
     <AttachmentDownloadProvider attachments={attachments}>
@@ -109,12 +103,8 @@ export function Markdown(props: MarkdownProps): React.JSX.Element {
         renderMention={defaultRenderMention}
         renderImage={renderImage}
         renderFileCard={renderFileCard}
-        cdnDomain={cdnDomain}
         {...rest}
       />
     </AttachmentDownloadProvider>
   );
 }
-
-export const MemoizedMarkdown = React.memo(Markdown);
-MemoizedMarkdown.displayName = "MemoizedMarkdown";

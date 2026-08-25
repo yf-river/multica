@@ -13,13 +13,13 @@ const env = {
 };
 
 const apiBase = trimSlash(env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:18762");
-const account = env.GOAL_TEST_ACCOUNT || env.E2E_ACCOUNT || "develop";
-const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "develop123";
-const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "ai-studio";
-const artifactRoot = acceptanceDir(repoRoot, env.GOAL_TEST_PRUNE_DEV_DATA_DIR);
+const account = env.GOAL_TEST_ACCOUNT || "develop";
+const password = env.GOAL_TEST_PASSWORD || "develop123";
+const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
+const artifactRoot = acceptanceDir(repoRoot);
 const apply = process.argv.includes("--apply");
-const canonicalSOPOnly = process.argv.includes("--canonical-sop-only") || env.GOAL_TEST_CANONICAL_SOP_ONLY === "1";
-const keep = positiveInt(readArg("keep") ?? env.GOAL_TEST_PRUNE_DEV_DATA_KEEP, 5);
+const canonicalSOPOnly = process.argv.includes("--canonical-sop-only");
+const keep = positiveInt(readArg("keep"), 5);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 

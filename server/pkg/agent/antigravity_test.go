@@ -110,8 +110,7 @@ func TestBuildAntigravityArgsResume(t *testing.T) {
 		quietAntigravityLogger(),
 	)
 
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--conversation b8b263a4-4b2f-4339-acc9-78b248e2b606") {
+	if argValue(args, "--conversation") != "b8b263a4-4b2f-4339-acc9-78b248e2b606" {
 		t.Fatalf("expected --conversation flag with id; got %v", args)
 	}
 }
@@ -145,13 +144,7 @@ func TestBuildAntigravityArgsFiltersBlockedCustomArgs(t *testing.T) {
 	joined := strings.Join(args, " ")
 	// Prompt argument should appear exactly once — the daemon's, not the
 	// user's hijacked copy.
-	pCount := 0
-	for _, a := range args {
-		if a == "-p" {
-			pCount++
-		}
-	}
-	if pCount != 1 {
+	if pCount := argCount(args, "-p"); pCount != 1 {
 		t.Errorf("expected exactly one -p flag, got args=%v", args)
 	}
 	if strings.Contains(joined, "hijacked-prompt") {
@@ -215,13 +208,8 @@ func TestReadAntigravityConversationIDMissingFile(t *testing.T) {
 	}
 }
 
-// TestAntigravityModelError is the regression guard for the silent-no-op fix:
-// agy exits 0 with empty output on an unrecognised --model, so Execute must
-// reject a non-empty model that isn't in the `agy models` catalog instead of
-// letting it run to a fake "completed + empty" success. This covers the same
-// validation regardless of whether opts.Model originated from agent.model, a
-// persisted/API value, or the daemon-wide MULTICA_ANTIGRAVITY_MODEL default —
-// they all collapse to opts.Model before Execute runs this check.
+// agy exits successfully without output for an unknown model, so the daemon
+// validates non-empty selections against the discovered catalog first.
 func TestAntigravityModelError(t *testing.T) {
 	t.Parallel()
 

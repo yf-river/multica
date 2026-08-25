@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeProfile } from "@multica/core/types";
-import { buildRuntimeCatalog, PROTOCOL_FAMILIES } from "./runtime-profile-catalog";
+import {
+  buildRuntimeCatalog,
+  formatFixedArgsInput,
+  parseFixedArgsInput,
+  PROTOCOL_FAMILIES,
+} from "./runtime-profile-catalog";
 
 function profile(
   id: string,
@@ -10,16 +15,12 @@ function profile(
 ): RuntimeProfile {
   return {
     id,
-    workspace_id: "ws-1",
     display_name: displayName,
     protocol_family: "codex",
     command_name: "codex",
     description: null,
     fixed_args: [],
-    visibility: "workspace",
-    created_by: "user-1",
     enabled,
-    created_at: "2026-01-01T00:00:00Z",
     updated_at: updatedAt,
   };
 }
@@ -58,5 +59,13 @@ describe("buildRuntimeCatalog", () => {
       "enabled-old",
       "disabled-new",
     ]);
+  });
+});
+
+describe("runtime profile fixed args", () => {
+  it("round-trips one argument per line and removes blank lines", () => {
+    const args = parseFixedArgsInput(" --profile-mode \nteam value\n\n");
+    expect(args).toEqual(["--profile-mode", "team value"]);
+    expect(formatFixedArgsInput(args)).toBe("--profile-mode\nteam value");
   });
 });

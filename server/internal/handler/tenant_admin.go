@@ -4,12 +4,13 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 )
 
-// GetTenantInitialAdminStatusResponse is the JSON response for the
+// getTenantInitialAdminStatusResponse is the JSON response for the
 // GetTenantInitialAdminStatus endpoint.
-type GetTenantInitialAdminStatusResponse struct {
+type getTenantInitialAdminStatusResponse struct {
 	Exists      bool    `json:"exists"`
 	WorkspaceID string  `json:"workspaceId"`
 	UserName    *string `json:"userName,omitempty"`
@@ -22,7 +23,7 @@ type GetTenantInitialAdminStatusResponse struct {
 // not a business error. When the workspace itself does not exist, it returns
 // 404.
 func (h *Handler) GetTenantInitialAdminStatus(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
+	workspaceID := chi.URLParam(r, "workspaceId")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -44,7 +45,7 @@ func (h *Handler) GetTenantInitialAdminStatus(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No initial admin — normal case, not a business error.
-			writeJSON(w, http.StatusOK, GetTenantInitialAdminStatusResponse{
+			writeJSON(w, http.StatusOK, getTenantInitialAdminStatusResponse{
 				Exists:      false,
 				WorkspaceID: uuidToString(wsUUID),
 			})
@@ -57,7 +58,7 @@ func (h *Handler) GetTenantInitialAdminStatus(w http.ResponseWriter, r *http.Req
 	// Initial admin exists — return full details.
 	name := owner.UserAccount
 	nickName := owner.UserName
-	writeJSON(w, http.StatusOK, GetTenantInitialAdminStatusResponse{
+	writeJSON(w, http.StatusOK, getTenantInitialAdminStatusResponse{
 		Exists:      true,
 		WorkspaceID: uuidToString(owner.WorkspaceID),
 		UserName:    &name,

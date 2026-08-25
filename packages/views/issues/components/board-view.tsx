@@ -12,7 +12,7 @@ import type { AssigneeGroupedIssuesFilter, IssueSortParam, MyIssuesFilter } from
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import type { IssueGrouping } from "@multica/core/issues/stores/view-store";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { BoardColumn, BOARD_CARD_WIDTH, type BoardColumnGroup } from "./board-column";
+import { BoardColumn, BOARD_CARD_WIDTH } from "./board-column";
 import { BoardCardContent } from "./board-card";
 import { HiddenColumnsPanel, HiddenColumnRow } from "./hidden-columns-panel";
 import { InfiniteScrollSentinel } from "./infinite-scroll-sentinel";
@@ -20,9 +20,10 @@ import type { ChildProgress } from "./list-row";
 import { useIssueDragColumns } from "./use-issue-drag-columns";
 import { useT } from "../../i18n";
 import {
+  type BoardColumnGroup,
   type DragMoveUpdates,
-  statusGroupId,
   assigneeGroupId,
+  buildStatusGroups,
 } from "../utils/drag-utils";
 
 function isStatusGroup(
@@ -39,12 +40,7 @@ function buildGroups(
   noAssigneeLabel: string,
 ): BoardColumnGroup[] {
   if (grouping === "status") {
-    return visibleStatuses.map((status) => ({
-      id: statusGroupId(status),
-      title: status,
-      status,
-      createData: { status },
-    }));
+    return buildStatusGroups(visibleStatuses);
   }
 
   const groups = new Map<string, BoardColumnGroup>();
@@ -62,10 +58,12 @@ function buildGroups(
         title: assigneeSummary?.name ?? getActorName(issue.assignee_type, issue.assignee_id),
         assigneeType: issue.assignee_type,
         assigneeId: issue.assignee_id,
-        createData: {
-          assignee_type: issue.assignee_type,
-          assignee_id: issue.assignee_id,
-        },
+        createData:
+          issue.assignee_type === "agent"
+            ? { agent_id: issue.assignee_id }
+            : issue.assignee_type === "squad"
+              ? { squad_id: issue.assignee_id }
+              : {},
       });
       continue;
     }
@@ -75,10 +73,7 @@ function buildGroups(
       title: noAssigneeLabel,
       assigneeType: null,
       assigneeId: null,
-      createData: {
-        assignee_type: null,
-        assignee_id: null,
-      },
+      createData: {},
     });
   }
 
@@ -193,10 +188,12 @@ export function BoardView({
         assigneeType: group.assignee_type,
         assigneeId: group.assignee_id,
         totalCount: group.total,
-        createData: {
-          assignee_type: group.assignee_type,
-          assignee_id: group.assignee_id,
-        },
+        createData:
+          group.assignee_type === "agent" && group.assignee_id
+            ? { agent_id: group.assignee_id }
+            : group.assignee_type === "squad" && group.assignee_id
+              ? { squad_id: group.assignee_id }
+              : {},
       }))
       .sort((a, b) => {
         const aOrder = order[a.assigneeType ?? "none"] ?? 99;

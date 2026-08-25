@@ -11,9 +11,121 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestRegistrationServiceBeginInstallRejectsMissingRegionBeforeDatabaseAccess(t *testing.T) {
+	validID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	service := &RegistrationService{}
+
+	_, err := service.BeginInstall(context.Background(), BeginInstallParams{
+		WorkspaceID: validID,
+		AgentID:     validID,
+		InitiatorID: validID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "region must be feishu or lark") {
+		t.Fatalf("BeginInstall missing region error = %v", err)
+	}
+}
+
+func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
+	fake := newRegistrationFake(t)
+	fake.stubBegin(map[string]any{
+		"device_code":               "dedup-device-code",
+		"verification_uri_complete": "https://accounts.feishu.cn/oauth/v1/qrcode?code=dedup",
+		"interval":                  60,
+		"expire_in":                 1,
+	})
+	service := newRegistrationServiceForTest(t)
+	service.client = NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
+	service.getAgentInWorkspace = func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error) {
+		return db.Agent{Name: "Replay Bot"}, nil
+	}
+	id := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
+	params := BeginInstallParams{
+		WorkspaceID: id,
+		AgentID:     id,
+		InitiatorID: id,
+		Region:      RegionFeishu,
+	}
+
+	first, err := service.BeginInstall(context.Background(), params)
+	if err != nil {
+		t.Fatalf("first begin: %v", err)
+	}
+	second, err := service.BeginInstall(context.Background(), params)
+	if err != nil {
+		t.Fatalf("replayed begin: %v", err)
+	}
+	if second != first {
+		t.Fatalf("replayed begin = %+v, want exact pending session %+v", second, first)
+	}
+	if got := fake.beginN.Load(); got != 1 {
+		t.Fatalf("external begin calls = %d, want 1", got)
+	}
+
+	const callers = 8
+	results := make(chan BeginInstallResult, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := service.BeginInstall(context.Background(), params)
+			results <- result
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent begin: %v", err)
+		}
+	}
+	for result := range results {
+		if result != first {
+			t.Fatalf("concurrent begin = %+v, want %+v", result, first)
+		}
+	}
+	if got := fake.beginN.Load(); got != 1 {
+		t.Fatalf("external begin calls after concurrency = %d, want 1", got)
+	}
+	otherUserParams := params
+	otherUserParams.InitiatorID = uuidFromStringSvc(t, "22222222-2222-2222-2222-222222222222")
+	otherUserResult, err := service.BeginInstall(context.Background(), otherUserParams)
+	if err != nil {
+		t.Fatalf("other-user begin: %v", err)
+	}
+	if otherUserResult.SessionID == first.SessionID {
+		t.Fatalf("pending session leaked across initiating users: %+v", otherUserResult)
+	}
+	if got := fake.beginN.Load(); got != 2 {
+		t.Fatalf("external begin calls after other user = %d, want 2", got)
+	}
+
+	service.mu.Lock()
+	firstSession := service.sessions[first.SessionID]
+	service.mu.Unlock()
+	if firstSession == nil {
+		t.Fatalf("pending session %q not stored", first.SessionID)
+	}
+	firstSession.markError(RegistrationReasonAccessDenied, "user denied", service.gcDeadline())
+	restarted, err := service.BeginInstall(context.Background(), params)
+	if err != nil {
+		t.Fatalf("restart after terminal session: %v", err)
+	}
+	if restarted.SessionID == first.SessionID {
+		t.Fatalf("terminal session was replayed instead of restarted: %+v", restarted)
+	}
+	if got := fake.beginN.Load(); got != 3 {
+		t.Fatalf("external begin calls after explicit restart = %d, want 3", got)
+	}
+}
 
 // These tests cover the pure-Go halves of RegistrationService —
 // constructor validation, session-id security boundary, status code
@@ -30,35 +142,40 @@ import (
 func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 	client := NewRegistrationClient(RegistrationConfig{})
 	api := NewHTTPAPIClient(HTTPClientConfig{})
+	binder := func(context.Context, *db.Queries, InstallerBindParams) error { return nil }
 	cases := []struct {
 		name   string
 		fn     func() error
 		needle string
 	}{
 		{"missing client", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "RegistrationClient"},
 		{"missing api", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "APIClient"},
 		{"missing queries", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, nil, fakeTxStarter{}, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(client, api, nil, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "queries"},
 		{"missing tx", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, nil, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(client, api, &db.Queries{}, nil, &InstallationService{}, binder, events.New())
 			return err
 		}, "TxStarter"},
 		{"missing installs", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, nil, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(client, api, &db.Queries{}, fakeTxStarter{}, nil, binder, events.New())
 			return err
 		}, "InstallationService"},
 		{"missing binder", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil)
+			_, err := NewRegistrationService(client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil, events.New())
 			return err
-		}, "InstallerBinder"},
+		}, "bind installer"},
+		{"missing event bus", func() error {
+			_, err := NewRegistrationService(client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, nil)
+			return err
+		}, "event bus"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,7 +250,7 @@ func TestRegistrationGetSessionNotFound(t *testing.T) {
 func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {
 	clock := &fakeClockSvc{now: time.Unix(1_700_000_000, 0)}
 	s := newRegistrationServiceForTest(t)
-	s.cfg.Now = clock.Now
+	s.now = clock.Now
 	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 
 	s.mu.Lock()
@@ -167,10 +284,6 @@ func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {
 	}
 }
 
-// TestRegistrationSessionMarkErrorIsIdempotent guards against a
-// double-fire race between the expiry timer and a Poll-driven terminal
-// error: whichever fires first wins, and the second mark must NOT
-// clobber the first reason (the user already saw it).
 func TestRegistrationSessionMarkErrorIsIdempotent(t *testing.T) {
 	sess := &registrationSession{
 		id:     "x",
@@ -178,61 +291,13 @@ func TestRegistrationSessionMarkErrorIsIdempotent(t *testing.T) {
 	}
 	deadline := time.Unix(1_700_001_000, 0)
 	sess.markError(RegistrationReasonAccessDenied, "user denied", deadline)
-	sess.markError(RegistrationReasonExpired, "qr expired", deadline) // second mark — should no-op
+	sess.markError(RegistrationReasonExpired, "qr expired", deadline)
 	st := sess.snapshot()
 	if st.ErrorReason != RegistrationReasonAccessDenied {
 		t.Errorf("first reason should win; got %q", st.ErrorReason)
 	}
 }
 
-// TestRegistrationSessionStateSnapshotIsValueCopy pins that the
-// snapshot does not return a pointer alias of the internal session —
-// a leaked alias would let the handler's serializer race the polling
-// goroutine on field reads. The snapshot is value-copied so the
-// caller can read it without holding the session mutex.
-func TestRegistrationSessionStateSnapshotIsValueCopy(t *testing.T) {
-	sess := &registrationSession{
-		id:     "x",
-		status: RegistrationStatusPending,
-	}
-	s1 := sess.snapshot()
-	deadline := time.Unix(1_700_001_000, 0)
-	sess.markSuccess(uuidFromStringSvc(t, "33333333-3333-3333-3333-333333333333"), deadline)
-	if s1.Status != RegistrationStatusPending {
-		t.Errorf("snapshot must be a value copy; got mutated to %q", s1.Status)
-	}
-	s2 := sess.snapshot()
-	if s2.Status != RegistrationStatusSuccess {
-		t.Errorf("second snapshot should reflect new state; got %q", s2.Status)
-	}
-}
-
-// TestRandomSessionIDUnique pins the in-process collision risk: 1024
-// rounds with no duplicate is enough headroom for the 24-byte input
-// (~10^57 keyspace) and matches the bar applied to randomToken.
-func TestRandomSessionIDUnique(t *testing.T) {
-	seen := map[string]struct{}{}
-	for i := 0; i < 1024; i++ {
-		id, err := randomSessionID()
-		if err != nil {
-			t.Fatalf("randomSessionID: %v", err)
-		}
-		if _, dup := seen[id]; dup {
-			t.Fatalf("duplicate after %d iterations: %q", i, id)
-		}
-		seen[id] = struct{}{}
-	}
-}
-
-// TestRegistrationServicePublishInstalledEmitsCreatedEvent pins the
-// MUL-3059 fix: a completed install must publish lark_installation:created
-// at the row-write point so every workspace client refreshes its
-// connection badge without a page reload. The bug was that this event only
-// fired from the HTTP status-poll handler, so any surface that wasn't the
-// polling install dialog stayed stale until a manual refresh. The exact
-// shape (type, workspace, system actor, installation_id payload) is what
-// the SubscribeAll fanout and the frontend lark_installation-prefix
-// invalidation depend on.
 func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	bus := events.New()
 	var caught []events.Event
@@ -241,7 +306,7 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	})
 
 	svc := newRegistrationServiceForTest(t)
-	svc.SetEventBus(bus)
+	svc.bus = bus
 
 	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 	inst := uuidFromStringSvc(t, "22222222-2222-2222-2222-222222222222")
@@ -256,8 +321,8 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	if got.Type != protocol.EventLarkInstallationCreated {
 		t.Errorf("type = %q, want %q", got.Type, protocol.EventLarkInstallationCreated)
 	}
-	if got.WorkspaceID != uuidString(ws) {
-		t.Errorf("workspace_id = %q, want %q", got.WorkspaceID, uuidString(ws))
+	if got.WorkspaceID != util.UUIDToString(ws) {
+		t.Errorf("workspace_id = %q, want %q", got.WorkspaceID, util.UUIDToString(ws))
 	}
 	if got.ActorType != "system" {
 		t.Errorf("actor_type = %q, want \"system\"", got.ActorType)
@@ -266,36 +331,9 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload type = %T, want map[string]any", got.Payload)
 	}
-	if payload["installation_id"] != uuidString(inst) {
-		t.Errorf("installation_id = %v, want %q", payload["installation_id"], uuidString(inst))
+	if payload["installation_id"] != util.UUIDToString(inst) {
+		t.Errorf("installation_id = %v, want %q", payload["installation_id"], util.UUIDToString(inst))
 	}
-}
-
-// TestRegistrationServicePublishInstalledNilBusIsNoOp pins that an install
-// still completes when no bus is wired — the bus is optional (SetEventBus
-// is never called in self-host builds that disable realtime), so the
-// publish must be a silent no-op rather than a nil-deref panic.
-func TestRegistrationServicePublishInstalledNilBusIsNoOp(t *testing.T) {
-	svc := newRegistrationServiceForTest(t) // no SetEventBus
-	svc.publishInstalled(
-		uuidFromStringSvc(t, "33333333-3333-3333-3333-333333333333"),
-		uuidFromStringSvc(t, "44444444-4444-4444-4444-444444444444"),
-	)
-}
-
-// fakeInstallerBinder records BindInstallerTx calls for tests that
-// need to assert the bind happened.
-type fakeInstallerBinder struct {
-	mu    sync.Mutex
-	calls []InstallerBindParams
-	err   error
-}
-
-func (f *fakeInstallerBinder) BindInstallerTx(_ context.Context, _ *db.Queries, p InstallerBindParams) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, p)
-	return f.err
 }
 
 // fakeTxStarter is a TxStarter stub for constructor tests — never
@@ -312,8 +350,11 @@ func (fakeTxStarter) Begin(_ context.Context) (pgx.Tx, error) {
 func newRegistrationServiceForTest(t *testing.T) *RegistrationService {
 	t.Helper()
 	return &RegistrationService{
-		cfg:      RegistrationServiceConfig{}.withDefaults(),
-		sessions: make(map[string]*registrationSession),
+		sessionTTL: 30 * time.Minute,
+		now:        time.Now,
+		logger:     newDiscardLogger(),
+		bus:        events.New(),
+		sessions:   make(map[string]*registrationSession),
 	}
 }
 

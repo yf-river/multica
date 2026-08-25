@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // freshDaemon builds a Daemon with every map field the production New() seeds
@@ -24,8 +26,6 @@ func freshDaemon(serverURL string) *Daemon {
 		workspaces:                make(map[string]*workspaceState),
 		runtimeIndex:              make(map[string]Runtime),
 		runtimeSet:                newRuntimeSetWatcher(),
-		agentVersions:             make(map[string]string),
-		wsHBLastAck:               make(map[string]time.Time),
 		activeEnvRoots:            make(map[string]int),
 		runtimeGoneInflight:       make(map[string]struct{}),
 		reregisterNextAttempt:     make(map[string]time.Time),
@@ -67,7 +67,6 @@ func TestRemoveStaleRuntime_PrunesAllLocalState(t *testing.T) {
 	d.runtimeIndex["rt-1"] = Runtime{ID: "rt-1"}
 	d.runtimeIndex["rt-2"] = Runtime{ID: "rt-2"}
 	d.runtimeIndex["rt-3"] = Runtime{ID: "rt-3"}
-	d.wsHBLastAck["rt-2"] = time.Now()
 
 	workspaceID, removed := d.removeStaleRuntime("rt-2")
 	if !removed {
@@ -81,9 +80,6 @@ func TestRemoveStaleRuntime_PrunesAllLocalState(t *testing.T) {
 	}
 	if _, ok := d.runtimeIndex["rt-2"]; ok {
 		t.Fatalf("runtimeIndex still contains rt-2")
-	}
-	if _, ok := d.wsHBLastAck["rt-2"]; ok {
-		t.Fatalf("wsHBLastAck still contains rt-2")
 	}
 }
 
@@ -148,7 +144,7 @@ func newHandleRuntimeGoneFixture(t *testing.T) *handleRuntimeGoneFixture {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(RegisterResponse{
 				Runtimes: []Runtime{{ID: "rt-new", Name: "Claude", Provider: "claude", Status: "online"}},
-				Repos:    []RepoData{},
+				Repos:    []protocol.TaskRepository{},
 			})
 		case strings.HasSuffix(r.URL.Path, "/recover-orphans"):
 			w.WriteHeader(http.StatusOK)
@@ -177,7 +173,6 @@ func TestHandleRuntimeGone_PrunesAndReregisters(t *testing.T) {
 	d := fx.daemon
 	d.workspaces["ws-1"] = &workspaceState{workspaceID: "ws-1", runtimeIDs: []string{"rt-old"}}
 	d.runtimeIndex["rt-old"] = Runtime{ID: "rt-old"}
-	d.wsHBLastAck["rt-old"] = time.Now()
 
 	d.handleRuntimeGone("rt-old")
 
@@ -189,9 +184,6 @@ func TestHandleRuntimeGone_PrunesAndReregisters(t *testing.T) {
 	}
 	if got := d.workspaces["ws-1"].runtimeIDs; len(got) != 1 || got[0] != "rt-new" {
 		t.Fatalf("workspace runtimeIDs after recovery = %v, want [rt-new]", got)
-	}
-	if _, ok := d.wsHBLastAck["rt-old"]; ok {
-		t.Fatalf("wsHBLastAck not cleared for rt-old")
 	}
 	if got := fx.registerCount.Load(); got != 1 {
 		t.Fatalf("register endpoint called %d times, want 1", got)
@@ -272,16 +264,14 @@ func TestHandleRuntimeGone_BackoffOnFailure(t *testing.T) {
 
 func TestHandleWSHeartbeatAck_RuntimeGoneTriggersRecovery(t *testing.T) {
 	// The WS path's twin of an HTTP 404 "runtime not found". When the server
-	// flags a runtime as gone, the daemon must NOT record a freshness mark
-	// — doing so would tell the HTTP heartbeat to skip its tick and let the
-	// daemon keep believing the runtime is alive.
+	// flags a runtime as gone, the daemon must use the same recovery path as
+	// the HTTP heartbeat.
 	fx := newHandleRuntimeGoneFixture(t)
 	d := fx.daemon
 	d.workspaces["ws-1"] = &workspaceState{workspaceID: "ws-1", runtimeIDs: []string{"rt-old"}}
 	d.runtimeIndex["rt-old"] = Runtime{ID: "rt-old"}
-	d.wsHBLastAck["rt-old"] = time.Now()
 
-	d.handleWSHeartbeatAck(context.Background(), &HeartbeatResponse{
+	d.handleWSHeartbeatAck(context.Background(), &protocol.DaemonHeartbeatAckPayload{
 		RuntimeID:   "rt-old",
 		Status:      "runtime_gone",
 		RuntimeGone: true,
@@ -303,22 +293,6 @@ func TestHandleWSHeartbeatAck_RuntimeGoneTriggersRecovery(t *testing.T) {
 	if _, stillOld := d.runtimeIndex["rt-old"]; stillOld {
 		t.Fatalf("rt-old not pruned after RuntimeGone ack")
 	}
-	if _, ok := d.wsHBLastAck["rt-old"]; ok {
-		t.Fatalf("WS freshness mark not cleared for gone runtime — HTTP heartbeat would skip its tick")
-	}
-}
-
-func TestHandleWSHeartbeatAck_NormalAckRecordsFreshness(t *testing.T) {
-	t.Parallel()
-
-	d := freshDaemon("")
-	d.handleWSHeartbeatAck(context.Background(), &HeartbeatResponse{
-		RuntimeID: "rt-1",
-		Status:    "ok",
-	})
-	if _, ok := d.wsHBLastAck["rt-1"]; !ok {
-		t.Fatalf("normal ack should record WS freshness for rt-1")
-	}
 }
 
 func TestHandleWSHeartbeatAck_EmptyAckIgnored(t *testing.T) {
@@ -326,11 +300,8 @@ func TestHandleWSHeartbeatAck_EmptyAckIgnored(t *testing.T) {
 
 	d := freshDaemon("")
 	d.handleWSHeartbeatAck(context.Background(), nil)
-	d.handleWSHeartbeatAck(context.Background(), &HeartbeatResponse{RuntimeID: ""})
-	// Should not panic, should not record any state.
-	if len(d.wsHBLastAck) != 0 {
-		t.Fatalf("empty ack recorded state: %v", d.wsHBLastAck)
-	}
+	d.handleWSHeartbeatAck(context.Background(), &protocol.DaemonHeartbeatAckPayload{RuntimeID: ""})
+	// Should not panic or dispatch an action.
 }
 
 func TestWorkspaceNeedsRuntimeRecovery(t *testing.T) {
@@ -406,7 +377,7 @@ func newMultiProviderRegisterFixture(t *testing.T, providers map[string]string) 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(RegisterResponse{
 				Runtimes: runtimes,
-				Repos:    []RepoData{},
+				Repos:    []protocol.TaskRepository{},
 			})
 		case strings.HasSuffix(r.URL.Path, "/recover-orphans"):
 			w.WriteHeader(http.StatusOK)
@@ -436,43 +407,51 @@ func (fx *multiProviderRegisterFixture) markDeleted(provider string) {
 	fx.providerToID[provider] = ""
 }
 
+func newTwoProviderRuntimeGoneFixture(t *testing.T) *multiProviderRegisterFixture {
+	t.Helper()
+	fx := newMultiProviderRegisterFixture(t, map[string]string{
+		"claude": "rt-claude-1",
+		"codex":  "rt-codex-1",
+	})
+	fx.daemon.workspaces["ws-1"] = &workspaceState{
+		workspaceID: "ws-1",
+		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
+	}
+	fx.daemon.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
+	fx.daemon.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
+	return fx
+}
+
+func uniqueRuntimeIDs(t *testing.T, ids []string, want int) map[string]struct{} {
+	t.Helper()
+	if len(ids) != want {
+		t.Fatalf("runtime IDs = %v, want %d entries", ids, want)
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, duplicate := seen[id]; duplicate {
+			t.Fatalf("duplicate runtime id %q in %v", id, ids)
+		}
+		seen[id] = struct{}{}
+	}
+	return seen
+}
+
 func TestHandleRuntimeGone_PartialWorkspaceRecoveryKeepsSibling(t *testing.T) {
 	// Workspace has two providers, only one runtime is deleted. The siblings
 	// must NOT end up duplicated in workspaceState.runtimeIDs — that would
 	// leak through allRuntimeIDs(), deregister(), and re-recovery state.
 	// This is the regression test for Finding #3 (register response is
 	// authoritative for the workspace's runtime set, not an append).
-	fx := newMultiProviderRegisterFixture(t, map[string]string{
-		"claude": "rt-claude-1",
-		"codex":  "rt-codex-1",
-	})
+	fx := newTwoProviderRuntimeGoneFixture(t)
 	d := fx.daemon
-	d.workspaces["ws-1"] = &workspaceState{
-		workspaceID: "ws-1",
-		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
-	}
-	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
-	d.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
 
 	// Only the claude runtime gets deleted server-side.
 	fx.markDeleted("claude")
 	d.handleRuntimeGone("rt-claude-1")
 
 	got := append([]string(nil), d.workspaces["ws-1"].runtimeIDs...)
-	if len(got) != 2 {
-		t.Fatalf("workspace runtimeIDs has %d entries after partial recovery; want 2; got %v", len(got), got)
-	}
-	// Set comparison: must contain rt-codex-1 (surviving) and a freshly
-	// minted claude id, with NO duplicates.
-	seen := make(map[string]int, len(got))
-	for _, id := range got {
-		seen[id]++
-	}
-	for id, count := range seen {
-		if count != 1 {
-			t.Fatalf("duplicate runtime id %q (count=%d) after partial recovery: %v", id, count, got)
-		}
-	}
+	seen := uniqueRuntimeIDs(t, got, 2)
 	if _, ok := seen["rt-codex-1"]; !ok {
 		t.Fatalf("surviving codex runtime missing from workspace state after recovery: %v", got)
 	}
@@ -493,17 +472,8 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 	// within the 30s coalesce window. Each deletion must trigger its own
 	// re-register: success on call #1 must NOT suppress call #2. Regression
 	// for Finding #2 (success-case clear of reregisterNextAttempt).
-	fx := newMultiProviderRegisterFixture(t, map[string]string{
-		"claude": "rt-claude-1",
-		"codex":  "rt-codex-1",
-	})
+	fx := newTwoProviderRuntimeGoneFixture(t)
 	d := fx.daemon
-	d.workspaces["ws-1"] = &workspaceState{
-		workspaceID: "ws-1",
-		runtimeIDs:  []string{"rt-claude-1", "rt-codex-1"},
-	}
-	d.runtimeIndex["rt-claude-1"] = Runtime{ID: "rt-claude-1", Provider: "claude"}
-	d.runtimeIndex["rt-codex-1"] = Runtime{ID: "rt-codex-1", Provider: "codex"}
 
 	// Sequential, NOT concurrent: the first call fully completes before the
 	// second starts, so the in-flight set never collides.
@@ -529,18 +499,7 @@ func TestHandleRuntimeGone_DistinctDeletionsWithinCoalesceWindowBothRecover(t *t
 		t.Fatalf("after second distinct deletion: register called %d times, want 2 (coalesce window must clear on success)", got)
 	}
 	got := append([]string(nil), d.workspaces["ws-1"].runtimeIDs...)
-	if len(got) != 2 {
-		t.Fatalf("workspace runtimeIDs after both recoveries = %v, want 2 entries", got)
-	}
-	seen := make(map[string]int, len(got))
-	for _, id := range got {
-		seen[id]++
-	}
-	for id, count := range seen {
-		if count != 1 {
-			t.Fatalf("duplicate runtime id %q after sequential recoveries: %v", id, got)
-		}
-	}
+	seen := uniqueRuntimeIDs(t, got, 2)
 	if _, ok := seen[claudeIDAfterFirst]; !ok {
 		t.Fatalf("claude id from first recovery missing after second deletion of codex: have %v, expected to keep %q", got, claudeIDAfterFirst)
 	}
@@ -687,7 +646,7 @@ func TestTryClaimRegisterSlot_PeerHoldingSlotForcesCoalesce(t *testing.T) {
 
 func TestHandleRuntimeGone_RecoveryContextSurvivesCallerCancellation(t *testing.T) {
 	// Regression for Finding #1: handleRuntimeGone must not use the per-
-	// runtime heartbeat ctx for the register HTTP call. notifyRuntimeSetChanged
+	// runtime heartbeat ctx for the register HTTP call. Runtime-set notification
 	// tears that ctx down as soon as we prune the dead runtime, so forwarding
 	// it would self-cancel the in-flight register.
 	//

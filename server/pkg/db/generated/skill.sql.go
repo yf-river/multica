@@ -66,6 +66,46 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill
 	return i, err
 }
 
+const createSkillIfNameAvailable = `-- name: CreateSkillIfNameAvailable :one
+INSERT INTO skill (workspace_id, name, description, content, config, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (workspace_id, name) DO NOTHING
+RETURNING id, workspace_id, name, description, content, config, created_by, created_at, updated_at
+`
+
+type CreateSkillIfNameAvailableParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Content     string      `json:"content"`
+	Config      []byte      `json:"config"`
+	CreatedBy   pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateSkillIfNameAvailable(ctx context.Context, arg CreateSkillIfNameAvailableParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, createSkillIfNameAvailable,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Description,
+		arg.Content,
+		arg.Config,
+		arg.CreatedBy,
+	)
+	var i Skill
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.Config,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteSkill = `-- name: DeleteSkill :exec
 DELETE FROM skill WHERE id = $1 AND workspace_id = $2
 `
@@ -99,28 +139,6 @@ func (q *Queries) DeleteSkillFilesBySkill(ctx context.Context, skillID pgtype.UU
 	return err
 }
 
-const getSkill = `-- name: GetSkill :one
-SELECT id, workspace_id, name, description, content, config, created_by, created_at, updated_at FROM skill
-WHERE id = $1
-`
-
-func (q *Queries) GetSkill(ctx context.Context, id pgtype.UUID) (Skill, error) {
-	row := q.db.QueryRow(ctx, getSkill, id)
-	var i Skill
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.Content,
-		&i.Config,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getSkillByWorkspaceAndName = `-- name: GetSkillByWorkspaceAndName :one
 SELECT id, workspace_id, name, description, content, config, created_by, created_at, updated_at FROM skill
 WHERE workspace_id = $1 AND name = $2
@@ -131,9 +149,8 @@ type GetSkillByWorkspaceAndNameParams struct {
 	Name        string      `json:"name"`
 }
 
-// Used by agent-template materialization to implement find-or-create: when a
-// template references a skill by name that already exists in the workspace,
-// reuse the existing skill_id rather than violating UNIQUE(workspace_id, name).
+// Shared by GitHub and Runtime-local imports to reuse the current workspace
+// Skill instead of violating UNIQUE(workspace_id, name).
 func (q *Queries) GetSkillByWorkspaceAndName(ctx context.Context, arg GetSkillByWorkspaceAndNameParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, getSkillByWorkspaceAndName, arg.WorkspaceID, arg.Name)
 	var i Skill
@@ -381,8 +398,8 @@ type ListSkillSummariesByWorkspaceRow struct {
 }
 
 // Skill CRUD
-// Same as ListSkillsByWorkspace but omits the SKILL.md `content` column. Used
-// by list endpoints (CLI table, web list page) where the body is never read;
+// Omits the SKILL.md `content` column for list endpoints (CLI table, web list
+// page) where the body is never read;
 // shipping it everywhere blew up payload size on workspaces with many skills
 // and caused 15s CLI timeouts from high-latency regions (GH multica-ai/multica#2174).
 func (q *Queries) ListSkillSummariesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListSkillSummariesByWorkspaceRow, error) {

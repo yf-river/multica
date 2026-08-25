@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Workspace } from "../types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "../types";
 import { paths } from "./paths";
 import { resolvePostAuthDestination } from "./resolve";
 
@@ -10,32 +10,20 @@ function makeWs(slug: string): Workspace {
     slug,
     description: null,
     context: null,
-    settings: {},
+    settings: { ...DEFAULT_WORKSPACE_SETTINGS },
     repos: [],
     issue_prefix: slug.toUpperCase(),
     avatar_url: null,
-    created_at: "",
-    updated_at: "",
   };
 }
 
 describe("resolvePostAuthDestination", () => {
-  it("routes to the first workspace even when onboarded_at is empty", () => {
-    const ws = [makeWs("acme")];
-    expect(resolvePostAuthDestination(ws, false)).toBe(
-      paths.workspace("acme").issues(),
-    );
-  });
-
   it("workspace[0] → /<first.slug>/issues", () => {
     const ws = [makeWs("acme"), makeWs("beta")];
-    expect(resolvePostAuthDestination(ws, true)).toBe(
-      paths.workspace("acme").issues(),
-    );
+    expect(resolvePostAuthDestination(ws)).toBe(paths.workspace("acme").issues());
   });
 
   it("no workspace → /workspaces/new", () => {
-    expect(resolvePostAuthDestination([], true)).toBe(paths.newWorkspace());
-    expect(resolvePostAuthDestination([], false)).toBe(paths.newWorkspace());
+    expect(resolvePostAuthDestination([])).toBe(paths.newWorkspace());
   });
 });

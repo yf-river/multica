@@ -71,7 +71,9 @@ func connectWS(t *testing.T, server *httptest.Server) *websocket.Conn {
 		t.Fatalf("failed to send auth message: %v", err)
 	}
 	// Read auth_ack before returning the connection.
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, ack, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("failed to read auth_ack: %v", err)
@@ -79,7 +81,9 @@ func connectWS(t *testing.T, server *httptest.Server) *websocket.Conn {
 	if !strings.Contains(string(ack), "auth_ack") {
 		t.Fatalf("expected auth_ack, got %s", ack)
 	}
-	conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
 	return conn
 }
 
@@ -95,7 +99,7 @@ func TestHub_ClientRegistration(t *testing.T) {
 	defer server.Close()
 
 	conn := connectWS(t, server)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -110,16 +114,18 @@ func TestHub_Broadcast(t *testing.T) {
 	defer server.Close()
 
 	conn1 := connectWS(t, server)
-	defer conn1.Close()
+	defer func() { _ = conn1.Close() }()
 	conn2 := connectWS(t, server)
-	defer conn2.Close()
+	defer func() { _ = conn2.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 
 	msg := []byte(`{"type":"issue:created","data":"test"}`)
 	hub.Broadcast(msg)
 
-	conn1.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := conn1.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, received1, err := conn1.ReadMessage()
 	if err != nil {
 		t.Fatalf("client 1 read error: %v", err)
@@ -128,7 +134,9 @@ func TestHub_Broadcast(t *testing.T) {
 		t.Fatalf("client 1: expected %s, got %s", msg, received1)
 	}
 
-	conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := conn2.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, received2, err := conn2.ReadMessage()
 	if err != nil {
 		t.Fatalf("client 2 read error: %v", err)
@@ -151,7 +159,7 @@ func TestHub_ClientDisconnect(t *testing.T) {
 		t.Fatalf("expected 1 client before disconnect, got %d", countBefore)
 	}
 
-	conn.Close()
+	_ = conn.Close()
 	time.Sleep(100 * time.Millisecond)
 
 	countAfter := totalClients(hub)
@@ -168,7 +176,7 @@ func TestHub_BroadcastToMultipleClients(t *testing.T) {
 	conns := make([]*websocket.Conn, numClients)
 	for i := 0; i < numClients; i++ {
 		conns[i] = connectWS(t, server)
-		defer conns[i].Close()
+		defer func(conn *websocket.Conn) { _ = conn.Close() }(conns[i])
 	}
 
 	time.Sleep(50 * time.Millisecond)
@@ -182,7 +190,9 @@ func TestHub_BroadcastToMultipleClients(t *testing.T) {
 	hub.Broadcast(msg)
 
 	for i, conn := range conns {
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		_, received, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatalf("client %d read error: %v", i, err)
@@ -198,7 +208,7 @@ func TestHub_MultipleBroadcasts(t *testing.T) {
 	defer server.Close()
 
 	conn := connectWS(t, server)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -213,7 +223,9 @@ func TestHub_MultipleBroadcasts(t *testing.T) {
 	}
 
 	for i, expected := range messages {
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		_, received, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatalf("message %d read error: %v", i, err)
@@ -248,7 +260,7 @@ func TestHandleWebSocket_ClientIdentityFromQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	authMsg, _ := json.Marshal(map[string]any{
 		"type":    "auth",
@@ -257,7 +269,9 @@ func TestHandleWebSocket_ClientIdentityFromQuery(t *testing.T) {
 	if err := conn.WriteMessage(websocket.TextMessage, authMsg); err != nil {
 		t.Fatalf("write auth: %v", err)
 	}
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := conn.ReadMessage(); err != nil {
 		t.Fatalf("read auth_ack: %v", err)
 	}

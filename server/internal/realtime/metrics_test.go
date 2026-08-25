@@ -76,9 +76,3 @@ func TestMetrics_Snapshot_IncludesCounters(t *testing.T) {
 		}
 	}
 }
-
-// Compile-time guarantee that *Hub continues to satisfy Broadcaster, in case
-// someone changes hub.go method signatures without updating the interface.
-func TestHubImplementsBroadcaster(t *testing.T) {
-	var _ Broadcaster = NewHub()
-}

@@ -107,18 +107,47 @@ func newAssigneeResolverTestServer(
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
+			if err := json.NewEncoder(w).Encode(membersResp); err != nil {
+				t.Errorf("encode members response: %v", err)
+			}
 		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
+			if err := json.NewEncoder(w).Encode(agentsResp); err != nil {
+				t.Errorf("encode agents response: %v", err)
+			}
 		case "/api/squads":
 			if onSquads != nil {
 				onSquads()
 			}
-			json.NewEncoder(w).Encode(squadsResp)
+			if err := json.NewEncoder(w).Encode(squadsResp); err != nil {
+				t.Errorf("encode squads response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+type assigneeResolutionCase struct {
+	name, input, wantType, wantID string
+}
+
+func testAssigneeResolutions(
+	t *testing.T,
+	tests []assigneeResolutionCase,
+	resolve func(string) (string, string, error),
+) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aType, aID, err := resolve(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if aType != tt.wantType || aID != tt.wantID {
+				t.Errorf("got (%q, %q), want (%q, %q)", aType, aID, tt.wantType, tt.wantID)
+			}
+		})
+	}
 }
 
 type issueCommentListQueryTestServer struct {
@@ -134,10 +163,12 @@ func newIssueCommentListQueryTestServer(
 	fixture := &issueCommentListQueryTestServer{}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
-			})
+			}); err != nil {
+				t.Errorf("encode issue response: %v", err)
+			}
 			return
 		}
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
@@ -146,7 +177,7 @@ func newIssueCommentListQueryTestServer(
 				onComments(w, r)
 				return
 			}
-			w.Write([]byte("[]"))
+			_, _ = w.Write([]byte("[]"))
 			return
 		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -303,7 +334,7 @@ func TestResolveFileOrStdinTextFlag(t *testing.T) {
 		c.Flags().String("content-file", "", "")
 		_ = c.Flags().Set("content-stdin", "true")
 		pipeStdin(t, "line one\nline two\n", func() {
-			got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+			got, ok, err := resolveFileOrStdinTextFlag(c)
 			if err != nil || !ok {
 				t.Fatalf("unexpected: ok=%v err=%v", ok, err)
 			}
@@ -317,7 +348,7 @@ func TestResolveFileOrStdinTextFlag(t *testing.T) {
 		c := &cobra.Command{Use: "test"}
 		c.Flags().Bool("content-stdin", false, "")
 		c.Flags().String("content-file", "", "")
-		got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+		got, ok, err := resolveFileOrStdinTextFlag(c)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -337,7 +368,7 @@ func TestResolveFileOrStdinTextFlag(t *testing.T) {
 		c.Flags().String("content-file", "", "")
 		_ = c.Flags().Set("content-stdin", "true")
 		_ = c.Flags().Set("content-file", path)
-		if _, _, err := resolveFileOrStdinTextFlag(c, "content"); err == nil {
+		if _, _, err := resolveFileOrStdinTextFlag(c); err == nil {
 			t.Fatalf("expected mutually-exclusive error")
 		}
 	})
@@ -386,16 +417,21 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Errorf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"id":         "issue-1",
 			"identifier": "MUL-1",
 			"title":      "With attachments",
 			"status":     "todo",
 			"priority":   "none",
-		})
+		}); err != nil {
+			t.Errorf("encode issue response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -428,31 +464,70 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 }
 
 func newIssuePullRequestsTestCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "pull-requests"}
+	cmd := &cobra.Command{Use: "mr list"}
 	cmd.Flags().String("output", "table", "")
 	return cmd
 }
 
-func newIssuePullRequestLinkTestCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "pull-request link"}
-	cmd.Flags().String("provider", "gongfeng", "")
-	cmd.Flags().String("project-path", "", "")
-	cmd.Flags().String("repo-url", "", "")
-	cmd.Flags().Int32("number", 0, "")
-	cmd.Flags().Int32("iid", 0, "")
-	cmd.Flags().String("title", "", "")
-	cmd.Flags().String("state", "open", "")
-	cmd.Flags().String("html-url", "", "")
-	cmd.Flags().String("source-branch", "", "")
-	cmd.Flags().String("target-branch", "", "")
-	cmd.Flags().String("author-login", "", "")
-	cmd.Flags().String("head-sha", "", "")
-	cmd.Flags().String("mergeable-state", "", "")
-	cmd.Flags().Int32("additions", 0, "")
-	cmd.Flags().Int32("deletions", 0, "")
-	cmd.Flags().Int32("changed-files", 0, "")
-	cmd.Flags().Bool("close-intent", false, "")
+func newIssueSearchTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "search-test"}
+	cmd.Flags().Int("limit", 0, "")
+	cmd.Flags().Bool("include-closed", false, "")
 	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
+func TestRunIssueSearchTableUsesCurrentCommentSnippet(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"issues": []map[string]any{{
+				"identifier":              "MUL-42",
+				"title":                   "Current search response",
+				"status":                  "todo",
+				"match_source":            "comment",
+				"matched_comment_snippet": "the current comment snippet",
+			}},
+			"total": 1,
+		}); err != nil {
+			t.Errorf("encode search response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("limit", "7")
+	_ = cmd.Flags().Set("include-closed", "true")
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssueSearch(cmd, []string{"current response"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+
+	if gotQuery.Get("q") != "current response" || gotQuery.Get("limit") != "7" || gotQuery.Get("include_closed") != "true" {
+		t.Fatalf("search query = %v", gotQuery)
+	}
+	text := string(out)
+	for _, want := range []string{"MUL-42", "Current search response", "comment: the current comment snippet"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("table output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func newIssueMRLinkTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "mr link"}
+	addIssuePullRequestLinkFlags(cmd)
 	return cmd
 }
 
@@ -478,13 +553,15 @@ func TestRunIssuePullRequestsListsLinkedPRsAsJSON(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/MUL-2818":
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "MUL-2818",
 				"title":      "CLI PR lookup",
-			})
+			}); err != nil {
+				t.Errorf("encode issue response: %v", err)
+			}
 		case "/api/issues/issue-uuid/pull-requests":
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"pull_requests": []map[string]any{
 					{
 						"url":    "https://github.com/multica-ai/multica/pull/42",
@@ -493,7 +570,9 @@ func TestRunIssuePullRequestsListsLinkedPRsAsJSON(t *testing.T) {
 						"title":  "MUL-2818 add issue PR CLI",
 					},
 				},
-			})
+			}); err != nil {
+				t.Errorf("encode pull requests response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -564,7 +643,7 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/GOA-61234":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "GOA-61234",
 				"title":      "CLI MR link",
@@ -576,7 +655,7 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatalf("decode posted body: %v", err)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"pull_request": map[string]any{
 					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
 					"number":   float64(61234),
@@ -594,7 +673,7 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
 	t.Setenv("MULTICA_TOKEN", "test-token")
 
-	cmd := newIssuePullRequestLinkTestCmd()
+	cmd := newIssueMRLinkTestCmd()
 	_ = cmd.Flags().Set("html-url", "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234")
 	_ = cmd.Flags().Set("title", "GOA-61234 user-center add quick entry API")
 	_ = cmd.Flags().Set("source-branch", "goa-61234-usercenter-api")
@@ -646,7 +725,7 @@ func TestRunIssueMRCreatePostsPlatformCreate(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/GOA-61235":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "GOA-61235",
 				"title":      "CLI MR create",
@@ -658,7 +737,7 @@ func TestRunIssueMRCreatePostsPlatformCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatalf("decode posted body: %v", err)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"linked": true,
 				"pull_request": map[string]any{
 					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61235",
@@ -734,14 +813,14 @@ func TestRunIssueChildrenParsesEnvelopeResponse(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/GOA-520":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "GOA-520",
 				"title":      "Parent",
 				"status":     "done",
 			})
 		case "/api/issues/issue-uuid/children":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issues": []map[string]any{},
 			})
 		default:
@@ -842,10 +921,10 @@ func TestActorDisplayLookupLazyLoads(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
 			memberCalls++
-			json.NewEncoder(w).Encode([]map[string]any{{"user_id": "user-1", "name": "Alice"}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"user_id": "user-1", "name": "Alice"}})
 		case "/api/agents":
 			agentCalls++
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "agent-1", "name": "CodeBot"}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "agent-1", "name": "CodeBot"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -945,7 +1024,7 @@ func TestResolveIssueRef(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/issues/MUL-1852":
-				json.NewEncoder(w).Encode(issue)
+				_ = json.NewEncoder(w).Encode(issue)
 			case "/api/issues":
 				listCalled = true
 				http.Error(w, "should not list", http.StatusTeapot)
@@ -974,8 +1053,11 @@ func TestResolveIssueRef(t *testing.T) {
 				http.NotFound(w, r)
 				return
 			}
-			if got := r.URL.Query().Get("workspace_id"); got != "ws-1" {
-				t.Errorf("workspace_id = %q, want ws-1", got)
+			if got := r.Header.Get("X-Workspace-ID"); got != "ws-1" {
+				t.Errorf("X-Workspace-ID = %q, want ws-1", got)
+			}
+			if got := r.URL.Query().Get("workspace_id"); got != "" {
+				t.Errorf("workspace_id query = %q, want omitted", got)
 			}
 			if got := r.URL.Query().Get("include_closed"); got != "true" {
 				t.Errorf("include_closed = %q, want true", got)
@@ -983,7 +1065,7 @@ func TestResolveIssueRef(t *testing.T) {
 			if got := r.URL.Query().Get("limit"); got != strconv.Itoa(resolverListPageLimit) {
 				t.Errorf("limit = %q, want %d", got, resolverListPageLimit)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issues": []map[string]any{issue},
 				"total":  1,
 			})
@@ -1006,7 +1088,7 @@ func TestResolveIssueRef(t *testing.T) {
 				http.NotFound(w, r)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issues": []map[string]any{{
 					"id":         "aaaaaaaa-4bb6-4602-944b-f40ce4192fe6",
 					"identifier": "MUL-1852",
@@ -1049,8 +1131,11 @@ func TestFetchAutopilotCandidatesPaginates(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		if got := r.URL.Query().Get("workspace_id"); got != "ws-1" {
-			t.Errorf("workspace_id = %q, want ws-1", got)
+		if got := r.Header.Get("X-Workspace-ID"); got != "ws-1" {
+			t.Errorf("X-Workspace-ID = %q, want ws-1", got)
+		}
+		if got := r.URL.Query().Get("workspace_id"); got != "" {
+			t.Errorf("workspace_id query = %q, want omitted", got)
 		}
 		if got := r.URL.Query().Get("limit"); got != strconv.Itoa(resolverListPageLimit) {
 			t.Errorf("limit = %q, want %d", got, resolverListPageLimit)
@@ -1059,12 +1144,12 @@ func TestFetchAutopilotCandidatesPaginates(t *testing.T) {
 		offsets = append(offsets, offset)
 		switch offset {
 		case "":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"autopilots": page1,
 				"total":      resolverListPageLimit + 1,
 			})
 		case strconv.Itoa(resolverListPageLimit):
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"autopilots": page2,
 				"total":      resolverListPageLimit + 1,
 			})
@@ -1097,7 +1182,7 @@ func TestResolveTaskRunID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/issues/" + issueID + "/task-runs":
-			json.NewEncoder(w).Encode([]map[string]any{{
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"id":       taskID,
 				"agent_id": "agent-1",
 				"status":   "completed",
@@ -1131,15 +1216,15 @@ func TestRunIssueRunMessagesResolvesShortTaskPrefix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/issues/MUL-1852":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         issueID,
 				"identifier": "MUL-1852",
 			})
 		case "/api/issues/" + issueID + "/task-runs":
-			json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
 		case "/api/tasks/" + taskID + "/messages":
 			messagePath = r.URL.Path
-			json.NewEncoder(w).Encode([]map[string]any{{
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"seq":     1,
 				"type":    "text",
 				"content": "done",
@@ -1185,67 +1270,15 @@ func TestResolveAssignee(t *testing.T) {
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
 	ctx := context.Background()
 
-	t.Run("exact match member", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "Alice Smith", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "member" || aID != "user-1111" {
-			t.Errorf("got (%q, %q), want (member, user-1111)", aType, aID)
-		}
-	})
-
-	t.Run("case-insensitive substring", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "bob", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "member" || aID != "user-2222" {
-			t.Errorf("got (%q, %q), want (member, user-2222)", aType, aID)
-		}
-	})
-
-	t.Run("match agent", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "codebot", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "agent-3333" {
-			t.Errorf("got (%q, %q), want (agent, agent-3333)", aType, aID)
-		}
-	})
-
-	// MUL-2165: squad names must resolve to (squad, <id>) so the autopilot
-	// quick-create prompt can route work to a squad (e.g. "Super Human")
-	// instead of falling through to "Unrecognized assignee".
-	t.Run("match squad by exact name", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "Super Human", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "squad" || aID != "squad-4444" {
-			t.Errorf("got (%q, %q), want (squad, squad-4444)", aType, aID)
-		}
-	})
-
-	t.Run("match squad by case-insensitive substring", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "super", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "squad" || aID != "squad-4444" {
-			t.Errorf("got (%q, %q), want (squad, squad-4444)", aType, aID)
-		}
-	})
-
-	t.Run("match squad by bare @ display name", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "@Super Human", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "squad" || aID != "squad-4444" {
-			t.Errorf("got (%q, %q), want (squad, squad-4444)", aType, aID)
-		}
+	testAssigneeResolutions(t, []assigneeResolutionCase{
+		{"exact match member", "Alice Smith", "member", "user-1111"},
+		{"case-insensitive substring", "bob", "member", "user-2222"},
+		{"match agent", "codebot", "agent", "agent-3333"},
+		{"match squad by exact name", "Super Human", "squad", "squad-4444"},
+		{"match squad by case-insensitive substring", "super", "squad", "squad-4444"},
+		{"match squad by bare @ display name", "@Super Human", "squad", "squad-4444"},
+	}, func(input string) (string, string, error) {
+		return resolveAssignee(ctx, client, input, issueAssigneeKinds)
 	})
 
 	t.Run("no match", func(t *testing.T) {
@@ -1385,34 +1418,12 @@ func TestResolveAssigneeExactMatchWins(t *testing.T) {
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
 	ctx := context.Background()
 
-	t.Run("exact shorter name resolves to shorter agent", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "reviewer", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "f656eab8-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want (agent, f656eab8-...)", aType, aID)
-		}
-	})
-
-	t.Run("exact longer name still resolves unambiguously", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "peer-reviewer", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "9b0ff9a2-2222-2222-2222-222222222222" {
-			t.Errorf("got (%q, %q), want (agent, 9b0ff9a2-...)", aType, aID)
-		}
-	})
-
-	t.Run("exact match is case-insensitive and tolerates whitespace", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "  Reviewer  ", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "f656eab8-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want exact reviewer agent", aType, aID)
-		}
+	testAssigneeResolutions(t, []assigneeResolutionCase{
+		{"exact shorter name resolves to shorter agent", "reviewer", "agent", "f656eab8-1111-1111-1111-111111111111"},
+		{"exact longer name still resolves unambiguously", "peer-reviewer", "agent", "9b0ff9a2-2222-2222-2222-222222222222"},
+		{"exact match is case-insensitive and tolerates whitespace", "  Reviewer  ", "agent", "f656eab8-1111-1111-1111-111111111111"},
+	}, func(input string) (string, string, error) {
+		return resolveAssignee(ctx, client, input, issueAssigneeKinds)
 	})
 
 	t.Run("substring-only input falls back and stays ambiguous", func(t *testing.T) {
@@ -1448,44 +1459,13 @@ func TestResolveAssigneeByID(t *testing.T) {
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
 	ctx := context.Background()
 
-	t.Run("full UUID resolves agent", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "f656eab8-1111-1111-1111-111111111111", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "f656eab8-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want reviewer agent", aType, aID)
-		}
-	})
-
-	t.Run("8-char ShortID resolves agent", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "f656eab8", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "f656eab8-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want reviewer agent", aType, aID)
-		}
-	})
-
-	t.Run("uppercase ShortID still resolves", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "F656EAB8", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "f656eab8-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want reviewer agent", aType, aID)
-		}
-	})
-
-	t.Run("ShortID resolves a member", func(t *testing.T) {
-		aType, aID, err := resolveAssignee(ctx, client, "aaaaaaaa", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "member" || aID != "aaaaaaaa-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want Alice", aType, aID)
-		}
+	testAssigneeResolutions(t, []assigneeResolutionCase{
+		{"full UUID resolves agent", "f656eab8-1111-1111-1111-111111111111", "agent", "f656eab8-1111-1111-1111-111111111111"},
+		{"8-char ShortID resolves agent", "f656eab8", "agent", "f656eab8-1111-1111-1111-111111111111"},
+		{"uppercase ShortID still resolves", "F656EAB8", "agent", "f656eab8-1111-1111-1111-111111111111"},
+		{"ShortID resolves a member", "aaaaaaaa", "member", "aaaaaaaa-1111-1111-1111-111111111111"},
+	}, func(input string) (string, string, error) {
+		return resolveAssignee(ctx, client, input, issueAssigneeKinds)
 	})
 }
 
@@ -1510,50 +1490,13 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
 	ctx := context.Background()
 
-	t.Run("full UUID resolves the right agent in a substring-collision workspace", func(t *testing.T) {
-		// This is the MUL-1254 scenario: agent "J" is unreachable by name
-		// because every other agent has "J" in it. UUID lookup must
-		// deterministically pick the right one.
-		aType, aID, err := resolveAssigneeByID(ctx, client, "5fb87ac7-23b5-4a7a-81fa-ed295a54545d", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "5fb87ac7-23b5-4a7a-81fa-ed295a54545d" {
-			t.Errorf("got (%q, %q), want agent J", aType, aID)
-		}
-	})
-
-	t.Run("uppercase UUID is normalized", func(t *testing.T) {
-		aType, aID, err := resolveAssigneeByID(ctx, client, "5FB87AC7-23B5-4A7A-81FA-ED295A54545D", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "agent" || aID != "5fb87ac7-23b5-4a7a-81fa-ed295a54545d" {
-			t.Errorf("got (%q, %q), want agent J", aType, aID)
-		}
-	})
-
-	t.Run("UUID resolves a member", func(t *testing.T) {
-		aType, aID, err := resolveAssigneeByID(ctx, client, "aaaaaaaa-1111-1111-1111-111111111111", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "member" || aID != "aaaaaaaa-1111-1111-1111-111111111111" {
-			t.Errorf("got (%q, %q), want Alice", aType, aID)
-		}
-	})
-
-	// MUL-2165: --assignee-id <squad-uuid> must resolve to (squad, <id>) so
-	// scripts that read the squad list and pin its UUID can assign work to a
-	// squad in a single deterministic call.
-	t.Run("UUID resolves a squad", func(t *testing.T) {
-		aType, aID, err := resolveAssigneeByID(ctx, client, "ccccccc1-2222-3333-4444-555555555555", issueAssigneeKinds)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if aType != "squad" || aID != "ccccccc1-2222-3333-4444-555555555555" {
-			t.Errorf("got (%q, %q), want squad Super Human", aType, aID)
-		}
+	testAssigneeResolutions(t, []assigneeResolutionCase{
+		{"full UUID resolves the right agent in a substring-collision workspace", "5fb87ac7-23b5-4a7a-81fa-ed295a54545d", "agent", "5fb87ac7-23b5-4a7a-81fa-ed295a54545d"},
+		{"uppercase UUID is normalized", "5FB87AC7-23B5-4A7A-81FA-ED295A54545D", "agent", "5fb87ac7-23b5-4a7a-81fa-ed295a54545d"},
+		{"UUID resolves a member", "aaaaaaaa-1111-1111-1111-111111111111", "member", "aaaaaaaa-1111-1111-1111-111111111111"},
+		{"UUID resolves a squad", "ccccccc1-2222-3333-4444-555555555555", "squad", "ccccccc1-2222-3333-4444-555555555555"},
+	}, func(input string) (string, string, error) {
+		return resolveAssigneeByID(ctx, client, input, issueAssigneeKinds)
 	})
 
 	t.Run("non-UUID input is rejected without name fallback", func(t *testing.T) {
@@ -1603,18 +1546,7 @@ func TestPickAssigneeFromFlags(t *testing.T) {
 	agentsResp := []map[string]any{
 		{"id": "5fb87ac7-23b5-4a7a-81fa-ed295a54545d", "name": "J"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode([]map[string]any{})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, []map[string]any{}, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1733,19 +1665,9 @@ func TestPickAssigneeFromFlagsMemberOrAgentKinds(t *testing.T) {
 	}
 
 	var squadsHits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			squadsHits++
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, func() {
+		squadsHits++
+	})
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1829,7 +1751,7 @@ func TestIssueSubscriberList(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
-		json.NewEncoder(w).Encode(subscribersResp)
+		_ = json.NewEncoder(w).Encode(subscribersResp)
 	}))
 	defer srv.Close()
 
@@ -1900,21 +1822,21 @@ func TestIssueSubscriberMutationBody(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/workspaces/ws-1/members":
-					json.NewEncoder(w).Encode(tt.members)
+					_ = json.NewEncoder(w).Encode(tt.members)
 					return
 				case "/api/agents":
-					json.NewEncoder(w).Encode(tt.agents)
+					_ = json.NewEncoder(w).Encode(tt.agents)
 					return
 				case "/api/squads":
-					json.NewEncoder(w).Encode([]map[string]any{})
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 					return
 				}
 				gotPath = r.URL.Path
 				if r.Method != http.MethodPost {
 					t.Errorf("expected POST, got %s", r.Method)
 				}
-				json.NewDecoder(r.Body).Decode(&gotBody)
-				json.NewEncoder(w).Encode(map[string]bool{"subscribed": tt.action == "subscribe"})
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				_ = json.NewEncoder(w).Encode(map[string]bool{"subscribed": tt.action == "subscribe"})
 			}))
 			defer srv.Close()
 
@@ -1991,7 +1913,7 @@ func TestRunIssueCommentListFlagGuards(t *testing.T) {
 		// resolveIssueRef hits GET /api/issues/<ref>; everything else means
 		// the guard let an invalid combination through to the wire.
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
 			})
@@ -2191,7 +2113,7 @@ func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *test
 		// when the call was a --thread + --tail combo.
 		w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
 		w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000999")
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	})
 	defer srv.close()
 
@@ -2233,7 +2155,7 @@ func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *test
 func TestRunIssueCommentList_RecentStillLabelsCursorAsThread(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
 			})
@@ -2241,7 +2163,7 @@ func TestRunIssueCommentList_RecentStillLabelsCursorAsThread(t *testing.T) {
 		}
 		w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
 		w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000777")
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
 
@@ -2274,13 +2196,13 @@ func TestRunIssueCommentList_RecentStillLabelsCursorAsThread(t *testing.T) {
 func TestRunIssueCommentList_DoesNotPrintShowingPreamble(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
 			})
 			return
 		}
-		w.Write([]byte(`[{"id":"c1"},{"id":"c2"}]`))
+		_, _ = w.Write([]byte(`[{"id":"c1"},{"id":"c2"}]`))
 	}))
 	defer srv.Close()
 
@@ -2367,56 +2289,42 @@ func TestValidateIssuePriority(t *testing.T) {
 	}
 }
 
-func TestRunIssueCreateRejectsInvalidStatusBeforeRequest(t *testing.T) {
-	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "Invalid status")
-	_ = cmd.Flags().Set("status", "active")
-	err := runIssueCreate(cmd, nil)
-	if err == nil {
-		t.Fatal("runIssueCreate should reject invalid status")
+func TestRunIssueCreateAndUpdateRejectInvalidFieldsBeforeRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		field  string
+		value  string
+		update bool
+		run    func(*cobra.Command) error
+	}{
+		{name: "create status", field: "status", value: "active", run: func(cmd *cobra.Command) error {
+			_ = cmd.Flags().Set("title", "Invalid status")
+			return runIssueCreate(cmd, nil)
+		}},
+		{name: "create priority", field: "priority", value: "P1", run: func(cmd *cobra.Command) error {
+			_ = cmd.Flags().Set("title", "Invalid priority")
+			return runIssueCreate(cmd, nil)
+		}},
+		{name: "update status", field: "status", value: "active", update: true, run: func(cmd *cobra.Command) error {
+			return runIssueUpdate(cmd, []string{"MUL-1"})
+		}},
+		{name: "update priority", field: "priority", value: "P1", update: true, run: func(cmd *cobra.Command) error {
+			return runIssueUpdate(cmd, []string{"MUL-1"})
+		}},
 	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
-	}
-}
 
-func TestRunIssueCreateRejectsInvalidPriorityBeforeRequest(t *testing.T) {
-	cmd := newIssueCreateTestCmd()
-	_ = cmd.Flags().Set("title", "Invalid priority")
-	_ = cmd.Flags().Set("priority", "P1")
-	err := runIssueCreate(cmd, nil)
-	if err == nil {
-		t.Fatal("runIssueCreate should reject invalid priority")
-	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
-	}
-}
-
-func TestRunIssueUpdateRejectsInvalidStatusBeforeRequest(t *testing.T) {
-	cmd := &cobra.Command{Use: "update"}
-	cmd.Flags().String("status", "", "")
-	cmd.Flags().String("priority", "", "")
-	_ = cmd.Flags().Set("status", "active")
-	err := runIssueUpdate(cmd, []string{"MUL-1"})
-	if err == nil {
-		t.Fatal("runIssueUpdate should reject invalid status")
-	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
-	}
-}
-
-func TestRunIssueUpdateRejectsInvalidPriorityBeforeRequest(t *testing.T) {
-	cmd := &cobra.Command{Use: "update"}
-	cmd.Flags().String("status", "", "")
-	cmd.Flags().String("priority", "", "")
-	_ = cmd.Flags().Set("priority", "P1")
-	err := runIssueUpdate(cmd, []string{"MUL-1"})
-	if err == nil {
-		t.Fatal("runIssueUpdate should reject invalid priority")
-	}
-	if !strings.Contains(err.Error(), "valid values") {
-		t.Fatalf("expected valid values error, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newIssueCreateTestCmd()
+			if tt.update {
+				cmd = &cobra.Command{Use: "update"}
+				cmd.Flags().String("status", "", "")
+				cmd.Flags().String("priority", "", "")
+			}
+			_ = cmd.Flags().Set(tt.field, tt.value)
+			if err := tt.run(cmd); err == nil || !strings.Contains(err.Error(), "valid values") {
+				t.Fatalf("error = %v, want invalid %s error listing valid values", err, tt.field)
+			}
+		})
 	}
 }

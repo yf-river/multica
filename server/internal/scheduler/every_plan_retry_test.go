@@ -10,34 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestManagerEveryPlanRetriesFailedSamePlanTime exercises the
-// `every_plan` retry path that张大彪 flagged on PR #3707:
-//
-//	"every_plan 的 FAILED retry 路径断了。CatchUpEveryPlan 规划必须把
-//	 还在 retry 窗口、attempts < max_attempts 的 FAILED row 先递回去
-//	 给 tryClaim 的 retry 分支，不能直接 latestPlan + cadence 跳过"
-//
-// The previous planner unconditionally advanced the cursor to
-// `latestStored + cadence`, so after a FAILED row was written the next
-// tick would skip past that plan_time and never re-attempt it — even
-// though tryClaim's `(status='FAILED' AND COALESCE(next_retry_at, ...)
-// <= now)` branch is the explicit retry path.
-//
-// This test:
-//
-//  1. Registers an every_plan job whose handler ALWAYS returns an
-//     error.
-//  2. Runs a tick → FAILED row at plan_time T, attempt=1, next_retry_at
-//     stamped from RetryBackoff[0].
-//  3. Forces next_retry_at into the past (test fast-forwards so we
-//     don't have to wait for the real backoff).
-//  4. Runs a second tick → asserts the SAME plan_time T was retried
-//     and is now attempt=2 (not skipped to T+cadence).
-//
-// We pin a cadence well above the wall-clock difference between the
-// two ticks so the rounded "current latest plan" remains the same
-// bucket on both ticks, ensuring the cursor's behaviour is what we are
-// actually measuring.
 func TestManagerEveryPlanRetriesFailedSamePlanTime(t *testing.T) {
 	pool := integrationPool(t)
 	job := newTestJobSpec(uniqueJobName(t, "every_plan_retry"))
@@ -63,7 +35,7 @@ func TestManagerEveryPlanRetriesFailedSamePlanTime(t *testing.T) {
 		return HandlerResult{}, errors.New("simulated handler failure")
 	}
 
-	mgr := NewManager(pool, Options{RunnerID: "retry-runner"})
+	mgr := newManagerWithRunnerID(pool, "retry-runner")
 	if err := mgr.Register(*job); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -136,8 +108,6 @@ func TestManagerEveryPlanRetriesFailedSamePlanTime(t *testing.T) {
 	}
 }
 
-// rowSnapshot is the subset of sys_cron_executions fields the test
-// inspects.
 type rowSnapshot struct {
 	ID          string
 	PlanTime    time.Time

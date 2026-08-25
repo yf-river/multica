@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-func TestRelayBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
+func TestDualWriteBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
 	hub := NewHub()
 	client := attachRealtimeTestClient(hub, ScopeWorkspace, "workspace-1")
 	publisher := &localFirstPublisher{t: t, client: client}
-	broadcaster := NewRelayBroadcaster(hub, publisher)
+	broadcaster := NewDualWriteBroadcaster(hub, publisher)
 	message := []byte(`{"type":"issue:updated"}`)
 
 	broadcaster.BroadcastToScope(ScopeWorkspace, "workspace-1", message)
@@ -38,6 +38,27 @@ func TestRelayBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
 	case duplicate := <-client.send:
 		t.Fatalf("expected redis loopback to dedup, got duplicate %s", duplicate)
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestDualWriteBroadcasterUserExclusionMatchesRelayEnvelope(t *testing.T) {
+	hub := NewHub()
+	excluded := attachRealtimeTestClient(hub, ScopeUser, "user-1")
+	delivered := attachRealtimeTestClient(hub, ScopeUser, "user-1")
+	delivered.workspaceID = "workspace-2"
+	publisher := &localFirstPublisher{t: t, client: delivered}
+	broadcaster := NewDualWriteBroadcaster(hub, publisher)
+	message := []byte(`{"type":"member:added"}`)
+
+	broadcaster.BroadcastToUser("user-1", "workspace-1", message)
+
+	if publisher.scopeType != ScopeUser || publisher.scopeID != "user-1" || publisher.exclude != "workspace-1" {
+		t.Fatalf("relay envelope = %s/%s exclude=%q", publisher.scopeType, publisher.scopeID, publisher.exclude)
+	}
+	select {
+	case frame := <-excluded.send:
+		t.Fatalf("excluded workspace received duplicate frame %s", frame)
+	default:
 	}
 }
 

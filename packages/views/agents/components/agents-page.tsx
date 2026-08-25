@@ -8,7 +8,6 @@ import {
   Bot,
   Loader2,
   Plus,
-  X,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -22,6 +21,7 @@ import type {
 import {
   type AgentActivity,
   agentRunCounts30dOptions,
+  createAgentWithRecovery,
   useWorkspaceActivityMap,
   useWorkspacePresenceMap,
   type AgentPresenceDetail,
@@ -29,14 +29,14 @@ import {
 import {
   useAgentsViewStore,
   AGENT_DEFAULT_HIDDEN_COLUMNS,
-  AGENT_SCOPES,
   type AgentColumnKey,
   type AgentsScope,
   type AgentSortField,
 } from "@multica/core/agents/stores";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
@@ -66,10 +66,16 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy, mapBy } from "../../common/collections";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
+import { ListBatchToolbar } from "../../common/list-toolbar";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
 import { CreateAgentDialog } from "./create-agent-dialog";
@@ -113,28 +119,15 @@ const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
 // still carry gaps).
 const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
 
-function columnTrackVars(
-  isVisible: (key: AgentColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: AgentColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as AgentColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--agc-status": width("status"),
-    "--agc-owner": width("owner"),
-    "--agc-runtime": width("runtime"),
-    "--agc-lastactive": width("lastActive"),
-    "--agc-runs": width("runs"),
-    "--agc-model": width("model"),
-    "--agc-created": width("created"),
-    "--agc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  status: "--agc-status",
+  owner: "--agc-owner",
+  runtime: "--agc-runtime",
+  lastActive: "--agc-lastactive",
+  runs: "--agc-runs",
+  model: "--agc-model",
+  created: "--agc-created",
+}, "--agc-minw");
 
 export interface AgentListRow {
   agent: Agent;
@@ -195,8 +188,6 @@ function PageHeaderBar({
           </a>
         </p>
       </div>
-      {/* Quiet chrome button (outline, icon-only below md) — primary is
-          reserved for the empty state's CTA. */}
       <Button
         type="button"
         size="sm"
@@ -435,66 +426,43 @@ function AgentListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.columns.agent)}
       </ListGridHeaderCell>
-      {isColVisible("status") ? (
-        <ListGridHeaderCell>{t(($) => $.columns.status)}</ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="px-0" />
-      )}
-      {isColVisible("owner") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.columns.owner)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("runtime") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.columns.runtime)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("lastActive") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("lastActive")}
-          onSort={() => onSort("lastActive")}
-        >
-          {t(($) => $.columns.last_active)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("runs") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          align="right"
-          sorted={sorted("runs")}
-          onSort={() => onSort("runs")}
-        >
-          {t(($) => $.columns.runs)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("model") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.columns.model)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.columns.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell visible={isColVisible("status")}>
+        {t(($) => $.columns.status)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("owner")} className="hidden @2xl:flex">
+        {t(($) => $.columns.owner)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("runtime")} className="hidden @2xl:flex">
+        {t(($) => $.columns.runtime)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("lastActive")}
+        className="hidden @2xl:flex"
+        sorted={sorted("lastActive")}
+        onSort={() => onSort("lastActive")}
+      >
+        {t(($) => $.columns.last_active)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("runs")}
+        className="hidden @2xl:flex"
+        align="right"
+        sorted={sorted("runs")}
+        onSort={() => onSort("runs")}
+      >
+        {t(($) => $.columns.runs)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("model")} className="hidden @2xl:flex">
+        {t(($) => $.columns.model)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.columns.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );
@@ -615,22 +583,11 @@ function AgentBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport. */}
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.actions.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.actions.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
-
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.actions.selected, { count: rows.length })}
+        clearLabel={t(($) => $.actions.clear_selection)}
+        onClear={onClear}
+      >
         {anyActive && (
           <Button
             variant="ghost"
@@ -658,7 +615,7 @@ function AgentBatchToolbar({
             {t(($) => $.row_actions.restore)}
           </Button>
         )}
-      </div>
+      </ListBatchToolbar>
 
       <Dialog open={confirmArchive} onOpenChange={setConfirmArchive}>
         <DialogContent className="sm:max-w-md">
@@ -741,12 +698,9 @@ export function AgentsPage() {
   const [duplicateTemplate, setDuplicateTemplate] = useState<Agent | null>(
     null,
   );
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
-  const rawScope = useAgentsViewStore((s) => s.scope);
-  const scope = AGENT_SCOPES.includes(rawScope) ? rawScope : "mine";
+  const scope = useAgentsViewStore((s) => s.scope);
   const setScope = useAgentsViewStore((s) => s.setScope);
   const sortField = useAgentsViewStore((s) => s.sortField);
   const sortDirection = useAgentsViewStore((s) => s.sortDirection);
@@ -761,38 +715,17 @@ export function AgentsPage() {
 
   const isColVisible = (key: AgentColumnKey) => !hiddenColumns.includes(key);
 
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
-  const runtimesById = useMemo(() => {
-    const m = new Map<string, AgentRuntime>();
-    for (const r of runtimes) m.set(r.id, r);
-    return m;
-  }, [runtimes]);
+  const runtimesById = useMemo(() => indexBy(runtimes, (runtime) => runtime.id), [runtimes]);
+  const runCountsById = useMemo(
+    () => mapBy(runCountsRaw, (count) => count.agent_id, (count) => count.run_count),
+    [runCountsRaw],
+  );
+  const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
-  const runCountsById = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of runCountsRaw) m.set(r.agent_id, r.run_count);
-    return m;
-  }, [runCountsRaw]);
-
-  const membersById = useMemo(() => {
-    const m = new Map<string, MemberWithUser>();
-    for (const mem of members) m.set(mem.user_id, mem);
-    return m;
-  }, [members]);
-
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const me = members.find((m) => m.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
-  }, [members, currentUser]);
+  const isWorkspaceAdmin = canManageWorkspace(
+    resolveCurrentMember(members, currentUser?.id).role,
+  );
 
   // Scope counts come from the FULL set (filters never affect them).
   // Archived ignores the ownership lens (see the view store comment).
@@ -930,7 +863,7 @@ export function AgentsPage() {
   });
 
   const handleCreate = async (data: CreateAgentRequest): Promise<Agent> => {
-    const agent = await api.createAgent(data);
+    const agent = await createAgentWithRecovery(data);
     qc.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current = []) => {
       const exists = current.some((a) => a.id === agent.id);
       return exists
@@ -949,14 +882,15 @@ export function AgentsPage() {
     setShowCreate(true);
   }, []);
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
   const selectedRows = rows.filter((row) => selectedIds.has(row.agent.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
-  const someSelected = selectedRows.length > 0 && !allSelected;
-  const handleToggleAll = () => {
-    setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.agent.id)),
-    );
-  };
+  const { allSelected, someSelected } = getListGridSelectionState(
+    rows.map((row) => row.agent.id),
+    selectedIds,
+  );
+  const handleToggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((row) => row.agent.id)));
 
   const virtualItems = rowVirtualizer.getVirtualItems();
   const firstVirtual = virtualItems[0];

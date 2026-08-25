@@ -13,20 +13,26 @@ import (
 
 const createTaskTraceEvent = `-- name: CreateTaskTraceEvent :one
 INSERT INTO task_trace_event (
-    workspace_id, task_id, issue_id, agent_id, runtime_id, squad_id, project_id,
+    id, workspace_id, task_id, issue_id, agent_id, runtime_id, squad_id, project_id,
     source, event_type, event_name, status, attempt,
     duration_ms, queue_wait_ms, run_ms, total_ms,
     provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
     failure_reason, error_type, trigger_comment_id, autopilot_run_id, chat_session_id,
     metadata
 ) VALUES (
-    $1, $2, $17, $3, $18, $19, $20,
+    COALESCE($17::uuid, gen_random_uuid()), $1, $2, $18, $3, $19, $20, $21,
     $4, $5, $6, $7, $8,
-    $21, $22, $23, $24,
+    $22, $23, $24, $25,
     $9, $10, $11, $12, $13, $14,
-    $15, $16, $25, $26, $27,
-    COALESCE($28::jsonb, '{}'::jsonb)
+    $15, $16, $26, $27, $28,
+    COALESCE($29::jsonb, '{}'::jsonb)
 )
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+WHERE task_trace_event.workspace_id = EXCLUDED.workspace_id
+  AND task_trace_event.task_id = EXCLUDED.task_id
+  AND task_trace_event.issue_id IS NOT DISTINCT FROM EXCLUDED.issue_id
+  AND task_trace_event.event_type = EXCLUDED.event_type
+  AND task_trace_event.metadata = EXCLUDED.metadata
 RETURNING id, workspace_id, task_id, issue_id, agent_id, runtime_id, squad_id, project_id, source, event_type, event_name, status, attempt, duration_ms, queue_wait_ms, run_ms, total_ms, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, failure_reason, error_type, trigger_comment_id, autopilot_run_id, chat_session_id, metadata, created_at
 `
 
@@ -47,6 +53,7 @@ type CreateTaskTraceEventParams struct {
 	CacheWriteTokens int64       `json:"cache_write_tokens"`
 	FailureReason    string      `json:"failure_reason"`
 	ErrorType        string      `json:"error_type"`
+	ID               pgtype.UUID `json:"id"`
 	IssueID          pgtype.UUID `json:"issue_id"`
 	RuntimeID        pgtype.UUID `json:"runtime_id"`
 	SquadID          pgtype.UUID `json:"squad_id"`
@@ -61,6 +68,9 @@ type CreateTaskTraceEventParams struct {
 	Metadata         []byte      `json:"metadata"`
 }
 
+// Callers may supply id for a response-loss-sensitive event. Reusing that ID
+// replays the committed row only when workspace/task/issue/type and the
+// request-bearing metadata are identical; a changed request returns no row.
 func (q *Queries) CreateTaskTraceEvent(ctx context.Context, arg CreateTaskTraceEventParams) (TaskTraceEvent, error) {
 	row := q.db.QueryRow(ctx, createTaskTraceEvent,
 		arg.WorkspaceID,
@@ -79,6 +89,7 @@ func (q *Queries) CreateTaskTraceEvent(ctx context.Context, arg CreateTaskTraceE
 		arg.CacheWriteTokens,
 		arg.FailureReason,
 		arg.ErrorType,
+		arg.ID,
 		arg.IssueID,
 		arg.RuntimeID,
 		arg.SquadID,

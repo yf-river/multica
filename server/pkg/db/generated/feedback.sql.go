@@ -24,16 +24,18 @@ func (q *Queries) CountRecentFeedbackByUser(ctx context.Context, userID pgtype.U
 }
 
 const createFeedback = `-- name: CreateFeedback :one
-INSERT INTO feedback (user_id, workspace_id, message, metadata)
-VALUES ($1, $4, $2, $3)
-RETURNING id, user_id, workspace_id, message, metadata, created_at
+INSERT INTO feedback (user_id, workspace_id, message, metadata, idempotency_key, request_hash)
+VALUES ($1, $6, $2, $3, $4, $5)
+RETURNING id, user_id, workspace_id, message, metadata, created_at, idempotency_key, request_hash
 `
 
 type CreateFeedbackParams struct {
-	UserID      pgtype.UUID `json:"user_id"`
-	Message     string      `json:"message"`
-	Metadata    []byte      `json:"metadata"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	Message        string      `json:"message"`
+	Metadata       []byte      `json:"metadata"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+	RequestHash    pgtype.Text `json:"request_hash"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 }
 
 func (q *Queries) CreateFeedback(ctx context.Context, arg CreateFeedbackParams) (Feedback, error) {
@@ -41,6 +43,8 @@ func (q *Queries) CreateFeedback(ctx context.Context, arg CreateFeedbackParams) 
 		arg.UserID,
 		arg.Message,
 		arg.Metadata,
+		arg.IdempotencyKey,
+		arg.RequestHash,
 		arg.WorkspaceID,
 	)
 	var i Feedback
@@ -51,6 +55,34 @@ func (q *Queries) CreateFeedback(ctx context.Context, arg CreateFeedbackParams) 
 		&i.Message,
 		&i.Metadata,
 		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+	)
+	return i, err
+}
+
+const getFeedbackByCreateRequest = `-- name: GetFeedbackByCreateRequest :one
+SELECT id, user_id, workspace_id, message, metadata, created_at, idempotency_key, request_hash FROM feedback
+WHERE user_id = $1 AND idempotency_key = $2
+`
+
+type GetFeedbackByCreateRequestParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+}
+
+func (q *Queries) GetFeedbackByCreateRequest(ctx context.Context, arg GetFeedbackByCreateRequestParams) (Feedback, error) {
+	row := q.db.QueryRow(ctx, getFeedbackByCreateRequest, arg.UserID, arg.IdempotencyKey)
+	var i Feedback
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.WorkspaceID,
+		&i.Message,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestHash,
 	)
 	return i, err
 }

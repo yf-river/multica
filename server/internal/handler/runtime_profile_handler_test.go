@@ -6,28 +6,77 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// insertRuntimeProfileFixture creates a runtime_profile in testWorkspaceID and
-// returns its id, registering cleanup.
-func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName, protocolFamily, commandName string) string {
+func TestCreateRuntimeProfile_ReplaysCommittedResponse(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	key := uuid.NewString()
+	create := func() (int, map[string]any) {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
+			"display_name":    "Idempotent Runtime " + key,
+			"protocol_family": "codex",
+			"command_name":    "idempotent-codex",
+		})
+		req = withURLParam(req, "id", testWorkspaceID)
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.CreateRuntimeProfile(w, req)
+		var body map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+			t.Fatalf("decode create response: %v", err)
+		}
+		return w.Code, body
+	}
+
+	firstStatus, first := create()
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, first["id"])
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'runtime_profile' AND idempotency_key = $1`, key)
+	})
+	secondStatus, second := create()
+	if firstStatus != http.StatusCreated || secondStatus != http.StatusCreated {
+		t.Fatalf("create statuses = (%d, %d), want (201, 201); second=%v", firstStatus, secondStatus, second)
+	}
+	if first["id"] != second["id"] {
+		t.Fatalf("replay IDs differ: first=%v second=%v", first["id"], second["id"])
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
+		"display_name":    "Different Runtime " + key,
+		"protocol_family": "codex",
+		"command_name":    "different-codex",
+	})
+	req = withURLParam(req, "id", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", key)
+	testHandler.CreateRuntimeProfile(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("different replay: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName, commandName string) string {
 	t.Helper()
 	var profileID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO runtime_profile (workspace_id, display_name, protocol_family, command_name, created_by)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, testWorkspaceID, displayName, protocolFamily, commandName, testUserID).Scan(&profileID); err != nil {
+	`, testWorkspaceID, displayName, "codex", commandName, testUserID).Scan(&profileID); err != nil {
 		t.Fatalf("insert runtime_profile fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, profileID)
+		mustExec(t, context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, profileID)
 	})
 	return profileID
 }
 
-// insertProfileRuntimeFixture creates an agent_runtime instance bound to the
-// given profile (so profile_id is set), returning its id.
 func insertProfileRuntimeFixture(t *testing.T, ctx context.Context, profileID, name, provider string) string {
 	t.Helper()
 	var runtimeID string
@@ -42,30 +91,30 @@ func insertProfileRuntimeFixture(t *testing.T, ctx context.Context, profileID, n
 		t.Fatalf("insert profile runtime fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
 
-// TestDeleteRuntimeProfile_ArchivedAgentCascade is the regression guard for the
-// FK-RESTRICT 500: a profile whose only remaining agent is ARCHIVED must still
-// delete cleanly. agent.runtime_id is ON DELETE RESTRICT, so without the
-// per-runtime archived-agent teardown the DELETE on agent_runtime would raise a
-// raw FK error and the handler would 500. The cascade must hard-delete the
-// archived agent, the runtime row, and the profile.
+func TestRuntimeProfileToResponseRejectsCorruptFixedArgs(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`{}`), []byte(`[1]`)} {
+		if _, err := runtimeProfileToResponse(db.RuntimeProfile{FixedArgs: raw}); err == nil {
+			t.Fatalf("fixed_args=%s expected an error", raw)
+		}
+	}
+}
+
 func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Archived", "codex", "company-codex-arch")
+	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Archived", "company-codex-arch")
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Runtime", "codex")
-	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Profile Archived Agent")
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Archived Agent")
 
-	// Archive the agent — the active-agent guard passes, but the FK still pins
-	// the runtime row until the archived cascade clears it.
 	if _, err := testPool.Exec(ctx, `UPDATE agent SET archived_at = now() WHERE id = $1`, agentID); err != nil {
 		t.Fatalf("archive agent: %v", err)
 	}
@@ -100,18 +149,15 @@ func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 	}
 }
 
-// TestDeleteRuntimeProfile_ActiveAgentBlocks confirms the guard still refuses
-// (409) while an ACTIVE agent is bound to one of the profile's runtimes, and
-// leaves the profile + runtime intact.
 func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Active", "codex", "company-codex-active")
+	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Active", "company-codex-active")
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Active Runtime", "codex")
-	_ = createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Profile Active Agent")
+	_ = createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Active Agent")
 
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, nil)
@@ -137,49 +183,45 @@ func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 	}
 }
 
-
-// TestCreateRuntimeProfile_ForcesWorkspaceVisibility is the regression guard
-// for the visibility leak: visibility=private is not user-settable in v1
-// because the read paths don't enforce it. A client that POSTs
-// scope: "personal" must get a profile stored as 'workspace' — never
-// private — so a "private" profile can't leak to other members or be
-// registered by other daemons. Belt-and-suspenders: also assert the row in
-// the DB is 'workspace'.
-func TestCreateRuntimeProfile_ForcesWorkspaceVisibility(t *testing.T) {
+func TestCreateRuntimeProfileRejectsUnknownFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
-		"display_name":    "Visibility Forced Profile",
-		"protocol_family": "codex",
-		"command_name":    "vis-forced-codex",
-		"scope": "personal", // must be ignored
+		"display_name":      "Unknown Field",
+		"protocol_family":   "codex",
+		"command_name":      "unknown-field-codex",
+		"unsupported_field": true,
 	})
 	req = withURLParam(req, "id", testWorkspaceID)
 	testHandler.CreateRuntimeProfile(w, req)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
-	var resp RuntimeProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID)
-	})
+}
 
-	if resp.Visibility != "workspace" {
-		t.Fatalf("response visibility = %q, want workspace (private must be forced to workspace)", resp.Visibility)
+func TestUpdateRuntimeProfileRejectsUnknownFields(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
 	}
-	var dbVis string
-	if err := testPool.QueryRow(ctx, `SELECT visibility FROM runtime_profile WHERE id = $1`, resp.ID).Scan(&dbVis); err != nil {
-		t.Fatalf("read stored visibility: %v", err)
-	}
-	if dbVis != "workspace" {
-		t.Fatalf("stored visibility = %q, want workspace", dbVis)
+	profileID := insertRuntimeProfileFixture(
+		t,
+		context.Background(),
+		"Unknown Update Field",
+		"unknown-update-field",
+	)
+
+	w := httptest.NewRecorder()
+	req := newRequest("PATCH", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, map[string]any{
+		"unsupported_field": true,
+	})
+	req = withURLParams(req, "id", testWorkspaceID, "profileId", profileID)
+	testHandler.UpdateRuntimeProfile(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }

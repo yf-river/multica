@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
+import type { CreateCommentRequest } from "../../types";
 
 /**
  * Per-comment draft persistence — survives:
@@ -25,11 +26,20 @@ interface CommentDraft {
   updatedAt: number;
 }
 
+interface PendingCommentCreate {
+  requestKey: string;
+  issueId: string;
+  request: CreateCommentRequest;
+  createdAt: number;
+}
+
 interface CommentDraftStore {
   drafts: Record<string, CommentDraft>;
+  pendingCreates: Record<string, PendingCommentCreate>;
   getDraft: (key: CommentDraftKey) => string | undefined;
   setDraft: (key: CommentDraftKey, content: string) => void;
   clearDraft: (key: CommentDraftKey) => void;
+  setPendingCreate: (scope: string, operation?: PendingCommentCreate) => void;
 }
 
 // Drafts older than 30 days are dropped on store init. Without TTL the store
@@ -48,10 +58,20 @@ function pruneStaleDrafts(drafts: Record<string, CommentDraft>): Record<string, 
   return out;
 }
 
+function pruneStalePendingCreates(
+  operations: Record<string, PendingCommentCreate>,
+): Record<string, PendingCommentCreate> {
+  const cutoff = Date.now() - TTL_MS;
+  return Object.fromEntries(
+    Object.entries(operations).filter(([, operation]) => operation.createdAt >= cutoff),
+  );
+}
+
 export const useCommentDraftStore = create<CommentDraftStore>()(
   persist(
     (set, get) => ({
       drafts: {},
+      pendingCreates: {},
       getDraft: (key) => get().drafts[key]?.content,
       setDraft: (key, content) =>
         set((s) => ({
@@ -64,6 +84,12 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
           delete next[key];
           return { drafts: next };
         }),
+      setPendingCreate: (scope, operation) => set((state) => {
+        const pendingCreates = { ...state.pendingCreates };
+        if (operation) pendingCreates[scope] = operation;
+        else delete pendingCreates[scope];
+        return { pendingCreates };
+      }),
     }),
     {
       name: "multica_comment_drafts",
@@ -71,10 +97,11 @@ export const useCommentDraftStore = create<CommentDraftStore>()(
       onRehydrateStorage: () => (state) => {
         if (state) {
           state.drafts = pruneStaleDrafts(state.drafts);
+          state.pendingCreates = pruneStalePendingCreates(state.pendingCreates);
         }
       },
     },
   ),
 );
 
-registerForWorkspaceRehydration(() => useCommentDraftStore.persist.rehydrate());
+registerWorkspacePersistStore(useCommentDraftStore);

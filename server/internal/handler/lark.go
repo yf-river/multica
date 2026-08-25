@@ -1,24 +1,21 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// LarkInstallationResponse is the wire shape for an installation row.
-// `app_secret_encrypted` is INTENTIONALLY absent — the encrypted blob
-// is server-internal and there is no product reason to expose it (the
-// only consumer that needs the plaintext is the WS hub, which calls
-// InstallationService.DecryptAppSecret server-side). Likewise, the WS
-// lease columns are omitted; they are runtime state, not API surface.
+// LarkInstallationResponse excludes encrypted credentials and WS lease state;
+// those remain server-only.
 type LarkInstallationResponse struct {
 	ID              string  `json:"id"`
 	WorkspaceID     string  `json:"workspace_id"`
@@ -28,9 +25,7 @@ type LarkInstallationResponse struct {
 	BotOpenID       string  `json:"bot_open_id"`
 	InstallerUserID string  `json:"installer_user_id"`
 	Status          string  `json:"status"`
-	// Region is the Lark cloud this installation lives on: "feishu"
-	// (mainland) or "lark" (international). The UI uses it to render a
-	// badge and to build the correct "Manage in Lark" dev-console host.
+	// Region selects the Feishu or international Lark cloud.
 	Region      string `json:"region"`
 	InstalledAt string `json:"installed_at"`
 	CreatedAt   string `json:"created_at"`
@@ -58,25 +53,8 @@ func larkInstallationToResponse(row db.LarkInstallation) LarkInstallationRespons
 	return resp
 }
 
-// ListLarkInstallations (GET /api/workspaces/{id}/lark/installations)
-// is member-visible — the Integrations tab should not render blank
-// for non-admins. Unlike the GitHub list, we do not strip any field
-// here because no API surface column doubles as a management handle:
-// revocation goes by the UUID id, which is meaningless without the
-// admin route's authorization, so exposing it is harmless.
-//
-// Response fields:
-//   - configured: at-rest encryption key is set (`LarkInstallations
-//     != nil`). When false, no install flow can succeed at all; the
-//     UI hides the tab.
-//   - install_supported: the device-flow install path is wired
-//     end-to-end: a RegistrationService exists (deployment supplied
-//     MULTICA_LARK_SECRET_KEY) AND the APIClient.IsConfigured signal
-//     is true (the real Lark HTTP client is in place — the stub
-//     cannot complete the post-poll GetBotInfo call). When false,
-//     the agent-detail "Bind" button stays hidden and the Settings
-//     tab surfaces a "coming soon" notice; already-installed bots
-//     still appear and remain manageable.
+// ListLarkInstallations is member-visible. configured reports credential
+// storage availability; install_supported reports the complete device flow.
 func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) {
 	if h.LarkInstallations == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -90,7 +68,7 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	rows, err := h.LarkInstallations.ListByWorkspace(r.Context(), wsUUID)
+	rows, err := h.Queries.ListLarkInstallationsByWorkspace(r.Context(), wsUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list lark installations")
 		return
@@ -102,14 +80,12 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"installations":     out,
 		"configured":        true,
-		"install_supported": h.LarkRegistration != nil && h.LarkAPIClient != nil && h.LarkAPIClient.IsConfigured(),
+		"install_supported": h.LarkRegistration != nil && h.LarkAPIClient != nil,
 	})
 }
 
-// RevokeLarkInstallation (DELETE /api/workspaces/{id}/lark/installations/{installationId})
-// flips status to 'revoked' so the WS hub drops the connection on its
-// next sweep. The row itself is preserved for audit; a re-install via
-// the device-flow path flips status back to 'active' atomically.
+// RevokeLarkInstallation preserves the row for audit while making the WS hub
+// drop its connection.
 func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request) {
 	if h.LarkInstallations == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
@@ -127,8 +103,7 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	// Workspace-scoped lookup ensures one workspace cannot revoke
-	// another's installation by guessing the UUID.
+	// Recheck workspace ownership before mutating a guessed UUID.
 	if _, err := h.LarkInstallations.GetInWorkspace(r.Context(), instUUID, wsUUID); err != nil {
 		if errors.Is(err, lark.ErrInstallationNotFound) {
 			writeError(w, http.StatusNotFound, "lark installation not found")
@@ -147,37 +122,22 @@ func (h *Handler) RevokeLarkInstallation(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RedeemLarkBindingTokenRequest carries the raw token the user
-// clicked through from the Bot's "you need to bind" reply card.
+// RedeemLarkBindingTokenRequest carries the one-time Bot binding token.
 type RedeemLarkBindingTokenRequest struct {
 	Token string `json:"token"`
 }
 
-// RedeemLarkBindingTokenResponse is the post-redemption shape. We
-// echo the workspace/installation/open_id so the frontend can render
-// "you are now bound to <workspace> via <agent>" without a second
-// fetch.
+// RedeemLarkBindingTokenResponse lets the client render success without a
+// second lookup.
 type RedeemLarkBindingTokenResponse struct {
 	WorkspaceID    string `json:"workspace_id"`
 	InstallationID string `json:"installation_id"`
 	LarkOpenID     string `json:"lark_open_id"`
 }
 
-// RedeemLarkBindingToken (POST /api/lark/binding/redeem) is the only
-// path that writes a lark_user_binding row from user-driven action.
-// The redeemer's identity is taken from the session, not the token,
-// so a stolen token cannot bind a Lark open_id to an attacker's
-// Multica account. The token only proves "this open_id requested
-// binding" — combining it with the logged-in user is what creates
-// the (open_id ↔ user) mapping.
-//
-// Consume + bind happen inside a single DB transaction (see
-// lark.BindingTokenService.RedeemAndBind). The three failure modes
-// each map to a distinct status code so the frontend can render the
-// appropriate copy without a separate probe:
-//   - 410 Gone:       token unknown / consumed / expired
-//   - 409 Conflict:   open_id is already bound to a different user
-//   - 403 Forbidden:  redeemer is not a workspace member
+// RedeemLarkBindingToken combines the one-time token with the authenticated
+// user in one transaction. Invalid/expired, conflicting and cross-workspace
+// bindings remain distinct 410, 409 and 403 outcomes.
 func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request) {
 	if h.LarkBindingTokens == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark integration not configured")
@@ -188,8 +148,7 @@ func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req RedeemLarkBindingTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Token == "" {
@@ -223,10 +182,7 @@ func (h *Handler) RedeemLarkBindingToken(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// BeginLarkInstallResponse is the payload the QR-code dialog consumes.
-// The frontend renders `qr_code_url` as a QR image (and as a tap-to-
-// open link fallback) and starts polling
-// /lark/install/{session_id}/status at the supplied cadence.
+// BeginLarkInstallResponse drives the QR dialog and polling cadence.
 type BeginLarkInstallResponse struct {
 	SessionID           string `json:"session_id"`
 	QRCodeURL           string `json:"qr_code_url"`
@@ -234,15 +190,8 @@ type BeginLarkInstallResponse struct {
 	PollIntervalSeconds int    `json:"poll_interval_seconds"`
 }
 
-// BeginLarkInstall (POST /api/workspaces/{id}/lark/install/begin)
-// opens a new device-flow registration session against Lark. Admin-only
-// at the router. The agent_id query param picks which Multica Agent
-// the new Bot will be bound to; the agent must belong to this
-// workspace (RegistrationService re-checks that defense-in-depth).
-//
-// Returns 503 when the integration is not wired (no at-rest key, no
-// HTTP client, no RegistrationService); the UI hides the bind button
-// in that case so this should not be reached through the normal flow.
+// BeginLarkInstall opens an admin-only device-flow session for a workspace
+// Agent. The service repeats the workspace check at the transaction boundary.
 func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark install not configured")
@@ -265,24 +214,30 @@ func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// region is the cloud the user explicitly chose to bind against:
-	// "feishu" (mainland) or "lark" (international).
+	// Require an explicit cloud so credentials cannot be sent to the wrong
+	// account system.
 	regionParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
 	switch regionParam {
 	case "feishu", "lark":
-		// ok
+		// valid
 	default:
 		writeError(w, http.StatusBadRequest, "region must be 'feishu' or 'lark'")
 		return
 	}
-	// Ownership pre-check at the HTTP boundary so a malformed
-	// agent_id surfaces 404 here (not an opaque service error from
-	// inside the service's own re-check).
+	// Return an HTTP-scoped 404 before the service repeats this ownership check.
 	if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          agentUUID,
 		WorkspaceID: wsUUID,
 	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "agent not found in this workspace")
+			return
+		}
+		slog.Error("load Lark installation agent failed", "workspace_id", uuidToString(wsUUID), "agent_id", uuidToString(agentUUID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load agent")
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
@@ -308,10 +263,7 @@ func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LarkInstallStatusResponse is the polling payload. `status` is one
-// of "pending" | "success" | "error"; on success `installation_id`
-// is populated, on error `error_reason` is a stable code (see
-// lark.RegistrationReason*).
+// LarkInstallStatusResponse is the pending/success/error polling payload.
 type LarkInstallStatusResponse struct {
 	Status         string `json:"status"`
 	InstallationID string `json:"installation_id,omitempty"`
@@ -319,15 +271,8 @@ type LarkInstallStatusResponse struct {
 	ErrorMessage   string `json:"error_message,omitempty"`
 }
 
-// GetLarkInstallStatus (GET /api/workspaces/{id}/lark/install/{sessionId}/status)
-// returns the current state of an in-flight install session. Admin-
-// only at the router. Unknown / cross-workspace / GC'd sessions return
-// 404 — the frontend treats it as "session lost, please restart".
-//
-// On success this handler does NOT clean up the session — the
-// frontend may poll once more after the dialog closes to confirm
-// before the in-process GC sweep retires the entry; reading is
-// idempotent.
+// GetLarkInstallStatus is admin-only and workspace-scoped. Reads are
+// idempotent; the registration service owns eventual session cleanup.
 func (h *Handler) GetLarkInstallStatus(w http.ResponseWriter, r *http.Request) {
 	if h.LarkRegistration == nil {
 		writeError(w, http.StatusServiceUnavailable, "lark install not configured")

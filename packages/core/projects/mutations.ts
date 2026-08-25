@@ -1,19 +1,27 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { executePendingCreateMutation } from "../api/transport";
 import { projectKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
-import type { Project, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "../types";
+import type { Project, CreateProjectRequest, UpdateProjectRequest } from "../types";
+import { useProjectCreateOperationStore } from "./draft-store";
 
 export function useCreateProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (data: CreateProjectRequest) => api.createProject(data),
+    mutationFn: async (data: CreateProjectRequest) => {
+      return executePendingCreateMutation(
+        useProjectCreateOperationStore,
+        data,
+        (operation) => api.createProject(operation.request, operation.requestKey),
+      );
+    },
     onSuccess: (newProject) => {
-      qc.setQueryData<ListProjectsResponse>(projectKeys.list(wsId), (old) =>
-        old && !old.projects.some((p) => p.id === newProject.id)
-          ? { ...old, projects: [...old.projects, newProject], total: old.total + 1 }
+      qc.setQueryData<Project[]>(projectKeys.list(wsId), (old) =>
+        old && !old.some((p) => p.id === newProject.id)
+          ? [...old, newProject]
           : old,
       );
     },
@@ -31,10 +39,10 @@ export function useUpdateProject() {
       api.updateProject(id, data),
     onMutate: ({ id, ...data }) => {
       qc.cancelQueries({ queryKey: projectKeys.list(wsId) });
-      const prevList = qc.getQueryData<ListProjectsResponse>(projectKeys.list(wsId));
+      const prevList = qc.getQueryData<Project[]>(projectKeys.list(wsId));
       const prevDetail = qc.getQueryData<Project>(projectKeys.detail(wsId, id));
-      qc.setQueryData<ListProjectsResponse>(projectKeys.list(wsId), (old) =>
-        old ? { ...old, projects: old.projects.map((p) => (p.id === id ? { ...p, ...data } : p)) } : old,
+      qc.setQueryData<Project[]>(projectKeys.list(wsId), (old) =>
+        old?.map((p) => (p.id === id ? { ...p, ...data } : p)),
       );
       qc.setQueryData<Project>(projectKeys.detail(wsId, id), (old) =>
         old ? { ...old, ...data } : old,
@@ -59,9 +67,9 @@ export function useDeleteProject() {
     mutationFn: (id: string) => api.deleteProject(id),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: projectKeys.list(wsId) });
-      const prevList = qc.getQueryData<ListProjectsResponse>(projectKeys.list(wsId));
-      qc.setQueryData<ListProjectsResponse>(projectKeys.list(wsId), (old) =>
-        old ? { ...old, projects: old.projects.filter((p) => p.id !== id), total: old.total - 1 } : old,
+      const prevList = qc.getQueryData<Project[]>(projectKeys.list(wsId));
+      qc.setQueryData<Project[]>(projectKeys.list(wsId), (old) =>
+        old?.filter((p) => p.id !== id),
       );
       qc.removeQueries({ queryKey: projectKeys.detail(wsId, id) });
       return { prevList };

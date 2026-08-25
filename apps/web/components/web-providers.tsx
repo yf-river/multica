@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import packageJson from "../package.json";
@@ -10,21 +10,6 @@ import {
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
 import { PageviewTracker } from "./pageview-tracker";
-
-// Legacy token in localStorage → keep this session in token mode so users who
-// logged in before the cookie-auth migration stay authed. They migrate to
-// cookie mode on their next logout/login cycle (logout clears multica_token).
-// Sunset: once telemetry shows <1% of sessions still carry multica_token,
-// delete this branch and hard-code `cookieAuth` — the localStorage token is
-// XSS-exposed and is the exact thing the cookie migration exists to remove.
-function hasLegacyToken(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return Boolean(window.localStorage.getItem("multica_token"));
-  } catch {
-    return false;
-  }
-}
 
 // Derive WebSocket URL from the page origin so self-hosted / LAN deployments
 // work without explicit NEXT_PUBLIC_WS_URL.  The Next.js rewrite rule
@@ -39,8 +24,10 @@ function deriveWsUrl(): string | undefined {
 // Build-time version preferred (CI sets NEXT_PUBLIC_APP_VERSION to a git tag
 // or sha so different deploys are distinguishable in server logs); fall back
 // to the package.json version so local dev still reports something useful.
-const WEB_VERSION =
-  process.env.NEXT_PUBLIC_APP_VERSION || packageJson.version || "dev";
+const WEB_IDENTITY = {
+  platform: "web",
+  version: process.env.NEXT_PUBLIC_APP_VERSION || packageJson.version,
+} as const;
 
 export function WebProviders({
   children,
@@ -51,23 +38,14 @@ export function WebProviders({
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
 }) {
-  const cookieAuth = !hasLegacyToken();
-  // Stable identity reference so downstream effects keyed on it don't see a
-  // new object on every parent render.
-  const identity = useMemo(
-    () => ({ platform: "web", version: WEB_VERSION }),
-    [],
-  );
   return (
     <CoreProvider
       apiBaseUrl={process.env.NEXT_PUBLIC_API_URL}
       wsUrl={deriveWsUrl()}
-      cookieAuth={cookieAuth}
+      cookieAuth
       onLogin={setLoggedInCookie}
-      onLogout={() => {
-        clearLoggedInCookie();
-      }}
-      identity={identity}
+      onLogout={clearLoggedInCookie}
+      identity={WEB_IDENTITY}
       locale={locale}
       resources={resources}
     >

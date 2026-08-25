@@ -9,7 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
-func getConfigForTest(t *testing.T) AppConfig {
+func getConfigForTest(t *testing.T) appConfig {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -19,7 +19,7 @@ func getConfigForTest(t *testing.T) AppConfig {
 		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var cfg AppConfig
+	var cfg appConfig
 	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}
@@ -102,80 +102,27 @@ func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
 	}
 }
 
-func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.internal.example/")
-
-	cfg := getConfigForTest(t)
-	if cfg.DaemonServerURL != "https://multica.internal.example" {
-		t.Fatalf("daemon_server_url: want same-origin URL, got %q", cfg.DaemonServerURL)
-	}
-	if cfg.DaemonAppURL != "https://multica.internal.example" {
-		t.Fatalf("daemon_app_url: want frontend origin, got %q", cfg.DaemonAppURL)
-	}
-}
-
 func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "https://api.multica.ai")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
-
-	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.GetConfig(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+	tests := []struct {
+		name      string
+		publicURL string
+		appURL    string
+	}{
+		{name: "API and frontend configured", publicURL: "https://api.multica.ai", appURL: "https://multica.ai"},
+		{name: "frontend only", appURL: "https://multica.ai"},
+		{name: "app subdomain", appURL: "https://app.multica.ai"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("MULTICA_PUBLIC_URL", tt.publicURL)
+			t.Setenv("MULTICA_APP_URL", tt.appURL)
+			t.Setenv("FRONTEND_ORIGIN", "")
 
-	var cfg AppConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
-	if cfg.DaemonServerURL != "" {
-		t.Fatalf("daemon_server_url: want omitted for cloud, got %q", cfg.DaemonServerURL)
-	}
-	if cfg.DaemonAppURL != "" {
-		t.Fatalf("daemon_app_url: want omitted for cloud, got %q", cfg.DaemonAppURL)
-	}
-}
-
-// TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL reproduces the production
-// regression behind the broken "Add a computer" command: the official cloud
-// frontend is multica.ai, but the deployment does not set MULTICA_PUBLIC_URL to
-// the api host. Previously this fell through to the same-origin branch and
-// emitted daemon_server_url=https://multica.ai, which the dialog turned into
-// `multica setup self-host --server-url https://multica.ai` — pointing the
-// daemon's backend at the frontend (no /health, no WebSocket proxy). The
-// official cloud must be recognised by its frontend host alone so the daemon
-// setup URLs are omitted and the dialog falls back to `multica setup`.
-func TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
-
-	cfg := getConfigForTest(t)
-	if cfg.DaemonServerURL != "" {
-		t.Fatalf("daemon_server_url: want omitted for official cloud, got %q", cfg.DaemonServerURL)
-	}
-	if cfg.DaemonAppURL != "" {
-		t.Fatalf("daemon_app_url: want omitted for official cloud, got %q", cfg.DaemonAppURL)
-	}
-}
-
-// TestGetConfigOmitsCloudDaemonSetupForAppSubdomain covers the app.multica.ai
-// frontend variant of the official cloud.
-func TestGetConfigOmitsCloudDaemonSetupForAppSubdomain(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "https://app.multica.ai")
-	t.Setenv("FRONTEND_ORIGIN", "")
-
-	cfg := getConfigForTest(t)
-	if cfg.DaemonServerURL != "" {
-		t.Fatalf("daemon_server_url: want omitted for official cloud, got %q", cfg.DaemonServerURL)
-	}
-	if cfg.DaemonAppURL != "" {
-		t.Fatalf("daemon_app_url: want omitted for official cloud, got %q", cfg.DaemonAppURL)
+			cfg := getConfigForTest(t)
+			if cfg.DaemonServerURL != "" || cfg.DaemonAppURL != "" {
+				t.Fatalf("official cloud daemon URLs = server:%q app:%q, want both omitted", cfg.DaemonServerURL, cfg.DaemonAppURL)
+			}
+		})
 	}
 }
 
@@ -215,5 +162,29 @@ func TestGetConfigExposesWorkspaceCreationDisabled(t *testing.T) {
 	cfg := getConfigForTest(t)
 	if !cfg.WorkspaceCreationDisabled {
 		t.Fatalf("workspace_creation_disabled: want true with env on, got false")
+	}
+}
+
+func TestGetConfigIncludesCurrentBooleanFieldsWhenFalse(t *testing.T) {
+	originalSigner := testHandler.CFSigner
+	testHandler.CFSigner = nil
+	t.Cleanup(func() { testHandler.CFSigner = originalSigner })
+	t.Setenv("DISABLE_WORKSPACE_CREATION", "false")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	testHandler.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	for _, field := range []string{"cdn_signed", "workspace_creation_disabled"} {
+		value, exists := payload[field]
+		if !exists || value != false {
+			t.Fatalf("%s: expected explicit false, got exists=%t value=%v", field, exists, value)
+		}
 	}
 }

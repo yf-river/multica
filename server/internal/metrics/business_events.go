@@ -5,52 +5,36 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// PR3: funnel / commercial / community counters paired with PostHog events.
-//
 // Every PostHog Capture(...) call site goes through metrics.RecordEvent(...)
-// (see event_recorder.go) so the two sides cannot drift. Lint test in
-// business_pairing_test.go enforces that.
+// so the Prometheus and PostHog sides cannot drift.
 
 // runtimeReadyBuckets covers cold-start runtime readiness from <1s to ~5min.
 // Most provider boots land in 5–60s; the long tail catches stuck pulls.
 var runtimeReadyBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600}
 
-// prMergeSecondsBuckets covers PR-open → PR-merged latency from minutes to weeks.
-var prMergeSecondsBuckets = []float64{
-	300, 900, 1800,
-	3600, 2 * 3600, 6 * 3600, 12 * 3600,
-	24 * 3600, 2 * 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600,
-}
-
-// businessEventMetrics holds the PR3 collectors. Kept in a separate struct
-// so business.go (PR2 task lifecycle / LLM) stays focused; both are exposed
+// businessEventMetrics keeps product and operational event collectors separate
+// from task lifecycle and LLM metrics; both are exposed
 // through the same BusinessMetrics receiver and the same Collectors() slice.
 type businessEventMetrics struct {
-	signup                        *prometheus.CounterVec
-	workspaceCreated              *prometheus.CounterVec
-	onboardingStarted             *prometheus.CounterVec
-	onboardingQuestionnaireSubmit *prometheus.CounterVec
-	onboardingCompleted           *prometheus.CounterVec
-	issueCreated                  *prometheus.CounterVec
-	chatMessageSent               *prometheus.CounterVec
-	agentCreated                  *prometheus.CounterVec
-	squadCreated                  *prometheus.CounterVec
-	autopilotCreated              *prometheus.CounterVec
-	issueExecuted                 *prometheus.CounterVec
-	runtimeRegistered             *prometheus.CounterVec
-	runtimeReady                  *prometheus.CounterVec
-	runtimeReadySeconds           *prometheus.HistogramVec
-	runtimeFailed                 *prometheus.CounterVec
-	runtimeOffline                *prometheus.CounterVec
-	daemonWSMessageReceived       *prometheus.CounterVec
-	autopilotRunStarted           *prometheus.CounterVec
-	autopilotRunTerminal          *prometheus.CounterVec
-	autopilotRunSkipped           *prometheus.CounterVec
-	webhookDelivery               *prometheus.CounterVec
-	githubEventReceived           *prometheus.CounterVec
-	githubPRReview                *prometheus.CounterVec
-	githubPRMergeSeconds          prometheus.Histogram
-	feedbackSubmitted             *prometheus.CounterVec
+	signup                  *prometheus.CounterVec
+	workspaceCreated        *prometheus.CounterVec
+	issueCreated            *prometheus.CounterVec
+	chatMessageSent         *prometheus.CounterVec
+	agentCreated            *prometheus.CounterVec
+	squadCreated            *prometheus.CounterVec
+	autopilotCreated        *prometheus.CounterVec
+	issueExecuted           *prometheus.CounterVec
+	runtimeRegistered       *prometheus.CounterVec
+	runtimeReady            *prometheus.CounterVec
+	runtimeReadySeconds     *prometheus.HistogramVec
+	runtimeFailed           *prometheus.CounterVec
+	runtimeOffline          *prometheus.CounterVec
+	daemonWSMessageReceived *prometheus.CounterVec
+	autopilotRunStarted     *prometheus.CounterVec
+	autopilotRunTerminal    *prometheus.CounterVec
+	autopilotRunSkipped     *prometheus.CounterVec
+	webhookDelivery         *prometheus.CounterVec
+	feedbackSubmitted       *prometheus.CounterVec
 }
 
 func newBusinessEventMetrics() *businessEventMetrics {
@@ -63,18 +47,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Name: "multica_workspace_created_total",
 			Help: "Total workspaces created.",
 		}, metricLabels("multica_workspace_created_total")),
-		onboardingStarted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_onboarding_started_total",
-			Help: "Total onboarding flows started.",
-		}, metricLabels("multica_onboarding_started_total")),
-		onboardingQuestionnaireSubmit: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_onboarding_questionnaire_submitted_total",
-			Help: "Total onboarding questionnaires submitted.",
-		}, metricLabels("multica_onboarding_questionnaire_submitted_total")),
-		onboardingCompleted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_onboarding_completed_total",
-			Help: "Total onboarding flows completed.",
-		}, metricLabels("multica_onboarding_completed_total")),
 		issueCreated: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_issue_created_total",
 			Help: "Total issues created (any source).",
@@ -140,19 +112,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Name: "multica_webhook_delivery_total",
 			Help: "Total inbound webhook deliveries by provider and outcome.",
 		}, metricLabels("multica_webhook_delivery_total")),
-		githubEventReceived: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_github_event_received_total",
-			Help: "Total GitHub webhook events received by event kind and action.",
-		}, metricLabels("multica_github_event_received_total")),
-		githubPRReview: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_github_pr_review_total",
-			Help: "Total GitHub pull request reviews observed by result.",
-		}, metricLabels("multica_github_pr_review_total")),
-		githubPRMergeSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "multica_github_pr_merge_seconds",
-			Help:    "Time from PR opened to merged (seconds).",
-			Buckets: prMergeSecondsBuckets,
-		}),
 		feedbackSubmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_feedback_submitted_total",
 			Help: "Total in-app feedback submissions.",
@@ -167,9 +126,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		e.signup,
 		e.workspaceCreated,
-		e.onboardingStarted,
-		e.onboardingQuestionnaireSubmit,
-		e.onboardingCompleted,
 		e.issueCreated,
 		e.chatMessageSent,
 		e.agentCreated,
@@ -186,9 +142,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 		e.autopilotRunTerminal,
 		e.autopilotRunSkipped,
 		e.webhookDelivery,
-		e.githubEventReceived,
-		e.githubPRReview,
-		e.githubPRMergeSeconds,
 		e.feedbackSubmitted,
 	}
 }
@@ -228,76 +181,70 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 	case analytics.EventSignup:
 		m.events.signup.WithLabelValues().Inc()
 	case analytics.EventWorkspaceCreated:
-		m.events.workspaceCreated.WithLabelValues(NormalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
-	case analytics.EventOnboardingStarted:
-		m.events.onboardingStarted.WithLabelValues(NormalizePlatform(stringProp(ev.Properties, "platform"))).Inc()
-	case analytics.EventOnboardingQuestionnaireSubmit:
-		m.events.onboardingQuestionnaireSubmit.WithLabelValues().Inc()
-	case analytics.EventOnboardingCompleted:
-		m.events.onboardingCompleted.WithLabelValues(NormalizeOnboardingPath(stringProp(ev.Properties, "completion_path"))).Inc()
+		m.events.workspaceCreated.WithLabelValues(taskSourceLabels.normalize(stringProp(ev.Properties, "source"))).Inc()
 	case analytics.EventIssueCreated:
 		m.events.issueCreated.WithLabelValues(
-			NormalizeTaskSource(stringProp(ev.Properties, "source")),
-			NormalizePlatform(stringProp(ev.Properties, "platform")),
+			taskSourceLabels.normalize(stringProp(ev.Properties, "source")),
+			platformLabels.normalize(stringProp(ev.Properties, "platform")),
 		).Inc()
 	case analytics.EventChatMessageSent:
-		m.events.chatMessageSent.WithLabelValues(NormalizePlatform(stringProp(ev.Properties, "platform"))).Inc()
+		m.events.chatMessageSent.WithLabelValues(platformLabels.normalize(stringProp(ev.Properties, "platform"))).Inc()
 	case analytics.EventAgentCreated:
 		m.events.agentCreated.WithLabelValues(
-			NormalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			NormalizeTaskSource(stringProp(ev.Properties, "source")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			taskSourceLabels.normalize(stringProp(ev.Properties, "source")),
 		).Inc()
 	case analytics.EventSquadCreated:
 		m.events.squadCreated.WithLabelValues().Inc()
 	case analytics.EventAutopilotCreated:
-		m.events.autopilotCreated.WithLabelValues(NormalizeAutopilotCadence(stringProp(ev.Properties, "cadence"))).Inc()
+		m.events.autopilotCreated.WithLabelValues(autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence"))).Inc()
 	case analytics.EventIssueExecuted:
-		m.events.issueExecuted.WithLabelValues(NormalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
+		m.events.issueExecuted.WithLabelValues(taskSourceLabels.normalize(stringProp(ev.Properties, "source"))).Inc()
 	case analytics.EventRuntimeRegistered:
 		m.events.runtimeRegistered.WithLabelValues(
-			NormalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			NormalizeRuntimeProvider(stringProp(ev.Properties, "provider")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider")),
 		).Inc()
 	case analytics.EventRuntimeReady:
-		runtimeMode := NormalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode"))
-		provider := NormalizeRuntimeProvider(stringProp(ev.Properties, "provider"))
+		runtimeMode := runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode"))
+		provider := runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider"))
 		m.events.runtimeReady.WithLabelValues(runtimeMode, provider).Inc()
 		if d := int64Prop(ev.Properties, "ready_duration_ms"); d > 0 {
 			m.events.runtimeReadySeconds.WithLabelValues(runtimeMode, provider).Observe(float64(d) / 1000.0)
 		}
 	case analytics.EventRuntimeFailed:
 		m.events.runtimeFailed.WithLabelValues(
-			NormalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			NormalizeRuntimeProvider(stringProp(ev.Properties, "provider")),
-			NormalizeFailureReason(stringProp(ev.Properties, "failure_reason")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider")),
+			normalizeFailureReason(stringProp(ev.Properties, "failure_reason")),
 			boolLabel(boolProp(ev.Properties, "recoverable")),
 		).Inc()
 	case analytics.EventRuntimeOffline:
 		m.events.runtimeOffline.WithLabelValues(
-			NormalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			NormalizeRuntimeProvider(stringProp(ev.Properties, "provider")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider")),
 		).Inc()
 	case analytics.EventAutopilotRunStarted:
 		m.events.autopilotRunStarted.WithLabelValues(
-			NormalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
-			NormalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
+			autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence")),
+			autopilotTriggerLabels.normalize(stringProp(ev.Properties, "trigger_kind")),
 		).Inc()
 	case analytics.EventAutopilotRunCompleted:
 		m.events.autopilotRunTerminal.WithLabelValues(
-			NormalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
-			NormalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
+			autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence")),
+			autopilotTriggerLabels.normalize(stringProp(ev.Properties, "trigger_kind")),
 			"completed",
 		).Inc()
 	case analytics.EventAutopilotRunFailed:
 		m.events.autopilotRunTerminal.WithLabelValues(
-			NormalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
-			NormalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
+			autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence")),
+			autopilotTriggerLabels.normalize(stringProp(ev.Properties, "trigger_kind")),
 			"failed",
 		).Inc()
 	case analytics.EventFeedbackSubmitted:
 		m.events.feedbackSubmitted.WithLabelValues(
-			NormalizeFeedbackKind(stringProp(ev.Properties, "kind")),
-			NormalizePlatform(stringProp(ev.Properties, "platform")),
+			feedbackKindLabels.normalize(stringProp(ev.Properties, "kind")),
+			platformLabels.normalize(stringProp(ev.Properties, "platform")),
 		).Inc()
 	default:
 		// agent_task_* lifecycle telemetry is recorded straight to Prometheus
@@ -316,8 +263,8 @@ func (m *BusinessMetrics) RecordAutopilotRunSkipped(cadence, reason string) {
 		return
 	}
 	m.events.autopilotRunSkipped.WithLabelValues(
-		NormalizeAutopilotCadence(cadence),
-		NormalizeAutopilotSkipReason(reason),
+		autopilotCadenceLabels.normalize(cadence),
+		autopilotSkipReasonLabels.normalize(reason),
 	).Inc()
 }
 
@@ -327,37 +274,9 @@ func (m *BusinessMetrics) RecordWebhookDelivery(provider, status string) {
 		return
 	}
 	m.events.webhookDelivery.WithLabelValues(
-		NormalizeWebhookProvider(provider),
-		NormalizeWebhookDeliveryStatus(status),
+		webhookProviderLabels.normalize(provider),
+		webhookDeliveryStatusLabels.normalize(status),
 	).Inc()
-}
-
-// RecordGithubEventReceived counts a GitHub webhook event by event kind / action.
-func (m *BusinessMetrics) RecordGithubEventReceived(eventKind, action string) {
-	if m == nil || m.events == nil {
-		return
-	}
-	m.events.githubEventReceived.WithLabelValues(
-		NormalizeGithubEventKind(eventKind),
-		NormalizeGithubAction(action),
-	).Inc()
-}
-
-// RecordGithubPRReview counts a PR review observation by result.
-func (m *BusinessMetrics) RecordGithubPRReview(result string) {
-	if m == nil || m.events == nil {
-		return
-	}
-	m.events.githubPRReview.WithLabelValues(NormalizeGithubPRReviewResult(result)).Inc()
-}
-
-// ObserveGithubPRMergeSeconds records open→merge latency in seconds.
-// Negative or zero values are ignored.
-func (m *BusinessMetrics) ObserveGithubPRMergeSeconds(seconds float64) {
-	if m == nil || m.events == nil || seconds <= 0 {
-		return
-	}
-	m.events.githubPRMergeSeconds.Observe(seconds)
 }
 
 // RecordDaemonWSMessageReceived counts an inbound daemon WS message by handler kind.
@@ -365,7 +284,7 @@ func (m *BusinessMetrics) RecordDaemonWSMessageReceived(kind string) {
 	if m == nil || m.events == nil {
 		return
 	}
-	m.events.daemonWSMessageReceived.WithLabelValues(NormalizeDaemonWSKind(kind)).Inc()
+	m.events.daemonWSMessageReceived.WithLabelValues(daemonWSKindLabels.normalize(kind)).Inc()
 }
 
 // ---- property accessors ---------------------------------------------------

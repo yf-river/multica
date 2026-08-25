@@ -2,8 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -34,25 +39,45 @@ func normalizeSquadScope(value string) (string, bool) {
 // {agent.owner_id} ∪ workspace owner/admin members. Manual configuration of
 // allowed_principals is not exposed in v1; future work can extend this set
 // without changing call sites.
-func (h *Handler) canAccessPersonalAgent(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) bool {
+func (h *Handler) personalAgentAccess(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) (bool, error) {
 	if agent.Scope != scopePersonal {
-		return true
+		return true, nil
 	}
 	if actorType == "agent" {
-		return true
+		return true, nil
 	}
 	if uuidToString(agent.OwnerID) == actorID {
-		return true
+		return true, nil
 	}
 	member, err := h.getWorkspaceMember(ctx, actorID, workspaceID)
 	if err != nil {
+		return false, err
+	}
+	return roleAllowed(member.Role, "owner", "admin"), nil
+}
+
+func (h *Handler) requirePersonalAgentAccess(w http.ResponseWriter, r *http.Request, agent db.Agent, actorType, actorID, workspaceID, deniedMessage string) bool {
+	allowed, err := h.personalAgentAccess(r.Context(), agent, actorType, actorID, workspaceID)
+	if err == nil {
+		if !allowed {
+			writeError(w, http.StatusForbidden, deniedMessage)
+		}
+		return allowed
+	}
+	if writeClientClosedIfCanceled(w, err) {
 		return false
 	}
-	return roleAllowed(member.Role, "owner", "admin")
+	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidWorkspaceMemberIdentity) {
+		writeError(w, http.StatusForbidden, deniedMessage)
+		return false
+	}
+	slog.Error("personal agent access lookup failed", "agent_id", uuidToString(agent.ID), "workspace_id", workspaceID, "actor_type", actorType, "actor_id", actorID, "error", err)
+	writeError(w, http.StatusInternalServerError, "failed to verify agent access")
+	return false
 }
 
 // memberAllowedForPersonalAgent is the pure predicate used by both
-// canAccessPersonalAgent and the ListAgents filter loop. Caller must have
+// personalAgentAccess and the ListAgents filter loop. Caller must have
 // already confirmed agent.Scope == "personal".
 func memberAllowedForPersonalAgent(agent db.Agent, userID, role string) bool {
 	if roleAllowed(role, "owner", "admin") {
@@ -68,27 +93,20 @@ func memberCanManageSquad(squad db.Squad, member db.Member) bool {
 	return uuidToString(squad.CreatorID) == uuidToString(member.UserID)
 }
 
-func memberCanUseSquad(squad db.Squad, member db.Member) bool {
+func (h *Handler) squadAccess(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) (bool, error) {
 	if squad.Scope != scopePersonal {
-		return true
-	}
-	return memberCanManageSquad(squad, member)
-}
-
-func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) bool {
-	if squad.Scope != scopePersonal {
-		return true
+		return true, nil
 	}
 	if actorType == "agent" {
 		if actorID == uuidToString(squad.LeaderID) {
-			return true
+			return true, nil
 		}
 		if h.DB == nil {
-			return false
+			return false, errors.New("squad access database is not configured")
 		}
 		agentID, err := util.ParseUUID(actorID)
 		if err != nil {
-			return false
+			return false, nil
 		}
 		var ok bool
 		if err := h.DB.QueryRow(ctx, `
@@ -100,30 +118,50 @@ func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, ac
 				   AND member_id = $2
 			)
 		`, squad.ID, agentID).Scan(&ok); err != nil {
-			return false
+			return false, fmt.Errorf("check squad agent membership: %w", err)
 		}
-		return ok
+		return ok, nil
 	}
 	if actorType != "member" {
-		return false
+		return false, nil
 	}
 	member, err := h.getWorkspaceMember(ctx, actorID, workspaceID)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return memberCanManageSquad(squad, member)
+	return memberCanManageSquad(squad, member), nil
 }
 
-// accessibleAgentIDs returns the set of agent IDs in the workspace the actor
-// is allowed to see, for use by workspace-wide aggregation endpoints
-// (run counts, activity histograms, task snapshots) that need to filter out
-// personal agents the member can't access.
+func (h *Handler) requireSquadAccess(w http.ResponseWriter, r *http.Request, squad db.Squad, actorType, actorID, workspaceID string, deniedStatus int, deniedMessage string) bool {
+	allowed, err := h.squadAccess(r.Context(), squad, actorType, actorID, workspaceID)
+	if err == nil {
+		if !allowed {
+			writeError(w, deniedStatus, deniedMessage)
+		}
+		return allowed
+	}
+	if writeClientClosedIfCanceled(w, err) {
+		return false
+	}
+	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidWorkspaceMemberIdentity) {
+		writeError(w, deniedStatus, deniedMessage)
+		return false
+	}
+	slog.Error("squad access lookup failed", "squad_id", uuidToString(squad.ID), "workspace_id", workspaceID, "actor_type", actorType, "actor_id", actorID, "error", err)
+	writeError(w, http.StatusInternalServerError, "failed to verify squad access")
+	return false
+}
+
+// accessibleAgentIDs returns the workspace agents visible to the actor.
 func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, error) {
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	agents, err := h.Queries.ListAllAgents(ctx, wsUUID)
+	agents, err := h.Queries.ListAgents(ctx, db.ListAgentsParams{
+		WorkspaceID:     wsUUID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -139,17 +177,36 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 	return allowed, nil
 }
 
+func (h *Handler) requestAccessibleAgentIDs(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID, userID, role string,
+) (map[string]struct{}, bool) {
+	actorType, actorID := resolveActor(r, userID)
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, role)
+	if err != nil {
+		if !writeClientClosedIfCanceled(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		}
+		return nil, false
+	}
+	return allowed, true
+}
+
 // canEnqueueSquadLeader returns true when the given actor is allowed to
 // trigger the squad's personal leader. It loads the leader agent and delegates
-// to canAccessPersonalAgent. Workspace leaders always pass. System-initiated
+// to personalAgentAccess. Workspace leaders always pass. System-initiated
 // triggers (e.g. github webhooks) pass by treating "system" like "agent".
-func (h *Handler) canEnqueueSquadLeader(ctx context.Context, leaderID pgtype.UUID, actorType, actorID, workspaceID string) bool {
+func (h *Handler) canEnqueueSquadLeader(ctx context.Context, leaderID pgtype.UUID, actorType, actorID, workspaceID string) (bool, error) {
 	agent, err := h.Queries.GetAgent(ctx, leaderID)
 	if err != nil {
-		return false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("load squad leader for enqueue access: %w", err)
 	}
 	if actorType == "system" {
 		actorType = "agent"
 	}
-	return h.canAccessPersonalAgent(ctx, agent, actorType, actorID, workspaceID)
+	return h.personalAgentAccess(ctx, agent, actorType, actorID, workspaceID)
 }

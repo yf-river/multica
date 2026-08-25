@@ -19,8 +19,7 @@ const taskUsageHourlyAdvisoryLockID int64 = 4246
 // TaskUsageHourlyJob returns the JobSpec that drives the
 // task_usage_hourly rollup. The handler calls the existing
 // `rollup_task_usage_hourly()` SQL function, which already holds
-// advisory lock 4246 internally so a concurrent legacy pg_cron tick or
-// manual call is safe (RFC §11.3).
+// advisory lock 4246 internally so a manual call cannot race the scheduler.
 //
 // The spec is the canonical settings from the RFC §11.1:
 //

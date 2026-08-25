@@ -5,41 +5,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const taskContextEnvFile = ".agent_context/task_env.json"
 
-type taskContextEnv struct {
-	Token        string `json:"token,omitempty"`
-	ServerURL    string `json:"server_url,omitempty"`
-	DaemonPort   string `json:"daemon_port,omitempty"`
-	WorkspaceID  string `json:"workspace_id,omitempty"`
-	AgentName    string `json:"agent_name,omitempty"`
-	AgentID      string `json:"agent_id,omitempty"`
-	TaskID       string `json:"task_id,omitempty"`
-	TaskSlot     string `json:"task_slot,omitempty"`
-	AutopilotRun string `json:"autopilot_run_id,omitempty"`
-	AutopilotID  string `json:"autopilot_id,omitempty"`
-	QuickCreate  string `json:"quick_create_task_id,omitempty"`
-}
-
-func loadTaskContextEnvFromCWD() taskContextEnv {
+func loadTaskContextEnvFromCWD() protocol.TaskContextEnvironment {
 	wd, err := os.Getwd()
 	if err != nil {
-		return taskContextEnv{}
+		return protocol.TaskContextEnvironment{}
 	}
 	for {
 		path := filepath.Join(wd, taskContextEnvFile)
 		data, err := os.ReadFile(path)
 		if err == nil {
-			var env taskContextEnv
+			var env protocol.TaskContextEnvironment
 			if json.Unmarshal(data, &env) == nil {
 				return env
 			}
 		}
 		parent := filepath.Dir(wd)
 		if parent == wd {
-			return taskContextEnv{}
+			return protocol.TaskContextEnvironment{}
 		}
 		wd = parent
 	}

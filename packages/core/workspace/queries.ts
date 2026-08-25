@@ -3,19 +3,18 @@ import { api } from "../api";
 import type { Agent, Squad, Workspace } from "../types";
 
 export const workspaceKeys = {
-  all: (wsId: string) => ["workspaces", wsId] as const,
   list: () => ["workspaces", "list"] as const,
   members: (wsId: string) => ["workspaces", wsId, "members"] as const,
   agents: (wsId: string) => ["workspaces", wsId, "agents"] as const,
   squads: (wsId: string) => ["workspaces", wsId, "squads"] as const,
-  // Per-squad member status. Lives under the workspace key tree so
-  // workspace switches naturally drop the cache, and so a broad
-  // `["workspaces", wsId, "squads"]` invalidation covers it.
-  squadMemberStatus: (wsId: string, squadId: string) =>
-    ["workspaces", wsId, "squads", squadId, "members-status"] as const,
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
-  assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
 };
+
+const squadMemberStatusKey = (wsId: string, squadId: string) =>
+  [...workspaceKeys.squads(wsId), squadId, "members-status"] as const;
+
+const assigneeFrequencyKey = (wsId: string) =>
+  ["workspaces", wsId, "assignee-frequency"] as const;
 
 export function workspaceListOptions() {
   return queryOptions({
@@ -67,7 +66,7 @@ export function squadListOptions(
 // tab-focus safety net.
 export function squadMemberStatusOptions(wsId: string, squadId: string) {
   return queryOptions({
-    queryKey: workspaceKeys.squadMemberStatus(wsId, squadId),
+    queryKey: squadMemberStatusKey(wsId, squadId),
     queryFn: () => api.getSquadMemberStatus(squadId),
     enabled: !!wsId && !!squadId,
     staleTime: 30 * 1000,
@@ -120,7 +119,7 @@ export function selectSkillAssignments(
 
 export function assigneeFrequencyOptions(wsId: string) {
   return queryOptions({
-    queryKey: workspaceKeys.assigneeFrequency(wsId),
+    queryKey: assigneeFrequencyKey(wsId),
     queryFn: () => api.getAssigneeFrequency(),
   });
 }

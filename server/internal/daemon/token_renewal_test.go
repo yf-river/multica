@@ -12,11 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// captureLogger returns a *slog.Logger whose output lands in buf, so tests
-// can assert on the daemon's user-facing warning text without scraping
-// stderr.
 func captureLogger(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
@@ -48,6 +46,23 @@ func newPreflightAuthFixture(t *testing.T, renewHandler http.HandlerFunc) prefli
 	d := &Daemon{client: NewClient(srv.URL), logger: captureLogger(&buf)}
 	d.client.SetToken("mul_healthy")
 	return preflightAuthFixture{daemon: d, logs: &buf, syncCalled: &syncCalled}
+}
+
+func newTokenRenewalDaemon(t *testing.T, status int, body, profile string) (*Daemon, *bytes.Buffer) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	var logs bytes.Buffer
+	return &Daemon{
+		client: NewClient(srv.URL),
+		logger: captureLogger(&logs),
+		cfg:    Config{Profile: profile},
+	}, &logs
 }
 
 func TestClient_RenewToken_PostsToCorrectEndpoint(t *testing.T) {
@@ -95,121 +110,41 @@ func TestClient_RenewToken_PostsToCorrectEndpoint(t *testing.T) {
 	}
 }
 
-func TestTryRenewToken_LogsRenewalOnSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"expires_at": "2099-01-02T03:04:05Z",
-			"renewed":    true,
+func TestTryRenewTokenLogging(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		profile     string
+		contains    []string
+		notContains []string
+	}{
+		{name: "renewed", status: http.StatusOK, body: `{"expires_at":"2099-01-02T03:04:05Z","renewed":true}`, contains: []string{"auth token renewed", "2099-01-02T03:04:05Z"}},
+		{name: "not eligible", status: http.StatusOK, body: `{"expires_at":"2099-01-02T03:04:05Z","renewed":false}`, notContains: []string{"WARN"}},
+		{name: "unauthorized", status: http.StatusUnauthorized, body: `{"error":"invalid token"}`, contains: []string{"level=WARN", "multica login"}},
+		{name: "unauthorized profile", status: http.StatusUnauthorized, body: `{"error":"invalid token"}`, profile: "staging", contains: []string{"--profile staging"}},
+		{name: "transient failure", status: http.StatusInternalServerError, body: `{"error":"db down"}`, contains: []string{"token renewal failed"}, notContains: []string{"level=WARN"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, logs := newTokenRenewalDaemon(t, tt.status, tt.body, tt.profile)
+			d.tryRenewToken(context.Background())
+			for _, want := range tt.contains {
+				if !strings.Contains(logs.String(), want) {
+					t.Errorf("log missing %q: %s", want, logs.String())
+				}
+			}
+			for _, unwanted := range tt.notContains {
+				if strings.Contains(logs.String(), unwanted) {
+					t.Errorf("log contains %q: %s", unwanted, logs.String())
+				}
+			}
 		})
-	}))
-	t.Cleanup(srv.Close)
-
-	var buf bytes.Buffer
-	d := &Daemon{client: NewClient(srv.URL), logger: captureLogger(&buf)}
-	d.tryRenewToken(context.Background())
-
-	out := buf.String()
-	if !strings.Contains(out, "auth token renewed") {
-		t.Fatalf("expected 'auth token renewed' log, got: %s", out)
-	}
-	if !strings.Contains(out, "2099-01-02T03:04:05Z") {
-		t.Fatalf("expected new expiry in log, got: %s", out)
 	}
 }
 
-func TestTryRenewToken_LogsNotEligibleOnNoOp(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"expires_at": "2099-01-02T03:04:05Z",
-			"renewed":    false,
-		})
-	}))
-	t.Cleanup(srv.Close)
-
-	var buf bytes.Buffer
-	d := &Daemon{client: NewClient(srv.URL), logger: captureLogger(&buf)}
-	d.tryRenewToken(context.Background())
-
-	out := buf.String()
-	// Non-renewal must NOT emit the warning that an operator would interpret
-	// as "something is wrong" — it's the normal steady-state for tokens with
-	// plenty of life left.
-	if strings.Contains(out, "WARN") {
-		t.Fatalf("no-op renewal should not log at WARN, got: %s", out)
-	}
-}
-
-func TestTryRenewToken_SurfacesReloginWarningOn401(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	var buf bytes.Buffer
-	d := &Daemon{client: NewClient(srv.URL), logger: captureLogger(&buf)}
-	d.tryRenewToken(context.Background())
-
-	out := buf.String()
-	if !strings.Contains(out, "level=WARN") {
-		t.Fatalf("401 must surface as WARN, got: %s", out)
-	}
-	if !strings.Contains(out, "multica login") {
-		t.Fatalf("401 warning must tell the user to run 'multica login', got: %s", out)
-	}
-}
-
-func TestTryRenewToken_SurfacesReloginWarningOn401_WithProfile(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	var buf bytes.Buffer
-	d := &Daemon{
-		client: NewClient(srv.URL),
-		logger: captureLogger(&buf),
-		cfg:    Config{Profile: "staging"},
-	}
-	d.tryRenewToken(context.Background())
-
-	out := buf.String()
-	if !strings.Contains(out, "--profile staging") {
-		t.Fatalf("profile-aware login hint missing, got: %s", out)
-	}
-}
-
-func TestTryRenewToken_TransientErrorIsDebugNotWarn(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"db down"}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	var buf bytes.Buffer
-	d := &Daemon{client: NewClient(srv.URL), logger: captureLogger(&buf)}
-	d.tryRenewToken(context.Background())
-
-	out := buf.String()
-	// A 500 is transient — the next tick will retry, so the operator should
-	// NOT see a re-login warning that doesn't reflect the actual cause.
-	if strings.Contains(out, "level=WARN") {
-		t.Fatalf("transient 500 should not log at WARN, got: %s", out)
-	}
-	if !strings.Contains(out, "token renewal failed") {
-		t.Fatalf("expected debug log about renewal failure, got: %s", out)
-	}
-}
-
-// TestPreflightAuth_RenewsBeforeWorkspaceSyncOnExpiredToken locks in the
-// must-fix from MUL-2744 review: when the daemon starts with an already-
-// revoked or expired PAT, the renewal call has to happen BEFORE the first
-// workspace sync, because the workspace sync's 401 would short-circuit Run
-// and the operator would never see a "run multica login" hint.
+// Renewal must precede workspace sync so an expired token produces an actionable warning.
 func TestPreflightAuth_RenewsBeforeWorkspaceSyncOnExpiredToken(t *testing.T) {
 	var mu sync.Mutex
 	var seen []string
@@ -217,8 +152,6 @@ func TestPreflightAuth_RenewsBeforeWorkspaceSyncOnExpiredToken(t *testing.T) {
 		mu.Lock()
 		seen = append(seen, r.URL.Path)
 		mu.Unlock()
-		// Both endpoints 401 — this is the "PAT already revoked/expired
-		// before the daemon even started" failure mode.
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
 	}))
@@ -253,52 +186,37 @@ func TestPreflightAuth_RenewsBeforeWorkspaceSyncOnExpiredToken(t *testing.T) {
 	}
 }
 
-// TestPreflightAuth_SyncProceedsWhenRenewIsNoOp covers the steady-state
-// startup: a PAT well outside the renewal window returns renewed=false,
-// and preflightAuth must still go on to do the workspace sync. The
-// renewal is best-effort and must not gate startup.
-func TestPreflightAuth_SyncProceedsWhenRenewIsNoOp(t *testing.T) {
-	fx := newPreflightAuthFixture(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"expires_at": "2099-01-02T03:04:05Z",
-			"renewed":    false,
+func TestPreflightAuthBestEffortRenewal(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "not eligible", status: http.StatusOK, body: `{"expires_at":"2099-01-02T03:04:05Z","renewed":false}`},
+		{name: "transient failure", status: http.StatusInternalServerError, body: `{"error":"db down"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := newPreflightAuthFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			})
+			if err := fx.daemon.preflightAuth(context.Background()); err != nil {
+				t.Fatalf("preflightAuth must not surface best-effort renewal result: %v", err)
+			}
+			if !fx.syncCalled.Load() {
+				t.Fatal("best-effort renewal must not skip workspace sync")
+			}
+			if strings.Contains(fx.logs.String(), "level=WARN") {
+				t.Fatalf("best-effort renewal must not emit re-login warning: %s", fx.logs.String())
+			}
 		})
-	})
-
-	if err := fx.daemon.preflightAuth(context.Background()); err != nil {
-		t.Fatalf("preflightAuth returned error on healthy startup: %v", err)
-	}
-	if !fx.syncCalled.Load() {
-		t.Fatal("preflightAuth must run the workspace sync after a no-op renewal")
-	}
-}
-
-// TestPreflightAuth_TransientRenewFailureDoesNotBlockStartup covers the
-// "renewal endpoint is briefly down" path. The renewal failure must not
-// kill the daemon — the workspace sync still happens, and the daemon is
-// up and serving. The background renewal loop will retry later.
-func TestPreflightAuth_TransientRenewFailureDoesNotBlockStartup(t *testing.T) {
-	fx := newPreflightAuthFixture(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"db down"}`))
-	})
-
-	if err := fx.daemon.preflightAuth(context.Background()); err != nil {
-		t.Fatalf("preflightAuth must not surface transient renew failures: %v", err)
-	}
-	if !fx.syncCalled.Load() {
-		t.Fatal("transient renew failure must not skip the workspace sync")
-	}
-	if strings.Contains(fx.logs.String(), "level=WARN") {
-		t.Fatalf("transient 500 must not emit the re-login WARN, got: %s", fx.logs.String())
 	}
 }
 
 func TestTryRenewToken_RespectsContextTimeout(t *testing.T) {
-	// Server that never responds — the per-call 15s timeout inside
-	// tryRenewToken is too long for a unit test, so cancel the parent
-	// context immediately and verify the call returns.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -317,8 +235,7 @@ func TestTryRenewToken_RespectsContextTimeout(t *testing.T) {
 	}()
 	select {
 	case <-done:
-		// Expected: tryRenewToken returns once the cancelled ctx propagates
-		// through the HTTP client.
-	case <-context.Background().Done():
+	case <-time.After(time.Second):
+		t.Fatal("tryRenewToken did not return after context cancellation")
 	}
 }

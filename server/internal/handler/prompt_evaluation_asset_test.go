@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,8 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/util/prompteval"
+	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -39,7 +41,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 			Seq:       1,
 			Type:      "tool_use",
 			Tool:      "shell",
-			Input:     map[string]any{"tool_call_id": "call-1", "cmd": "echo ok"},
+			Input:     map[string]any{"cmd": "echo ok"},
 			CreatedAt: "2026-06-24T00:00:01Z",
 		},
 		{
@@ -62,7 +64,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 			Seq:       4,
 			Type:      "tool_use",
 			Tool:      "curl",
-			Input:     map[string]any{"tool_call_id": "call-2", "url": "https://example.test"},
+			Input:     map[string]any{"url": "https://example.test"},
 			CreatedAt: "2026-06-24T00:00:03Z",
 		},
 		{
@@ -79,7 +81,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if len(chains) != 3 {
 		t.Fatalf("tool call chains = %+v, want 3", chains)
 	}
-	if chains[0].ID != "tool:call-1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
+	if chains[0].ID != "tool:shell:1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
 		t.Fatalf("paired chain = %+v", chains[0])
 	}
 	if chains[0].DurationMs != 1000 || chains[0].ResultCategory != "已返回" {
@@ -103,7 +105,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if toolSummary[1].Tool != "browser" || !toolSummary[1].NeedsAttention || toolSummary[1].OrphanResultCalls != 1 {
 		t.Fatalf("orphan summary row = %+v", toolSummary[1])
 	}
-	if toolSummary[2].Tool != "shell" || toolSummary[2].AverageDurationMs != 1000 || toolSummary[2].MaxDurationMs != 1000 || toolSummary[2].SlowestToolCallChainID != "tool:call-1" {
+	if toolSummary[2].Tool != "shell" || toolSummary[2].AverageDurationMs != 1000 || toolSummary[2].MaxDurationMs != 1000 || toolSummary[2].SlowestToolCallChainID != "tool:shell:1" {
 		t.Fatalf("shell summary row = %+v", toolSummary[2])
 	}
 	if summary["工具调用链数"] != 3 || summary["已配对工具调用数"] != 2 || summary["孤立工具结果数"] != 1 {
@@ -121,7 +123,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if useSpan == nil || resultSpan == nil {
 		t.Fatalf("message spans missing: %+v", spans)
 	}
-	if useSpan.Details["工具调用链ID"] != "tool:call-1" || resultSpan.Details["工具调用链ID"] != "tool:call-1" {
+	if useSpan.Details["工具调用链ID"] != "tool:shell:1" || resultSpan.Details["工具调用链ID"] != "tool:shell:1" {
 		t.Fatalf("span chain details: use=%+v result=%+v", useSpan.Details, resultSpan.Details)
 	}
 }
@@ -371,31 +373,23 @@ return biz_err.NewFromCodeWithErrMsgDetails(consts.ErrDatabaseUpdateFailed, err,
 }
 
 func TestPromptEvaluationAssetCRUD(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "评测提示词")
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":   promptID,
 		"name":        "user-center 澄清数据集",
 		"description": "用于验证澄清提示词",
 		"asset_type":  "数据集",
-		"payload":     map[string]any{"cases": []map[string]any{{"输入": "登录失败", "期望": "询问边界和验收"}}},
-		"status":      "启用",
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+		"payload": map[string]any{"cases": []map[string]any{{
+			"case_name": "用例 1", "variables": map[string]any{}, "expected_contains": []string{"询问边界和验收"},
+		}}},
+		"status": "启用",
+	})
 	if created.AssetType != "数据集" || created.PromptID == nil || *created.PromptID != promptID {
 		t.Fatalf("created = %+v", created)
 	}
@@ -413,8 +407,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 		t.Fatalf("created payload is not object: %#v", created.Payload)
 	}
 	if createdPayload["schema_version"] != float64(1) ||
-		createdPayload["schema"] != "multica.training_evaluation.payload.v1" ||
-		createdPayload["语义版本"] != "multica.training_evaluation.v1" {
+		createdPayload["schema"] != "multica.training_evaluation.payload.v1" {
 		t.Fatalf("created payload missing contract fields: %#v", createdPayload)
 	}
 	canonicalCases, ok := createdPayload["cases"].([]any)
@@ -458,7 +451,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "套件用例", "变量": map[string]any{"输入": "登录失败"}, "期望包含": []string{"边界"}}},
+			"cases": []map[string]any{{"case_name": "套件用例", "variables": map[string]any{"输入": "登录失败"}, "expected_contains": []string{"边界"}}},
 			"通过标准":  []string{"变量完整", "输出中文"},
 		},
 	}), "id", created.ID))
@@ -479,7 +472,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	assertPromptEvaluationDatasetRows(t, created.ID, nil)
 	updatedPayload, ok := updated.Payload.(map[string]any)
-	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {
+	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["schema"] != "multica.training_evaluation.payload.v1" {
 		t.Fatalf("updated payload missing contract: %#v", updated.Payload)
 	}
 	if _, ok := updatedPayload["cases"].([]any); !ok {
@@ -500,47 +493,44 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if casesResp.Total != 1 || casesResp.Items[0].AssetID != created.ID || casesResp.Items[0].Status != "启用" {
 		t.Fatalf("cases response = %+v", casesResp)
 	}
-	rejectExperimentW := httptest.NewRecorder()
-	testHandler.UpdatePromptEvaluationAsset(rejectExperimentW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
+	partialUpdateW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationAsset(partialUpdateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"asset_type": "测试套件",
 	}), "id", created.ID))
-	if rejectExperimentW.Code != http.StatusBadRequest {
-		t.Fatalf("experiment update status = %d, body = %s", rejectExperimentW.Code, rejectExperimentW.Body.String())
+	if partialUpdateW.Code != http.StatusOK {
+		t.Fatalf("partial update status = %d, body = %s", partialUpdateW.Code, partialUpdateW.Body.String())
+	}
+	var partiallyUpdated PromptEvaluationAssetResponse
+	if err := json.Unmarshal(partialUpdateW.Body.Bytes(), &partiallyUpdated); err != nil {
+		t.Fatalf("decode partial update response: %v", err)
+	}
+	if partiallyUpdated.ID != created.ID || partiallyUpdated.AssetType != "测试套件" || partiallyUpdated.StructuredCaseCount != 1 {
+		t.Fatalf("partial update did not preserve current asset fields: %+v", partiallyUpdated)
 	}
 }
 
 func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "实验维度提示词")
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "实验维度不阻塞创建",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{
-				"名称":   "维度用例",
-				"变量":   map[string]any{"issue_title": "登录失败"},
-				"期望包含": []string{"边界"},
+				"case_name":         "维度用例",
+				"variables":         map[string]any{"issue_title": "登录失败"},
+				"expected_contains": []string{"边界"},
 			}},
-			"实验维度": []string{"命中率", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "中文一致性"},
 		},
 		"status": "启用",
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 	if created.ExperimentDimensionCount != 2 {
 		t.Fatalf("created experiment dimension count = %d, want 2", created.ExperimentDimensionCount)
 	}
@@ -549,11 +539,11 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"payload": map[string]any{
 			"cases": []map[string]any{{
-				"名称":   "更新维度用例",
-				"变量":   map[string]any{"issue_title": "登录失败"},
-				"期望包含": []string{"边界"},
+				"case_name":         "更新维度用例",
+				"variables":         map[string]any{"issue_title": "登录失败"},
+				"expected_contains": []string{"边界"},
 			}},
-			"实验维度": []string{"命中率", "缺失变量", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "缺失变量", "中文一致性"},
 		},
 	}), "id", created.ID))
 	if updateW.Code != http.StatusOK {
@@ -568,161 +558,21 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 	}
 }
 
-func TestPromptEvaluationDatasetExportImportProtocol(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
-	})
-	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "导入导出提示词")
-
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":   promptID,
-		"name":        "完整协议源数据集",
-		"description": "验证完整导入导出",
-		"asset_type":  "数据集",
-		"payload": map[string]any{"cases": []map[string]any{{
-			"case_name":         "载荷用例",
-			"variables":         map[string]any{"需求": "登录失败"},
-			"expected_contains": []string{"边界"},
-			"input":             map[string]any{"来源": "payload"},
-			"expected":          map[string]any{"结论": "追问"},
-			"tags":              []string{"载荷", "协议"},
-		}}},
-		"status": "启用",
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create dataset status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var sourceAsset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &sourceAsset); err != nil {
-		t.Fatalf("decode source asset: %v", err)
-	}
-
-	createCaseW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
-		"asset_id":          sourceAsset.ID,
-		"prompt_id":         promptID,
-		"case_name":         "手工用例",
-		"variables":         map[string]any{"模块": "usercenter"},
-		"expected_contains": []string{"验收"},
-		"input":             map[string]any{"来源": "manual"},
-		"expected":          map[string]any{"结论": "补充验收"},
-		"tags":              []string{"手工", "协议"},
-		"status":            "启用",
-	}))
-	if createCaseW.Code != http.StatusCreated {
-		t.Fatalf("create manual case status = %d, body = %s", createCaseW.Code, createCaseW.Body.String())
-	}
-
-	exportW := httptest.NewRecorder()
-	testHandler.ExportPromptEvaluationDataset(exportW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+sourceAsset.ID+"/dataset-export", nil), "id", sourceAsset.ID))
-	if exportW.Code != http.StatusOK {
-		t.Fatalf("export status = %d, body = %s", exportW.Code, exportW.Body.String())
-	}
-	var exported PromptEvaluationDatasetExportResponse
-	if err := json.Unmarshal(exportW.Body.Bytes(), &exported); err != nil {
-		t.Fatalf("decode export response: %v", err)
-	}
-	if exported.Schema != promptEvaluationDatasetExportV1 || exported.CaseCount != 2 || len(exported.Cases) != 2 {
-		t.Fatalf("exported protocol = %+v", exported)
-	}
-	sources := map[string]bool{}
-	for _, item := range exported.Cases {
-		sources[item.Source] = true
-	}
-	if !sources["payload"] || !sources["manual"] {
-		t.Fatalf("exported sources = %+v", sources)
-	}
-
-	importW := httptest.NewRecorder()
-	testHandler.ImportPromptEvaluationDataset(importW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets/dataset-import", map[string]any{
-		"name":        "完整协议导入副本",
-		"description": "由完整协议导入",
-		"prompt_id":   promptID,
-		"status":      "启用",
-		"export":      exported,
-	}))
-	if importW.Code != http.StatusCreated {
-		t.Fatalf("import status = %d, body = %s", importW.Code, importW.Body.String())
-	}
-	var imported ImportPromptEvaluationDatasetResponse
-	if err := json.Unmarshal(importW.Body.Bytes(), &imported); err != nil {
-		t.Fatalf("decode import response: %v", err)
-	}
-	if imported.CaseCount != 2 || imported.SourceAssetID != sourceAsset.ID || imported.Asset.AssetType != "数据集" || imported.Asset.DatasetRowCount != 2 {
-		t.Fatalf("imported response = %+v", imported)
-	}
-	if imported.Asset.StructuredCaseCount != 2 || imported.Asset.StructuredAssertionCount != 2 {
-		t.Fatalf("imported asset profile = %+v", imported.Asset)
-	}
-	assertPromptEvaluationDatasetRows(t, imported.Asset.ID, []string{"载荷用例", "手工用例"})
-
-	rows, err := testPool.Query(context.Background(), `
-		SELECT source
-		FROM prompt_evaluation_case
-		WHERE workspace_id = $1 AND asset_id = $2
-		ORDER BY case_index ASC, id ASC
-	`, testWorkspaceID, imported.Asset.ID)
-	if err != nil {
-		t.Fatalf("query imported sources: %v", err)
-	}
-	defer rows.Close()
-	var importedSources []string
-	for rows.Next() {
-		var source string
-		if err := rows.Scan(&source); err != nil {
-			t.Fatalf("scan imported source: %v", err)
-		}
-		importedSources = append(importedSources, source)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate imported sources: %v", err)
-	}
-	if len(importedSources) != 2 || importedSources[0] != "payload" || importedSources[1] != "manual" {
-		t.Fatalf("imported sources = %#v", importedSources)
-	}
-	var importedCaseCount, importedAssertionCount int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT
-			(SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1 AND asset_id = $2),
-			(SELECT count(*)::int FROM prompt_evaluation_case_assertion WHERE workspace_id = $1 AND asset_id = $2)
-	`, testWorkspaceID, imported.Asset.ID).Scan(&importedCaseCount, &importedAssertionCount); err != nil {
-		t.Fatalf("count imported facts: %v", err)
-	}
-	if importedCaseCount != 2 || importedAssertionCount != 2 {
-		t.Fatalf("imported facts case=%d assertion=%d", importedCaseCount, importedAssertionCount)
-	}
-}
-
 func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "trace 数据集提示词", "请复盘 {{event_name}}。", `["event_name"]`)
-	assetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(assetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":   promptID,
 		"name":        "trace 导入数据集",
 		"description": "从真实任务 trace 沉淀评估样本",
 		"asset_type":  "数据集",
 		"payload":     map[string]any{"cases": []map[string]any{}},
 		"status":      "启用",
-	}))
-	if assetW.Code != http.StatusCreated {
-		t.Fatalf("create asset status = %d, body = %s", assetW.Code, assetW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(assetW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 	agentID := createHandlerTestAgent(t, "trace dataset agent", nil)
 	taskID := createHandlerTestTaskForAgent(t, agentID)
 	trace, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
@@ -749,13 +599,17 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 		t.Fatalf("create trace event: %v", err)
 	}
 
-	importW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationDatasetFromTraces(importW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", map[string]any{
+	requestKey := uuid.NewString()
+	importBody := map[string]any{
 		"task_ids":          []string{taskID},
 		"event_type":        "tool.result",
 		"expected_contains": []string{"接口验收完成", "completed"},
 		"tags":              []string{"usercenter", "trace样本"},
-	}), "id", asset.ID))
+	}
+	importW := httptest.NewRecorder()
+	importReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", importBody), "id", asset.ID)
+	importReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationDatasetFromTraces(importW, importReq)
 	if importW.Code != http.StatusCreated {
 		t.Fatalf("import status = %d, body = %s", importW.Code, importW.Body.String())
 	}
@@ -772,13 +626,34 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 	if imported.TraceEvents[0].ID != uuidToString(trace.ID) || imported.TraceEvents[0].TaskID != taskID {
 		t.Fatalf("imported trace event = %+v, trace=%s task=%s", imported.TraceEvents[0], uuidToString(trace.ID), taskID)
 	}
+	replayW := httptest.NewRecorder()
+	replayReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", importBody), "id", asset.ID)
+	replayReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationDatasetFromTraces(replayW, replayReq)
+	if replayW.Code != http.StatusCreated || replayW.Body.String() != importW.Body.String() {
+		t.Fatalf("trace import replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), importW.Body.String())
+	}
+	conflictW := httptest.NewRecorder()
+	conflictReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", map[string]any{
+		"task_ids": []string{taskID}, "event_type": "tool.result", "tags": []string{"changed"},
+	}), "id", asset.ID)
+	conflictReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationDatasetFromTraces(conflictW, conflictReq)
+	if conflictW.Code != http.StatusConflict {
+		t.Fatalf("changed trace import replay = %d %s, want 409", conflictW.Code, conflictW.Body.String())
+	}
+	var caseCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM prompt_evaluation_case WHERE asset_id = $1 AND source = 'trace'`, asset.ID).Scan(&caseCount); err != nil {
+		t.Fatalf("count trace cases: %v", err)
+	}
+	if caseCount != 1 {
+		t.Fatalf("trace cases after replay = %d, want 1", caseCount)
+	}
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{imported.Cases[0].CaseName})
 }
 
 func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -791,29 +666,21 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 		`[{"name":"repo","default_value":"user-center"}]`,
 	)
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "澄清渲染测试套件",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"对比维度": []string{"命中率", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "中文一致性"},
 			"cases": []map[string]any{
 				{
-					"名称":   "登录失败澄清",
-					"变量":   map[string]any{"issue_title": "登录失败"},
-					"期望包含": []string{"登录失败", "user-center"},
+					"case_name":         "登录失败澄清",
+					"variables":         map[string]any{"issue_title": "登录失败"},
+					"expected_contains": []string{"登录失败", "user-center"},
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/run", nil), "id", created.ID))
@@ -857,7 +724,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	`, testWorkspaceID, created.ID).Scan(&runID, &runStatus, &runKind, &trialStatus, &renderedPrompt); err != nil {
 		t.Fatalf("load structured prompt evaluation run: %v", err)
 	}
-	if recent["trace/task id"] != runID || runStatus != "通过" || runKind != "本地渲染" || trialStatus != "通过" {
+	if recent["trace/task id"] != runID || runStatus != "通过" || runKind != "模板渲染检查" || trialStatus != "通过" {
 		t.Fatalf("structured run mismatch: runID=%s status=%s kind=%s trial=%s recent=%#v", runID, runStatus, runKind, trialStatus, recent)
 	}
 	if renderedPrompt != "请澄清 登录失败，仓库是 user-center。" {
@@ -959,8 +826,14 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if summary.Assets["服务端证据快照"] < 1 || summary.Assets["验收归档快照"] < 1 {
 		t.Fatalf("summary assets missing evidence snapshots: %#v", summary.Assets)
 	}
-	if _, ok := summary.Assets["实验维度事实"]; !ok {
-		t.Fatalf("summary missing experiment dimension fact metric: %#v", summary.Assets)
+	if _, ok := summary.Assets["评估维度数"]; !ok {
+		t.Fatalf("summary missing evaluation dimension metric: %#v", summary.Assets)
+	}
+	if _, exists := summary.Assets["实验"]; exists {
+		t.Fatalf("summary retained impossible experiment asset metric: %#v", summary.Assets)
+	}
+	if _, exists := summary.Assets["优化运行"]; exists {
+		t.Fatalf("summary retained impossible optimization asset metric: %#v", summary.Assets)
 	}
 
 	futureSince := url.QueryEscape(time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339))
@@ -985,9 +858,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 }
 
 func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 	})
@@ -995,14 +866,14 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 	var businessAssetID, acceptanceAssetID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO prompt_evaluation_asset (workspace_id, name, description, asset_type, payload, status)
-		VALUES ($1, '业务需求评估套件', '日常 usercenter 需求拆解评估', '测试套件', '{"cases":[{"名称":"业务用例"}]}'::jsonb, '启用')
+		VALUES ($1, '业务需求评估套件', '日常 usercenter 需求拆解评估', '测试套件', '{"cases":[{"case_name":"业务用例"}]}'::jsonb, '启用')
 		RETURNING id::text
 	`, testWorkspaceID).Scan(&businessAssetID); err != nil {
 		t.Fatalf("create business asset: %v", err)
 	}
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO prompt_evaluation_asset (workspace_id, name, description, asset_type, payload, status)
-		VALUES ($1, 'goal-test curl 端到端验收套件', '只用于页面验收和 e2e 证据', '测试套件', '{"cases":[{"名称":"验收用例"}]}'::jsonb, '启用')
+		VALUES ($1, 'goal-test curl 端到端验收套件', '只用于页面验收和 e2e 证据', '测试套件', '{"cases":[{"case_name":"验收用例"}]}'::jsonb, '启用')
 		RETURNING id::text
 	`, testWorkspaceID).Scan(&acceptanceAssetID); err != nil {
 		t.Fatalf("create acceptance asset: %v", err)
@@ -1010,9 +881,9 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO prompt_evaluation_run (workspace_id, asset_id, run_kind, status, total_cases, passed_cases, input_tokens, output_tokens, estimated_cost)
 		VALUES
-			($1, $2, '本地渲染', '通过', 1, 1, 11, 7, 0.01),
+			($1, $2, '模板渲染检查', '通过', 1, 1, 11, 7, 0.01),
 			($1, $2, 'Agent执行', '通过', 1, 1, 13, 9, 0.02),
-			($1, $3, '本地渲染', '通过', 1, 1, 100, 70, 0.10)
+			($1, $3, '模板渲染检查', '通过', 1, 1, 100, 70, 0.10)
 	`, testWorkspaceID, businessAssetID, acceptanceAssetID); err != nil {
 		t.Fatalf("create evaluation runs: %v", err)
 	}
@@ -1030,24 +901,10 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 		t.Fatalf("all summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", allSummary.Assets, allSummary.RunStatus, allSummary.Metrics)
 	}
 
-	compatW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationSummary(compatW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary?include_acceptance_fixtures=false", nil))
-	if compatW.Code != http.StatusOK {
-		t.Fatalf("compat summary status = %d, body = %s", compatW.Code, compatW.Body.String())
-	}
-	var compatSummary PromptEvaluationSummaryResponse
-	if err := json.Unmarshal(compatW.Body.Bytes(), &compatSummary); err != nil {
-		t.Fatalf("decode compat summary: %v", err)
-	}
-	if compatSummary.Assets["资产总数"] != 2 || compatSummary.RunStatus["运行总数"] != 3 || compatSummary.Metrics["输入token"].(float64) != 124 {
-		t.Fatalf("compat summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", compatSummary.Assets, compatSummary.RunStatus, compatSummary.Metrics)
-	}
 }
 
 func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -1060,15 +917,13 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 		`[]`,
 	)
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "中文数据集可运行",
 		"asset_type": "数据集",
 		"payload": map[string]any{
 			"schema_version": 1,
 			"schema":         "multica.training_evaluation.payload.v1",
-			"语义版本":           "multica.training_evaluation.v1",
 			"cases": []map[string]any{
 				{
 					"case_name":         "规范数据集用例",
@@ -1077,14 +932,7 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/run", nil), "id", created.ID))
@@ -1103,29 +951,23 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 }
 
 func TestPromptEvaluationCaseCRUD(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "评测用例 CRUD 提示词", "请处理 {{issue_title}}。", `[]`)
-	createAssetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 数据集",
 		"asset_type": "数据集",
-		"payload":    map[string]any{"cases": []any{}},
-	}))
-	if createAssetW.Code != http.StatusCreated {
-		t.Fatalf("create asset status = %d, body = %s", createAssetW.Code, createAssetW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createAssetW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
-
+		"payload": map[string]any{"cases": []any{map[string]any{
+			"case_name":         "基准载荷用例",
+			"variables":         map[string]any{},
+			"expected_contains": []any{},
+			"tags":              []any{},
+		}}},
+	})
 	createCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          asset.ID,
@@ -1148,7 +990,10 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if len(created.Assertions) != 2 || created.Assertions[0].ExpectedText != "trace/task id" || created.Assertions[1].ExpectedText != "验收条件" {
 		t.Fatalf("created assertions = %+v", created.Assertions)
 	}
-	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"trace/task id", "验收条件"})
+	if created.Assertions[0].ID == "" || created.Assertions[0].WorkspaceID != testWorkspaceID || created.Assertions[0].AssetID != asset.ID || created.Assertions[0].CaseID != created.ID || created.Assertions[0].AssertionIndex != 0 || created.Assertions[0].AssertionType != "包含文本" || created.Assertions[0].Status != "启用" || created.Assertions[0].Source != "expected_contains" || created.Assertions[0].CreatedAt == "" {
+		t.Fatalf("created assertion contract = %+v", created.Assertions[0])
+	}
+	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 2)
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要 trace"})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
@@ -1206,9 +1051,8 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if len(updated.Assertions) != 1 || updated.Assertions[0].ExpectedText != "可观测证据" || updated.Assertions[0].Status != "归档" {
 		t.Fatalf("updated assertions = %+v", updated.Assertions)
 	}
-	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"可观测证据"})
+	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 1)
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要可观测证据"})
-
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
 	if listW.Code != http.StatusOK {
@@ -1232,7 +1076,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if listed.Total != 2 || listed.TotalCount != 2 || listedManual == nil {
 		t.Fatalf("listed cases = %+v", listed)
 	}
-	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" {
+	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" || listedManual.Assertions[0].ID != updated.Assertions[0].ID {
 		t.Fatalf("listed assertions = %+v", listedManual.Assertions)
 	}
 	firstPageW := httptest.NewRecorder()
@@ -1310,20 +1154,12 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if tagSummary.Total == 0 || !promptEvaluationTagSummaryContains(tagSummary.Items, "user-center", 1) {
 		t.Fatalf("tag summary = %+v", tagSummary)
 	}
-	createSecondAssetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createSecondAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	secondAsset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 第二数据集",
 		"asset_type": "数据集",
 		"payload":    map[string]any{"cases": []any{}},
-	}))
-	if createSecondAssetW.Code != http.StatusCreated {
-		t.Fatalf("create second asset status = %d, body = %s", createSecondAssetW.Code, createSecondAssetW.Body.String())
-	}
-	var secondAsset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createSecondAssetW.Body.Bytes(), &secondAsset); err != nil {
-		t.Fatalf("decode second asset: %v", err)
-	}
+	})
 	createSecondCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createSecondCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          secondAsset.ID,
@@ -1447,6 +1283,27 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if backgroundTags.Operation.Status != "已入队" {
 		t.Fatalf("background operation status = %+v", backgroundTags.Operation)
 	}
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin background operation consumer tx: %v", err)
+	}
+	if _, err := testHandler.consumePromptEvaluationCaseOperation(context.Background(), testHandler.Queries.WithTx(tx), events.Event{
+		Type:        promptEvaluationCaseOperationRequestedEvent,
+		WorkspaceID: testWorkspaceID,
+		Payload: map[string]any{
+			"operation_id": backgroundTags.Operation.ID,
+		},
+	}); err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatalf("consume background operation: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit background operation consumer tx: %v", err)
+	}
+	mustExec(t, context.Background(), `
+		DELETE FROM domain_event_outbox
+		WHERE event_type = $1 AND payload->>'operation_id' = $2
+	`, promptEvaluationCaseOperationRequestedEvent, backgroundTags.Operation.ID)
 	var completedBackground PromptEvaluationCaseOperationResponse
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -1610,23 +1467,20 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if listed.Total != 1 || listed.Items[0].Source != "payload" {
 		t.Fatalf("cases after delete = %+v", listed)
 	}
-	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
-	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"默认用例"})
+	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 0)
+	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"基准载荷用例"})
 
-	createSuiteW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createSuiteW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	testSuite := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 测试套件",
 		"asset_type": "测试套件",
-		"payload":    map[string]any{"cases": []any{}},
-	}))
-	if createSuiteW.Code != http.StatusCreated {
-		t.Fatalf("create test suite status = %d, body = %s", createSuiteW.Code, createSuiteW.Body.String())
-	}
-	var testSuite PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createSuiteW.Body.Bytes(), &testSuite); err != nil {
-		t.Fatalf("decode test suite: %v", err)
-	}
+		"payload": map[string]any{"cases": []any{map[string]any{
+			"case_name":         "测试套件基准用例",
+			"variables":         map[string]any{},
+			"expected_contains": []any{},
+			"tags":              []any{},
+		}}},
+	})
 	createSuiteCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createSuiteCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          testSuite.ID,
@@ -1657,34 +1511,40 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if deleteSuiteCaseW.Code != http.StatusNoContent {
 		t.Fatalf("delete test suite case status = %d, body = %s", deleteSuiteCaseW.Code, deleteSuiteCaseW.Body.String())
 	}
-	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"默认用例"})
+	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"测试套件基准用例"})
+}
+
+func TestPromptEvaluationEmptyCanonicalCasesStayEmpty(t *testing.T) {
+	requireHandlerDatabase(t)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
+		"name":       "空 Canonical 数据集",
+		"asset_type": "数据集",
+		"payload":    map[string]any{"cases": []any{}},
+	})
+	if asset.StructuredCaseCount != 0 || asset.DatasetRowCount != 0 {
+		t.Fatalf("empty canonical dataset created ghost cases: %+v", asset)
+	}
+	assertPromptEvaluationDatasetRows(t, asset.ID, nil)
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "保留人工用例提示词", "请处理 {{issue_title}}。", `[]`)
-	createAssetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "保留人工用例数据集",
 		"asset_type": "数据集",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "旧 payload 用例", "变量": map[string]any{"issue_title": "旧问题"}, "期望包含": []string{"旧 payload 断言"}}},
+			"cases": []map[string]any{{"case_name": "旧 payload 用例", "variables": map[string]any{"issue_title": "旧问题"}, "expected_contains": []string{"旧 payload 断言"}}},
 		},
-	}))
-	if createAssetW.Code != http.StatusCreated {
-		t.Fatalf("create asset status = %d, body = %s", createAssetW.Code, createAssetW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createAssetW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 
 	createCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
@@ -1705,7 +1565,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 	updateAssetW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationAsset(updateAssetW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+asset.ID, map[string]any{
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "新 payload 用例", "变量": map[string]any{"issue_title": "新问题"}, "期望包含": []string{"新 payload 断言"}}},
+			"cases": []map[string]any{{"case_name": "新 payload 用例", "variables": map[string]any{"issue_title": "新问题"}, "expected_contains": []string{"新 payload 断言"}}},
 		},
 	}), "id", asset.ID))
 	if updateAssetW.Code != http.StatusOK {
@@ -1758,9 +1618,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, runtimeID := createPromptEvaluationAgentRunFixture(t, "真实智能体运行实验", "登录失败")
 	if resp.TaskID == "" || resp.ChatSessionID == "" || resp.AgentID == "" || resp.RuntimeID != runtimeID || resp.Model != "deepseek-v4-pro-ioa" {
@@ -1771,7 +1629,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if recent["trace/task id"] != resp.TaskID || recent["状态"] != "已入队" || recent["评估结论"] != "等待智能体执行完成" {
 		t.Fatalf("recent agent run = %#v", recent)
 	}
-	if resp.Run.ID == "" || resp.Run.Status != "已入队" || resp.Run.RunKind != "Agent执行" || resp.Run.TaskID == nil || *resp.Run.TaskID != resp.TaskID {
+	if resp.Run.ID == "" || resp.Run.Status != "已入队" || resp.Run.RunKind != "Agent执行" || resp.Run.TriggerSource != "评测运行" || resp.Run.TaskID == nil || *resp.Run.TaskID != resp.TaskID {
 		t.Fatalf("agent structured run response = %+v", resp.Run)
 	}
 	var runStatus, runKind, taskID, chatSessionID, trialStatus string
@@ -1816,9 +1674,9 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	structuredOutput := `Agent 输出：
 ` + "```json" + `
-{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"登录失败：已覆盖验收条件和 trace/任务标识","failure_reason":"无","conclusion":"通过","命中":["登录失败","验收条件","trace/任务标识"],"缺失":[],"evidence":{"命中":["登录失败","验收条件","trace/任务标识"]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
+{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"登录失败：已覆盖验收条件和 trace/任务标识","failure_reason":"无","evidence":{"命中":["登录失败","验收条件","trace/任务标识"],"缺失":[]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
 ` + "```"
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",
@@ -1847,9 +1705,11 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("insert task trace event: %v", err)
 	}
+	// task_usage is the canonical billing record. The deliberately different
+	// trace count proves that run and trial totals do not double-read trace data.
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
+	completeReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
 		"output":     structuredOutput,
 		"session_id": "prompt-eval-session",
 		"work_dir":   "/tmp/prompt-eval",
@@ -1858,20 +1718,13 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.ID != resp.Run.ID || len(evidence.Trials) != 1 || evidence.Trials[0].CaseName != "登录失败" {
 		t.Fatalf("evidence trials = %+v", evidence)
 	}
-	if evidence.Run.Status != "通过" || evidence.Run.PassedCases != 1 || evidence.Run.FailedCases != 0 || evidence.Run.InputTokens != 16 || evidence.Run.OutputTokens != 7 {
+	if evidence.Run.Status != "通过" || evidence.Run.PassedCases != 1 || evidence.Run.FailedCases != 0 || evidence.Run.InputTokens != 11 || evidence.Run.OutputTokens != 7 {
 		t.Fatalf("auto-synced run = %+v", evidence.Run)
 	}
 	if evidence.Run.EstimatedCost <= 0 {
@@ -1884,6 +1737,15 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	dimensionScores, ok := runMetrics["实验维度评分"].([]any)
 	if !ok || len(dimensionScores) != 3 {
 		t.Fatalf("run metrics missing agent dimension scores: %#v", runMetrics)
+	}
+	if runMetrics["输入 token"] != float64(11) || runMetrics["输出 token"] != float64(7) {
+		t.Fatalf("run metrics missing canonical token fields: %#v", runMetrics)
+	}
+	if _, exists := runMetrics["输入token"]; exists {
+		t.Fatalf("run metrics retained old unspaced token field: %#v", runMetrics)
+	}
+	if _, exists := runMetrics["输出token"]; exists {
+		t.Fatalf("run metrics retained old unspaced token field: %#v", runMetrics)
 	}
 	firstDimensionScore, _ := dimensionScores[0].(map[string]any)
 	if firstDimensionScore["维度名称"] != "命中率" || firstDimensionScore["状态"] != "已评分" || firstDimensionScore["通过用例数"] != float64(1) {
@@ -1901,7 +1763,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 		{name: "缺失变量", status: "已评分", source: "agent_sync", passed: 1, total: 1},
 		{name: "中文一致性", status: "已评分", source: "agent_sync", passed: 1, total: 1},
 	})
-	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 16 || evidence.Trials[0].OutputTokens != 7 {
+	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 11 || evidence.Trials[0].OutputTokens != 7 {
 		t.Fatalf("auto-synced trial = %+v", evidence.Trials[0])
 	}
 	if len(evidence.TaskUsage) != 1 || evidence.TaskUsage[0].InputTokens != 11 || evidence.TaskUsage[0].OutputTokens != 7 {
@@ -1954,15 +1816,58 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	syncedPayload := syncedAsset.Payload.(map[string]any)
 	agentRun := syncedPayload["最近Agent运行"].(map[string]any)
-	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(prompteval.StringFromAny(agentRun["评估结论"]), "结构化逐用例评估") {
+	conclusion, _ := agentRun["评估结论"].(string)
+	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(conclusion, "结构化逐用例评估") {
 		t.Fatalf("auto-synced asset agent run = %#v", agentRun)
 	}
 }
 
-func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
+func createPromptEvaluationAgentAssetFixture(t *testing.T, assetName, caseName, expected string, dimensions []string) PromptEvaluationAssetResponse {
+	t.Helper()
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, assetName+"提示词", "请评估 {{issue_title}}。", `[]`)
+	payload := map[string]any{
+		"cases": []map[string]any{{
+			"case_name":         caseName,
+			"variables":         map[string]any{"issue_title": caseName},
+			"expected_contains": []string{expected},
+		}},
 	}
+	if dimensions != nil {
+		payload["experiment_dimensions"] = dimensions
+	}
+	return createPromptEvaluationAssetFixture(t, map[string]any{
+		"prompt_id":  promptID,
+		"name":       assetName,
+		"asset_type": "测试套件",
+		"payload":    payload,
+	})
+}
+
+func readPromptEvaluationRuntimeReadiness(t *testing.T, req *http.Request) PromptEvaluationRuntimeReadinessResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("readiness status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var readiness PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &readiness); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	return readiness
+}
+
+func assertPromptEvaluationAgentRunUnavailable(t *testing.T, assetID, detail string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(w, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+assetID+"/agent-run", nil), "id", assetID))
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), detail) {
+		t.Fatalf("agent run availability status = %d, body = %s; want 503 containing %q", w.Code, w.Body.String(), detail)
+	}
+}
+
+func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T) {
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -1997,30 +1902,14 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 		t.Fatalf("archive training agent fixture: %v", err)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "恢复归档训练智能体提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "恢复归档训练智能体实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "恢复归档", "变量": map[string]any{"issue_title": "恢复归档"}, "期望包含": []string{"恢复"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "恢复归档训练智能体实验", "恢复归档", "恢复", nil)
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
 	if runW.Code != http.StatusAccepted {
 		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
 	}
-	var resp PromptEvaluationAgentRunResponse
+	var resp promptEvaluationAgentRunResponse
 	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode agent run response: %v", err)
 	}
@@ -2048,9 +1937,7 @@ func TestPromptEvaluationAgentModelCanBeConfigured(t *testing.T) {
 }
 
 func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
 		t.Fatalf("cleanup codebuddy runtime: %v", err)
@@ -2062,54 +1949,23 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 		t.Fatalf("create stale codex runtime: %v", err)
 	}
 
-	readinessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if readinessW.Code != http.StatusOK {
-		t.Fatalf("readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
-	}
-	var readiness PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(readinessW.Body.Bytes(), &readiness); err != nil {
-		t.Fatalf("decode readiness response: %v", err)
-	}
+	readiness := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if readiness.Status != "过期" || readiness.LastSeenAgeSeconds < 120 || readiness.Runtime == nil {
 		t.Fatalf("readiness = %+v", readiness)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "过期 runtime 提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "过期 runtime Agent 实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "过期 runtime", "变量": map[string]any{"issue_title": "过期 runtime"}, "期望包含": []string{"过期"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "last_seen_at") {
-		t.Fatalf("agent run with stale runtime status = %d, body = %s", runW.Code, runW.Body.String())
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "过期 runtime Agent 实验", "过期 runtime", "过期", nil)
+	assertPromptEvaluationAgentRunUnavailable(t, created.ID, "last_seen_at")
 }
 
 func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "容量受限 readiness 实验", "额度不足")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "429 当前无可用Token额度",
 		"failure_reason": "agent_error.provider_capacity_or_rate_limit",
 		"session_id":     "prompt-eval-capacity-session",
@@ -2119,63 +1975,25 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	readinessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if readinessW.Code != http.StatusOK {
-		t.Fatalf("readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
-	}
-	var readiness PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(readinessW.Body.Bytes(), &readiness); err != nil {
-		t.Fatalf("decode readiness response: %v", err)
-	}
+	readiness := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if readiness.Status != "容量受限" || readiness.Runtime == nil || !strings.Contains(readiness.Detail, "429 当前无可用Token额度") {
 		t.Fatalf("capacity readiness = %+v", readiness)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "容量受限提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "容量受限 Agent 实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "容量受限", "变量": map[string]any{"issue_title": "容量受限"}, "期望包含": []string{"容量"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "429") {
-		t.Fatalf("agent run with capacity-limited runtime status = %d, body = %s", runW.Code, runW.Body.String())
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "容量受限 Agent 实验", "容量受限", "容量", nil)
+	assertPromptEvaluationAgentRunUnavailable(t, created.ID, "429")
 }
 
 func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
 		t.Fatalf("cleanup codebuddy runtime: %v", err)
 	}
 
-	readinessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if readinessW.Code != http.StatusOK {
-		t.Fatalf("missing readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
-	}
-	var missing PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(readinessW.Body.Bytes(), &missing); err != nil {
-		t.Fatalf("decode missing readiness response: %v", err)
-	}
+	missing := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if missing.Status != "缺失" || !strings.Contains(missing.Fix, "启动 multica 守护进程") || missing.Runtime != nil {
 		t.Fatalf("missing readiness = %+v", missing)
 	}
@@ -2189,41 +2007,13 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Fatalf("create offline codex runtime: %v", err)
 	}
 
-	offlineW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(offlineW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if offlineW.Code != http.StatusOK {
-		t.Fatalf("offline readiness status = %d, body = %s", offlineW.Code, offlineW.Body.String())
-	}
-	var offline PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(offlineW.Body.Bytes(), &offline); err != nil {
-		t.Fatalf("decode offline readiness response: %v", err)
-	}
+	offline := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if offline.Status != "离线" || offline.Runtime == nil || offline.Runtime.ID != offlineRuntimeID || !strings.Contains(offline.Fix, "启动 multica daemon") {
 		t.Fatalf("offline readiness = %+v", offline)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "离线 runtime 提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "离线 runtime Agent 实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "离线 runtime", "变量": map[string]any{"issue_title": "离线 runtime"}, "期望包含": []string{"离线"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "启动 multica daemon") {
-		t.Fatalf("agent run with offline runtime status = %d, body = %s", runW.Code, runW.Body.String())
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "离线 runtime Agent 实验", "离线 runtime", "离线", nil)
+	assertPromptEvaluationAgentRunUnavailable(t, created.ID, "启动 multica daemon")
 
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, offlineRuntimeID); err != nil {
 		t.Fatalf("delete offline runtime: %v", err)
@@ -2263,36 +2053,19 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Fatalf("create private codex runtime: %v", err)
 	}
 
-	noPermissionW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(noPermissionW, newRequestAs(plainMemberID, http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if noPermissionW.Code != http.StatusOK {
-		t.Fatalf("no permission readiness status = %d, body = %s", noPermissionW.Code, noPermissionW.Body.String())
-	}
-	var noPermission PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(noPermissionW.Body.Bytes(), &noPermission); err != nil {
-		t.Fatalf("decode no permission readiness response: %v", err)
-	}
+	noPermission := readPromptEvaluationRuntimeReadiness(t, newRequestAs(plainMemberID, http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if noPermission.Status != "无权限" || !strings.Contains(noPermission.Fix, "运行时所有者") || noPermission.Runtime != nil {
 		t.Fatalf("no permission readiness = %+v", noPermission)
 	}
 }
 
 func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsReview(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体人工复核实验", "缺少结构化评估")
 
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE agent_task_queue
-		SET status = 'running',
-		    started_at = now() - interval '1 second'
-		WHERE id = $1
-	`, resp.TaskID); err != nil {
-		t.Fatalf("start agent task: %v", err)
-	}
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
+	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",
@@ -2302,7 +2075,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	}
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
+	completeReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
 		"output":     "Agent 输出：我已经完成训练评估。",
 		"session_id": "prompt-eval-review-session",
 		"work_dir":   "/tmp/prompt-eval",
@@ -2311,16 +2084,9 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "需人工复核" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "缺少结构化逐用例评估结果" {
 		t.Fatalf("completed run without structured verdict = %+v", evidence.Run)
 	}
@@ -2343,15 +2109,23 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if reviewed.Status != "通过" || reviewed.ReviewDecision != "通过" || reviewed.ReviewNote != "人工确认可作为通过样例" || reviewed.ReviewedBy == nil || *reviewed.ReviewedBy != testUserID || reviewed.ReviewedAt == "" {
 		t.Fatalf("reviewed run = %+v", reviewed)
 	}
-	reviewedEvidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(reviewedEvidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if reviewedEvidenceW.Code != http.StatusOK {
-		t.Fatalf("reviewed evidence status = %d, body = %s", reviewedEvidenceW.Code, reviewedEvidenceW.Body.String())
+	replayW := httptest.NewRecorder()
+	testHandler.ReviewPromptEvaluationRun(replayW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/review", map[string]any{
+		"decision": "通过",
+		"note":     "人工确认可作为通过样例",
+	}), "id", resp.Run.ID))
+	if replayW.Code != http.StatusOK || replayW.Body.String() != reviewW.Body.String() {
+		t.Fatalf("review replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), reviewW.Body.String())
 	}
-	var reviewedEvidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(reviewedEvidenceW.Body.Bytes(), &reviewedEvidence); err != nil {
-		t.Fatalf("decode reviewed evidence response: %v", err)
+	changedReviewW := httptest.NewRecorder()
+	testHandler.ReviewPromptEvaluationRun(changedReviewW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/review", map[string]any{
+		"decision": "通过",
+		"note":     "不同的复核说明",
+	}), "id", resp.Run.ID))
+	if changedReviewW.Code != http.StatusConflict {
+		t.Fatalf("changed review replay = %d %s, want 409", changedReviewW.Code, changedReviewW.Body.String())
 	}
+	reviewedEvidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if len(reviewedEvidence.Trials) != 1 || reviewedEvidence.Trials[0].Status != "通过" || reviewedEvidence.Trials[0].FailureReason != "无" {
 		t.Fatalf("reviewed trial = %+v", reviewedEvidence.Trials)
 	}
@@ -2362,20 +2136,11 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 }
 
 func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体失败实验", "部署失败")
 
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE agent_task_queue
-		SET status = 'running',
-		    started_at = now() - interval '1 second'
-		WHERE id = $1
-	`, resp.TaskID); err != nil {
-		t.Fatalf("start agent task: %v", err)
-	}
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
 		VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 5, 1, 0, 0, now())
@@ -2384,7 +2149,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	}
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "智能体执行超时",
 		"failure_reason": "命令超时",
 		"session_id":     "prompt-eval-failed-session",
@@ -2394,16 +2159,9 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "失败" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "智能体执行超时" {
 		t.Fatalf("auto-synced failed run = %+v", evidence.Run)
 	}
@@ -2413,15 +2171,13 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 }
 
 func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "服务端证据快照实验", "需要归档")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "402 当前账号 Token 额度已耗尽",
 		"failure_reason": "agent_error.provider_quota_limit",
 		"session_id":     "prompt-eval-snapshot-session",
@@ -2431,9 +2187,13 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	createSnapshotW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationEvidenceSnapshot(createSnapshotW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID))
+	requestKey := uuid.NewString()
+	createSnapshotReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID)
+	createSnapshotReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(createSnapshotW, createSnapshotReq)
 	if createSnapshotW.Code != http.StatusCreated {
 		t.Fatalf("create snapshot status = %d, body = %s", createSnapshotW.Code, createSnapshotW.Body.String())
 	}
@@ -2462,6 +2222,20 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 	if scores, ok := insight["维度评分摘要"].([]any); !ok || len(scores) < 1 {
 		t.Fatalf("snapshot insight missing dimension summaries: %#v", insight)
+	}
+	replayW := httptest.NewRecorder()
+	replayReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID)
+	replayReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(replayW, replayReq)
+	if replayW.Code != http.StatusCreated || replayW.Body.String() != createSnapshotW.Body.String() {
+		t.Fatalf("snapshot replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), createSnapshotW.Body.String())
+	}
+	conflictW := httptest.NewRecorder()
+	conflictReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=手动归档", nil), "id", resp.Run.ID)
+	conflictReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(conflictW, conflictReq)
+	if conflictW.Code != http.StatusConflict {
+		t.Fatalf("changed snapshot replay = %d %s, want 409", conflictW.Code, conflictW.Body.String())
 	}
 
 	listW := httptest.NewRecorder()
@@ -2495,15 +2269,43 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
+func TestPromptEvaluationRunEvidenceFailsWhenRequiredProjectionCannotLoad(t *testing.T) {
+	requireHandlerDatabase(t)
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "证据任务读取失败实验", "不得返回残缺证据")
+
+	for _, queryName := range []string{"GetAgentTaskInWorkspace", "GetPromptEvaluationAssetInWorkspace"} {
+		t.Run(queryName, func(t *testing.T) {
+			h := *testHandler
+			h.Queries = db.New(queryRowFailingDB{
+				DBTX:      testPool,
+				queryName: queryName,
+				err:       context.DeadlineExceeded,
+			})
+			w := httptest.NewRecorder()
+			h.GetPromptEvaluationRunEvidence(w, withURLParam(
+				newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil),
+				"id",
+				resp.Run.ID,
+			))
+
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusInternalServerError, w.Body.String())
+			}
+		})
 	}
+}
+
+func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产级证据快照实验", "需要批量归档")
 
+	requestKey := uuid.NewString()
 	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(createW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID))
+	createReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	createReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(createW, createReq)
 	if createW.Code != http.StatusCreated {
 		t.Fatalf("asset snapshot status = %d, body = %s", createW.Code, createW.Body.String())
 	}
@@ -2519,12 +2321,25 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	}
 
 	retryW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(retryW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID))
+	retryReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	retryReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(retryW, retryReq)
 	if retryW.Code != http.StatusCreated {
 		t.Fatalf("asset snapshot retry status = %d, body = %s", retryW.Code, retryW.Body.String())
 	}
+	if retryW.Body.String() != createW.Body.String() {
+		t.Fatalf("asset snapshot same-key retry = %s, want exact %s", retryW.Body.String(), createW.Body.String())
+	}
+
+	distinctW := httptest.NewRecorder()
+	distinctReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	distinctReq.Header.Set("Idempotency-Key", uuid.NewString())
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(distinctW, distinctReq)
+	if distinctW.Code != http.StatusCreated {
+		t.Fatalf("asset snapshot distinct retry status = %d, body = %s", distinctW.Code, distinctW.Body.String())
+	}
 	var retry PromptEvaluationAssetEvidenceSnapshotResponse
-	if err := json.Unmarshal(retryW.Body.Bytes(), &retry); err != nil {
+	if err := json.Unmarshal(distinctW.Body.Bytes(), &retry); err != nil {
 		t.Fatalf("decode asset snapshot retry response: %v", err)
 	}
 	if retry.CreatedCount != 0 || retry.SkippedCount != 1 || len(retry.Skipped) != 1 || retry.Skipped[0].RunID != resp.Run.ID {
@@ -2558,10 +2373,54 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
+func TestPromptEvaluationAssetEvidenceSnapshotsRollbackWholeBatch(t *testing.T) {
+	requireHandlerDatabase(t)
+	cleanupPromptEvaluationAgentRunTest(t)
+	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产证据批量回滚实验", "第一条不得残留")
+	var secondRunID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO prompt_evaluation_run (
+			id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+			agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+			total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+			average_duration_ms, input_tokens, output_tokens, estimated_cost,
+			failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by
+		)
+		SELECT gen_random_uuid(), workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+			agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+			total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+			average_duration_ms, input_tokens, output_tokens, estimated_cost,
+			failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by
+		FROM prompt_evaluation_run WHERE id = $1
+		RETURNING id::text
+	`, resp.Run.ID).Scan(&secondRunID); err != nil {
+		t.Fatalf("clone prompt evaluation run: %v", err)
 	}
+
+	h := *testHandler
+	h.TxStarter = failEvidenceSnapshotTxStarter{pool: testPool, failAt: 2}
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	requestKey := uuid.NewString()
+	req.Header.Set("Idempotency-Key", requestKey)
+	h.CreatePromptEvaluationAssetEvidenceSnapshots(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("batch failure status = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var snapshots, requests int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM prompt_evaluation_evidence_snapshot WHERE run_id IN ($1, $2)`, resp.Run.ID, secondRunID).Scan(&snapshots); err != nil {
+		t.Fatalf("count rolled-back snapshots: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE resource_type = 'prompt_evaluation_evidence_batch' AND idempotency_key = $1`, requestKey).Scan(&requests); err != nil {
+		t.Fatalf("count rolled-back batch requests: %v", err)
+	}
+	if snapshots != 0 || requests != 0 {
+		t.Fatalf("partial batch state snapshots=%d requests=%d, want 0/0", snapshots, requests)
+	}
+}
+
+func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体证据优化实验", "缺少验收条件")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2572,7 +2431,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",
@@ -2603,7 +2462,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "缺少验收条件",
 		"failure_reason": "assertion_mismatch",
 		"session_id":     "prompt-eval-evidence-session",
@@ -2613,6 +2472,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	candidateW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationOptimizationCandidate(candidateW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/optimization-candidates", nil), "id", resp.Run.ID))
@@ -2650,50 +2510,17 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationRequestedAgentIDIgnoresAutoModeLabel(t *testing.T) {
-	payload := map[string]any{
-		"调试包": map[string]any{
-			"执行智能体": nil,
-		},
-		"运行环境": map[string]any{
-			"目标智能体":   "自动选择训练评估智能体",
-			"目标智能体标识": nil,
-		},
-	}
-	if got := promptEvaluationRequestedAgentID(payload); got != "" {
-		t.Fatalf("requested agent id = %q, want empty auto mode", got)
-	}
-
-	explicit := "11111111-1111-4111-8111-111111111111"
-	payload["运行环境"] = map[string]any{
-		"目标智能体":   "指定执行智能体",
-		"目标智能体标识": explicit,
-	}
-	if got := promptEvaluationRequestedAgentID(payload); got != explicit {
-		t.Fatalf("requested agent id = %q, want %q", got, explicit)
-	}
-}
-
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体取消实验", "取消任务")
 
 	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(resp.TaskID)); err != nil {
 		t.Fatalf("cancel task: %v", err)
 	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "已取消" || evidence.Run.Conclusion != "智能体执行已取消" || evidence.Run.FailureReason != "任务被取消" {
 		t.Fatalf("auto-synced cancelled run = %+v", evidence.Run)
 	}
@@ -2703,9 +2530,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 }
 
 func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "公开取消运行实验", "取消公开运行")
 
@@ -2720,6 +2545,11 @@ func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
 	}
 	if cancelled.Status != "已取消" || cancelled.TaskID == nil || *cancelled.TaskID != resp.TaskID {
 		t.Fatalf("cancelled run response = %+v", cancelled)
+	}
+	replayW := httptest.NewRecorder()
+	testHandler.CancelPromptEvaluationRun(replayW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/cancel", nil), "id", resp.Run.ID))
+	if replayW.Code != http.StatusOK || replayW.Body.String() != cancelW.Body.String() {
+		t.Fatalf("cancel replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), cancelW.Body.String())
 	}
 	var taskStatus, runStatus, trialStatus string
 	if err := testPool.QueryRow(context.Background(), `
@@ -2737,10 +2567,67 @@ func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
 	}
 }
 
-func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
+func TestCancelPromptEvaluationRunRecoversAfterRunPersistenceFailure(t *testing.T) {
+	requireHandlerDatabase(t)
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "取消事务恢复实验", "取消事务恢复")
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "_")
+	functionName := "fail_eval_cancel_" + suffix
+	triggerName := "fail_eval_cancel_" + suffix
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'injected run cancellation failure'; END $$;
+		CREATE TRIGGER %s BEFORE UPDATE ON prompt_evaluation_run
+		FOR EACH ROW WHEN (OLD.id = '%s'::uuid AND NEW.status = '已取消')
+		EXECUTE FUNCTION %s()
+	`, functionName, triggerName, resp.Run.ID, functionName)); err != nil {
+		t.Fatal(err)
 	}
+	dropFailureWitness := func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(
+			`DROP TRIGGER IF EXISTS %s ON prompt_evaluation_run; DROP FUNCTION IF EXISTS %s()`,
+			triggerName, functionName,
+		))
+	}
+	t.Cleanup(dropFailureWitness)
+	cancel := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		testHandler.CancelPromptEvaluationRun(w, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/cancel", nil), "id", resp.Run.ID))
+		return w
+	}
+	failed := cancel()
+	dropFailureWitness()
+	if failed.Code != http.StatusInternalServerError {
+		t.Fatalf("injected cancellation failure = %d %s, want 500", failed.Code, failed.Body.String())
+	}
+	var taskStatus, runStatus, trialStatus string
+	loadState := func() {
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT q.status, r.status, t.status
+			FROM prompt_evaluation_run r
+			JOIN agent_task_queue q ON q.id = r.task_id
+			JOIN prompt_evaluation_trial t ON t.run_id = r.id
+			WHERE r.id = $1 LIMIT 1
+		`, resp.Run.ID).Scan(&taskStatus, &runStatus, &trialStatus); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loadState()
+	if taskStatus != "cancelled" || runStatus != "已入队" || trialStatus != "待执行" {
+		t.Fatalf("failed cancellation state: task=%s run=%s trial=%s", taskStatus, runStatus, trialStatus)
+	}
+	recovered := cancel()
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("cancel recovery = %d %s", recovered.Code, recovered.Body.String())
+	}
+	loadState()
+	if taskStatus != "cancelled" || runStatus != "已取消" || trialStatus != "已跳过" {
+		t.Fatalf("recovered cancellation state: task=%s run=%s trial=%s", taskStatus, runStatus, trialStatus)
+	}
+}
+
+func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体批处理失败实验", "批处理失败")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
@@ -2748,22 +2635,15 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
 		ID:            parseUUID(resp.TaskID),
 		Error:         pgtype.Text{String: "后台扫描判定任务失败", Valid: true},
-		FailureReason: "agent_error",
+		FailureReason: "agent_error.unknown",
 	})
 	if err != nil {
 		t.Fatalf("fail task row: %v", err)
 	}
 	testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "失败" || evidence.Run.FailureReason != "后台扫描判定任务失败" || evidence.Run.TaskID == nil || *evidence.Run.TaskID != resp.TaskID {
 		t.Fatalf("auto-synced batch failed run = %+v", evidence.Run)
 	}
@@ -2773,25 +2653,30 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 }
 
 func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体重试实验", "运行时离线")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
-	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
-		ID:            parseUUID(resp.TaskID),
-		Error:         pgtype.Text{String: "运行时离线，自动重试", Valid: true},
-		FailureReason: "runtime_offline",
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET started_at = now() - interval '2 hours'
+		WHERE id = $1
+	`, resp.TaskID); err != nil {
+		t.Fatalf("age prompt evaluation task: %v", err)
+	}
+	batch, err := testHandler.TaskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+		DispatchTimeoutSecs: 24 * 60 * 60,
+		RunningTimeoutSecs:  60 * 60,
 	})
 	if err != nil {
-		t.Fatalf("fail task row: %v", err)
+		t.Fatalf("fail stale prompt evaluation task: %v", err)
 	}
-	retried := testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
-	if retried != 1 {
-		t.Fatalf("expected one retry, got %d", retried)
+	if len(batch.Tasks) != 1 || batch.Retried != 1 {
+		t.Fatalf("failed task batch = %+v, want one task and one retry", batch)
 	}
+	testHandler.TaskService.HandleFailedTasks(ctx, batch.Tasks)
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	var childTaskID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -2800,15 +2685,7 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 	`, resp.TaskID).Scan(&childTaskID); err != nil {
 		t.Fatalf("load retry child: %v", err)
 	}
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "已入队" || evidence.Run.TaskID == nil || *evidence.Run.TaskID != childTaskID {
 		t.Fatalf("retry did not reassign prompt evaluation run: child=%s run=%+v", childTaskID, evidence.Run)
 	}
@@ -2864,68 +2741,29 @@ func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
 	}
 }
 
-func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T) {
-	t.Skip("experiment assets were removed from training evaluation")
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
+func projectPromptEvaluationTask(t *testing.T, taskID string) {
+	t.Helper()
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), taskID); err != nil {
+		t.Fatalf("project terminal prompt evaluation task: %v", err)
 	}
-	cleanupPromptEvaluationAgentRunTest(t)
-	var runtimeID string
-	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 默认维度运行时', '{}'::jsonb, $4, 'personal', now())
-		RETURNING id
-	`, testWorkspaceID, "prompt-eval-default-dimension-daemon-"+randomID()[:8], "prompt-eval-default-dimension-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create codebuddy runtime: %v", err)
-	}
-	promptID := createPromptEvaluationTestPromptWithContent(
-		t,
-		testWorkspaceID,
-		"默认维度提示词",
-		"请评估 {{issue_title}}，输出中文结论。",
-		`[]`,
-	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "默认维度实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "默认维度用例", "变量": map[string]any{"issue_title": "默认维度"}, "期望包含": []string{"中文结论"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	if created.ExperimentDimensionCount != 3 {
-		t.Fatalf("experiment dimension count = %d, want 3", created.ExperimentDimensionCount)
-	}
-	assertPromptEvaluationExperimentDimensions(t, created.ID, []string{"命中率", "缺失变量", "中文一致性"})
+}
 
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusAccepted {
-		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+func readPromptEvaluationRunEvidence(t *testing.T, runID string) PromptEvaluationRunEvidenceResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(w, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+runID+"/evidence", nil), "id", runID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", w.Code, w.Body.String())
 	}
-	var resp PromptEvaluationAgentRunResponse
-	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode agent run response: %v", err)
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
 	}
-	assertPromptEvaluationDimensionScores(t, resp.Run.ID, []expectedPromptEvaluationDimensionScore{
-		{name: "命中率", status: "待执行", source: "run_metrics", passed: 0, total: 1},
-		{name: "缺失变量", status: "待执行", source: "run_metrics", passed: 0, total: 1},
-		{name: "中文一致性", status: "待执行", source: "run_metrics", passed: 0, total: 1},
-	})
+	return evidence
 }
 
 func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -2969,33 +2807,25 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		"请评估 {{issue_title}}。",
 		`[]`,
 	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "指定执行智能体实验",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"执行智能体": map[string]any{"agent_id": uuidToString(agent.ID)},
+			"agent_id": uuidToString(agent.ID),
 			"cases": []map[string]any{{
-				"名称":   "指定执行智能体用例",
-				"变量":   map[string]any{"issue_title": "登录失败"},
-				"期望包含": []string{"登录失败"},
+				"case_name":         "指定执行智能体用例",
+				"variables":         map[string]any{"issue_title": "登录失败"},
+				"expected_contains": []string{"登录失败"},
 			}},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
 	if runW.Code != http.StatusAccepted {
 		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
 	}
-	var resp PromptEvaluationAgentRunResponse
+	var resp promptEvaluationAgentRunResponse
 	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode agent run response: %v", err)
 	}
@@ -3009,7 +2839,23 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	}
 }
 
-func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, PromptEvaluationAgentRunResponse, string) {
+func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, promptEvaluationAgentRunResponse, string) {
+	t.Helper()
+	created, runtimeID := createPromptEvaluationAgentRunAssetFixture(t, assetName, caseName)
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusAccepted {
+		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var resp promptEvaluationAgentRunResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	return created, resp, runtimeID
+}
+
+func createPromptEvaluationAgentRunAssetFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, string) {
 	t.Helper()
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -3020,47 +2866,11 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 		t.Fatalf("create codebuddy runtime: %v", err)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(
-		t,
-		testWorkspaceID,
-		assetName+"提示词",
-		"请评估 {{issue_title}}。",
-		`[]`,
-	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       assetName,
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"对比维度":  []string{"命中率", "缺失变量", "中文一致性"},
-			"cases": []map[string]any{{"名称": caseName, "变量": map[string]any{"issue_title": caseName}, "期望包含": []string{caseName}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusAccepted {
-		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
-	}
-	var resp PromptEvaluationAgentRunResponse
-	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode agent run response: %v", err)
-	}
-	return created, resp, runtimeID
+	return createPromptEvaluationAgentAssetFixture(t, assetName, caseName, caseName, []string{"命中率", "缺失变量", "中文一致性"}), runtimeID
 }
 
 func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -3073,28 +2883,20 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 		sourceContent,
 		`[]`,
 	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "失败用例优化运行",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{
 				{
-					"名称":   "缺少验收口径",
-					"变量":   map[string]any{"issue_title": "登录失败"},
-					"期望包含": []string{"验收条件", "trace/task id"},
+					"case_name":         "缺少验收口径",
+					"variables":         map[string]any{"issue_title": "登录失败"},
+					"expected_contains": []string{"验收条件", "trace/task id"},
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
@@ -3207,9 +3009,7 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 }
 
 func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
@@ -3221,28 +3021,20 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 		"请澄清 {{issue_title}}，输出必须使用中文。",
 		`[]`,
 	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "拒绝优化候选运行",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{
 				{
-					"名称":   "仍缺少验收口径",
-					"变量":   map[string]any{"issue_title": "权限异常"},
-					"期望包含": []string{"验收条件", "trace/task id"},
+					"case_name":         "仍缺少验收口径",
+					"variables":         map[string]any{"issue_title": "权限异常"},
+					"expected_contains": []string{"验收条件", "trace/task id"},
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
 	if runW.Code != http.StatusOK {
@@ -3294,10 +3086,22 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
+func createPromptEvaluationAssetFixture(t *testing.T, requestBody map[string]any) PromptEvaluationAssetResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(w, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", requestBody))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create prompt evaluation asset status = %d, body = %s", w.Code, w.Body.String())
 	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode prompt evaluation asset: %v", err)
+	}
+	return asset
+}
+
+func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
+	requireHandlerDatabase(t)
 	foreignWorkspaceID := createPromptLibraryTestWorkspace(t, "prompt-eval-foreign-"+randomID()[:8])
 	foreignPromptID := createPromptEvaluationTestPrompt(t, foreignWorkspaceID, "外部提示词")
 
@@ -3334,10 +3138,10 @@ func createPromptEvaluationTestPromptWithContent(t *testing.T, workspaceID, name
 	return promptID
 }
 
-func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected []string) {
+func assertPromptEvaluationCaseAssertionIdentities(t *testing.T, caseID string, expectedCount int) {
 	t.Helper()
 	rows, err := testPool.Query(context.Background(), `
-		SELECT expected_text
+		SELECT assertion_index
 		FROM prompt_evaluation_case_assertion
 		WHERE case_id = $1
 		ORDER BY assertion_index ASC
@@ -3346,23 +3150,23 @@ func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected 
 		t.Fatalf("query case assertions: %v", err)
 	}
 	defer rows.Close()
-	actual := []string{}
+	actual := []int32{}
 	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
+		var index int32
+		if err := rows.Scan(&index); err != nil {
 			t.Fatalf("scan case assertion: %v", err)
 		}
-		actual = append(actual, value)
+		actual = append(actual, index)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate case assertions: %v", err)
 	}
-	if len(actual) != len(expected) {
-		t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+	if len(actual) != expectedCount {
+		t.Fatalf("case assertion indexes = %#v, want %d identities", actual, expectedCount)
 	}
-	for idx := range expected {
-		if actual[idx] != expected[idx] {
-			t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+	for index := range actual {
+		if actual[index] != int32(index) {
+			t.Fatalf("case assertion indexes = %#v, want contiguous indexes", actual)
 		}
 	}
 }
@@ -3471,39 +3275,6 @@ func loadPromptEvaluationTestSuiteCases(t *testing.T, assetID string) []string {
 		t.Fatalf("iterate test suite cases: %v", err)
 	}
 	return actual
-}
-
-func assertPromptEvaluationExperimentDimensions(t *testing.T, assetID string, expected []string) {
-	t.Helper()
-	rows, err := testPool.Query(context.Background(), `
-		SELECT dimension_name
-		FROM prompt_evaluation_experiment_dimension
-		WHERE experiment_asset_id = $1
-		ORDER BY dimension_index ASC
-	`, assetID)
-	if err != nil {
-		t.Fatalf("query experiment dimensions: %v", err)
-	}
-	defer rows.Close()
-	actual := []string{}
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			t.Fatalf("scan experiment dimension: %v", err)
-		}
-		actual = append(actual, value)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate experiment dimensions: %v", err)
-	}
-	if len(actual) != len(expected) {
-		t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
-	}
-	for idx := range expected {
-		if actual[idx] != expected[idx] {
-			t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
-		}
-	}
 }
 
 type expectedPromptEvaluationDimensionScore struct {

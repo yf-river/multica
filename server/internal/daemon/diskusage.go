@@ -11,25 +11,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-// TaskDiskUsage describes one task workdir's footprint on disk.
-type TaskDiskUsage struct {
+type taskDiskUsage struct {
 	WorkspaceID       string `json:"workspace_id"`
 	WorkspaceShort    string `json:"workspace_short"`
 	TaskShort         string `json:"task_short"`
 	Path              string `json:"path"`
 	Kind              string `json:"kind"`
-	ParentStatus      string `json:"parent_status"`
 	AgeSeconds        int64  `json:"age_seconds"`
 	SizeBytes         int64  `json:"size_bytes"`
 	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`
 }
 
-// WorkspaceDiskUsage aggregates per-workspace footprint across all tasks.
+// workspaceDiskUsage aggregates per-workspace footprint across all tasks.
 // ArtifactRatio is the fraction (0..1) of SizeBytes that the GC artifact
 // cleanup could reclaim — kept here so the JSON consumer doesn't have to
 // re-derive it (and so the table view can render the column without dividing
 // by zero on empty workspaces).
-type WorkspaceDiskUsage struct {
+type workspaceDiskUsage struct {
 	WorkspaceID       string  `json:"workspace_id"`
 	WorkspaceShort    string  `json:"workspace_short"`
 	TaskCount         int     `json:"task_count"`
@@ -46,8 +44,8 @@ type DiskUsageReport struct {
 	WorkspacesRoot         string               `json:"workspaces_root"`
 	GeneratedAt            time.Time            `json:"generated_at"`
 	ArtifactPatterns       []string             `json:"artifact_patterns"`
-	Tasks                  []TaskDiskUsage      `json:"tasks"`
-	Workspaces             []WorkspaceDiskUsage `json:"workspaces"`
+	Tasks                  []taskDiskUsage      `json:"tasks"`
+	Workspaces             []workspaceDiskUsage `json:"workspaces"`
 	TotalTaskCount         int                  `json:"total_task_count"`
 	TotalWorkspaceCount    int                  `json:"total_workspace_count"`
 	TotalSizeBytes         int64                `json:"total_size_bytes"`
@@ -64,8 +62,7 @@ type DiskUsageRoot struct {
 	Root    string
 }
 
-// RootDiskUsage is one root's report inside an AggregateDiskUsageReport.
-type RootDiskUsage struct {
+type rootDiskUsage struct {
 	Profile string          `json:"profile"`
 	Report  DiskUsageReport `json:"report"`
 }
@@ -77,7 +74,7 @@ type RootDiskUsage struct {
 type AggregateDiskUsageReport struct {
 	GeneratedAt            time.Time       `json:"generated_at"`
 	ArtifactPatterns       []string        `json:"artifact_patterns"`
-	Roots                  []RootDiskUsage `json:"roots"`
+	Roots                  []rootDiskUsage `json:"roots"`
 	TotalTaskCount         int             `json:"total_task_count"`
 	TotalWorkspaceCount    int             `json:"total_workspace_count"`
 	TotalSizeBytes         int64           `json:"total_size_bytes"`
@@ -99,7 +96,7 @@ func ScanDiskUsageRoots(roots []DiskUsageRoot, artifactPatterns []string) (Aggre
 		if err != nil {
 			return agg, err
 		}
-		agg.Roots = append(agg.Roots, RootDiskUsage{Profile: r.Profile, Report: report})
+		agg.Roots = append(agg.Roots, rootDiskUsage{Profile: r.Profile, Report: report})
 		agg.TotalTaskCount += report.TotalTaskCount
 		agg.TotalWorkspaceCount += report.TotalWorkspaceCount
 		agg.TotalSizeBytes += report.TotalSizeBytes
@@ -109,10 +106,10 @@ func ScanDiskUsageRoots(roots []DiskUsageRoot, artifactPatterns []string) (Aggre
 	return agg, nil
 }
 
-// DiskUsageKindUnknown is the kind reported for task directories whose
+// diskUsageKindUnknown is the kind reported for task directories whose
 // .gc_meta.json is missing or unreadable. Mirrors how the GC orphan path
 // treats them — present on disk, but no parent record we can lock onto.
-const DiskUsageKindUnknown = "unknown"
+const diskUsageKindUnknown = "unknown"
 
 // ScanDiskUsage walks workspacesRoot and returns the disk-usage report. The
 // walk is read-only and follows the same safety contract as the GC artifact
@@ -142,7 +139,7 @@ func ScanDiskUsage(workspacesRoot string, artifactPatterns []string) (DiskUsageR
 		return report, fmt.Errorf("disk-usage: read workspaces root: %w", err)
 	}
 
-	wsAgg := map[string]*WorkspaceDiskUsage{}
+	wsAgg := map[string]*workspaceDiskUsage{}
 
 	for _, wsEntry := range wsEntries {
 		// Skip the bare-repo cache and any non-directory entries; the GC loop
@@ -170,7 +167,7 @@ func ScanDiskUsage(workspacesRoot string, artifactPatterns []string) (DiskUsageR
 
 			ws, ok := wsAgg[wsID]
 			if !ok {
-				ws = &WorkspaceDiskUsage{
+				ws = &workspaceDiskUsage{
 					WorkspaceID:    wsID,
 					WorkspaceShort: ShortID(wsID),
 				}
@@ -189,7 +186,7 @@ func ScanDiskUsage(workspacesRoot string, artifactPatterns []string) (DiskUsageR
 		return report.Tasks[i].SizeBytes > report.Tasks[j].SizeBytes
 	})
 
-	report.Workspaces = make([]WorkspaceDiskUsage, 0, len(wsAgg))
+	report.Workspaces = make([]workspaceDiskUsage, 0, len(wsAgg))
 	for _, ws := range wsAgg {
 		ws.ArtifactRatio = ratio(ws.ArtifactSizeBytes, ws.SizeBytes)
 		report.Workspaces = append(report.Workspaces, *ws)
@@ -236,13 +233,13 @@ func sortedKeys(set map[string]struct{}) []string {
 	return out
 }
 
-func buildTaskUsage(taskDir, wsID, taskShort string, patternSet map[string]struct{}) TaskDiskUsage {
-	usage := TaskDiskUsage{
+func buildTaskUsage(taskDir, wsID, taskShort string, patternSet map[string]struct{}) taskDiskUsage {
+	usage := taskDiskUsage{
 		WorkspaceID:    wsID,
 		WorkspaceShort: ShortID(wsID),
 		TaskShort:      taskShort,
 		Path:           taskDir,
-		Kind:           DiskUsageKindUnknown,
+		Kind:           diskUsageKindUnknown,
 	}
 
 	if meta, err := execenv.ReadGCMeta(taskDir); err == nil && meta != nil {

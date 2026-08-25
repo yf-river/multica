@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import type { GanttZoom } from "@multica/core/issues/stores/view-store";
@@ -21,7 +21,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { StatusIcon } from "./status-icon";
 import { PriorityIcon } from "./priority-icon";
-import { IssueActionsContextMenu } from "../actions";
+import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { sortIssues } from "../utils/sort";
 import { useT } from "../../i18n";
 import { TAPDSourceBadge } from "./tapd-source-badge";
@@ -43,13 +43,6 @@ function addDays(d: Date, days: number): Date {
 
 function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / MS_PER_DAY);
-}
-
-// Issue dates arrive as date-only "YYYY-MM-DD" strings (calendar days). Anchor
-// each to UTC midnight so the bar lands on exactly that day, independent of the
-// viewer's timezone. See @multica/core/issues/date.
-function parseDay(iso: string | null): Date | null {
-  return dateOnlyToUTCDate(iso);
 }
 
 function isWeekendUTC(d: Date): boolean {
@@ -93,8 +86,8 @@ function computeRange(issues: Issue[], today: Date, zoom: GanttZoom): Range {
   let minTs = today.getTime() - defaultPad[zoom] * MS_PER_DAY;
   let maxTs = today.getTime() + defaultPad[zoom] * MS_PER_DAY;
   for (const i of issues) {
-    const s = parseDay(i.start_date);
-    const e = parseDay(i.due_date);
+    const s = dateOnlyToUTCDate(i.start_date);
+    const e = dateOnlyToUTCDate(i.due_date);
     if (s && s.getTime() < minTs) minTs = s.getTime();
     if (e && e.getTime() > maxTs) maxTs = e.getTime();
     if (s && s.getTime() > maxTs) maxTs = s.getTime();
@@ -325,8 +318,9 @@ function ScheduledRow({
   });
   const project = issue.project_id ? projects.find((pr) => pr.id === issue.project_id) : undefined;
 
-  const start = parseDay(issue.start_date);
-  const due = parseDay(issue.due_date);
+  // Date-only values are anchored to UTC by the shared Issue date owner.
+  const start = dateOnlyToUTCDate(issue.start_date);
+  const due = dateOnlyToUTCDate(issue.due_date);
 
   // start > due is a data anomaly (backend only validates RFC3339, not order).
   // Normalize to min/max so the row still draws something, and flag it so the

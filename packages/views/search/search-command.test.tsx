@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { SearchCommand } from "./search-command";
-import { useSearchStore } from "./search-store";
+import { useSearchStore } from "@multica/core/search";
 import enCommon from "../locales/zh-Hans/common.json";
 import enAuth from "../locales/zh-Hans/auth.json";
 import enSettings from "../locales/zh-Hans/settings.json";
@@ -23,6 +23,13 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 }
 
 const renderSearch = () => render(<SearchCommand />, { wrapper: I18nWrapper });
+
+async function renderSearchQuery(query: string) {
+  const user = userEvent.setup();
+  renderSearch();
+  await user.type(screen.getByPlaceholderText("输入命令或关键词搜索..."), query);
+  return user;
+}
 
 const {
   mockPush,
@@ -46,7 +53,9 @@ const {
   mockPush: vi.fn(),
   mockSearchIssues: vi.fn(),
   mockSearchProjects: vi.fn(),
-  mockRecentItems: { current: [] as Array<{ id: string; visitedAt: number }> },
+  mockRecentItems: {
+    current: [] as Array<{ type: "issue" | "project"; id: string; visitedAt: number }>,
+  },
   mockAllIssues: { current: [] as Array<Record<string, unknown>> },
   mockSetTheme: vi.fn(),
   mockTheme: { current: "system" as "light" | "dark" | "system" },
@@ -118,10 +127,10 @@ vi.mock("../common/actor-avatar", () => ({
   },
 }));
 
-vi.mock("@multica/core/issues/stores", () => {
-  const EMPTY: Array<{ id: string; visitedAt: number }> = [];
+vi.mock("@multica/core/chat", () => {
+  const EMPTY: typeof mockRecentItems.current = [];
   return {
-    useRecentIssuesStore: (
+    useRecentContextStore: (
       selector?: (state: {
         byWorkspace: Record<string, typeof mockRecentItems.current>;
       }) => unknown,
@@ -129,14 +138,17 @@ vi.mock("@multica/core/issues/stores", () => {
       const state = { byWorkspace: { "ws-test": mockRecentItems.current } };
       return selector ? selector(state) : state;
     },
-    selectRecentIssues:
+    selectRecentContexts:
       (wsId: string | null) =>
       (state: { byWorkspace: Record<string, typeof mockRecentItems.current> }) =>
         wsId ? (state.byWorkspace[wsId] ?? EMPTY) : EMPTY,
-    openCreateIssueWithPreference: (data?: Record<string, unknown> | null) =>
-      mockOpenModal("quick-create-issue", data ?? null),
   };
 });
+
+vi.mock("@multica/core/issues", () => ({
+  openCreateIssue: (data?: Record<string, unknown> | null) =>
+    mockOpenModal("create-issue", data ?? null),
+}));
 
 vi.mock("@multica/core", () => ({
   useWorkspaceId: () => "ws-test",
@@ -232,8 +244,8 @@ vi.mock("sonner", () => ({
 describe("SearchCommand", () => {
   beforeEach(() => {
     mockPush.mockReset();
-    mockSearchIssues.mockReset().mockResolvedValue({ issues: [] });
-    mockSearchProjects.mockReset().mockResolvedValue({ projects: [] });
+    mockSearchIssues.mockReset().mockResolvedValue([]);
+    mockSearchProjects.mockReset().mockResolvedValue([]);
     mockRecentItems.current = [];
     mockAllIssues.current = [];
     mockAgents.current = [];
@@ -262,8 +274,8 @@ describe("SearchCommand", () => {
       useSearchStore.setState({ open: false });
     });
     mockRecentItems.current = [
-      { id: "issue-1", visitedAt: 1000 },
-      { id: "issue-2", visitedAt: 900 },
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+      { type: "issue", id: "issue-2", visitedAt: 900 },
     ];
     mockPathname.current = "/ws-test/issues/issue-1";
 
@@ -318,11 +330,7 @@ describe("SearchCommand", () => {
   });
 
   it("按查询过滤导航页面", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "set");
+    await renderSearchQuery("set");
 
     await waitFor(() => {
       // HighlightText splits text, so use a function matcher
@@ -331,52 +339,26 @@ describe("SearchCommand", () => {
     expect(screen.queryByText("收件箱")).not.toBeInTheDocument();
   });
 
-  it("选择页面后跳转", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "settings");
-
-    const settingsItem = await screen.findByText("设置");
-    await user.click(settingsItem);
-
-    expect(mockPush).toHaveBeenCalledWith("/ws-test/settings");
-    expect(useSearchStore.getState().open).toBe(false);
-  });
-
-  it("调试页面入口默认跳转到提示词库", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "调试");
-
+  it.each([
+    ["设置页面", "settings", "page:settings", "/ws-test/settings"],
+    ["调试默认入口", "调试", "page:debug", "/ws-test/debug/prompts"],
+    ["评估默认入口", "评估", "page:evaluation", "/ws-test/evaluation/datasets"],
+    ["提示词库", "提示词库", "command:training-prompts", "/ws-test/debug/prompts"],
+    ["用例库", "用例库", "command:training-datasets", "/ws-test/evaluation/datasets"],
+    ["测试套件", "测试套件", "command:training-test-suites", "/ws-test/evaluation/test-suites"],
+    ["评测记录", "评测记录", "command:training-evaluation-runs", "/ws-test/evaluation/runs"],
+  ])("选择%s后跳转并关闭面板", async (_name, query, value, href) => {
+    const user = await renderSearchQuery(query);
     await waitFor(() => {
-      expect(document.querySelector('[data-value="page:debug"]')).toBeInTheDocument();
+      expect(document.querySelector(`[data-value="${value}"]`)).toBeInTheDocument();
     });
-    await user.click(document.querySelector('[data-value="page:debug"]')!);
+    await user.click(document.querySelector(`[data-value="${value}"]`)!);
 
-    expect(mockPush).toHaveBeenCalledWith("/ws-test/debug/prompts");
-    expect(useSearchStore.getState().open).toBe(false);
-  });
-
-  it("评估页面入口默认跳转到用例库", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "评估");
-
-    const evaluationItem = await screen.findByText("评估");
-    await user.click(evaluationItem);
-
-    expect(mockPush).toHaveBeenCalledWith("/ws-test/evaluation/datasets");
+    expect(mockPush).toHaveBeenCalledWith(href);
     expect(useSearchStore.getState().open).toBe(false);
   });
 
   it("列出工作区成员，并在选择后跳转到成员页", async () => {
-    const user = userEvent.setup();
     mockMembers.current = [
       {
         id: "member-1",
@@ -399,10 +381,7 @@ describe("SearchCommand", () => {
         avatar_url: null,
       },
     ];
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "alice");
+    const user = await renderSearchQuery("alice");
 
     await waitFor(() => {
       expect(screen.getByText("成员")).toBeInTheDocument();
@@ -426,8 +405,8 @@ describe("SearchCommand", () => {
 
   it("结合查询缓存和访问记录渲染最近访问的 issue", () => {
     mockRecentItems.current = [
-      { id: "issue-1", visitedAt: 1000 },
-      { id: "issue-2", visitedAt: 900 },
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+      { type: "issue", id: "issue-2", visitedAt: 900 },
     ];
     mockAllIssues.current = [
       { id: "issue-1", identifier: "MUL-1", title: "第一个 issue", status: "todo" },
@@ -444,11 +423,7 @@ describe("SearchCommand", () => {
   });
 
   it("在命令分组显示新建任务 / 新建项目，并触发 modal store", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "new");
+    const user = await renderSearchQuery("new");
 
     await waitFor(() => {
       expect(screen.getByText("命令")).toBeInTheDocument();
@@ -465,51 +440,19 @@ describe("SearchCommand", () => {
     );
     await user.click(newIssue);
 
-    expect(mockOpenModal).toHaveBeenCalledWith("quick-create-issue", null);
+    expect(mockOpenModal).toHaveBeenCalledWith("create-issue", null);
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("调试和评估子模块命令会跳转到对应视图", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const commands = [
-      ["提示词库", "打开提示词库", "/ws-test/debug/prompts"],
-      ["用例库", "打开用例库", "/ws-test/evaluation/datasets"],
-      ["测试套件", "打开测试套件", "/ws-test/evaluation/test-suites"],
-      ["评测记录", "打开评测记录", "/ws-test/evaluation/runs"],
-    ] as const;
-
-    for (const [query, label, href] of commands) {
-      act(() => {
-        useSearchStore.setState({ open: true });
-      });
-      const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-      await user.clear(input);
-      await user.type(input, query);
-
-      const item = await screen.findByText((_, el) => el?.textContent === label && el?.tagName === "SPAN");
-      await user.click(item);
-
-      expect(mockPush).toHaveBeenLastCalledWith(href);
-      expect(useSearchStore.getState().open).toBe(false);
-    }
-  });
-
   it("不在任务详情路由时隐藏复制链接命令", async () => {
-    const user = userEvent.setup();
     mockPathname.current = "/ws-test/projects";
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "copy");
+    await renderSearchQuery("copy");
 
     // 命令分组可能仍为空或不存在。
     expect(screen.queryByText("复制任务链接")).not.toBeInTheDocument();
   });
 
   it("在任务详情路由复制任务链接和标识符", async () => {
-    const user = userEvent.setup();
     // userEvent.setup() installs its own navigator.clipboard; spy on it so we
     // intercept the writeText call without clobbering userEvent's internals.
     const writeSpy = vi
@@ -519,10 +462,7 @@ describe("SearchCommand", () => {
     mockAllIssues.current = [
       { id: "issue-1", identifier: "MUL-42", title: "演示", status: "todo" },
     ];
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "copy");
+    const user = await renderSearchQuery("copy");
 
     const linkItem = await screen.findByText(
       (_, el) => el?.textContent === "复制任务链接" && el?.tagName === "SPAN",
@@ -551,11 +491,7 @@ describe("SearchCommand", () => {
   });
 
   it("按查询关键词过滤主题命令", async () => {
-    const user = userEvent.setup();
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "dark");
+    await renderSearchQuery("dark");
 
     await waitFor(() => {
       expect(screen.getByText("命令")).toBeInTheDocument();
@@ -568,12 +504,8 @@ describe("SearchCommand", () => {
   });
 
   it("应用选中的主题并关闭面板", async () => {
-    const user = userEvent.setup();
     mockTheme.current = "light";
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "dark");
+    const user = await renderSearchQuery("dark");
 
     const darkItem = await screen.findByText(
       (_, el) => el?.textContent === "切换到深色主题" && el?.tagName === "SPAN",
@@ -585,12 +517,8 @@ describe("SearchCommand", () => {
   });
 
   it("通过通用 theme 关键词匹配主题操作，并标记当前主题", async () => {
-    const user = userEvent.setup();
     mockTheme.current = "dark";
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "theme");
+    await renderSearchQuery("theme");
 
     await waitFor(() => {
       expect(
@@ -608,8 +536,8 @@ describe("SearchCommand", () => {
 
   it("过滤掉查询缓存中不存在的最近访问项", () => {
     mockRecentItems.current = [
-      { id: "issue-1", visitedAt: 1000 },
-      { id: "deleted-issue", visitedAt: 900 },
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+      { type: "issue", id: "deleted-issue", visitedAt: 900 },
     ];
     mockAllIssues.current = [
       { id: "issue-1", identifier: "MUL-1", title: "现有 issue", status: "in_progress" },
@@ -623,7 +551,6 @@ describe("SearchCommand", () => {
   });
 
   it("issue 搜索结果显示负责人头像而不是状态文本", async () => {
-    const user = userEvent.setup();
     mockMembers.current = [
       {
         id: "member-1",
@@ -636,8 +563,7 @@ describe("SearchCommand", () => {
         avatar_url: null,
       },
     ];
-    mockSearchIssues.mockResolvedValue({
-      issues: [
+    mockSearchIssues.mockResolvedValue([
         {
           id: "issue-assigned",
           workspace_id: "ws-test",
@@ -658,16 +584,10 @@ describe("SearchCommand", () => {
           due_date: null,
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
-          match_source: "title",
         },
-      ],
-      total: 1,
-    });
+      ]);
 
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "assigned");
+    await renderSearchQuery("assigned");
 
     await waitFor(
       () => {
@@ -685,8 +605,20 @@ describe("SearchCommand", () => {
     expect(screen.queryByText("验收中")).not.toBeInTheDocument();
   });
 
+  it("搜索接口失败时清空旧结果并显示可诊断错误", async () => {
+    mockSearchIssues.mockRejectedValue(new Error("service unavailable"));
+    await renderSearchQuery("unavailable");
+
+    expect(
+      await screen.findByRole("alert", undefined, { timeout: 2000 }),
+    ).toHaveTextContent("搜索服务暂时不可用，请稍后重试。");
+    expect(screen.queryByText("未找到结果。")).not.toBeInTheDocument();
+  });
+
   it("最近访问 issue 显示负责人头像而不是状态文本", () => {
-    mockRecentItems.current = [{ id: "issue-1", visitedAt: 1000 }];
+    mockRecentItems.current = [
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+    ];
     mockAgents.current = [{ id: "agent-1", name: "Niko", avatar_url: null }];
     mockAllIssues.current = [
       {
@@ -706,10 +638,8 @@ describe("SearchCommand", () => {
     expect(screen.queryByText("已完成")).not.toBeInTheDocument();
   });
 
-  it("无论 match_source 如何都渲染描述和评论片段", async () => {
-    const user = userEvent.setup();
-    mockSearchIssues.mockResolvedValue({
-      issues: [
+  it("同时渲染描述和评论匹配片段", async () => {
+    mockSearchIssues.mockResolvedValue([
         {
           id: "issue-snippet",
           workspace_id: "ws-test",
@@ -730,17 +660,11 @@ describe("SearchCommand", () => {
           due_date: null,
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
-          match_source: "title",
           matched_description_snippet: "...uses HTML templates for rendering...",
           matched_comment_snippet: "...we should migrate away from HTML...",
         },
-      ],
-      total: 1,
-    });
-    renderSearch();
-
-    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "html");
+      ]);
+    await renderSearchQuery("html");
 
     await waitFor(
       () => {
@@ -749,7 +673,7 @@ describe("SearchCommand", () => {
       { timeout: 2000 },
     );
 
-    // Description snippet should render even though match_source is "title"
+    // Both independent snippets remain visible when the backend returns them.
     expect(
       screen.getByText((_, el) =>
         (el?.textContent?.includes("uses HTML templates for rendering") ?? false) &&
@@ -757,7 +681,6 @@ describe("SearchCommand", () => {
       ),
     ).toBeInTheDocument();
 
-    // Comment snippet should render even though match_source is "title"
     expect(
       screen.getByText((_, el) =>
         (el?.textContent?.includes("we should migrate away from HTML") ?? false) &&

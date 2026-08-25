@@ -10,71 +10,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/pkg/agent"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func enableQuickCreateRuntime(t *testing.T, ctx context.Context) string {
 	t.Helper()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id
+		FROM agent a
+		JOIN agent_runtime r ON r.id = a.runtime_id
+		WHERE a.workspace_id = $1 AND a.name = 'Handler Test Agent'
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("fetch quick-create agent runtime: %v", err)
 	}
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
-	if _, err := testPool.Exec(ctx,
-		`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
-		agent.MinQuickCreateCLIVersion, runtimeID,
-	); err != nil {
-		t.Fatalf("bump runtime cli_version: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
-			`UPDATE agent_runtime SET metadata = '{}'::jsonb WHERE id = $1`, runtimeID)
-	})
 
 	return agentID
 }
 
-// TestQuickCreateIssueParentTrustBoundary locks the server-side trust boundary
-// for the optional parent_issue_id field on POST /api/issues/quick-create.
-//
-// The frontend seeds parent_issue_id from the "Add sub issue" entry point and
-// otherwise leaves it empty. The handler is the trust boundary: a forged
-// request must not be able to smuggle a foreign parent UUID through to the
-// quick-create task context, and the same-workspace happy path must thread
-// the resolved UUID into QuickCreateContext.ParentIssueID so the daemon claim
-// step can resolve the identifier and emit `--parent <uuid>` in the prompt.
-//
-// Three branches are covered:
-//
-//  1. Same-workspace parent → 202 Accepted, task enqueued with
-//     QuickCreateContext.ParentIssueID populated.
-//  2. Foreign-workspace parent → 400 Bad Request, no task enqueued.
-//  3. Bogus UUID parent → 400 Bad Request, no task enqueued.
 func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	// Resolve the seeded runtime + agent for this workspace, then bump the
-	// runtime metadata to a CLI version that clears MinQuickCreateCLIVersion.
-	// The seed runtime uses metadata '{}'::jsonb which would otherwise trip
-	// the daemon-version gate before we ever reach the parent_issue_id check.
 	agentID := enableQuickCreateRuntime(t, ctx)
 
-	// Same-workspace parent — must be accepted and threaded through.
 	var localParentID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
@@ -85,10 +51,9 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		t.Fatalf("create local parent issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, localParentID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, localParentID)
 	})
 
-	// Foreign-workspace parent — must be rejected.
 	var foreignWorkspaceID, foreignUserID, foreignParentID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
@@ -96,7 +61,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		t.Fatalf("create foreign user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, foreignUserID)
+		mustExec(t, context.Background(), `DELETE FROM "user" WHERE id = $1`, foreignUserID)
 	})
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workspace (name, slug, description, issue_prefix)
@@ -105,7 +70,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		t.Fatalf("create foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
 	})
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
@@ -115,16 +80,10 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	`, foreignWorkspaceID, foreignUserID).Scan(&foreignParentID); err != nil {
 		t.Fatalf("create foreign parent issue: %v", err)
 	}
-	// The foreign workspace cleanup above cascades, but the issue row also
-	// needs a direct cleanup in case workspace deletion ordering changes.
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, foreignParentID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, foreignParentID)
 	})
 
-	// Helper for the "must not enqueue" assertions. Each rejection subtest
-	// snapshots the count immediately before the request and re-checks after
-	// so sibling subtests (and their t.Cleanup deletions) can't false-positive
-	// or false-negative this assertion.
 	countQuickCreateTasks := func(t *testing.T) int {
 		t.Helper()
 		var count int
@@ -155,12 +114,9 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 			t.Fatalf("decode response: %v", err)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
+			mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
 		})
 
-		// QuickCreateContext.ParentIssueID must contain the resolved UUID —
-		// the daemon claim step reads this field to attach the parent
-		// identifier and to inject `--parent <uuid>` into the prompt.
 		var contextJSON []byte
 		if err := testPool.QueryRow(context.Background(),
 			`SELECT context FROM agent_task_queue WHERE id = $1`, resp.TaskID,
@@ -195,8 +151,6 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 			t.Fatalf("expected 400 for foreign parent, got %d: %s", w.Code, w.Body.String())
 		}
 		if got := countQuickCreateTasks(t); got != before {
-			// Any increase means the foreign-parent request enqueued a
-			// task despite the 400 — the trust boundary leaked.
 			t.Fatalf("foreign parent must not enqueue a task: expected %d quick-create tasks, got %d", before, got)
 		}
 	})
@@ -251,7 +205,9 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 
 	title := fmt.Sprintf("TAPD 直建测试 %d", time.Now().UnixNano())
 	var sawAuth bool
+	var tapdCalls int
 	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tapdCalls++
 		if r.URL.Path != "/tapd_wikis" {
 			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
 		}
@@ -294,11 +250,14 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 		t.Fatalf("count quick-create tasks before: %v", err)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/quick-create", map[string]any{
+	quickCreateKey := uuid.NewString()
+	quickCreateBody := map[string]any{
 		"agent_id": agentID,
 		"prompt":   "根据 TAPD Wiki 文档创建需求：https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
-	})
+	}
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/quick-create", quickCreateBody)
+	req.Header.Set("Idempotency-Key", quickCreateKey)
 	testHandler.QuickCreateIssue(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("QuickCreateIssue TAPD: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -317,9 +276,25 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'quick_create' AND idempotency_key = $1`, quickCreateKey)
 	})
+
+	replayWriter := httptest.NewRecorder()
+	replayRequest := newRequest("POST", "/api/issues/quick-create", quickCreateBody)
+	replayRequest.Header.Set("Idempotency-Key", quickCreateKey)
+	testHandler.QuickCreateIssue(replayWriter, replayRequest)
+	if replayWriter.Code != http.StatusCreated {
+		t.Fatalf("TAPD replay: expected 201, got %d: %s", replayWriter.Code, replayWriter.Body.String())
+	}
+	var replay QuickCreateIssueResponse
+	if err := json.NewDecoder(replayWriter.Body).Decode(&replay); err != nil {
+		t.Fatalf("decode TAPD replay: %v", err)
+	}
+	if replay.IssueID != resp.IssueID || tapdCalls != 1 {
+		t.Fatalf("TAPD replay diverged: first=%s replay=%s provider_calls=%d", resp.IssueID, replay.IssueID, tapdCalls)
+	}
 
 	var quickTasksAfter int
 	if err := testPool.QueryRow(ctx,
@@ -336,7 +311,7 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load created issue: %v", err)
 	}
-	metadata := parseIssueMetadata(issue.Metadata)
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_fetch_status"] != "fetched" || metadata["source_fetch_title"] != title {
 		t.Fatalf("metadata missing fetched TAPD source: %+v", metadata)
 	}
@@ -349,7 +324,10 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	if strings.Contains(issue.Description.String, "真实需求正文") {
 		t.Fatalf("description should not copy fetched TAPD body before LLM summary: %s", issue.Description.String)
 	}
-	source := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	source, err := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	if err != nil {
+		t.Fatalf("build issue source context: %v", err)
+	}
 	if source == nil || source.TAPD == nil || source.TAPD.Title != title || !strings.Contains(source.TAPD.BodyExcerpt, "真实需求正文") {
 		t.Fatalf("source_context missing fetched fields: %+v", source)
 	}
@@ -377,6 +355,24 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	}
 	summaryOutput := "## 需求摘要\n租户创建校验场景需要通过租户 ID 查询初始化管理员信息。\n\n## 验收要点\n- 已初始化管理员时返回用户基础信息。\n- 未初始化管理员时返回明确业务错误。"
 	result, _ := json.Marshal(map[string]string{"output": summaryOutput})
+	removeFailure := installSourceSummaryIssueUpdateFailure(t, resp.IssueID)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, parseUUID(summaryTaskID), result, "", ""); err == nil {
+		t.Fatal("source summary completion succeeded despite forced issue update failure")
+	}
+	var summaryTaskStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, summaryTaskID).Scan(&summaryTaskStatus); err != nil {
+		t.Fatalf("load source summary task after rollback: %v", err)
+	}
+	if summaryTaskStatus != "running" {
+		t.Fatalf("source summary task status after rollback = %q, want running", summaryTaskStatus)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_task_queue WHERE issue_id = $1 AND context IS NULL`, resp.IssueID).Scan(&formalTasksBefore); err != nil {
+		t.Fatalf("count formal tasks after rollback: %v", err)
+	}
+	if formalTasksBefore != 0 {
+		t.Fatalf("source summary rollback left %d formal tasks", formalTasksBefore)
+	}
+	removeFailure()
 	gotIssueUpdated := make(chan map[string]any, 1)
 	testHandler.Bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
 		payload, ok := e.Payload.(map[string]any)
@@ -397,8 +393,9 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	}
 	select {
 	case issuePayload := <-gotIssueUpdated:
-		if issuePayload["description"] != summaryOutput {
-			t.Fatalf("issue:updated description = %q, want source summary output", issuePayload["description"])
+		description, ok := issuePayload["description"].(*string)
+		if !ok || description == nil || *description != summaryOutput {
+			t.Fatalf("issue:updated description = %#v, want pointer to source summary output", issuePayload["description"])
 		}
 		metadata, ok := issuePayload["metadata"].(map[string]any)
 		if !ok {
@@ -410,6 +407,20 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	default:
 		t.Fatal("source summary completion did not publish matching issue:updated event")
 	}
+	var durableSummaryEventCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM domain_event_outbox
+		WHERE event_type = 'issue:updated'
+		  AND stream_key = 'issue:' || $1
+		  AND payload->>'description_changed' = 'true'
+		  AND payload #>> '{issue,metadata,source_summary_status}' = 'completed'
+	`, resp.IssueID).Scan(&durableSummaryEventCount); err != nil {
+		t.Fatalf("count source summary durable event: %v", err)
+	}
+	if durableSummaryEventCount != 1 {
+		t.Fatalf("source summary durable events = %d, want 1", durableSummaryEventCount)
+	}
 	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(resp.IssueID))
 	if err != nil {
 		t.Fatalf("reload summarized issue: %v", err)
@@ -417,7 +428,7 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	if issue.Description.String != summaryOutput {
 		t.Fatalf("description not replaced by source summary output:\n%s", issue.Description.String)
 	}
-	metadata = parseIssueMetadata(issue.Metadata)
+	metadata = mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_summary_status"] != "completed" {
 		t.Fatalf("source summary status not completed: %+v", metadata)
 	}
@@ -430,6 +441,185 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	}
 	if formalTasksAfter != 1 {
 		t.Fatalf("expected formal execution task after source summary completion, got %d", formalTasksAfter)
+	}
+}
+
+func installSourceSummaryIssueUpdateFailure(t *testing.T, issueID string) func() {
+	t.Helper()
+	suffix := time.Now().UnixNano()
+	functionName := fmt.Sprintf("source_summary_issue_fail_fn_%d", suffix)
+	triggerName := fmt.Sprintf("source_summary_issue_fail_%d", suffix)
+	ctx := context.Background()
+	remove := func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON issue`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}
+	t.Cleanup(remove)
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.id = '%s' THEN
+				RAISE EXCEPTION 'forced source summary issue update failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON issue
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, issueID, triggerName, functionName)); err != nil {
+		t.Fatalf("install source summary issue update failure: %v", err)
+	}
+	return remove
+}
+
+func createSourceSummaryTaskForTest(t *testing.T, ctx context.Context, issue db.Issue, agentID string) db.AgentTaskQueue {
+	t.Helper()
+	tx, err := testHandler.TxStarter.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin source summary task transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	task, err := testHandler.TaskService.CreateIssueSourceSummaryTaskInTx(ctx, testHandler.Queries.WithTx(tx), issue, parseUUID(agentID))
+	if err != nil {
+		t.Fatalf("create source summary task: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit source summary task: %v", err)
+	}
+	testHandler.TaskService.PublishIssueSourceSummaryTaskEnqueued(ctx, task)
+	return task
+}
+
+func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := enableQuickCreateRuntime(t, ctx)
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, description, status, priority,
+			assignee_type, assignee_id, creator_type, creator_id, number, metadata
+		)
+		VALUES (
+			$1, 'source summary failure atomicity', '摘要生成中，请稍候。', 'todo', 'medium',
+			'agent', $2, 'member', $3,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1),
+			'{"source_provider":"tapd","source_fetch_title":"原始 TAPD 需求","source_fetch_summary":"原始需求正文","source_summary_status":"pending"}'::jsonb
+		)
+		RETURNING id::text
+	`, testWorkspaceID, agentID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create source summary issue: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	issue, err := testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load source summary issue: %v", err)
+	}
+	summaryTask := createSourceSummaryTaskForTest(t, ctx, issue, agentID)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1
+	`, summaryTask.ID); err != nil {
+		t.Fatalf("mark source summary task running: %v", err)
+	}
+
+	removeFailure := installSourceSummaryIssueUpdateFailure(t, issueID)
+	if _, err := testHandler.TaskService.FailTask(ctx, summaryTask.ID, "摘要智能体执行失败", "", "", "agent_error"); err == nil {
+		t.Fatal("source summary failure succeeded despite forced issue update failure")
+	}
+	var taskStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, summaryTask.ID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load source summary task after rollback: %v", err)
+	}
+	if taskStatus != "running" {
+		t.Fatalf("source summary task status after rollback = %q, want running", taskStatus)
+	}
+	var formalTasks int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND context IS NULL`, issueID).Scan(&formalTasks); err != nil {
+		t.Fatalf("count formal tasks after source summary rollback: %v", err)
+	}
+	if formalTasks != 0 {
+		t.Fatalf("source summary rollback left %d formal tasks", formalTasks)
+	}
+	removeFailure()
+
+	if _, err := testHandler.TaskService.FailTask(ctx, summaryTask.ID, "摘要智能体执行失败", "", "", "agent_error"); err != nil {
+		t.Fatalf("retry source summary failure: %v", err)
+	}
+	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("reload source summary issue: %v", err)
+	}
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
+	if metadata["source_summary_status"] != "failed" || metadata["source_summary_error"] != "摘要智能体执行失败" {
+		t.Fatalf("source summary failure metadata = %+v", metadata)
+	}
+	if !strings.Contains(issue.Description.String, "原始 TAPD 需求") || !strings.Contains(issue.Description.String, "摘要智能体执行失败") {
+		t.Fatalf("source summary fallback description = %q", issue.Description.String)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND context IS NULL AND status = 'queued'
+	`, issueID).Scan(&formalTasks); err != nil {
+		t.Fatalf("count formal tasks after source summary failure: %v", err)
+	}
+	if formalTasks != 1 {
+		t.Fatalf("source summary failure created %d formal tasks, want 1", formalTasks)
+	}
+
+	if _, err := testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1 AND context IS NULL`, issueID); err != nil {
+		t.Fatalf("clear formal task before batch failure: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET description = '摘要生成中，请稍候。',
+		    metadata = jsonb_set(metadata, '{source_summary_status}', '"pending"'::jsonb)
+		WHERE id = $1
+	`, issueID); err != nil {
+		t.Fatalf("reset issue before batch failure: %v", err)
+	}
+	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("reload issue before batch failure: %v", err)
+	}
+	batchTask := createSourceSummaryTaskForTest(t, ctx, issue, agentID)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'running', started_at = '1900-01-01T00:00:00Z' WHERE id = $1
+	`, batchTask.ID); err != nil {
+		t.Fatalf("age batch source summary task: %v", err)
+	}
+	batch, err := testHandler.TaskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+		DispatchTimeoutSecs: 100 * 365 * 24 * 60 * 60,
+		RunningTimeoutSecs:  100 * 365 * 24 * 60 * 60,
+	})
+	if err != nil {
+		t.Fatalf("fail stale source summary task: %v", err)
+	}
+	if len(batch.Tasks) != 1 || batch.Tasks[0].ID != batchTask.ID {
+		t.Fatalf("failed stale source summary tasks = %+v, want only %s", batch.Tasks, uuidToString(batchTask.ID))
+	}
+	testHandler.TaskService.HandleFailedTasks(ctx, batch.Tasks)
+	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("reload issue after batch failure: %v", err)
+	}
+	metadata = mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
+	if metadata["source_summary_status"] != "failed" || metadata["source_summary_error"] != "task timed out" {
+		t.Fatalf("batch source summary failure metadata = %+v", metadata)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND context IS NULL AND status = 'queued'
+	`, issueID).Scan(&formalTasks); err != nil {
+		t.Fatalf("count formal tasks after batch source summary failure: %v", err)
+	}
+	if formalTasks != 1 {
+		t.Fatalf("batch source summary failure created %d formal tasks, want 1", formalTasks)
 	}
 }
 
@@ -505,8 +695,8 @@ func TestQuickCreateIssueTapdStoryPreviewCreatesFetchedIssueDirectly(t *testing.
 			t.Fatalf("unexpected response: %+v", resp)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
-			testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+			mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
+			mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
 		})
 		return resp
 	}
@@ -531,7 +721,7 @@ func TestQuickCreateIssueTapdStoryPreviewCreatesFetchedIssueDirectly(t *testing.
 		strings.Contains(issue.Description.String, "公告列表提供公告管理查询功能") {
 		t.Fatalf("story description should be a summary placeholder before source summary completion: %s", issue.Description.String)
 	}
-	metadata := parseIssueMetadata(issue.Metadata)
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_url"] != "https://www.tapd.cn/51081496/prong/stories/view/1151081496001028216" ||
 		metadata["tapd_workspace_id"] != "51081496" ||
 		metadata["tapd_resource_type"] != "story" ||
@@ -552,7 +742,10 @@ func TestQuickCreateIssueTapdStoryPreviewCreatesFetchedIssueDirectly(t *testing.
 	if summaryTaskCount != 1 {
 		t.Fatalf("story create should enqueue one source summary task, got %d", summaryTaskCount)
 	}
-	source := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	source, err := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	if err != nil {
+		t.Fatalf("build issue source context: %v", err)
+	}
 	if source == nil || source.TAPD == nil || source.TAPD.ResourceType != "story" || source.TAPD.ResourceID != "1151081496001028216" {
 		t.Fatalf("source_context missing story fields: %+v", source)
 	}

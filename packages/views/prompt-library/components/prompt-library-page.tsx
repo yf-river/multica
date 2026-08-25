@@ -1,12 +1,12 @@
 "use client";
 /* eslint-disable i18next/no-literal-string */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { BookOpenText, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { issueExecutionTreeOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
@@ -14,9 +14,6 @@ import {
   TRAINING_WORKBENCH_VIEW_BY_TAB,
   buildSkillScenarioAssetRequest,
   buildWritingModelBenchmarkAssetRequest,
-  isSkillScenarioPayload,
-  summarizeSkillScenarioTarget,
-  summarizeWritingModelBenchmark,
   trainingWorkbenchSectionLabelFromView,
   trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTabFromView,
@@ -26,88 +23,67 @@ import {
   type TrainingWorkbenchViewId,
 } from "@multica/core/training";
 import type {
-  Agent,
-  CreatePromptLibraryItemRequest,
-  CreatePromptLibraryTrialRequest,
-  CreatePromptLibraryVersionRequest,
-  CreatePromptEvaluationAssetRequest,
-  CreatePromptEvaluationCaseRequest,
-  UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
-  PromptEvaluationEvidenceSnapshot,
-  PromptEvaluationOptimizationCandidate,
-  PromptEvaluationStructuredCase,
   PromptEvaluationRun,
-  PromptEvaluationRunEvidence,
-  PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationAssetType,
-  PromptEvaluationDatasetVersionDiff,
-  PromptEvaluationDatasetVersionRow,
-  PromptEvaluationDatasetVersionTagTrend,
   IssueExecutionTreeResponse,
-  Project,
-  ProjectResource,
   PromptLibraryItem,
-  PromptLibraryTrial,
   PromptLibraryVersion,
   UpdatePromptEvaluationAssetRequest,
-  UpdatePromptEvaluationOptimizationCandidateRequest,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
-import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
+import { useT } from "../../i18n/use-t";
 import {
   buildAssetPayload,
   draftToRequest,
   emptyDraft,
   itemToDraft,
-  parseDebugValues,
   setDraftField,
-  splitList,
   type PromptDraft,
 } from "./prompt-library-request-builders";
-import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
+import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
+import { Field } from "./form-field";
+import { extractPromptVariables } from "./prompt-trial-model";
+import { buildSkillResourceOptions } from "./skill-candidate-model";
+import { promptLibraryKeys } from "./prompt-library-query-keys";
+import {
+  type EvidenceFocus,
+  type RunStatusFilter,
+} from "./run-model";
+import { RunHistoryPanel, type RunHistoryPanelProps } from "./run-history-panel";
+import {
+  CaseLibraryEditorPanel,
+  type CaseLibraryEditorCopy,
+} from "./case-library-editor";
+import {
+  assetTypeLabel,
+  downloadTextFile,
+  tabToAssetType,
+  TrainingFocusedIssueCallout,
+  TrainingRouteIntroCard,
+  TrainingRouteWorkspaceBand,
+  trainingRouteIntro,
+} from "./training-workbench-support";
+import {
+  TrainingAssetPanel,
+  type TrainingAssetPanelBaseProps,
+} from "./training-asset-panel";
+import {
+  emptyManualCaseDraft,
+  type ManualCaseDraft,
+} from "./case-model";
+import { usePromptLibraryMutations } from "./use-prompt-library-mutations";
 
-const promptLibraryKeys = {
-  list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
-  versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
-  trials: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "trials", promptId ?? ""] as const,
-  agents: (workspaceId: string) => ["prompt-library", workspaceId, "agents"] as const,
-  assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
-  datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
-  datasetVersionRows: (workspaceId: string, assetId: string, versionId: string | null) => ["prompt-library", workspaceId, "evaluation-dataset-version-rows", assetId, versionId ?? ""] as const,
-  datasetVersionTagTrends: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-version-tag-trends", assetId] as const,
-  cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
-  runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
-  runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
-  runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
-  candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
-};
-
-type WorkbenchTab = TrainingWorkbenchTab;
-
-function isEvaluationRunRecordsTab(tab: WorkbenchTab): boolean {
+function isEvaluationRunRecordsTab(tab: TrainingWorkbenchTab): boolean {
   return tab === "评测记录";
 }
 
-type RunStatusFilter = "全部" | PromptEvaluationRun["status"];
-type EvidenceFocus = {
-  traceSeq: string | null;
-  toolChainId: string | null;
-  trialAnchor: string | null;
-  assertionAnchor: string | null;
-  messageSeq: string | null;
-  spanAnchor: string | null;
-  failureAnchor: string | null;
-};
-
-const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
-const DEFAULT_CASE_LIBRARY_ASSET_NAME = "默认用例库";
 const DEFAULT_CASE_LIBRARY_DRAFT_KEY = "__default_case_library__";
 function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
   const match = pathname.match(/\/(debug|evaluation)\/([^/?#]+)/);
@@ -131,28 +107,12 @@ function collectIssueExecutionTaskIds(tree: IssueExecutionTreeResponse | undefin
   return [...ids];
 }
 
-export function extractPromptVariables(content: string): string[] {
-  const names = new Set<string>();
-  for (const match of content.matchAll(/\{\{\s*([^{}\n\r]+?)\s*\}\}/g)) {
-    const name = match[1]?.trim();
-    if (name) names.add(name);
-  }
-  return [...names];
+function escapeCssIdentifier(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+  return value.replace(/["\\]/g, "\\$&");
 }
 
-export function allPromptTrialVariablesFilled(variableNames: string[], variables: Record<string, string>): boolean {
-  return variableNames.every((name) => Boolean(variables[name]?.trim()));
-}
-
-export function summarizePromptTrialVariables(variables: Record<string, unknown> | null | undefined): string {
-  const entries = Object.entries(variables ?? {})
-    .map(([name, value]) => [name.trim(), String(value ?? "").trim()] as const)
-    .filter(([name, value]) => name && value);
-  if (entries.length === 0) return "无变量";
-  return entries.map(([name, value]) => `${name}=${value}`).join("，");
-}
-
-export function resolvePromptSelection(
+function resolvePromptSelection(
   items: Array<Pick<PromptLibraryItem, "id">>,
   currentId: string | null,
   promptIdParam: string | null,
@@ -165,7 +125,7 @@ export function resolvePromptSelection(
   return items[0]?.id ?? null;
 }
 
-export function promptDraftSyncKey(
+function promptDraftSyncKey(
   selected: Pick<PromptLibraryItem, "id" | "version"> | null,
   activeVersion: Pick<PromptLibraryVersion, "id"> | null,
 ): string | null {
@@ -181,10 +141,10 @@ export function PromptLibraryPage({
   activeView?: TrainingWorkbenchViewId;
   showPromptEditor?: boolean;
 }) {
+  const { t } = useT("prompt-library");
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const navigation = useNavigation();
-  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isDraftingNew, setIsDraftingNew] = useState(false);
@@ -214,7 +174,7 @@ export function PromptLibraryPage({
     spanAnchor: navigation.searchParams.get("span"),
     failureAnchor: navigation.searchParams.get("failure"),
   };
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
+  const [activeTab, setActiveTab] = useState<TrainingWorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const activeSectionLabel = trainingWorkbenchSectionLabelFromView(resolvedView);
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [exportingAssetEvidencePackageAssetId, setExportingAssetEvidencePackageAssetId] = useState<string | null>(null);
@@ -294,12 +254,12 @@ export function PromptLibraryPage({
   useEffect(() => {
     if (!focusedCaseId || activeTab !== "用例库") return;
     const timer = window.setTimeout(() => {
-      document.querySelector(`[data-testid="case-library-case-${cssEscape(focusedCaseId)}"]`)?.scrollIntoView({
+      document.querySelector(`[data-testid="case-library-case-${escapeCssIdentifier(focusedCaseId)}"]`)?.scrollIntoView({
         block: "center",
       });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeTab, focusedCaseId, caseQuery.data?.items.length]);
+  }, [activeTab, focusedCaseId, caseQuery.data?.length]);
   const runQuery = useQuery({
     queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), effectiveRunStatusFilter] as const,
     queryFn: () => api.listPromptEvaluationRuns({
@@ -313,9 +273,10 @@ export function PromptLibraryPage({
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
     enabled: !!workspaceId && needsCandidates,
   });
+  const needsFocusedIssueTree = Boolean(focusedIssueId && (needsEvaluationAssets || isEvaluationRunRecords));
   const focusedIssueTreeQuery = useQuery({
     ...issueExecutionTreeOptions(focusedIssueId ?? ""),
-    enabled: false,
+    enabled: !!workspaceId && needsFocusedIssueTree,
   });
   const focusedIssueTaskIds = useMemo(
     () => collectIssueExecutionTaskIds(focusedIssueTreeQuery.data),
@@ -333,11 +294,11 @@ export function PromptLibraryPage({
         enabled: !!workspaceId && needsSkillResources,
       })),
   });
-  const items = listQuery.data?.items ?? [];
-  const assets = assetQuery.data?.items ?? [];
-  const cases = caseQuery.data?.items ?? [];
-  const runs = runQuery.data?.items ?? [];
-  const candidates = candidateQuery.data?.items ?? [];
+  const items = listQuery.data ?? [];
+  const assets = useMemo(() => assetQuery.data ?? [], [assetQuery.data]);
+  const cases = caseQuery.data ?? [];
+  const runs = runQuery.data ?? [];
+  const candidates = candidateQuery.data ?? [];
   const skillResourceOptions = useMemo(
     () => buildSkillResourceOptions(projectQuery.data ?? [], projectResourceQueries.map((query) => query.data ?? [])),
     [projectQuery.data, projectResourceQueries],
@@ -355,7 +316,10 @@ export function PromptLibraryPage({
     queryFn: () => api.listPromptLibraryVersions(selectedFromList?.id ?? ""),
     enabled: !!workspaceId && needsPromptVersions && !!selectedFromList,
   });
-  const promptVersions = versionQuery.data?.items ?? [];
+  const promptVersions = useMemo(
+    () => versionQuery.data ?? [],
+    [versionQuery.data],
+  );
   const trialQuery = useQuery({
     queryKey: promptLibraryKeys.trials(workspaceId ?? "", selectedFromList?.id ?? null),
     queryFn: () => api.listPromptLibraryTrials(selectedFromList?.id ?? ""),
@@ -366,7 +330,7 @@ export function PromptLibraryPage({
     queryFn: () => api.listAgents({ workspace_id: workspaceId ?? undefined }),
     enabled: !!workspaceId && needsPromptVersions,
   });
-  const promptTrials = trialQuery.data?.items ?? [];
+  const promptTrials = trialQuery.data ?? [];
   const agents = useMemo(
     () => (agentQuery.data ?? []).filter((agent) => !agent.archived_at),
     [agentQuery.data],
@@ -375,7 +339,9 @@ export function PromptLibraryPage({
     if (!selectedFromList) return null;
     return promptVersions.find((version) => version.id === activeVersionId) ?? promptVersions[0] ?? null;
   }, [activeVersionId, promptVersions, selectedFromList]);
-  const selectedPromptStorageKey = trainingSelectedPromptStorageKey(workspaceId);
+  const selectedPromptStorageKey = workspaceId
+    ? `multica:training:selected-prompt:${workspaceId}`
+    : null;
 
   useEffect(() => {
     if (!selectedPromptStorageKey || !selectedId) return;
@@ -407,18 +373,10 @@ export function PromptLibraryPage({
     return visiblePromptItems.filter((item) => {
       if (!q) return true;
       const haystack = [item.name, item.description, item.content].join(" ");
-      return haystack.toLowerCase().includes(q) || matchesPinyin(haystack, q);
+      return matchesTextQuery(haystack, q);
     });
   }, [query, visiblePromptItems]);
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
-  const invalidateVersions = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId) });
-  const invalidateTrials = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.trials(workspaceId ?? "", promptId) });
-  const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
-  const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
-  const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
-  const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
-  const invalidateRunEvidenceSnapshots = (runId: string) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId ?? "", runId) });
   const rememberSelectedPrompt = (promptId: string | null) => {
     setSelectedId(promptId);
     if (!selectedPromptStorageKey) return;
@@ -433,24 +391,38 @@ export function PromptLibraryPage({
     }
   };
 
-  const createMut = useMutation({
-    mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
-    onSuccess: (item) => {
-      invalidate();
-      invalidateVersions(item.id);
+  const {
+    reportError: reportMutationError,
+    createPrompt: createMut,
+    createPromptVersion: createVersionMut,
+    createPromptTrial: createTrialMut,
+    deletePrompt: deleteMut,
+    createAsset: createAssetMut,
+    updateAsset: updateAssetMut,
+    deleteAsset: deleteAssetMut,
+    importDatasetFromTraces: importDatasetFromTracesMut,
+    createDatasetVersion: createDatasetVersionMut,
+    createCase: createCaseMut,
+    updateCase: updateCaseMut,
+    deleteCase: deleteCaseMut,
+    createCaseLibraryCase: createCaseLibraryCaseMut,
+    syncRun: syncRunMut,
+    cancelRun: cancelRunMut,
+    reviewRun: reviewRunMut,
+    createEvidenceSnapshot: createEvidenceSnapshotMut,
+    createAssetEvidenceSnapshots: createAssetEvidenceSnapshotsMut,
+    createCandidate: createCandidateMut,
+  } = usePromptLibraryMutations({
+    workspaceId,
+    focusedIssueId,
+    focusedIssueTaskIds,
+    cases,
+    onPromptCreated: (item) => {
       setActiveVersionId(null);
       setIsDraftingNew(false);
       rememberSelectedPrompt(item.id);
-      toast.success("提示词已创建");
     },
-  });
-
-  const createVersionMut = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: CreatePromptLibraryVersionRequest }) => api.createPromptLibraryVersion(id, data),
-    onSuccess: (result) => {
-      const item = result.item;
-      invalidate();
-      invalidateVersions(item.id);
+    onPromptVersionCreated: (result) => {
       setActiveVersionId(result.version.id);
       setDraft({
         name: result.version.name,
@@ -459,274 +431,39 @@ export function PromptLibraryPage({
       });
       setChangeNote("");
       setIsDraftingNew(false);
-      rememberSelectedPrompt(item.id);
-      toast.success(`已创建版本 ${result.version.version}`);
+      rememberSelectedPrompt(result.item.id);
     },
-  });
-
-  const createTrialMut = useMutation({
-    mutationFn: ({ id, versionId, data }: { id: string; versionId: string; data: CreatePromptLibraryTrialRequest }) =>
-      api.createPromptLibraryTrial(id, versionId, data),
-    onSuccess: (_trial, variables) => {
-      invalidateTrials(variables.id);
-      toast.success("试跑已提交");
-    },
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api.deletePromptLibraryItem(id),
-    onSuccess: () => {
-      invalidate();
+    onPromptDeleted: () => {
       rememberSelectedPrompt(null);
       setDraft(emptyDraft());
-      toast.success("提示词已删除");
-    },
-  });
-
-  const updateAssetMut = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      toast.success("已更新");
-    },
-  });
-
-  const deleteAssetMut = useMutation({
-    mutationFn: (id: string) => api.deletePromptEvaluationAsset(id),
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      toast.success("已删除");
-    },
-  });
-
-  const importDatasetFromTracesMut = useMutation({
-    mutationFn: (assetId: string) =>
-      api.createPromptEvaluationDatasetFromTraces(assetId, {
-        limit: focusedIssueTaskIds.length > 0 ? focusedIssueTaskIds.length : 5,
-        ...(focusedIssueTaskIds.length > 0 ? { task_ids: focusedIssueTaskIds } : {}),
-        expected_contains: ["任务", "trace"],
-        tags: focusedIssueId
-          ? ["trace导入", "真实执行记录", `issue:${focusedIssueId}`]
-          : ["trace导入", "真实执行记录"],
-      }),
-    onSuccess: (result) => {
-      invalidateAssets();
-      invalidateCases();
-      toast.success(`已从 trace 导入 ${result.created_count} 条用例`);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "trace 导入失败，请先产生真实任务记录");
-    },
-  });
-
-  const createDatasetVersionMut = useMutation({
-    mutationFn: ({ assetId, versionLabel }: { assetId: string; versionLabel: string }) => api.createPromptEvaluationDatasetVersion(assetId, {
-      version_label: versionLabel,
-      metadata: {
-        来源: "训练与评估页面",
-        用途: "锁定当前用例库版本，供后续评估运行和实验对比复盘",
-        创建时间: new Date().toISOString(),
-      },
-    }),
-    onSuccess: (version, variables) => {
-      invalidateAssets();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId ?? "", variables.assetId) });
-      toast.success(`用例库版本 v${version.version} 已锁定`);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "用例库版本锁定失败，请先补充启用用例");
-    },
-  });
-
-  const createCaseMut = useMutation({
-    mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
-    onSuccess: () => {
-      invalidateCases();
-      toast.success("手工评测用例已创建");
-    },
-  });
-
-  const updateCaseMut = useMutation({
-    mutationFn: ({ caseId, data }: { caseId: string; data: UpdatePromptEvaluationCaseRequest }) => api.updatePromptEvaluationCase(caseId, data),
-    onSuccess: () => {
-      invalidateCases();
-      toast.success("手工评测用例已保存");
-    },
-  });
-
-  const deleteCaseMut = useMutation({
-    mutationFn: (id: string) => api.deletePromptEvaluationCase(id),
-    onSuccess: () => {
-      invalidateCases();
-      toast.success("手工评测用例已删除");
-    },
-  });
-
-  const ensureDefaultCaseLibraryAsset = useCallback(async () => {
-    const existing = assets.find((asset) =>
-      asset.asset_type === "数据集" &&
-      asset.name === DEFAULT_CASE_LIBRARY_ASSET_NAME &&
-      asset.status === "启用"
-    );
-    if (existing) return existing;
-    return api.createPromptEvaluationAsset({
-      name: DEFAULT_CASE_LIBRARY_ASSET_NAME,
-      description: "用例库页面自动维护的默认用例承载资产。",
-      asset_type: "数据集",
-      status: "启用",
-      payload: {
-        schema_version: 1,
-        schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
-        cases: [],
-        payload_contract: {
-          source: "case-library-editor",
-          hidden_asset: true,
-        },
-      },
-    });
-  }, [assets]);
-
-  const createCaseLibraryCaseMut = useMutation({
-    mutationFn: async ({ asset: requestedAsset, draft }: { asset?: PromptEvaluationAsset; draft: ManualCaseDraft }) => {
-      const asset = requestedAsset ?? await ensureDefaultCaseLibraryAsset();
-      const existingCount = cases.filter((item) => item.asset_id === asset.id).length;
-      return api.createPromptEvaluationCase(buildCaseLibraryCreateRequest(asset, draft, existingCount));
-    },
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      toast.success("用例已创建");
-    },
-  });
-
-  const syncRunMut = useMutation({
-    mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
-    onSuccess: (_run, runId) => {
-      invalidateRuns();
-      invalidateCandidates();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
-      invalidateRunEvidenceSnapshots(runId);
-      toast.success("运行记录已同步");
-    },
-  });
-
-  const cancelRunMut = useMutation({
-    mutationFn: (runId: string) => api.cancelPromptEvaluationRun(runId),
-    onSuccess: (run) => {
-      invalidateRuns();
-      invalidateCandidates();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
-      invalidateRunEvidenceSnapshots(run.id);
-      toast.success("训练评估运行已取消");
-    },
-  });
-
-  const reviewRunMut = useMutation({
-    mutationFn: ({ runId, decision, note }: { runId: string; decision: "通过" | "未通过"; note: string }) =>
-      api.reviewPromptEvaluationRun(runId, { decision, note }),
-    onSuccess: (run) => {
-      invalidateRuns();
-      invalidateCandidates();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
-      invalidateRunEvidenceSnapshots(run.id);
-      toast.success(`人工复核已处理：${run.review_decision || run.status}`);
-    },
-  });
-
-  const createEvidenceSnapshotMut = useMutation({
-    mutationFn: (runId: string) => api.createPromptEvaluationEvidenceSnapshot(runId, "验收归档"),
-    onSuccess: (snapshot) => {
-      invalidateRunEvidenceSnapshots(snapshot.run_id);
-      toast.success("服务端证据快照已归档");
-    },
-  });
-
-  const createAssetEvidenceSnapshotsMut = useMutation({
-    mutationFn: (assetId: string) => api.createPromptEvaluationAssetEvidenceSnapshots(assetId, "验收归档", 20),
-    onSuccess: (result) => {
-      invalidateRuns();
-      for (const snapshot of result.items) {
-        invalidateRunEvidenceSnapshots(snapshot.run_id);
-      }
-      const skippedText = result.skipped_count > 0 ? `，跳过 ${result.skipped_count} 条已归档` : "";
-      toast.success(`已归档 ${result.created_count} 条运行证据${skippedText}`);
     },
   });
 
   const handleDownloadAssetEvidencePackage = async (assetId: string) => {
     setExportingAssetEvidencePackageAssetId(assetId);
     try {
-      const archivePackage: PromptEvaluationAssetEvidenceArchivePackage = await api.getPromptEvaluationAssetEvidenceArchivePackage(assetId, "验收归档", 20);
+      const archivePackage = await api.getPromptEvaluationAssetEvidenceArchivePackage(assetId, "验收归档", 20);
       const filename = `multica-training-asset-evidence-${assetId}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
       downloadTextFile(JSON.stringify(archivePackage, null, 2), filename, "application/json;charset=utf-8");
       if (archivePackage.archived_run_count > 0) {
-        toast.success(`资产归档包已导出：${archivePackage.archived_run_count} 条运行证据`);
+        toast.success(t(($) => $.page.toast.archive_exported, { count: archivePackage.archived_run_count }));
       } else {
-        toast.info("资产归档包已导出，但该资产还没有服务端证据快照");
+        toast.info(t(($) => $.page.toast.archive_exported_empty));
       }
+    } catch (error) {
+      reportMutationError(error);
     } finally {
       setExportingAssetEvidencePackageAssetId(null);
     }
   };
 
-  const createCandidateMut = useMutation({
-    mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
-    onSuccess: () => {
-      invalidateCandidates();
-      toast.success("优化候选已生成，等待人工确认");
-    },
-  });
-
-  const publishCandidateMut = useMutation({
-    mutationFn: (candidateId: string) => api.publishPromptEvaluationOptimizationCandidate(candidateId),
-    onSuccess: (result) => {
-      invalidate();
-      invalidateVersions(result.prompt.id);
-      invalidateCandidates();
-      rememberSelectedPrompt(result.prompt.id);
-      toast.success(`已发布新提示词版本：${result.prompt.name}`);
-    },
-  });
-
-  const updateCandidateMut = useMutation({
-    mutationFn: ({ candidateId, data }: { candidateId: string; data: UpdatePromptEvaluationOptimizationCandidateRequest }) =>
-      api.updatePromptEvaluationOptimizationCandidate(candidateId, data),
-    onSuccess: (candidate) => {
-      invalidateCandidates();
-      toast.success(`优化候选已保存：${candidate.candidate_name}`);
-    },
-  });
-
-  const rejectCandidateMut = useMutation({
-    mutationFn: ({ candidateId, reason }: { candidateId: string; reason: string }) =>
-      api.rejectPromptEvaluationOptimizationCandidate(candidateId, reason),
-    onSuccess: (candidate) => {
-      invalidateCandidates();
-      toast.success(`已暂不采纳优化候选：${candidate.candidate_name}`);
-    },
-  });
-
   const saving = createMut.isPending || createVersionMut.isPending;
   const deleting = deleteMut.isPending;
-
-  const createAssetMut = useMutation({
-    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      toast.success("资产已创建");
-    },
-  });
 
   const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
     const prompt = selected ?? visiblePromptItems[0] ?? null;
     if (!prompt) {
-      toast.error("请先保存提示词");
+      toast.error(t(($) => $.page.toast.save_prompt_first));
       return;
     }
     const assetLabel = assetTypeLabel(assetType);
@@ -748,8 +485,8 @@ export function PromptLibraryPage({
     createAssetMut.mutate(buildWritingModelBenchmarkAssetRequest());
   };
 
-  const createCaseLibraryDataset = (name: string, description: string) => {
-    createAssetMut.mutate({
+  const createCaseLibraryDataset = (name: string, description: string) =>
+    createAssetMut.mutateAsync({
       name,
       description,
       asset_type: "数据集",
@@ -757,14 +494,9 @@ export function PromptLibraryPage({
       payload: {
         schema_version: 1,
         schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
         cases: [],
-        payload_contract: {
-          source: "case-library-editor",
-        },
       },
     });
-  };
 
   const creatingAsset = createAssetMut.isPending;
   const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || createDatasetVersionMut.isPending;
@@ -827,11 +559,11 @@ export function PromptLibraryPage({
   const saveDraft = () => {
     const payload = draftToRequest(draft);
     if (!payload.name.trim()) {
-      toast.error("请输入名称");
+      toast.error(t(($) => $.page.toast.name_required));
       return;
     }
     if (!payload.content.trim()) {
-      toast.error("请输入提示词内容");
+      toast.error(t(($) => $.page.toast.content_required));
       return;
     }
     if (selected) {
@@ -851,16 +583,16 @@ export function PromptLibraryPage({
 
   const runPromptTrial = () => {
     if (!selected || !activeVersion) {
-      toast.error("请先保存提示词版本");
+      toast.error(t(($) => $.page.toast.save_version_first));
       return;
     }
     if (!trialAgentId) {
-      toast.error("请选择 Agent");
+      toast.error(t(($) => $.page.toast.agent_required));
       return;
     }
     const missingVariables = detectedVariables.filter((name) => !trialVariables[name]?.trim());
     if (missingVariables.length > 0) {
-      toast.error(`请填写变量：${missingVariables.join("、")}`);
+      toast.error(t(($) => $.page.toast.variables_required, { names: missingVariables.join("、") }));
       return;
     }
     createTrialMut.mutate({
@@ -875,7 +607,7 @@ export function PromptLibraryPage({
 
   const deleteSelected = () => {
     if (!selected) return;
-    if (!window.confirm(`删除提示词「${selected.name}」？`)) return;
+    if (!window.confirm(t(($) => $.page.confirm.delete_prompt, { name: selected.name }))) return;
     deleteMut.mutate(selected.id);
   };
 
@@ -887,7 +619,7 @@ export function PromptLibraryPage({
   };
 
   const deleteAsset = (asset: PromptEvaluationAsset) => {
-    if (!window.confirm(`删除资产「${asset.name}」？`)) return;
+    if (!window.confirm(t(($) => $.page.confirm.delete_asset, { name: asset.name }))) return;
     deleteAssetMut.mutate(asset.id);
   };
 
@@ -895,18 +627,20 @@ export function PromptLibraryPage({
     importDatasetFromTracesMut.mutate(asset.id);
   };
 
-  const updateCaseLibraryDataset = (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => {
-    updateAssetMut.mutate({ id: asset.id, data });
-  };
+  const updateCaseLibraryDataset = (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) =>
+    updateAssetMut.mutateAsync({ id: asset.id, data });
 
   const deleteCaseLibraryDataset = (asset: PromptEvaluationAsset) => {
-    if (!window.confirm(`删除评估数据集「${asset.name}」？这会同时删除其中的用例和版本记录。`)) return;
+    if (!window.confirm(t(($) => $.page.confirm.delete_dataset, { name: asset.name }))) return;
     deleteAssetMut.mutate(asset.id);
   };
 
   const reviewRun = (run: PromptEvaluationRun, decision: "通过" | "未通过") => {
     const defaultNote = decision === "通过" ? "人工复核确认通过" : "人工复核驳回";
-    const note = window.prompt(`请输入${decision === "通过" ? "通过" : "驳回"}说明`, defaultNote);
+    const note = window.prompt(
+      decision === "通过" ? t(($) => $.page.review.pass_prompt) : t(($) => $.page.review.fail_prompt),
+      defaultNote,
+    );
     if (note === null) return;
     reviewRunMut.mutate({ runId: run.id, decision, note: note.trim() || defaultNote });
   };
@@ -942,12 +676,12 @@ export function PromptLibraryPage({
       onDeleteAsset={deleteAsset}
       onImportDatasetFromTraces={importDatasetFromTraces}
       importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
-      onCreateDatasetVersion={(asset, versionLabel = "手动快照") => createDatasetVersionMut.mutate({
+      onCreateDatasetVersion={(asset, versionLabel = "手动快照") => createDatasetVersionMut.mutateAsync({
         assetId: asset.id,
         versionLabel: versionLabel.trim() || "手动快照",
       })}
       creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables?.assetId ?? null : null}
-      onCreateCase={(data) => createCaseMut.mutate(data)}
+      onCreateCase={(data) => createCaseMut.mutateAsync(data)}
       onCreateCaseLibraryCase={(asset, draft) => createCaseLibraryCaseMut.mutateAsync({ asset, draft })}
       creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
       creatingCaseLibraryCase={createCaseLibraryCaseMut.isPending}
@@ -971,19 +705,13 @@ export function PromptLibraryPage({
       exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
       onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
       generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
-      onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
-      updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
-      onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
-      publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
-      onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
-      rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
     />
   );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
       <div className="sr-only" data-testid={`training-route-${activeViewId}`}>
-        当前{activeSectionLabel}子模块：{activeTab}
+        {t(($) => $.page.route_context, { section: activeSectionLabel, tab: activeTab })}
       </div>
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -995,7 +723,7 @@ export function PromptLibraryPage({
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={startNew}>
               <Plus className="size-3.5" />
-              新建
+              {t(($) => $.page.new)}
             </Button>
           </div>
         )}
@@ -1010,7 +738,7 @@ export function PromptLibraryPage({
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索名称、内容"
+                  placeholder={t(($) => $.page.search_placeholder)}
                   className="h-8 pl-8 text-sm"
                 />
               </div>
@@ -1024,7 +752,7 @@ export function PromptLibraryPage({
                   ))}
                 </div>
               ) : filteredItems.length === 0 ? (
-                <div className="p-6 text-sm text-muted-foreground">暂无提示词</div>
+                <div className="p-6 text-sm text-muted-foreground">{t(($) => $.page.empty)}</div>
               ) : (
                 <div className="divide-y">
                   {filteredItems.map((item) => (
@@ -1042,10 +770,12 @@ export function PromptLibraryPage({
                     >
 	                      <div className="flex min-w-0 items-center gap-2">
 	                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-	                        <Badge variant="outline" className="shrink-0 text-[10px]">v{item.version}</Badge>
+	                        <Badge variant="outline" className="shrink-0 text-[10px]">
+                            {t(($) => $.page.version_badge, { version: item.version })}
+                          </Badge>
 	                      </div>
                       <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span className="truncate">{item.description || "无描述"}</span>
+                        <span className="truncate">{item.description || t(($) => $.page.no_description)}</span>
                       </div>
                     </button>
                   ))}
@@ -1058,21 +788,26 @@ export function PromptLibraryPage({
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-	                  <h2 className="truncate text-base font-semibold">{selected ? selected.name : "新建提示词"}</h2>
+	                  <h2 className="truncate text-base font-semibold">{selected ? selected.name : t(($) => $.page.new_prompt)}</h2>
 	                  <div className="mt-1 text-xs text-muted-foreground">
-	                    {selected ? `当前查看 ${activeVersion ? `v${activeVersion.version}` : `v${selected.version}`} · 最新 v${selected.version}` : "未保存"}
+	                    {selected
+                        ? t(($) => $.page.version_context, {
+                            current: activeVersion ? `v${activeVersion.version}` : `v${selected.version}`,
+                            latest: selected.version,
+                          })
+                        : t(($) => $.page.unsaved)}
 	                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {selected && (
                     <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={deleting}>
                       <Trash2 className="size-3.5" />
-                      删除
+                      {t(($) => $.page.delete)}
                     </Button>
                   )}
 	                  <Button size="sm" onClick={saveDraft} disabled={saving}>
 	                    {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-	                    {selected ? "保存为新版本" : "创建提示词"}
+	                    {selected ? t(($) => $.page.save_version) : t(($) => $.page.create_prompt)}
 	                  </Button>
                 </div>
               </div>
@@ -1086,15 +821,15 @@ export function PromptLibraryPage({
               />
 
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="名称">
+                <Field label={t(($) => $.page.fields.name)}>
                   <Input value={draft.name} onChange={(event) => setDraftField(setDraft, "name", event.target.value)} />
                 </Field>
-                <Field label="描述">
+                <Field label={t(($) => $.page.fields.description)}>
                   <Input value={draft.description} onChange={(event) => setDraftField(setDraft, "description", event.target.value)} />
                 </Field>
               </div>
 
-	              <Field label="提示词内容">
+	              <Field label={t(($) => $.page.fields.content)}>
 	                <Textarea
 	                  value={draft.content}
 	                  onChange={(event) => setDraftField(setDraft, "content", event.target.value)}
@@ -1103,11 +838,11 @@ export function PromptLibraryPage({
 	              </Field>
 
 	              {selected && (
-	                <Field label="版本说明">
+	                <Field label={t(($) => $.page.fields.change_note)}>
 	                  <Input
 	                    value={changeNote}
 	                    onChange={(event) => setChangeNote(event.target.value)}
-	                    placeholder="例如：收紧输出格式、补充边界条件"
+	                    placeholder={t(($) => $.page.change_note_placeholder)}
 	                  />
 	                </Field>
 	              )}
@@ -1143,255 +878,20 @@ export function PromptLibraryPage({
   );
 }
 
-function PromptVersionHistory({
-  selected,
-  versions,
-  activeVersionId,
-  onSelectVersion,
-  loading,
-}: {
-  selected: PromptLibraryItem | null;
-  versions: PromptLibraryVersion[];
-  activeVersionId: string | null;
-  onSelectVersion: (versionId: string) => void;
-  loading: boolean;
-}) {
-  if (!selected) {
-    return (
-      <section className="rounded-md border border-dashed bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
-        保存后会生成第一个不可变版本记录。
-      </section>
-    );
-  }
-  return (
-    <section className="rounded-md border bg-muted/10 p-3" data-testid="prompt-version-history">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">版本历史</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {loading ? "正在读取版本链" : `${versions.length} 个版本记录 · 当前版本 ${selected.version}`}
-          </p>
-        </div>
-      </div>
-      {versions.length === 0 ? (
-        <div className="mt-3 rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-          暂无版本历史；旧数据会在迁移中回填为“历史回填”。
-        </div>
-      ) : (
-        <div className="mt-3 grid gap-2">
-          {versions.slice(0, 4).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelectVersion(item.id)}
-              className={`grid gap-1 rounded-md border bg-background px-3 py-2 text-left text-xs transition-colors hover:bg-muted/60 md:grid-cols-[minmax(0,1fr)_auto] ${
-                activeVersionId === item.id ? "border-primary" : ""
-              }`}
-            >
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">版本 {item.version}</span>
-                  {item.source_candidate_id && <span className="text-muted-foreground">候选 {item.source_candidate_id}</span>}
-                </div>
-                {item.change_note && <div className="mt-1 truncate text-foreground">{item.change_note}</div>}
-                <div className="mt-1 truncate text-muted-foreground">{item.content}</div>
-              </div>
-              <div className="text-muted-foreground md:text-right">{item.created_at || "未记录时间"}</div>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
 
-function PromptTrialPanel({
-  selected,
-  activeVersion,
-  agents,
-  agentsLoading,
-  selectedAgentId,
-  onSelectedAgentIdChange,
-  variableNames,
-  variables,
-  onVariablesChange,
-  trials,
-  trialsLoading,
-  running,
-  onRun,
-}: {
-  selected: PromptLibraryItem | null;
-  activeVersion: PromptLibraryVersion | null;
-  agents: Agent[];
-  agentsLoading: boolean;
-  selectedAgentId: string;
-  onSelectedAgentIdChange: (agentId: string) => void;
-  variableNames: string[];
-  variables: Record<string, string>;
-  onVariablesChange: Dispatch<SetStateAction<Record<string, string>>>;
-  trials: PromptLibraryTrial[];
-  trialsLoading: boolean;
-  running: boolean;
-  onRun: () => void;
-}) {
-  const agentNameById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
-  const canRun = Boolean(selected && activeVersion && selectedAgentId && allPromptTrialVariablesFilled(variableNames, variables));
-
-  return (
-    <section className="rounded-md border bg-muted/10 p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Agent 试跑</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {activeVersion ? `使用已保存版本 v${activeVersion.version}` : "保存提示词后可以选择 Agent 试跑"}
-          </p>
-        </div>
-        <Button size="sm" onClick={onRun} disabled={!canRun || running}>
-          {running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-          试跑
-        </Button>
-      </div>
-
-      <div className="mt-3 grid gap-3 md:grid-cols-[240px_minmax(0,1fr)]">
-        <Field label="执行 Agent">
-          <select
-            value={selectedAgentId}
-            onChange={(event) => onSelectedAgentIdChange(event.target.value)}
-            disabled={!selected || agentsLoading || agents.length === 0}
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-          >
-            {agents.length === 0 ? (
-              <option value="">{agentsLoading ? "正在读取 Agent" : "暂无可用 Agent"}</option>
-            ) : (
-              agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))
-            )}
-          </select>
-        </Field>
-        <div className="grid gap-3">
-          <div className="text-xs font-medium text-muted-foreground">试跑变量</div>
-          {variableNames.length > 0 ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {variableNames.map((name) => (
-                <Field key={name} label={`变量：${name}`}>
-                  <Input
-                    value={variables[name] ?? ""}
-                    onChange={(event) =>
-                      onVariablesChange((current) => ({
-                        ...current,
-                        [name]: event.target.value,
-                      }))
-                    }
-                    disabled={!selected}
-                  />
-                </Field>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-              该提示词没有变量，将直接使用当前版本试跑。
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 border-t pt-3">
-        <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-xs font-medium text-muted-foreground">最近试跑</h4>
-          {trialsLoading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-        </div>
-        {trials.length === 0 ? (
-          <div className="rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-            暂无试跑记录
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {trials.slice(0, 5).map((trial) => (
-              <div key={trial.id} className="grid gap-1 rounded-md border bg-background px-3 py-2 text-xs">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Badge variant="outline">{trial.status || "queued"}</Badge>
-                  <span className="truncate text-foreground">{agentNameById.get(trial.agent_id) ?? "未知 Agent"}</span>
-                  <span className="text-muted-foreground">{trial.created_at || "未记录时间"}</span>
-                </div>
-                <div className="truncate text-muted-foreground">变量：{summarizePromptTrialVariables(trial.variables)}</div>
-                {trial.output_preview && <div className="truncate text-muted-foreground">输出：{trial.output_preview}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-type TrainingAssetPanelBaseProps = {
-  assets: PromptEvaluationAsset[];
-  cases: PromptEvaluationStructuredCase[];
-  runs: PromptEvaluationRun[];
-  focusedIssueId: string | null;
-  focusedCaseId: string | null;
-  focusedIssueRunReviewHref: string | null;
-  loading: boolean;
-  saving: boolean;
-  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
-  onDeleteAsset: (asset: PromptEvaluationAsset) => void;
-  onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
-  importingTraceDatasetAssetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => void;
-  creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
-  creatingCaseAssetId: string | null;
-  caseDrafts: Record<string, ManualCaseDraft>;
-  onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-  onCreateAssetEvidenceSnapshots: (assetId: string) => void;
-  creatingAssetEvidenceSnapshotsAssetId: string | null;
-  onDownloadAssetEvidencePackage: (assetId: string) => void;
-  exportingAssetEvidencePackageAssetId: string | null;
-};
-
-type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
-  activeTab: WorkbenchTab;
-  workspaceId: string;
-  focusedRunId: string | null;
-  evidenceFocus: EvidenceFocus;
-  runStatusFilter: RunStatusFilter;
+type WorkbenchPanelProps = TrainingAssetPanelBaseProps & Omit<RunHistoryPanelProps, "runs" | "loading"> & {
+  activeTab: TrainingWorkbenchTab;
   focusedIssueTaskIds: string[];
-  onRunStatusFilterChange: (status: RunStatusFilter) => void;
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
   onCreateWritingBenchmarkAsset: () => void;
-  onCreateCaseLibraryDataset: (name: string, description: string) => void;
-  onUpdateCaseLibraryDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => void;
+  onCreateCaseLibraryDataset: (name: string, description: string) => Promise<unknown>;
+  onUpdateCaseLibraryDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   updatingCaseLibraryDatasetId: string | null;
   onDeleteCaseLibraryDataset: (asset: PromptEvaluationAsset) => void;
   deletingCaseLibraryDatasetId: string | null;
-  onCreateCaseLibraryCase: (asset: PromptEvaluationAsset | undefined, draft: ManualCaseDraft) => Promise<unknown>;
+  onCreateCaseLibraryCase: (asset: PromptEvaluationAsset, draft: ManualCaseDraft) => Promise<unknown>;
   creatingCaseLibraryCase: boolean;
-  onSyncRun: (runId: string) => void;
-  syncingRunId: string | null;
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
-  reviewingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onGenerateCandidate: (runId: string) => void;
-  generatingCandidateRunId: string | null;
-  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
-  updatingCandidateId: string | null;
-  onPublishCandidate: (candidateId: string) => void;
-  publishingCandidateId: string | null;
-  onRejectCandidate: (candidateId: string, reason: string) => void;
-  rejectingCandidateId: string | null;
 };
 
 function WorkbenchPanel({
@@ -1450,30 +950,101 @@ function WorkbenchPanel({
   exportingAssetEvidencePackageAssetId,
   onGenerateCandidate,
   generatingCandidateRunId,
-  onUpdateCandidate,
-  updatingCandidateId,
-  onPublishCandidate,
-  publishingCandidateId,
-  onRejectCandidate,
-  rejectingCandidateId,
 }: WorkbenchPanelProps) {
+  const { t } = useT("prompt-library");
   const tabAssetType = tabToAssetType(activeTab);
   const tabAssetLabel = tabAssetType ? assetTypeLabel(tabAssetType) : activeTab;
   const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const visibleAssets = tabAssets;
   const visibleCandidates = candidates;
-  void onUpdateCandidate;
-  void updatingCandidateId;
-  void onPublishCandidate;
-  void publishingCandidateId;
-  void onRejectCandidate;
-  void rejectingCandidateId;
-
   if (activeTab === "提示词库") {
     return null;
   }
 
   if (activeTab === "用例库") {
+    const caseLibraryCopy: CaseLibraryEditorCopy = {
+      title: t(($) => $.case_library.title),
+      loading: t(($) => $.case_library.loading),
+      count: (datasetCount, caseCount) =>
+        t(($) => $.case_library.count, { datasets: datasetCount, cases: caseCount }),
+      createDataset: t(($) => $.case_library.create_dataset),
+      searchPlaceholder: t(($) => $.case_library.search_placeholder),
+      searchAriaLabel: t(($) => $.case_library.search_aria_label),
+      datasetNamePlaceholder: t(($) => $.case_library.dataset_name_placeholder),
+      datasetDescriptionPlaceholder: t(($) => $.case_library.dataset_description_placeholder),
+      cancel: t(($) => $.case_library.cancel),
+      save: t(($) => $.case_library.save),
+      missingDatasetNameError: t(($) => $.case_library.missing_dataset_name_error),
+      missingCaseNameError: t(($) => $.case_library.missing_case_name_error),
+      missingCaseInputError: t(($) => $.case_library.missing_case_input_error),
+      noDatasets: t(($) => $.case_library.no_datasets),
+      noDatasetSearchResults: t(($) => $.case_library.no_dataset_search_results),
+      noDescription: t(($) => $.case_library.no_description),
+      updatedAt: (value) => t(($) => $.case_library.updated_at, { time: value }),
+      missingTime: t(($) => $.case_library.missing_time),
+      emptyTitle: t(($) => $.case_library.empty_title),
+      emptyDescription: t(($) => $.case_library.empty_description),
+      saveDataset: t(($) => $.case_library.save_dataset),
+      createVersion: t(($) => $.case_library.create_version),
+      edit: t(($) => $.case_library.edit),
+      delete: t(($) => $.case_library.delete),
+      addCase: t(($) => $.case_library.add_case),
+      versionLabel: t(($) => $.case_library.version_label),
+      versionPlaceholder: t(($) => $.case_library.version_placeholder),
+      defaultVersionLabel: t(($) => $.case_library.default_version_label),
+      saveVersion: t(($) => $.case_library.save_version),
+      tagFilterAriaLabel: t(($) => $.case_library.tag_filter_aria_label),
+      allTags: t(($) => $.case_library.all_tags),
+      matchCount: (visible, total) => t(($) => $.case_library.match_count, { visible, total }),
+      newCaseTitle: t(($) => $.case_library.new_case_title),
+      editCaseTitle: t(($) => $.case_library.edit_case_title),
+      saveCase: t(($) => $.case_library.save_case),
+      caseCount: (count) => t(($) => $.case_library.case_count, { count }),
+      caseName: (index) => t(($) => $.case_library.case_name, { index }),
+      sourceLabel: (source) => t(($) => $.case_library.source[source]),
+      inputPrefix: t(($) => $.case_library.input_prefix),
+      expectedPrefix: t(($) => $.case_library.expected_prefix),
+      missingInput: t(($) => $.case_library.missing_input),
+      missingExpected: t(($) => $.case_library.missing_expected),
+      noTags: t(($) => $.case_library.no_tags),
+      noCases: t(($) => $.case_library.no_cases),
+      noCaseFilterResults: t(($) => $.case_library.no_case_filter_results),
+      datasetVersionSummary: (summary) => {
+        const version = summary.version ?? "?";
+        const rows = summary.rowCount ?? "0";
+        const fingerprint = summary.fingerprint ? summary.fingerprint.slice(0, 10) : t(($) => $.case_library.version_history.missing_fingerprint);
+        return t(($) => $.case_library.dataset_version_summary, {
+          version,
+          rows,
+          fingerprint,
+        });
+      },
+      draft: {
+        nameLabel: t(($) => $.case_library.draft.name_label),
+        namePlaceholder: t(($) => $.case_library.draft.name_placeholder),
+        tagsLabel: t(($) => $.case_library.draft.tags_label),
+        tagsPlaceholder: t(($) => $.case_library.draft.tags_placeholder),
+        inputLabel: t(($) => $.case_library.draft.input_label),
+        inputPlaceholder: t(($) => $.case_library.draft.input_placeholder),
+        expectedLabel: t(($) => $.case_library.draft.expected_label),
+        expectedPlaceholder: t(($) => $.case_library.draft.expected_placeholder),
+        cancel: t(($) => $.case_library.draft.cancel),
+      },
+      versionHistory: {
+        title: t(($) => $.case_library.version_history.title),
+        loading: t(($) => $.case_library.version_history.loading),
+        count: (count) => t(($) => $.case_library.version_history.count, { count }),
+        noSnapshots: t(($) => $.case_library.version_history.no_snapshots),
+        emptyDescription: t(($) => $.case_library.version_history.empty_description),
+        unnamedVersion: t(($) => $.case_library.version_history.unnamed_version),
+        version: (version) => t(($) => $.case_library.version_history.version, { version }),
+        latest: t(($) => $.case_library.version_history.latest),
+        rowFingerprint: (rowCount, fingerprint) =>
+          t(($) => $.case_library.version_history.row_fingerprint, { count: rowCount, fingerprint }),
+        missingFingerprint: t(($) => $.case_library.version_history.missing_fingerprint),
+        missingTime: t(($) => $.case_library.version_history.missing_time),
+      },
+    };
     return (
       <CaseLibraryEditorPanel
         assets={assets}
@@ -1500,6 +1071,7 @@ function WorkbenchPanel({
         updatingCaseId={updatingCaseId}
         onDeleteCase={onDeleteCase}
         deletingCaseId={deletingCaseId}
+        copy={caseLibraryCopy}
       />
     );
   }
@@ -1531,12 +1103,12 @@ function WorkbenchPanel({
                 disabled={saving}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                新建 Skill 场景
+                {t(($) => $.workbench.new_skill_scenario)}
               </Button>
             )}
             <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={saving}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-              新建{tabAssetLabel}
+              {t(($) => $.workbench.new_asset, { label: tabAssetLabel })}
             </Button>
             {activeTab === "测试套件" && (
               <Button
@@ -1547,7 +1119,7 @@ function WorkbenchPanel({
                 disabled={saving}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                新建写作模型评测
+                {t(($) => $.workbench.new_writing_benchmark)}
               </Button>
             )}
           </div>
@@ -1630,3037 +1202,4 @@ function WorkbenchPanel({
       )}
     </section>
   );
-}
-
-type TrainingAssetPanelProps = TrainingAssetPanelBaseProps & {
-  activeTab: WorkbenchTab;
-  route: string;
-  title: string;
-};
-
-function TrainingAssetPanel({
-  activeTab,
-  route,
-  title,
-  assets,
-  runs,
-  cases,
-  loading,
-  saving,
-  onToggleAssetStatus,
-  onDeleteAsset,
-  onImportDatasetFromTraces,
-  importingTraceDatasetAssetId,
-  onCreateDatasetVersion,
-  creatingDatasetVersionAssetId,
-  onCreateCase,
-  creatingCaseAssetId,
-  caseDrafts,
-  onCaseDraftsChange,
-  focusedCaseId,
-  focusedIssueId,
-  focusedIssueRunReviewHref,
-  onUpdateCase,
-  updatingCaseId,
-  onDeleteCase,
-  deletingCaseId,
-  onCreateAssetEvidenceSnapshots,
-  creatingAssetEvidenceSnapshotsAssetId,
-  onDownloadAssetEvidencePackage,
-  exportingAssetEvidencePackageAssetId,
-}: TrainingAssetPanelProps) {
-  const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
-  const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
-  const runCountByAsset = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const run of runs) {
-      counts.set(run.asset_id, (counts.get(run.asset_id) ?? 0) + 1);
-    }
-    return counts;
-  }, [runs]);
-
-  return (
-    <section className="grid gap-3" aria-label={`${title}内容`} data-testid={`training-route-panel-${route}`}>
-      {loading ? (
-        <div className="h-20 rounded-md bg-muted/60" />
-      ) : assets.length === 0 ? (
-        <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid={`training-route-empty-${route}`}>
-          {emptyTrainingRouteText(activeTab)}
-        </div>
-      ) : (
-        <div className="divide-y rounded-md border" data-testid={`training-route-list-${route}`}>
-          {assets.map((asset) => (
-            <div key={asset.id} data-testid={`prompt-evaluation-asset-${asset.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-sm font-medium">{asset.name}</span>
-                  <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                    {asset.asset_type} · {asset.status}
-                  </Badge>
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseSummaries.get(asset.id))}
-                </div>
-                {summarizeSkillScenarioTarget(asset) && (
-                  <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`skill-scenario-target-${asset.id}`}>
-                    Skill 场景：{summarizeSkillScenarioTarget(asset)}
-                  </div>
-                )}
-                {summarizeAgentRun(asset) && (
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    {summarizeAgentRun(asset)}
-                  </div>
-                )}
-                {asset.asset_type === "数据集" && summarizeDatasetVersion(asset) && (
-                  <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`dataset-version-summary-${asset.id}`}>
-                    {summarizeDatasetVersion(asset)}
-                  </div>
-                )}
-                {asset.asset_type !== "数据集" && summarizeLinkedDatasetVersions(asset) && (
-                  <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`linked-dataset-version-summary-${asset.id}`}>
-                    {summarizeLinkedDatasetVersions(asset)}
-                  </div>
-                )}
-                <ModelComparisonJudgePanel asset={asset} />
-                {asset.asset_type === "数据集" && (
-                  <DatasetVersionControls asset={asset} saving={saving} />
-                )}
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {(runCountByAsset.get(asset.id) ?? 0) > 0 && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    data-testid={`archive-asset-evidence-${asset.id}`}
-                    onClick={() => onCreateAssetEvidenceSnapshots(asset.id)}
-                    disabled={saving || creatingAssetEvidenceSnapshotsAssetId === asset.id}
-                  >
-                    {creatingAssetEvidenceSnapshotsAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-                    归档运行证据
-                  </Button>
-                )}
-                {(runCountByAsset.get(asset.id) ?? 0) > 0 && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    data-testid={`download-asset-evidence-package-${asset.id}`}
-                    onClick={() => onDownloadAssetEvidencePackage(asset.id)}
-                    disabled={saving || exportingAssetEvidencePackageAssetId === asset.id}
-                  >
-                    {exportingAssetEvidencePackageAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                    下载归档包
-                  </Button>
-                )}
-                {asset.asset_type === "数据集" && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      data-testid={`create-dataset-version-${asset.id}`}
-                      onClick={() => onCreateDatasetVersion(asset)}
-                      disabled={saving || creatingDatasetVersionAssetId === asset.id}
-                    >
-                      {creatingDatasetVersionAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      锁定版本
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      data-testid={`import-dataset-from-traces-${asset.id}`}
-                      onClick={() => onImportDatasetFromTraces(asset)}
-                      disabled={saving || importingTraceDatasetAssetId === asset.id}
-                    >
-                      {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                      从 trace 导入用例
-                    </Button>
-                  </>
-                )}
-                <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
-                  {asset.status === "启用" ? "归档" : "启用"}
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
-                  <Trash2 className="size-3.5" />
-                  删除
-                </Button>
-              </div>
-              {canManageStructuredCases(asset) && (
-                <ManualCasePanel
-                  asset={asset}
-                  cases={casesByAsset.get(asset.id) ?? []}
-                  draft={caseDrafts[asset.id] ?? emptyManualCaseDraft()}
-                  onDraftChange={(draft) => onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: draft }))}
-                  onCreateCase={() => {
-                    const draft = caseDrafts[asset.id] ?? emptyManualCaseDraft();
-                    onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
-                    onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
-                  }}
-                  creating={creatingCaseAssetId === asset.id}
-                  focusedCaseId={focusedCaseId}
-                  focusedIssueId={focusedIssueId}
-                  focusedIssueRunReviewHref={focusedIssueRunReviewHref}
-                  onUpdateCase={onUpdateCase}
-                  updatingCaseId={updatingCaseId}
-                  onDeleteCase={onDeleteCase}
-                  deletingCaseId={deletingCaseId}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ModelComparisonJudgePanel({ asset }: { asset: PromptEvaluationAsset }) {
-  const summary = modelComparisonJudgeSummary(asset);
-  if (!summary) return null;
-  return (
-    <div className="mt-2 grid gap-2 border-l pl-3 text-xs" data-testid={`model-comparison-judge-${asset.id}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-foreground">模型对比评分</span>
-        <Badge variant="secondary">Judge：{summary.judgeModel}</Badge>
-        {summary.winner && <Badge variant="outline">推荐：{summary.winner}</Badge>}
-      </div>
-      {summary.conclusion && <div className="text-muted-foreground">{summary.conclusion}</div>}
-      <div className="grid gap-1 md:grid-cols-2">
-        {summary.scores.map((score) => (
-          <div key={score.model} className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-medium text-foreground">{score.model}</span>
-              <Badge variant="outline">{score.totalScore}/100</Badge>
-            </div>
-            {score.dimensionSummary && <div className="mt-0.5 truncate text-muted-foreground">{score.dimensionSummary}</div>}
-            {score.recommendation && <div className="mt-0.5 line-clamp-2 text-muted-foreground">建议：{score.recommendation}</div>}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RunHistoryPanel({
-  workspaceId,
-  runs,
-  focusedRunId,
-  evidenceFocus,
-  runStatusFilter,
-  onRunStatusFilterChange,
-  candidates,
-  skillResources,
-  loading,
-  onSyncRun,
-  syncingRunId,
-  onCancelRun,
-  cancellingRunId,
-  onReviewRun,
-  reviewingRunId,
-  onCreateEvidenceSnapshot,
-  creatingEvidenceSnapshotRunId,
-  onGenerateCandidate,
-  generatingCandidateRunId,
-}: {
-  workspaceId: string;
-  runs: PromptEvaluationRun[];
-  focusedRunId: string | null;
-  evidenceFocus: EvidenceFocus;
-  runStatusFilter: RunStatusFilter;
-  onRunStatusFilterChange: (status: RunStatusFilter) => void;
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
-  loading: boolean;
-  onSyncRun: (runId: string) => void;
-  syncingRunId: string | null;
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
-  reviewingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onGenerateCandidate: (runId: string) => void;
-  generatingCandidateRunId: string | null;
-}) {
-  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!focusedRunId || !runs.some((run) => run.id === focusedRunId)) return;
-    setExpandedRunId(focusedRunId);
-    window.requestAnimationFrame(() => {
-      document.querySelector(`[data-testid="prompt-evaluation-run-${focusedRunId}"]`)?.scrollIntoView({ block: "center" });
-    });
-  }, [focusedRunId, runs]);
-  const evidenceQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
-    queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
-    enabled: !!expandedRunId,
-  });
-  const evidenceSnapshotQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
-    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
-    enabled: !!expandedRunId,
-  });
-
-  return (
-    <section className="grid gap-3" aria-label="运行历史内容" data-testid="training-route-panel-run-history">
-      {loading ? (
-        <div className="h-20 rounded-md bg-muted/60" />
-      ) : runs.length === 0 ? (
-        <div className="grid gap-3">
-          <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid="training-route-empty-run-history">
-            {runStatusFilter === "全部" ? "暂无结构化运行记录" : `暂无${runStatusFilter}运行记录`}
-          </div>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-          <div className="divide-y rounded-md border" data-testid="prompt-evaluation-run-list">
-            {runs.map((run) => {
-              const hasPendingCandidate = candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false;
-              return (
-                <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-medium">{displayRunKind(run.run_kind)} · {run.status}</span>
-                      <Badge variant={run.status === "通过" ? "secondary" : run.status === "已入队" || run.status === "运行中" ? "outline" : "destructive"} className="shrink-0">
-                        {run.total_cases} 用例 · 通过率 {Math.round(run.pass_rate * 100)}%
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
-                    {run.review_decision && (
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        人工复核：{run.review_decision}{run.review_note ? ` · ${run.review_note}` : ""}{run.reviewed_at ? ` · ${run.reviewed_at}` : ""}
-                      </div>
-                    )}
-                    <div className="mt-1 break-all text-[11px] text-muted-foreground">
-                      运行 {run.id}{run.task_id ? ` · 任务 ${run.task_id}` : ""}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
-                    <div>
-                      <div>{run.created_at}</div>
-                      <div>{run.total_duration_ms} ms</div>
-                    </div>
-                    <Button size="sm" variant="secondary" onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}>
-                      {expandedRunId === run.id ? "收起证据" : "查看证据"}
-                    </Button>
-                    {run.task_id && (
-                      <Button size="sm" variant="secondary" onClick={() => onSyncRun(run.id)} disabled={syncingRunId === run.id}>
-                        {syncingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        同步任务
-                      </Button>
-                    )}
-                    {canCancelPromptEvaluationRun(run) && (
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => onCancelRun(run.id)}
-                        disabled={cancellingRunId === run.id}
-                        data-testid={`cancel-prompt-evaluation-run-${run.id}`}
-                      >
-                        {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                        取消运行
-                      </Button>
-                    )}
-                    {canReviewPromptEvaluationRun(run) && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onReviewRun(run, "通过")}
-                          disabled={reviewingRunId === run.id}
-                          data-testid={`review-prompt-evaluation-run-pass-${run.id}`}
-                        >
-                          {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle className="size-3.5" />}
-                          人工通过
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => onReviewRun(run, "未通过")}
-                          disabled={reviewingRunId === run.id}
-                          data-testid={`review-prompt-evaluation-run-fail-${run.id}`}
-                        >
-                          {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                          人工驳回
-                        </Button>
-                      </>
-                    )}
-                    {canGenerateOptimizationCandidate(run) && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => onGenerateCandidate(run.id)}
-                        disabled={generatingCandidateRunId === run.id || hasPendingCandidate}
-                      >
-                        {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                        {hasPendingCandidate ? "已有候选" : "生成优化候选"}
-                      </Button>
-                    )}
-                  </div>
-                  {expandedRunId === run.id && (
-                    <RunEvidencePanel
-                      evidence={evidenceQuery.data ?? null}
-                      snapshots={evidenceSnapshotQuery.data?.items ?? []}
-                      snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
-                      loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
-                      error={evidenceQuery.isError}
-                      skillResources={skillResources}
-                      evidenceFocus={evidenceFocus}
-                      optimizationActions={{
-                        canGenerate: canGenerateOptimizationCandidate(run),
-                        hasPendingCandidate,
-                        generatingCandidate: generatingCandidateRunId === run.id,
-                        onGenerateCandidate: () => onGenerateCandidate(run.id),
-                      }}
-                      creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
-                      onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function RunEvidencePanel({
-  evidence,
-  snapshots,
-  snapshotsLoading,
-  loading,
-  error,
-  skillResources,
-  evidenceFocus,
-  optimizationActions,
-  creatingSnapshot,
-  onCreateSnapshot,
-}: {
-  evidence: PromptEvaluationRunEvidence | null;
-  snapshots: PromptEvaluationEvidenceSnapshot[];
-  snapshotsLoading: boolean;
-  loading: boolean;
-  error: boolean;
-  skillResources: SkillResourceOption[];
-  evidenceFocus?: EvidenceFocus;
-  optimizationActions?: {
-    canGenerate: boolean;
-    hasPendingCandidate: boolean;
-    generatingCandidate: boolean;
-    onGenerateCandidate: () => void;
-  };
-  creatingSnapshot: boolean;
-  onCreateSnapshot: () => void;
-}) {
-  const workspaceId = useWorkspaceId();
-  const queryClient = useQueryClient();
-  const run = evidence?.run ?? null;
-  const runId = run?.id ?? "";
-  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
-  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
-  const candidatesQuery = useQuery({
-    queryKey: ["prompt-library", workspaceId ?? "", "optimization-candidates", "run", runId],
-    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: runId, limit: 5 }),
-    enabled: Boolean(workspaceId && runId),
-  });
-  const candidates = candidatesQuery.data?.items ?? [];
-  const candidate = candidates[0] ?? null;
-  const invalidateRunCandidates = useCallback(() => {
-    if (!workspaceId || !runId) return;
-    queryClient.invalidateQueries({ queryKey: ["prompt-library", workspaceId, "optimization-candidates", "run", runId] });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
-  }, [queryClient, runId, workspaceId]);
-  const runSkillWorkflowAction = useCallback(async (
-    item: PromptEvaluationOptimizationCandidate,
-    action: SkillCandidateWorkflowAction,
-  ) => {
-    const draft = skillDrafts[item.id] ?? defaultSkillCandidateWorkflowDraft(item);
-    setSkillAction({ candidateId: item.id, action });
-    try {
-      if (action === "freshness") {
-        const result = await api.checkPromptEvaluationSkillCandidateFreshness(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-        });
-        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
-      } else if (action === "apply") {
-        const result = await api.applyPromptEvaluationSkillCandidate(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          changelog_path: draft.changelogPath.trim() || undefined,
-          allow_dirty: draft.allowDirty,
-          skip_changelog: draft.skipChangelog,
-        });
-        toast.success(`Skill apply: ${result.apply.status}`);
-      } else if (action === "prepare-re-eval") {
-        const result = await api.preparePromptEvaluationSkillReEvalAsset(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          include_draft: draft.includeDraft,
-        });
-        setSkillDrafts((prev) => ({ ...prev, [item.id]: { ...draft, reEvalAssetId: result.asset.id } }));
-        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
-      } else {
-        const result = await api.runPromptEvaluationSkillReEval(item.id, {
-          asset_id: draft.reEvalAssetId.trim() || undefined,
-        });
-        toast.success(`Skill re-eval run: ${result.run.status}`);
-      }
-      invalidateRunCandidates();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Skill workflow action failed");
-    } finally {
-      setSkillAction(null);
-    }
-  }, [invalidateRunCandidates, skillDrafts]);
-
-  if (loading) {
-    return <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground md:col-span-2">正在读取运行证据...</div>;
-  }
-  if (error || !evidence || !run) {
-    return <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-4 text-sm text-destructive md:col-span-2">运行证据读取失败。</div>;
-  }
-
-  const totalTokens = Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0);
-  const focusLabels = [
-    evidenceFocus?.traceSeq ? `trace ${evidenceFocus.traceSeq}` : "",
-    evidenceFocus?.toolChainId ? `tool ${evidenceFocus.toolChainId}` : "",
-    evidenceFocus?.messageSeq ? `message ${evidenceFocus.messageSeq}` : "",
-    evidenceFocus?.failureAnchor ? `failure ${evidenceFocus.failureAnchor}` : "",
-  ].filter(Boolean);
-  const rawPayload = {
-    run: evidence.run,
-    trials: evidence.trials,
-    task_usage: evidence.task_usage,
-    task_messages: evidence.task_messages,
-    trace_events: evidence.trace_events,
-    execution_spans: evidence.execution_spans,
-    tool_call_chains: evidence.tool_call_chains,
-    tool_call_summary: evidence.tool_call_summary,
-    execution_summary: evidence.execution_summary,
-    evidence: evidence.evidence,
-    context: evidence.上下文,
-  };
-
-  return (
-    <section className="grid gap-3 rounded-md border bg-muted/10 p-3 md:col-span-2" data-testid="run-evidence-panel">
-      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-foreground">运行证据摘要</span>
-            <Badge variant={run.status === "通过" ? "secondary" : run.failed_cases > 0 ? "destructive" : "outline"}>{run.status}</Badge>
-            <Badge variant={totalTokens > 0 ? "secondary" : "outline"}>{formatNumber(totalTokens)} token</Badge>
-            <Badge variant={snapshots.length > 0 ? "secondary" : "outline"}>{snapshotsLoading ? "快照读取中" : `${snapshots.length} 个快照`}</Badge>
-            {focusLabels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}
-          </div>
-          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-            run {run.id} · task {run.task_id || "未绑定"} · model {run.model || "未记录"} · runtime {run.runtime_provider || "未记录"}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 md:justify-end">
-          {optimizationActions?.canGenerate && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={optimizationActions.onGenerateCandidate}
-              disabled={optimizationActions.generatingCandidate || optimizationActions.hasPendingCandidate}
-            >
-              {optimizationActions.generatingCandidate ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-              {optimizationActions.hasPendingCandidate ? "已有候选" : "生成候选"}
-            </Button>
-          )}
-          <Button size="sm" variant="secondary" onClick={() => candidatesQuery.refetch()} disabled={candidatesQuery.isFetching}>
-            {candidatesQuery.isFetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            刷新候选
-          </Button>
-          <Button size="sm" variant="secondary" onClick={onCreateSnapshot} disabled={creatingSnapshot}>
-            {creatingSnapshot ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-            归档快照
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <EvidenceMetric label="用例" value={`${formatNumber(run.passed_cases)}/${formatNumber(run.total_cases)}`} />
-        <EvidenceMetric label="耗时" value={formatDuration(run.total_duration_ms)} />
-        <EvidenceMetric label="成本" value={formatMoney(run.estimated_cost)} />
-        <EvidenceMetric label="证据" value={`${evidence.trials.length} trial · ${evidence.task_messages.length} message · ${evidence.trace_events.length} trace`} />
-      </div>
-
-      <div className="grid gap-2 rounded border bg-background px-3 py-2 text-xs" data-testid="run-evidence-snapshots">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium text-foreground">服务端证据快照</span>
-          <Badge variant={snapshots.length > 0 ? "secondary" : "outline"}>{snapshotsLoading ? "读取中" : `${snapshots.length} 个`}</Badge>
-        </div>
-        <div className="break-all text-muted-foreground">run {run.id} · task {run.task_id || "未绑定"}</div>
-        {snapshotsLoading ? (
-          <div className="text-muted-foreground">正在读取快照...</div>
-        ) : snapshots.length === 0 ? (
-          <div className="text-muted-foreground">暂无归档快照，可点击“归档快照”保存当前运行证据。</div>
-        ) : (
-          <div className="grid gap-1.5">
-            {snapshots.map((snapshot) => (
-              <div key={snapshot.id} className="grid gap-1 rounded border bg-muted/10 px-2 py-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{snapshot.snapshot_type}</Badge>
-                  <span className="break-all font-mono text-[11px] text-muted-foreground">{snapshot.id}</span>
-                  <span className="text-muted-foreground">{snapshot.created_at}</span>
-                </div>
-                <div className="break-all text-muted-foreground">{snapshotSummary(snapshot)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {candidate && (
-        <div className="grid gap-2 rounded border bg-background px-2 py-2 text-xs" data-testid="run-evidence-candidate">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{candidate.candidate_name}</span>
-            <Badge variant={candidate.status === "待确认" ? "secondary" : "outline"}>{candidate.status}</Badge>
-            <Badge variant="outline">失败 {candidate.failed_case_count}</Badge>
-          </div>
-          <div className="text-muted-foreground">{candidate.rationale || "基于失败运行生成，等待人工确认。"}</div>
-          <SkillCandidateWorkflowPanel
-            candidate={candidate}
-            draft={skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate)}
-            evidence={candidateSkillWorkflowEvidence(candidate)}
-            resources={skillResources}
-            pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
-            disabled={candidate.status !== "待确认"}
-            onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
-            onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
-          />
-        </div>
-      )}
-
-      <details className="rounded border bg-background px-3 py-2 text-xs" open={focusLabels.length > 0}>
-        <summary className="cursor-pointer font-medium text-muted-foreground">完整原始 evidence JSON</summary>
-        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5">
-          {JSON.stringify(rawPayload, null, 2)}
-        </pre>
-      </details>
-    </section>
-  );
-}
-
-function EvidenceMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded border bg-background px-2 py-1.5 text-xs">
-      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate font-semibold">{value}</div>
-    </div>
-  );
-}
-
-function emptyTrainingRouteText(activeTab: WorkbenchTab) {
-  switch (activeTab) {
-    case "用例库":
-      return "暂无用例库，先新建用例库或从 trace 导入用例";
-    case "测试套件":
-      return "暂无测试套件，先把稳定用例组织成可回归的套件";
-    default:
-      return "暂无评估资产";
-  }
-}
-
-type TrainingRouteIntro = {
-  route: string;
-  title: string;
-  subtitle: string;
-  facts: Array<[string, string]>;
-  evidence: string;
-};
-
-function trainingRouteIntro(
-  activeTab: WorkbenchTab,
-  context: {
-    visibleAssets: PromptEvaluationAsset[];
-    cases: PromptEvaluationStructuredCase[];
-    runs: PromptEvaluationRun[];
-    candidates: PromptEvaluationOptimizationCandidate[];
-    runStatusFilter: RunStatusFilter;
-  },
-): TrainingRouteIntro {
-  const enabledAssets = context.visibleAssets.filter((asset) => asset.status === "启用").length;
-  switch (activeTab) {
-    case "用例库": {
-      const datasetRows = context.visibleAssets.reduce((sum, asset) => sum + asset.dataset_row_count, 0);
-      const traceCases = context.cases.filter((item) => item.source === "trace").length;
-      return {
-        route: "datasets",
-        title: "用例库",
-        subtitle: "把真实 trace 和手工样例沉淀成可复跑的评测用例，用于后续测试套件和实验。",
-        facts: [
-          ["用例库", String(context.visibleAssets.length)],
-          ["启用", String(enabledAssets)],
-          ["用例", formatNumber(datasetRows)],
-          ["trace 样本", formatNumber(traceCases)],
-        ],
-        evidence: "公开 API 创建/回读用例库，页面可从真实 trace 导入并维护结构化用例。",
-      };
-    }
-    case "测试套件": {
-      const suiteCases = context.visibleAssets.reduce((sum, asset) => sum + asset.test_suite_case_count, 0);
-      return {
-        route: "test-suites",
-        title: "测试套件回归",
-        subtitle: "把一组稳定用例固定为回归套件，用来反复验证提示词、智能体和小队 SOP 是否退化。",
-        facts: [
-          ["测试套件", String(context.visibleAssets.length)],
-          ["启用", String(enabledAssets)],
-          ["套件用例", formatNumber(suiteCases)],
-          ["结构化用例", formatNumber(context.cases.length)],
-        ],
-        evidence: "页面可创建套件资产、维护手工用例，并通过评测记录回读每次套件执行结果。",
-      };
-    }
-    case "评测记录": {
-      const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
-      return {
-        route: "runs",
-        title: context.runStatusFilter === "需人工复核" ? "人工复核队列" : "评测记录与证据",
-        subtitle: "按运行记录回看任务、模型、耗时、评估结论和服务端证据快照，支持同步、取消和人工复核。",
-        facts: [
-          ["当前筛选", context.runStatusFilter === "全部" ? "全部运行" : context.runStatusFilter],
-          ["运行记录", formatNumber(context.runs.length)],
-          ["人工复核", formatNumber(reviewRuns)],
-          ["带任务记录", formatNumber(context.runs.filter((run) => Boolean(run.task_id)).length)],
-        ],
-        evidence: "每条运行可展开 task/message/trace/usage 证据，并可归档服务端证据快照。",
-      };
-    }
-    default:
-      return {
-        route: "assets",
-        title: activeTab,
-        subtitle: "评估资产页面。",
-        facts: [["资产", String(context.visibleAssets.length)]],
-        evidence: "通过公开 API 创建和回读。",
-      };
-  }
-}
-
-function TrainingFocusedIssueCallout({
-  activeTab,
-  issueId,
-  taskCount,
-}: {
-  activeTab: WorkbenchTab;
-  issueId: string;
-  taskCount: number;
-}) {
-  const actionLabel = activeTab === "用例库"
-    ? "点击用例库里的“从 trace 导入用例”会优先使用该 issue 的任务 trace。"
-    : "当前页面带有 issue 复盘上下文，可回到 issue 查看完整链路。";
-  return (
-    <section className="rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs" data-testid="training-focused-issue-callout">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="font-medium text-foreground">来自 issue {issueId} 的运行复盘</div>
-          <div className="mt-0.5 text-muted-foreground">
-            {taskCount > 0 ? `已识别 ${taskCount} 个任务 trace。` : "正在读取该 issue 的任务 trace。"}
-            {" "}{actionLabel}
-          </div>
-        </div>
-        <a className="shrink-0 rounded border bg-background px-2 py-1 text-[11px] hover:bg-accent" href={`../issues/${encodeURIComponent(issueId)}`}>
-          返回 issue
-        </a>
-      </div>
-    </section>
-  );
-}
-
-function TrainingRouteIntroCard({
-  route,
-  title,
-  subtitle,
-  facts,
-  evidence,
-  action,
-}: TrainingRouteIntro & { action?: ReactNode }) {
-  return (
-    <section className="rounded-md border border-border/70 bg-muted/15 px-4 py-3" data-testid={`training-route-intro-${route}`}>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="text-xs font-medium text-muted-foreground">评估子模块</div>
-          <h3 className="mt-1 text-base font-semibold">{title}</h3>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{subtitle}</p>
-          <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">{evidence}</p>
-        </div>
-        {action ? <div className="shrink-0">{action}</div> : null}
-      </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {facts.map(([label, value]) => (
-          <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-route-intro-fact-${route}-${label}`}>
-            <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-            <div className="mt-1 truncate text-sm font-semibold">{value}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function TrainingRouteWorkspaceBand({
-  activeTab,
-  route,
-  visibleAssets,
-  cases,
-  runs,
-  candidates,
-  runStatusFilter,
-}: {
-  activeTab: WorkbenchTab;
-  route: string;
-  visibleAssets: PromptEvaluationAsset[];
-  cases: PromptEvaluationStructuredCase[];
-  runs: PromptEvaluationRun[];
-  candidates: PromptEvaluationOptimizationCandidate[];
-  runStatusFilter: RunStatusFilter;
-}) {
-  const config = trainingRouteOperatingModel(activeTab, {
-    visibleAssets,
-    cases,
-    runs,
-    candidates,
-    runStatusFilter,
-  });
-  if (!config) return null;
-  return (
-    <section className={`grid gap-3 rounded-md border px-4 py-3 ${config.className}`} data-testid={`training-route-operating-model-${route}`}>
-      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
-          <div className="text-xs font-medium text-muted-foreground">{config.kicker}</div>
-          <h3 className="mt-1 text-sm font-semibold">{config.title}</h3>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{config.description}</p>
-        </div>
-        <Badge variant="outline" className="w-fit shrink-0">{config.badge}</Badge>
-      </div>
-      <div className="grid gap-2 md:grid-cols-3">
-        {config.steps.map((step, index) => (
-          <div key={step.label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-route-operating-step-${route}-${index + 1}`}>
-            <div className="text-[11px] font-medium text-muted-foreground">{step.label}</div>
-            <div className="mt-1 truncate text-sm font-semibold">{step.title}</div>
-            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{step.detail}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-type TrainingRouteOperatingModel = {
-  kicker: string;
-  title: string;
-  description: string;
-  badge: string;
-  className: string;
-  steps: Array<{ label: string; title: string; detail: string }>;
-};
-
-function trainingRouteOperatingModel(
-  activeTab: WorkbenchTab,
-  context: {
-    visibleAssets: PromptEvaluationAsset[];
-    cases: PromptEvaluationStructuredCase[];
-    runs: PromptEvaluationRun[];
-    candidates: PromptEvaluationOptimizationCandidate[];
-    runStatusFilter: RunStatusFilter;
-  },
-): TrainingRouteOperatingModel | null {
-  switch (activeTab) {
-    case "用例库": {
-      const datasetRows = context.visibleAssets.reduce((sum, asset) => sum + asset.dataset_row_count, 0);
-      const traceCases = context.cases.filter((item) => item.source === "trace").length;
-      return {
-        kicker: "用例库工作台",
-        title: "用例入库、锁定版本、下游复用",
-        description: "用例库页面关注评测输入本身：从 trace 或手工样例形成结构化用例，锁定可追溯版本，再供测试套件和实验引用。",
-        badge: "用例事实",
-        className: "border-sky-500/30 bg-sky-500/5",
-        steps: [
-          { label: "入口", title: "trace 导入或手工用例", detail: `${formatNumber(traceCases)} 条 trace 用例，用例库 ${formatNumber(context.visibleAssets.length)} 个` },
-          { label: "版本", title: "锁定用例库版本", detail: `${formatNumber(datasetRows)} 条用例可形成版本指纹，避免实验偷偷读最新数据` },
-          { label: "复用", title: "供测试套件和实验绑定", detail: "下游资产通过用例库版本证明输入一致，便于回归和对比" },
-        ],
-      };
-    }
-    case "测试套件": {
-      const suiteCases = context.visibleAssets.reduce((sum, asset) => sum + asset.test_suite_case_count, 0);
-      return {
-        kicker: "测试套件工作台",
-        title: "固定试卷、断言回归、失败定位",
-        description: "测试套件页面关注稳定回归：把多条用例和断言组织成一张试卷，反复验证提示词、智能体或小队流程是否退化。",
-        badge: "回归试卷",
-        className: "border-violet-500/30 bg-violet-500/5",
-        steps: [
-          { label: "组织", title: "用例组成套件", detail: `${formatNumber(suiteCases)} 条套件用例，${formatNumber(context.cases.length)} 条结构化用例` },
-          { label: "执行", title: "反复运行同一试卷", detail: "评测记录会记录通过率、失败原因、耗时和 token" },
-          { label: "定位", title: "断言级复盘", detail: "失败后可跳到运行证据、生成候选或进入人工复核" },
-        ],
-      };
-    }
-    case "评测记录": {
-      const taskRuns = context.runs.filter((run) => Boolean(run.task_id)).length;
-      const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
-      return {
-        kicker: "评测记录工作台",
-        title: "运行检索、证据展开、人工复核",
-        description: "评测记录页面关注证据检索：按状态筛选运行，展开 task、message、trace、usage、span 和服务端快照。",
-        badge: context.runStatusFilter === "全部" ? "证据检索" : context.runStatusFilter,
-        className: "border-emerald-500/30 bg-emerald-500/5",
-        steps: [
-          { label: "筛选", title: "按运行状态定位", detail: `当前筛选：${context.runStatusFilter === "全部" ? "全部运行" : context.runStatusFilter}` },
-          { label: "证据", title: "任务和 Trace 展开", detail: `${formatNumber(taskRuns)} 条运行绑定任务，可展开消息、工具调用和用量` },
-          { label: "复核", title: "人工复核队列", detail: `${formatNumber(reviewRuns)} 条运行等待人工判断，可通过或驳回` },
-        ],
-      };
-    }
-    default:
-      return null;
-  }
-}
-
-function RunStatusFilterBar({
-  value,
-  onChange,
-}: {
-  value: RunStatusFilter;
-  onChange: (status: RunStatusFilter) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 bg-muted/10 px-3 py-2" data-testid="run-status-filter-bar">
-      <span className="text-xs font-medium text-muted-foreground">运行状态</span>
-      {RUN_STATUS_FILTERS.map((status) => (
-        <FilterButton key={status} active={value === status} onClick={() => onChange(status)}>
-          {status === "需人工复核" ? "人工复核队列" : status}
-        </FilterButton>
-      ))}
-    </div>
-  );
-}
-
-type SkillCandidateWorkflowAction = "freshness" | "apply" | "prepare-re-eval" | "run-re-eval";
-
-type SkillResourceOption = {
-  id: string;
-  projectTitle: string;
-  label: string;
-  resourceType: string;
-  repo: string;
-  repoPath: string;
-  branch: string;
-  detail: string;
-  requiresRepoPath: boolean;
-};
-
-type SkillCandidateWorkflowDraft = {
-  sourceResourceId: string;
-  repoPath: string;
-  targetBranch: string;
-  skillPath: string;
-  changelogPath: string;
-  reEvalAssetId: string;
-  includeDraft: boolean;
-  allowDirty: boolean;
-  skipChangelog: boolean;
-};
-
-type SkillCandidateWorkflowEvidence = {
-  snapshot: Record<string, unknown>;
-  freshness: Record<string, unknown>;
-  apply: Record<string, unknown>;
-  reEval: Record<string, unknown>;
-  reEvalRun: Record<string, unknown>;
-};
-
-function SkillCandidateWorkflowPanel({
-  candidate,
-  draft,
-  evidence,
-  resources,
-  pendingAction,
-  disabled,
-  onDraftChange,
-  onRunAction,
-}: {
-  candidate: PromptEvaluationOptimizationCandidate;
-  draft: SkillCandidateWorkflowDraft;
-  evidence: SkillCandidateWorkflowEvidence;
-  resources: SkillResourceOption[];
-  pendingAction: SkillCandidateWorkflowAction | null;
-  disabled: boolean;
-  onDraftChange: (draft: SkillCandidateWorkflowDraft) => void;
-  onRunAction: (action: SkillCandidateWorkflowAction) => void;
-}) {
-  const snapshotHash = stringFromUnknown(evidence.snapshot["skill_hash"]);
-  const freshnessStatus = stringFromUnknown(evidence.freshness["status"]) || "未检查";
-  const applyStatus = stringFromUnknown(evidence.apply["status"]) || "未应用";
-  const reEvalAssetId = draft.reEvalAssetId || stringFromUnknown(evidence.reEval["asset_id"]);
-  const reEvalRunId = stringFromUnknown(evidence.reEvalRun["run_id"]);
-  const canRunReEval = !disabled && Boolean(reEvalAssetId);
-  const selectedResource = resources.find((resource) => resource.id === draft.sourceResourceId) ?? null;
-  const skillPatch = asRecord(candidate.skill_patch);
-  const patchText = stringFromUnknown(skillPatch["patch"]);
-  const expectedImprovement = stringFromUnknown(skillPatch["expected_improvement"]);
-  const risk = stringFromUnknown(skillPatch["risk"]);
-  const verificationPlan = stringFromUnknown(skillPatch["verification_plan"]);
-  const patchHash = stringFromUnknown(skillPatch["patch_hash"]);
-  const publicationStatus = stringFromUnknown(skillPatch["publication_status"]);
-  const candidateIntent = stringFromUnknown(skillPatch["candidate_intent"]) || "update_existing_skill";
-  const operationSkillKey = stringFromUnknown(skillPatch["operation_skill_key"]);
-  const operationSkillPath = stringFromUnknown(skillPatch["operation_skill_path"]);
-  const operationSkillReason = stringFromUnknown(skillPatch["operation_skill_reason"]);
-  return (
-    <section className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-muted/10 px-2 py-2 text-xs" data-testid={`skill-candidate-workflow-${candidate.id}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium">Skill 发布链路</div>
-        <div className="flex flex-wrap gap-1">
-          <Badge variant={snapshotHash ? "secondary" : "outline"}>snapshot {shortId(snapshotHash) || "missing"}</Badge>
-          <Badge variant={candidateIntent === "create_operation_skill" ? "secondary" : "outline"}>
-            {candidateIntent === "create_operation_skill" ? "新建 operation skill" : "更新已有 skill"}
-          </Badge>
-          <Badge variant={freshnessStatus === "conflict" || freshnessStatus === "stale" ? "destructive" : "outline"}>{freshnessStatus}</Badge>
-          <Badge variant={applyStatus === "applied" ? "secondary" : applyStatus === "conflict" || applyStatus === "blocked" ? "destructive" : "outline"}>{applyStatus}</Badge>
-          {reEvalRunId && <Badge variant="secondary">re-eval {shortId(reEvalRunId)}</Badge>}
-        </div>
-      </div>
-      <label className="grid gap-1">
-        <span className="text-muted-foreground">项目资源</span>
-        <select
-          value={draft.sourceResourceId}
-          onChange={(event) => {
-            const nextResource = resources.find((resource) => resource.id === event.target.value) ?? null;
-            onDraftChange({
-              ...draft,
-              sourceResourceId: event.target.value,
-              repoPath: nextResource?.repoPath || draft.repoPath,
-              targetBranch: nextResource?.branch || draft.targetBranch,
-            });
-          }}
-          className="h-8 rounded-sm border border-input bg-background px-2 text-xs"
-        >
-          <option value="">手动填写本地 checkout</option>
-          {resources.map((resource) => (
-            <option key={resource.id} value={resource.id}>
-              {resource.label}
-            </option>
-          ))}
-        </select>
-        <span className="text-[11px] text-muted-foreground">
-          {selectedResource
-            ? `${selectedResource.detail}${selectedResource.requiresRepoPath ? " · 仍需填写本地 checkout" : ""}`
-            : "可选择 Gongfeng/local project resource；Gongfeng 资源当前仍需本地 checkout 承载读写。"}
-        </span>
-      </label>
-      <div className="grid gap-2 md:grid-cols-3">
-        <label className="grid gap-1">
-          <span className="text-muted-foreground">本地工蜂 checkout</span>
-          <Input
-            value={draft.repoPath}
-            onChange={(event) => onDraftChange({ ...draft, repoPath: event.target.value })}
-            placeholder="/data/ida/goal-test"
-            className="h-8 text-xs"
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-muted-foreground">目标分支</span>
-          <Input
-            value={draft.targetBranch}
-            onChange={(event) => onDraftChange({ ...draft, targetBranch: event.target.value })}
-            placeholder="v5.0.0_dev_sop"
-            className="h-8 text-xs"
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-muted-foreground">Skill 路径</span>
-          <Input
-            value={draft.skillPath}
-            onChange={(event) => onDraftChange({ ...draft, skillPath: event.target.value })}
-            placeholder=".codebuddy/skills/05-verify/SKILL.md"
-            className="h-8 text-xs"
-          />
-        </label>
-      </div>
-      <div className="grid gap-2 md:grid-cols-2">
-        <label className="grid gap-1">
-          <span className="text-muted-foreground">CHANGELOG 路径</span>
-          <Input
-            value={draft.changelogPath}
-            onChange={(event) => onDraftChange({ ...draft, changelogPath: event.target.value })}
-            placeholder="默认写入 skill 旁边 CHANGELOG.md"
-            className="h-8 text-xs"
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-muted-foreground">Re-eval 资产</span>
-          <Input
-            value={draft.reEvalAssetId}
-            onChange={(event) => onDraftChange({ ...draft, reEvalAssetId: event.target.value })}
-            placeholder={stringFromUnknown(evidence.reEval["asset_id"]) || "准备 re-eval 后自动填充"}
-            className="h-8 text-xs"
-          />
-        </label>
-      </div>
-      <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
-        <label className="inline-flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={draft.includeDraft}
-            onChange={(event) => onDraftChange({ ...draft, includeDraft: event.target.checked })}
-          />
-          re-eval 包含 draft case
-        </label>
-        <label className="inline-flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={draft.allowDirty}
-            onChange={(event) => onDraftChange({ ...draft, allowDirty: event.target.checked })}
-          />
-          允许 dirty worktree
-        </label>
-        <label className="inline-flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={draft.skipChangelog}
-            onChange={(event) => onDraftChange({ ...draft, skipChangelog: event.target.checked })}
-          />
-          跳过 CHANGELOG
-        </label>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <SkillWorkflowButton action="freshness" pendingAction={pendingAction} disabled={disabled} onRunAction={onRunAction}>
-          Freshness
-        </SkillWorkflowButton>
-        <SkillWorkflowButton action="apply" pendingAction={pendingAction} disabled={disabled} onRunAction={onRunAction}>
-          Apply + CHANGELOG
-        </SkillWorkflowButton>
-        <SkillWorkflowButton action="prepare-re-eval" pendingAction={pendingAction} disabled={disabled} onRunAction={onRunAction}>
-          Prepare re-eval
-        </SkillWorkflowButton>
-        <SkillWorkflowButton action="run-re-eval" pendingAction={pendingAction} disabled={!canRunReEval} onRunAction={onRunAction}>
-          Run re-eval
-        </SkillWorkflowButton>
-      </div>
-      <div className="grid gap-1 break-all text-[11px] text-muted-foreground md:grid-cols-2">
-        <div>base {shortId(stringFromUnknown(evidence.snapshot["base_commit"])) || "missing"} · path {draft.skillPath || stringFromUnknown(evidence.snapshot["skill_path"]) || "missing"}</div>
-        <div>re-eval asset {shortId(reEvalAssetId) || "missing"} · run {shortId(reEvalRunId) || "not run"}</div>
-      </div>
-      {(patchText || expectedImprovement || risk || verificationPlan || patchHash || publicationStatus || operationSkillKey || operationSkillPath || operationSkillReason) && (
-        <div className="grid gap-1 rounded border bg-background px-2 py-2 text-[11px] leading-5" data-testid={`skill-candidate-diff-risk-${candidate.id}`}>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant={patchHash ? "secondary" : "outline"}>patch {shortId(patchHash) || "draft"}</Badge>
-            <Badge variant="outline">发布 {publicationStatus || "draft"}</Badge>
-            <Badge variant={candidateIntent === "create_operation_skill" ? "secondary" : "outline"}>
-              {candidateIntent === "create_operation_skill" ? "create_operation_skill" : "update_existing_skill"}
-            </Badge>
-          </div>
-          {(operationSkillKey || operationSkillPath || operationSkillReason) && (
-            <div className="grid gap-1 rounded bg-muted/20 px-2 py-1.5">
-              <div className="font-medium text-foreground">Operation Skill 候选</div>
-              <div className="text-muted-foreground">
-                key {operationSkillKey || "未记录"} · path {operationSkillPath || draft.skillPath || "未记录"}
-              </div>
-              {operationSkillReason && <div className="text-muted-foreground">{operationSkillReason}</div>}
-            </div>
-          )}
-          <div className="grid gap-1 md:grid-cols-3">
-            <div className="min-w-0">
-              <div className="font-medium text-foreground">预期改善</div>
-              <div className="mt-1 text-muted-foreground">{expectedImprovement || "未记录"}</div>
-            </div>
-            <div className="min-w-0">
-              <div className="font-medium text-foreground">风险</div>
-              <div className="mt-1 text-muted-foreground">{risk || "未记录"}</div>
-            </div>
-            <div className="min-w-0">
-              <div className="font-medium text-foreground">验证计划</div>
-              <div className="mt-1 text-muted-foreground">{verificationPlan || "未记录"}</div>
-            </div>
-          </div>
-          {patchText && (
-            <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded bg-muted/30 px-2 py-1 font-mono text-[11px] leading-5 text-foreground">{patchText}</pre>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SkillWorkflowButton({
-  action,
-  pendingAction,
-  disabled,
-  children,
-  onRunAction,
-}: {
-  action: SkillCandidateWorkflowAction;
-  pendingAction: SkillCandidateWorkflowAction | null;
-  disabled: boolean;
-  children: ReactNode;
-  onRunAction: (action: SkillCandidateWorkflowAction) => void;
-}) {
-  const pending = pendingAction === action;
-  return (
-    <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => onRunAction(action)} disabled={disabled || pendingAction !== null}>
-      {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-      {children}
-    </Button>
-  );
-}
-
-function defaultSkillCandidateWorkflowDraft(candidate: PromptEvaluationOptimizationCandidate): SkillCandidateWorkflowDraft {
-  const evidence = candidateSkillWorkflowEvidence(candidate);
-  const skillPatch = asRecord(candidate.skill_patch);
-  return {
-    sourceResourceId: stringFromUnknown(skillPatch["source_resource_id"]) || stringFromUnknown(evidence.snapshot["source_resource_id"]),
-    repoPath: stringFromUnknown(skillPatch["repo_path"]) || stringFromUnknown(evidence.snapshot["repo_path"]),
-    targetBranch: stringFromUnknown(evidence.freshness["target_branch"]) || stringFromUnknown(skillPatch["target_branch"]) || stringFromUnknown(evidence.snapshot["branch"]),
-    skillPath: stringFromUnknown(evidence.freshness["skill_path"]) || stringFromUnknown(skillPatch["skill_path"]) || stringFromUnknown(evidence.snapshot["skill_path"]),
-    changelogPath: stringFromUnknown(evidence.apply["changelog_path"]) || stringFromUnknown(skillPatch["changelog_path"]),
-    reEvalAssetId: stringFromUnknown(evidence.reEval["asset_id"]),
-    includeDraft: false,
-    allowDirty: false,
-    skipChangelog: false,
-  };
-}
-
-function buildSkillResourceOptions(projects: Project[], resourceGroups: ProjectResource[][]): SkillResourceOption[] {
-  const projectTitles = new Map(projects.map((project) => [project.id, project.title]));
-  return resourceGroups
-    .flat()
-    .filter((resource) => resource.resource_type === "gongfeng_repo" || resource.resource_type === "local_directory")
-    .map((resource) => skillResourceOptionFromProjectResource(resource, projectTitles.get(resource.project_id) || "未命名项目"))
-    .filter((resource): resource is SkillResourceOption => resource !== null)
-    .sort((a, b) => `${a.projectTitle}:${a.label}`.localeCompare(`${b.projectTitle}:${b.label}`, "zh-Hans"));
-}
-
-function skillResourceOptionFromProjectResource(resource: ProjectResource, projectTitle: string): SkillResourceOption | null {
-  const ref = isRecord(resource.resource_ref) ? resource.resource_ref : {};
-  const resourceLabel = typeof resource.label === "string" && resource.label.trim() ? resource.label.trim() : "";
-  if (resource.resource_type === "gongfeng_repo") {
-    const repo = stringFromUnknown(ref["project_path"]) || stringFromUnknown(ref["url"]);
-    if (!repo) return null;
-    const branch = stringFromUnknown(ref["ref"]);
-    const title = resourceLabel || stringFromUnknown(ref["title"]) || repo;
-    return {
-      id: resource.id,
-      projectTitle,
-      label: `${projectTitle} · 工蜂 · ${title}`,
-      resourceType: resource.resource_type,
-      repo,
-      repoPath: "",
-      branch,
-      detail: `${projectTitle} · ${repo}${branch ? ` · ${branch}` : ""}`,
-      requiresRepoPath: true,
-    };
-  }
-  const repoPath = stringFromUnknown(ref["local_path"]);
-  if (!repoPath) return null;
-  const title = resourceLabel || stringFromUnknown(ref["label"]) || repoPath;
-  return {
-    id: resource.id,
-    projectTitle,
-    label: `${projectTitle} · 本地 · ${title}`,
-    resourceType: resource.resource_type,
-    repo: title,
-    repoPath,
-    branch: "HEAD",
-    detail: `${projectTitle} · ${repoPath}`,
-    requiresRepoPath: false,
-  };
-}
-
-function candidateSkillWorkflowEvidence(candidate: PromptEvaluationOptimizationCandidate): SkillCandidateWorkflowEvidence {
-  const metrics = isRecord(candidate.metrics) ? candidate.metrics : {};
-  const skillPatch = asRecord(candidate.skill_patch);
-  const apply = asRecord(metrics["skill_apply"]);
-  const freshness = firstRecord(asRecord(metrics["skill_freshness"]), asRecord(apply["freshness"]));
-  const reEval = asRecord(metrics["skill_re_eval"]);
-  const reEvalRun = asRecord(metrics["skill_re_eval_run"]);
-  const sourceSnapshot = isRecord(candidate.source_prompt_snapshot) ? candidate.source_prompt_snapshot : {};
-  const snapshot = firstRecord(
-    asRecord(apply["snapshot"]),
-    asRecord(freshness["snapshot"]),
-    asRecord(reEval["re_eval_snapshot"]),
-    asRecord(reEval["source_snapshot"]),
-    asRecord(skillPatch["source_snapshot"]),
-    asRecord(sourceSnapshot["skill_snapshot"]),
-    hasSkillSnapshotShape(sourceSnapshot) ? sourceSnapshot : {},
-  );
-  return {
-    snapshot,
-    freshness,
-    apply,
-    reEval,
-    reEvalRun,
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
-}
-
-function firstRecord(...values: Record<string, unknown>[]): Record<string, unknown> {
-  return values.find((value) => Object.keys(value).length > 0) ?? {};
-}
-
-function hasSkillSnapshotShape(value: Record<string, unknown>): boolean {
-  return Boolean(value["base_commit"] || value["skill_hash"] || value["skill_path"]);
-}
-
-function shortId(value: string): string {
-  if (!value) return "";
-  return value.length > 10 ? value.slice(0, 10) : value;
-}
-
-function issueIdFromStructuredCase(item: PromptEvaluationStructuredCase): string | null {
-  const variableIssueId = stringFromUnknown(item.variables["issue_id"]);
-  if (variableIssueId) return variableIssueId;
-  const issue = asRecord(item.input["issue"]);
-  const inputIssueId = stringFromUnknown(issue["id"]);
-  if (inputIssueId) return inputIssueId;
-  const issueTag = item.tags.map((tag) => stringFromUnknown(tag)).find((tag) => tag.startsWith("issue:"));
-  return issueTag?.slice("issue:".length) || null;
-}
-
-function caseValidationSummary(item: PromptEvaluationStructuredCase): string {
-  const validation = stringFromUnknown(item.expected["validation"]);
-  if (validation) return validation;
-  const expectedBehavior = stringFromUnknown(item.expected["expected_behavior"]);
-  if (expectedBehavior) return expectedBehavior;
-  if (item.expected_contains.length > 0) return `包含 ${item.expected_contains.map((value) => stringFromUnknown(value)).filter(Boolean).slice(0, 5).join("、")}`;
-  return "";
-}
-
-function caseEvidenceSummary(item: PromptEvaluationStructuredCase): string {
-  const runReview = asRecord(item.input["run_review"]);
-  const stageFacts = Array.isArray(runReview["stage_facts"]) ? runReview["stage_facts"].length : 0;
-  const childLanes = Array.isArray(runReview["child_lanes"]) ? runReview["child_lanes"].length : 0;
-  const timelineNodeCount = Number(runReview["timeline_node_count"] ?? 0);
-  const pieces = [
-    stageFacts > 0 ? `${stageFacts} 个阶段` : "",
-    childLanes > 0 ? `${childLanes} 条子任务 lane` : "",
-    timelineNodeCount > 0 ? `${timelineNodeCount} 个事件` : "",
-  ].filter(Boolean);
-  return pieces.join(" · ");
-}
-
-function snapshotSummary(snapshot: PromptEvaluationEvidenceSnapshot): string {
-  const summary = asRecord(snapshot.summary);
-  const candidates = [
-    stringFromUnknown(summary["说明"]),
-    stringFromUnknown(summary["结论"]),
-    stringFromUnknown(summary["summary"]),
-    stringFromUnknown(summary["status"]),
-  ].filter(Boolean);
-  if (candidates.length > 0) return candidates.join(" · ");
-  const keys = Object.keys(summary).slice(0, 4);
-  if (keys.length === 0) return `run ${snapshot.run_id}`;
-  return keys.map((key) => `${key}: ${stringFromUnknown(summary[key]) || "已记录"}`).join(" · ");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringFromUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
-}
-
-function cssEscape(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/["\\]/g, "\\$&");
-}
-
-function FilterButton({
-  active,
-  onClick,
-  href,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  href?: string;
-  children: ReactNode;
-}) {
-  const className = `inline-flex h-7 items-center rounded-md border px-2.5 text-xs transition-colors ${
-    active ? "border-foreground bg-foreground text-background" : "border-border bg-background text-muted-foreground hover:text-foreground"
-  }`;
-  if (href) {
-    return (
-      <AppLink href={href} onClick={onClick} className={className} data-active={active ? "true" : undefined} aria-current={active ? "page" : undefined}>
-        {children}
-      </AppLink>
-    );
-  }
-  return (
-    <button type="button" onClick={onClick} className={className} data-active={active ? "true" : undefined}>
-      {children}
-    </button>
-  );
-}
-
-export function CaseLibraryEditorPanel({
-  assets,
-  cases,
-  loading,
-  saving,
-  draft,
-  onDraftChange,
-  onCreateDataset,
-  creatingDataset,
-  onUpdateDataset,
-  updatingDatasetId,
-  onDeleteDataset,
-  deletingDatasetId,
-  onCreateDatasetVersion,
-  creatingDatasetVersionAssetId,
-  onCreateCase,
-  creating,
-  focusedCaseId,
-  onUpdateCase,
-  updatingCaseId,
-  onDeleteCase,
-  deletingCaseId,
-}: {
-  assets: PromptEvaluationAsset[];
-  cases: PromptEvaluationStructuredCase[];
-  loading: boolean;
-  saving: boolean;
-  draft: ManualCaseDraft;
-  onDraftChange: (draft: ManualCaseDraft) => void;
-  onCreateDataset: (name: string, description: string) => void;
-  creatingDataset: boolean;
-  onUpdateDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => void;
-  updatingDatasetId: string | null;
-  onDeleteDataset: (asset: PromptEvaluationAsset) => void;
-  deletingDatasetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => void;
-  creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (asset: PromptEvaluationAsset | undefined, draft: ManualCaseDraft) => Promise<unknown>;
-  creating: boolean;
-  focusedCaseId: string | null;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-}) {
-  const [keywordFilter, setKeywordFilter] = useState("");
-  const [tagFilter, setTagFilter] = useState("全部");
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [showDatasetForm, setShowDatasetForm] = useState(false);
-  const [datasetDraft, setDatasetDraft] = useState({ name: "", description: "" });
-  const [editingDataset, setEditingDataset] = useState(false);
-  const [datasetEditDraft, setDatasetEditDraft] = useState({ name: "", description: "" });
-  const [showVersionForm, setShowVersionForm] = useState(false);
-  const [versionLabelDraft, setVersionLabelDraft] = useState("");
-  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
-  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
-  const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
-  const datasetAssets = useMemo(
-    () => assets.filter((asset) => asset.asset_type === "数据集"),
-    [assets],
-  );
-  const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
-  const selectedAsset = useMemo(
-    () => datasetAssets.find((asset) => asset.id === selectedAssetId) ?? datasetAssets[0] ?? null,
-    [datasetAssets, selectedAssetId],
-  );
-  const selectedCases = selectedAsset ? casesByAsset.get(selectedAsset.id) ?? [] : cases;
-  const caseTags = useMemo(() => uniqueSortedStrings(selectedCases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [selectedCases]);
-  const filteredCases = useMemo(() => {
-    const keyword = keywordFilter.trim().toLowerCase();
-    return selectedCases
-      .filter((item) => {
-        const tagOK = tagFilter === "全部" || item.tags.some((value) => String(value) === tagFilter);
-        const keywordOK = !keyword || datasetCaseSearchText(item).includes(keyword);
-        return tagOK && keywordOK;
-      })
-      .toSorted((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || a.case_index - b.case_index);
-  }, [selectedCases, keywordFilter, tagFilter]);
-  const datasetFilter = keywordFilter.trim().toLowerCase();
-  const filteredAssets = useMemo(() => {
-    if (!datasetFilter) return datasetAssets;
-    return datasetAssets.filter((asset) => {
-      const text = [asset.name, asset.description, summarizeDatasetVersion(asset)].join(" ").toLowerCase();
-      return text.includes(datasetFilter) || matchesPinyin(text, datasetFilter);
-    });
-  }, [datasetAssets, datasetFilter]);
-
-  useEffect(() => {
-    if (selectedAssetId && datasetAssets.some((asset) => asset.id === selectedAssetId)) return;
-    setSelectedAssetId(datasetAssets[0]?.id ?? null);
-  }, [datasetAssets, selectedAssetId]);
-
-  useEffect(() => {
-    setTagFilter("全部");
-    setEditingDataset(false);
-    setShowVersionForm(false);
-    setVersionLabelDraft("");
-    setShowCreateForm(false);
-    setEditingCaseId(null);
-  }, [selectedAssetId]);
-
-  useEffect(() => {
-    if (!selectedAsset) {
-      setDatasetEditDraft({ name: "", description: "" });
-      return;
-    }
-    setDatasetEditDraft({
-      name: selectedAsset.name,
-      description: selectedAsset.description,
-    });
-  }, [selectedAsset]);
-
-  const submitDataset = () => {
-    const name = datasetDraft.name.trim();
-    if (!name) {
-      toast.error("请输入数据集名称");
-      return;
-    }
-    onCreateDataset(name, datasetDraft.description.trim());
-    setDatasetDraft({ name: "", description: "" });
-    setShowDatasetForm(false);
-  };
-
-  const submitDatasetEdit = () => {
-    if (!selectedAsset) return;
-    const name = datasetEditDraft.name.trim();
-    if (!name) {
-      toast.error("请输入数据集名称");
-      return;
-    }
-    onUpdateDataset(selectedAsset, {
-      name,
-      description: datasetEditDraft.description.trim(),
-      asset_type: "数据集",
-      prompt_id: selectedAsset.prompt_id,
-      payload: selectedAsset.payload,
-      status: selectedAsset.status,
-    });
-    setEditingDataset(false);
-  };
-
-  const submitDatasetVersion = () => {
-    if (!selectedAsset) return;
-    onCreateDatasetVersion(selectedAsset, versionLabelDraft.trim() || "手动快照");
-    setShowVersionForm(false);
-    setVersionLabelDraft("");
-  };
-
-  const submitCase = async (caseDraft: ManualCaseDraft) => {
-    if (!caseDraft.caseName.trim()) {
-      toast.error("请输入用例名称");
-      return;
-    }
-    if (!caseDraft.variablesText.trim()) {
-      toast.error("请输入用例输入");
-      return;
-    }
-    await onCreateCase(selectedAsset ?? undefined, caseDraft);
-    setShowCreateForm(false);
-  };
-
-  return (
-    <section className="grid min-h-[620px] gap-0 overflow-hidden rounded-md border md:grid-cols-[320px_minmax(0,1fr)]" data-testid="case-library-editor">
-      <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
-        <div className="grid gap-3 border-b p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold">评估数据集</h2>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {loading ? "正在读取数据集" : `${datasetAssets.length} 个数据集 · ${cases.length} 条用例`}
-              </div>
-            </div>
-            <Button size="sm" onClick={() => setShowDatasetForm((value) => !value)} disabled={saving || creatingDataset}>
-              <Plus className="size-3.5" />
-              新建
-            </Button>
-          </div>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={keywordFilter}
-              onChange={(event) => setKeywordFilter(event.target.value)}
-              placeholder="搜索数据集、用例、标签"
-              aria-label="搜索数据集和用例"
-              className="h-8 pl-8 text-sm"
-            />
-          </div>
-          {showDatasetForm && (
-            <div className="grid gap-2 rounded-md border bg-muted/10 p-2">
-              <Input
-                value={datasetDraft.name}
-                onChange={(event) => setDatasetDraft((current) => ({ ...current, name: event.target.value }))}
-                placeholder="数据集名称"
-                className="h-8 text-sm"
-              />
-              <Input
-                value={datasetDraft.description}
-                onChange={(event) => setDatasetDraft((current) => ({ ...current, description: event.target.value }))}
-                placeholder="描述"
-                className="h-8 text-sm"
-              />
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setShowDatasetForm(false)}>
-                  取消
-                </Button>
-                <Button size="sm" onClick={submitDataset} disabled={creatingDataset || !datasetDraft.name.trim()}>
-                  {creatingDataset ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  保存
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="space-y-2 p-3">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="h-16 rounded-md bg-muted/60" />
-              ))}
-            </div>
-          ) : filteredAssets.length === 0 ? (
-            <div className="p-6 text-sm text-muted-foreground">
-              {datasetAssets.length === 0 ? "暂无数据集，可以先新建一个评估数据集。" : "当前搜索没有命中数据集。"}
-            </div>
-          ) : (
-            <div className="divide-y" data-testid="case-library-dataset-list">
-              {filteredAssets.map((asset) => {
-                const assetCases = casesByAsset.get(asset.id) ?? [];
-                const selected = selectedAsset?.id === asset.id;
-                return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedAssetId(asset.id);
-                      setShowCreateForm(false);
-                      setEditingCaseId(null);
-                    }}
-                    className={`flex w-full flex-col gap-1 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${selected ? "bg-muted" : ""}`}
-                    data-testid={`case-library-dataset-${asset.id}`}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{asset.name}</span>
-                      <Badge variant="outline" className="shrink-0 text-[10px]">{assetCases.length}</Badge>
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {summarizeDatasetVersion(asset) || `更新于 ${asset.updated_at || "未记录时间"}`}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </aside>
-
-      <main className="min-h-0 overflow-y-auto p-4">
-        {!selectedAsset && !loading ? (
-          <div className="grid min-h-[360px] place-items-center rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground" data-testid="case-library-empty">
-            <div>
-              <div className="font-medium text-foreground">还没有评估数据集</div>
-              <div className="mt-1">先新建数据集，再沉淀可复现的评估用例。</div>
-            </div>
-          </div>
-        ) : selectedAsset ? (
-          <div className="grid gap-4">
-            <div className="flex flex-col gap-3 border-b pb-4 md:flex-row md:items-start md:justify-between">
-              <div className="min-w-0 flex-1">
-                {editingDataset ? (
-                  <div className="grid gap-2">
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <Input
-                        value={datasetEditDraft.name}
-                        onChange={(event) => setDatasetEditDraft((current) => ({ ...current, name: event.target.value }))}
-                        placeholder="数据集名称"
-                      />
-                      <Input
-                        value={datasetEditDraft.description}
-                        onChange={(event) => setDatasetEditDraft((current) => ({ ...current, description: event.target.value }))}
-                        placeholder="描述"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" onClick={submitDatasetEdit} disabled={saving || updatingDatasetId === selectedAsset.id || !datasetEditDraft.name.trim()}>
-                        {updatingDatasetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                        保存数据集
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditingDataset(false)}>
-                        取消
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <h2 className="truncate text-base font-semibold">{selectedAsset.name}</h2>
-                    <div className="mt-1 text-sm text-muted-foreground">{selectedAsset.description || "无描述"}</div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <Badge variant="outline">{selectedCases.length} 条用例</Badge>
-                      <span>更新于 {selectedAsset.updated_at || "未记录时间"}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setShowVersionForm((value) => !value)}
-                  disabled={saving || creatingDatasetVersionAssetId === selectedAsset.id || selectedCases.length === 0}
-                >
-                  {creatingDatasetVersionAssetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  创建版本
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  data-testid={`edit-case-library-dataset-${selectedAsset.id}`}
-                  onClick={() => setEditingDataset(true)}
-                  disabled={saving || editingDataset}
-                >
-                  编辑
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  data-testid={`delete-case-library-dataset-${selectedAsset.id}`}
-                  onClick={() => onDeleteDataset(selectedAsset)}
-                  disabled={saving || deletingDatasetId === selectedAsset.id}
-                >
-                  {deletingDatasetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                  删除
-                </Button>
-                <Button size="sm" onClick={() => setShowCreateForm((value) => !value)} disabled={saving}>
-                  <Plus className="size-3.5" />
-                  新增用例
-                </Button>
-              </div>
-            </div>
-
-            {showVersionForm && (
-              <div className="grid gap-2 rounded-md border bg-muted/10 p-3">
-                <Field label="版本说明">
-                  <Input
-                    value={versionLabelDraft}
-                    onChange={(event) => setVersionLabelDraft(event.target.value)}
-                    placeholder="例如：补充登录失败边界用例"
-                  />
-                </Field>
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => setShowVersionForm(false)}>
-                    取消
-                  </Button>
-                  <Button size="sm" onClick={submitDatasetVersion} disabled={creatingDatasetVersionAssetId === selectedAsset.id}>
-                    {creatingDatasetVersionAssetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                    保存版本
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            <DatasetVersionHistoryPanel asset={selectedAsset} />
-
-            <div className="flex flex-col gap-2 md:flex-row md:items-center" data-testid="case-library-toolbar">
-              <select
-                aria-label="筛选用例标签"
-                className="h-8 rounded-md border bg-background px-2 text-sm"
-                value={tagFilter}
-                onChange={(event) => setTagFilter(event.target.value)}
-              >
-                <option value="全部">全部标签</option>
-                {caseTags.map((tag) => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-              </select>
-              <Badge variant="outline" className="h-8 px-2">
-                命中 {filteredCases.length} / {selectedCases.length}
-              </Badge>
-            </div>
-
-            {showCreateForm && (
-              <CaseDraftEditor
-                title="新增用例"
-                draft={draft}
-                onDraftChange={onDraftChange}
-                saving={creating}
-                onSave={() => submitCase(draft)}
-                onCancel={() => setShowCreateForm(false)}
-                saveLabel="保存用例"
-              />
-            )}
-
-            {filteredCases.length === 0 ? (
-              <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground" data-testid="case-library-empty">
-                {selectedCases.length === 0 ? "暂无用例，先新增一条评估用例。" : "当前筛选没有命中用例。"}
-              </div>
-            ) : (
-              <div className="divide-y rounded-md border" data-testid="case-library-case-list">
-                {filteredCases.map((item) => {
-                  const editing = editingCaseId === item.id;
-                  const editDraft = editDrafts[item.id] ?? manualCaseToDraft(item);
-                  const focused = focusedCaseId === item.id;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`grid gap-2 px-3 py-3 ${focused ? "bg-info/5 ring-1 ring-inset ring-info/40" : ""}`}
-                      data-testid={`case-library-case-${item.id}`}
-                    >
-                      <div className="flex min-w-0 flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-medium">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-                            {item.source !== "manual" && (
-                              <Badge variant="outline" className="text-[11px]">{caseSourceLabel(item.source)}</Badge>
-                            )}
-                          </div>
-                          <div className="mt-2 grid gap-1 text-xs">
-                            <div className="line-clamp-2 text-muted-foreground">
-                              <span className="font-medium text-foreground">输入：</span>{caseLibraryInputText(item) || "未填写输入"}
-                            </div>
-                            <div className="line-clamp-2 text-muted-foreground">
-                              <span className="font-medium text-foreground">期望：</span>{caseLibraryExpectedText(item) || "未填写期望"}
-                            </div>
-                          </div>
-                          <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                            {item.tags.map(String).filter(Boolean).join("、") || "无标签"} · 更新于 {item.updated_at || "未记录时间"}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="h-8"
-                            onClick={() => {
-                              setEditingCaseId(item.id);
-                              setEditDrafts((prev) => ({ ...prev, [item.id]: manualCaseToDraft(item) }));
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button size="sm" variant="destructive" className="h-8" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id || saving}>
-                            {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                            删除
-                          </Button>
-                        </div>
-                      </div>
-                      {editing && (
-                        <CaseDraftEditor
-                          title="编辑用例"
-                          draft={editDraft}
-                          onDraftChange={(nextDraft) => setEditDrafts((prev) => ({ ...prev, [item.id]: nextDraft }))}
-                          saving={updatingCaseId === item.id}
-                          onSave={async () => {
-                            await onUpdateCase(item.id, buildCaseLibraryUpdateRequest(item, editDraft));
-                            setEditingCaseId(null);
-                          }}
-                          onCancel={() => setEditingCaseId(null)}
-                          saveLabel="保存"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="h-28 rounded-md bg-muted/60" />
-        )}
-      </main>
-    </section>
-  );
-}
-
-function CaseDraftEditor({
-  title,
-  draft,
-  onDraftChange,
-  saving,
-  onSave,
-  onCancel,
-  saveLabel,
-}: {
-  title: string;
-  draft: ManualCaseDraft;
-  onDraftChange: (draft: ManualCaseDraft) => void;
-  saving: boolean;
-  onSave: () => Promise<unknown>;
-  onCancel: () => void;
-  saveLabel: string;
-}) {
-  return (
-    <div className="grid gap-3 rounded-md border bg-muted/10 p-3" data-testid="case-library-draft-editor">
-      <div className="text-sm font-medium">{title}</div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="名称">
-          <Input
-            value={draft.caseName}
-            onChange={(event) => onDraftChange({ ...draft, caseName: event.target.value })}
-            placeholder="例如：登录失败时说明原因"
-          />
-        </Field>
-        <Field label="标签">
-          <Input
-            value={draft.tagsText}
-            onChange={(event) => onDraftChange({ ...draft, tagsText: event.target.value })}
-            placeholder="账号系统, 回归"
-          />
-        </Field>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="输入">
-          <Textarea
-            value={draft.variablesText}
-            onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
-            className="min-h-28 font-mono text-sm"
-            placeholder="用户输入、问题描述或待评估内容"
-          />
-        </Field>
-        <Field label="期望">
-          <Textarea
-            value={draft.expectedText}
-            onChange={(event) => onDraftChange({ ...draft, expectedText: event.target.value })}
-            className="min-h-28 text-sm"
-            placeholder="期望输出、判断标准或必须覆盖的要点；多行会拆成简单包含断言"
-          />
-        </Field>
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          取消
-        </Button>
-        <Button size="sm" onClick={() => void onSave()} disabled={saving || !draft.caseName.trim() || !draft.variablesText.trim()}>
-          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-          {saveLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-type ManualCaseDraft = {
-  caseName: string;
-  variablesText: string;
-  expectedText: string;
-  tagsText: string;
-};
-
-function ManualCasePanel({
-  asset,
-  cases,
-  draft,
-  onDraftChange,
-  onCreateCase,
-  creating,
-  focusedCaseId,
-  focusedIssueId,
-  focusedIssueRunReviewHref,
-  onUpdateCase,
-  updatingCaseId,
-  onDeleteCase,
-  deletingCaseId,
-}: {
-  asset: PromptEvaluationAsset;
-  cases: PromptEvaluationStructuredCase[];
-  draft: ManualCaseDraft;
-  onDraftChange: (draft: ManualCaseDraft) => void;
-  onCreateCase: () => void;
-  creating: boolean;
-  focusedCaseId: string | null;
-  focusedIssueId: string | null;
-  focusedIssueRunReviewHref: string | null;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-}) {
-  const workspacePaths = useWorkspacePaths();
-  const manualCases = cases.filter((item) => item.source === "manual");
-  const traceCases = cases.filter((item) => item.source === "trace");
-  const [caseSourceFilter, setCaseSourceFilter] = useState<DatasetCaseSourceFilter>("全部");
-  const [caseTagFilter, setCaseTagFilter] = useState("全部");
-  const [caseKeywordFilter, setCaseKeywordFilter] = useState("");
-  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
-  const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
-  const [tagEditingCaseId, setTagEditingCaseId] = useState<string | null>(null);
-  const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
-  const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
-  const filteredCases = useMemo(() => {
-    const keyword = caseKeywordFilter.trim().toLowerCase();
-    return cases.filter((item) => {
-      const sourceOK = caseSourceFilter === "全部" || caseSourceLabel(item.source) === caseSourceFilter;
-      const tagOK = caseTagFilter === "全部" || item.tags.some((value) => String(value) === caseTagFilter);
-      const keywordOK = !keyword || datasetCaseSearchText(item).includes(keyword);
-      return sourceOK && tagOK && keywordOK;
-    });
-  }, [caseSourceFilter, caseTagFilter, caseKeywordFilter, cases]);
-  return (
-    <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-medium text-muted-foreground">结构化评测用例</div>
-        <Badge variant="outline" className="text-[11px]">
-          手工 {manualCases.length} · trace {traceCases.length} · draft {cases.filter((item) => item.status === "draft").length} · approved {cases.filter((item) => item.status === "approved").length} · active {cases.filter((item) => item.status === "active" || item.status === "启用").length}
-        </Badge>
-      </div>
-      <CaseFilterBar
-        totalCount={cases.length}
-        visibleCount={filteredCases.length}
-        tags={caseTags}
-        sourceFilter={caseSourceFilter}
-        onSourceFilterChange={setCaseSourceFilter}
-        tagFilter={caseTagFilter}
-        onTagFilterChange={setCaseTagFilter}
-        keywordFilter={caseKeywordFilter}
-        onKeywordFilterChange={setCaseKeywordFilter}
-      />
-      {cases.length > 0 ? (
-        <div className="grid gap-1.5">
-          {filteredCases.length === 0 ? (
-            <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground" data-testid={`dataset-case-filter-empty-${asset.id}`}>
-              当前筛选没有命中用例，请切换来源或标签。
-            </div>
-          ) : filteredCases.map((item) => {
-            const editing = editingCaseId === item.id;
-            const editDraft = editDrafts[item.id] ?? manualCaseToDraft(item);
-            const focused = focusedCaseId === item.id;
-            const sourceIssueId = issueIdFromStructuredCase(item) || focusedIssueId;
-            const runReviewHref = sourceIssueId
-              ? sourceIssueId === focusedIssueId && focusedIssueRunReviewHref
-                ? focusedIssueRunReviewHref
-                : `${workspacePaths.runReviews()}?issue=${encodeURIComponent(sourceIssueId)}`
-              : null;
-            const validationSummary = caseValidationSummary(item);
-            const evidenceSummary = caseEvidenceSummary(item);
-            return (
-              <div
-                key={item.id}
-                data-testid={`prompt-evaluation-case-${item.id}`}
-                className={`grid gap-2 rounded px-2 py-1.5 text-xs ${focused ? "border border-info/60 bg-info/5 ring-1 ring-info/40" : "border bg-background"}`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-                  <span className="text-muted-foreground">{caseSourceLabel(item.source)}</span>
-                  <Badge variant={item.status === "active" || item.status === "启用" ? "secondary" : "outline"} className="text-[11px]">
-                    {caseReviewStatusLabel(item.status)}
-                  </Badge>
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
-                  {item.source === "manual" && (
-                    <>
-                      {item.status === "draft" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="h-7"
-                          data-testid={`approve-eval-case-${item.id}`}
-                          onClick={() => onUpdateCase(item.id, { status: "approved" })}
-                          disabled={updatingCaseId === item.id}
-                        >
-                          批准 Draft
-                        </Button>
-                      )}
-                      {item.status === "approved" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="h-7"
-                          data-testid={`activate-eval-case-${item.id}`}
-                          onClick={() => onUpdateCase(item.id, { status: "active" })}
-                          disabled={updatingCaseId === item.id}
-                        >
-                          激活评测
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-7"
-                        onClick={() => {
-                          setEditingCaseId(item.id);
-                          setEditDrafts((prev) => ({ ...prev, [item.id]: manualCaseToDraft(item) }));
-                        }}
-                      >
-                        编辑用例
-                      </Button>
-                      <Button size="sm" variant="destructive" className="h-7" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id}>
-                        {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                        删除用例
-                      </Button>
-                    </>
-                  )}
-                  {asset.asset_type === "数据集" && item.source !== "manual" && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="h-7"
-                      onClick={() => {
-                        setTagEditingCaseId(item.id);
-                        setTagEditDrafts((prev) => ({ ...prev, [item.id]: item.tags.map((value) => String(value)).join(", ") }));
-                      }}
-                    >
-                      编辑标签
-                    </Button>
-                  )}
-                </div>
-                {(sourceIssueId || validationSummary || evidenceSummary) && (
-                  <div
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-border/70 bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground"
-                    data-testid={`prompt-evaluation-case-source-${item.id}`}
-                  >
-                    {sourceIssueId && (
-                      <span>
-                        来源 issue <span className="font-medium text-foreground">{shortId(sourceIssueId)}</span>
-                      </span>
-                    )}
-                    {runReviewHref && (
-                      <AppLink href={runReviewHref} className="font-medium text-primary underline-offset-2 hover:underline">
-                        查看运行复盘
-                      </AppLink>
-                    )}
-                    {validationSummary && <span>验证：{validationSummary}</span>}
-                    {evidenceSummary && <span>证据：{evidenceSummary}</span>}
-                  </div>
-                )}
-                {tagEditingCaseId === item.id && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border/70 bg-muted/20 p-2" data-testid={`dataset-case-tag-editor-${item.id}`}>
-                    <Input
-                      value={tagEditDrafts[item.id] ?? item.tags.map((value) => String(value)).join(", ")}
-                      onChange={(event) => setTagEditDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
-                      placeholder="编辑用例标签"
-                      aria-label="编辑用例标签"
-                      className="h-9 min-w-52 flex-1 text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      className="h-9 shrink-0"
-                      onClick={() => {
-                        void onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, tagEditDrafts[item.id] ?? ""));
-                        setTagEditingCaseId(null);
-                      }}
-                      disabled={updatingCaseId === item.id}
-                    >
-                      {updatingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      保存标签
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-9 shrink-0" onClick={() => setTagEditingCaseId(null)}>
-                      取消
-                    </Button>
-                  </div>
-                )}
-                {editing && (
-                  <div className="grid gap-2 rounded-sm border border-border/70 bg-muted/20 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                    <Input
-                      value={editDraft.caseName}
-                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, caseName: event.target.value } }))}
-                      placeholder="编辑用例名称"
-                    />
-                    <Textarea
-                      value={editDraft.variablesText}
-                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, variablesText: event.target.value } }))}
-                      className="min-h-20 text-xs"
-                      placeholder="编辑变量：任务标题=登录失败"
-                    />
-                    <Input
-                      value={editDraft.expectedText}
-                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, expectedText: event.target.value } }))}
-                      placeholder="编辑期望包含"
-                    />
-                    <div className="flex gap-2">
-                      <Input
-                        value={editDraft.tagsText}
-                        onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, tagsText: event.target.value } }))}
-                        placeholder="编辑标签"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-10 shrink-0"
-                        onClick={() => {
-                          void onUpdateCase(item.id, buildManualCaseUpdateRequest(asset, item, editDraft));
-                          setEditingCaseId(null);
-                        }}
-                        disabled={updatingCaseId === item.id || !editDraft.caseName.trim()}
-                      >
-                        {updatingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                        保存用例
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-10 shrink-0" onClick={() => setEditingCaseId(null)}>
-                        取消
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无结构化用例，运行时会回退到资产载荷。</div>
-      )}
-      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Input
-          value={draft.caseName}
-          onChange={(event) => onDraftChange({ ...draft, caseName: event.target.value })}
-          placeholder="手工用例名称"
-        />
-        <Textarea
-          value={draft.variablesText}
-          onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
-          className="min-h-20 text-sm"
-          placeholder="变量：任务标题=登录失败"
-        />
-        <Input
-          value={draft.expectedText}
-          onChange={(event) => onDraftChange({ ...draft, expectedText: event.target.value })}
-          placeholder="期望包含：验收条件, trace/任务标识"
-        />
-        <div className="flex gap-2">
-          <Input
-            value={draft.tagsText}
-            onChange={(event) => onDraftChange({ ...draft, tagsText: event.target.value })}
-            placeholder="标签：账号系统, 回归"
-          />
-          <Button size="sm" className="h-10 shrink-0" onClick={onCreateCase} disabled={creating || !draft.caseName.trim()}>
-            {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            新增用例
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CaseFilterBar({
-  totalCount,
-  visibleCount,
-  tags,
-  sourceFilter,
-  onSourceFilterChange,
-  tagFilter,
-  onTagFilterChange,
-  keywordFilter,
-  onKeywordFilterChange,
-}: {
-  totalCount: number;
-  visibleCount: number;
-  tags: string[];
-  sourceFilter: DatasetCaseSourceFilter;
-  onSourceFilterChange: (value: DatasetCaseSourceFilter) => void;
-  tagFilter: string;
-  onTagFilterChange: (value: string) => void;
-  keywordFilter: string;
-  onKeywordFilterChange: (value: string) => void;
-}) {
-  return (
-    <section className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs" data-testid="case-library-filter-bar">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-medium text-foreground">用例筛选</div>
-          <div className="mt-0.5 text-muted-foreground">按来源、标签和关键词快速定位用例。</div>
-        </div>
-        <Badge variant="outline" data-testid="case-library-filter-count">
-          命中 {visibleCount} / {totalCount}
-        </Badge>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground">来源</span>
-        {(["全部", "手工", "trace导入", "资产载荷"] as const).map((source) => (
-          <FilterButton key={source} active={sourceFilter === source} onClick={() => onSourceFilterChange(source)}>
-            {source}
-          </FilterButton>
-        ))}
-        <span className="ml-1 text-muted-foreground">标签</span>
-        <select
-          aria-label="筛选用例标签"
-          className="h-8 rounded-md border bg-background px-2 text-xs"
-          value={tagFilter}
-          onChange={(event) => onTagFilterChange(event.target.value)}
-        >
-          <option value="全部">全部标签</option>
-          {tags.map((tag) => (
-            <option key={tag} value={tag}>{tag}</option>
-          ))}
-        </select>
-        <Input
-          value={keywordFilter}
-          onChange={(event) => onKeywordFilterChange(event.target.value)}
-          placeholder="搜索名称、变量、期望或标签"
-          aria-label="筛选用例关键词"
-          className="h-8 min-w-60 flex-1 text-xs"
-        />
-      </div>
-    </section>
-  );
-}
-
-function datasetCaseSearchText(item: PromptEvaluationStructuredCase) {
-  return [
-    item.case_name,
-    item.status,
-    caseSourceLabel(item.source),
-    ...item.tags.map(String),
-    summarizeStructuredCase(item),
-    summarizeJSONValue(item.variables),
-    summarizeJSONValue(item.expected_contains),
-    summarizeJSONValue(item.input),
-    summarizeJSONValue(item.expected),
-  ].join(" ").toLowerCase();
-}
-
-type DatasetCaseSourceFilter = "全部" | "手工" | "trace导入" | "资产载荷";
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="grid gap-1.5 text-sm">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
-  if (tab === "用例库") return "数据集";
-  if (tab === "测试套件") return "测试套件";
-  return null;
-}
-
-function assetTypeLabel(assetType: PromptEvaluationAssetType): string {
-  return assetType === "数据集" ? "用例库" : assetType;
-}
-
-function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
-  return asset.asset_type === "数据集" || asset.asset_type === "测试套件";
-}
-
-function caseSourceLabel(source: string): string {
-  if (source === "manual") return "手工";
-  if (source === "trace") return "trace导入";
-  return "导入";
-}
-
-function caseReviewStatusLabel(status: string): string {
-  if (status === "draft") return "待确认";
-  if (status === "approved") return "已批准";
-  if (status === "active" || status === "启用") return "已激活";
-  if (status === "归档") return "已归档";
-  return status;
-}
-
-function emptyManualCaseDraft(): ManualCaseDraft {
-  return {
-    caseName: "",
-    variablesText: "",
-    expectedText: "",
-    tagsText: "",
-  };
-}
-
-function buildManualCaseRequest(asset: PromptEvaluationAsset, draft: ManualCaseDraft, existingCount: number): CreatePromptEvaluationCaseRequest {
-  const variables = parseDebugValues(draft.variablesText);
-  const expectedContains = splitList(draft.expectedText);
-  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
-  return {
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
-    case_index: existingCount,
-    case_name: draft.caseName.trim(),
-    variables,
-    expected_contains: expectedContains,
-    input: {
-      变量: variables,
-      来源: "训练与评估手工用例",
-      ...(skillScenario ? { skill_scenario: {
-        target: skillScenario.target,
-        scenario: skillScenario.scenario,
-        rubric: skillScenario.rubric,
-      } } : {}),
-    },
-    expected: {
-      期望包含: expectedContains,
-      ...(skillScenario ? { skill_scenario: {
-        rubric_keys: skillScenario.rubric.map((item) => item.key),
-        target_skill_path: skillScenario.target.skill_path,
-      } } : {}),
-    },
-    tags: splitList(draft.tagsText),
-    status: "active",
-  };
-}
-
-function buildCaseLibraryCreateRequest(asset: PromptEvaluationAsset, draft: ManualCaseDraft, existingCount: number): CreatePromptEvaluationCaseRequest {
-  const inputText = draft.variablesText.trim();
-  const expectedText = draft.expectedText.trim();
-  const expectedContains = splitExpectationLines(expectedText);
-  return {
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
-    case_index: existingCount,
-    case_name: draft.caseName.trim(),
-    variables: inputText ? { input: inputText } : {},
-    expected_contains: expectedContains,
-    input: {
-      内容: inputText,
-      来源: "用例库手工维护",
-    },
-    expected: {
-      内容: expectedText,
-      期望包含: expectedContains,
-    },
-    tags: splitList(draft.tagsText),
-    status: "active",
-  };
-}
-
-function buildCaseLibraryUpdateRequest(item: PromptEvaluationStructuredCase, draft: ManualCaseDraft): UpdatePromptEvaluationCaseRequest {
-  const inputText = draft.variablesText.trim();
-  const expectedText = draft.expectedText.trim();
-  const expectedContains = splitExpectationLines(expectedText);
-  return {
-    asset_id: item.asset_id,
-    prompt_id: item.prompt_id,
-    case_index: item.case_index,
-    case_name: draft.caseName.trim(),
-    variables: inputText ? { input: inputText } : {},
-    expected_contains: expectedContains,
-    input: {
-      内容: inputText,
-      来源: "用例库手工维护",
-      最近人工维护: new Date().toISOString(),
-    },
-    expected: {
-      内容: expectedText,
-      期望包含: expectedContains,
-    },
-    tags: splitList(draft.tagsText),
-    status: item.status,
-  };
-}
-
-function buildManualCaseUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, draft: ManualCaseDraft): UpdatePromptEvaluationCaseRequest {
-  const variables = parseDebugValues(draft.variablesText);
-  const expectedContains = splitList(draft.expectedText);
-  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
-  return {
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
-    case_index: item.case_index,
-    case_name: draft.caseName.trim(),
-    variables,
-    expected_contains: expectedContains,
-    input: {
-      变量: variables,
-      来源: "训练与评估手工用例",
-      最近人工维护: new Date().toISOString(),
-      ...(skillScenario ? { skill_scenario: {
-        target: skillScenario.target,
-        scenario: skillScenario.scenario,
-        rubric: skillScenario.rubric,
-      } } : {}),
-    },
-    expected: {
-      期望包含: expectedContains,
-      ...(skillScenario ? { skill_scenario: {
-        rubric_keys: skillScenario.rubric.map((entry) => entry.key),
-        target_skill_path: skillScenario.target.skill_path,
-      } } : {}),
-    },
-    tags: splitList(draft.tagsText),
-    status: item.status,
-  };
-}
-
-function buildCaseTagUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, tagsText: string): UpdatePromptEvaluationCaseRequest {
-  return {
-    asset_id: asset.id,
-    prompt_id: item.prompt_id ?? asset.prompt_id,
-    case_index: item.case_index,
-    case_name: item.case_name,
-    tags: splitList(tagsText),
-    status: item.status,
-  };
-}
-
-function manualCaseToDraft(item: PromptEvaluationStructuredCase): ManualCaseDraft {
-  return {
-    caseName: item.case_name,
-    variablesText: caseLibraryInputText(item),
-    expectedText: caseLibraryExpectedText(item),
-    tagsText: item.tags.map((value) => String(value)).join(", "),
-  };
-}
-
-type CaseSummary = {
-  total: number;
-  manual: number;
-  payload: number;
-  trace: number;
-};
-
-function buildCaseSummaries(cases: PromptEvaluationStructuredCase[]): Map<string, CaseSummary> {
-  const counts = new Map<string, CaseSummary>();
-  for (const item of cases) {
-    const current = counts.get(item.asset_id) ?? { total: 0, manual: 0, payload: 0, trace: 0 };
-    current.total += 1;
-    if (item.source === "manual") {
-      current.manual += 1;
-    } else if (item.source === "trace") {
-      current.trace += 1;
-    } else {
-      current.payload += 1;
-    }
-    counts.set(item.asset_id, current);
-  }
-  return counts;
-}
-
-function buildCasesByAsset(cases: PromptEvaluationStructuredCase[]): Map<string, PromptEvaluationStructuredCase[]> {
-  const result = new Map<string, PromptEvaluationStructuredCase[]>();
-  for (const item of cases) {
-    const bucket = result.get(item.asset_id) ?? [];
-    bucket.push(item);
-    result.set(item.asset_id, bucket);
-  }
-  for (const bucket of result.values()) {
-    bucket.sort((a, b) => a.case_index - b.case_index || a.case_name.localeCompare(b.case_name, "zh-CN"));
-  }
-  return result;
-}
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
-}
-
-function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
-  const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
-  for (const candidate of candidates) {
-    const bucket = result.get(candidate.run_id) ?? [];
-    bucket.push(candidate);
-    result.set(candidate.run_id, bucket);
-  }
-  return result;
-}
-
-function summarizeJSONValue(value: unknown): string {
-  if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)) {
-    return "无额外配置";
-  }
-  const text = JSON.stringify(value);
-  if (!text) return "无额外配置";
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-}
-
-function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
-  if (!run.prompt_id) return false;
-  if (run.failed_cases > 0) return true;
-  if (run.status === "未通过" || run.status === "失败") return true;
-  return Boolean(run.failure_reason && run.failure_reason !== "无");
-}
-
-function canCancelPromptEvaluationRun(run: PromptEvaluationRun): boolean {
-  return run.status === "已入队" || run.status === "运行中";
-}
-
-function canReviewPromptEvaluationRun(run: PromptEvaluationRun): boolean {
-  return run.status === "需人工复核";
-}
-
-function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {
-  const payload = asset.payload ?? {};
-  const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
-  const skillTarget = summarizeSkillScenarioTarget(asset);
-  if (skillTarget) return `Skill 场景评测 · ${skillTarget}`;
-  const writingBenchmark = summarizeWritingModelBenchmark(asset);
-  if (writingBenchmark) return `多模型写作评测 · ${writingBenchmark}`;
-  if (caseSummary && caseSummary.total > 0) {
-    const sourceParts = [];
-    if (caseSummary.manual > 0) sourceParts.push(`手工 ${caseSummary.manual}`);
-    if (caseSummary.trace > 0) sourceParts.push(`trace导入 ${caseSummary.trace}`);
-    if (caseSummary.payload > 0) sourceParts.push(`资产载荷 ${caseSummary.payload}`);
-    return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
-  }
-  if (payload["最近Agent运行"]) return "包含真实智能体运行";
-  if (payload["运行结果"]) return "包含运行结果";
-  return cases > 0 ? `${cases} 个用例` : "未记录用例";
-}
-
-type ModelComparisonJudgeScore = {
-  model: string;
-  totalScore: number;
-  dimensionSummary: string;
-  recommendation: string;
-};
-
-type ModelComparisonJudgeSummary = {
-  judgeModel: string;
-  winner: string;
-  conclusion: string;
-  scores: ModelComparisonJudgeScore[];
-};
-
-function modelComparisonJudgeSummary(_asset: PromptEvaluationAsset): ModelComparisonJudgeSummary | null {
-  return null;
-}
-
-function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
-  const expected = item.expected_contains.map((value) => String(value)).filter(Boolean);
-  const variables = Object.keys(item.variables ?? {});
-  const parts = [];
-  if (variables.length > 0) parts.push(`变量 ${variables.join("、")}`);
-  if (expected.length > 0) parts.push(`期望 ${expected.join("、")}`);
-  return parts.length > 0 ? parts.join(" · ") : "未填写输入和期望";
-}
-
-function caseLibraryInputText(item: PromptEvaluationStructuredCase): string {
-  const inputRecord = item.input ?? {};
-  const variableRecord = item.variables ?? {};
-  return (
-    stringFromRecord(inputRecord, "内容") ||
-    stringFromRecord(inputRecord, "input") ||
-    stringFromRecord(variableRecord, "input") ||
-    Object.entries(variableRecord).map(([key, value]) => `${key}=${String(value)}`).join("\n")
-  ).trim();
-}
-
-function caseLibraryExpectedText(item: PromptEvaluationStructuredCase): string {
-  const expectedRecord = item.expected ?? {};
-  return (
-    stringFromRecord(expectedRecord, "内容") ||
-    stringFromRecord(expectedRecord, "expected") ||
-    item.expected_contains.map((value) => String(value)).join("\n")
-  ).trim();
-}
-
-function splitExpectationLines(value: string): string[] {
-  return value
-    .split(/[\n\r,，]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function DatasetVersionHistoryPanel({ asset }: { asset: PromptEvaluationAsset }) {
-  const workspaceId = asset.workspace_id;
-  const versionsQuery = useQuery({
-    queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id),
-    queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 10),
-    enabled: Boolean(workspaceId && asset.id),
-  });
-  const versions = versionsQuery.data?.items ?? [];
-  return (
-    <section className="grid gap-2 rounded-md border bg-muted/10 p-3" data-testid={`case-library-version-history-${asset.id}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">版本历史</h3>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {versionsQuery.isLoading ? "正在读取版本" : versions.length > 0 ? `${versions.length} 个版本快照` : "暂无版本快照"}
-          </div>
-        </div>
-        {versionsQuery.isFetching && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-      </div>
-      {versions.length === 0 ? (
-        <div className="rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-          创建版本后，后续评估和调试可以固定使用这批用例。
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {versions.slice(0, 5).map((version) => (
-            <div key={version.id} className="grid gap-1 rounded-md border bg-background px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">v{version.version}</span>
-                  <span className="truncate text-foreground">{version.version_label || "未命名版本"}</span>
-                  {versions[0]?.id === version.id && <Badge variant="outline" className="text-[10px]">最新</Badge>}
-                </div>
-                <div className="mt-1 truncate text-muted-foreground">
-                  {version.row_count} 条用例 · 指纹 {version.row_fingerprint ? version.row_fingerprint.slice(0, 10) : "未生成"}
-                </div>
-              </div>
-              <div className="text-muted-foreground md:text-right">{version.created_at || "未记录时间"}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsset; saving: boolean }) {
-  const workspaceId = useWorkspaceId() ?? "";
-  const queryClient = useQueryClient();
-  const [diff, setDiff] = useState<PromptEvaluationDatasetVersionDiff | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
-  const versionsQuery = useQuery({
-    queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id),
-    queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 20),
-    enabled: Boolean(loaded && workspaceId && asset.id),
-  });
-  const tagTrendsQuery = useQuery({
-    queryKey: promptLibraryKeys.datasetVersionTagTrends(workspaceId, asset.id),
-    queryFn: () => api.listPromptEvaluationDatasetVersionTagTrends(asset.id, { version_limit: 20, limit: 200 }),
-    enabled: Boolean(loaded && workspaceId && asset.id),
-  });
-  const versionRowsQuery = useQuery({
-    queryKey: promptLibraryKeys.datasetVersionRows(workspaceId, asset.id, selectedVersionId),
-    queryFn: () => api.listPromptEvaluationDatasetVersionRows(asset.id, selectedVersionId!),
-    enabled: Boolean(loaded && workspaceId && asset.id && selectedVersionId),
-  });
-  const invalidateDataset = () => {
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersionRows(workspaceId, asset.id, selectedVersionId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersionTagTrends(workspaceId, asset.id) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
-  };
-  const diffMut = useMutation({
-    mutationFn: () => {
-      const versions = versionsQuery.data?.items ?? [];
-      if (versions.length < 2) {
-        throw new Error("至少需要两个用例库版本才能对比");
-      }
-      return api.diffPromptEvaluationDatasetVersion(asset.id, versions[1]!.id, versions[0]!.id);
-    },
-    onSuccess: (result) => {
-      setDiff(result);
-      toast.success("用例库版本对比已生成");
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "用例库版本对比失败"),
-  });
-  const restoreMut = useMutation({
-    mutationFn: (versionId: string) =>
-      api.restorePromptEvaluationDatasetVersion(asset.id, versionId, {
-        version_label: "从历史版本恢复",
-        metadata: {
-          来源: "训练与评估页面",
-          用途: "恢复历史用例库版本并生成新的可追溯快照",
-          恢复时间: new Date().toISOString(),
-        },
-      }),
-    onSuccess: (result) => {
-      setDiff(null);
-      invalidateDataset();
-      toast.success(`已恢复 v${result.restored_from.version}，并生成 v${result.restored_version.version}`);
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "用例库版本恢复失败"),
-  });
-  const versions = versionsQuery.data?.items ?? [];
-  const latest = versions[0];
-  const oldestLoaded = versions[versions.length - 1] ?? null;
-  const selectedVersion = versions.find((version) => version.id === selectedVersionId) ?? null;
-  const selectedRows = versionRowsQuery.data?.items ?? [];
-  const tagTrends = tagTrendsQuery.data?.items ?? [];
-  const busy = versionsQuery.isLoading || versionsQuery.isFetching || diffMut.isPending || restoreMut.isPending;
-  const disabled = saving || busy;
-
-  return (
-    <div className="mt-2 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2 text-[11px]" data-testid={`dataset-version-controls-${asset.id}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-foreground">版本治理</span>
-        {!loaded ? (
-          <span className="text-muted-foreground">按需加载版本快照，避免列表页批量请求</span>
-        ) : latest ? (
-          <span className="text-muted-foreground">最新 v{latest.version} · {latest.row_count} 行 · 指纹 {latest.row_fingerprint.slice(0, 10)}</span>
-        ) : (
-          <span className="text-muted-foreground">暂无版本快照</span>
-        )}
-        <Button
-          size="sm"
-          variant="secondary"
-          data-testid={`load-dataset-versions-${asset.id}`}
-          onClick={() => setLoaded(true)}
-          disabled={saving || loaded || busy}
-        >
-          {versionsQuery.isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-          查看版本
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          data-testid={`diff-dataset-version-${asset.id}`}
-          onClick={() => diffMut.mutate()}
-          disabled={disabled || !loaded || versions.length < 2}
-        >
-          {diffMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
-          对比最近版本
-        </Button>
-      </div>
-      {loaded && (
-        <div className="rounded border bg-background px-2 py-1.5 text-muted-foreground" data-testid={`dataset-version-chain-${asset.id}`}>
-          版本链回放：已加载最近 {versions.length} 个快照
-          {latest ? ` · 最新 v${latest.version}` : ""}
-          {oldestLoaded && oldestLoaded.id !== latest?.id ? ` · 最早 v${oldestLoaded.version}` : ""}
-          {versions.length >= 20 ? " · 继续缩小用例库后再做长链复盘" : ""}
-        </div>
-      )}
-      {loaded && (
-        <DatasetVersionTagTrendsPanel
-          assetId={asset.id}
-          trends={tagTrends}
-          loading={tagTrendsQuery.isLoading || tagTrendsQuery.isFetching}
-        />
-      )}
-      {versions.length > 0 && (
-        <div className="grid gap-2" data-testid={`dataset-version-timeline-${asset.id}`}>
-          <div className="grid gap-1">
-            {versions.map((version) => (
-              <div key={version.id} className="flex flex-wrap items-center gap-2 rounded border bg-background px-2 py-1.5">
-                <button
-                  type="button"
-                  className="text-left font-medium text-foreground hover:underline"
-                  data-testid={`show-dataset-version-rows-${asset.id}-${version.version}`}
-                  onClick={() => setSelectedVersionId(version.id)}
-                >
-                  v{version.version} · {version.version_label || "未命名快照"}
-                </button>
-                <span className="text-muted-foreground">{version.row_count} 行 · 指纹 {version.row_fingerprint.slice(0, 10)}</span>
-                <span className="text-muted-foreground">{version.created_at || "未记录时间"}</span>
-                {version.id === latest?.id && <Badge variant="outline" className="text-[10px]">最新</Badge>}
-                {selectedVersionId === version.id && <Badge variant="secondary" className="text-[10px]">正在查看</Badge>}
-                <Button
-                  size="sm"
-                  variant={version.id === latest?.id ? "outline" : "secondary"}
-                  className="ml-auto h-7"
-                  data-testid={`restore-dataset-version-${asset.id}-${version.version}`}
-                  onClick={() => restoreMut.mutate(version.id)}
-                  disabled={disabled}
-                >
-                  {restoreMut.isPending && restoreMut.variables === version.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-                  恢复 v{version.version}
-                </Button>
-              </div>
-            ))}
-          </div>
-          {selectedVersion && (
-            <DatasetVersionRowsPanel
-              assetId={asset.id}
-              version={selectedVersion}
-              rows={selectedRows}
-              loading={versionRowsQuery.isLoading || versionRowsQuery.isFetching}
-            />
-          )}
-        </div>
-      )}
-      {diff && (
-        <div className="text-muted-foreground" data-testid={`dataset-version-diff-${asset.id}`}>
-          对比 v{diff.base_version.version} → v{diff.target_version.version}：新增 {diff.summary["新增"] ?? 0} · 删除 {diff.summary["删除"] ?? 0} · 变更 {diff.summary["变更"] ?? 0} · 未变更 {diff.summary["未变更"] ?? 0}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DatasetVersionTagTrendsPanel({
-  assetId,
-  trends,
-  loading,
-}: {
-  assetId: string;
-  trends: PromptEvaluationDatasetVersionTagTrend[];
-  loading: boolean;
-}) {
-  const grouped = useMemo(() => {
-    const byTag = new Map<string, PromptEvaluationDatasetVersionTagTrend[]>();
-    for (const item of trends) {
-      const tag = item.tag.trim();
-      if (!tag) continue;
-      const bucket = byTag.get(tag) ?? [];
-      bucket.push(item);
-      byTag.set(tag, bucket);
-    }
-    return Array.from(byTag.entries())
-      .map(([tag, items]) => ({
-        tag,
-        total: items.reduce((sum, item) => sum + item.case_count, 0),
-        items: items.slice().sort((a, b) => b.version - a.version),
-      }))
-      .sort((a, b) => b.total - a.total || a.tag.localeCompare(b.tag, "zh-Hans-CN"))
-      .slice(0, 8);
-  }, [trends]);
-  return (
-    <div className="rounded border bg-background px-2 py-1.5" data-testid={`dataset-version-tag-trends-${assetId}`}>
-      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-        <span className="font-medium text-foreground">版本标签趋势</span>
-        {loading ? <Loader2 className="size-3.5 animate-spin" /> : <span>基于不可变版本快照统计</span>}
-      </div>
-      {!loading && grouped.length === 0 && (
-        <div className="mt-1 text-muted-foreground">暂无可统计标签。</div>
-      )}
-      {grouped.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-1.5">
-          {grouped.map((group) => (
-            <span key={group.tag} className="rounded border bg-muted/20 px-2 py-1 text-muted-foreground">
-              <span className="font-medium text-foreground">{group.tag}</span>{" "}
-              {group.items.map((item) => `v${item.version}:${item.case_count}`).join(" / ")}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DatasetVersionRowsPanel({
-  assetId,
-  version,
-  rows,
-  loading,
-}: {
-  assetId: string;
-  version: { id: string; version: number; row_count: number; version_label: string };
-  rows: PromptEvaluationDatasetVersionRow[];
-  loading: boolean;
-}) {
-  return (
-    <div className="grid gap-1.5 rounded border border-border/70 bg-muted/20 px-2 py-2" data-testid={`dataset-version-rows-${assetId}`}>
-      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-        <span className="font-medium text-foreground">行级快照 v{version.version}</span>
-        <span>{version.version_label || "未命名快照"}</span>
-        <span>已加载 {rows.length} / {version.row_count} 行</span>
-        {loading && <Loader2 className="size-3.5 animate-spin" />}
-      </div>
-      {loading ? (
-        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">正在读取版本行级快照。</div>
-      ) : rows.length === 0 ? (
-        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">该版本没有可展示的行级快照。</div>
-      ) : (
-        rows.slice(0, 8).map((row) => (
-          <div key={row.id} className="grid gap-1 rounded border bg-background px-2 py-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium text-foreground">#{row.row_index + 1} {row.row_name || "未命名用例"}</span>
-              <span className="text-muted-foreground">{caseSourceLabel(row.source)} · {row.tags.map(String).join("、") || "无标签"}</span>
-            </div>
-            <div className="text-muted-foreground">
-              变量 {Object.keys(row.variables ?? {}).join("、") || "无"} · 期望 {row.expected_contains.map(String).filter(Boolean).join("、") || "无"}
-            </div>
-          </div>
-        ))
-      )}
-      {rows.length > 8 && <div className="text-muted-foreground">已截取前 8 行展示；完整数据仍通过公开 API 回读。</div>}
-    </div>
-  );
-}
-
-function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
-  const payload = asset.payload ?? {};
-  const run = payload["最近Agent运行"];
-  if (!run || typeof run !== "object" || Array.isArray(run)) return null;
-  const record = run as Record<string, unknown>;
-  const status = stringFromRecord(record, "状态") || "未知状态";
-  const taskId = stringFromRecord(record, "trace/任务标识") || stringFromRecord(record, "trace/task id");
-  const agent = stringFromRecord(record, "执行Agent");
-  const model = stringFromRecord(record, "模型");
-  return `智能体任务：${status}${taskId ? ` · 任务标识 ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
-}
-
-function summarizeDatasetVersion(asset: PromptEvaluationAsset): string | null {
-  const payload = asset.payload ?? {};
-  const version = payload["最近数据集版本"];
-  if (!version || typeof version !== "object" || Array.isArray(version)) return null;
-  const record = version as Record<string, unknown>;
-  const versionNumber = stringFromRecord(record, "version");
-  const rowCount = stringFromRecord(record, "row_count");
-  const fingerprint = stringFromRecord(record, "row_fingerprint");
-  const createdAt = stringFromRecord(record, "created_at");
-  if (!versionNumber && !rowCount && !fingerprint) return null;
-  const parts = [`用例库版本 v${versionNumber || "?"}`];
-  if (rowCount) parts.push(`${rowCount} 行`);
-  if (fingerprint) parts.push(`指纹 ${fingerprint.slice(0, 12)}`);
-  if (createdAt) parts.push(createdAt);
-  return parts.join(" · ");
-}
-
-function summarizeLinkedDatasetVersions(asset: PromptEvaluationAsset): string | null {
-  const payload = asset.payload ?? {};
-  const raw = payload["linked_dataset_versions"] ?? payload["数据集版本"] ?? payload["关联数据集版本"];
-  if (!Array.isArray(raw) || raw.length === 0) return null;
-  const parts = raw
-    .map((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return "";
-      const record = item as Record<string, unknown>;
-      const datasetName = stringFromRecord(record, "dataset_name") || stringFromRecord(record, "数据集名称") || stringFromRecord(record, "name") || stringFromRecord(record, "名称");
-      const version = stringFromRecord(record, "version") || stringFromRecord(record, "版本");
-      const fingerprint = stringFromRecord(record, "row_fingerprint") || stringFromRecord(record, "行指纹");
-      const versionId = stringFromRecord(record, "dataset_version_id") || stringFromRecord(record, "数据集版本ID");
-      const label = datasetName || "用例库";
-      const versionLabel = version ? `v${version}` : versionId ? `版本 ${versionId.slice(0, 8)}` : "未声明版本";
-      return `${label} ${versionLabel}${fingerprint ? ` · 指纹 ${fingerprint.slice(0, 10)}` : ""}`;
-    })
-    .filter(Boolean);
-  return parts.length > 0 ? `绑定用例库版本：${parts.join("；")}` : null;
-}
-
-function displayRunKind(runKind: string): string {
-  return runKind === "Agent执行" ? "智能体执行" : runKind;
-}
-
-function summarizeStructuredRun(run: PromptEvaluationRun): string {
-  const pieces = [
-    `模型 ${run.model || "未记录"}`,
-    `运行时 ${run.runtime_provider || "未记录"}`,
-    `通过 ${run.passed_cases}/${run.total_cases}`,
-    `输入 ${run.input_tokens} token`,
-    `输出 ${run.output_tokens} token`,
-  ];
-  if (run.failure_reason) pieces.push(`失败原因：${run.failure_reason}`);
-  if (run.conclusion) pieces.push(`结论：${run.conclusion}`);
-  return pieces.join(" · ");
-}
-
-function stringFromRecord(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  if (typeof value === "string") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
-}
-
-function formatNumber(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
-}
-
-function formatMoney(value: unknown): string {
-  const n = typeof value === "number" ? value : Number(value ?? 0);
-  if (!Number.isFinite(n) || n <= 0) return "$0.00";
-  if (n < 0.01) return `$${n.toFixed(6)}`;
-  return `$${n.toFixed(2)}`;
-}
-
-function formatDuration(value: unknown): string {
-  const ms = typeof value === "number" ? value : Number(value ?? 0);
-  if (!Number.isFinite(ms) || ms <= 0) return "0 ms";
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${Math.round(seconds * 10) / 10} 秒`;
-  const minutes = seconds / 60;
-  return `${Math.round(minutes * 10) / 10} 分钟`;
-}
-
-function downloadTextFile(content: string, filename: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 }

@@ -3,11 +3,9 @@
 
 import {
   forwardRef,
-  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -16,15 +14,16 @@ import { getCurrentWsId } from "@multica/core/platform";
 import { flattenIssueBuckets, issueKeys } from "@multica/core/issues/queries";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
-import { canAssignAgentToIssue } from "@multica/core/permissions";
+import { canAssignAgentToIssue, resolveCurrentMember } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
-import { isImeComposing } from "@multica/core/utils";
 import type {
   Issue,
   ListIssuesCache,
   MemberWithUser,
   Agent,
   Squad,
+  IssueStatus,
+  ProjectStatus,
 } from "@multica/core/types";
 import { ListTodo } from "lucide-react";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -33,7 +32,6 @@ import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
-import type { IssueStatus, ProjectStatus } from "@multica/core/types";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { SuggestionOptions } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
@@ -42,8 +40,12 @@ import {
   recordMentionUsage,
   sortUserItemsByRecency,
 } from "./mention-recency";
-import { matchesPinyin } from "./pinyin-match";
-import { createSuggestionPopupRender } from "./suggestion-popup";
+import { matchesTextQuery } from "./pinyin-match";
+import {
+  createSuggestionPopupRender,
+  useSuggestionSelection,
+  type SuggestionSelectionRef,
+} from "./suggestion-popup";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,10 +72,6 @@ interface MentionListProps {
   query: string;
   command: (item: MentionItem) => void;
   includeProjectSearch?: boolean;
-}
-
-export interface MentionListRef {
-  onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,14 +142,12 @@ function mergeMentionItems(
   return merged;
 }
 
-export const MentionList = forwardRef<MentionListRef, MentionListProps>(
+const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
-    const [selectedIndex, setSelectedIndex] = useState(0);
     const [serverItems, setServerItems] = useState<MentionItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [searchedQuery, setSearchedQuery] = useState("");
-    const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const normalizedQuery = query.trim();
 
     useEffect(() => {
@@ -171,7 +167,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         return;
       }
 
-      let cancelled = false;
       const controller = new AbortController();
       setIsSearching(true);
 
@@ -193,10 +188,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                   signal: controller.signal,
                 }),
               ]);
-              if (!cancelled && !controller.signal.aborted) {
+              if (!controller.signal.aborted) {
                 setServerItems([
-                  ...issues.issues.map((issue) => ({ ...issueToMention(issue), group: "search" as const })),
-                  ...projects.projects.map((project) => ({ ...projectToMention(project), group: "search" as const })),
+                  ...issues.map((issue) => ({ ...issueToMention(issue), group: "search" as const })),
+                  ...projects.map((project) => ({ ...projectToMention(project), group: "search" as const })),
                 ]);
               }
             } else {
@@ -206,14 +201,14 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                 include_closed: true,
                 signal: controller.signal,
               });
-              if (!cancelled && !controller.signal.aborted) {
-                setServerItems(res.issues.map(issueToMention));
+              if (!controller.signal.aborted) {
+                setServerItems(res.map(issueToMention));
               }
             }
           } catch {
             // Aborted or network error: keep the synchronous cache results.
           } finally {
-            if (!cancelled && !controller.signal.aborted) {
+            if (!controller.signal.aborted) {
               setSearchedQuery(q);
               setIsSearching(false);
             }
@@ -222,7 +217,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       }, SERVER_SEARCH_DEBOUNCE_MS);
 
       return () => {
-        cancelled = true;
         clearTimeout(timer);
         controller.abort();
       };
@@ -233,50 +227,17 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       return mergeMentionItems(items, currentServerItems).slice(0, MAX_ITEMS);
     }, [items, normalizedQuery, searchedQuery, serverItems]);
 
-    useEffect(() => {
-      setSelectedIndex(0);
-    }, [displayItems]);
-
-    useEffect(() => {
-      itemRefs.current[selectedIndex]?.scrollIntoView({ block: "nearest" });
-    }, [selectedIndex]);
-
-    const selectItem = useCallback(
-      (index: number) => {
-        const item = displayItems[index];
-        if (!item) return;
+    const selection = useSuggestionSelection(
+      displayItems,
+      (item) => {
         const wsId = getCurrentWsId();
         if (wsId) recordMentionUsage(wsId, item);
         command(item);
       },
-      [displayItems, command],
+      true,
     );
 
-    useImperativeHandle(ref, () => ({
-      onKeyDown: ({ event }) => {
-        // IME is composing — don't intercept Enter/Arrow as picker actions;
-        // those keys belong to the IME (Enter commits composition, etc).
-        if (isImeComposing(event)) return false;
-        if (event.key === "ArrowUp") {
-          if (displayItems.length === 0) return true;
-          setSelectedIndex(
-            (i) => (i + displayItems.length - 1) % displayItems.length,
-          );
-          return true;
-        }
-        if (event.key === "ArrowDown") {
-          if (displayItems.length === 0) return true;
-          setSelectedIndex((i) => (i + 1) % displayItems.length);
-          return true;
-        }
-        if (event.key === "Enter") {
-          if (displayItems.length === 0) return true;
-          selectItem(selectedIndex);
-          return true;
-        }
-        return false;
-      },
-    }));
+    useImperativeHandle(ref, () => ({ onKeyDown: selection.onKeyDown }), [selection.onKeyDown]);
 
     if (displayItems.length === 0) {
       const isWaitingForServer =
@@ -293,8 +254,9 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     }
 
     const groups = groupItems(displayItems);
-    const hasContextGroups = displayItems.some((item) => item.group === "current" || item.group === "recent");
-    const contextLayout = hasContextGroups;
+    const contextLayout = displayItems.some(
+      (item) => item.group === "current" || item.group === "recent",
+    );
     const groupLabel = (label: string): string => {
       if (label === "Current") return t(($) => $.mention.group_current);
       if (label === "Recent") return t(($) => $.mention.group_recent);
@@ -314,20 +276,15 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           <MentionRow
             key={`${item.type}-${item.id}`}
             item={item}
-            selected={idx === selectedIndex}
-            onSelect={() => selectItem(idx)}
-            buttonRef={(el) => { itemRefs.current[idx] = el; }}
+            selected={idx === selection.selectedIndex}
+            onSelect={() => selection.selectItem(idx)}
+            buttonRef={(el) => { selection.itemRefs.current[idx] = el; }}
           />
         );
       });
 
-    // One scroll container for every group. Previously the context layout made
-    // only the "Recent" group scrollable while the rest were `shrink-0`, so a
-    // query that mixed context items with search results squeezed Recent toward
-    // zero height and its un-clipped rows painted over the groups below it. With
-    // a single `overflow-y-auto` flex column the groups simply stack and the
-    // whole popup scrolls — no group can collapse onto another. The context
-    // variant only differs in width / max-height / chrome.
+    // One scroll container keeps every group stacked and clipped; the context
+    // variant differs only in width, maximum height and chrome.
     return (
       <div
         className={cn(
@@ -450,10 +407,14 @@ function MentionRow({
         {item.type === "all" ? t(($) => $.mention.all_members) : item.label}
       </span>
       {item.type === "agent" && (
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">智能体</Badge>
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">
+          {t(($) => $.mention.entity_agent)}
+        </Badge>
       )}
       {item.type === "squad" && (
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">小队</Badge>
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">
+          {t(($) => $.mention.entity_squad)}
+        </Badge>
       )}
     </button>
   );
@@ -467,9 +428,9 @@ function issueToMention(i: Pick<Issue, "id" | "identifier" | "title" | "status">
   return {
     id: i.id,
     label: i.identifier,
-    type: "issue" as const,
+    type: "issue",
     description: i.title,
-    status: i.status as IssueStatus,
+    status: i.status,
   };
 }
 
@@ -477,7 +438,7 @@ function projectToMention(p: { id: string; title: string; description?: string |
   return {
     id: p.id,
     label: p.title,
-    type: "project" as const,
+    type: "project",
     description: p.description ?? undefined,
     icon: p.icon ?? null,
     projectStatus: p.status,
@@ -488,10 +449,8 @@ function matchesMentionQuery(item: MentionItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return (
-    item.label.toLowerCase().includes(q) ||
-    item.description?.toLowerCase().includes(q) === true ||
-    matchesPinyin(item.label, q) ||
-    (item.description ? matchesPinyin(item.description, q) : false)
+    matchesTextQuery(item.label, q) ||
+    (item.description ? matchesTextQuery(item.description, q) : false)
   );
 }
 
@@ -531,36 +490,35 @@ export function createMentionSuggestion(
     // store. Used to gate personal agents in the @mention list so members
     // don't see (or auto-complete) agents they couldn't assign anyway.
     const userId = useAuthStore.getState().user?.id ?? null;
-    const myRole =
-      members.find((m) => m.user_id === userId)?.role ?? null;
+    const { role: myRole } = resolveCurrentMember(members, userId);
 
     const q = query.toLowerCase();
 
     const allItem: MentionItem[] =
       "all members".includes(q) || "all".includes(q)
-        ? [{ id: "all", label: "All members", type: "all" as const }]
+        ? [{ id: "all", label: "All members", type: "all" }]
         : [];
 
     const memberItems: MentionItem[] = members
-      .filter((m) => m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q))
+      .filter((m) => matchesTextQuery(m.name, q))
       .map((m) => ({
         id: m.user_id,
         label: m.name,
-        type: "member" as const,
+        type: "member",
       }));
 
     const agentItems: MentionItem[] = agents
       .filter(
         (a) =>
           !a.archived_at &&
-          (a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q)) &&
+          matchesTextQuery(a.name, q) &&
           canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
       )
-      .map((a) => ({ id: a.id, label: a.name, type: "agent" as const }));
+      .map((a) => ({ id: a.id, label: a.name, type: "agent" }));
 
     const squadItems: MentionItem[] = squads
-      .filter((s) => !s.archived_at && (s.name.toLowerCase().includes(q) || matchesPinyin(s.name, q)))
-      .map((s) => ({ id: s.id, label: s.name, type: "squad" as const }));
+      .filter((s) => !s.archived_at && matchesTextQuery(s.name, q))
+      .map((s) => ({ id: s.id, label: s.name, type: "squad" }));
 
     // Members and agents share a single ranked list — recently mentioned
     // targets come first regardless of type, with an alphabetical fallback
@@ -596,7 +554,7 @@ export function createMentionSuggestion(
       return buildSyncItems(query);
     },
 
-    render: createSuggestionPopupRender<MentionItem, MentionItem, MentionListRef, MentionListProps>({
+    render: createSuggestionPopupRender<MentionItem, MentionItem, SuggestionSelectionRef, MentionListProps>({
       pluginKey,
       component: MentionList,
       getProps: (props) => ({

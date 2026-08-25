@@ -8,6 +8,18 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+func TestSetupRequiresExplicitDeploymentTarget(t *testing.T) {
+	if setupCmd.Run != nil || setupCmd.RunE != nil {
+		t.Fatal("bare setup must not execute a deployment-specific setup path")
+	}
+	for _, name := range []string{"cloud", "self-host"} {
+		command, _, err := setupCmd.Find([]string{name})
+		if err != nil || command == setupCmd {
+			t.Fatalf("setup %s command is not registered: %v", name, err)
+		}
+	}
+}
+
 // TestPersistSelfHostConfigIfReachable verifies the fix for the
 // setup-wipes-token bug: a failed reachability probe must leave the existing
 // config (and its auth token) untouched, instead of overwriting it before the
@@ -149,7 +161,7 @@ func TestSelfHostAppURLHonorsEnv(t *testing.T) {
 
 	t.Run("env honored when flag absent", func(t *testing.T) {
 		t.Setenv("MULTICA_APP_URL", "https://app.internal.co")
-		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", ""); got != "https://app.internal.co" {
+		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL"); got != "https://app.internal.co" {
 			t.Fatalf("app_url: want env value, got %q", got)
 		}
 	})
@@ -159,7 +171,7 @@ func TestSelfHostAppURLHonorsEnv(t *testing.T) {
 		if err := cmd.Flags().Set("app-url", "https://flag.example"); err != nil {
 			t.Fatalf("set flag: %v", err)
 		}
-		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", ""); got != "https://flag.example" {
+		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL"); got != "https://flag.example" {
 			t.Fatalf("app_url: want flag value, got %q", got)
 		}
 	})

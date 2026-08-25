@@ -1,3 +1,9 @@
+import {
+  TEXT_PREVIEW_BASENAMES,
+  TEXT_PREVIEW_CONTENT_TYPES,
+  TEXT_PREVIEW_EXTENSIONS,
+} from "./attachment-preview-types.generated";
+
 /**
  * Preview dispatch table for the AttachmentPreviewModal.
  *
@@ -81,40 +87,6 @@ const BASENAME_LANGUAGE_MAP: Record<string, string> = {
   makefile: "makefile",
 };
 
-// IMPORTANT — KEEP IN SYNC with isTextPreviewable() in
-// server/internal/handler/file.go. If an extension lands here but the proxy
-// rejects it, the user sees a 415 fallback in the modal. If the proxy accepts
-// but this set doesn't, the Eye button doesn't appear at all.
-//
-// TODO(follow-up): extract to a JSON single-source-of-truth + generator
-// (mirror reserved-slugs pattern in server/internal/handler/reserved_slugs.json).
-const TEXT_EXTENSIONS = new Set<string>([
-  "md", "markdown", "txt", "log", "csv", "tsv",
-  "html", "htm", "json", "xml",
-  "yml", "yaml", "toml", "ini", "conf",
-  "sh", "bash", "zsh",
-  "py", "rb", "go", "rs",
-  "ts", "tsx", "js", "jsx", "mjs", "cjs",
-  "css", "scss", "sass", "less",
-  "sql",
-  "java", "kt", "swift",
-  "c", "cc", "cpp", "h", "hpp",
-  "cs", "php", "lua", "vim",
-]);
-
-const TEXT_CONTENT_TYPES = new Set<string>([
-  "application/json",
-  "application/javascript",
-  "application/xml",
-  "application/x-yaml",
-  "application/yaml",
-  "application/toml",
-  "application/x-sh",
-  "application/x-httpd-php",
-]);
-
-const TEXT_BASENAMES = new Set<string>(["dockerfile", "makefile"]);
-
 // Extension fallbacks for media kinds — used when contentType is empty
 // (URL-only preview source, no server-side metadata available).
 const VIDEO_EXTS = new Set<string>([
@@ -139,7 +111,7 @@ function baseOf(filename: string): string {
 }
 
 function normalizeContentType(contentType: string): string {
-  const ct = (contentType ?? "").toLowerCase().trim();
+  const ct = contentType.toLowerCase().trim();
   const semi = ct.indexOf(";");
   return (semi >= 0 ? ct.slice(0, semi) : ct).trim();
 }
@@ -147,10 +119,10 @@ function normalizeContentType(contentType: string): string {
 function isTextLike(contentType: string, filename: string): boolean {
   const ct = normalizeContentType(contentType);
   if (ct.startsWith("text/")) return true;
-  if (TEXT_CONTENT_TYPES.has(ct)) return true;
+  if (TEXT_PREVIEW_CONTENT_TYPES.has(ct)) return true;
   const ext = extOf(filename);
-  if (ext && TEXT_EXTENSIONS.has(ext)) return true;
-  return TEXT_BASENAMES.has(baseOf(filename));
+  if (ext && TEXT_PREVIEW_EXTENSIONS.has(ext)) return true;
+  return TEXT_PREVIEW_BASENAMES.has(baseOf(filename));
 }
 
 // Dispatch on PreviewKind. New cases go in attachment-preview-modal.tsx;
@@ -184,10 +156,6 @@ export function getPreviewKind(
 
   if (isTextLike(contentType, filename)) return "text";
   return null;
-}
-
-export function isPreviewable(contentType: string, filename: string): boolean {
-  return getPreviewKind(contentType, filename) !== null;
 }
 
 // Pick the hljs language token for a file. Returns undefined when the file

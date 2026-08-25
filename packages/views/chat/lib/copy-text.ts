@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@multica/core/types";
-import type { ChatTimelineItem } from "@multica/core/chat";
+import type { TimelineItem } from "../../common/task-transcript";
 
 /**
  * Split an assistant timeline into three regions for the conductor-style fold:
@@ -13,10 +13,10 @@ import type { ChatTimelineItem } from "@multica/core/chat";
  * Copy concatenates preface + final — the fold's contents are intentionally
  * omitted, mirroring what's visible when the fold is closed.
  */
-export function splitTimeline(items: ChatTimelineItem[]): {
-  preface: ChatTimelineItem[];
-  middle: ChatTimelineItem[];
-  final: ChatTimelineItem[];
+export function splitTimeline(items: TimelineItem[]): {
+  preface: TimelineItem[];
+  middle: TimelineItem[];
+  final: TimelineItem[];
 } {
   const firstNonTextIdx = items.findIndex((i) => i.type !== "text");
   if (firstNonTextIdx === -1) {
@@ -37,12 +37,12 @@ export function splitTimeline(items: ChatTimelineItem[]): {
  * Markdown source the Copy action puts on the clipboard. By design this is
  * the user-visible answer only — anything inside the outer fold (thinking,
  * tool calls, sandwiched intermediate text) is dropped. Falls back to
- * `message.content` for legacy messages without a timeline and for the
+ * `message.content` for current messages without timeline items and for the
  * pathological all-non-text shape so Copy never produces an empty string.
  */
 export function extractCopyText(
   message: ChatMessage,
-  timeline: ChatTimelineItem[],
+  timeline: TimelineItem[],
 ): string {
   if (timeline.length === 0) return message.content ?? "";
   const { preface, final } = splitTimeline(timeline);

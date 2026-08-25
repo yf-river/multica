@@ -6,12 +6,12 @@
   },
   "input": {
     "placeholder_no_agent": "创建一个智能体后才能开始对话",
-    "placeholder_archived": "此会话已归档",
     "placeholder_named": "给 {{name}} 发消息…",
     "placeholder_default": "输入消息…",
     "send_tooltip": "发送",
     "stop_tooltip": "停止",
     "send_failed_toast": "发送消息失败",
+    "send_status_unknown_toast": "消息可能已发送，正在同步服务器状态，请勿重复发送。",
     "attachment_bind_failed_toast": "消息已发送，但文件未能附加。请稍后重试。"
   },
   "message_list": {
@@ -98,7 +98,6 @@
       "offline": "离线",
       "reconnecting": "重连中",
       "queued": "排队中",
-      "waiting_local_directory": "等待本地目录释放",
       "starting_up": "启动中",
       "thinking": "思考中",
       "typing": "输入中"

@@ -2,45 +2,29 @@ import { forwardRef, useRef, useImperativeHandle } from "react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import type { Attachment } from "@multica/core/types";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enChat from "../../locales/zh-Hans/chat.json";
 
-function makeUpload(overrides: Partial<UploadResult> & { id: string; link: string; filename: string }): UploadResult {
+function makeUpload(overrides: Partial<Attachment> & { id: string; url: string; filename: string }): Attachment {
   return {
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "user-1",
-    url: overrides.link,
-    download_url: overrides.link,
-    markdown_url: overrides.link,
     content_type: "image/png",
     size_bytes: 1,
-    created_at: new Date(0).toISOString(),
-    // markdownLink defaults to the same value as `link` so legacy
-    // tests assert the previous URL shape unless they pass an
-    // explicit override. Real callers always set it to the stable
-    // /api/attachments/<id>/download path via useFileUpload.
-    markdownLink: overrides.link,
     ...overrides,
+    url: overrides.url,
+    download_url: overrides.download_url ?? overrides.url,
+    markdown_url: overrides.markdown_url ?? overrides.url,
   };
 }
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, chat: enChat } };
 
-// Track drop-zone callbacks so the test can simulate a real drop.
 const dropHandlers = vi.hoisted(() => ({
   onDrop: null as null | ((files: File[]) => void),
 }));
 const editorProps = vi.hoisted(() => ({
   last: null as null | Record<string, unknown>,
 }));
-// Records imperative editor calls so tests can assert whether a commit
-// scrubbed the editor (clearEditor) or left it intact (fire-and-forget).
 const editorState = vi.hoisted(() => ({ cleared: 0, blurred: 0 }));
 
 vi.mock("../../editor", () => ({
@@ -54,7 +38,7 @@ vi.mock("../../editor", () => ({
       defaultValue?: string;
       onUpdate?: (md: string) => void;
       placeholder?: string;
-      onUploadFile?: (file: File) => Promise<UploadResult | null>;
+      onUploadFile?: (file: File) => Promise<Attachment | null>;
       mentionMode?: string;
       mentionContextItems?: unknown[];
     },
@@ -84,15 +68,7 @@ vi.mock("../../editor", () => ({
         try {
           const result = await onUploadFile?.(file);
           if (result) {
-            // Mirror the real editor (uploadAndInsertFile in
-            // packages/views/editor/extensions/file-upload.ts): the
-            // markdown body captures `markdownLink` (the stable
-            // /api/attachments/<id>/download URL) when the upload
-            // returned one, falling back to `link` for the
-            // no-workspace avatar branch. The chat input's
-            // uploadMapRef must use the same value as its key —
-            // pinning that contract is the regression below.
-            const persistedURL = result.markdownLink || result.link;
+            const persistedURL = result.markdown_url;
             valueRef.current = `${valueRef.current}![](${persistedURL})`.trim();
             onUpdate?.(valueRef.current);
           }
@@ -115,21 +91,19 @@ vi.mock("../../editor", () => ({
   }),
 }));
 
-// Mock chat store with an in-memory implementation that supports both
-// (selector) calls and getState().
 vi.mock("@multica/core/chat", () => {
   const state = {
     activeSessionId: null as string | null,
     selectedAgentId: "agent-1",
     inputDrafts: {} as Record<string, string>,
-    inputDraftAttachments: {} as Record<string, UploadResult[]>,
+    inputDraftAttachments: {} as Record<string, Attachment[]>,
     setInputDraft: vi.fn(),
     setInputDraftAttachments: vi.fn(),
     addInputDraftAttachment: vi.fn(),
     clearInputDraft: vi.fn(),
+    clearInputDraftForWorkspace: vi.fn(),
   };
   return {
-    DRAFT_NEW_SESSION: "__draft_new__",
     newSessionDraftKey: (agentId: string | null) => `__draft_new__:${agentId ?? ""}`,
     useChatStore: Object.assign(
       (selector?: (s: typeof state) => unknown) =>
@@ -141,6 +115,7 @@ vi.mock("@multica/core/chat", () => {
 
 import { ChatInput } from "./chat-input";
 import { useChatStore } from "@multica/core/chat";
+import { setCurrentWorkspace } from "@multica/core/platform";
 
 type ChatInputOnSend = React.ComponentProps<typeof ChatInput>["onSend"];
 type ChatInputCommit = Parameters<ChatInputOnSend>[2];
@@ -156,7 +131,8 @@ beforeEach(() => {
     inputDrafts: Record<string, string>;
     setInputDraft: ReturnType<typeof vi.fn>;
     clearInputDraft: ReturnType<typeof vi.fn>;
-    inputDraftAttachments: Record<string, UploadResult[]>;
+    clearInputDraftForWorkspace: ReturnType<typeof vi.fn>;
+    inputDraftAttachments: Record<string, Attachment[]>;
     setInputDraftAttachments: ReturnType<typeof vi.fn>;
     addInputDraftAttachment: ReturnType<typeof vi.fn>;
   };
@@ -169,12 +145,12 @@ beforeEach(() => {
     state.inputDrafts[key] = value;
   });
   state.setInputDraftAttachments.mockClear();
-  state.setInputDraftAttachments.mockImplementation((key: string, attachments: UploadResult[]) => {
+  state.setInputDraftAttachments.mockImplementation((key: string, attachments: Attachment[]) => {
     if (attachments.length > 0) state.inputDraftAttachments[key] = attachments;
     else delete state.inputDraftAttachments[key];
   });
   state.addInputDraftAttachment.mockClear();
-  state.addInputDraftAttachment.mockImplementation((key: string, attachment: UploadResult) => {
+  state.addInputDraftAttachment.mockImplementation((key: string, attachment: Attachment) => {
     const existing = state.inputDraftAttachments[key] ?? [];
     state.inputDraftAttachments[key] = existing.some((a) => a.id === attachment.id)
       ? existing.map((a) => (a.id === attachment.id ? attachment : a))
@@ -185,6 +161,8 @@ beforeEach(() => {
     delete state.inputDrafts[key];
     delete state.inputDraftAttachments[key];
   });
+  state.clearInputDraftForWorkspace.mockClear();
+  setCurrentWorkspace(null, null);
 });
 
 function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}) {
@@ -192,7 +170,7 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
   const onUploadFile =
     props.onUploadFile ??
     vi.fn(async (_file: File) =>
-      makeUpload({ id: "att-1", link: "https://cdn.example/att-1.png", filename: "img.png" }),
+      makeUpload({ id: "att-1", url: "https://cdn.example/att-1.png", filename: "img.png" }),
     );
   render(
     <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
@@ -228,6 +206,18 @@ async function waitForSendButton(state: "enabled" | "disabled") {
   return sendButton!;
 }
 
+async function clickEnabledSendButton() {
+  const button = await waitForSendButton("enabled");
+  await act(async () => {
+    fireEvent.click(button);
+  });
+}
+
+async function typeDraft(content: string) {
+  fireEvent.change(screen.getByTestId("editor"), { target: { value: content } });
+  return waitForSendButton("enabled");
+}
+
 describe("ChatInput @ context wiring", () => {
   it("configures chat @ with current/recent issue/project context", () => {
     const contextItems = [
@@ -246,7 +236,6 @@ describe("ChatInput attachment wiring", () => {
     const { onUploadFile } = renderInput();
     expect(dropHandlers.onDrop).not.toBeNull();
     const file = new File(["x"], "drop.png", { type: "image/png" });
-    // Microtask: the mock editor awaits onUploadFile before mutating its value.
     await dropFile(file);
     expect(onUploadFile).toHaveBeenCalledWith(file);
   });
@@ -254,20 +243,14 @@ describe("ChatInput attachment wiring", () => {
   it("passes attachment_ids to onSend for uploads still referenced in the content", async () => {
     const onSend = vi.fn();
     const onUploadFile = vi.fn(async (_file: File) =>
-      makeUpload({ id: "att-42", link: "https://cdn.example/att-42.png", filename: "x.png" }),
+      makeUpload({ id: "att-42", url: "https://cdn.example/att-42.png", filename: "x.png" }),
     );
     renderInput({ onSend, onUploadFile });
 
-    // Simulate the drop → editor.uploadFile → onUploadFile happy path. The
-    // mock editor appends the markdown link into its value and calls
-    // onUpdate so the input flips out of the empty state.
     const file = new File(["x"], "drop.png", { type: "image/png" });
     await dropFile(file);
 
-    // Wait for the submit button to become enabled (onUpdate has fired and
-    // React has re-rendered). SubmitButton has no aria-label, so we pick
-    // the last action button on the bar (FileUploadButton, SubmitButton).
-    fireEvent.click(await waitForSendButton("enabled"));
+    await clickEnabledSendButton();
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
@@ -278,23 +261,15 @@ describe("ChatInput attachment wiring", () => {
     );
   });
 
-  it("binds attachment_ids when the upload's markdownLink differs from its link (MUL-3130 regression)", async () => {
-    // Pin: real LocalStorage uploads return `link` =
-    // /uploads/<key>?exp&sig (short-lived) and `markdownLink` =
-    // /api/attachments/<id>/download (stable). The editor persists
-    // `markdownLink` into the markdown body, so chat-input's upload
-    // map MUST key on `markdownLink` too — keying on `link` would
-    // leave content.includes(url) false at send time and silently
-    // drop the attachment binding. This is exactly the blocker
-    // GPT-Boy raised in PR #3937 review.
+  it("binds attachment_ids when markdown_url differs from the storage URL", async () => {
     const onSend = vi.fn();
     const SHORT_LIVED_LINK = "/uploads/workspaces/ws-1/foo.png?exp=42&sig=stale";
     const STABLE_MARKDOWN_LINK = "/api/attachments/att-99/download";
     const onUploadFile = vi.fn(async (_file: File) =>
       makeUpload({
         id: "att-99",
-        link: SHORT_LIVED_LINK,
-        markdownLink: STABLE_MARKDOWN_LINK,
+        url: SHORT_LIVED_LINK,
+        markdown_url: STABLE_MARKDOWN_LINK,
         filename: "foo.png",
       }),
     );
@@ -303,48 +278,38 @@ describe("ChatInput attachment wiring", () => {
     const file = new File(["x"], "foo.png", { type: "image/png" });
     await dropFile(file);
 
-    fireEvent.click(await waitForSendButton("enabled"));
+    await clickEnabledSendButton();
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [content, ids] = onSend.mock.calls[0]!;
-    // The markdown body carries the stable URL — the short-lived
-    // signed `?exp&sig` link must never make it into the message body.
     expect(content).toContain(STABLE_MARKDOWN_LINK);
     expect(content).not.toContain("?exp=");
     expect(content).not.toContain("?sig=");
-    // And the attachment id is bound, even though `result.link` no
-    // longer matches the URL the editor actually persisted.
     expect(ids).toEqual(["att-99"]);
   });
 
   it("disables send while an upload is in flight, re-enables after it resolves", async () => {
-    let resolveUpload: (v: UploadResult) => void;
-    const uploadPromise = new Promise<UploadResult>((res) => {
+    let resolveUpload: (v: Attachment) => void;
+    const uploadPromise = new Promise<Attachment>((res) => {
       resolveUpload = res;
     });
     const onSend = vi.fn();
     const onUploadFile = vi.fn(() => uploadPromise);
     renderInput({ onSend, onUploadFile });
 
-    // Give the editor some text so isEmpty=false — this isolates the
-    // disabled state to the pending-upload condition (otherwise both
-    // checks would fire and the test couldn't tell them apart).
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "preview text" } });
 
     const file = new File(["x"], "slow.png", { type: "image/png" });
     await dropFile(file, "upload-started");
 
-    // While the upload is pending the SubmitButton must be disabled.
-    // Bypassing this would send the message with the attachment id
-    // missing from the body.
     await waitForSendButton("disabled");
 
     await act(async () => {
-      resolveUpload!(makeUpload({ id: "att-slow", link: "https://cdn.example/att-slow.png", filename: "slow.png" }));
+      resolveUpload!(makeUpload({ id: "att-slow", url: "https://cdn.example/att-slow.png", filename: "slow.png" }));
       await Promise.resolve();
     });
 
-    fireEvent.click(await waitForSendButton("enabled"));
+    await clickEnabledSendButton();
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
     expect(ids).toEqual(["att-slow"]);
@@ -352,31 +317,28 @@ describe("ChatInput attachment wiring", () => {
 
   it("does not render the file upload button when onUploadFile is omitted", () => {
     renderInput({ onUploadFile: undefined });
-    // FileUploadButton renders an icon button labelled by its tooltip — when
-    // upload wiring is absent the chat input falls back to "submit + extras"
-    // only. Probe by counting buttons: with no upload, only the submit
-    // button is in the action row.
     const buttons = screen.getAllByRole("button");
-    // The agent picker may render zero buttons
-    // in this test (no leftAdornment passed). So a single button = submit.
     expect(buttons.length).toBe(1);
   });
 });
 
 describe("ChatInput async send", () => {
   it("restores a cancelled empty run draft into the editor", async () => {
+    const state = useChatStore.getState() as unknown as { activeSessionId: string | null };
+    state.activeSessionId = "session-a";
     const onRestoreDraftConsumed = vi.fn();
     renderInput({
       restoreDraftRequest: {
         id: "msg-restored",
         content: "bring this back",
+        sessionId: "session-a",
       },
       onRestoreDraftConsumed,
     });
 
     await waitFor(() => {
       expect(useChatStore.getState().setInputDraft).toHaveBeenCalledWith(
-        "__draft_new__:agent-1",
+        "session-a",
         "bring this back",
       );
       expect(editorProps.last?.defaultValue).toBe("bring this back");
@@ -386,16 +348,19 @@ describe("ChatInput async send", () => {
 
   it("consumes a restore request even when an existing draft blocks restore", async () => {
     const state = useChatStore.getState() as unknown as {
+      activeSessionId: string | null;
       inputDrafts: Record<string, string>;
       setInputDraft: ReturnType<typeof vi.fn>;
     };
-    state.inputDrafts["__draft_new__:agent-1"] = "already typing";
+    state.activeSessionId = "session-a";
+    state.inputDrafts["session-a"] = "already typing";
     const onRestoreDraftConsumed = vi.fn();
 
     renderInput({
       restoreDraftRequest: {
         id: "msg-restored",
         content: "bring this back",
+        sessionId: "session-a",
       },
       onRestoreDraftConsumed,
     });
@@ -404,7 +369,7 @@ describe("ChatInput async send", () => {
       expect(onRestoreDraftConsumed).toHaveBeenCalledTimes(1);
     });
     expect(state.setInputDraft).not.toHaveBeenCalledWith(
-      "__draft_new__:agent-1",
+      "session-a",
       "bring this back",
     );
   });
@@ -417,16 +382,8 @@ describe("ChatInput async send", () => {
     const onSend = vi.fn<ChatInputOnSend>(() => sendPromise);
     renderInput({ onSend });
 
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "slow network" } });
-
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-
-    fireEvent.click(sendButton!);
+    const sendButton = await typeDraft("slow network");
+    fireEvent.click(sendButton);
 
     expect(onSend).toHaveBeenCalledWith(
       "slow network",
@@ -435,7 +392,7 @@ describe("ChatInput async send", () => {
       [],
     );
     expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
-    await waitFor(() => expect(sendButton!).toBeDisabled());
+    await waitFor(() => expect(sendButton).toBeDisabled());
 
     const commitInput = onSend.mock.calls[0]![2] as ChatInputCommit;
     act(() => {
@@ -457,17 +414,10 @@ describe("ChatInput async send", () => {
     const onSend = vi.fn(async () => false);
     renderInput({ onSend });
 
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "retry me" } });
-
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
+    const sendButton = await typeDraft("retry me");
 
     await act(async () => {
-      fireEvent.click(sendButton!);
+      fireEvent.click(sendButton);
       await Promise.resolve();
     });
 
@@ -478,11 +428,11 @@ describe("ChatInput async send", () => {
   it("sends attachment ids restored from persisted draft attachments", async () => {
     const state = useChatStore.getState() as unknown as {
       inputDrafts: Record<string, string>;
-      inputDraftAttachments: Record<string, UploadResult[]>;
+      inputDraftAttachments: Record<string, Attachment[]>;
     };
     const attachment = makeUpload({
       id: "att-persisted",
-      link: "/api/attachments/att-persisted/download",
+      url: "/api/attachments/att-persisted/download",
       filename: "persisted.png",
     });
     state.inputDrafts["__draft_new__:agent-1"] = "see ![](/api/attachments/att-persisted/download)";
@@ -494,14 +444,7 @@ describe("ChatInput async send", () => {
     });
     renderInput({ onSend });
 
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
 
     expect(onSend).toHaveBeenCalledWith(
       "see ![](/api/attachments/att-persisted/download)",
@@ -512,8 +455,6 @@ describe("ChatInput async send", () => {
   });
 });
 
-// A failed fire-and-forget send must restore into the session it was sent
-// FROM, never into whatever session the user navigated to in the meantime.
 describe("ChatInput session-aware restore", () => {
   function element(props: Partial<React.ComponentProps<typeof ChatInput>>) {
     return (
@@ -528,7 +469,6 @@ describe("ChatInput session-aware restore", () => {
       activeSessionId: string | null;
       setInputDraft: ReturnType<typeof vi.fn>;
     };
-    // User is viewing session-b; the failed send belongs to session-a.
     state.activeSessionId = "session-b";
     const onRestoreDraftConsumed = vi.fn();
     const props = {
@@ -537,11 +477,9 @@ describe("ChatInput session-aware restore", () => {
     };
     const { rerender } = render(element(props));
 
-    // Pending — must NOT dump A's content into session-b.
     expect(onRestoreDraftConsumed).not.toHaveBeenCalled();
     expect(state.setInputDraft).not.toHaveBeenCalledWith("session-b", "from A");
 
-    // User navigates back to the source session → the pending restore fires.
     state.activeSessionId = "session-a";
     rerender(element(props));
 
@@ -572,21 +510,10 @@ describe("ChatInput session-aware restore", () => {
   });
 });
 
-// commitInput is the handoff: the owner (ChatWindow) decides WHEN and HOW to
-// clear the input. clearEditor:false is the fire-and-forget case — the user
-// navigated away, so the shared editor now shows another session's draft and
-// must not be scrubbed, but the SENT draft's data is still cleared.
 describe("ChatInput commit handoff", () => {
   async function typeAndSend(onSend: ChatInputOnSend) {
     renderInput({ onSend });
-    fireEvent.change(screen.getByTestId("editor"), { target: { value: "msg" } });
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await typeDraft("msg"));
     await waitFor(() => expect(onSend).toHaveBeenCalled());
   }
 
@@ -609,10 +536,25 @@ describe("ChatInput commit handoff", () => {
     });
     await typeAndSend(onSend);
 
-    // Editor untouched — it now shows the session the user navigated to.
     expect(editorState.cleared).toBe(0);
     expect(editorState.blurred).toBe(0);
-    // …but the sent session's persisted draft is cleared regardless.
     expect(useChatStore.getState().clearInputDraft).toHaveBeenCalledWith("__draft_new__:agent-1");
+  });
+
+  it("clears the workspace captured at send even if navigation changes before commit", async () => {
+    setCurrentWorkspace("team-a", "ws-a");
+    const onSend = vi.fn<ChatInputOnSend>((_content, _ids, commitInput) => {
+      setCurrentWorkspace("team-b", "ws-b");
+      commitInput({ clearEditor: false });
+      return true;
+    });
+
+    await typeAndSend(onSend);
+
+    expect(useChatStore.getState().clearInputDraftForWorkspace).toHaveBeenCalledWith(
+      "team-a",
+      "__draft_new__:agent-1",
+    );
+    expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
   });
 });

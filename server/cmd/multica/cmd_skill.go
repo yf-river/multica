@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -216,21 +217,12 @@ func skillContentBytesToString(data []byte, label string) (string, bool, error) 
 }
 
 func runSkillList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	skills, err := fetchMapList(cmd, "/api/skills", "list skills")
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var skills []map[string]any
-	if err := client.GetJSON(ctx, "/api/skills", &skills); err != nil {
-		return fmt.Errorf("list skills: %w", err)
-	}
-
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, skills)
 	}
 
@@ -249,12 +241,10 @@ func runSkillList(cmd *cobra.Command, _ []string) error {
 }
 
 func runSkillGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var skill map[string]any
@@ -262,8 +252,7 @@ func runSkillGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get skill: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, skill)
 	}
 
@@ -279,10 +268,11 @@ func runSkillGet(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillCreate(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
@@ -292,9 +282,7 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	body := map[string]any{
 		"name": name,
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "description", "description")
 	content, hasContent, err := resolveSkillContentFlag(cmd)
 	if err != nil {
 		return err
@@ -311,11 +299,8 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 		body["config"] = config
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/skills", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/skills", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create skill: %w", err)
 	}
 
@@ -323,20 +308,15 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runSkillUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("name") {
-		v, _ := cmd.Flags().GetString("name")
-		body["name"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "name", "name")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	content, hasContent, err := resolveSkillContentFlag(cmd)
 	if err != nil {
 		return err
@@ -356,9 +336,6 @@ func runSkillUpdate(cmd *cobra.Command, args []string) error {
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --name, --description, --content, or --config")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/skills/"+args[0], body, &result); err != nil {
@@ -381,12 +358,10 @@ func runSkillDelete(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	if err := client.DeleteJSON(ctx, "/api/skills/"+args[0]); err != nil {
@@ -421,7 +396,7 @@ func runSkillImport(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/skills/import", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/skills/import", body, uuid.NewString(), &result); err != nil {
 		if handledErr := handleSkillImportError(cmd, err); handledErr != nil {
 			return handledErr
 		}
@@ -467,8 +442,7 @@ func handleSkillImportError(cmd *cobra.Command, err error) error {
 }
 
 func printSkillImportResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -529,8 +503,7 @@ func runSkillSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search skills: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, results)
 	}
 
@@ -554,21 +527,12 @@ func runSkillSearch(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runSkillFilesList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	files, err := fetchMapList(cmd, "/api/skills/"+args[0]+"/files", "list skill files")
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var files []map[string]any
-	if err := client.GetJSON(ctx, "/api/skills/"+args[0]+"/files", &files); err != nil {
-		return fmt.Errorf("list skill files: %w", err)
-	}
-
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, files)
 	}
 
@@ -587,10 +551,11 @@ func runSkillFilesList(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	filePath, _ := cmd.Flags().GetString("path")
 	if filePath == "" {
@@ -609,16 +574,12 @@ func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
 		"content": content,
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/skills/"+args[0]+"/files", body, &result); err != nil {
 		return fmt.Errorf("upsert skill file: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -627,12 +588,10 @@ func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
 }
 
 func runSkillFilesDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	if err := client.DeleteJSON(ctx, "/api/skills/"+args[0]+"/files/"+args[1]); err != nil {

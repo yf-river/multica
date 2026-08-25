@@ -9,7 +9,6 @@ import {
   FolderOpen,
   GitBranch,
   Loader2,
-  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -22,9 +21,8 @@ import {
   useCreateProjectResource,
   useDeleteProjectResource,
   useSyncProjectResource,
-  useUpdateProjectResource,
 } from "@multica/core/projects";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
   GongfengRepoResourceRef,
@@ -82,7 +80,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     projectResourcesOptions(wsId, projectId),
   );
   const createResource = useCreateProjectResource(wsId, projectId);
-  const updateResource = useUpdateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
   const syncResource = useSyncProjectResource(wsId, projectId);
 
@@ -143,33 +140,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     }
   };
 
-  const handleRenameLocalDirectory = async (
-    resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
-    nextLabel: string,
-  ) => {
-    const trimmed = nextLabel.trim();
-    const previous = resource.resource_ref.label ?? resource.label ?? "";
-    if (trimmed === previous.trim()) return;
-    try {
-      await updateResource.mutateAsync({
-        resourceId: resource.id,
-        data: {
-          resource_ref: {
-            ...resource.resource_ref,
-            label: trimmed,
-          },
-        },
-      });
-      toast.success(t(($) => $.resources.toast_local_renamed));
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : t(($) => $.resources.toast_local_rename_failed);
-      toast.error(msg);
-    }
-  };
-
   return (
     <div>
       <button
@@ -195,14 +165,13 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                 <ResourceRow
                   key={resource.id}
                   resource={resource}
-                  canEdit={false}
+                  localDaemonId={localDaemonId}
                   onRemove={() => handleRemove(resource)}
                   onSync={() => handleSync(resource)}
                   pendingAction={
                     syncResource.isPending ||
                     deleteResource.isPending
                   }
-                  onRenameLocalDirectory={handleRenameLocalDirectory}
                 />
               ))}
             </div>
@@ -295,32 +264,26 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
 
 interface ResourceRowProps {
   resource: ProjectResource;
-  canEdit: boolean;
+  localDaemonId: string | null;
   onRemove: () => void;
   onSync: () => void;
   pendingAction: boolean;
-  onRenameLocalDirectory: (
-    resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
-    nextLabel: string,
-  ) => Promise<void>;
 }
 
 function ResourceRow({
   resource,
-  canEdit,
+  localDaemonId,
   onRemove,
   onSync,
   pendingAction,
-  onRenameLocalDirectory,
 }: ResourceRowProps) {
   const { t } = useT("projects");
   if (isLocalDirectoryRef(resource)) {
     return (
       <LocalDirectoryRow
         resource={resource}
-        canEdit={canEdit}
+        localDaemonId={localDaemonId}
         onRemove={onRemove}
-        onRename={onRenameLocalDirectory}
       />
     );
   }
@@ -382,7 +345,9 @@ function ResourceRow({
                   {item.label}: {statusLabel(item.value)}
                 </div>
               ))}
-              <div className="text-muted-foreground">Gongfeng</div>
+              <div className="text-muted-foreground">
+                {t(($) => $.resources.gongfeng_provider)}
+              </div>
             </div>
           </TooltipContent>
         </Tooltip>
@@ -408,7 +373,7 @@ function ResourceRow({
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="truncate flex-1">
-        {resource.label || t(($) => $.resources.legacy_resource_label)}
+        {resource.label || t(($) => $.resources.resource_label_fallback)}
       </span>
       <button
         type="button"
@@ -490,19 +455,14 @@ function statusLabel(value: string): string {
 
 interface LocalDirectoryRowProps {
   resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef };
-  canEdit: boolean;
+  localDaemonId: string | null;
   onRemove: () => void;
-  onRename: (
-    resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
-    nextLabel: string,
-  ) => Promise<void>;
 }
 
 function LocalDirectoryRow({
   resource,
-  canEdit,
+  localDaemonId,
   onRemove,
-  onRename,
 }: LocalDirectoryRowProps) {
   const { t } = useT("projects");
   const ref = resource.resource_ref;
@@ -514,22 +474,6 @@ function LocalDirectoryRow({
   // drop a stale registration from any device.
   const mismatch = true;
 
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(display);
-
-  const startEdit = () => {
-    setDraft(display);
-    setEditing(true);
-  };
-  const commit = async () => {
-    setEditing(false);
-    await onRename(resource, draft);
-  };
-  const cancel = () => {
-    setEditing(false);
-    setDraft(display);
-  };
-
   return (
     <div
       className={`flex items-center gap-2 text-xs group ${
@@ -537,61 +481,23 @@ function LocalDirectoryRow({
       }`}
     >
       <FolderOpen className="size-3.5 text-muted-foreground shrink-0" />
-      {editing ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => void commit()}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void commit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              cancel();
-            }
-          }}
-          className="flex-1 min-w-0 rounded-sm border bg-transparent px-1 py-0.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          aria-label={t(($) => $.resources.local_rename_label)}
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="truncate flex-1">{display}</span>}
         />
-      ) : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="truncate flex-1">{display}</span>
-            }
-          />
-          <TooltipContent side="top">
-            <div className="space-y-0.5 text-[11px]">
-              <div className="font-mono">{ref.local_path}</div>
-              {mismatch && (
-                <div className="text-muted-foreground">
-                  {t(($) => $.resources.local_no_daemon_tooltip)}
-                </div>
-              )}
+        <TooltipContent side="top">
+          <div className="space-y-0.5 text-[11px]">
+            <div className="font-mono">{ref.local_path}</div>
+            {mismatch && (
               <div className="text-muted-foreground">
-                {t(($) => $.resources.local_compat_tooltip)}
+                {isLocalUnknown
+                  ? t(($) => $.resources.local_no_daemon_tooltip)
+                  : t(($) => $.resources.local_other_machine_tooltip)}
               </div>
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      )}
-      {!editing && (
-        <span className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">
-          {t(($) => $.resources.local_compat_badge)}
-        </span>
-      )}
-      {canEdit && !mismatch && !editing && (
-        <button
-          type="button"
-          onClick={startEdit}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
-          title={t(($) => $.resources.local_rename_tooltip)}
-        >
-          <Pencil className="size-3 text-muted-foreground" />
-        </button>
-      )}
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
       <button
         type="button"
         onClick={onRemove}

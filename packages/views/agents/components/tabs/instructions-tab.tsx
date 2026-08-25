@@ -16,13 +16,13 @@ export function InstructionsTab({
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("agents");
-  const [value, setValue] = useState(agent.instructions ?? "");
+  const [value, setValue] = useState(agent.instructions);
   const [saving, setSaving] = useState(false);
-  const isDirty = value !== (agent.instructions ?? "");
+  const isDirty = value !== agent.instructions;
 
   // Sync when switching between agents.
   useEffect(() => {
-    setValue(agent.instructions ?? "");
+    setValue(agent.instructions);
   }, [agent.id, agent.instructions]);
 
   // Report dirty state up so the parent can guard tab switches.

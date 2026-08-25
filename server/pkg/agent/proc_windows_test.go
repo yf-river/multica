@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// TestHideAgentWindowSetsCreateNewConsole guards against a regression where
-// hideAgentWindow reverts to CREATE_NO_WINDOW. CREATE_NO_WINDOW strips the
-// console entirely, which forces Windows to allocate a new visible console
-// per grandchild that doesn't itself pass CREATE_NO_WINDOW — the popup
-// storm reported in #1521.
 func TestHideAgentWindowSetsCreateNewConsole(t *testing.T) {
 	cmd := exec.Command("cmd.exe", "/c", "echo", "hi")
 	hideAgentWindow(cmd)
@@ -29,21 +24,11 @@ func TestHideAgentWindowSetsCreateNewConsole(t *testing.T) {
 	}
 	const createNoWindow = 0x08000000
 	if cmd.SysProcAttr.CreationFlags&createNoWindow != 0 {
-		t.Errorf("CreationFlags must NOT include CREATE_NO_WINDOW (0x%x), got 0x%x — "+
-			"see #1521 for why this causes grandchild popups",
+		t.Errorf("CreationFlags must not include CREATE_NO_WINDOW (0x%x), got 0x%x",
 			createNoWindow, cmd.SysProcAttr.CreationFlags)
 	}
 }
 
-// TestHideAgentWindowPreservesExistingSysProcAttr ensures hideAgentWindow
-// does not overwrite fields set by callers — a regression caught in PR #1474
-// where the whole SysProcAttr struct was replaced. We verify both a
-// non-CreationFlags field and a pre-existing CreationFlags bit survive.
-//
-// CREATE_UNICODE_ENVIRONMENT (0x00000400) is chosen because it is documented
-// as compatible with CREATE_NEW_CONSOLE (unlike CREATE_NEW_PROCESS_GROUP,
-// which Windows silently ignores when combined with CREATE_NEW_CONSOLE), so
-// a surviving bit here is semantically meaningful, not just bitwise intact.
 func TestHideAgentWindowPreservesExistingSysProcAttr(t *testing.T) {
 	const createUnicodeEnvironment = 0x00000400
 	cmd := exec.Command("cmd.exe", "/c", "echo", "hi")

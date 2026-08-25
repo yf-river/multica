@@ -5,9 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
+import { openCreateIssue } from "@multica/core/issues";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -16,23 +17,12 @@ import { useT } from "../../i18n";
 
 const BACKLOG_HINT_LS_KEY = "multica:backlog-agent-hint-dismissed";
 
-export interface UseIssueActionsResult {
-  isPinned: boolean;
-  updateField: (updates: Partial<UpdateIssueRequest>) => void;
-  togglePin: () => void;
-  copyLink: () => Promise<void>;
-  openCreateSubIssue: () => void;
-  openSetParent: () => void;
-  openAddChild: () => void;
-  openDeleteConfirm: (opts?: { onDeletedNavigateTo?: string }) => void;
-}
-
 /**
  * Accepts a nullable issue so callers can invoke the hook before they've
  * early-returned on a missing issue. Returned handlers are safe no-ops when
  * `issue` is null.
  */
-export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
+export function useIssueActions(issue: Issue | null) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -111,12 +101,14 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const openCreateSubIssue = useCallback(() => {
     if (!issueId) return;
-    openModal("create-issue", {
+    openCreateIssue({
       parent_issue_id: issueId,
-      parent_issue_identifier: issueIdentifier,
+      ...(issueIdentifier
+        ? { parent_issue_identifier: issueIdentifier }
+        : {}),
       ...(issueProjectId ? { project_id: issueProjectId } : {}),
     });
-  }, [openModal, issueId, issueIdentifier, issueProjectId]);
+  }, [issueId, issueIdentifier, issueProjectId]);
 
   const openSetParent = useCallback(() => {
     if (!issueId) return;

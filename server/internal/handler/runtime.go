@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -19,18 +22,18 @@ import (
 )
 
 type AgentRuntimeResponse struct {
-	ID           string  `json:"id"`
-	WorkspaceID  string  `json:"workspace_id"`
-	DaemonID     *string `json:"daemon_id"`
-	Name         string  `json:"name"`
-	RuntimeMode  string  `json:"runtime_mode"`
-	Provider     string  `json:"provider"`
-	LaunchHeader string  `json:"launch_header"`
-	Status       string  `json:"status"`
-	DeviceInfo   string  `json:"device_info"`
-	Metadata     any     `json:"metadata"`
-	OwnerID      *string `json:"owner_id"`
-	Scope        string  `json:"scope"`
+	ID           string         `json:"id"`
+	WorkspaceID  string         `json:"workspace_id"`
+	DaemonID     *string        `json:"daemon_id"`
+	Name         string         `json:"name"`
+	RuntimeMode  string         `json:"runtime_mode"`
+	Provider     string         `json:"provider"`
+	LaunchHeader string         `json:"launch_header"`
+	Status       string         `json:"status"`
+	DeviceInfo   string         `json:"device_info"`
+	Metadata     map[string]any `json:"metadata"`
+	OwnerID      *string        `json:"owner_id"`
+	Scope        string         `json:"scope"`
 	// ProfileID is set when this runtime is an instance of a custom
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
@@ -39,13 +42,13 @@ type AgentRuntimeResponse struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
-func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
-	var metadata any
-	if rt.Metadata != nil {
-		json.Unmarshal(rt.Metadata, &metadata)
+func runtimeToResponse(rt db.AgentRuntime) (AgentRuntimeResponse, error) {
+	var metadata map[string]any
+	if err := json.Unmarshal(rt.Metadata, &metadata); err != nil {
+		return AgentRuntimeResponse{}, fmt.Errorf("decode runtime metadata: %w", err)
 	}
 	if metadata == nil {
-		metadata = map[string]any{}
+		return AgentRuntimeResponse{}, fmt.Errorf("decode runtime metadata: expected JSON object")
 	}
 
 	return AgentRuntimeResponse{
@@ -65,26 +68,35 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
 		CreatedAt:    timestampToString(rt.CreatedAt),
 		UpdatedAt:    timestampToString(rt.UpdatedAt),
-	}
+	}, nil
+}
+
+func writeRuntimeResponseDecodeError(w http.ResponseWriter, r *http.Request, runtimeID string, err error) {
+	slog.Error("decode runtime response failed", append(logger.RequestAttrs(r), "runtime_id", runtimeID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode runtime metadata")
 }
 
 // ---------------------------------------------------------------------------
 // Runtime Usage
 // ---------------------------------------------------------------------------
 
-type RuntimeUsageResponse struct {
-	RuntimeID        string `json:"runtime_id"`
-	Date             string `json:"date"`
+type runtimeUsageResponse struct {
+	RuntimeID string `json:"runtime_id"`
+	Date      string `json:"date"`
+	usageResponse
+}
+
+type usageResponse struct {
 	Provider         string `json:"provider"`
 	Model            string `json:"model"`
 	InputTokens      int64  `json:"input_tokens"`
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	UsageCostResponse
+	usageCostFields
 }
 
-type UsageCostResponse struct {
+type usageCostFields struct {
 	CostUSD           float64 `json:"cost_usd"`
 	InputCostUSD      float64 `json:"input_cost_usd"`
 	OutputCostUSD     float64 `json:"output_cost_usd"`
@@ -94,12 +106,20 @@ type UsageCostResponse struct {
 	Priced            bool    `json:"priced"`
 }
 
-func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) UsageCostResponse {
+func newUsageResponse(provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) usageResponse {
+	response := usageResponse{
+		Provider:         provider,
+		Model:            model,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+	}
 	breakdown, ok := metrics.EstimateUsageCostBreakdownUSD(provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
 	if !ok {
-		return UsageCostResponse{Priced: false}
+		return response
 	}
-	return UsageCostResponse{
+	response.usageCostFields = usageCostFields{
 		CostUSD:           breakdown.TotalCostUSD,
 		InputCostUSD:      breakdown.InputCostUSD,
 		OutputCostUSD:     breakdown.OutputCostUSD,
@@ -108,6 +128,15 @@ func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheR
 		CacheSavingsUSD:   breakdown.CacheSavingsUSD,
 		Priced:            true,
 	}
+	return response
+}
+
+func (h *Handler) requireRuntimeUsageScope(w http.ResponseWriter, r *http.Request) (pgtype.UUID, string, bool) {
+	runtime, _, ok := h.requireRuntimeAccess(w, r, chi.URLParam(r, "runtimeId"))
+	if !ok {
+		return pgtype.UUID{}, "", false
+	}
+	return runtime.ID, h.resolveViewingTZ(r), true
 }
 
 // GetRuntimeUsage returns daily token usage for a runtime, aggregated from
@@ -115,27 +144,13 @@ func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheR
 // Daemon-executed tasks only (i.e. excludes users' local CLI usage of the
 // same tool).
 func (h *Handler) GetRuntimeUsage(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
-		return
-	}
-
-	// All runtime reports render in the viewer's tz.
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 90, viewTZ)
 
-	resp, err := h.listRuntimeUsage(r.Context(), rt.ID, viewTZ, since)
+	resp, err := h.listRuntimeUsage(r.Context(), runtimeID, viewTZ, since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list usage")
 		return
@@ -146,7 +161,7 @@ func (h *Handler) GetRuntimeUsage(w http.ResponseWriter, r *http.Request) {
 
 // listRuntimeUsage reads the daily-bucketed trend from task_usage_hourly,
 // applying the viewer's tz to project bucket_hour into local days.
-func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, tz string, since pgtype.Timestamptz) ([]RuntimeUsageResponse, error) {
+func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, tz string, since pgtype.Timestamptz) ([]runtimeUsageResponse, error) {
 	resolvedRuntimeID := uuidToString(runtimeID)
 	rows, err := h.Queries.ListRuntimeUsage(ctx, db.ListRuntimeUsageParams{
 		RuntimeID: runtimeID,
@@ -156,18 +171,12 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 	if err != nil {
 		return nil, err
 	}
-	resp := make([]RuntimeUsageResponse, len(rows))
+	resp := make([]runtimeUsageResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageResponse{
-			RuntimeID:        resolvedRuntimeID,
-			Date:             row.Date.Time.Format("2006-01-02"),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			UsageCostResponse: usageCostResponse(
+		resp[i] = runtimeUsageResponse{
+			RuntimeID: resolvedRuntimeID,
+			Date:      row.Date.Time.Format("2006-01-02"),
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -182,25 +191,13 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 
 // GetRuntimeTaskActivity returns hourly task activity distribution for a runtime.
 func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
-		return
-	}
-
-	viewTZ := h.resolveViewingTZ(r)
 	rows, err := h.Queries.GetRuntimeTaskHourlyActivity(r.Context(), db.GetRuntimeTaskHourlyActivityParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Tz:        viewTZ,
 	})
 	if err != nil {
@@ -221,69 +218,44 @@ func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RuntimeUsageByAgentResponse is one (agent, provider, model) row of "Cost by
-// agent". The server computes cost per row; the client groups by agent_id and
-// sums cost across models.
-type RuntimeUsageByAgentResponse struct {
-	AgentID          string `json:"agent_id"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	TaskCount        int32  `json:"task_count"`
-	UsageCostResponse
+// usageByAgentResponse is one (agent, provider, model) usage row. The server
+// computes cost per row; clients group by agent_id and sum across models.
+type usageByAgentResponse struct {
+	AgentID   string `json:"agent_id"`
+	TaskCount int32  `json:"task_count"`
+	usageResponse
 }
 
-// RuntimeUsageByTaskResponse is one (task, provider, model) row of "Cost by
+// runtimeUsageByTaskResponse is one (task, provider, model) row of "Cost by
 // task". task_usage_hourly intentionally does not carry task_id, so this
 // endpoint reads raw task_usage rows and computes cost before the client folds
 // rows by task_id.
-type RuntimeUsageByTaskResponse struct {
-	TaskID           string  `json:"task_id"`
-	IssueID          *string `json:"issue_id"`
-	IssueNumber      int32   `json:"issue_number"`
-	IssueTitle       string  `json:"issue_title"`
-	AgentID          string  `json:"agent_id"`
-	Status           string  `json:"status"`
-	StartedAt        *string `json:"started_at"`
-	CompletedAt      *string `json:"completed_at"`
-	Provider         string  `json:"provider"`
-	Model            string  `json:"model"`
-	InputTokens      int64   `json:"input_tokens"`
-	OutputTokens     int64   `json:"output_tokens"`
-	CacheReadTokens  int64   `json:"cache_read_tokens"`
-	CacheWriteTokens int64   `json:"cache_write_tokens"`
-	UsageCostResponse
+type runtimeUsageByTaskResponse struct {
+	TaskID      string  `json:"task_id"`
+	IssueID     *string `json:"issue_id"`
+	IssueNumber int32   `json:"issue_number"`
+	IssueTitle  string  `json:"issue_title"`
+	AgentID     string  `json:"agent_id"`
+	Status      string  `json:"status"`
+	StartedAt   *string `json:"started_at"`
+	CompletedAt *string `json:"completed_at"`
+	usageResponse
 }
 
 // GetRuntimeUsageByAgent returns per-agent token aggregates for a runtime
 // since the cutoff window. Drives the runtime-detail "Cost by agent" tab.
 func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return
 	}
 
 	// No date bucketing — tz only sets the cutoff boundary so "last 30
 	// days" means 30 of the viewer's days.
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	rows, err := h.Queries.ListRuntimeUsageByAgent(r.Context(), db.ListRuntimeUsageByAgentParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Since:     since,
 	})
 	if err != nil {
@@ -291,18 +263,12 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := make([]RuntimeUsageByAgentResponse, len(rows))
+	resp := make([]usageByAgentResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageByAgentResponse{
-			AgentID:          uuidToString(row.AgentID),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			TaskCount:        row.TaskCount,
-			UsageCostResponse: usageCostResponse(
+		resp[i] = usageByAgentResponse{
+			AgentID:   uuidToString(row.AgentID),
+			TaskCount: row.TaskCount,
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -319,27 +285,15 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 // GetRuntimeUsageByTask returns per-task token aggregates for a runtime since
 // the cutoff window. Drives the runtime-detail "Cost by task" tab.
 func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
-		return
-	}
-
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	rows, err := h.Queries.ListRuntimeUsageByTask(r.Context(), db.ListRuntimeUsageByTaskParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Since:     since,
 	})
 	if err != nil {
@@ -347,24 +301,18 @@ func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp := make([]RuntimeUsageByTaskResponse, len(rows))
+	resp := make([]runtimeUsageByTaskResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageByTaskResponse{
-			TaskID:           uuidToString(row.TaskID),
-			IssueID:          uuidToPtr(row.IssueID),
-			IssueNumber:      row.IssueNumber,
-			IssueTitle:       row.IssueTitle,
-			AgentID:          uuidToString(row.AgentID),
-			Status:           row.Status,
-			StartedAt:        timestampToPtr(row.StartedAt),
-			CompletedAt:      timestampToPtr(row.CompletedAt),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			UsageCostResponse: usageCostResponse(
+		resp[i] = runtimeUsageByTaskResponse{
+			TaskID:      uuidToString(row.TaskID),
+			IssueID:     uuidToPtr(row.IssueID),
+			IssueNumber: row.IssueNumber,
+			IssueTitle:  row.IssueTitle,
+			AgentID:     uuidToString(row.AgentID),
+			Status:      row.Status,
+			StartedAt:   timestampToPtr(row.StartedAt),
+			CompletedAt: timestampToPtr(row.CompletedAt),
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -378,19 +326,13 @@ func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RuntimeUsageByHourResponse is one (hour, provider, model) row. Hours with
+// runtimeUsageByHourResponse is one (hour, provider, model) row. Hours with
 // zero activity are omitted by the SQL; clients fill the gap to render a
 // continuous 0..23 axis.
-type RuntimeUsageByHourResponse struct {
-	Hour             int    `json:"hour"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	TaskCount        int32  `json:"task_count"`
-	UsageCostResponse
+type runtimeUsageByHourResponse struct {
+	Hour      int   `json:"hour"`
+	TaskCount int32 `json:"task_count"`
+	usageResponse
 }
 
 // GetRuntimeUsageByHour returns hourly (0..23) token aggregates for a
@@ -400,27 +342,15 @@ type RuntimeUsageByHourResponse struct {
 // report — the same timezone resolved by resolveViewingTZ from the request's
 // `?tz=` param or the authenticated user's stored user.timezone.
 func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
-		return
-	}
-
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	rows, err := h.Queries.GetRuntimeUsageByHour(r.Context(), db.GetRuntimeUsageByHourParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Since:     since,
 		Tz:        viewTZ,
 	})
@@ -429,18 +359,12 @@ func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp := make([]RuntimeUsageByHourResponse, len(rows))
+	resp := make([]runtimeUsageByHourResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageByHourResponse{
-			Hour:             int(row.Hour),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			TaskCount:        row.TaskCount,
-			UsageCostResponse: usageCostResponse(
+		resp[i] = runtimeUsageByHourResponse{
+			Hour:      int(row.Hour),
+			TaskCount: row.TaskCount,
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -533,31 +457,19 @@ func (h *Handler) resolveViewingTZ(r *http.Request) string {
 	return "UTC"
 }
 
-// UpdateAgentRuntimeRequest is the JSON body accepted by PATCH /api/runtimes/:id.
+// updateAgentRuntimeRequest is the JSON body accepted by PATCH /api/runtimes/:id.
 // Only fields users may legitimately edit are listed; other runtime metadata
 // (provider, daemon_id, status…) flows in from the daemon and is read-only here.
-type UpdateAgentRuntimeRequest struct {
+type updateAgentRuntimeRequest struct {
 	Scope *string `json:"scope,omitempty"`
 }
 
-// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently scope
-// is editable; the request shape is open-ended so future fields (display
-// name, description) can be added without a route change.
-// Workspace-membership-checked; write access is gated by canEditRuntime.
+// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Scope is the only
+// editable field; daemon-owned runtime metadata is rejected at this boundary.
+// Workspace membership and canEditRuntime gate the write.
 func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
-	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	member, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found")
+	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -566,8 +478,10 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req UpdateAgentRuntimeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req updateAgentRuntimeRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -588,7 +502,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 
 	if needScope {
 		if newScope == scopePersonal {
-			count, err := h.Queries.CountWorkspaceAgentsByRuntime(r.Context(), runtimeUUID)
+			count, err := h.Queries.CountWorkspaceAgentsByRuntime(r.Context(), rt.ID)
 			if err != nil {
 				slog.Error("CountWorkspaceAgentsByRuntime failed", "error", err, "runtime_id", runtimeID)
 				writeError(w, http.StatusInternalServerError, "failed to inspect runtime dependencies")
@@ -600,7 +514,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		updated, err := h.Queries.UpdateAgentRuntimeScope(r.Context(), db.UpdateAgentRuntimeScopeParams{
-			ID:    runtimeUUID,
+			ID:    rt.ID,
 			Scope: newScope,
 		})
 		if err != nil {
@@ -611,7 +525,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		rt = updated
 		if newScope == scopeWorkspace && rt.OwnerID.Valid {
 			if _, err := h.Queries.OpenPersonalAgentsByRuntimeOwner(r.Context(), db.OpenPersonalAgentsByRuntimeOwnerParams{
-				RuntimeID: runtimeUUID,
+				RuntimeID: rt.ID,
 				OwnerID:   rt.OwnerID,
 			}); err != nil {
 				slog.Error("OpenPersonalAgentsByRuntimeOwner failed", "error", err, "runtime_id", runtimeID)
@@ -627,7 +541,12 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, runtimeToResponse(rt))
+	resp, err := runtimeToResponse(rt)
+	if err != nil {
+		writeRuntimeResponseDecodeError(w, r, runtimeID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
@@ -637,10 +556,10 @@ func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
 	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
 }
 
-// canUseRuntimeForAgent reports whether a workspace member can see/use the
-// runtime at all. Agent-specific scope compatibility is checked separately by
+// canAccessRuntime reports whether a workspace member can see or use the
+// runtime. Agent-specific scope compatibility is checked separately by
 // validateAgentRuntimeScope.
-func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
+func canAccessRuntime(member db.Member, rt db.AgentRuntime) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}
@@ -652,6 +571,10 @@ func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
 
 func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := requireWorkspaceMemberContext(w, r)
+	if !ok {
+		return
+	}
 
 	var runtimes []db.AgentRuntime
 	var err error
@@ -676,10 +599,21 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
 		return
 	}
+	visible := make([]db.AgentRuntime, 0, len(runtimes))
+	for _, runtime := range runtimes {
+		if canAccessRuntime(member, runtime) {
+			visible = append(visible, runtime)
+		}
+	}
+	runtimes = visible
 
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
-		resp[i] = runtimeToResponse(rt)
+		resp[i], err = runtimeToResponse(rt)
+		if err != nil {
+			writeRuntimeResponseDecodeError(w, r, uuidToString(rt.ID), err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -695,22 +629,11 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 // below) and runs the multi-write teardown inside a single transaction.
 func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
 	wsID := uuidToString(rt.WorkspaceID)
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "runtime not found")
-	if !ok {
-		return
-	}
 
 	// Permission: owner/admin can delete any runtime; members can only delete their own.
 	if !canEditRuntime(member, rt) {
@@ -729,7 +652,12 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(activeAgents) > 0 {
-		writeJSON(w, http.StatusConflict, runtimeHasActiveAgentsResponse(activeAgents))
+		body, err := runtimeHasActiveAgentsResponse(activeAgents)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, "", err)
+			return
+		}
+		writeJSON(w, http.StatusConflict, body)
 		return
 	}
 
@@ -750,41 +678,11 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	// Pause autopilots pointing at the archived agents BEFORE we delete
-	// them. Migration 096 dropped the autopilot.assignee_id agent FK, so a
-	// hard-delete here would otherwise leave dangling rows that subsequent
-	// scheduler ticks would skip with "assignee agent no longer exists" —
-	// quiet, but burning a run record every tick until an operator notices.
-	// Pausing makes the breakage visible in the autopilot list so the owner
-	// can re-point or delete the row instead. This runs inside the teardown
-	// transaction so a pause that lands but is followed by a failed delete
-	// rolls back with everything else, matching ArchiveAgentsAndDeleteRuntime.
-	archivedAgentIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
-		return
-	}
-	if len(archivedAgentIDs) > 0 {
-		if err := qtx.PauseAutopilotsByAgentAssignees(r.Context(), archivedAgentIDs); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to pause autopilots")
-			return
-		}
-	}
-
-	// Remove archived squads whose leader is an archived agent on this runtime
-	// so the RESTRICT FK on squad.leader_id won't block the subsequent agent
-	// deletion. Active squads are handled by the 409 guard above instead.
-	if err := qtx.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rt.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
-		return
-	}
-
-	// Remove archived agents so the FK constraint (ON DELETE RESTRICT) won't block deletion.
-	if err := qtx.DeleteArchivedAgentsByRuntime(r.Context(), rt.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clean up archived agents")
+	if err := removeArchivedRuntimeDependents(r.Context(), qtx, rt.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -807,6 +705,28 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// removeArchivedRuntimeDependents releases every reference that would prevent
+// deleting a runtime. Callers run it inside the deletion transaction after
+// rejecting active agents and active squad leaders.
+func removeArchivedRuntimeDependents(ctx context.Context, queries *db.Queries, runtimeID pgtype.UUID) error {
+	archivedAgentIDs, err := queries.ListArchivedAgentIDsByRuntime(ctx, runtimeID)
+	if err != nil {
+		return errors.New("failed to enumerate archived agents")
+	}
+	if len(archivedAgentIDs) > 0 {
+		if err := queries.PauseAutopilotsByAgentAssignees(ctx, archivedAgentIDs); err != nil {
+			return errors.New("failed to pause autopilots")
+		}
+	}
+	if err := queries.DeleteSquadsByArchivedAgentsOnRuntime(ctx, runtimeID); err != nil {
+		return errors.New("failed to clean up squads referencing archived agents")
+	}
+	if err := queries.DeleteArchivedAgentsByRuntime(ctx, runtimeID); err != nil {
+		return errors.New("failed to clean up archived agents")
+	}
+	return nil
+}
+
 // runtimeHasActiveAgentsResponse builds the structured 409 body shared by
 // DeleteAgentRuntime (light-mode block) and ArchiveAgentsAndDeleteRuntime
 // (cascade-plan-changed). The shape is:
@@ -817,18 +737,22 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 //	  "active_agents": [AgentResponse, ...]
 //	}
 //
-// Front-end branches on `code`. The caller picks which code to send; this
-// helper just normalises the agent serialisation and the error string.
-func runtimeHasActiveAgentsResponse(agents []db.Agent) map[string]any {
+// Front-end branches on `code`; the cascade endpoint replaces the default
+// code and message when the confirmed deletion plan has changed.
+func runtimeHasActiveAgentsResponse(agents []db.Agent) (map[string]any, error) {
 	resp := make([]AgentResponse, len(agents))
 	for i, a := range agents {
-		resp[i] = agentToResponse(a)
+		var err error
+		resp[i], err = agentToResponse(a)
+		if err != nil {
+			return nil, fmt.Errorf("decode active agent %s: %w", uuidToString(a.ID), err)
+		}
 	}
 	return map[string]any{
 		"error":         "cannot delete runtime: it has active agents bound to it. Archive or reassign the agents first.",
 		"code":          "runtime_has_active_agents",
 		"active_agents": resp,
-	}
+	}, nil
 }
 
 // archiveAgentsAndDeleteRuntimeRequest is the wire shape for the cascade
@@ -864,14 +788,9 @@ type archiveAgentsAndDeleteRuntimeRequest struct {
 // a stale plan.
 func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
-	if !ok {
-		return
-	}
 
 	var req archiveAgentsAndDeleteRuntimeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	expected, ok := parseExpectedActiveAgentIDs(req.ExpectedActiveAgentIDs)
@@ -880,17 +799,11 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	wsID := uuidToString(rt.WorkspaceID)
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "runtime not found")
+	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
+	wsID := uuidToString(rt.WorkspaceID)
 	if !canEditRuntime(member, rt) {
 		writeError(w, http.StatusForbidden, "you can only delete your own runtimes")
 		return
@@ -902,7 +815,7 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	// Lock the runtime row first. PostgreSQL's FK validation on
@@ -934,7 +847,11 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		// shared response helper but overrides the code to a planning
 		// signal so the dialog can distinguish "you opened from a stale
 		// page" from "the plan you confirmed just changed under you".
-		body := runtimeHasActiveAgentsResponse(currentActive)
+		body, err := runtimeHasActiveAgentsResponse(currentActive)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, "", err)
+			return
+		}
 		body["code"] = "runtime_delete_plan_changed"
 		body["error"] = "the active agent set changed; please review and confirm again."
 		writeJSON(w, http.StatusConflict, body)
@@ -964,6 +881,14 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to archive agents")
 		return
 	}
+	archivedResponses := make([]AgentResponse, len(archivedAgents))
+	for i, archived := range archivedAgents {
+		archivedResponses[i], err = agentToResponse(archived)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, uuidToString(archived.ID), err)
+			return
+		}
+	}
 
 	// 2. Cancel queued/dispatched/running tasks. Match by runtime_id AND
 	//    by archived agent ids: agent.runtime_id can be reassigned without
@@ -971,8 +896,8 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	//    archived may still own tasks pinned to a different runtime — and
 	//    ClaimAgentTask does not gate on agent.archived_at.
 	archivedIDs := make([]pgtype.UUID, len(archivedAgents))
-	for i, a := range archivedAgents {
-		archivedIDs[i] = a.ID
+	for i := range archivedAgents {
+		archivedIDs[i] = archivedAgents[i].ID
 	}
 	cancelledTasks, err := qtx.CancelAgentTasksByRuntimeOrAgent(r.Context(), db.CancelAgentTasksByRuntimeOrAgentParams{
 		RuntimeIds: []pgtype.UUID{rt.ID},
@@ -982,13 +907,18 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to cancel tasks")
 		return
 	}
+	cancelledEvents, err := h.TaskService.EnqueueCancelledTaskEvents(r.Context(), qtx, cancelledTasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record task cancellations")
+		return
+	}
 
 	// 3. Pause autopilots whose assignee is one of the archived agents.
 	//    Snapshots the full archived set on this runtime — including any
 	//    that were already archived before this call — because the
 	//    DeleteArchivedAgentsByRuntime below will hard-delete the lot, and
-	//    a paused autopilot is much louder in the UI than a silently
-	//    dangling assignee_id.
+	//    a paused autopilot is much louder in the UI than a silently-
+	//    dangling assignee_id (the current schema intentionally has no FK).
 	allArchivedIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
@@ -1022,12 +952,12 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	// Post-commit fan-out — same ordering as publishRevocation so subscribers
 	// observe task:cancelled before agent:archived before the runtime list
 	// refresh, matching the order other revocation paths use.
-	if h.TaskService != nil && len(cancelledTasks) > 0 {
-		h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledTasks)
+	if len(cancelledTasks) > 0 {
+		h.TaskService.PublishCancelledTasks(r.Context(), cancelledTasks, cancelledEvents)
 	}
-	for _, a := range archivedAgents {
+	for i := range archivedAgents {
 		h.publish(protocol.EventAgentArchived, wsID, "member", userID, map[string]any{
-			"agent": agentToResponse(a),
+			"agent": archivedResponses[i],
 		})
 	}
 	h.publish(protocol.EventDaemonRegister, wsID, "member", userID, map[string]any{

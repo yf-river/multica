@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// createTestAttachment inserts a test attachment row directly into the DB,
-// linked to the given issue with no comment_id. Returns the attachment UUID.
 func createTestAttachment(t *testing.T, issueID string) string {
 	t.Helper()
 	var id string
@@ -20,12 +18,11 @@ func createTestAttachment(t *testing.T, issueID string) string {
 		t.Fatalf("createTestAttachment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1::uuid`, id)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1::uuid`, id)
 	})
 	return id
 }
 
-// listCommentAttachmentIDs returns the attachment IDs linked to a comment.
 func listCommentAttachmentIDs(t *testing.T, commentID string) []string {
 	t.Helper()
 	rows, err := testPool.Query(context.Background(),
@@ -55,7 +52,7 @@ func createCommentWithAttachments(t *testing.T, issueID, content string, attachm
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("CreateComment: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var comment map[string]any
@@ -67,7 +64,7 @@ func updateComment(t *testing.T, commentID string, payload map[string]any) {
 	t.Helper()
 
 	resp := authRequest(t, "PUT", "/api/comments/"+commentID, payload)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("UpdateComment: expected 200, got %d: %s", resp.StatusCode, body)
@@ -78,7 +75,7 @@ func TestUpdateCommentAttachments(t *testing.T) {
 	issueID := createIssue(t, "Attachment edit integration test")
 	t.Cleanup(func() {
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("edit to remove some attachments keeps the rest", func(t *testing.T) {
@@ -86,16 +83,13 @@ func TestUpdateCommentAttachments(t *testing.T) {
 		att2 := createTestAttachment(t, issueID)
 		att3 := createTestAttachment(t, issueID)
 
-		// Create comment with all three attachments.
 		commentID := createCommentWithAttachments(t, issueID, "comment with three attachments", []string{att1, att2, att3})
 
-		// Verify all three are linked.
 		ids := listCommentAttachmentIDs(t, commentID)
 		if len(ids) != 3 {
 			t.Fatalf("expected 3 attachments, got %d", len(ids))
 		}
 
-		// Edit: keep only att1 and att3, remove att2.
 		updateComment(t, commentID, map[string]any{
 			"content":        "updated — removed att2",
 			"attachment_ids": []string{att1, att3},
@@ -120,7 +114,6 @@ func TestUpdateCommentAttachments(t *testing.T) {
 			t.Fatalf("expected 1 attachment, got %d", len(ids))
 		}
 
-		// Edit with empty attachment_ids to remove all.
 		updateComment(t, commentID, map[string]any{
 			"content":        "no more attachments",
 			"attachment_ids": []string{},
@@ -131,7 +124,7 @@ func TestUpdateCommentAttachments(t *testing.T) {
 		}
 	})
 
-	t.Run("old client omitting attachment_ids preserves existing attachments", func(t *testing.T) {
+	t.Run("missing attachment_ids is rejected without changing attachments", func(t *testing.T) {
 		att1 := createTestAttachment(t, issueID)
 
 		commentID := createCommentWithAttachments(t, issueID, "comment with attachment", []string{att1})
@@ -140,14 +133,18 @@ func TestUpdateCommentAttachments(t *testing.T) {
 			t.Fatalf("expected 1 attachment, got %d", len(ids))
 		}
 
-		// Old client: only sends content, no attachment_ids field at all.
-		updateComment(t, commentID, map[string]any{
+		resp := authRequest(t, "PUT", "/api/comments/"+commentID, map[string]any{
 			"content": "edited content without attachment_ids",
 		})
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != 400 {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("UpdateComment: expected 400, got %d: %s", resp.StatusCode, body)
+		}
 
 		ids := listCommentAttachmentIDs(t, commentID)
 		if len(ids) != 1 {
-			t.Fatalf("expected 1 attachment preserved (old client), got %d", len(ids))
+			t.Fatalf("expected 1 unchanged attachment, got %d", len(ids))
 		}
 		if ids[0] != att1 {
 			t.Errorf("expected att1 %q preserved, got %q", att1, ids[0])

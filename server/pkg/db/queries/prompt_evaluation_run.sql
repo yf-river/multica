@@ -1,61 +1,21 @@
--- name: CreatePromptEvaluationRun :one
+-- name: CreatePromptEvaluationRunWithID :one
 INSERT INTO prompt_evaluation_run (
-    workspace_id,
-    asset_id,
-    prompt_id,
-    run_kind,
-    status,
-    trigger_source,
-    agent_id,
-    runtime_id,
-    task_id,
-    chat_session_id,
-    model,
-    runtime_provider,
-    total_cases,
-    passed_cases,
-    failed_cases,
-    pass_rate,
-    total_duration_ms,
-    average_duration_ms,
-    input_tokens,
-    output_tokens,
-    estimated_cost,
-    failure_reason,
-    conclusion,
-    metrics,
-    evidence,
-    started_at,
-    completed_at,
+    id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+    agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+    total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+    average_duration_ms, input_tokens, output_tokens, estimated_cost,
+    failure_reason, conclusion, metrics, evidence, started_at, completed_at,
     created_by
 ) VALUES (
-    $1,
-    $2,
-    sqlc.narg('prompt_id'),
-    $3,
-    $4,
-    COALESCE(sqlc.narg('trigger_source'), '手动'),
-    sqlc.narg('agent_id'),
-    sqlc.narg('runtime_id'),
-    sqlc.narg('task_id'),
-    sqlc.narg('chat_session_id'),
-    COALESCE(sqlc.narg('model'), ''),
-    COALESCE(sqlc.narg('runtime_provider'), ''),
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    COALESCE(sqlc.narg('failure_reason'), ''),
-    COALESCE(sqlc.narg('conclusion'), ''),
+    $1, $2, $3, sqlc.narg('prompt_id'), $4, $5,
+    COALESCE(sqlc.narg('trigger_source'), '手动'), sqlc.narg('agent_id'),
+    sqlc.narg('runtime_id'), sqlc.narg('task_id'), sqlc.narg('chat_session_id'),
+    COALESCE(sqlc.narg('model'), ''), COALESCE(sqlc.narg('runtime_provider'), ''),
+    $6, $7, $8, $9, $10, $11, $12, $13, $14,
+    COALESCE(sqlc.narg('failure_reason'), ''), COALESCE(sqlc.narg('conclusion'), ''),
     COALESCE(sqlc.narg('metrics')::jsonb, '{}'::jsonb),
     COALESCE(sqlc.narg('evidence')::jsonb, '{}'::jsonb),
-    COALESCE(sqlc.narg('started_at'), now()),
-    sqlc.narg('completed_at'),
+    COALESCE(sqlc.narg('started_at'), now()), sqlc.narg('completed_at'),
     sqlc.narg('created_by')
 )
 RETURNING *;
@@ -74,7 +34,6 @@ WITH filtered_assets AS (
     SELECT pea.*
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
-      AND (sqlc.arg('include_acceptance_fixtures')::boolean OR TRUE)
 ),
 asset_summary AS (
     SELECT
@@ -82,8 +41,6 @@ asset_summary AS (
         COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_assets,
         COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
         COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
-        COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
-        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets,
         COALESCE(SUM(structured_case_count), 0)::bigint AS asset_profile_cases,
         COALESCE(SUM(structured_variable_count), 0)::bigint AS asset_profile_variables,
         COALESCE(SUM(structured_assertion_count), 0)::bigint AS asset_profile_assertions,
@@ -106,7 +63,7 @@ case_summary AS (
 run_summary AS (
     SELECT
         COUNT(*)::bigint AS total_runs,
-        COUNT(*) FILTER (WHERE per.run_kind = '本地渲染')::bigint AS local_runs,
+        COUNT(*) FILTER (WHERE per.run_kind = '模板渲染检查')::bigint AS local_runs,
         COUNT(*) FILTER (WHERE per.run_kind = 'Agent执行')::bigint AS agent_runs,
         COUNT(*) FILTER (WHERE per.status = '已入队')::bigint AS queued_runs,
         COUNT(*) FILTER (WHERE per.status = '运行中')::bigint AS running_runs,
@@ -139,7 +96,6 @@ candidate_summary AS (
     JOIN filtered_assets pea ON pea.id = peoc.asset_id
     WHERE peoc.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR peoc.created_at >= sqlc.narg('since'))
-      AND (sqlc.arg('include_acceptance_fixtures')::boolean OR TRUE)
 ),
 snapshot_summary AS (
     SELECT
@@ -156,8 +112,6 @@ SELECT
     a.active_assets,
     a.dataset_assets,
     a.test_suite_assets,
-    a.experiment_assets,
-    a.optimization_assets,
     a.asset_profile_cases,
     a.asset_profile_variables,
     a.asset_profile_assertions,
@@ -402,3 +356,7 @@ RETURNING *;
 SELECT * FROM prompt_evaluation_trial
 WHERE run_id = $1 AND workspace_id = $2
 ORDER BY case_index ASC, created_at ASC;
+-- name: LockPromptEvaluationRun :one
+SELECT * FROM prompt_evaluation_run
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;

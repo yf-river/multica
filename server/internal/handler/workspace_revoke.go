@@ -2,9 +2,11 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -14,27 +16,18 @@ import (
 // agent pinned to one of those runtimes is archived, every in-flight task on
 // those runtimes is cancelled (cancelled rather than failed so the daemon's
 // per-task status poller interrupts the running agent gracefully), the
-// daemon_token rows for those runtimes are deleted, and finally the member row
-// itself is removed.
+// and finally the member row itself is removed.
 //
 // All DB writes run inside a single transaction so a partial revocation never
 // leaves the workspace half-converged — e.g. a member who is "gone" but whose
-// runtime row is still active. Once the transaction commits, daemon_token
-// cache entries are invalidated and events are published (see
-// publishRevocation) so connected clients and other workspace members observe
-// the new state immediately.
+// runtime row is still active. Once the transaction commits, events are
+// published (see publishRevocation) so connected clients and other workspace
+// members observe the new state immediately.
 //
-// Note on scope: this revokes every runtime whose owner_id matches userID,
-// regardless of how the daemon authenticates. Today most daemons fall back to
-// PAT/JWT and `daemon_token` rows are unused in production; deleting them is
-// a no-op for those daemons but takes effect once the mdt_ flow is live.
-// Either way the agent-archive + task-cancel + force-offline writes are the
-// actual production safety net: even if the daemon races back online with a
-// still-valid PAT, it finds no agent it can run for, no queued task to claim,
-// and the dispatcher (which gates on agent.archived_at IS NULL) won't hand it
-// new work — and the member-row deletion in the same tx means subsequent
-// requireWorkspaceMember checks will reject the daemon's PAT-authenticated
-// requests with 404.
+// This revokes every runtime whose owner_id matches userID. The agent-archive,
+// task-cancel, force-offline and member deletion writes are the production
+// safety boundary: a daemon racing back with the user's credential no longer
+// passes workspace membership and has no active agent or claimable task.
 //
 // archivedBy is the actor who triggered the revocation. For DeleteMember it's
 // the requester (the admin doing the kick); for LeaveWorkspace it's the leaver
@@ -46,7 +39,7 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	if err != nil {
 		return empty, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := h.Queries.WithTx(tx)
 
@@ -62,12 +55,8 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 
 	if len(runtimes) > 0 {
 		runtimeIDs := make([]pgtype.UUID, len(runtimes))
-		daemonIDs := make([]string, 0, len(runtimes))
 		for i, rt := range runtimes {
 			runtimeIDs[i] = rt.ID
-			if rt.DaemonID.Valid && rt.DaemonID.String != "" {
-				daemonIDs = append(daemonIDs, rt.DaemonID.String)
-			}
 		}
 
 		result.ArchivedAgents, err = qtx.ArchiveAgentsByRuntime(ctx, db.ArchiveAgentsByRuntimeParams{
@@ -77,7 +66,13 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		if err != nil {
 			return empty, err
 		}
-
+		result.ArchivedAgentResponses = make([]AgentResponse, len(result.ArchivedAgents))
+		for i, archived := range result.ArchivedAgents {
+			result.ArchivedAgentResponses[i], err = agentToResponse(archived)
+			if err != nil {
+				return empty, fmt.Errorf("decode archived agent %s: %w", uuidToString(archived.ID), err)
+			}
+		}
 		// Cancel by runtime AND by archived agent. agent.runtime_id can be
 		// reassigned via UpdateAgent without rewriting the runtime_id on
 		// historical agent_task_queue rows, so an archived agent may still
@@ -95,20 +90,14 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		if err != nil {
 			return empty, err
 		}
-
-		result.OfflineRuntimeIDs, err = qtx.ForceOfflineRuntimesByIDs(ctx, runtimeIDs)
+		result.CancelledEvents, err = h.TaskService.EnqueueCancelledTaskEvents(ctx, qtx, result.CancelledTasks)
 		if err != nil {
 			return empty, err
 		}
 
-		if len(daemonIDs) > 0 {
-			result.RevokedTokenHashes, err = qtx.DeleteDaemonTokensByWorkspaceAndDaemons(ctx, db.DeleteDaemonTokensByWorkspaceAndDaemonsParams{
-				WorkspaceID: workspaceID,
-				DaemonIds:   daemonIDs,
-			})
-			if err != nil {
-				return empty, err
-			}
+		result.OfflineRuntimeIDs, err = qtx.ForceOfflineRuntimesByIDs(ctx, runtimeIDs)
+		if err != nil {
+			return empty, err
 		}
 	}
 
@@ -130,43 +119,39 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 // revocationResult captures everything revokeMemberRuntimes touched so the
 // caller can fan out events and analytics after the transaction commits.
 // Publishing inside the transaction would let subscribers observe a state the
-// tx might still roll back (see TaskService.BroadcastCancelledTasks docstring).
+// tx might still roll back.
 type revocationResult struct {
-	Runtimes           []db.AgentRuntime
-	ArchivedAgents     []db.Agent
-	CancelledTasks     []db.AgentTaskQueue
-	OfflineRuntimeIDs  []db.ForceOfflineRuntimesByIDsRow
-	RevokedTokenHashes []string
+	Runtimes               []db.AgentRuntime
+	ArchivedAgents         []db.Agent
+	ArchivedAgentResponses []AgentResponse
+	CancelledTasks         []db.AgentTaskQueue
+	CancelledEvents        []events.Event
+	OfflineRuntimeIDs      []db.ForceOfflineRuntimesByIDsRow
 }
 
 func (r revocationResult) isEmpty() bool {
 	return len(r.Runtimes) == 0
 }
 
-// publishRevocation runs all post-commit side effects: invalidate daemon token
-// cache, broadcast task:cancelled with per-agent reconciliation, broadcast
-// agent:archived, and signal a runtime-list refresh. Safe to call on an empty
-// result — it returns immediately.
+// publishRevocation broadcasts task cancellation with per-agent
+// reconciliation, agent archival and a runtime-list refresh. Safe to call on
+// an empty result.
 func (h *Handler) publishRevocation(ctx context.Context, result revocationResult, workspaceIDStr, actorType, actorIDStr string) {
 	if result.isEmpty() {
 		return
-	}
-
-	for _, hash := range result.RevokedTokenHashes {
-		h.DaemonTokenCache.Invalidate(ctx, hash)
 	}
 
 	// Per-task cancellation: TaskService handles status reconciliation and
 	// per-task event broadcast. Run this before the agent:archived burst so
 	// subscribers see "task cancelled" before the parent agent disappears
 	// from active lists, matching the order ArchiveAgent uses.
-	if h.TaskService != nil && len(result.CancelledTasks) > 0 {
-		h.TaskService.BroadcastCancelledTasks(ctx, result.CancelledTasks)
+	if len(result.CancelledTasks) > 0 {
+		h.TaskService.PublishCancelledTasks(ctx, result.CancelledTasks, result.CancelledEvents)
 	}
 
-	for _, agent := range result.ArchivedAgents {
+	for i := range result.ArchivedAgents {
 		h.publish(protocol.EventAgentArchived, workspaceIDStr, actorType, actorIDStr, map[string]any{
-			"agent": agentToResponse(agent),
+			"agent": result.ArchivedAgentResponses[i],
 		})
 	}
 
@@ -195,7 +180,6 @@ func logRevocation(result revocationResult, workspaceID, userID string, attrs ..
 		"agents_archived", len(result.ArchivedAgents),
 		"tasks_cancelled", len(result.CancelledTasks),
 		"runtimes_taken_offline", len(result.OfflineRuntimeIDs),
-		"daemon_tokens_revoked", len(result.RevokedTokenHashes),
 	}
 	slog.Info("member runtimes revoked", append(base, attrs...)...)
 }

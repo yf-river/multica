@@ -12,10 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// integrationPool returns a pool against the configured DATABASE_URL,
-// or skips the test if the database is not reachable. Mirrors the
-// pattern used by server/cmd/server/integration_test.go and
-// internal/handler/handler_test.go (see those files' TestMain).
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL := os.Getenv("DATABASE_URL")
@@ -43,8 +39,6 @@ func cleanupExecutions(t *testing.T, pool *pgxpool.Pool, jobName string) {
 	}
 }
 
-// uniqueJobName isolates concurrent CI runs so each test has its own
-// job-name partition in sys_cron_executions.
 func uniqueJobName(t *testing.T, prefix string) string {
 	t.Helper()
 	return fmt.Sprintf("%s_%s", prefix, uuid.NewString()[:8])
@@ -69,15 +63,6 @@ func newTestJobSpec(name string) *JobSpec {
 	}
 }
 
-// TestStaleStealTerminalUpdateIgnored covers RFC §14:
-//
-//	"stale steal | winner heartbeat stops, stale_after expires, another
-//	 runner steal lease; old lease terminal update doesn't take effect."
-//
-// We claim a plan, simulate a stuck handler by setting stale_after into
-// the past, steal it as a second runner, then verify that the FIRST
-// runner's terminal SUCCESS write is rejected by the lease_token guard
-// — the row stays in the second runner's RUNNING state.
 func TestStaleStealTerminalUpdateIgnored(t *testing.T) {
 	pool := integrationPool(t)
 	job := newTestJobSpec(uniqueJobName(t, "stale_steal"))

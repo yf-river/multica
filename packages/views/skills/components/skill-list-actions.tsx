@@ -5,10 +5,8 @@ import {
   Check,
   ChevronRight,
   Loader2,
-  MoreHorizontal,
   Plus,
   Trash2,
-  X,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -45,11 +43,11 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { cn } from "@multica/ui/lib/utils";
+import { ListBatchToolbar } from "../../common/list-toolbar";
+import { ListGridRowMenuButton } from "../../common/list-grid-selection";
 import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 
-// Shared context the row kebab and the batch toolbar both need. Assembled
-// once at the page level.
 export interface SkillActionsContext {
   wsId: string;
   agents: Agent[];
@@ -57,10 +55,6 @@ export interface SkillActionsContext {
   /** Workspace owner/admin — may manage every agent, not only their own. */
   isAdmin: boolean;
 }
-
-// ---------------------------------------------------------------------------
-// Add-to-agent dialog (multi-select; shared by row kebab and batch toolbar)
-// ---------------------------------------------------------------------------
 
 // Attaching is permission-gated by the TARGET agent (its owner, or a
 // workspace owner/admin — server/internal/handler/agent.go canManageAgent).
@@ -112,7 +106,6 @@ function AgentPickerRow({
             : "hover:bg-accent/50",
       )}
     >
-      {/* Indicator only — the wrapping <button> handles clicks. */}
       <Checkbox
         checked={hasAll || selected}
         tabIndex={-1}
@@ -137,9 +130,6 @@ function AgentPickerRow({
   );
 }
 
-// Shows the first few skill names as chips so the dialog says WHAT is being
-// added; the overflow collapses into a "+N" badge with the remaining names
-// in a tooltip. Number-agnostic, so single-row and batch share the layout.
 const MAX_SKILL_CHIPS = 3;
 const MAX_TOOLTIP_NAMES = 10;
 
@@ -177,8 +167,6 @@ function SkillChips({ skills }: { skills: SkillSummary[] }) {
   );
 }
 
-// Collapsible agent group; "my agents" opens by default, other people's
-// agents start collapsed.
 function AgentGroup({
   label,
   agents,
@@ -359,10 +347,6 @@ function AddToAgentDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Delete confirmation (single row and batch share one dialog)
-// ---------------------------------------------------------------------------
-
 function DeleteSkillsDialog({
   rows,
   ctx,
@@ -467,10 +451,6 @@ function DeleteSkillsDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Row kebab
-// ---------------------------------------------------------------------------
-
 // The row is a plain `<div>` whose whole-row navigation is a mouse `onClick`
 // (see `useRowLink`), not an ancestor `<a>`. The wrapper span stops click
 // propagation so opening this menu never navigates the row — just
@@ -493,15 +473,7 @@ export function SkillRowActions({
     >
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.actions.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.actions.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuItem onClick={() => setAddOpen(true)}>
@@ -538,10 +510,6 @@ export function SkillRowActions({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Batch toolbar (floating bottom bar, same shape as the issues batch bar)
-// ---------------------------------------------------------------------------
-
 export function SkillBatchToolbar({
   rows,
   ctx,
@@ -577,25 +545,11 @@ export function SkillBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport: with a
-          sidebar/split pane open, viewport-centering sits visibly off the
-          list's own center. Same rule for every future list page's batch
-          toolbar. */}
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.actions.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.actions.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
-
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.actions.selected, { count: rows.length })}
+        clearLabel={t(($) => $.actions.clear_selection)}
+        onClear={onClear}
+      >
         <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}>
           <Plus className="mr-1 size-3.5" />
           {t(($) => $.actions.add_to_agent)}
@@ -613,7 +567,7 @@ export function SkillBatchToolbar({
             </TooltipContent>
           </Tooltip>
         )}
-      </div>
+      </ListBatchToolbar>
 
       <AddToAgentDialog
         skills={rows.map((r) => r.skill)}

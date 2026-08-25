@@ -25,7 +25,6 @@ type larkFakeServer struct {
 	srv     *httptest.Server
 	tokenN  atomic.Int32
 	sendN   atomic.Int32
-	patchN  atomic.Int32
 	bindN   atomic.Int32
 	reactN  atomic.Int32
 	delRN   atomic.Int32
@@ -106,32 +105,6 @@ func (f *larkFakeServer) stubSend(resp map[string]any, verify func(r *http.Reque
 	})
 }
 
-// stubPatch installs the IM-patch endpoint. The Lark route is
-// /open-apis/im/v1/messages/<id>; ServeMux uses prefix matching when
-// we register the parent path explicitly. We register the parent
-// SEND path above already, so the patch path needs the full prefix.
-func (f *larkFakeServer) stubPatch(resp map[string]any, verify func(r *http.Request, id string, body map[string]string)) {
-	const prefix = "/open-apis/im/v1/messages/"
-	f.mux.HandleFunc(prefix, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch {
-			f.t.Errorf("patch: want PATCH, got %s", r.Method)
-		}
-		id := strings.TrimPrefix(r.URL.Path, prefix)
-		if id == "" {
-			f.t.Errorf("patch: missing message id")
-		}
-		f.patchN.Add(1)
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			f.t.Errorf("patch: decode body: %v", err)
-		}
-		if verify != nil {
-			verify(r, id, body)
-		}
-		writeJSON(w, resp)
-	})
-}
-
 // stubReaction installs the IM-reaction-create endpoint.
 func (f *larkFakeServer) stubReaction(resp map[string]any, verify func(r *http.Request, id string, body map[string]any)) {
 	const suffix = "/reactions"
@@ -193,111 +166,13 @@ func writeJSON(w http.ResponseWriter, body any) {
 // using the supplied clock so token expiry can be controlled
 // deterministically.
 func newTestClient(fake *larkFakeServer, now func() time.Time) *httpAPIClient {
-	c := NewHTTPAPIClient(HTTPClientConfig{
-		BaseURL: fake.URL(),
-		Now:     now,
-	}).(*httpAPIClient)
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()}).(*httpAPIClient)
+	c.now = now
 	return c
 }
 
 func testCreds() InstallationCredentials {
 	return InstallationCredentials{AppID: "cli_app_xx", AppSecret: "secret_xx"}
-}
-
-func TestHTTPClient_IsConfigured(t *testing.T) {
-	c := NewHTTPAPIClient(HTTPClientConfig{})
-	if !c.IsConfigured() {
-		t.Fatalf("real client must report IsConfigured()=true")
-	}
-}
-
-// TestHTTPClient_SendInteractiveCard_DefaultRendererBodyHasUpdateMulti
-// is the send-side half of the must-fix wire check: when the Patcher
-// uses NewDefaultRenderer to produce a card and ships it via
-// SendInteractiveCard, the actual HTTP body Lark receives must carry
-// config.update_multi=true so the card is patchable downstream.
-// Without this, the first send succeeds but every subsequent patch
-// silently no-ops on Lark's side while local DB status still flips.
-func TestHTTPClient_SendInteractiveCard_DefaultRendererBodyHasUpdateMulti(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_um_send", 7200)
-	var capturedContent string
-	fake.stubSend(
-		map[string]any{"code": 0, "data": map[string]string{"message_id": "om_send_um"}},
-		func(_ *http.Request, body map[string]string) {
-			capturedContent = body["content"]
-		},
-	)
-
-	r := NewDefaultRenderer()
-	render, err := r.Render(RenderInput{Kind: CardKindThinking, AgentName: "TestAgent"})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-
-	c := newTestClient(fake, time.Now)
-	if _, err := c.SendInteractiveCard(context.Background(), SendCardParams{
-		InstallationID: testCreds(),
-		ChatID:         ChatID("oc_send_um"),
-		CardJSON:       render.JSON,
-	}); err != nil {
-		t.Fatalf("send: %v", err)
-	}
-
-	assertCardContentHasUpdateMulti(t, capturedContent)
-}
-
-// TestHTTPClient_PatchInteractiveCard_DefaultRendererBodyHasUpdateMulti
-// is the patch-side half of the same wire check. Every PatchCardParams
-// the Patcher produces goes through the default renderer; the body
-// shipped over PATCH /open-apis/im/v1/messages/:id must still carry
-// update_multi=true, otherwise Lark refuses to apply the patch to a
-// card that was sent with update_multi=true (the two ends must agree).
-func TestHTTPClient_PatchInteractiveCard_DefaultRendererBodyHasUpdateMulti(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_um_patch", 7200)
-	var capturedContent string
-	fake.stubPatch(
-		map[string]any{"code": 0, "msg": "ok"},
-		func(_ *http.Request, _ string, body map[string]string) {
-			capturedContent = body["content"]
-		},
-	)
-
-	r := NewDefaultRenderer()
-	render, err := r.Render(RenderInput{Kind: CardKindRunning, AgentName: "TestAgent"})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-
-	c := newTestClient(fake, time.Now)
-	if err := c.PatchInteractiveCard(context.Background(), PatchCardParams{
-		InstallationID:    testCreds(),
-		LarkCardMessageID: "om_patch_um",
-		CardJSON:          render.JSON,
-	}); err != nil {
-		t.Fatalf("patch: %v", err)
-	}
-
-	assertCardContentHasUpdateMulti(t, capturedContent)
-}
-
-func assertCardContentHasUpdateMulti(t *testing.T, content string) {
-	t.Helper()
-	if content == "" {
-		t.Fatalf("captured content empty — fake server did not receive the request body")
-	}
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(content), &doc); err != nil {
-		t.Fatalf("card content is not valid JSON: %v (raw=%s)", err, content)
-	}
-	cfg, ok := doc["config"].(map[string]any)
-	if !ok {
-		t.Fatalf("card content missing config block (raw=%s)", content)
-	}
-	if v, _ := cfg["update_multi"].(bool); !v {
-		t.Fatalf("config.update_multi must be true so the card is patchable on Lark's side; got config=%v (raw=%s)", cfg, content)
-	}
 }
 
 func TestHTTPClient_SendInteractiveCard_HappyPath(t *testing.T) {
@@ -581,7 +456,8 @@ func TestHTTPClient_TokenRefreshAfterExpiry(t *testing.T) {
 
 	now := time.Unix(1_700_000_000, 0)
 	clock := &fakeClock{now: now}
-	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL(), Now: clock.Now}).(*httpAPIClient)
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()}).(*httpAPIClient)
+	c.now = clock.Now
 
 	// First call — fetches token.
 	if _, err := c.SendInteractiveCard(context.Background(), SendCardParams{
@@ -677,45 +553,6 @@ func TestHTTPClient_SendInteractiveCard_TokenExpired_InvalidatesCache(t *testing
 	}
 	if got := fake.tokenN.Load(); got != 2 {
 		t.Errorf("token endpoint hits after invalidation: got %d want 2", got)
-	}
-}
-
-func TestHTTPClient_PatchInteractiveCard_HappyPath(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_p", 7200)
-	fake.stubPatch(
-		map[string]any{"code": 0, "msg": "ok"},
-		func(r *http.Request, id string, body map[string]string) {
-			if id != "om_msg_42" {
-				t.Errorf("patch id: got %q want om_msg_42", id)
-			}
-			if !strings.Contains(body["content"], "updated") {
-				t.Errorf("patch content: %q", body["content"])
-			}
-		},
-	)
-	c := newTestClient(fake, time.Now)
-	if err := c.PatchInteractiveCard(context.Background(), PatchCardParams{
-		InstallationID:    testCreds(),
-		LarkCardMessageID: "om_msg_42",
-		CardJSON:          `{"text":"updated"}`,
-	}); err != nil {
-		t.Fatalf("patch: %v", err)
-	}
-}
-
-func TestHTTPClient_PatchInteractiveCard_LarkErrorCode(t *testing.T) {
-	fake := newLarkFake(t)
-	fake.stubToken("tok_p", 7200)
-	fake.stubPatch(map[string]any{"code": 230002, "msg": "card not found"}, nil)
-	c := newTestClient(fake, time.Now)
-	err := c.PatchInteractiveCard(context.Background(), PatchCardParams{
-		InstallationID:    testCreds(),
-		LarkCardMessageID: "om_msg_x",
-		CardJSON:          `{}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "code=230002") {
-		t.Errorf("want code=230002 in error, got %v", err)
 	}
 }
 
@@ -891,23 +728,6 @@ func TestHTTPClient_MissingCardJSON(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "card json") {
 		t.Errorf("send: want missing card json, got %v", err)
 	}
-	if err := c.PatchInteractiveCard(context.Background(), PatchCardParams{
-		InstallationID:    testCreds(),
-		LarkCardMessageID: "om",
-	}); err == nil || !strings.Contains(err.Error(), "card json") {
-		t.Errorf("patch: want missing card json, got %v", err)
-	}
-}
-
-func TestHTTPClient_PatchMissingID(t *testing.T) {
-	c := NewHTTPAPIClient(HTTPClientConfig{}).(*httpAPIClient)
-	err := c.PatchInteractiveCard(context.Background(), PatchCardParams{
-		InstallationID: testCreds(),
-		CardJSON:       `{}`,
-	})
-	if err == nil || !strings.Contains(err.Error(), "card message id") {
-		t.Errorf("want missing message id error, got %v", err)
-	}
 }
 
 func TestHTTPClient_BindingPromptValidation(t *testing.T) {
@@ -990,7 +810,11 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 	}
 }
 
-func TestHTTPClient_GetBotInfo_UnionIDLookupFailure(t *testing.T) {
+// TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails covers the case
+// where /contact/v3/users returns a non-zero code (e.g. the app's
+// contact scope was never approved). The install must still succeed with an
+// empty UnionID because open_id remains the current single-bot boundary.
+func TestHTTPClient_GetBotInfo_UnionIDLookupSoftFails(t *testing.T) {
 	fake := newLarkFake(t)
 	fake.stubToken("tok_bi_softfail", 7200)
 	fake.mux.HandleFunc("/open-apis/bot/v3/info", func(w http.ResponseWriter, r *http.Request) {
@@ -1004,9 +828,15 @@ func TestHTTPClient_GetBotInfo_UnionIDLookupFailure(t *testing.T) {
 		writeJSON(w, map[string]any{"code": 99991002, "msg": "no permission"})
 	})
 	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()})
-	_, err := c.GetBotInfo(context.Background(), testCreds())
-	if err == nil || !strings.Contains(err.Error(), "bot union_id") {
-		t.Fatalf("GetBotInfo error = %v, want bot union_id failure", err)
+	info, err := c.GetBotInfo(context.Background(), testCreds())
+	if err != nil {
+		t.Fatalf("GetBotInfo unexpectedly errored on soft-fail: %v", err)
+	}
+	if string(info.OpenID) != "ou_bot_softfail" {
+		t.Errorf("OpenID: got %q want ou_bot_softfail", info.OpenID)
+	}
+	if info.UnionID != "" {
+		t.Errorf("UnionID: got %q want empty when contact scope is unavailable", info.UnionID)
 	}
 }
 
@@ -1074,7 +904,8 @@ func TestHTTPClient_TokenExpire_ClampedToSafety(t *testing.T) {
 
 	now := time.Unix(1_700_000_000, 0)
 	clock := &fakeClock{now: now}
-	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL(), Now: clock.Now}).(*httpAPIClient)
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: fake.URL()}).(*httpAPIClient)
+	c.now = clock.Now
 
 	if _, err := c.SendInteractiveCard(context.Background(), SendCardParams{
 		InstallationID: testCreds(),

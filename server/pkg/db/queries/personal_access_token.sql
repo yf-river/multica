@@ -1,7 +1,14 @@
 -- name: CreatePersonalAccessToken :one
-INSERT INTO personal_access_token (user_id, name, token_hash, token_prefix, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO personal_access_token (
+  user_id, name, token_hash, token_prefix, expires_at,
+  idempotency_key, request_hash
+)
+VALUES ($1, $2, $3, $4, $5, sqlc.narg('idempotency_key'), sqlc.narg('request_hash'))
 RETURNING *;
+
+-- name: GetPersonalAccessTokenByCreateRequest :one
+SELECT * FROM personal_access_token
+WHERE user_id = $1 AND idempotency_key = $2;
 
 -- name: GetPersonalAccessTokenByHash :one
 SELECT * FROM personal_access_token

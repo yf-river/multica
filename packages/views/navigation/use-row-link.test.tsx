@@ -86,7 +86,7 @@ describe("useRowLink", () => {
       button: 1,
       cancelable: true,
     });
-    screen.getByRole("row").dispatchEvent(event);
+    fireEvent(screen.getByRole("row"), event);
 
     expect(event.defaultPrevented).toBe(true);
     expect(openInNewTab).toHaveBeenCalledWith("/acme/projects/p1");
@@ -103,7 +103,7 @@ describe("useRowLink", () => {
       button: 1,
       cancelable: true,
     });
-    screen.getByRole("row").dispatchEvent(event);
+    fireEvent(screen.getByRole("row"), event);
 
     expect(event.defaultPrevented).toBe(true);
     expect(push).toHaveBeenCalledWith("/acme/projects/p1");

@@ -2,70 +2,58 @@ package agent
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 )
 
-func TestNewReturnsClaudeBackend(t *testing.T) {
+func TestSupportedTypesMatchFactoryAndSchema(t *testing.T) {
 	t.Parallel()
-	b, err := New("claude", Config{ExecutablePath: "/nonexistent/claude"})
-	if err != nil {
-		t.Fatalf("New(claude) error: %v", err)
-	}
-	if _, ok := b.(*claudeBackend); !ok {
-		t.Fatalf("expected *claudeBackend, got %T", b)
-	}
-}
 
-func TestNewReturnsCodexBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("codex", Config{ExecutablePath: "/nonexistent/codex"})
-	if err != nil {
-		t.Fatalf("New(codex) error: %v", err)
+	want := map[string]reflect.Type{
+		"claude":      reflect.TypeOf((*claudeBackend)(nil)),
+		"codebuddy":   reflect.TypeOf((*codebuddyBackend)(nil)),
+		"codex":       reflect.TypeOf((*CodexBrokerBackend)(nil)),
+		"copilot":     reflect.TypeOf((*copilotBackend)(nil)),
+		"opencode":    reflect.TypeOf((*opencodeBackend)(nil)),
+		"openclaw":    reflect.TypeOf((*openclawBackend)(nil)),
+		"hermes":      reflect.TypeOf((*hermesBackend)(nil)),
+		"gemini":      reflect.TypeOf((*geminiBackend)(nil)),
+		"pi":          reflect.TypeOf((*piBackend)(nil)),
+		"cursor":      reflect.TypeOf((*cursorBackend)(nil)),
+		"kimi":        reflect.TypeOf((*kimiBackend)(nil)),
+		"kiro":        reflect.TypeOf((*kiroBackend)(nil)),
+		"antigravity": reflect.TypeOf((*antigravityBackend)(nil)),
 	}
-	if _, ok := b.(*codexBackend); !ok {
-		t.Fatalf("expected *codexBackend, got %T", b)
-	}
-}
 
-func TestNewReturnsCodebuddyBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("codebuddy", Config{ExecutablePath: "/nonexistent/codebuddy"})
-	if err != nil {
-		t.Fatalf("New(codebuddy) error: %v", err)
+	if len(SupportedTypes) != len(want) {
+		t.Fatalf("SupportedTypes has %d entries, current schema/factory contract has %d", len(SupportedTypes), len(want))
 	}
-	if _, ok := b.(*codebuddyBackend); !ok {
-		t.Fatalf("expected *codebuddyBackend, got %T", b)
+	for _, agentType := range SupportedTypes {
+		wantType, ok := want[agentType]
+		if !ok {
+			t.Errorf("SupportedTypes contains %q outside the current schema contract", agentType)
+			continue
+		}
+		if !IsSupportedType(agentType) {
+			t.Errorf("IsSupportedType(%q) = false", agentType)
+		}
+		backend, err := New(agentType, Config{})
+		if err != nil {
+			t.Errorf("New(%q): %v", agentType, err)
+			continue
+		}
+		if gotType := reflect.TypeOf(backend); gotType != wantType {
+			t.Errorf("New(%q) returned %v, want %v", agentType, gotType, wantType)
+		}
 	}
-}
 
-func TestNewReturnsCopilotBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("copilot", Config{ExecutablePath: "/nonexistent/copilot"})
-	if err != nil {
-		t.Fatalf("New(copilot) error: %v", err)
+	const unknown = "definitely-not-a-real-backend"
+	if IsSupportedType(unknown) {
+		t.Errorf("IsSupportedType(%q) = true", unknown)
 	}
-	if _, ok := b.(*copilotBackend); !ok {
-		t.Fatalf("expected *copilotBackend, got %T", b)
-	}
-}
-
-func TestNewReturnsAntigravityBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("antigravity", Config{ExecutablePath: "/nonexistent/agy"})
-	if err != nil {
-		t.Fatalf("New(antigravity) error: %v", err)
-	}
-	if _, ok := b.(*antigravityBackend); !ok {
-		t.Fatalf("expected *antigravityBackend, got %T", b)
-	}
-}
-
-func TestNewRejectsUnknownType(t *testing.T) {
-	t.Parallel()
-	_, err := New("gpt", Config{})
-	if err == nil {
-		t.Fatal("expected error for unknown agent type")
+	if _, err := New(unknown, Config{}); err == nil {
+		t.Errorf("New(%q) succeeded", unknown)
 	}
 }
 

@@ -1,12 +1,11 @@
 import type { AgentRuntime, RuntimeProfile } from "@multica/core/types";
 
-export const PENDING_RUNTIME_WARNING_MS = 45_000;
+const PENDING_RUNTIME_WARNING_MS = 45_000;
 
 const PENDING_RUNTIME_ID_PREFIX = "pending-runtime-profile:";
 
 interface PendingRuntimeMetadata extends Record<string, unknown> {
   pending_custom_runtime: true;
-  runtime_profile_id: string;
   command_name: string;
   pending_since: string;
 }
@@ -16,7 +15,7 @@ export interface PendingRuntimeProfile {
   createdAt: number;
 }
 
-export function pendingRuntimeId(profileId: string): string {
+function pendingRuntimeId(profileId: string): string {
   return `${PENDING_RUNTIME_ID_PREFIX}${profileId}`;
 }
 
@@ -41,7 +40,7 @@ export function isPendingCustomRuntimeWarning(
   return now - startedAt >= PENDING_RUNTIME_WARNING_MS;
 }
 
-export function pendingRuntimeFromProfile({
+function pendingRuntimeFromProfile({
   profile,
   createdAt,
   ownerId,
@@ -57,15 +56,13 @@ export function pendingRuntimeFromProfile({
     fallbackMachineName?.trim() || "Pending custom runtimes";
   const metadata: PendingRuntimeMetadata = {
     pending_custom_runtime: true,
-    runtime_profile_id: profile.id,
     command_name: profile.command_name,
     pending_since: pendingSince,
   };
 
   return {
     id: pendingRuntimeId(profile.id),
-    workspace_id: profile.workspace_id,
-    daemon_id: null,
+    daemon_id: localDaemonId ?? null,
     name: `${profile.display_name} (${machineName})`,
     runtime_mode: "local",
     provider: profile.protocol_family,
@@ -77,8 +74,6 @@ export function pendingRuntimeFromProfile({
     scope: "personal",
     profile_id: profile.id,
     last_seen_at: pendingSince,
-    created_at: pendingSince,
-    updated_at: pendingSince,
   };
 }
 

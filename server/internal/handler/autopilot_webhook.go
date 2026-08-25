@@ -2,11 +2,8 @@ package handler
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -249,28 +246,11 @@ func verifyWebhookSignatureForProvider(provider, secret string, headers http.Hea
 	if sig == "" {
 		return sigStatusMissing
 	}
-	if !verifyHubSignature(secret, sig, rawBody) {
+	if !verifyWebhookHMACSignature(secret, sig, rawBody) {
 		return sigStatusInvalid
 	}
 	_ = provider
 	return sigStatusValid
-}
-
-// verifyHubSignature implements the GitHub-compatible HMAC-SHA256 scheme:
-// `X-Hub-Signature-256: sha256=<hex(hmac(body, secret))>`. The hmac.Equal
-// comparison is constant-time so partial-prefix attacks cannot leak timing.
-func verifyHubSignature(secret, header string, body []byte) bool {
-	const prefix = "sha256="
-	if !strings.HasPrefix(header, prefix) {
-		return false
-	}
-	want, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hmac.Equal(mac.Sum(nil), want)
 }
 
 // selectedHeadersJSON returns the small, debugging-friendly subset of request

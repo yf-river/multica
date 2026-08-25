@@ -20,6 +20,14 @@ interface TestWorkspace {
   repos?: Array<Record<string, unknown>>;
 }
 
+interface TestWorkspaceMember {
+  id: string;
+  user_id: string;
+  account: string;
+  name: string;
+  role: string;
+}
+
 interface PromptLibraryItem {
   id: string;
   name: string;
@@ -35,6 +43,18 @@ interface PromptLibraryVersion {
   content: string;
   source: string;
   source_candidate_id: string | null;
+  change_note?: string;
+}
+
+interface PromptLibraryTrial {
+  id: string;
+  prompt_id: string;
+  version_id: string;
+  agent_id: string;
+  task_id: string | null;
+  rendered_message: string;
+  variables: Record<string, unknown>;
+  status: string;
 }
 
 interface PromptEvaluationAsset {
@@ -73,56 +93,6 @@ interface PromptEvaluationRun {
   reviewed_at?: string;
   metrics: Record<string, unknown>;
   evidence: Record<string, unknown>;
-}
-
-interface PromptEvaluationDimensionScore {
-  id: string;
-  run_id: string;
-  asset_id: string;
-  prompt_id: string | null;
-  dimension_index: number;
-  dimension_name: string;
-  score: number;
-  passed_cases: number;
-  total_cases: number;
-  status: "待执行" | "已评分" | "无用例";
-  rule: string;
-  evidence: string;
-  source: string;
-}
-
-interface PromptEvaluationDimensionScoreSummary {
-  asset_id: string;
-  prompt_id: string | null;
-  dimension_index: number;
-  dimension_name: string;
-  run_count: number;
-  scored_run_count: number;
-  passed_cases: number;
-  total_cases: number;
-  score: number;
-  latest_status: "待执行" | "已评分" | "无用例";
-  latest_rule: string;
-  latest_evidence: string;
-  latest_source: string;
-}
-
-interface PromptEvaluationDimensionScoreTrend {
-  asset_id: string;
-  prompt_id: string | null;
-  dimension_index: number;
-  dimension_name: string;
-  period: string;
-  prompt_version: number;
-  run_count: number;
-  scored_run_count: number;
-  passed_cases: number;
-  total_cases: number;
-  score: number;
-  latest_status: "待执行" | "已评分" | "无用例";
-  latest_rule: string;
-  latest_evidence: string;
-  latest_source: string;
 }
 
 interface PromptEvaluationAgentRunResponse {
@@ -230,23 +200,6 @@ interface PromptEvaluationCase {
   source: string;
 }
 
-interface PromptEvaluationCaseOperation {
-  id: string;
-  asset_id: string;
-  operation_type: string;
-  filter: Record<string, unknown>;
-  input: Record<string, unknown>;
-  changed_count: number;
-  skipped_count: number;
-  sample_case_ids: unknown[];
-  created_at: string;
-  status: string;
-  error_message: string;
-  started_at: string | null;
-  completed_at: string | null;
-  updated_at: string;
-}
-
 interface PromptEvaluationDatasetVersion {
   id: string;
   dataset_asset_id: string;
@@ -254,47 +207,6 @@ interface PromptEvaluationDatasetVersion {
   version_label: string;
   row_count: number;
   row_fingerprint: string;
-}
-
-interface PromptEvaluationDatasetVersionRow {
-  id: string;
-  dataset_version_id: string;
-  dataset_asset_id: string;
-  row_index: number;
-  row_name: string;
-  variables: Record<string, unknown>;
-  expected_contains: unknown[];
-  tags: unknown[];
-  source: string;
-}
-
-interface PromptEvaluationDatasetVersionDiff {
-  base_version: PromptEvaluationDatasetVersion;
-  target_version: PromptEvaluationDatasetVersion;
-  summary: Record<string, number>;
-  added: PromptEvaluationDatasetVersionRow[];
-  removed: PromptEvaluationDatasetVersionRow[];
-  changed: Array<{ row_index: number; base: PromptEvaluationDatasetVersionRow; target: PromptEvaluationDatasetVersionRow }>;
-  unchanged: PromptEvaluationDatasetVersionRow[];
-}
-
-interface RestorePromptEvaluationDatasetVersionResponse {
-  asset: PromptEvaluationAsset;
-  restored_from: PromptEvaluationDatasetVersion;
-  restored_version: PromptEvaluationDatasetVersion;
-  restored_cases: PromptEvaluationCase[];
-}
-
-interface PromptEvaluationExperimentDimension {
-  id: string;
-  experiment_asset_id: string;
-  dimension_index: number;
-  dimension_name: string;
-  experiment_target: string;
-  baseline_output: string;
-  comparison_payload: Record<string, unknown>;
-  status: string;
-  source: string;
 }
 
 interface PromptEvaluationOptimizationCandidate {
@@ -314,24 +226,6 @@ interface PromptEvaluationOptimizationCandidate {
   failed_case_count: number;
   status: string;
   published_prompt_id: string | null;
-}
-
-interface PromptEvaluationSummary {
-  workspace_id: string;
-  generated_at: string;
-  last_run_at: string;
-  指标: Record<string, number>;
-  资产统计: Record<string, number>;
-  运行状态: Record<string, number>;
-  优化候选: Record<string, number>;
-}
-
-interface CodingSquadFixture {
-  runtimeId: string;
-  squadId: string;
-  squadName: string;
-  leaderAgentId: string;
-  agents: Array<{ id: string; name: string; role: string; roleKey: string }>;
 }
 
 interface InternalSquadTemplateAgent {
@@ -452,25 +346,34 @@ export class TestApiClient {
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
   private account: string | null = null;
+  private userId: string | null = null;
   private createdIssueIds: string[] = [];
   private createdProjectIds: string[] = [];
   private createdPromptLibraryIds: string[] = [];
   private createdRuntimeIds: string[] = [];
   private createdSquadIds: string[] = [];
+  private createdMemberIds: Array<{ workspaceId: string; memberId: string }> = [];
 
-  async login(account: string, name: string) {
+  useAuthenticatedSession(session: { token: string; account: string; userId: string | null }) {
+    this.token = session.token;
+    this.account = session.account;
+    this.userId = session.userId;
+  }
+
+  async login(account: string, name: string, password: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account, password: "develop123" }),
+      body: JSON.stringify({ account, password }),
     });
     if (!res.ok) {
-      throw new Error(`login failed: ${res.status}`);
+      throw new Error(`login failed: ${res.status} ${await res.text()}`);
     }
     const data = await res.json();
 
     this.token = data.token;
     this.account = account;
+    this.userId = data.user?.id ?? null;
 
     if (name && data.user?.name !== name) {
       await this.authedFetch("/api/me", {
@@ -482,17 +385,24 @@ export class TestApiClient {
     return data;
   }
 
+  getUserId(): string | null {
+    return this.userId;
+  }
+
   async getWorkspaces(): Promise<TestWorkspace[]> {
     const res = await this.authedFetch("/api/workspaces");
     return res.json();
   }
 
-  async getWorkspace(id: string): Promise<TestWorkspace> {
-    const res = await this.authedFetch(`/api/workspaces/${id}`);
+  async deleteWorkspace(id: string): Promise<void> {
+    const res = await this.authedFetch(`/api/workspaces/${id}`, { method: "DELETE" });
     if (!res.ok) {
-      throw new Error(`get workspace failed: ${res.status} ${await res.text()}`);
+      throw new Error(`delete workspace failed: ${res.status} ${await res.text()}`);
     }
-    return res.json();
+    if (this.workspaceId === id) {
+      this.workspaceId = null;
+      this.workspaceSlug = null;
+    }
   }
 
   setWorkspaceId(id: string) {
@@ -514,6 +424,7 @@ export class TestApiClient {
 
     const res = await this.authedFetch("/api/workspaces", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ name, slug }),
     });
     if (res.ok) {
@@ -534,29 +445,27 @@ export class TestApiClient {
     throw new Error(`Failed to ensure workspace ${slug}: ${res.status} ${res.statusText}`);
   }
 
-  async markUserOnboarded() {
-    if (!this.account) {
-      throw new Error("Cannot mark E2E user onboarded before login");
+  async listExternalCredentialProfiles(provider?: "gongfeng" | "tapd"): Promise<Array<{
+    id: string;
+    provider: string;
+    name: string;
+    secret_binding?: { configured?: boolean; hint?: string; mode?: string };
+  }>> {
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+    const res = await this.authedFetch(`/api/external-credential-profiles${query}`);
+    if (!res.ok) {
+      throw new Error(`list external credential profiles failed: ${res.status} ${await res.text()}`);
     }
+    const body = await res.json();
+    return body.profiles ?? [];
+  }
 
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const result = await client.query(
-        `
-          UPDATE "user"
-          SET
-            onboarded_at = COALESCE(onboarded_at, now()),
-            onboarding_questionnaire = COALESCE(onboarding_questionnaire, '{}'::jsonb)
-          WHERE account = $1
-        `,
-        [this.account],
-      );
-      if (result.rowCount !== 1) {
-        throw new Error(`Failed to mark E2E user onboarded: ${this.account}`);
-      }
-    } finally {
-      await client.end();
+  async deleteExternalCredentialProfile(id: string): Promise<void> {
+    const res = await this.authedFetch(`/api/external-credential-profiles/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      throw new Error(`delete external credential profile failed: ${res.status} ${await res.text()}`);
     }
   }
 
@@ -612,21 +521,18 @@ export class TestApiClient {
     return this.ensureOnlineRuntime("codex", name);
   }
 
-  async ensureOnlineCodeBuddyRuntime(name = `E2E CodeBuddy Runtime ${Date.now()}`) {
-    return this.ensureOnlineRuntime("codebuddy", name);
-  }
-
   async createAgent(data: {
     name: string;
     runtime_id: string;
     description?: string;
     instructions?: string;
     model?: string;
-    visibility?: "workspace" | "private";
+    scope?: "workspace" | "personal";
     max_concurrent_tasks?: number;
   }): Promise<AgentResponse> {
     const res = await this.authedFetch("/api/agents", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({
         name: data.name,
         description: data.description ?? "E2E 创建的训练评估执行智能体",
@@ -635,7 +541,7 @@ export class TestApiClient {
         runtime_config: {},
         custom_env: {},
         custom_args: [],
-        visibility: data.visibility ?? "workspace",
+        scope: data.scope ?? "personal",
         max_concurrent_tasks: data.max_concurrent_tasks ?? 1,
         model: data.model ?? "deepseek-v4-pro-ioa",
       }),
@@ -672,6 +578,41 @@ export class TestApiClient {
     }
     this.createdRuntimeIds.push(runtime.id);
     return { daemonId, runtime };
+  }
+
+  async completeNextDaemonModelList(
+    runtimeId: string,
+    models = [
+      { id: "deepseek-v4-pro-ioa", label: "DeepSeek V4 Pro", provider: "deepseek", default: true },
+      { id: "glm-5.2-ioa", label: "GLM 5.2", provider: "zhipu", default: false },
+    ],
+  ) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const heartbeat = await this.authedFetch("/api/daemon/heartbeat", {
+        method: "POST",
+        body: JSON.stringify({ runtime_id: runtimeId }),
+      });
+      if (!heartbeat.ok) {
+        throw new Error(`daemon heartbeat failed: ${heartbeat.status} ${await heartbeat.text()}`);
+      }
+      const ack = (await heartbeat.json()) as { pending_model_list?: { id: string } };
+      const requestId = ack.pending_model_list?.id;
+      if (requestId) {
+        const result = await this.authedFetch(
+          `/api/daemon/runtimes/${runtimeId}/models/${requestId}/result`,
+          {
+            method: "POST",
+            body: JSON.stringify({ status: "completed", supported: true, models }),
+          },
+        );
+        if (!result.ok) {
+          throw new Error(`report model list failed: ${result.status} ${await result.text()}`);
+        }
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(`runtime ${runtimeId} received no model-list request`);
   }
 
   async claimDaemonTask(runtimeId: string) {
@@ -741,190 +682,10 @@ export class TestApiClient {
     }
   }
 
-  async failDaemonTask(taskId: string, data: { error: string; failure_reason: string }) {
-    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/fail`, {
-      method: "POST",
-      body: JSON.stringify({
-        error: data.error,
-        failure_reason: data.failure_reason,
-        session_id: `e2e-session-${taskId}`,
-        work_dir: `/tmp/multica-e2e/${taskId}`,
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to fail daemon task: ${res.status} ${await res.text()}`);
-    }
-  }
-
-  async createCodingSquadFixture(name = `E2E Multica 编码小队 ${Date.now()}`): Promise<CodingSquadFixture> {
-    if (!this.workspaceId) {
-      throw new Error("Cannot seed coding squad before workspace is selected");
-    }
-    if (!this.account) {
-      throw new Error("Cannot seed coding squad before login");
-    }
-
-    const runtime = await this.ensureOnlineCodexRuntime(`${name} Runtime`);
-    const profile = {
-      profile_key: "multica-coding-squad-v1",
-      project: "Multica",
-      repo: "/data/ida/goal-test",
-      mode: "coding_squad",
-      operation_skills: ["需求拆解", "代码实现", "独立验收", "规约同步", "部署验证"],
-      acceptance: ["方案可审阅", "开发范围清晰", "验收者独立检查", "日志和测试证据齐全"],
-      forbidden_actions: ["开发者自证通过", "越权修改非负责范围", "泄露密钥"],
-      model_policy: {
-        "轻量验收任务": "deepseek-v4-pro-ioa",
-        "代码测试任务": "deepseek-v4-pro-ioa",
-      },
-      roles: [
-        {
-          key: "captain",
-          name: "队长",
-          responsibility: "接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。",
-          output: "小队执行计划和任务分派记录",
-        },
-        {
-          key: "designer",
-          name: "方案设计者",
-          responsibility: "输出技术方案、影响面和测试方案，开发前给人确认。",
-          output: "技术方案和测试计划",
-        },
-        {
-          key: "developer",
-          name: "开发者",
-          responsibility: "只处理被分配的代码范围。",
-          boundary: "不得随手修改别人负责的范围。",
-          output: "代码变更和自测记录",
-        },
-        {
-          key: "acceptor",
-          name: "验收者",
-          responsibility: "独立检查开发者代码、测试结果和漏改风险。",
-          forbidden: "开发者不能自己说通过。",
-          output: "独立验收结论",
-        },
-        {
-          key: "spec-maintainer",
-          name: "规约维护者",
-          responsibility: "同步流程文档、测试数据说明、接口索引和技能说明。",
-          output: "规约同步清单",
-        },
-        {
-          key: "operator",
-          name: "部署运行者",
-          responsibility: "负责端口、环境变量、数据库、启动服务、健康检查和部署验证。",
-          forbidden: "不得泄露密钥，不随意改业务代码。",
-          output: "部署与健康检查证据",
-        },
-      ],
-      steps: [
-        { key: "receive", name: "需求接收与流程判断", role_key: "captain" },
-        { key: "design", name: "技术方案与测试方案", role_key: "designer" },
-        { key: "develop", name: "范围内实现", role_key: "developer" },
-        { key: "acceptance", name: "独立验收", role_key: "acceptor" },
-        { key: "spec", name: "规约同步", role_key: "spec-maintainer" },
-        { key: "deploy", name: "部署与健康检查", role_key: "operator" },
-      ],
-    };
-    const roleSeeds = [
-      ["captain", "队长", "负责接需求、拆任务、分派和跟踪进度。"],
-      ["designer", "方案设计者", "负责技术方案、影响面和测试方案。"],
-      ["developer", "开发者", "负责限定范围内的代码实现。"],
-      ["acceptor", "验收者", "负责独立验收和漏改检查。"],
-      ["spec-maintainer", "规约维护者", "负责同步文档、接口索引和技能说明。"],
-      ["operator", "部署运行者", "负责环境、启动、日志和健康检查。"],
-    ] as const;
-
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const userRow = await client.query<{ id: string }>(
-        `SELECT id FROM "user" WHERE account = $1 LIMIT 1`,
-        [this.account],
-      );
-      if (userRow.rows.length === 0) {
-        throw new Error(`E2E user missing: ${this.account}`);
-      }
-      const userId = userRow.rows[0]!.id;
-      await client.query("BEGIN");
-      const agents: CodingSquadFixture["agents"] = [];
-      for (const [roleKey, role, instruction] of roleSeeds) {
-        const agent = await client.query<{ id: string }>(
-          `
-            INSERT INTO agent (
-              workspace_id, name, runtime_mode, runtime_config, runtime_id,
-              visibility, status, max_concurrent_tasks, owner_id,
-              instructions, custom_env, custom_args, model
-            )
-            VALUES (
-              $1, $2, 'cloud', '{"provider":"codebuddy","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
-              'workspace', 'idle', 2, $4,
-              $5, '{}'::jsonb, '[]'::jsonb, 'deepseek-v4-pro-ioa'
-            )
-            RETURNING id
-          `,
-          [
-            this.workspaceId,
-            `${name} · ${role}`,
-            runtime.id,
-            userId,
-            `你是 Multica 编码小队的${role}。${instruction}所有输出使用中文，并保留可验收证据。`,
-          ],
-        );
-        agents.push({ id: agent.rows[0]!.id, name: `${name} · ${role}`, role, roleKey });
-      }
-
-      const squad = await client.query<{ id: string }>(
-        `
-          INSERT INTO squad (
-            workspace_id, name, description, leader_id, creator_id, instructions, sop_profile
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-          RETURNING id
-        `,
-        [
-          this.workspaceId,
-          name,
-          "用于开发 Multica 自身的生产级编码小队，包含队长、方案设计者、开发者、验收者、规约维护者和部署运行者。",
-          agents[0]!.id,
-          userId,
-          "队长先澄清需求和验收口径，再按角色分派；开发者不得越界；验收者必须独立给出证据；所有指标和输出使用中文。",
-          JSON.stringify(profile),
-        ],
-      );
-      const squadId = squad.rows[0]!.id;
-      for (const agent of agents) {
-        await client.query(
-          `
-            INSERT INTO squad_member (squad_id, member_type, member_id, role)
-            VALUES ($1, 'agent', $2, $3)
-            ON CONFLICT (squad_id, member_type, member_id)
-            DO UPDATE SET role = EXCLUDED.role
-          `,
-          [squadId, agent.id, agent.role],
-        );
-      }
-      await client.query("COMMIT");
-      this.createdSquadIds.push(squadId);
-      return {
-        runtimeId: runtime.id,
-        squadId,
-        squadName: name,
-        leaderAgentId: agents[0]!.id,
-        agents,
-      };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      await client.end();
-    }
-  }
-
   async createIssue(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/issues", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ title, ...opts }),
     });
     if (!res.ok) {
@@ -933,10 +694,6 @@ export class TestApiClient {
     const issue = await res.json();
     this.createdIssueIds.push(issue.id);
     return issue;
-  }
-
-  async createIssueForE2E(prefix = "E2E Issue", opts?: Record<string, unknown>) {
-    return this.createIssue(this.e2eName(prefix), opts);
   }
 
   rememberIssue(id: string) {
@@ -979,15 +736,6 @@ export class TestApiClient {
     };
   }
 
-  async listChildIssues(issueId: string) {
-    const res = await this.authedFetch(`/api/issues/${issueId}/children`);
-    if (!res.ok) {
-      throw new Error(`list child issues failed: ${res.status} ${await res.text()}`);
-    }
-    const data = await res.json();
-    return data.issues ?? [];
-  }
-
   async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
     const res = await this.authedFetch(`/api/issues/${issueId}/execution-tree`);
     if (!res.ok) {
@@ -999,6 +747,7 @@ export class TestApiClient {
   async createProject(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/projects", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ title, ...opts }),
     });
     if (!res.ok) {
@@ -1007,41 +756,6 @@ export class TestApiClient {
     const project = await res.json();
     this.createdProjectIds.push(project.id);
     return project;
-  }
-
-  async createProjectResource(projectId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/projects/${projectId}/resources`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create project resource failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async ensureGongfengRepositoryInventory(repo: Record<string, unknown>) {
-    if (!this.workspaceId) {
-      throw new Error("workspace id is not initialized");
-    }
-    const projectPath = String(repo.project_path || "").replace(/^\/+|\/+$/g, "");
-    if (!projectPath) {
-      throw new Error("project_path is required for Gongfeng repository inventory");
-    }
-    const workspace = await this.getWorkspace(this.workspaceId);
-    const repos = Array.isArray(workspace.repos) ? workspace.repos as Array<Record<string, unknown>> : [];
-    const existing = repos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
-    if (existing) {
-      return existing;
-    }
-    const nextRepo = { provider: "gongfeng", ...repo, project_path: projectPath };
-    const updated = await this.updateWorkspace(this.workspaceId, { repos: [...repos, nextRepo] });
-    const updatedRepos = Array.isArray(updated.repos) ? updated.repos as Array<Record<string, unknown>> : [];
-    const registered = updatedRepos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
-    if (!registered) {
-      throw new Error(`workspace repo inventory did not register ${projectPath}`);
-    }
-    return registered;
   }
 
   async updateWorkspace(id: string, data: Record<string, unknown>): Promise<TestWorkspace> {
@@ -1053,6 +767,87 @@ export class TestApiClient {
       throw new Error(`update workspace failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async listWorkspaceMembers(workspaceId: string): Promise<TestWorkspaceMember[]> {
+    const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members`);
+    if (!res.ok) {
+      throw new Error(`list workspace members failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async createWorkspaceMember(
+    workspaceId: string,
+    data: { account: string; name?: string; password?: string; role?: string },
+  ): Promise<TestWorkspaceMember> {
+    const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members`, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({
+        account: data.account,
+        name: data.name ?? data.account,
+        password: data.password,
+        role: data.role ?? "member",
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`create workspace member failed: ${res.status} ${await res.text()}`);
+    }
+    const member = (await res.json()) as TestWorkspaceMember;
+    this.createdMemberIds.push({ workspaceId, memberId: member.id });
+    return member;
+  }
+
+  async deleteWorkspaceMember(workspaceId: string, memberId: string): Promise<void> {
+    const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`delete workspace member failed: ${res.status} ${await res.text()}`);
+    }
+  }
+
+  async cleanupWorkspaceMemberFixture(account: string, requestKey?: string): Promise<void> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      if (requestKey) {
+        await client.query(
+          `DELETE FROM resource_create_request WHERE resource_type='workspace_member' AND idempotency_key=$1`,
+          [requestKey],
+        );
+      }
+      await client.query(`DELETE FROM "user" WHERE account=$1`, [account]);
+    } finally {
+      await client.end();
+    }
+  }
+
+  async getProject(projectId: string) {
+    const res = await this.authedFetch(`/api/projects/${projectId}`);
+    if (!res.ok) {
+      throw new Error(`get project failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listInbox(): Promise<
+    Array<{
+      id: string;
+      title: string;
+      read: boolean;
+      archived: boolean;
+      issue_id?: string | null;
+      type?: string;
+    }>
+  > {
+    const res = await this.authedFetch("/api/inbox");
+    if (!res.ok) {
+      throw new Error(`list inbox failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   }
 
   async deleteProject(id: string) {
@@ -1070,10 +865,18 @@ export class TestApiClient {
     return res.json();
   }
 
-  async ensureInternalSquadTemplate(templateKey: "user-center" | "multica-coding"): Promise<InternalSquadTemplateResponse> {
+  async ensureInternalSquadTemplate(
+    templateKey: "user-center" | "multica-coding",
+    options: {
+      name?: string;
+      runtime_provider?: string;
+      model?: string;
+      scope?: "workspace" | "personal";
+    } = {},
+  ): Promise<InternalSquadTemplateResponse> {
     const res = await this.authedFetch("/api/squads/internal-template", {
       method: "POST",
-      body: JSON.stringify({ template_key: templateKey }),
+      body: JSON.stringify({ template_key: templateKey, ...options }),
     });
     if (!res.ok) {
       throw new Error(`ensure internal squad template failed: ${res.status} ${await res.text()}`);
@@ -1085,7 +888,16 @@ export class TestApiClient {
     return data;
   }
 
-  async getInternalSquadTemplateStats(templateName = "Multica 编码小队"): Promise<InternalSquadTemplateStats> {
+  rememberSquad(id: string) {
+    if (id && !this.createdSquadIds.includes(id)) {
+      this.createdSquadIds.push(id);
+    }
+  }
+
+  async getInternalSquadTemplateStats(
+    templateName: string,
+    agentNamePrefix: string,
+  ): Promise<InternalSquadTemplateStats> {
     if (!this.workspaceId) {
       throw new Error("Cannot inspect internal squad template before workspace is selected");
     }
@@ -1095,10 +907,11 @@ export class TestApiClient {
       const result = await client.query<InternalSquadTemplateStats>(
         `
           WITH target_squads AS (
-            SELECT id FROM squad WHERE workspace_id = $1 AND name = $2
+            SELECT id FROM squad WHERE workspace_id = $1 AND name = $2 AND archived_at IS NULL
           ),
           target_agents AS (
-            SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE ($2 || ' · %')
+            SELECT id FROM agent
+            WHERE workspace_id = $1 AND name LIKE ($3 || ' · %') AND archived_at IS NULL
           )
           SELECT
             (SELECT count(*)::int FROM target_squads) AS squad_count,
@@ -1109,7 +922,7 @@ export class TestApiClient {
               JOIN target_squads s ON s.id = sm.squad_id
             ) AS member_count
         `,
-        [this.workspaceId, templateName],
+        [this.workspaceId, templateName, agentNamePrefix],
       );
       return result.rows[0] ?? { squad_count: 0, agent_count: 0, member_count: 0 };
     } finally {
@@ -1125,21 +938,6 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/issues/${issueId}/sop-runs`);
     if (!res.ok) {
       throw new Error(`list issue SOP runs failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async recordSOPStepEvent(
-    runId: string,
-    stepId: string,
-    data: Record<string, unknown>,
-  ): Promise<SquadSOPRun["events"][number]> {
-    const res = await this.authedFetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`record SOP step event failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }
@@ -1254,86 +1052,6 @@ export class TestApiClient {
     }
   }
 
-  async completeSquadLeaderTaskWithEvidence(task: SquadLeaderTask, opts?: { squadId?: string }) {
-    if (!this.workspaceId) {
-      throw new Error("Cannot complete squad leader task before workspace is selected");
-    }
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(
-        `
-          UPDATE agent_task_queue
-          SET
-            status = 'completed',
-            started_at = COALESCE(started_at, now() - interval '5 seconds'),
-            completed_at = now(),
-            result = '{"状态":"完成","结论":"队长已完成分派并收集编码小队验收证据"}'::jsonb,
-            error = NULL,
-            session_id = COALESCE(session_id, 'e2e-coding-squad-session'),
-            work_dir = COALESCE(work_dir, '/data/ida/goal-test')
-          WHERE id = $1
-        `,
-        [task.id],
-      );
-      await client.query(
-        `
-          INSERT INTO task_usage (
-            task_id, provider, model, input_tokens, output_tokens,
-            cache_read_tokens, cache_write_tokens, updated_at
-          )
-          VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 31, 19, 5, 7, now())
-          ON CONFLICT (task_id, provider, model)
-          DO UPDATE SET
-            input_tokens = EXCLUDED.input_tokens,
-            output_tokens = EXCLUDED.output_tokens,
-            cache_read_tokens = EXCLUDED.cache_read_tokens,
-            cache_write_tokens = EXCLUDED.cache_write_tokens,
-            updated_at = now()
-        `,
-        [task.id],
-      );
-      await client.query(`DELETE FROM task_message WHERE task_id = $1`, [task.id]);
-      await client.query(
-        `
-          INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
-          VALUES
-            ($1, 1, 'text', NULL, '队长输出：已完成需求接收、方案分派和验收证据登记', '{}'::jsonb, NULL),
-            ($1, 2, 'tool_result', 'multica squad activity', '已记录编码小队 SOP 事件', '{}'::jsonb, '通过')
-        `,
-        [task.id],
-      );
-      await client.query(`DELETE FROM task_trace_event WHERE task_id = $1`, [task.id]);
-      await client.query(
-        `
-          INSERT INTO task_trace_event (
-            workspace_id, task_id, issue_id, squad_id, agent_id, runtime_id,
-            source, event_type, event_name, status, attempt,
-            queue_wait_ms, duration_ms, run_ms, total_ms,
-            provider, model, input_tokens, output_tokens, cache_read_tokens,
-            cache_write_tokens, failure_reason, error_type, chat_session_id, metadata
-          )
-          VALUES (
-            $1, $2, $3, $4, $5, $6,
-            'squad_sop', 'squad.leader.completed', '编码小队队长任务完成', 'completed', 1,
-            400, 2800, 2300, 3200,
-            'codebuddy', 'deepseek-v4-pro-ioa', 36, 19, 5,
-            7, '无', '', NULL,
-            '{"阶段":"编码小队","证据":"E2E","模型策略":"codebuddy"}'::jsonb
-          )
-        `,
-        [this.workspaceId, task.id, task.issue_id, opts?.squadId ?? null, task.agent_id, task.runtime_id],
-      );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      await client.end();
-    }
-  }
-
   async completeSquadLeaderTaskViaDaemon(task: SquadLeaderTask, output: string) {
     if (task.status === "queued") {
       const claimed = await this.claimDaemonTask(task.runtime_id);
@@ -1363,10 +1081,11 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
-  async createPromptLibraryItem(data: Record<string, unknown>): Promise<PromptLibraryItem> {
+  async createPromptLibraryItem(data: Record<string, unknown>, idempotencyKey?: string): Promise<PromptLibraryItem> {
     const res = await this.authedFetch("/api/prompt-library", {
       method: "POST",
       body: JSON.stringify(data),
+      headers: { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() },
     });
     if (!res.ok) {
       throw new Error(`create prompt library item failed: ${res.status} ${await res.text()}`);
@@ -1401,15 +1120,46 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
-  async updatePromptLibraryItem(id: string, data: Record<string, unknown>): Promise<PromptLibraryItem> {
-    const res = await this.authedFetch(`/api/prompt-library/${id}`, {
-      method: "PUT",
+  async createPromptLibraryVersion(
+    id: string,
+    data: Record<string, unknown>,
+    idempotencyKey?: string,
+  ): Promise<{ item: PromptLibraryItem; version: PromptLibraryVersion }> {
+    const res = await this.authedFetch(`/api/prompt-library/${id}/versions`, {
+      method: "POST",
       body: JSON.stringify(data),
+      headers: { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() },
     });
     if (!res.ok) {
-      throw new Error(`update prompt library item failed: ${res.status} ${await res.text()}`);
+      throw new Error(`create prompt library version failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async createPromptLibraryTrial(
+    promptId: string,
+    versionId: string,
+    data: Record<string, unknown>,
+    idempotencyKey?: string,
+  ): Promise<PromptLibraryTrial> {
+    const res = await this.authedFetch(`/api/prompt-library/${promptId}/versions/${versionId}/trials`, {
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: { "Idempotency-Key": idempotencyKey ?? crypto.randomUUID() },
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt library trial failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listPromptLibraryTrials(promptId: string): Promise<PromptLibraryTrial[]> {
+    const res = await this.authedFetch(`/api/prompt-library/${promptId}/trials`);
+    if (!res.ok) {
+      throw new Error(`list prompt library trials failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
   }
 
   async deletePromptLibraryItem(id: string) {
@@ -1435,75 +1185,11 @@ export class TestApiClient {
   async createPromptEvaluationAsset(data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
     const res = await this.authedFetch("/api/prompt-evaluation-assets", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
       throw new Error(`create prompt evaluation asset failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationCase(data: Record<string, unknown>): Promise<PromptEvaluationCase> {
-    const res = await this.authedFetch("/api/prompt-evaluation-cases", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create prompt evaluation case failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationSkillInventory(assetId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-inventory`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create skill inventory failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationSkillSnapshot(assetId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-snapshot`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create skill snapshot failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async createPromptEvaluationSkillCaseDrafts(assetId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-case-drafts`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`create skill case drafts failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async listPromptEvaluationCaseOperations(id: string, params?: { limit?: number }): Promise<{ items: PromptEvaluationCaseOperation[]; total: number }> {
-    const search = new URLSearchParams();
-    if (params?.limit) search.set("limit", String(params.limit));
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/case-operations${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation case operations failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async updatePromptEvaluationAsset(id: string, data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`update prompt evaluation asset failed: ${res.status}`);
     }
     return res.json();
   }
@@ -1520,6 +1206,7 @@ export class TestApiClient {
   async createPromptEvaluationDatasetVersion(id: string, data: Record<string, unknown> = {}): Promise<PromptEvaluationDatasetVersion> {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -1528,33 +1215,72 @@ export class TestApiClient {
     return res.json();
   }
 
-  async listPromptEvaluationDatasetVersionRows(id: string, versionId: string): Promise<PromptEvaluationDatasetVersionRow[]> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/rows`);
+  async listAgentPlaygroundExperiments(): Promise<Array<{
+    id: string;
+    name: string;
+    input_count: number;
+    agent_count: number;
+  }>> {
+    const res = await this.authedFetch("/api/agent-playground-experiments");
     if (!res.ok) {
-      throw new Error(`list prompt evaluation dataset version rows failed: ${res.status} ${await res.text()}`);
+      throw new Error(`list agent playground experiments failed: ${res.status} ${await res.text()}`);
     }
     const data = await res.json();
     return data.items ?? [];
   }
 
-  async diffPromptEvaluationDatasetVersion(id: string, baseVersionId: string, targetVersionId: string): Promise<PromptEvaluationDatasetVersionDiff> {
-    const search = new URLSearchParams({ target_version_id: targetVersionId });
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);
+  async getAgentPlaygroundExperiment(id: string): Promise<{
+    results: Array<{ id: string; task_id: string | null; chat_session_id: string | null }>;
+    judgements: Array<{ id: string; task_id: string | null; chat_session_id: string | null }>;
+  }> {
+    const res = await this.authedFetch(`/api/agent-playground-experiments/${id}`);
     if (!res.ok) {
-      throw new Error(`diff prompt evaluation dataset version failed: ${res.status} ${await res.text()}`);
+      throw new Error(`get agent playground experiment failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }
 
-  async restorePromptEvaluationDatasetVersion(id: string, versionId: string): Promise<RestorePromptEvaluationDatasetVersionResponse> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/restore`, {
-      method: "POST",
-      body: JSON.stringify({ version_label: "E2E 恢复快照", metadata: { 来源: "E2E" } }),
-    });
-    if (!res.ok) {
-      throw new Error(`restore prompt evaluation dataset version failed: ${res.status} ${await res.text()}`);
+  async cleanupAgentPlaygroundFixture(options: {
+    experimentId?: string;
+    requestKey?: string;
+    agentId?: string;
+    assetId?: string;
+  }): Promise<void> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      if (options.requestKey) {
+        await client.query(
+          `DELETE FROM resource_create_request WHERE resource_type='agent_playground_experiment' AND idempotency_key=$1`,
+          [options.requestKey],
+        );
+      }
+      if (options.experimentId) {
+        await client.query(`
+          DELETE FROM agent_task_queue WHERE id IN (
+            SELECT task_id FROM agent_playground_result WHERE experiment_id=$1 AND task_id IS NOT NULL
+            UNION
+            SELECT task_id FROM agent_playground_judgement WHERE experiment_id=$1 AND task_id IS NOT NULL
+          )
+        `, [options.experimentId]);
+        await client.query(`
+          DELETE FROM chat_session WHERE id IN (
+            SELECT chat_session_id FROM agent_playground_result WHERE experiment_id=$1 AND chat_session_id IS NOT NULL
+            UNION
+            SELECT chat_session_id FROM agent_playground_judgement WHERE experiment_id=$1 AND chat_session_id IS NOT NULL
+          )
+        `, [options.experimentId]);
+        await client.query(`DELETE FROM agent_playground_experiment WHERE id=$1`, [options.experimentId]);
+      }
+      if (options.agentId) {
+        await client.query(`DELETE FROM agent WHERE id=$1`, [options.agentId]);
+      }
+      if (options.assetId) {
+        await client.query(`DELETE FROM prompt_evaluation_asset WHERE id=$1`, [options.assetId]);
+      }
+    } finally {
+      await client.end();
     }
-    return res.json();
   }
 
   async completePromptEvaluationAgentTask(run: PromptEvaluationRun) {
@@ -1667,162 +1393,35 @@ export class TestApiClient {
     }
   }
 
-  async completePromptEvaluationOptimizationAgentTask(run: PromptEvaluationRun) {
-    if (!this.workspaceId) {
-      throw new Error("Cannot complete E2E optimization agent task before workspace is selected");
-    }
-    if (!run.task_id || !run.agent_id || !run.runtime_id || !run.chat_session_id) {
-      throw new Error(`Prompt evaluation optimization run is not linked to a complete agent task graph: ${run.id}`);
-    }
-
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const provider = run.runtime_provider || "codebuddy";
-      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa";
-      const structuredOutput = [
-        "Agent 优化输出：已基于失败用例生成待人工确认的优化候选。",
-        "```json",
-        JSON.stringify({
-          用例结果: [
-            {
-              case_index: 0,
-              status: "通过",
-              output: "已生成优化候选提示词正文。",
-              failure_reason: "无",
-              evidence: {
-                命中: ["优化候选", "验收条件", "trace/task id"],
-                trace_task_id: run.task_id,
-              },
-            },
-          ],
-          评估结论: "Agent 已生成可人工确认的优化候选",
-          优化候选名称: "Agent 自动优化候选",
-          候选提示词正文:
-            "请澄清 {{issue_title}}，输出必须使用中文；必须给出优化候选、验收条件、trace/task id、失败原因和下一步人工确认点。",
-          逐条修改依据: "补充验收条件、trace/task id、失败原因和人工确认点，保证领导演示可以复盘。",
-          可能影响的通过用例: "需要回归原有中文澄清用例，确认没有降低通过质量。",
-          人工验收清单: ["确认中文输出", "确认包含 trace/task id", "确认原提示词未被自动替换"],
-        }),
-        "```",
-      ].join("\n");
-      await client.query("BEGIN");
-      await client.query(
-        `
-          UPDATE agent_task_queue
-          SET
-            status = 'completed',
-            started_at = COALESCE(started_at, now() - interval '2 seconds'),
-            completed_at = now(),
-            result = $2::jsonb,
-            error = NULL,
-            session_id = COALESCE(session_id, 'e2e-prompt-eval-optimization-session'),
-            work_dir = COALESCE(work_dir, '/tmp/e2e-prompt-eval')
-          WHERE id = $1
-        `,
-        [run.task_id, JSON.stringify({ status: "completed", output: structuredOutput })],
-      );
-      await client.query(
-        `
-          INSERT INTO task_usage (
-            task_id, provider, model, input_tokens, output_tokens,
-            cache_read_tokens, cache_write_tokens, updated_at
-          )
-          VALUES ($1, $2, $3, 21, 13, 1, 2, now())
-          ON CONFLICT (task_id, provider, model)
-          DO UPDATE SET
-            input_tokens = EXCLUDED.input_tokens,
-            output_tokens = EXCLUDED.output_tokens,
-            cache_read_tokens = EXCLUDED.cache_read_tokens,
-            cache_write_tokens = EXCLUDED.cache_write_tokens,
-            updated_at = now()
-        `,
-        [run.task_id, provider, model],
-      );
-      await client.query(`DELETE FROM task_message WHERE task_id = $1`, [run.task_id]);
-      await client.query(
-        `
-          INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
-          VALUES
-            ($1, 1, 'text', NULL, $2, '{}'::jsonb, NULL),
-            ($1, 2, 'tool_result', 'Agent 优化同步', '已生成候选正文、依据和人工验收清单', '{}'::jsonb, '通过')
-        `,
-        [run.task_id, structuredOutput],
-      );
-      await client.query(`DELETE FROM task_trace_event WHERE task_id = $1`, [run.task_id]);
-      await client.query(
-        `
-          INSERT INTO task_trace_event (
-            workspace_id, task_id, agent_id, runtime_id, source, event_type,
-            event_name, status, attempt, duration_ms, run_ms, total_ms,
-            provider, model, input_tokens, output_tokens, cache_read_tokens,
-            cache_write_tokens, failure_reason, error_type, chat_session_id, metadata
-          )
-          VALUES (
-            $1, $2, $3, $4, 'prompt_evaluation', 'llm.usage_reported',
-            'Agent 优化候选已生成', 'completed', 1, 2400, 2100, 2500,
-            $6, $7, 21, 13, 1,
-            2, '无', '', $5, '{"阶段":"Agent 优化运行","验收":"E2E"}'::jsonb
-          )
-        `,
-        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id, provider, model],
-      );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      await client.end();
-    }
+  async runPromptEvaluationAsset(id: string, requestId = crypto.randomUUID()): Promise<PromptEvaluationAsset> {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, {
+        method: "POST", headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    return this.retryOnConnectionLoss(attempt);
   }
 
-  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`run prompt evaluation asset agent failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async runPromptEvaluationOptimizationAgent(runId: string): Promise<PromptEvaluationAgentRunResponse> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-agent-run`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`run prompt evaluation optimization agent failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
+  async runPromptEvaluationAssetAgent(id: string, requestId = crypto.randomUUID()): Promise<PromptEvaluationAgentRunResponse> {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/agent-run`, {
+        method: "POST",
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) {
+        throw new Error(`run prompt evaluation asset agent failed: ${res.status} ${await res.text()}`);
+      }
+      return res.json();
+    };
+    return this.retryOnConnectionLoss(attempt);
   }
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
     if (!res.ok) {
       throw new Error(`sync prompt evaluation run failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`cancel prompt evaluation run failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async reviewPromptEvaluationRun(runId: string, decision: "通过" | "未通过", note: string): Promise<PromptEvaluationRun> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/review`, {
-      method: "POST",
-      body: JSON.stringify({ decision, note }),
-    });
-    if (!res.ok) {
-      throw new Error(`review prompt evaluation run failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }
@@ -1857,18 +1456,10 @@ export class TestApiClient {
     return res.json();
   }
 
-  async listPromptEvaluationEvidenceSnapshots(runId: string): Promise<PromptEvaluationEvidenceSnapshot[]> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation evidence snapshots failed: ${res.status}`);
-    }
-    const data = await res.json();
-    return data.items ?? [];
-  }
-
   async createPromptEvaluationEvidenceSnapshot(runId: string): Promise<PromptEvaluationEvidenceSnapshot> {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?snapshot_type=${encodeURIComponent("验收归档")}`, {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
     });
     if (!res.ok) {
       throw new Error(`create prompt evaluation evidence snapshot failed: ${res.status}`);
@@ -1876,118 +1467,21 @@ export class TestApiClient {
     return res.json();
   }
 
-  async createPromptEvaluationAssetEvidenceSnapshots(assetId: string): Promise<Record<string, unknown>> {
-    const search = new URLSearchParams({ snapshot_type: "验收归档", limit: "20" });
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      throw new Error(`create prompt evaluation asset evidence snapshots failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async getPromptEvaluationAssetEvidenceArchivePackage(assetId: string): Promise<Record<string, unknown>> {
-    const search = new URLSearchParams({ snapshot_type: "验收归档", limit: "20" });
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots/export?${search.toString()}`);
-    if (!res.ok) {
-      throw new Error(`get prompt evaluation asset evidence archive package failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
-    if (!res.ok) {
-      throw new Error(`get prompt evaluation evidence snapshot failed: ${res.status}`);
-    }
-    return res.json();
-  }
-
-  async getPromptEvaluationSummary(params?: { since?: string }): Promise<PromptEvaluationSummary> {
-    const search = new URLSearchParams();
-    if (params?.since) search.set("since", params.since);
-    const res = await this.authedFetch(`/api/prompt-evaluation-summary${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`get prompt evaluation summary failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async listPromptEvaluationOptimizationCandidates(params?: { run_id?: string; prompt_id?: string; status?: string }): Promise<PromptEvaluationOptimizationCandidate[]> {
-    const search = new URLSearchParams();
-    if (params?.run_id) search.set("run_id", params.run_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation optimization candidates failed: ${res.status}`);
-    }
-    const data = await res.json();
-    return data.items ?? [];
-  }
-
-  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`create prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: Record<string, unknown>): Promise<PromptEvaluationOptimizationCandidate> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`update prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async checkPromptEvaluationSkillCandidateFreshness(candidateId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-freshness`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`check skill freshness failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async applyPromptEvaluationSkillCandidate(candidateId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`apply skill candidate failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async preparePromptEvaluationSkillReEvalAsset(candidateId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`prepare skill re-eval asset failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async runPromptEvaluationSkillReEval(candidateId: string, data: Record<string, unknown> = {}) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`run skill re-eval failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
+  async createPromptEvaluationOptimizationCandidate(
+    runId: string,
+    requestId = crypto.randomUUID(),
+  ): Promise<PromptEvaluationOptimizationCandidate> {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, {
+        method: "POST",
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) {
+        throw new Error(`create prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
+      }
+      return res.json();
+    };
+    return this.retryOnConnectionLoss(attempt);
   }
 
   async listPromptEvaluationCasesPage(params?: {
@@ -2031,70 +1525,6 @@ export class TestApiClient {
 
   async listPromptEvaluationCases(params?: { asset_id?: string; status?: string; source?: string; tag?: string; keyword?: string; limit?: number; cursor?: string; sort_by?: string; sort_direction?: string }): Promise<PromptEvaluationCase[]> {
     return (await this.listPromptEvaluationCasesPage(params)).items;
-  }
-
-  async listPromptEvaluationExperimentDimensions(params?: { asset_id?: string; status?: string }): Promise<{ items: PromptEvaluationExperimentDimension[]; total: number }> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.status) search.set("status", params.status);
-    const res = await this.authedFetch(`/api/prompt-evaluation-experiment-dimensions${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation experiment dimensions failed: ${res.status}`);
-    }
-    const data = await res.json();
-    return { items: data.items ?? [], total: data.total ?? 0 };
-  }
-
-  async listPromptEvaluationDimensionScores(params?: { run_id?: string; asset_id?: string; prompt_id?: string; status?: string }): Promise<{ items: PromptEvaluationDimensionScore[]; total: number }> {
-    const search = new URLSearchParams();
-    if (params?.run_id) search.set("run_id", params.run_id);
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const res = await this.authedFetch(`/api/prompt-evaluation-dimension-scores${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation dimension scores failed: ${res.status}`);
-    }
-    const data = await res.json();
-    return { items: data.items ?? [], total: data.total ?? 0 };
-  }
-
-  async listPromptEvaluationDimensionScoreSummaries(params?: { asset_id?: string; prompt_id?: string; status?: string }): Promise<{ items: PromptEvaluationDimensionScoreSummary[]; total: number }> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const res = await this.authedFetch(`/api/prompt-evaluation-dimension-score-summaries${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation dimension score summaries failed: ${res.status}`);
-    }
-    const data = await res.json();
-    return { items: data.items ?? [], total: data.total ?? 0 };
-  }
-
-  async listPromptEvaluationDimensionScoreTrends(params?: { asset_id?: string; prompt_id?: string; status?: string; since?: string }): Promise<{ items: PromptEvaluationDimensionScoreTrend[]; total: number }> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.since) search.set("since", params.since);
-    const res = await this.authedFetch(`/api/prompt-evaluation-dimension-score-trends${search.toString() ? `?${search}` : ""}`);
-    if (!res.ok) {
-      throw new Error(`list prompt evaluation dimension score trends failed: ${res.status}`);
-    }
-    const data = await res.json();
-    return { items: data.items ?? [], total: data.total ?? 0 };
-  }
-
-  async updatePromptEvaluationCase(id: string, data: Record<string, unknown>): Promise<PromptEvaluationCase> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-cases/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`update prompt evaluation case failed: ${res.status}`);
-    }
-    return res.json();
   }
 
   async deletePromptEvaluationCase(id: string) {
@@ -2173,45 +1603,6 @@ export class TestApiClient {
     }
   }
 
-  async cleanupInternalSquadTemplates() {
-    if (!this.workspaceId) {
-      return;
-    }
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      await client.query("BEGIN");
-      try {
-        await client.query(
-          `
-            DELETE FROM squad
-            WHERE workspace_id = $1
-              AND name IN ('pm', 'user-center 小队', 'Multica 编码小队')
-          `,
-          [this.workspaceId],
-        );
-        await client.query(
-          `
-            DELETE FROM agent
-            WHERE workspace_id = $1
-              AND (
-                name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
-                OR name LIKE 'user-center 小队 · %'
-                OR name LIKE 'Multica 编码小队 · %'
-              )
-          `,
-          [this.workspaceId],
-        );
-        await client.query("COMMIT");
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
-    } finally {
-      await client.end();
-    }
-  }
-
   /** Clean up all issues created during this test. */
   async cleanup() {
     for (const id of this.createdIssueIds) {
@@ -2238,20 +1629,20 @@ export class TestApiClient {
       }
     }
     this.createdPromptLibraryIds = [];
+    for (const { workspaceId, memberId } of this.createdMemberIds) {
+      try {
+        await this.deleteWorkspaceMember(workspaceId, memberId);
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdMemberIds = [];
     await this.cleanupSeededSquads();
-    await this.cleanupInternalSquadTemplates();
     await this.cleanupSeededRuntimes();
   }
 
   getToken() {
     return this.token;
-  }
-
-  getAccount() {
-    if (!this.account) {
-      throw new Error("Test API client is not logged in");
-    }
-    return this.account;
   }
 
   private async authedFetch(path: string, init?: RequestInit) {
@@ -2263,6 +1654,15 @@ export class TestApiClient {
     if (this.workspaceSlug) headers["X-Workspace-Slug"] = this.workspaceSlug;
     else if (this.workspaceId) headers["X-Workspace-ID"] = this.workspaceId;
     return fetch(`${API_BASE}${path}`, { ...init, headers });
+  }
+
+  private async retryOnConnectionLoss<T>(attempt: () => Promise<T>): Promise<T> {
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
+    }
   }
 
   private e2eName(prefix: string) {

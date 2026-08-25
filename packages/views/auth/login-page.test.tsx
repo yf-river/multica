@@ -1,26 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement, ReactNode } from "react";
-import { I18nProvider } from "@multica/core/i18n/react";
-import zhCommon from "../locales/zh-Hans/common.json";
-import zhAuth from "../locales/zh-Hans/auth.json";
-import zhSettings from "../locales/zh-Hans/settings.json";
+import { renderWithI18n } from "../test/i18n";
 
-const TEST_RESOURCES = {
-  "zh-Hans": { common: zhCommon, auth: zhAuth, settings: zhSettings },
-};
-
-function I18nWrapper({ children }: { children: ReactNode }) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      {children}
-    </I18nProvider>
-  );
-}
-
-function renderWithI18n(ui: ReactElement) {
-  return render(ui, { wrapper: I18nWrapper });
+async function submitCredentials(password: string) {
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("账号"), "alice");
+  await user.type(screen.getByLabelText("密码"), password);
+  await user.click(screen.getByRole("button", { name: "继续" }));
 }
 
 const mockLogin = vi.hoisted(() => vi.fn());
@@ -30,6 +17,17 @@ const mockApiSetToken = vi.hoisted(() => vi.fn());
 const mockApiGetMe = vi.hoisted(() => vi.fn());
 const mockApiIssueCliToken = vi.hoisted(() => vi.fn());
 const mockSetQueryData = vi.hoisted(() => vi.fn());
+const MockApiError = vi.hoisted(
+  () =>
+    class MockApiError extends Error {
+      constructor(
+        message: string,
+        readonly status: number,
+      ) {
+        super(message);
+      }
+    },
+);
 
 vi.mock("@tanstack/react-query", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
@@ -53,6 +51,7 @@ vi.mock("@multica/core/auth", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
+  ApiError: MockApiError,
   api: {
     login: mockApiLogin,
     listWorkspaces: mockApiListWorkspaces,
@@ -71,7 +70,7 @@ describe("LoginPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
+    mockApiGetMe.mockRejectedValue(new MockApiError("unauthorized", 401));
     mockApiListWorkspaces.mockResolvedValue([]);
     localStorage.clear();
     Object.defineProperty(window, "location", {
@@ -91,12 +90,8 @@ describe("LoginPage", () => {
 
   it("logs in with account and password", async () => {
     mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice", name: "Alice" });
-    const user = userEvent.setup();
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    await user.type(screen.getByLabelText("账号"), "alice");
-    await user.type(screen.getByLabelText("密码"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "继续" }));
+    await submitCredentials("correct-password");
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith("alice", "correct-password");
@@ -107,36 +102,73 @@ describe("LoginPage", () => {
 
   it("shows login errors", async () => {
     mockLogin.mockRejectedValueOnce(new Error("账号或密码错误"));
-    const user = userEvent.setup();
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    await user.type(screen.getByLabelText("账号"), "alice");
-    await user.type(screen.getByLabelText("密码"), "wrong-password");
-    await user.click(screen.getByRole("button", { name: "继续" }));
+    await submitCredentials("wrong-password");
 
     expect(await screen.findByText("账号或密码错误")).toBeInTheDocument();
   });
 
   it("uses direct API login for CLI callback", async () => {
     mockApiLogin.mockResolvedValueOnce({ token: "jwt-token", user: { id: "u1" } });
-    const user = userEvent.setup();
     renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         cliCallback={{ url: "http://localhost:39876/callback", state: "state-1" }}
       />,
     );
-
-    await user.type(screen.getByLabelText("账号"), "alice");
-    await user.type(screen.getByLabelText("密码"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "继续" }));
+    await submitCredentials("correct-password");
 
     await waitFor(() => {
       expect(mockApiLogin).toHaveBeenCalledWith("alice", "correct-password");
+      expect(mockApiSetToken).not.toHaveBeenCalledWith("jwt-token");
+      expect(localStorage.getItem("multica_token")).toBeNull();
       expect(window.location.href).toBe(
         "http://localhost:39876/callback?token=jwt-token&state=state-1",
       );
     });
+  });
+
+  it("issues a fresh CLI token from the current cookie session", async () => {
+    mockApiGetMe.mockResolvedValueOnce({ id: "u1", account: "alice", name: "Alice" });
+    mockApiIssueCliToken.mockResolvedValueOnce({ token: "cli-token" });
+    const user = userEvent.setup();
+
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        cliCallback={{ url: "http://localhost:39876/callback", state: "state-2" }}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "授权" }));
+
+    await waitFor(() => {
+      expect(mockApiIssueCliToken).toHaveBeenCalledOnce();
+      expect(window.location.href).toBe(
+        "http://localhost:39876/callback?token=cli-token&state=state-2",
+      );
+    });
+  });
+
+  it("reports a failed CLI session check when the server is unavailable", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = new MockApiError("unavailable", 503);
+    mockApiGetMe.mockRejectedValueOnce(error);
+
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        cliCallback={{ url: "http://localhost:39876/callback", state: "state-3" }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(warning).toHaveBeenCalledWith(
+        "[auth] failed to check existing CLI session",
+        error,
+      );
+    });
+    warning.mockRestore();
   });
 
   it("validates CLI callback hosts", () => {

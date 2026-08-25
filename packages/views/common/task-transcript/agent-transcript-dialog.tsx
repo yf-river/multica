@@ -35,19 +35,20 @@ import {
   DropdownMenuItem,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
-import { api } from "@multica/core/api";
 import { useTranscriptViewStore, type TranscriptSortDirection } from "@multica/core/agents/stores";
-import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
+import type { AgentTask } from "@multica/core/types/agent";
 import { redactSecrets } from "./redact";
 import type { TimelineItem } from "./build-timeline";
 import {
   formatEventLabel,
   formatFilterLabel,
   localizeTranscriptOutput,
+  summarizeToolInput,
   transcriptTruncatedSuffix,
   truncateTranscriptText,
 } from "./format";
 import { useT } from "../../i18n";
+import { useTranscriptMetadata } from "./use-transcript-metadata";
 
 interface AgentTranscriptDialogProps {
   open: boolean;
@@ -102,28 +103,8 @@ function getEventSummary(item: TimelineItem): string {
       return item.content?.split("\n").find((l) => l.trim().length > 0) ?? "";
     case "thinking":
       return item.content?.slice(0, 200) ?? "";
-    case "tool_use": {
-      if (!item.input) return "";
-      const inp = item.input as Record<string, string>;
-      if (inp.query) return inp.query;
-      if (inp.file_path) return shortenPath(inp.file_path);
-      if (inp.path) return shortenPath(inp.path);
-      if (inp.pattern) return inp.pattern;
-      if (inp.description) return String(inp.description);
-      if (inp.command) {
-        const cmd = String(inp.command);
-        return truncateTranscriptText(cmd, 120);
-      }
-      if (inp.prompt) {
-        const p = String(inp.prompt);
-        return truncateTranscriptText(p, 120);
-      }
-      if (inp.skill) return String(inp.skill);
-      for (const v of Object.values(inp)) {
-        if (typeof v === "string" && v.length > 0 && v.length < 120) return v;
-      }
-      return "";
-    }
+    case "tool_use":
+      return summarizeToolInput(item.input, 120);
     case "tool_result":
       return item.output ? truncateTranscriptText(localizeTranscriptOutput(item.output), 200) : "";
     case "error":
@@ -131,12 +112,6 @@ function getEventSummary(item: TimelineItem): string {
     default:
       return "";
   }
-}
-
-function shortenPath(p: string): string {
-  const parts = p.split("/");
-  if (parts.length <= 3) return p;
-  return ".../" + parts.slice(-2).join("/");
 }
 
 function formatDuration(start: string, end: string): string {
@@ -185,8 +160,11 @@ export function AgentTranscriptDialog({
   const [elapsed, setElapsed] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedWorkdir, setCopiedWorkdir] = useState(false);
-  const [agentInfo, setAgentInfo] = useState<Agent | null>(null);
-  const [runtimeInfo, setRuntimeInfo] = useState<AgentRuntime | null>(null);
+  const { agentInfo, runtimeInfo } = useTranscriptMetadata(
+    open,
+    task.agent_id,
+    task.runtime_id,
+  );
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const sortDirection = useTranscriptViewStore((s) => s.sortDirection);
   const setSortDirection = useTranscriptViewStore((s) => s.setSortDirection);
@@ -243,28 +221,6 @@ export function AgentTranscriptDialog({
     },
     [sortDirection, setSortDirection],
   );
-
-  // Fetch agent and runtime metadata when dialog opens
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    if (task.agent_id) {
-      api.getAgent(task.agent_id).then((agent) => {
-        if (!cancelled) setAgentInfo(agent);
-      }).catch(() => {});
-    }
-
-    if (task.runtime_id) {
-      api.listRuntimes().then((runtimes) => {
-        if (cancelled) return;
-        const rt = runtimes.find((r) => r.id === task.runtime_id);
-        if (rt) setRuntimeInfo(rt);
-      }).catch(() => {});
-    }
-
-    return () => { cancelled = true; };
-  }, [open, task.agent_id, task.runtime_id]);
 
   // Elapsed time for live tasks
   useEffect(() => {
@@ -665,6 +621,7 @@ function TimelineBar({
   selectedSeq: number | null;
   onSegmentClick: (seq: number) => void;
 }) {
+  const { t } = useT("agents");
   const segments: { startIdx: number; endIdx: number; color: EventColor; count: number }[] = [];
   let currentColor: EventColor | null = null;
   let currentStart = 0;
@@ -685,7 +642,7 @@ function TimelineBar({
   }
 
   return (
-    <div className="flex gap-0.5 h-5 rounded overflow-hidden" role="navigation" aria-label="执行时间线">
+    <div className="flex gap-0.5 h-5 rounded overflow-hidden" role="navigation" aria-label={t(($) => $.transcript.timeline_aria)}>
       {segments.map((seg) => {
         const isSelected = selectedSeq !== null && items.slice(seg.startIdx, seg.endIdx + 1).some((i) => i.seq === selectedSeq);
         const color = colorClasses[seg.color];
@@ -702,12 +659,16 @@ function TimelineBar({
             )}
             style={{ width: `${Math.max(widthPercent, 0.5)}%` }}
             onClick={() => onSegmentClick(items[seg.startIdx]!.seq)}
-            title={`${formatEventLabel(items[seg.startIdx]!)}${seg.count > 1 ? `（另 ${seg.count - 1} 条）` : ""}`}
+            title={`${formatEventLabel(items[seg.startIdx]!)}${seg.count > 1 ? `（${t(($) => $.transcript.more_events, { count: seg.count - 1 })}）` : ""}`}
           >
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10 pointer-events-none">
               <div className="rounded bg-popover border px-2 py-1 text-[10px] text-popover-foreground shadow-md whitespace-nowrap">
                 {formatEventLabel(items[seg.startIdx]!)}
-                {seg.count > 1 && <span className="text-muted-foreground ml-1">另 {seg.count - 1} 条</span>}
+                {seg.count > 1 && (
+                  <span className="text-muted-foreground ml-1">
+                    {t(($) => $.transcript.more_events, { count: seg.count - 1 })}
+                  </span>
+                )}
               </div>
             </div>
           </button>

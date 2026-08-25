@@ -42,13 +42,23 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	}
 
 	path, _ := cli.CLIConfigPathForProfile(profile)
-	fmt.Fprintf(os.Stdout, "Config file: %s\n", path)
-	if profile != "" {
-		fmt.Fprintf(os.Stdout, "Profile:      %s\n", profile)
+	if _, err := fmt.Fprintf(os.Stdout, "Config file: %s\n", path); err != nil {
+		return err
 	}
-	fmt.Fprintf(os.Stdout, "server_url:   %s\n", valueOrDefault(cfg.ServerURL, "(not set)"))
-	fmt.Fprintf(os.Stdout, "app_url:      %s\n", valueOrDefault(cfg.AppURL, "(not set)"))
-	fmt.Fprintf(os.Stdout, "workspace_id: %s\n", valueOrDefault(cfg.WorkspaceID, "(not set)"))
+	if profile != "" {
+		if _, err := fmt.Fprintf(os.Stdout, "Profile:      %s\n", profile); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "server_url:   %s\n", configDisplayValue(cfg.ServerURL)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "app_url:      %s\n", configDisplayValue(cfg.AppURL)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(os.Stdout, "workspace_id: %s\n", configDisplayValue(cfg.WorkspaceID)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -80,9 +90,9 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func valueOrDefault(v, fallback string) string {
+func configDisplayValue(v string) string {
 	if v == "" {
-		return fallback
+		return "(not set)"
 	}
 	return v
 }

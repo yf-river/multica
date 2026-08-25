@@ -35,14 +35,14 @@ function getMermaid(): Promise<MermaidAPI> {
   return mermaidPromise;
 }
 
-function toLegacyColor(color: string, fallback: string, ownerDocument: Document): string {
+function toMermaidColor(color: string, fallback: string, ownerDocument: Document): string {
   const canvas = ownerDocument.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return fallback;
 
-  // Mermaid's color parser only supports legacy color syntax. Canvas can parse
+  // Mermaid's color parser only supports CSS color keywords and hex/rgb syntax. Canvas can parse
   // modern CSS Color 4 values such as oklch(), then getImageData gives concrete
   // 8-bit sRGB bytes that Mermaid can consume safely.
   context.fillStyle = "#000";
@@ -65,7 +65,7 @@ function resolveCssColor(
   const color = getComputedStyle(probe).color;
   probe.remove();
 
-  return toLegacyColor(color || fallback, fallback, host.ownerDocument);
+  return toMermaidColor(color || fallback, fallback, host.ownerDocument);
 }
 
 function getMermaidThemeVariables(host: HTMLElement | null) {

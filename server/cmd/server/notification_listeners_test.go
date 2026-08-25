@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -15,9 +17,9 @@ import (
 // (testPool, testUserID, testWorkspaceID are set in integration_test.go).
 
 // inboxItemsForRecipient returns all non-archived inbox items for a given recipient.
-func inboxItemsForRecipient(t *testing.T, queries *db.Queries, recipientID string) []db.ListInboxItemsRow {
+func inboxItemsForRecipient(t *testing.T, queries *db.Queries, recipientID string) []db.InboxItem {
 	t.Helper()
-	items, err := queries.ListInboxItems(context.Background(), db.ListInboxItemsParams{
+	rows, err := queries.ListInboxItems(context.Background(), db.ListInboxItemsParams{
 		WorkspaceID:   util.MustParseUUID(testWorkspaceID),
 		RecipientType: "member",
 		RecipientID:   util.MustParseUUID(recipientID),
@@ -25,13 +27,17 @@ func inboxItemsForRecipient(t *testing.T, queries *db.Queries, recipientID strin
 	if err != nil {
 		t.Fatalf("ListInboxItems: %v", err)
 	}
+	items := make([]db.InboxItem, len(rows))
+	for i, row := range rows {
+		items[i] = row.InboxItem
+	}
 	return items
 }
 
 // cleanupInboxForIssue deletes all inbox items related to a given issue.
 func cleanupInboxForIssue(t *testing.T, issueID string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
+	_, _ = testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
 }
 
 func inboxItemCountForIssue(t *testing.T, issueID string) int {
@@ -80,9 +86,50 @@ func createTestSubIssue(t *testing.T, workspaceID, creatorID, parentIssueID stri
 func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	t.Helper()
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
+	bus.Subscribe(protocol.EventIssueReactionAdded, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeIssueReactionNotification)
+	})
+	bus.Subscribe(protocol.EventReactionAdded, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeCommentReactionNotification)
+	})
+	bus.Subscribe(protocol.EventIssueCreated, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeIssueCreatedAudience)
+	})
+	bus.Subscribe(protocol.EventIssueUpdated, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeIssueUpdatedAudience)
+	})
+	bus.Subscribe(protocol.EventCommentCreated, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeCommentCreatedAudience)
+	})
+	bus.Subscribe(protocol.EventTaskFailed, func(event events.Event) {
+		payload, ok := decodeEventPayload[taskEventPayload](event)
+		if !ok {
+			t.Fatalf("decode task failure notification test event")
+		}
+		emitted, err := projectTaskFailedNotifications(context.Background(), queries, event, payload)
+		if err != nil {
+			t.Fatalf("project task failure notification test event: %v", err)
+		}
+		publishEventsForTest(bus, emitted)
+	})
 	return bus
+}
+
+func projectDurableEventForTest(
+	t *testing.T,
+	queries *db.Queries,
+	bus *events.Bus,
+	event events.Event,
+	consumers ...func(context.Context, *db.Queries, events.Event) ([]events.Event, error),
+) {
+	t.Helper()
+	for _, consume := range consumers {
+		emitted, err := consume(context.Background(), queries, event)
+		if err != nil {
+			t.Fatalf("project durable %s event: %v", event.Type, err)
+		}
+		publishEventsForTest(bus, emitted)
+	}
 }
 
 type notificationIssueTestFixture struct {
@@ -118,6 +165,165 @@ func setupNotificationIssueTest(t *testing.T) notificationIssueTestFixture {
 
 func (f notificationIssueTestFixture) inboxEventCount() int {
 	return len(*f.inboxEvents)
+}
+
+func issueNotificationResponse(issueID, title string) handler.IssueResponse {
+	return handler.IssueResponse{
+		ID:          issueID,
+		WorkspaceID: testWorkspaceID,
+		Title:       title,
+		Status:      "todo",
+		Priority:    "medium",
+		CreatorType: "member",
+		CreatorID:   testUserID,
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func publishIssueCreated(bus *events.Bus, issue handler.IssueResponse) {
+	bus.Publish(events.Event{
+		Type:        protocol.EventIssueCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload:     map[string]any{"issue": issue},
+	})
+}
+
+func publishIssueUpdated(bus *events.Bus, issue handler.IssueResponse, changes map[string]any) {
+	changes["issue"] = issue
+	bus.Publish(events.Event{
+		Type:        protocol.EventIssueUpdated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload:     changes,
+	})
+}
+
+func publishTaskFailed(bus *events.Bus, issueID, taskID string) {
+	bus.Publish(events.Event{
+		Type:        protocol.EventTaskFailed,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "system",
+		Payload: map[string]any{
+			"task_id":  taskID,
+			"agent_id": "00000000-0000-0000-0000-aaaaaaaaaaaa",
+			"issue_id": issueID,
+			"status":   "failed",
+		},
+	})
+}
+
+func TestDurableIssueReactionNotifiesCreator(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+	actorAccount := "reaction-actor-issue@multica"
+	actorID := createTestUser(t, actorAccount)
+	t.Cleanup(func() { cleanupTestUser(t, actorAccount) })
+
+	f.bus.Publish(events.Event{
+		Type:        protocol.EventIssueReactionAdded,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     actorID,
+		Payload: map[string]any{
+			"reaction": map[string]any{
+				"id":         "issue-reaction-event",
+				"issue_id":   f.issueID,
+				"actor_type": "member",
+				"actor_id":   actorID,
+				"emoji":      "eyes",
+			},
+		},
+	})
+
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
+	if len(items) != 1 || items[0].Type != "reaction_added" {
+		t.Fatalf("issue reaction inbox items = %+v", items)
+	}
+	var details map[string]string
+	if err := json.Unmarshal(items[0].Details, &details); err != nil {
+		t.Fatalf("decode issue reaction details: %v", err)
+	}
+	if details["emoji"] != "eyes" || f.inboxEventCount() != 1 {
+		t.Fatalf("issue reaction details/events = %+v/%d", details, f.inboxEventCount())
+	}
+}
+
+func TestDurableCommentReactionNotifiesCommentAuthor(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+	comment, err := f.queries.CreateComment(context.Background(), db.CreateCommentParams{
+		IssueID:     util.MustParseUUID(f.issueID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		AuthorType:  "member",
+		AuthorID:    util.MustParseUUID(testUserID),
+		Content:     "reaction notification target",
+		Type:        "comment",
+		ParentID:    pgtype.UUID{},
+	})
+	if err != nil {
+		t.Fatalf("create comment: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM comment WHERE id = $1`, comment.ID) })
+	actorAccount := "reaction-actor-comment@multica"
+	actorID := createTestUser(t, actorAccount)
+	t.Cleanup(func() { cleanupTestUser(t, actorAccount) })
+
+	f.bus.Publish(events.Event{
+		Type:        protocol.EventReactionAdded,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     actorID,
+		Payload: map[string]any{
+			"reaction": map[string]any{
+				"id":         "comment-reaction-event",
+				"comment_id": util.UUIDToString(comment.ID),
+				"actor_type": "member",
+				"actor_id":   actorID,
+				"emoji":      "rocket",
+			},
+		},
+	})
+
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
+	if len(items) != 1 || items[0].Type != "reaction_added" {
+		t.Fatalf("comment reaction inbox items = %+v", items)
+	}
+	var details map[string]string
+	if err := json.Unmarshal(items[0].Details, &details); err != nil {
+		t.Fatalf("decode comment reaction details: %v", err)
+	}
+	if details["emoji"] != "rocket" || details["comment_id"] != util.UUIDToString(comment.ID) || f.inboxEventCount() != 1 {
+		t.Fatalf("comment reaction details/events = %+v/%d", details, f.inboxEventCount())
+	}
+}
+
+func TestDurableReactionRejectsActorMismatch(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+	_, err := consumeIssueReactionNotification(context.Background(), f.queries, events.Event{
+		Type:        protocol.EventIssueReactionAdded,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"reaction": map[string]any{
+				"id":         "mismatched-reaction-event",
+				"issue_id":   f.issueID,
+				"actor_type": "member",
+				"actor_id":   "00000000-0000-0000-0000-000000000001",
+				"emoji":      "eyes",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("actor-mismatched reaction event was accepted")
+	}
+	if count := inboxItemCountForIssue(t, f.issueID); count != 0 {
+		t.Fatalf("actor-mismatched reaction created %d inbox items", count)
+	}
 }
 
 type parentBubbleNotificationFixture struct {
@@ -166,26 +372,11 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	assigneeID := createTestUser(t, assigneeAccount)
 	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
+	issue := issueNotificationResponse(f.issueID, "notif test issue")
 	assigneeType := "member"
-	f.bus.Publish(events.Event{
-		Type:        protocol.EventIssueCreated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           f.issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "notif test issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
-	})
+	issue.AssigneeType = &assigneeType
+	issue.AssigneeID = &assigneeID
+	publishIssueCreated(f.bus, issue)
 
 	// Assignee should have an inbox item
 	items := inboxItemsForRecipient(t, f.queries, assigneeID)
@@ -211,104 +402,32 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	}
 }
 
-func TestNotification_IssueCreated_SkipsUnsupportedSquadAssigneeDirectInbox(t *testing.T) {
-	f := setupNotificationIssueTest(t)
-
-	assigneeType := "squad"
-	assigneeID := "11111111-2222-3333-4444-555555555555"
-	f.bus.Publish(events.Event{
-		Type:        protocol.EventIssueCreated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           f.issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "test squad issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
-	})
-
-	if count := inboxItemCountForIssue(t, f.issueID); count != 0 {
-		t.Fatalf("expected no inbox items for unsupported squad assignee, got %d", count)
+func TestNotification_IssueCreated_SuppressesDirectInbox(t *testing.T) {
+	tests := []struct {
+		name         string
+		assigneeType *string
+		assigneeID   *string
+	}{
+		{name: "unsupported squad", assigneeType: stringPointer("squad"), assigneeID: stringPointer("11111111-2222-3333-4444-555555555555")},
+		{name: "self assignment", assigneeType: stringPointer("member"), assigneeID: stringPointer(testUserID)},
+		{name: "no assignee"},
 	}
-	if f.inboxEventCount() != 0 {
-		t.Fatalf("expected no inbox:new events for unsupported squad assignee, got %d", f.inboxEventCount())
-	}
-}
 
-// TestNotification_IssueCreated_SelfAssign verifies that when the creator
-// assigns the issue to themselves, no notification is generated.
-func TestNotification_IssueCreated_SelfAssign(t *testing.T) {
-	f := setupNotificationIssueTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupNotificationIssueTest(t)
+			issue := issueNotificationResponse(f.issueID, tt.name+" issue")
+			issue.AssigneeType = tt.assigneeType
+			issue.AssigneeID = tt.assigneeID
+			publishIssueCreated(f.bus, issue)
 
-	assigneeType := "member"
-	assigneeID := testUserID // self-assign
-	f.bus.Publish(events.Event{
-		Type:        protocol.EventIssueCreated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           f.issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "self-assign issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &assigneeType,
-				AssigneeID:   &assigneeID,
-			},
-		},
-	})
-
-	items := inboxItemsForRecipient(t, f.queries, testUserID)
-	if len(items) != 0 {
-		t.Fatalf("expected 0 inbox items for self-assign, got %d", len(items))
-	}
-	if f.inboxEventCount() != 0 {
-		t.Fatalf("expected 0 inbox:new events for self-assign, got %d", f.inboxEventCount())
-	}
-}
-
-// TestNotification_IssueCreated_NoAssignee verifies that when an issue is
-// created without an assignee, no notifications are generated.
-func TestNotification_IssueCreated_NoAssignee(t *testing.T) {
-	f := setupNotificationIssueTest(t)
-
-	f.bus.Publish(events.Event{
-		Type:        protocol.EventIssueCreated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          f.issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "no assignee issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-		},
-	})
-
-	items := inboxItemsForRecipient(t, f.queries, testUserID)
-	if len(items) != 0 {
-		t.Fatalf("expected 0 inbox items for no-assignee issue, got %d", len(items))
-	}
-	if f.inboxEventCount() != 0 {
-		t.Fatalf("expected 0 inbox:new events, got %d", f.inboxEventCount())
+			if count := inboxItemCountForIssue(t, f.issueID); count != 0 {
+				t.Fatalf("created %d inbox items", count)
+			}
+			if f.inboxEventCount() != 0 {
+				t.Fatalf("published %d inbox:new events", f.inboxEventCount())
+			}
+		})
 	}
 }
 
@@ -338,25 +457,12 @@ func TestNotification_StatusChanged(t *testing.T) {
 	addTestSubscriber(t, issueID, "member", sub1ID, "assignee")
 	addTestSubscriber(t, issueID, "member", sub2ID, "commenter")
 
-	bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID, // actor is the creator
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "status test issue",
-				Status:      "in_progress",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-			"assignee_changed": false,
-			"status_changed":   true,
-			"prev_status":      "todo",
-		},
+	issue := issueNotificationResponse(issueID, "status test issue")
+	issue.Status = "in_progress"
+	publishIssueUpdated(bus, issue, map[string]any{
+		"assignee_changed": false,
+		"status_changed":   true,
+		"prev_status":      "todo",
 	})
 
 	// Actor (testUserID) should NOT get a notification
@@ -416,6 +522,7 @@ func TestNotification_CommentCreated(t *testing.T) {
 	// by subscriber_listeners when the event fires.
 	addTestSubscriber(t, issueID, "member", testUserID, "creator")
 	addTestSubscriber(t, issueID, "member", sub1ID, "assignee")
+	commentID := createTestComment(t, issueID, "member", commenterID, "test comment content", "comment")
 
 	bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
@@ -424,7 +531,7 @@ func TestNotification_CommentCreated(t *testing.T) {
 		ActorID:     commenterID, // commenter is the actor
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    issueID,
 				AuthorType: "member",
 				AuthorID:   commenterID,
@@ -495,6 +602,7 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 	})
 
 	addTestSubscriber(t, issueID, "member", subID, "manual")
+	commentID := createTestComment(t, issueID, "system", "00000000-0000-0000-0000-000000000000", "Sub-issue done — see [@Target](mention://member/"+targetID+").", "system")
 
 	// Publish a system-authored comment that transcludes a member mention
 	// in the body — the exact attack vector the reviewer flagged. If the
@@ -507,7 +615,7 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 		ActorID:     "",
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    issueID,
 				AuthorType: "system",
 				AuthorID:   "00000000-0000-0000-0000-000000000000",
@@ -535,13 +643,11 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 // constraint violation on every child-done event.
 func TestSubscriberSystemCommentDoesNotSubscribe(t *testing.T) {
 	queries := db.New(testPool)
-	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	bus.Publish(events.Event{
+	event := events.Event{
 		Type:        protocol.EventCommentCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "system",
@@ -556,7 +662,18 @@ func TestSubscriberSystemCommentDoesNotSubscribe(t *testing.T) {
 				Type:       "system",
 			},
 		},
-	})
+	}
+	payload, ok := decodeCommentEvent(event)
+	if !ok {
+		t.Fatal("decode system comment event")
+	}
+	emitted, err := projectCommentCreatedSubscriber(context.Background(), queries, event, payload)
+	if err != nil {
+		t.Fatalf("project system comment subscriber: %v", err)
+	}
+	if len(emitted) != 0 {
+		t.Fatalf("system comment emitted %d subscriber events, want 0", len(emitted))
+	}
 
 	if count := subscriberCount(t, queries, issueID); count != 0 {
 		t.Fatalf("expected 0 subscribers after system comment, got %d", count)
@@ -597,28 +714,14 @@ func TestNotification_AssigneeChanged(t *testing.T) {
 
 	newAssigneeType := "member"
 	oldAssigneeType := "member"
-	bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID, // actor is the creator
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:           issueID,
-				WorkspaceID:  testWorkspaceID,
-				Title:        "assignee change issue",
-				Status:       "todo",
-				Priority:     "medium",
-				CreatorType:  "member",
-				CreatorID:    testUserID,
-				AssigneeType: &newAssigneeType,
-				AssigneeID:   &newAssigneeID,
-			},
-			"assignee_changed":   true,
-			"status_changed":     false,
-			"prev_assignee_type": &oldAssigneeType,
-			"prev_assignee_id":   &oldAssigneeID,
-		},
+	issue := issueNotificationResponse(issueID, "assignee change issue")
+	issue.AssigneeType = &newAssigneeType
+	issue.AssigneeID = &newAssigneeID
+	publishIssueUpdated(bus, issue, map[string]any{
+		"assignee_changed":   true,
+		"status_changed":     false,
+		"prev_assignee_type": &oldAssigneeType,
+		"prev_assignee_id":   &oldAssigneeID,
 	})
 
 	// New assignee should get "issue_assigned"
@@ -664,76 +767,15 @@ func TestNotification_AssigneeChanged(t *testing.T) {
 	}
 }
 
-// TestNotification_TaskCompleted verifies that task:completed events do NOT
-// create inbox notifications (completion is visible from the status change).
-func TestNotification_TaskCompleted(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	// The agent ID (acting as system actor)
-	agentID := "00000000-0000-0000-0000-aaaaaaaaaaaa"
-
-	// Pre-add subscribers: creator and the agent
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-	addTestSubscriber(t, issueID, "agent", agentID, "assignee")
-
-	bus.Publish(events.Event{
-		Type:        protocol.EventTaskCompleted,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
-			"agent_id": agentID,
-			"issue_id": issueID,
-			"status":   "completed",
-		},
-	})
-
-	// No inbox notification should be created for task:completed
-	creatorItems := inboxItemsForRecipient(t, queries, testUserID)
-	if len(creatorItems) != 0 {
-		t.Fatalf("expected 0 inbox items for creator on task:completed, got %d", len(creatorItems))
-	}
-}
-
 // TestNotification_TaskFailed verifies that subscribers get a "task_failed"
 // notification when a task fails, excluding the agent.
 func TestNotification_TaskFailed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupNotificationIssueTest(t)
+	addTestSubscriber(t, f.issueID, "member", testUserID, "creator")
+	addTestSubscriber(t, f.issueID, "agent", "00000000-0000-0000-0000-aaaaaaaaaaaa", "assignee")
+	publishTaskFailed(f.bus, f.issueID, "00000000-0000-0000-0000-bbbbbbbbbbbb")
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	agentID := "00000000-0000-0000-0000-aaaaaaaaaaaa"
-
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-	addTestSubscriber(t, issueID, "agent", agentID, "assignee")
-
-	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
-			"agent_id": agentID,
-			"issue_id": issueID,
-			"status":   "failed",
-		},
-	})
-
-	creatorItems := inboxItemsForRecipient(t, queries, testUserID)
+	creatorItems := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(creatorItems) != 1 {
 		t.Fatalf("expected 1 inbox item for creator, got %d", len(creatorItems))
 	}
@@ -745,189 +787,43 @@ func TestNotification_TaskFailed(t *testing.T) {
 	}
 }
 
-// TestNotification_PriorityChanged verifies that all subscribers except the actor
-// receive a "priority_changed" notification when an issue priority changes.
-func TestNotification_PriorityChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	sub1Account := "notif-sub1-priority@multica"
-	sub1ID := createTestUser(t, sub1Account)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-	addTestSubscriber(t, issueID, "member", sub1ID, "assignee")
-
-	bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "priority test issue",
-				Status:      "todo",
-				Priority:    "high",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-			"assignee_changed": false,
-			"status_changed":   false,
-			"priority_changed": true,
-			"prev_priority":    "medium",
-		},
-	})
-
-	// Actor should NOT get a notification
-	actorItems := inboxItemsForRecipient(t, queries, testUserID)
-	if len(actorItems) != 0 {
-		t.Fatalf("expected 0 inbox items for actor, got %d", len(actorItems))
+func TestNotification_IssueFieldChanged(t *testing.T) {
+	tests := []struct {
+		name    string
+		changes map[string]any
+		mutate  func(*handler.IssueResponse)
+	}{
+		{name: "priority_changed", changes: map[string]any{"priority_changed": true, "prev_priority": "medium"}, mutate: func(issue *handler.IssueResponse) { issue.Priority = "high" }},
+		{name: "due_date_changed", changes: map[string]any{"due_date_changed": true}, mutate: func(issue *handler.IssueResponse) { issue.DueDate = stringPointer("2026-04-15") }},
+		{name: "start_date_changed", changes: map[string]any{"start_date_changed": true}, mutate: func(issue *handler.IssueResponse) { issue.StartDate = stringPointer("2026-04-01") }},
 	}
 
-	// sub1 should get a priority_changed notification
-	sub1Items := inboxItemsForRecipient(t, queries, sub1ID)
-	if len(sub1Items) != 1 {
-		t.Fatalf("expected 1 inbox item for sub1, got %d", len(sub1Items))
-	}
-	if sub1Items[0].Type != "priority_changed" {
-		t.Fatalf("expected type 'priority_changed', got %q", sub1Items[0].Type)
-	}
-	if sub1Items[0].Severity != "info" {
-		t.Fatalf("expected severity 'info', got %q", sub1Items[0].Severity)
-	}
-	// Title is now just the issue title; details contain from/to
-	expectedTitle := "priority test issue"
-	if sub1Items[0].Title != expectedTitle {
-		t.Fatalf("expected title %q, got %q", expectedTitle, sub1Items[0].Title)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := setupNotificationIssueTest(t)
+			recipientAccount := "notif-" + tt.name + "@multica"
+			recipientID := createTestUser(t, recipientAccount)
+			t.Cleanup(func() { cleanupTestUser(t, recipientAccount) })
+			addTestSubscriber(t, f.issueID, "member", testUserID, "creator")
+			addTestSubscriber(t, f.issueID, "member", recipientID, "assignee")
 
-// TestNotification_DueDateChanged verifies that all subscribers except the actor
-// receive a "due_date_changed" notification when an issue due date changes.
-func TestNotification_DueDateChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+			issue := issueNotificationResponse(f.issueID, tt.name+" issue")
+			tt.mutate(&issue)
+			tt.changes["assignee_changed"] = false
+			tt.changes["status_changed"] = false
+			publishIssueUpdated(f.bus, issue, tt.changes)
 
-	sub1Account := "notif-sub1-duedate@multica"
-	sub1ID := createTestUser(t, sub1Account)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-	addTestSubscriber(t, issueID, "member", sub1ID, "assignee")
-
-	dueDate := "2026-04-15"
-	bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "due date test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-				DueDate:     &dueDate,
-			},
-			"assignee_changed": false,
-			"status_changed":   false,
-			"due_date_changed": true,
-		},
-	})
-
-	// Actor should NOT get a notification
-	actorItems := inboxItemsForRecipient(t, queries, testUserID)
-	if len(actorItems) != 0 {
-		t.Fatalf("expected 0 inbox items for actor, got %d", len(actorItems))
-	}
-
-	// sub1 should get a due_date_changed notification
-	sub1Items := inboxItemsForRecipient(t, queries, sub1ID)
-	if len(sub1Items) != 1 {
-		t.Fatalf("expected 1 inbox item for sub1, got %d", len(sub1Items))
-	}
-	if sub1Items[0].Type != "due_date_changed" {
-		t.Fatalf("expected type 'due_date_changed', got %q", sub1Items[0].Type)
-	}
-	if sub1Items[0].Severity != "info" {
-		t.Fatalf("expected severity 'info', got %q", sub1Items[0].Severity)
-	}
-}
-
-// TestNotification_StartDateChanged verifies that subscribers (except the actor)
-// receive a "start_date_changed" notification when an issue start date changes.
-func TestNotification_StartDateChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	sub1Account := "notif-sub1-startdate@multica"
-	sub1ID := createTestUser(t, sub1Account)
-	t.Cleanup(func() { cleanupTestUser(t, sub1Account) })
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-	addTestSubscriber(t, issueID, "member", sub1ID, "assignee")
-
-	startDate := "2026-04-01"
-	bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "start date test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-				StartDate:   &startDate,
-			},
-			"assignee_changed":   false,
-			"status_changed":     false,
-			"start_date_changed": true,
-		},
-	})
-
-	// Actor should NOT get a notification
-	actorItems := inboxItemsForRecipient(t, queries, testUserID)
-	if len(actorItems) != 0 {
-		t.Fatalf("expected 0 inbox items for actor, got %d", len(actorItems))
-	}
-
-	sub1Items := inboxItemsForRecipient(t, queries, sub1ID)
-	if len(sub1Items) != 1 {
-		t.Fatalf("expected 1 inbox item for sub1, got %d", len(sub1Items))
-	}
-	if sub1Items[0].Type != "start_date_changed" {
-		t.Fatalf("expected type 'start_date_changed', got %q", sub1Items[0].Type)
-	}
-	if sub1Items[0].Severity != "info" {
-		t.Fatalf("expected severity 'info', got %q", sub1Items[0].Severity)
+			if items := inboxItemsForRecipient(t, f.queries, testUserID); len(items) != 0 {
+				t.Fatalf("actor received %d inbox items", len(items))
+			}
+			items := inboxItemsForRecipient(t, f.queries, recipientID)
+			if len(items) != 1 || items[0].Type != tt.name || items[0].Severity != "info" {
+				t.Fatalf("notification mismatch: %+v", items)
+			}
+			if items[0].Title != issue.Title {
+				t.Fatalf("notification title = %q, want %q", items[0].Title, issue.Title)
+			}
+		})
 	}
 }
 
@@ -936,25 +832,12 @@ func TestNotification_StartDateChanged(t *testing.T) {
 func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-status@multica")
 
-	f.bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          f.subID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "sub-issue status bubble",
-				Status:      "done",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-			"assignee_changed": false,
-			"status_changed":   true,
-			"prev_status":      "in_progress",
-		},
+	issue := issueNotificationResponse(f.subID, "sub-issue status bubble")
+	issue.Status = "done"
+	publishIssueUpdated(f.bus, issue, map[string]any{
+		"assignee_changed": false,
+		"status_changed":   true,
+		"prev_status":      "in_progress",
 	})
 
 	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
@@ -981,6 +864,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 	commenterAccount := "notif-parent-bubble-commenter@multica"
 	commenterID := createTestUser(t, commenterAccount)
 	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
+	commentID := createTestComment(t, f.subID, "member", commenterID, "comment on sub-issue", "comment")
 
 	f.bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
@@ -989,7 +873,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 		ActorID:     commenterID,
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    f.subID,
 				AuthorType: "member",
 				AuthorID:   commenterID,
@@ -1012,26 +896,13 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 func TestNotification_ParentBubble_PriorityChangeSuppressed(t *testing.T) {
 	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-priority@multica")
 
-	f.bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          f.subID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "sub-issue priority bubble",
-				Status:      "todo",
-				Priority:    "high",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-			"assignee_changed": false,
-			"status_changed":   false,
-			"priority_changed": true,
-			"prev_priority":    "medium",
-		},
+	issue := issueNotificationResponse(f.subID, "sub-issue priority bubble")
+	issue.Priority = "high"
+	publishIssueUpdated(f.bus, issue, map[string]any{
+		"assignee_changed": false,
+		"status_changed":   false,
+		"priority_changed": true,
+		"prev_priority":    "medium",
 	})
 
 	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
@@ -1114,20 +985,9 @@ func TestNotification_StatusChange_ArchivesStaleTaskFailed(t *testing.T) {
 	addTestSubscriber(t, issueID, "member", testUserID, "creator")
 	addTestSubscriber(t, issueID, "member", subID, "assignee")
 
-	agentID := "00000000-0000-0000-0000-aaaaaaaaaaaa"
-
 	// Two failed runs land before the status flip.
 	for i := 0; i < 2; i++ {
-		bus.Publish(events.Event{
-			Type:        protocol.EventTaskFailed,
-			WorkspaceID: testWorkspaceID,
-			ActorType:   "system",
-			Payload: map[string]any{
-				"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
-				"agent_id": agentID,
-				"issue_id": issueID,
-			},
-		})
+		publishTaskFailed(bus, issueID, "00000000-0000-0000-0000-bbbbbbbbbbbb")
 	}
 
 	// A separate non-task notification on the same issue, so we can prove
@@ -1206,33 +1066,15 @@ func TestNotification_StatusChange_ArchivesStaleTaskFailed(t *testing.T) {
 // transition to a non-terminal status (e.g. in_progress) does NOT archive
 // existing task_failed inbox rows.
 func TestNotification_StatusChange_NonTerminalKeepsTaskFailed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-
-	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
-		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
-			"agent_id": "00000000-0000-0000-0000-aaaaaaaaaaaa",
-			"issue_id": issueID,
-		},
-	})
+	f := setupNotificationIssueTest(t)
+	addTestSubscriber(t, f.issueID, "member", testUserID, "creator")
+	publishTaskFailed(f.bus, f.issueID, "00000000-0000-0000-0000-bbbbbbbbbbbb")
 
 	if active, _ := countInboxByTypeForRecipient(t, testUserID, "task_failed"); active != 1 {
 		t.Fatalf("precondition: expected 1 active task_failed row, got %d", active)
 	}
 
-	publishStatusChange(bus, issueID, "in_progress", "todo")
+	publishStatusChange(f.bus, f.issueID, "in_progress", "todo")
 
 	// task_failed row stays active because in_progress is not terminal.
 	active, archived := countInboxByTypeForRecipient(t, testUserID, "task_failed")
@@ -1246,48 +1088,19 @@ func TestNotification_StatusChange_NonTerminalKeepsTaskFailed(t *testing.T) {
 // followed by a new task failure produces a fresh, visible task_failed row.
 // This guards the "reopen and rerun" path described in the design.
 func TestNotification_StatusChange_ReopenSurfacesNewTaskFailed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	addTestSubscriber(t, issueID, "member", testUserID, "creator")
-
-	agentID := "00000000-0000-0000-0000-aaaaaaaaaaaa"
-
-	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
-		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-bbbbbbbbbbbb",
-			"agent_id": agentID,
-			"issue_id": issueID,
-		},
-	})
+	f := setupNotificationIssueTest(t)
+	addTestSubscriber(t, f.issueID, "member", testUserID, "creator")
+	publishTaskFailed(f.bus, f.issueID, "00000000-0000-0000-0000-bbbbbbbbbbbb")
 
 	// First terminal transition archives the original failure.
-	publishStatusChange(bus, issueID, "in_review", "in_progress")
+	publishStatusChange(f.bus, f.issueID, "in_review", "in_progress")
 	if active, archived := countInboxByTypeForRecipient(t, testUserID, "task_failed"); active != 0 || archived != 1 {
 		t.Fatalf("after terminal transition: expected active=0 archived=1, got active=%d archived=%d", active, archived)
 	}
 
 	// Reviewer kicks the issue back; a rerun fails again.
-	publishStatusChange(bus, issueID, "in_progress", "in_review")
-	bus.Publish(events.Event{
-		Type:        protocol.EventTaskFailed,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "system",
-		Payload: map[string]any{
-			"task_id":  "00000000-0000-0000-0000-cccccccccccc",
-			"agent_id": agentID,
-			"issue_id": issueID,
-		},
-	})
+	publishStatusChange(f.bus, f.issueID, "in_progress", "in_review")
+	publishTaskFailed(f.bus, f.issueID, "00000000-0000-0000-0000-cccccccccccc")
 
 	// The new failure is visible; the old archived row stays archived.
 	active, archived := countInboxByTypeForRecipient(t, testUserID, "task_failed")

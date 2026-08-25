@@ -12,8 +12,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// pickFixtureAgent grabs the first agent in the workspace fixture. The
-// integration TestMain seeds exactly one agent, so this is deterministic.
 func pickFixtureAgent(t *testing.T) pgtype.UUID {
 	t.Helper()
 	var agentID string
@@ -23,16 +21,14 @@ func pickFixtureAgent(t *testing.T) pgtype.UUID {
 	).Scan(&agentID); err != nil {
 		t.Fatalf("load fixture agent: %v", err)
 	}
-	return parseUUID(agentID)
+	return util.MustParseUUID(agentID)
 }
 
-// seedAutopilot creates an autopilot owned by the given creator (member or
-// agent UUID + type) and registers cleanup. Status defaults to "active".
 func seedAutopilot(t *testing.T, queries *db.Queries, title, creatorType string, creatorID pgtype.UUID, agentID pgtype.UUID) db.Autopilot {
 	t.Helper()
 	ctx := context.Background()
 	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:   parseUUID(testWorkspaceID),
+		WorkspaceID:   util.MustParseUUID(testWorkspaceID),
 		Title:         title,
 		AssigneeType:  "agent",
 		AssigneeID:    agentID,
@@ -45,19 +41,14 @@ func seedAutopilot(t *testing.T, queries *db.Queries, title, creatorType string,
 		t.Fatalf("CreateAutopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		// inbox_item has no FK to autopilot, so clean both up explicitly.
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM inbox_item WHERE workspace_id = $1 AND details->>'autopilot_id' = $2`,
 			testWorkspaceID, util.UUIDToString(ap.ID))
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 	return ap
 }
 
-// seedAutopilotRuns inserts n runs for the given autopilot, the first
-// `failed` of which have status='failed' and the rest 'completed'. All runs
-// are timestamped at `runAt` so they fall inside or outside a chosen lookback
-// window deterministically.
 func seedAutopilotRuns(t *testing.T, autopilotID pgtype.UUID, total, failed int, runAt time.Time) {
 	t.Helper()
 	ctx := context.Background()
@@ -84,27 +75,23 @@ func reloadAutopilotStatus(t *testing.T, queries *db.Queries, id pgtype.UUID) st
 	return ap.Status
 }
 
+func testFailureMonitorConfig() failureMonitorConfig {
+	return failureMonitorConfig{Interval: time.Hour, Lookback: 7 * 24 * time.Hour, MinRuns: 10, FailRatio: 0.9}
+}
+
 func TestAutopilotFailureMonitor_PausesOffenderAndNotifiesCreator(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
 
-	cfg := failureMonitorConfig{
-		Interval:  time.Hour,
-		Lookback:  7 * 24 * time.Hour,
-		MinRuns:   10,
-		FailRatio: 0.9,
-	}
+	cfg := testFailureMonitorConfig()
 
 	agentID := pickFixtureAgent(t)
-	offender := seedAutopilot(t, queries, "Failure monitor: offender", "member", parseUUID(testUserID), agentID)
-	innocent := seedAutopilot(t, queries, "Failure monitor: innocent", "member", parseUUID(testUserID), agentID)
+	offender := seedAutopilot(t, queries, "Failure monitor: offender", "member", util.MustParseUUID(testUserID), agentID)
+	innocent := seedAutopilot(t, queries, "Failure monitor: innocent", "member", util.MustParseUUID(testUserID), agentID)
 
 	now := time.Now()
-	// 12 runs in window, 11 failed → 91.6% > 90% and ≥10 min runs.
 	seedAutopilotRuns(t, offender.ID, 12, 11, now.Add(-1*time.Hour))
-	// Innocent: also lots of failures, but they fall outside the lookback.
 	seedAutopilotRuns(t, innocent.ID, 12, 12, now.Add(-30*24*time.Hour))
-	// Innocent: a few recent runs but below min_runs threshold.
 	seedAutopilotRuns(t, innocent.ID, 5, 5, now.Add(-1*time.Hour))
 
 	var inboxEvents []events.Event
@@ -146,7 +133,6 @@ func TestAutopilotFailureMonitor_PausesOffenderAndNotifiesCreator(t *testing.T) 
 		t.Fatalf("expected recipient %s, got %v", testUserID, got)
 	}
 
-	// Confirm the inbox item exists in the DB too.
 	items := inboxItemsForRecipient(t, queries, testUserID)
 	var found bool
 	for _, it := range items {
@@ -163,18 +149,12 @@ func TestAutopilotFailureMonitor_PausesOffenderAndNotifiesCreator(t *testing.T) 
 func TestAutopilotFailureMonitor_LeavesAlreadyPausedAlone(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	cfg := failureMonitorConfig{
-		Interval:  time.Hour,
-		Lookback:  7 * 24 * time.Hour,
-		MinRuns:   10,
-		FailRatio: 0.9,
-	}
+	cfg := testFailureMonitorConfig()
 
 	agentID := pickFixtureAgent(t)
-	ap := seedAutopilot(t, queries, "Failure monitor: already paused", "member", parseUUID(testUserID), agentID)
+	ap := seedAutopilot(t, queries, "Failure monitor: already paused", "member", util.MustParseUUID(testUserID), agentID)
 	seedAutopilotRuns(t, ap.ID, 12, 11, time.Now().Add(-1*time.Hour))
 
-	// Manually pause first.
 	if _, err := testPool.Exec(context.Background(),
 		`UPDATE autopilot SET status = 'paused' WHERE id = $1`, ap.ID); err != nil {
 		t.Fatalf("manual pause: %v", err)
@@ -195,15 +175,9 @@ func TestAutopilotFailureMonitor_LeavesAlreadyPausedAlone(t *testing.T) {
 func TestAutopilotFailureMonitor_AgentCreatorRoutesToOwner(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	cfg := failureMonitorConfig{
-		Interval:  time.Hour,
-		Lookback:  7 * 24 * time.Hour,
-		MinRuns:   10,
-		FailRatio: 0.9,
-	}
+	cfg := testFailureMonitorConfig()
 
 	agentID := pickFixtureAgent(t)
-	// The fixture agent's owner_id is testUserID (set in setupIntegrationTestFixture).
 	ap := seedAutopilot(t, queries, "Failure monitor: agent-created", "agent", agentID, agentID)
 	seedAutopilotRuns(t, ap.ID, 11, 10, time.Now().Add(-2*time.Hour))
 
@@ -232,16 +206,10 @@ func TestAutopilotFailureMonitor_AgentCreatorRoutesToOwner(t *testing.T) {
 func TestAutopilotFailureMonitor_BelowThresholdNoOp(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	cfg := failureMonitorConfig{
-		Interval:  time.Hour,
-		Lookback:  7 * 24 * time.Hour,
-		MinRuns:   10,
-		FailRatio: 0.9,
-	}
+	cfg := testFailureMonitorConfig()
 
 	agentID := pickFixtureAgent(t)
-	ap := seedAutopilot(t, queries, "Failure monitor: under threshold", "member", parseUUID(testUserID), agentID)
-	// 12 total, 5 failed → 41.6% < 90%.
+	ap := seedAutopilot(t, queries, "Failure monitor: under threshold", "member", util.MustParseUUID(testUserID), agentID)
 	seedAutopilotRuns(t, ap.ID, 12, 5, time.Now().Add(-1*time.Hour))
 
 	var inboxEvents []events.Event

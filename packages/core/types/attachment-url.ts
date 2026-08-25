@@ -46,7 +46,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * (e.g. a download click handler that re-signs the URL on every press)
  * the server-returned `download_url` is still appropriate.
  */
-export function attachmentDownloadPath(attachmentId: string): string {
+function attachmentDownloadPath(attachmentId: string): string {
   return `${DOWNLOAD_PREFIX}${attachmentId}${DOWNLOAD_SUFFIX}`;
 }
 
@@ -65,8 +65,7 @@ export function attachmentDownloadPath(attachmentId: string): string {
 export function attachmentIdFromDownloadURL(rawURL: string): string | undefined {
   if (!rawURL) return undefined;
 
-  // Strip query string + fragment so a `?exp=...` (legacy signed URL
-  // accidentally embedded by an old client) does not poison the match.
+  // Query strings and fragments do not change the stable attachment id.
   let path = rawURL;
   const qi = path.indexOf("?");
   if (qi >= 0) path = path.slice(0, qi);
@@ -93,26 +92,15 @@ export function attachmentIdFromDownloadURL(rawURL: string): string | undefined 
 }
 
 /**
- * True when `content` contains a markdown reference to `attachment` —
- * either the new stable `/api/attachments/<id>/download` shape OR the
- * legacy `att.url` storage path. Used by the comment composer and the
- * standalone-attachment list to decide whether an attachment is "in
- * the body" (and therefore should be tracked as a comment attachment
- * but not rendered as a card below).
- *
- * The two checks must both run because:
- *   - new uploads from a post-MUL-3130 client write the stable URL
- *   - edits to a pre-MUL-3130 comment may still have the legacy URL
- *     in `entry.content`
- *   - mixed content (one image uploaded before the fix, one after)
- *     is possible during the rollout window
+ * True when `content` contains the stable markdown reference to
+ * `attachment`. The data migration converts persisted raw storage URLs to
+ * this path, so every composer and renderer can use the attachment id as the
+ * sole matching key.
  */
 export function contentReferencesAttachment(
   content: string,
-  attachment: { id: string; url: string },
+  attachment: { id: string },
 ): boolean {
   if (!content) return false;
-  if (content.includes(attachmentDownloadPath(attachment.id))) return true;
-  if (attachment.url && content.includes(attachment.url)) return true;
-  return false;
+  return content.includes(attachmentDownloadPath(attachment.id));
 }

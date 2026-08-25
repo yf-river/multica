@@ -1,8 +1,10 @@
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
-import type { ProjectStatus, ProjectPriority } from "../types";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../platform/workspace-storage";
-import { defaultStorage } from "../platform/storage";
+import type { CreateProjectRequest, ProjectStatus, ProjectPriority } from "../types";
+import {
+  createWorkspacePendingCreateStore,
+  type PendingCreateOperation,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
+import { createWorkspaceDraftStore } from "../platform/workspace-storage";
 
 interface ProjectDraft {
   title: string;
@@ -24,31 +26,13 @@ const EMPTY_DRAFT: ProjectDraft = {
   icon: undefined,
 };
 
-interface ProjectDraftStore {
-  draft: ProjectDraft;
-  setDraft: (patch: Partial<ProjectDraft>) => void;
-  clearDraft: () => void;
-  hasDraft: () => boolean;
-}
-
-export const useProjectDraftStore = create<ProjectDraftStore>()(
-  persist(
-    (set, get) => ({
-      draft: { ...EMPTY_DRAFT },
-      setDraft: (patch) =>
-        set((s) => ({ draft: { ...s.draft, ...patch } })),
-      clearDraft: () =>
-        set({ draft: { ...EMPTY_DRAFT } }),
-      hasDraft: () => {
-        const { draft } = get();
-        return !!(draft.title || draft.description);
-      },
-    }),
-    {
-      name: "multica_project_draft",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-    },
-  ),
+export const useProjectDraftStore = createWorkspaceDraftStore(
+  "multica_project_draft",
+  EMPTY_DRAFT,
 );
 
-registerForWorkspaceRehydration(() => useProjectDraftStore.persist.rehydrate());
+export const useProjectCreateOperationStore: RecoverableOperationStore<
+  PendingCreateOperation<CreateProjectRequest>
+> = createWorkspacePendingCreateStore<CreateProjectRequest>(
+  "multica_project_create_operation",
+);

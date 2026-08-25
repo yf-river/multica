@@ -1,5 +1,6 @@
--- Workspace-level definitions of custom runtimes. Relational integrity for
--- workspace and created_by is enforced in the application layer.
+-- Custom Runtime profiles (MUL-3284). Workspace-level definitions of a custom
+-- runtime. Relational integrity (workspace,
+-- created_by) is enforced in the application layer — there are no DB FKs.
 
 -- name: CreateRuntimeProfile :one
 INSERT INTO runtime_profile (
@@ -9,15 +10,10 @@ INSERT INTO runtime_profile (
     command_name,
     description,
     fixed_args,
-    visibility,
     created_by,
     enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
-
--- name: GetRuntimeProfile :one
-SELECT * FROM runtime_profile
-WHERE id = $1;
 
 -- name: GetRuntimeProfileForWorkspace :one
 SELECT * FROM runtime_profile
@@ -45,7 +41,6 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
     command_name = COALESCE(sqlc.narg('command_name'), command_name),
     description  = COALESCE(sqlc.narg('description'), description),
     fixed_args   = COALESCE(sqlc.narg('fixed_args'), fixed_args),
-    visibility   = COALESCE(sqlc.narg('visibility'), visibility),
     enabled      = COALESCE(sqlc.narg('enabled'), enabled),
     updated_at   = now()
 WHERE id = @id AND workspace_id = @workspace_id
@@ -56,9 +51,10 @@ DELETE FROM runtime_profile
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: DeleteAgentRuntimesByProfile :many
--- The profile-delete path removes registered runtime instances itself so it can
--- broadcast and audit each deletion. It runs in the same transaction as
--- DeleteRuntimeProfile.
+-- Application-layer cascade: the current schema has no DB ON DELETE CASCADE, so
+-- the profile-delete path must remove the profile's registered runtime
+-- instances itself. Returns the deleted rows so the caller can broadcast /
+-- audit. Runs inside the same transaction as DeleteRuntimeProfile.
 DELETE FROM agent_runtime
 WHERE profile_id = $1
 RETURNING id, workspace_id, owner_id, daemon_id, provider;

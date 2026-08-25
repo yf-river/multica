@@ -3,7 +3,7 @@
 import { Check, FolderKanban, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { projectListOptions } from "@multica/core/projects/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import type { UpdateIssueRequest } from "@multica/core/types";
 import {
   DropdownMenu,

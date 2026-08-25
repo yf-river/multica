@@ -61,9 +61,7 @@ func TestSearchSkillsReturnsNormalizedClawHubCandidates(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	oldBase := clawHubAPIBase
-	clawHubAPIBase = upstream.URL
-	t.Cleanup(func() { clawHubAPIBase = oldBase })
+	setClawHubAPIBase(t, upstream.URL)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodGet, "/api/skills/search?q=react", nil)
@@ -121,9 +119,7 @@ func TestSearchSkillsUpstreamUnavailableReturnsStructuredError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	oldBase := clawHubAPIBase
-	clawHubAPIBase = upstream.URL
-	t.Cleanup(func() { clawHubAPIBase = oldBase })
+	setClawHubAPIBase(t, upstream.URL)
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodGet, "/api/skills/search?q=react", nil)

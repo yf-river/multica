@@ -1,0 +1,71 @@
+{
+  "page_title": "Agent 调试场",
+  "page_description": "用同一批输入对比多个 Agent，手动同步结果，再交给裁判 Agent 评价。",
+  "experiments": "实验",
+  "experiment_count_other": "{{count}} 个实验",
+  "experiment_summary": "{{inputCount}} 用例 · {{agentCount}} Agent",
+  "create": {
+    "title": "新建调试实验",
+    "description": "选择一个用例库快照，批量对比多个 Agent 的真实执行结果。",
+    "button": "创建实验",
+    "default_name": "Agent 对比实验",
+    "name": "名称",
+    "description_label": "描述",
+    "dataset": "用例库",
+    "dataset_placeholder": "选择用例库",
+    "snapshot": "快照",
+    "snapshot_placeholder": "选择快照",
+    "snapshot_option": "v{{version}} · {{count}} 条",
+    "snapshot_option_labeled": "v{{version}} {{label}} · {{count}} 条",
+    "judge_agent": "裁判 Agent",
+    "judge_later": "稍后选择",
+    "missing_name": "填写名称",
+    "missing_dataset": "选择用例库",
+    "missing_snapshot_loading": "等待快照加载",
+    "missing_snapshot_empty": "为用例库创建快照",
+    "missing_snapshot": "选择快照",
+    "missing_agents": "选择执行 Agent",
+    "missing_hint": "还需要：{{reasons}}",
+    "planned_tasks": "本次将创建 {{caseCount}} 条用例 × {{agentCount}} 个 Agent = {{taskCount}} 个执行任务。",
+    "selected_agents_hint": "已选择 {{count}} 个 Agent。选择快照后会显示本次执行任务数。",
+    "select_agent_hint": "请选择至少 1 个 Agent。"
+  },
+  "agent_picker": {
+    "label": "执行 Agent",
+    "selected_other": "已选择 {{count}} 个 Agent",
+    "trigger": "搜索并选择执行 Agent",
+    "search_placeholder": "搜索 Agent",
+    "empty": "暂无可执行 Agent。",
+    "create_agent": "去智能体页面创建",
+    "no_matches": "没有匹配的 Agent",
+    "remove_aria": "移除 {{name}}"
+  },
+  "empty_experiments": "暂无实验。创建一个实验后会在这里看到结果矩阵。",
+  "detail": {
+    "summary": "{{inputCount}} 条输入 · {{agentCount}} 个 Agent",
+    "auto_syncing": "自动同步中",
+    "sync": "同步",
+    "judge": "裁判",
+    "run": "运行",
+    "input": "输入",
+    "judge_column": "裁判",
+    "case_name": "用例 {{count}}",
+    "not_run": "未运行",
+    "not_judged": "未裁判",
+    "no_output": "暂无输出"
+  },
+  "status": {
+    "draft": "草稿",
+    "queued": "排队中",
+    "running": "运行中",
+    "completed": "已完成",
+    "failed": "失败",
+    "cancelled": "已取消"
+  },
+  "toast": {
+    "created": "已创建 Agent 调试实验",
+    "create_failed": "创建失败",
+    "run_failed": "运行失败",
+    "judge_failed": "裁判失败"
+  }
+}

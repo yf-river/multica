@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Square } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
+import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { issueKeys, issueExecutionTreeOptions, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { AgentTask, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
@@ -14,12 +15,21 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
 import { TranscriptButton } from "../../common/task-transcript";
 import { useT } from "../../i18n";
 import { usageTokenTotal } from "../../runtimes/utils";
-import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 
 // Right-panel section for the issue's live/debug surface. Active runs stay
 // visible with recent events; terminal runs are summarized into one compact
@@ -65,9 +75,9 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     refetchOnWindowFocus: true,
   });
   const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
-  const traceEvents = traceData?.events ?? [];
+  const traceEvents = useMemo(() => traceData?.events ?? [], [traceData?.events]);
   const { data: sopData } = useQuery(issueSOPRunsOptions(issueId));
-  const sopRuns = sopData?.items ?? [];
+  const sopRuns = useMemo(() => sopData ?? [], [sopData]);
   const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
   const allTasks = useMemo(
     () => mergeTasks(tasks, collectExecutionTreeTasks(executionTree)),
@@ -79,17 +89,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   );
 
   const activeTasks = useMemo(
-    () =>
-      tasks.filter(
-        (t) =>
-          t.status === "queued" ||
-          t.status === "dispatched" ||
-          // Daemon-parked task on a busy local_directory — still active
-          // (waiting on a path lock), not terminal. Surfacing it here is
-          // what tells the user the agent is alive and will resume.
-          t.status === "waiting_local_directory" ||
-          t.status === "running",
-      ),
+    () => tasks.filter((task) => isActiveAgentTaskStatus(task.status)),
     [tasks],
   );
 
@@ -158,7 +158,7 @@ export function IssueRunReviewSummaryCard({ issueId }: ExecutionLogSectionProps)
     refetchOnWindowFocus: true,
   });
   const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
-  const traceEvents = traceData?.events ?? [];
+  const traceEvents = useMemo(() => traceData?.events ?? [], [traceData?.events]);
   const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
   const treeTasks = useMemo(() => collectExecutionTreeTasks(executionTree), [executionTree]);
   const terminalTasks = useMemo(
@@ -207,6 +207,7 @@ function RunReviewSummaryCard({
   terminalTasks: AgentTask[];
   traceEvents: TaskTraceEvent[];
 }) {
+  const { t } = useT("issues");
   const paths = useWorkspacePaths();
   const runReviewHref = `${paths.runReviews()}?issue=${encodeURIComponent(issueId)}`;
   const summary = tree?.issue_summary;
@@ -215,7 +216,7 @@ function RunReviewSummaryCard({
   const cancelledTasks = terminalTasks.filter((task) => task.status === "cancelled");
   const tokenTotal = summary
     ? summary.total_input_tokens + summary.total_output_tokens + summary.total_cache_read_tokens + summary.total_cache_write_tokens
-    : traceEvents.reduce((sum, event) => sum + traceEventTokenTotal(event), 0);
+    : traceEvents.reduce((sum, event) => sum + usageTokenTotal(event), 0);
   const taskCount = Number(aggregate["任务数"] ?? terminalTasks.length);
   const anomalyCount =
     Number(aggregate["异常工具数"] ?? 0) + failedTasks.length + cancelledTasks.length;
@@ -224,13 +225,33 @@ function RunReviewSummaryCard({
     <div className="rounded-md border border-info/30 bg-info/5 px-2 py-2 text-xs" data-testid="issue-run-review-summary-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-medium text-foreground">运行复盘</div>
+          <div className="font-medium text-foreground">
+            {t(($) => $.execution_log.review_title)}
+          </div>
           <div className="mt-1 grid gap-x-3 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
-            <span className="truncate">验收：{summary?.acceptance_status ?? deriveAcceptanceStatus(terminalTasks)}</span>
-            <span className="truncate">总耗时：{formatNullableMilliseconds(summary?.total_duration_ms)}</span>
-            <span className="truncate">任务数：{taskCount}</span>
-            <span className="truncate">异常数：{anomalyCount}</span>
-            <span className="truncate sm:col-span-2">Token：{tokenTotal > 0 ? tokenTotal.toLocaleString() : "未记录"}</span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_acceptance, {
+                value: summary?.acceptance_status ?? deriveAcceptanceStatus(terminalTasks),
+              })}
+            </span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_duration, {
+                value: formatNullableMilliseconds(summary?.total_duration_ms),
+              })}
+            </span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_task_count, { count: taskCount })}
+            </span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_anomaly_count, { count: anomalyCount })}
+            </span>
+            <span className="truncate sm:col-span-2">
+              {t(($) => $.execution_log.review_tokens, {
+                value: tokenTotal > 0
+                  ? tokenTotal.toLocaleString()
+                  : t(($) => $.execution_log.not_recorded),
+              })}
+            </span>
           </div>
           {failureSummary && (
             <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-destructive">
@@ -243,7 +264,7 @@ function RunReviewSummaryCard({
             className="rounded border bg-background px-2 py-1 text-[11px] hover:bg-accent"
             href={runReviewHref}
           >
-            查看完整复盘
+            {t(($) => $.execution_log.review_open)}
           </a>
         </div>
       </div>
@@ -286,30 +307,56 @@ function ExecutionRunSummary({
   summary: ExecutionSummary;
   events: MacroEvent[];
 }) {
+  const { t } = useT("issues");
+  const notRecorded = t(($) => $.execution_log.not_recorded);
   return (
     <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-active-run-signals">
       <div className="space-y-1">
         <div className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
-          <span>当前阶段</span>
-          <span className="min-w-0 truncate text-foreground">{currentStage || "未记录"}</span>
+          <span>{t(($) => $.execution_log.current_stage)}</span>
+          <span className="min-w-0 truncate text-foreground">{currentStage || notRecorded}</span>
         </div>
         <div className="grid gap-x-3 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
-          <span className="truncate">Agent：{summary.agentCount > 0 ? summary.agentCount : "未记录"}</span>
           <span className="truncate">
-            任务：{summary.totalTasks}
-            {summary.activeTasks > 0 ? ` 进行中 ${summary.activeTasks}` : ""}
+            {t(($) => $.execution_log.run_agents, {
+              value: summary.agentCount > 0 ? summary.agentCount : notRecorded,
+            })}
           </span>
-          <span className="truncate">已完成：{summary.completedTasks}</span>
           <span className="truncate">
-            异常：{summary.failedTasks + summary.cancelledTasks}
+            {t(($) => $.execution_log.run_tasks, { count: summary.totalTasks })}
+            {summary.activeTasks > 0
+              ? ` ${t(($) => $.execution_log.run_active, { count: summary.activeTasks })}`
+              : ""}
           </span>
-          <span className="truncate">首次领取：{summary.firstClaimedAt || "未记录"}</span>
-          <span className="truncate">首次开始：{summary.firstStartedAt || "未记录"}</span>
-          <span className="truncate sm:col-span-2">最后完成：{summary.lastCompletedAt || "未记录"}</span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_completed, { count: summary.completedTasks })}
+          </span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_anomalies, {
+              count: summary.failedTasks + summary.cancelledTasks,
+            })}
+          </span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_first_claimed, {
+              value: summary.firstClaimedAt || notRecorded,
+            })}
+          </span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_first_started, {
+              value: summary.firstStartedAt || notRecorded,
+            })}
+          </span>
+          <span className="truncate sm:col-span-2">
+            {t(($) => $.execution_log.run_last_completed, {
+              value: summary.lastCompletedAt || notRecorded,
+            })}
+          </span>
         </div>
         {events.length > 0 && (
           <div className="space-y-0.5">
-            <div className="text-[11px] text-muted-foreground">最近事件</div>
+            <div className="text-[11px] text-muted-foreground">
+              {t(($) => $.execution_log.recent_events)}
+            </div>
             {events.map((event) => (
               <RecentMacroEventRow key={event.id} event={event} />
             ))}
@@ -363,7 +410,9 @@ function buildExecutionSummary(
     if (event.agent_id) agentIds.add(event.agent_id);
   });
 
-  const activeTasks = tasks.filter((task) => isActiveStatus(task.status)).length;
+  const activeTasks = tasks.filter(
+    (task) => isActiveAgentTaskStatus(task.status),
+  ).length;
   const firstClaimedAt = earliest(
     tasks.map((task) => task.dispatched_at),
     traceEvents
@@ -468,21 +517,11 @@ const MACRO_TRACE_EVENT_TYPES = new Set([
   "task.queued",
   "task.dispatched",
   "task.started",
-  "task.waiting_local_directory",
   "task.completed",
   "task.failed",
   "task.cancelled",
   "user_input.received",
 ]);
-
-function isActiveStatus(status: AgentTask["status"]): boolean {
-  return (
-    status === "queued" ||
-    status === "dispatched" ||
-    status === "waiting_local_directory" ||
-    status === "running"
-  );
-}
 
 function terminalTaskEventType(status: AgentTask["status"]): string {
   if (status === "failed") return "task.failed";
@@ -562,10 +601,6 @@ function formatTimestamp(value: string | null | undefined): string {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
 }
 
-function traceEventTokenTotal(event: TaskTraceEvent): number {
-  return usageTokenTotal(event);
-}
-
 function traceEventStageLabel(eventType: string): string {
   switch (eventType) {
     case "task.queued":
@@ -574,8 +609,6 @@ function traceEventStageLabel(eventType: string): string {
       return "任务领取";
     case "task.started":
       return "任务开始";
-    case "task.waiting_local_directory":
-      return "等待本地目录";
     case "task.completed":
       return "任务完成";
     case "task.failed":
@@ -638,19 +671,14 @@ function formatMilliseconds(ms: number): string {
 // "Retry #N" when parent_task_id is set so retries are scannable as
 // retries even when their summary is inherited.
 //
-// Fallback chain for legacy tasks created before the snapshot field
-// shipped, OR for sources we don't snapshot (direct assignment / chat):
-// degrade to a short structural label by trigger source. New tasks
-// (post-061 migration) almost always hit the snapshot path.
+// Tasks without a summary (including direct assignment and chat) use a short
+// structural label derived from the current trigger source.
 
 // ─── Row visual config ─────────────────────────────────────────────────────
 
 const STATUS_TONE: Record<AgentTask["status"], string> = {
   queued: "text-warning",
   dispatched: "text-warning",
-  // Same tone as queued/dispatched — visually "stopped" so users see the
-  // task is parked, but distinguished by the status label.
-  waiting_local_directory: "text-warning",
   running: "text-info",
   completed: "text-success",
   failed: "text-destructive",
@@ -686,13 +714,52 @@ function useStatusLabel(status: AgentTask["status"]): string {
   switch (status) {
     case "queued": return t(($) => $.execution_log.status_queued);
     case "dispatched": return t(($) => $.execution_log.status_dispatched);
-    case "waiting_local_directory":
-      return t(($) => $.execution_log.status_waiting_local_directory);
     case "running": return t(($) => $.execution_log.status_running);
     case "completed": return t(($) => $.execution_log.status_completed);
     case "failed": return t(($) => $.execution_log.status_failed);
     case "cancelled": return t(($) => $.execution_log.status_cancelled);
   }
+}
+
+function TerminateTaskConfirmDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  showRunningNote,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+  showRunningNote: boolean;
+}) {
+  const { t } = useT("issues");
+  if (!open) return null;
+
+  return (
+    <AlertDialog open onOpenChange={onOpenChange}>
+      <AlertDialogContent onClick={(event) => event.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t(($) => $.terminate_dialog.title)}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(($) => $.terminate_dialog.body)}
+            {showRunningNote && t(($) => $.terminate_dialog.running_note)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t(($) => $.terminate_dialog.keep)}</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              onOpenChange(false);
+              onConfirm();
+            }}
+          >
+            {t(($) => $.terminate_dialog.confirm)}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 // One active (running / queued / dispatched / parked) task row. Running rows
@@ -729,10 +796,8 @@ export function ActiveTaskRow({
         )
       : "";
 
-  // Transcript only meaningful once messages exist — pure-queued and
-  // waiting_local_directory tasks haven't streamed any agent output yet.
-  const showTranscript =
-    task.status !== "queued" && task.status !== "waiting_local_directory";
+  // Transcript is only meaningful once a task has left the queue.
+  const showTranscript = task.status !== "queued";
 
   const handleCancel = async () => {
     if (cancelling) return;
@@ -799,8 +864,7 @@ export function ActiveTaskRow({
         onConfirm={() => void handleCancel()}
         showRunningNote={
           task.status === "running" ||
-          task.status === "dispatched" ||
-          task.status === "waiting_local_directory"
+          task.status === "dispatched"
         }
       />
     </RowShell>

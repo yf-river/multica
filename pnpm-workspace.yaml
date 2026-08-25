@@ -17,7 +17,6 @@ catalog:
   # 状态管理
   zustand: "^5.0.0"
   "@tanstack/react-query": "^5.96.2"
-  "@tanstack/react-table": "^8.21.3"
 
   # 运行时 schema 校验（对抗 API 漂移的防御边界——
   # 见 CLAUDE.md 「API 响应兼容」）

@@ -16,9 +16,7 @@ import (
 
 func TestPromptEvaluationSkillSnapshotCaseDraftsAndFreshness(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	v1 := "# Verify\n\n- Run focused checks.\n"
@@ -118,9 +116,7 @@ func TestPromptEvaluationSkillSnapshotCaseDraftsAndFreshness(t *testing.T) {
 
 func TestPromptEvaluationSkillInventoryDiscoversTrackedSkills(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	changelogPath := ".codebuddy/skills/05-verify/CHANGELOG.md"
@@ -222,9 +218,7 @@ func TestPromptEvaluationSkillSourceResourceDefaultsFromLocalDirectory(t *testin
 
 func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	v1 := "# Verify\n\n- Run focused checks.\n"
@@ -248,9 +242,11 @@ func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T
 	writeSkillTestFile(t, repoPath, skillPath, v1)
 
 	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath:           repoPath,
-		SkillPath:          skillPath,
-		CandidatePatch:     patch,
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath:       repoPath,
+			SkillPath:      skillPath,
+			CandidatePatch: patch,
+		},
 		ChangeReason:       "Improve verification evidence discipline.",
 		VerificationResult: "Focused helper test passed.",
 		RollbackPlan:       "Reverse the candidate patch.",
@@ -324,11 +320,44 @@ func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T
 	}
 }
 
+func TestPromptEvaluationSkillApplyRollsBackPatchWhenChangelogFails(t *testing.T) {
+	repoPath := t.TempDir()
+	skillPath := ".codebuddy/skills/verify/SKILL.md"
+	v1 := "# Verify\n\nRun focused checks.\n"
+	v2 := "# Verify\n\nRun focused checks and retain evidence.\n"
+	initSkillTestRepo(t, repoPath)
+	writeSkillTestFile(t, repoPath, skillPath, v1)
+	runSkillTestGit(t, repoPath, "add", ".")
+	runSkillTestGit(t, repoPath, "commit", "-m", "add verify skill")
+	snapshot, err := buildPromptEvaluationSkillSnapshot(CreatePromptEvaluationSkillSnapshotRequest{
+		RepoPath: repoPath, Branch: "HEAD", SkillPath: skillPath,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSkillTestFile(t, repoPath, skillPath, v2)
+	patch := runSkillTestGit(t, repoPath, "diff", "--", skillPath)
+	writeSkillTestFile(t, repoPath, skillPath, v1)
+	writeSkillTestFile(t, repoPath, "blocked", "not a directory")
+
+	_, err = applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath: repoPath, SkillPath: skillPath, CandidatePatch: patch,
+		},
+		ChangelogPath: "blocked/CHANGELOG.md", AllowDirty: true,
+	}, snapshot, map[string]any{"operation_id": "rollback-test"}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("expected changelog failure")
+	}
+	content, readErr := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(skillPath)))
+	if readErr != nil || string(content) != v1 {
+		t.Fatalf("skill patch was not compensated: content=%q err=%v", content, readErr)
+	}
+}
+
 func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	writeSkillTestFile(t, repoPath, ".codebuddy/skills/05-verify/SKILL.md", "# Verify\n\n- Run focused checks.\n")
 	runSkillTestGit(t, repoPath, "add", ".codebuddy/skills/05-verify/SKILL.md")
@@ -371,10 +400,12 @@ func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	}
 
 	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath:           repoPath,
-		SkillPath:          newSkillPath,
-		CandidatePatch:     patch,
-		CandidateIntent:    "create_operation_skill",
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath:        repoPath,
+			SkillPath:       newSkillPath,
+			CandidatePatch:  patch,
+			CandidateIntent: "create_operation_skill",
+		},
 		ChangeReason:       "Adding a user-center API is a repeated operation.",
 		VerificationResult: "Service sandbox curl and eval candidate chain passed.",
 		RollbackPlan:       "Remove the new operation skill directory and CHANGELOG entry.",
@@ -434,6 +465,7 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 			"skill_patch": map[string]any{
 				"schema_version":       promptEvaluationSkillPatchSchema,
 				"patch":                patchText,
+				"candidate_intent":     "update_existing_skill",
 				"source_snapshot":      snapshot,
 				"source_resource_id":   "resource-1",
 				"repo_path":            "/tmp/goal-d-skill-patch",
@@ -454,10 +486,10 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 		t.Fatalf("skill patch hash/bytes should be present after decode = %+v", skillPatch)
 	}
 	if skillPatch.CandidateIntent != "update_existing_skill" {
-		t.Fatalf("legacy skill patch should default to update_existing_skill, got %+v", skillPatch)
+		t.Fatalf("skill patch candidate intent = %q, want update_existing_skill", skillPatch.CandidateIntent)
 	}
 	freshnessReq := CheckPromptEvaluationSkillFreshnessRequest{}
-	applySkillPatchFreshnessDefaults(&freshnessReq, skillPatch)
+	applySkillPatchCandidateDefaults(&freshnessReq, skillPatch)
 	if freshnessReq.CandidatePatch != patchText || freshnessReq.SourceResourceID != "resource-1" || freshnessReq.SkillPath != snapshot.SkillPath {
 		t.Fatalf("freshness defaults = %+v", freshnessReq)
 	}
@@ -488,11 +520,36 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 	}
 }
 
+func TestResolvePromptEvaluationSkillCandidateSnapshotPrecedence(t *testing.T) {
+	requested := &PromptEvaluationSkillSnapshotResponse{SourceResourceID: "requested"}
+	fromPatch := &PromptEvaluationSkillSnapshotResponse{}
+	patch := &PromptEvaluationSkillPatch{SourceSnapshot: fromPatch}
+	candidate := db.PromptEvaluationOptimizationCandidate{Metrics: []byte("{}")}
+
+	got := resolvePromptEvaluationSkillCandidateSnapshot(
+		candidate, patch, requested, "request-resource",
+	)
+	if got != requested || got.SourceResourceID != "requested" {
+		t.Fatalf("requested snapshot must win without being overwritten: %+v", got)
+	}
+
+	got = resolvePromptEvaluationSkillCandidateSnapshot(
+		candidate, patch, nil, "request-resource",
+	)
+	if got != fromPatch || got.SourceResourceID != "request-resource" {
+		t.Fatalf("patch snapshot should receive the resolved source resource: %+v", got)
+	}
+
+	if got := resolvePromptEvaluationSkillCandidateSnapshot(
+		candidate, nil, nil, "request-resource",
+	); got != nil {
+		t.Fatalf("missing snapshot sources should stay missing: %+v", got)
+	}
+}
+
 func TestPromptEvaluationSkillApplyBlocksDirtyWorktreeByDefault(t *testing.T) {
 	repoPath := t.TempDir()
-	runSkillTestGit(t, repoPath, "init")
-	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
-	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	initSkillTestRepo(t, repoPath)
 
 	skillPath := ".codebuddy/skills/05-verify/SKILL.md"
 	v1 := "# Verify\n\n- Run focused checks.\n"
@@ -516,9 +573,11 @@ func TestPromptEvaluationSkillApplyBlocksDirtyWorktreeByDefault(t *testing.T) {
 	writeSkillTestFile(t, repoPath, "README.md", "dirty\n")
 
 	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath:       repoPath,
-		SkillPath:      skillPath,
-		CandidatePatch: patch,
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath:       repoPath,
+			SkillPath:      skillPath,
+			CandidatePatch: patch,
+		},
 	}, snapshot, nil, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("apply dirty worktree: %v", err)
@@ -598,6 +657,9 @@ func TestPromptEvaluationSkillReEvalPayloadUsesApprovedDraftsAndSnapshot(t *test
 	if !ok || len(payloadCases) != 1 {
 		t.Fatalf("payload cases = %#v", payload["cases"])
 	}
+	if len(payloadCases[0]) != 4 || payloadCases[0]["case_name"] == "" || payloadCases[0]["variables"] == nil || payloadCases[0]["expected_contains"] == nil || payloadCases[0]["tags"] == nil {
+		t.Fatalf("payload case is not canonical: %#v", payloadCases[0])
+	}
 }
 
 func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testing.T) {
@@ -634,8 +696,9 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	if err := validatePromptEvaluationSkillReEvalAsset(candidate, asset, payload); err != nil {
 		t.Fatalf("validate re-eval asset: %v", err)
 	}
-	sourceSnapshot, reEvalSnapshot := skillSnapshotsFromReEvalPayload(payload)
-	if sourceSnapshot.SkillHash != "hash-after" || reEvalSnapshot.SkillHash != "hash-after" {
+	sourceSnapshot, sourceOK := decodeSkillSnapshotAny(payload["source_skill_snapshot"])
+	reEvalSnapshot, reEvalOK := decodeSkillSnapshotAny(payload["re_eval_snapshot"])
+	if !sourceOK || !reEvalOK || sourceSnapshot.SkillHash != "hash-after" || reEvalSnapshot.SkillHash != "hash-after" {
 		t.Fatalf("snapshots = source %+v re-eval %+v", sourceSnapshot, reEvalSnapshot)
 	}
 
@@ -648,7 +711,7 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	run := db.PromptEvaluationRun{
 		ID:      parseUUID("55555555-5555-4555-8555-555555555555"),
 		Status:  "通过",
-		RunKind: "本地渲染",
+		RunKind: "模板渲染检查",
 	}
 	evidence := buildPromptEvaluationSkillReEvalRunEvidence(candidate, asset, run, promptEvaluationRunResult{
 		PassedCases: 2,
@@ -661,9 +724,17 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	if evidence["run_kind"] != "模板渲染检查" || evidence["case_count"] != 2 || evidence["pass_rate"] != float64(1) {
 		t.Fatalf("run evidence metrics = %+v", evidence)
 	}
-	if !strings.Contains(prompteval.StringFromAny(evidence["proof_boundary"]), "Gongfeng/agent skill runtime") {
+	proofBoundary, _ := evidence["proof_boundary"].(string)
+	if !strings.Contains(proofBoundary, "Gongfeng/agent skill runtime") {
 		t.Fatalf("run evidence boundary = %+v", evidence)
 	}
+}
+
+func initSkillTestRepo(t *testing.T, repoPath string) {
+	t.Helper()
+	runSkillTestGit(t, repoPath, "init")
+	runSkillTestGit(t, repoPath, "config", "user.email", "test@multica.local")
+	runSkillTestGit(t, repoPath, "config", "user.name", "Multica Test")
 }
 
 func runSkillTestGit(t *testing.T, repoPath string, args ...string) string {

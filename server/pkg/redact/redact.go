@@ -51,23 +51,6 @@ var patterns = []secretPattern{
 	{regexp.MustCompile(`(?i)(?:API_KEY|API_SECRET|SECRET_KEY|SECRET|ACCESS_TOKEN|AUTH_TOKEN|PRIVATE_KEY|DATABASE_URL|DB_PASSWORD|DB_URL|REDIS_URL|PASSWORD|TOKEN)\s*[=:]\s*\S+`), "[REDACTED CREDENTIAL]"},
 }
 
-// InputMap returns a copy of m with all string values passed through Text.
-// Non-string values are preserved as-is.
-func InputMap(m map[string]any) map[string]any {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		if s, ok := v.(string); ok {
-			out[k] = Text(s)
-		} else {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 // homeDir is resolved once at init for path redaction.
 var homeDir string
 var username string

@@ -21,41 +21,17 @@ const (
 	DefaultServerURL         = "ws://localhost:8080/ws"
 	DefaultPollInterval      = 30 * time.Second
 	DefaultHeartbeatInterval = 15 * time.Second
-	// DefaultAgentTimeout is the optional absolute wall-clock cap on a single
-	// agent run. 0 = no cap: a run is bounded only by the inactivity watchdogs
-	// (DefaultAgentIdleWatchdog / DefaultAgentToolWatchdog), so a session that keeps emitting events is
-	// never killed merely for running long (MUL-3064). Operators who want a
-	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
+	// A zero agent timeout leaves liveness to the idle and tool watchdogs.
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
-	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
-	// run when the backend has emitted no message for this long AND its
-	// message queue is empty. Backends like Claude Code can hang indefinitely
-	// on a stuck child process (e.g. `docker ps` against a frozen dockerd),
-	// in which case `cmd.Wait()` never returns. With no wall-clock cap
-	// (DefaultAgentTimeout = 0) such a run would otherwise sit at "running"
-	// forever, so this watchdog is its sole liveness net. The previous 5 min default
-	// killed legitimate long assistant outputs (e.g. RFC-length writeups)
-	// where the model streams a single message for many minutes without any
-	// daemon-visible activity — see MUL-2300. 30 min keeps the safety net for
-	// truly stuck runs (dockerd hang) while leaving headroom for long writes.
-	// Set MULTICA_AGENT_IDLE_WATCHDOG=0 to disable.
+	// Idle applies only when no message is emitted and the queue is empty.
 	DefaultAgentIdleWatchdog = 30 * time.Minute
-	// DefaultAgentToolWatchdog bounds how long a single tool call may stay in
-	// flight (tool_use emitted, no tool_result and no other message) before the
-	// idle watchdog force-stops the run. The idle watchdog ignores its normal
-	// window while a tool is in flight, because a real build/install/test
-	// legitimately runs silently for many minutes — but with no wall-clock cap
-	// (DefaultAgentTimeout = 0) a backend that emits tool_use and never the
-	// matching tool_result would otherwise run forever. This is the backstop for
-	// that stuck-tool case (MUL-3064). Set MULTICA_AGENT_TOOL_WATCHDOG=0 to
-	// disable, in which case an in-flight tool never force-stops the run.
+	// Tool watchdog applies while a tool_use awaits its matching tool_result.
 	DefaultAgentToolWatchdog     = 2 * time.Hour
 	DefaultRuntimeName           = "Local Agent"
 	DefaultWorkspaceSyncInterval = 30 * time.Second
 	DefaultHealthPort            = 19514
 	DefaultMaxConcurrentTasks    = 20
-	DefaultCodexMinTaskInterval  = 10 * time.Second
 	DefaultGCInterval            = 1 * time.Hour
 	DefaultGCTTL                 = 24 * time.Hour // 1 day — AI-coding issues rarely stay open long
 	DefaultGCOrphanTTL           = 72 * time.Hour // 3 days — orphans with no meta (crashes, pre-GC leftovers)
@@ -70,6 +46,29 @@ const (
 // MULTICA_GC_ARTIFACT_PATTERNS to extend the list per deployment.
 var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 
+type agentProviderSpec struct {
+	provider string
+	pathEnv  string
+	command  string
+	modelEnv string
+}
+
+var agentProviderSpecs = []agentProviderSpec{
+	{provider: "claude", pathEnv: "MULTICA_CLAUDE_PATH", command: "claude", modelEnv: "MULTICA_CLAUDE_MODEL"},
+	{provider: "codex", pathEnv: "MULTICA_CODEX_PATH", command: "codex", modelEnv: "MULTICA_CODEX_MODEL"},
+	{provider: "opencode", pathEnv: "MULTICA_OPENCODE_PATH", command: "opencode", modelEnv: "MULTICA_OPENCODE_MODEL"},
+	{provider: "openclaw", pathEnv: "MULTICA_OPENCLAW_PATH", command: "openclaw", modelEnv: "MULTICA_OPENCLAW_MODEL"},
+	{provider: "hermes", pathEnv: "MULTICA_HERMES_PATH", command: "hermes", modelEnv: "MULTICA_HERMES_MODEL"},
+	{provider: "gemini", pathEnv: "MULTICA_GEMINI_PATH", command: "gemini", modelEnv: "MULTICA_GEMINI_MODEL"},
+	{provider: "pi", pathEnv: "MULTICA_PI_PATH", command: "pi", modelEnv: "MULTICA_PI_MODEL"},
+	{provider: "cursor", pathEnv: "MULTICA_CURSOR_PATH", command: "cursor-agent", modelEnv: "MULTICA_CURSOR_MODEL"},
+	{provider: "copilot", pathEnv: "MULTICA_COPILOT_PATH", command: "copilot", modelEnv: "MULTICA_COPILOT_MODEL"},
+	{provider: "kimi", pathEnv: "MULTICA_KIMI_PATH", command: "kimi", modelEnv: "MULTICA_KIMI_MODEL"},
+	{provider: "kiro", pathEnv: "MULTICA_KIRO_PATH", command: "kiro-cli", modelEnv: "MULTICA_KIRO_MODEL"},
+	{provider: "codebuddy", pathEnv: "MULTICA_CODEBUDDY_PATH", command: "codebuddy", modelEnv: "MULTICA_CODEBUDDY_MODEL"},
+	{provider: "antigravity", pathEnv: "MULTICA_ANTIGRAVITY_PATH", command: "agy", modelEnv: "MULTICA_ANTIGRAVITY_MODEL"},
+}
+
 // Config holds all daemon configuration.
 type Config struct {
 	ServerBaseURL                  string
@@ -80,7 +79,6 @@ type Config struct {
 	Profile                        string                // profile name (empty = default)
 	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro, antigravity
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
-	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
 	GCEnabled                      bool                  // enable periodic workspace garbage collection (default: true)
@@ -93,7 +91,6 @@ type Config struct {
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
 	CodexSemanticInactivityTimeout time.Duration
-	CodexMinTaskInterval           time.Duration // minimum spacing between Codex task starts on the same runtime (0 = disabled)
 	AgentIdleWatchdog              time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
 	AgentToolWatchdog              time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
 	ClaudeArgs                     []string
@@ -141,14 +138,17 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
+	// Local config is optional. Explicit process environment still wins over
+	// OpenClaw config, and a malformed config does not prevent daemon startup.
 	var profileCommandOverrides map[string]string
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
 		slog.Warn("could not load CLI config; proceeding without profile command overrides",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		// Per-machine custom-runtime command path overrides (MUL-3284).
-		// Copy into our own map so later mutation of the loaded config can't
-		// alias daemon state, and so an empty map normalizes to nil.
+		if cliCfg.Backends != nil {
+			applyOpenclawOverride(cliCfg.Backends.OpenClaw)
+		}
+		// Copy machine-local paths so loaded config cannot alias daemon state.
 		if len(cliCfg.ProfileCommandOverrides) > 0 {
 			profileCommandOverrides = make(map[string]string, len(cliCfg.ProfileCommandOverrides))
 			for id, path := range cliCfg.ProfileCommandOverrides {
@@ -160,28 +160,19 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		}
 	}
 
-	// Probe available agent CLIs. exec.LookPath is the primary path, but on
-	// macOS/Linux a GUI-launched daemon (Electron, Launchpad) does not
-	// inherit the user's interactive shell PATH — fnm/nvm/volta multishells,
-	// the Anthropic native installer prefix, and per-user npm prefixes all
-	// live in dirs that only get added to PATH by ~/.zshrc or ~/.bashrc.
-	// shellResolvedAgents asks the user's login shell, lazily on first miss,
-	// to resolve every standard agent name to its canonical absolute path,
-	// so we can find binaries the bare daemon process can't see. See
-	// resolveAgentsViaLoginShell for the details and constraints.
-	//
-	// Laziness matters: the happy path (every agent on the daemon's PATH or
-	// pinned to an explicit MULTICA_*_PATH) must not pay the cost of
-	// spawning the user's login shell — that touches their rc files and
-	// adds startup latency that scales with whatever they put in there. We
-	// only fork a shell when a bare command name actually missed LookPath.
+	// Resolve normal PATH entries first. Query a login shell lazily only when
+	// a bare command is absent from a GUI-launched daemon's PATH.
+	agentCommandNames := make([]string, 0, len(agentProviderSpecs))
+	for _, spec := range agentProviderSpecs {
+		agentCommandNames = append(agentCommandNames, spec.command)
+	}
 	var (
 		shellResolveOnce sync.Once
 		shellResolved    map[string]string
 	)
 	getShellResolved := func() map[string]string {
 		shellResolveOnce.Do(func() {
-			shellResolved = resolveAgentsViaLoginShell(defaultAgentCommandNames)
+			shellResolved = resolveAgentsViaLoginShell(agentCommandNames)
 		})
 		return shellResolved
 	}
@@ -193,10 +184,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 				Model: strings.TrimSpace(os.Getenv(modelEnv)),
 			}, true
 		}
-		// The shell fallback only rescues bare command names. An operator
-		// who pinned MULTICA_*_PATH to an absolute or relative path that
-		// doesn't exist should hard-miss, not silently get a different
-		// binary.
+		// An invalid explicit path must not silently select another binary.
 		if strings.ContainsAny(cmd, "/\\") {
 			return AgentEntry{}, false
 		}
@@ -221,46 +209,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return AgentEntry{}, false
 	}
 
-	agents := map[string]AgentEntry{}
-	if e, ok := probe("MULTICA_CLAUDE_PATH", "claude", "MULTICA_CLAUDE_MODEL"); ok {
-		agents["claude"] = e
-	}
-	if e, ok := probe("MULTICA_CODEX_PATH", "codex", "MULTICA_CODEX_MODEL"); ok {
-		agents["codex"] = e
-	}
-	if e, ok := probe("MULTICA_OPENCODE_PATH", "opencode", "MULTICA_OPENCODE_MODEL"); ok {
-		agents["opencode"] = e
-	}
-	if e, ok := probe("MULTICA_HERMES_PATH", "hermes", "MULTICA_HERMES_MODEL"); ok {
-		agents["hermes"] = e
-	}
-	if e, ok := probe("MULTICA_GEMINI_PATH", "gemini", "MULTICA_GEMINI_MODEL"); ok {
-		agents["gemini"] = e
-	}
-	if e, ok := probe("MULTICA_PI_PATH", "pi", "MULTICA_PI_MODEL"); ok {
-		agents["pi"] = e
-	}
-	if e, ok := probe("MULTICA_CURSOR_PATH", "cursor-agent", "MULTICA_CURSOR_MODEL"); ok {
-		agents["cursor"] = e
-	}
-	if e, ok := probe("MULTICA_COPILOT_PATH", "copilot", "MULTICA_COPILOT_MODEL"); ok {
-		agents["copilot"] = e
-	}
-	if e, ok := probe("MULTICA_KIMI_PATH", "kimi", "MULTICA_KIMI_MODEL"); ok {
-		agents["kimi"] = e
-	}
-	if e, ok := probe("MULTICA_KIRO_PATH", "kiro-cli", "MULTICA_KIRO_MODEL"); ok {
-		agents["kiro"] = e
-	}
-	if e, ok := probe("MULTICA_CODEBUDDY_PATH", "codebuddy", "MULTICA_CODEBUDDY_MODEL"); ok {
-		agents["codebuddy"] = e
-	}
-	// agy 1.0.6 added a `--model` flag (MUL-3125), so Antigravity now takes a
-	// model env like every other backend. MULTICA_ANTIGRAVITY_MODEL seeds the
-	// daemon-wide default; its value is the exact `agy models` display string
-	// (e.g. "Claude Opus 4.6 (Thinking)"), not a provider/model slug.
-	if e, ok := probe("MULTICA_ANTIGRAVITY_PATH", "agy", "MULTICA_ANTIGRAVITY_MODEL"); ok {
-		agents["antigravity"] = e
+	agents := make(map[string]AgentEntry, len(agentProviderSpecs))
+	for _, spec := range agentProviderSpecs {
+		if entry, ok := probe(spec.pathEnv, spec.command, spec.modelEnv); ok {
+			agents[spec.provider] = entry
+		}
 	}
 	agents = filterAgentsByProviderEnv(agents)
 	if len(agents) == 0 {
@@ -319,11 +272,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
 	}
 
-	codexMinTaskInterval, err := durationFromEnv("MULTICA_CODEX_MIN_TASK_INTERVAL", DefaultCodexMinTaskInterval)
-	if err != nil {
-		return Config{}, err
-	}
-
 	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
 	// route 0 through durationFromEnv so the operator can opt out without
 	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
@@ -351,9 +299,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	profile := overrides.Profile
 
 	// daemon_id resolution: override > env > persistent UUID on disk.
-	// The persistent UUID is written once to `<profile-dir>/daemon.id` and
-	// then reused forever so hostname drift (.local suffix, system rename,
-	// mDNS state, profile switch) no longer mints a new runtime identity.
+	// The persistent UUID is written once to ~/.multica/daemon.id and then
+	// reused forever across hostname and profile changes.
 	// Callers may still pin a specific id via MULTICA_DAEMON_ID or the
 	// override field (e.g. for tests or embedded environments).
 	daemonID := strings.TrimSpace(os.Getenv("MULTICA_DAEMON_ID"))
@@ -383,7 +330,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 	if _, ok := agents["codex"]; ok {
-		if err := ensureCodexRuntimeProfile(daemonID); err != nil {
+		if err := ensureCodexRuntimeProfile(); err != nil {
 			return Config{}, fmt.Errorf("ensure codex runtime profile: %w", err)
 		}
 	}
@@ -393,9 +340,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if overrides.HealthPort > 0 {
 		healthPort = overrides.HealthPort
 	}
-
-	// Keep env after task: env > default (false)
-	keepEnv := os.Getenv("MULTICA_KEEP_ENV_AFTER_TASK") == "true" || os.Getenv("MULTICA_KEEP_ENV_AFTER_TASK") == "1"
 
 	// GC config: env > defaults
 	gcEnabled := true
@@ -418,7 +362,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	gcArtifactPatterns := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
+	gcArtifactPatterns := patternsFromEnv(DefaultGCArtifactPatterns)
 
 	return Config{
 		ServerBaseURL:                  serverBaseURL,
@@ -428,7 +372,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		Profile:                        profile,
 		Agents:                         agents,
 		WorkspacesRoot:                 workspacesRoot,
-		KeepEnvAfterTask:               keepEnv,
 		GCEnabled:                      gcEnabled,
 		GCInterval:                     gcInterval,
 		GCTTL:                          gcTTL,
@@ -441,7 +384,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		HeartbeatInterval:              heartbeatInterval,
 		AgentTimeout:                   agentTimeout,
 		CodexSemanticInactivityTimeout: codexSemanticInactivityTimeout,
-		CodexMinTaskInterval:           codexMinTaskInterval,
 		AgentIdleWatchdog:              agentIdleWatchdog,
 		AgentToolWatchdog:              agentToolWatchdog,
 		ClaudeArgs:                     claudeArgs,
@@ -509,15 +451,15 @@ func ResolveWorkspacesRoot(profile, override string) (string, error) {
 // disk-usage CLI uses this to make sure the "artifact size" it reports
 // matches what the GC would actually reclaim.
 func ArtifactPatternsFromEnv() []string {
-	return patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
+	return patternsFromEnv(DefaultGCArtifactPatterns)
 }
 
 // patternsFromEnv reads a comma-separated list from env. Patterns containing
 // path separators are silently dropped — the GC artifact cleanup only matches
 // directory basenames, never paths, so a pattern like "foo/bar" is meaningless
 // and accepting it would just be a footgun.
-func patternsFromEnv(name string, defaults []string) []string {
-	raw := strings.TrimSpace(os.Getenv(name))
+func patternsFromEnv(defaults []string) []string {
+	raw := strings.TrimSpace(os.Getenv("MULTICA_GC_ARTIFACT_PATTERNS"))
 	if raw == "" {
 		out := make([]string, len(defaults))
 		copy(out, defaults)
@@ -572,16 +514,6 @@ func shellArgsFromEnv(name string) ([]string, error) {
 	return args, nil
 }
 
-// defaultAgentCommandNames lists the command names the agent probe loop tries
-// before any MULTICA_*_PATH override is applied. Kept in sync with the
-// `probe(...)` calls in LoadConfig — the shell-fallback resolver uses this
-// list to pre-fetch canonical paths for every known agent in a single shell
-// invocation, instead of paying the cost-per-miss.
-var defaultAgentCommandNames = []string{
-	"claude", "codex", "opencode", "hermes",
-	"gemini", "pi", "cursor-agent", "copilot", "kimi", "kiro-cli", "codebuddy", "agy",
-}
-
 var codexDesktopAppBundlePaths = func() []string {
 	paths := []string{
 		"/Applications/Codex.app/Contents/Resources/codex",
@@ -592,23 +524,10 @@ var codexDesktopAppBundlePaths = func() []string {
 	return paths
 }
 
-// loginShellResolveTimeout caps how long the daemon will wait for the user's
-// login shell to print canonical agent paths. A broken rc file should not
-// block startup — if the shell takes longer than this, we proceed without
-// shell-resolved fallbacks and the daemon falls back to the same behaviour
-// it had before this code was added.
+// A slow or broken shell configuration must not block daemon startup.
 const loginShellResolveTimeout = 3 * time.Second
 
-// loginShellResolveWaitDelay is the hard cap that runs *after*
-// loginShellResolveTimeout has elapsed and `CommandContext` has signalled the
-// shell to exit. The context kills the shell process itself, but rc files in
-// the wild routinely background things that inherit stdout (`nvm` shims,
-// `direnv hook`, `eval $(starship init)`, plain `&`). Those survivors keep
-// the stdout pipe open and `cmd.Output()` will block on EOF for as long as
-// they live. Cmd.WaitDelay (Go 1.20+) forcibly closes the pipes and returns
-// once this delay elapses, so the total daemon-startup penalty caused by a
-// pathological rc file is bounded by `timeout + waitDelay`, not by however
-// long the user's background processes happen to run.
+// WaitDelay also bounds inherited pipes kept open by background rc processes.
 const loginShellResolveWaitDelay = 2 * time.Second
 
 // supportedLoginShells limits which interpreters we will invoke via
@@ -623,38 +542,9 @@ var supportedLoginShells = map[string]struct{}{
 	"ksh":  {},
 }
 
-// resolveAgentsViaLoginShell asks the user's login shell to print the canonical
-// (symlink-resolved) absolute path to each name in `names`. It returns a map
-// of name → path for whatever the shell could find, and an empty map if the
-// shell is unavailable / unsupported / times out / produces no usable output.
-//
-// Why we need this:
-//
-// Daemon-style processes on macOS/Linux do not inherit the user's interactive
-// PATH. `claude --version` working in Terminal.app is no guarantee that
-// exec.LookPath("claude") will work from a binary spawned by Launchpad, the
-// Electron app, or `launchctl`. The most common offenders are fnm/nvm/volta
-// "multishell" prefix dirs (per-shell, ephemeral) and the Anthropic native
-// installer (`~/.claude/local/`) — both leave their binaries on a path that
-// only `.zshrc` knows about.
-//
-// Implementation notes:
-//
-//   - We invoke `$SHELL -ilc <script>` with both -i (interactive) and -l
-//     (login) so we pick up PATH set in either ~/.zshrc / ~/.bashrc OR
-//     ~/.zprofile / ~/.bash_profile. Real users put it in both places.
-//   - The script resolves symlinks via `cd "$dirname" && pwd -P` while the
-//     spawned shell is still alive. fnm/nvm "multishell" directories vanish
-//     on shell exit, so the canonical path must be captured before stdout is
-//     returned to Go — by then the original path is already gone.
-//   - We only trust outputs that look like an absolute path AND still pass a
-//     fresh exec.LookPath check from the daemon's vantage point. That filters
-//     out aliases (`command -v` prints the alias definition for those, not a
-//     path) and per-shell paths the shell happened not to fully canonicalise.
-//   - Agent names are restricted to the bare set in defaultAgentCommandNames
-//     (`[A-Za-z0-9._-]` only); we inline them into the script unquoted to
-//     keep the script readable. Custom MULTICA_*_PATH values never reach this
-//     resolver — those go through exec.LookPath directly.
+// resolveAgentsViaLoginShell discovers canonical executable paths from a
+// supported interactive login shell. Names are allowlisted before entering
+// the script, and results must remain absolute and executable afterward.
 func resolveAgentsViaLoginShell(names []string) map[string]string {
 	out := map[string]string{}
 	if len(names) == 0 {
@@ -697,12 +587,7 @@ func resolveAgentsViaLoginShell(names []string) map[string]string {
 		if !filepath.IsAbs(path) {
 			continue
 		}
-		// Final reality check: the path the shell gave us must still be
-		// executable from the daemon's perspective right now. fnm
-		// multishells are the motivating example — pwd -P inside the
-		// helper shell can fail to break out of the per-session bin dir,
-		// and we'd rather report "not found" than hand back a path that
-		// vanishes between detection and execution.
+		// Reject paths that disappeared with the helper shell.
 		if _, err := exec.LookPath(path); err != nil {
 			continue
 		}
@@ -711,34 +596,9 @@ func resolveAgentsViaLoginShell(names []string) map[string]string {
 	return out
 }
 
-// buildLoginShellResolveScript returns the shell script that resolveAgentsViaLoginShell
-// runs inside `$SHELL -ilc`. The script:
-//
-//  1. iterates the provided command names,
-//  2. strips any locally-defined alias and shell function with that name so
-//     `command -v` reaches through to a real binary on PATH (see below),
-//  3. uses POSIX `command -v` to find each one on the interactive PATH,
-//  4. rejects results that are not absolute paths (defence in depth — if the
-//     unalias/unset -f pair somehow didn't take effect, `command -v` would
-//     still print the alias/function definition, and we'd rather drop it
-//     than hand back garbage),
-//  5. canonicalises the directory via `cd ... && pwd -P` so symlinked prefix
-//     dirs (fnm/nvm/volta) collapse to stable paths,
-//  6. prints `<name>\t<canonical_path>` one entry per line for the caller.
-//
-// Why steps 2 is important — and why this PR's first revision missed #2512:
-// the motivating case has `alias claude=...` in ~/.zshrc *and* fnm's real
-// claude binary further down on PATH. With `-i` set, the alias loads, and
-// `command -v claude` returns `claude: aliased to ...` (zsh) or `alias
-// claude='...'` (bash) — neither starts with `/`, so step 4 drops them, and
-// the loop never looks at PATH again. Unaliasing inside the same shell makes
-// `command -v` fall back to the PATH search the daemon actually wants.
-// Shell functions exhibit the same shadowing in bash/zsh, hence `unset -f`.
-// Both calls are wrapped in `2>/dev/null` so the harmless "no such alias"
-// error never reaches stderr.
-//
-// All input names are vetted by isSafeAgentName before they reach this
-// function, so inlining them unquoted into the for-loop word list is safe.
+// buildLoginShellResolveScript removes alias/function shadows, resolves each
+// allowlisted name through PATH, canonicalizes its directory and prints a
+// tab-separated name/path pair. Non-absolute results are rejected.
 func buildLoginShellResolveScript(names []string) string {
 	var b strings.Builder
 	b.WriteString("for n in")
@@ -758,11 +618,7 @@ func buildLoginShellResolveScript(names []string) string {
 	return b.String()
 }
 
-// isSafeAgentName checks that `s` is a bare command name composed only of
-// characters that are safe to inline into a shell script (ASCII letters,
-// digits, dot, dash, underscore). The agent names this daemon ships with all
-// satisfy the predicate; it exists to guard against future drift, not to
-// constrain operator-supplied paths (those never reach the shell resolver).
+// isSafeAgentName restricts shell-script input to a bare ASCII command name.
 func isSafeAgentName(s string) bool {
 	if s == "" {
 		return false
@@ -778,4 +634,22 @@ func isSafeAgentName(s string) bool {
 		}
 	}
 	return true
+}
+
+// applyOpenclawOverride exposes machine-local config through the environment
+// already consumed by discovery and child processes. Explicit env wins.
+func applyOpenclawOverride(oc *cli.OpenClawOverride) {
+	if oc == nil {
+		return
+	}
+	if oc.BinaryPath != "" {
+		if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); !set {
+			_ = os.Setenv("MULTICA_OPENCLAW_PATH", oc.BinaryPath)
+		}
+	}
+	if oc.StateDir != "" {
+		if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); !set {
+			_ = os.Setenv("OPENCLAW_STATE_DIR", oc.StateDir)
+		}
+	}
 }

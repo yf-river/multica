@@ -1,49 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, waitFor } from "@testing-library/react";
 import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enIssues from "../../locales/zh-Hans/issues.json";
+import { renderIssueTest } from "../test/issue-test-providers";
+import "../test/current-issue-boundary-mocks";
 
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
-
-// Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => {
-      const state = { user: mockAuthUser, isAuthenticated: true };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
-  ),
-  registerAuthStore: vi.fn(),
-  createAuthStore: vi.fn(),
-}));
-
-// Mock @multica/core/paths — after the URL-driven workspace refactor,
-// useCurrentWorkspace derives from the workspace slug in URL Context. Tests
-// don't mount a real route, so we short-circuit to a fixed fixture.
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
-    "@multica/core/paths",
-  );
-  return {
-    ...actual,
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
-    useWorkspacePaths: () => actual.paths.workspace("test"),
-  };
-});
-
-// Mock @multica/views/navigation (AppLink + useNavigation)
 vi.mock("../../navigation", () => ({
   AppLink: ({ children, href, ...props }: any) => (
     <a href={href} {...props}>
@@ -53,6 +13,9 @@ vi.mock("../../navigation", () => ({
   useNavigation: () => ({ push: vi.fn(), pathname: "/issues" }),
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
 
 // Mock workspace avatar
 vi.mock("../../workspace/workspace-avatar", () => ({
@@ -145,32 +108,9 @@ vi.mock("@multica/core/api", () => {
   };
 });
 
-// Mock issue config
-vi.mock("@multica/core/issues/config", () => ({
-  ALL_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
-  STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  STATUS_CONFIG: {
-    backlog: { label: "待办池", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "待处理", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-  },
-  PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
-  PRIORITY_CONFIG: {
-    urgent: { label: "Urgent", bars: 4, color: "text-destructive" },
-    high: { label: "High", bars: 3, color: "text-warning" },
-    medium: { label: "Medium", bars: 2, color: "text-warning" },
-    low: { label: "Low", bars: 1, color: "text-info" },
-    none: { label: "No priority", bars: 0, color: "text-muted-foreground" },
-  },
-}));
-
 // Mock view store
 const mockViewState = {
+  scope: "all" as "all" | "members" | "agents",
   viewMode: "board" as "board" | "list",
   grouping: "status" as "status" | "assignee",
   statusFilters: [] as string[],
@@ -187,6 +127,7 @@ const mockViewState = {
   cardProperties: { priority: true, description: true, assignee: true, dueDate: true, project: true, childProgress: true, labels: true },
   listCollapsedStatuses: [] as string[],
   setViewMode: vi.fn(),
+  setScope: vi.fn(),
   setGrouping: vi.fn(),
   toggleStatusFilter: vi.fn(),
   togglePriorityFilter: vi.fn(),
@@ -208,7 +149,6 @@ const mockViewState = {
 vi.mock("@multica/core/issues/stores/view-store", () => ({
   useClearFiltersOnWorkspaceChange: () => {},
   viewStorePersistOptions: () => ({ name: "test", storage: undefined, partialize: (s: any) => s }),
-  mergeViewStatePersisted: (_p: unknown, c: any) => c,
   viewStoreSlice: vi.fn(),
   useIssueViewStore: Object.assign(
     (selector?: any) => (selector ? selector(mockViewState) : mockViewState),
@@ -245,45 +185,6 @@ vi.mock("@multica/core/issues/stores/view-store-context", () => ({
   ViewStoreProvider: ({ children }: { children: React.ReactNode }) => children,
   useViewStore: (selector?: any) => (selector ? selector(mockViewState) : mockViewState),
   useViewStoreApi: () => ({ getState: () => mockViewState, setState: vi.fn(), subscribe: vi.fn() }),
-}));
-
-let mockScope = "all";
-
-vi.mock("@multica/core/issues/stores/issues-scope-store", () => ({
-  useIssuesScopeStore: Object.assign(
-    (selector?: any) => {
-      const state = { scope: mockScope, setScope: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ scope: mockScope, setScope: vi.fn() }) },
-  ),
-}));
-
-vi.mock("@multica/core/issues/stores/selection-store", () => ({
-  useIssueSelectionStore: Object.assign(
-    (selector?: any) => {
-      const state = { selectedIds: new Set(), toggle: vi.fn(), clear: vi.fn(), setAll: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ selectedIds: new Set(), toggle: vi.fn(), clear: vi.fn(), setAll: vi.fn() }) },
-  ),
-}));
-
-vi.mock("@multica/core/issues/stores/recent-issues-store", () => ({
-  useRecentIssuesStore: Object.assign(
-    (selector?: any) => {
-      const state = { byWorkspace: {}, recordVisit: vi.fn(), pruneWorkspaces: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    {
-      getState: () => ({
-        byWorkspace: {},
-        recordVisit: vi.fn(),
-        pruneWorkspaces: vi.fn(),
-      }),
-    },
-  ),
-  selectRecentIssues: () => () => [],
 }));
 
 vi.mock("@multica/core/modals", () => ({
@@ -357,8 +258,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-1",
-    workspace_id: "ws-1",
-    number: 1,
     identifier: "TES-1",
     title: "Implement auth",
     description: "Add JWT authentication",
@@ -376,8 +275,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-2",
-    workspace_id: "ws-1",
-    number: 2,
     identifier: "TES-2",
     title: "Design landing page",
     description: null,
@@ -388,15 +285,13 @@ const mockIssues: Issue[] = [
     creator_type: "member",
     creator_id: "user-1",
     start_date: null,
-    due_date: "2026-02-01T00:00:00Z",
+    due_date: "2026-02-01",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   },
   {
     ...issueDefaults,
     id: "issue-3",
-    workspace_id: "ws-1",
-    number: 3,
     identifier: "TES-3",
     title: "Write tests",
     description: null,
@@ -414,8 +309,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-4",
-    workspace_id: "ws-1",
-    number: 4,
     identifier: "TES-4",
     title: "Squad task",
     description: null,
@@ -508,19 +401,7 @@ import { IssuesPage } from "./issues-page";
 // ---------------------------------------------------------------------------
 
 function renderWithQuery(ui: React.ReactElement) {
-  const qc = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
-      mutations: { retry: false },
-    },
-  });
-  return render(
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={qc}>
-        {ui}
-      </QueryClientProvider>
-    </I18nProvider>,
-  );
+  return renderIssueTest(ui);
 }
 
 // ---------------------------------------------------------------------------
@@ -543,7 +424,7 @@ describe("IssuesPage (shared)", () => {
     mockViewState.statusFilters = [];
     mockViewState.priorityFilters = [];
     mockViewState.agentRunningFilter = false;
-    mockScope = "all";
+    mockViewState.scope = "all";
   });
 
   it("shows loading skeletons initially", () => {
@@ -567,7 +448,6 @@ describe("IssuesPage (shared)", () => {
     const fixtureIssue: Issue = {
       ...mockIssues[0]!,
       id: "issue-fixture",
-      number: 99,
       identifier: "TES-99",
       title: "curl user-center 小队真实端到端验收",
       project: { id: "project-fixture", title: "curl gateway 1782316918018", icon: null },
@@ -726,7 +606,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("agents scope includes squad-assigned issues", async () => {
-    mockScope = "agents";
+    mockViewState.scope = "agents";
     mockViewState.viewMode = "list";
     mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
@@ -739,7 +619,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("members scope excludes squad-assigned issues", async () => {
-    mockScope = "members";
+    mockViewState.scope = "members";
     mockViewState.viewMode = "list";
     mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);

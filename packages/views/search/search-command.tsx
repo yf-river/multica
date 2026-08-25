@@ -35,10 +35,10 @@ import type {
 } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import {
-  openCreateIssueWithPreference,
-  selectRecentIssues,
-  useRecentIssuesStore,
-} from "@multica/core/issues/stores";
+  selectRecentContexts,
+  useRecentContextStore,
+} from "@multica/core/chat";
+import { openCreateIssue } from "@multica/core/issues";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -54,8 +54,9 @@ import {
 } from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
 import { memberListOptions } from "@multica/core/workspace/queries";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { StatusIcon } from "../issues/components";
+import { StatusIcon } from "../issues/components/status-icon";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { ProjectStatus } from "@multica/core/types";
@@ -72,9 +73,9 @@ import { useTheme } from "@multica/ui/components/common/theme-provider";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { HighlightText } from "./highlight-text";
-import { useSearchStore } from "./search-store";
+import { useSearchStore } from "@multica/core/search";
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see SearchCommand body).
@@ -101,21 +102,11 @@ interface NavPage {
 
 type ThemeValue = "light" | "dark" | "system";
 
-function memberInitials(name: string) {
-  return name
-    .split(" ")
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
 function matchesMember(member: MemberWithUser, query: string) {
   return (
-    member.name.toLowerCase().includes(query) ||
+    matchesTextQuery(member.name, query) ||
     member.account.toLowerCase().includes(query) ||
-    (query.length >= 3 && member.role.startsWith(query)) ||
-    matchesPinyin(member.name, query)
+    (query.length >= 3 && member.role.startsWith(query))
   );
 }
 
@@ -201,7 +192,11 @@ export function SearchCommand() {
   const open = useSearchStore((s) => s.open);
   const setOpen = useSearchStore((s) => s.setOpen);
   const wsId = useWorkspaceId();
-  const recentItems = useRecentIssuesStore(selectRecentIssues(wsId));
+  const recentContexts = useRecentContextStore(selectRecentContexts(wsId));
+  const recentItems = useMemo(
+    () => recentContexts.filter((item) => item.type === "issue"),
+    [recentContexts],
+  );
   const { theme, setTheme } = useTheme();
   const { data: members = [] } = useQuery({
     ...memberListOptions(wsId),
@@ -224,6 +219,7 @@ export function SearchCommand() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults>({ issues: [], projects: [] });
   const [isLoading, setIsLoading] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -276,7 +272,7 @@ export function SearchCommand() {
         icon: Plus,
         keywords: ["new", "issue", "create", "add"],
         onSelect: () => {
-          openCreateIssueWithPreference();
+          openCreateIssue();
           setOpen(false);
         },
       },
@@ -433,9 +429,14 @@ export function SearchCommand() {
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
+      debounceRef.current = null;
+      abortRef.current = null;
       setQuery("");
       setResults({ issues: [], projects: [] });
       setIsLoading(false);
+      setSearchFailed(false);
     }
   }, [open]);
 
@@ -446,10 +447,12 @@ export function SearchCommand() {
     if (!q.trim()) {
       setResults({ issues: [], projects: [] });
       setIsLoading(false);
+      setSearchFailed(false);
       return;
     }
 
     setIsLoading(true);
+    setSearchFailed(false);
     debounceRef.current = setTimeout(async () => {
       const controller = new AbortController();
       abortRef.current = controller;
@@ -470,14 +473,17 @@ export function SearchCommand() {
         ]);
         if (!controller.signal.aborted) {
           setResults({
-            issues: issueRes.issues,
-            projects: projectRes.projects,
+            issues: issueRes,
+            projects: projectRes,
           });
           setIsLoading(false);
+          setSearchFailed(false);
         }
       } catch {
         if (!controller.signal.aborted) {
+          setResults({ issues: [], projects: [] });
           setIsLoading(false);
+          setSearchFailed(true);
         }
       }
     }, 300);
@@ -612,7 +618,7 @@ export function SearchCommand() {
                   >
                     <ActorAvatarBase
                       name={member.name}
-                      initials={memberInitials(member.name)}
+                      initials={nameInitials(member.name)}
                       avatarUrl={resolvePublicFileUrl(member.avatar_url)}
                       size={22}
                     />
@@ -635,7 +641,14 @@ export function SearchCommand() {
               </div>
             )}
 
+            {!isLoading && searchFailed && (
+              <div role="alert" className="px-4 py-8 text-center text-sm text-destructive">
+                {t(($) => $.error.search_failed)}
+              </div>
+            )}
+
             {!isLoading &&
+              !searchFailed &&
               query.trim() &&
               !hasResults &&
               filteredPages.length === 0 &&

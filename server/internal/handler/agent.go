@@ -15,17 +15,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // Mirrors AGENT_DESCRIPTION_MAX_LENGTH in packages/core/agents/constants.ts
-// and the agent_description_length CHECK constraint. Counted in Unicode code
-// points (utf8.RuneCountInString), matching Postgres
+// and the current agent_description_length CHECK constraint. Counted
+// in unicode code points (utf8.RuneCountInString), matching Postgres
 // char_length and the front-end's String.prototype.length-with-counter UX.
 const maxAgentDescriptionLength = 255
 
@@ -38,7 +39,7 @@ type AgentResponse struct {
 	Instructions  string          `json:"instructions"`
 	AvatarURL     *string         `json:"avatar_url"`
 	RuntimeMode   string          `json:"runtime_mode"`
-	RuntimeConfig any             `json:"runtime_config"`
+	RuntimeConfig map[string]any  `json:"runtime_config"`
 	CustomArgs    []string        `json:"custom_args"`
 	McpConfig     json.RawMessage `json:"mcp_config"`
 	// custom_env is intentionally NOT serialized on agent resources. The
@@ -76,13 +77,13 @@ type AgentResponse struct {
 // instead of overwriting it.
 const runtimeConfigGatewayTokenMask = "***"
 
-func agentToResponse(a db.Agent) AgentResponse {
-	var rc any
-	if a.RuntimeConfig != nil {
-		json.Unmarshal(a.RuntimeConfig, &rc)
+func agentToResponse(a db.Agent) (AgentResponse, error) {
+	var rc map[string]any
+	if err := json.Unmarshal(a.RuntimeConfig, &rc); err != nil {
+		return AgentResponse{}, fmt.Errorf("decode agent runtime config: %w", err)
 	}
 	if rc == nil {
-		rc = map[string]any{}
+		return AgentResponse{}, fmt.Errorf("decode agent runtime config: expected JSON object")
 	}
 	maskGatewayToken(rc)
 
@@ -91,27 +92,29 @@ func agentToResponse(a db.Agent) AgentResponse {
 	// has_custom_env / key_count is what the UI gets — to read the values
 	// the caller must hit GET /api/agents/{id}/env (owner/admin only,
 	// audited).
-	envKeyCount := 0
-	if a.CustomEnv != nil {
-		var customEnv map[string]string
-		if err := json.Unmarshal(a.CustomEnv, &customEnv); err != nil {
-			slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(a.ID), "error", err)
-		}
-		envKeyCount = len(customEnv)
+	var customEnv map[string]string
+	if err := json.Unmarshal(a.CustomEnv, &customEnv); err != nil {
+		return AgentResponse{}, fmt.Errorf("decode agent custom env: %w", err)
 	}
+	if customEnv == nil {
+		return AgentResponse{}, fmt.Errorf("decode agent custom env: expected JSON object")
+	}
+	envKeyCount := len(customEnv)
 
 	var customArgs []string
-	if a.CustomArgs != nil {
-		if err := json.Unmarshal(a.CustomArgs, &customArgs); err != nil {
-			slog.Warn("failed to unmarshal agent custom_args", "agent_id", uuidToString(a.ID), "error", err)
-		}
+	if err := json.Unmarshal(a.CustomArgs, &customArgs); err != nil {
+		return AgentResponse{}, fmt.Errorf("decode agent custom args: %w", err)
 	}
 	if customArgs == nil {
-		customArgs = []string{}
+		return AgentResponse{}, fmt.Errorf("decode agent custom args: expected JSON array")
 	}
 
 	var mcpConfig json.RawMessage
 	if a.McpConfig != nil {
+		var object map[string]any
+		if err := json.Unmarshal(a.McpConfig, &object); err != nil || object == nil {
+			return AgentResponse{}, fmt.Errorf("decode agent MCP config: expected JSON object")
+		}
 		mcpConfig = json.RawMessage(a.McpConfig)
 	}
 
@@ -140,18 +143,23 @@ func agentToResponse(a db.Agent) AgentResponse {
 		UpdatedAt:          timestampToString(a.UpdatedAt),
 		ArchivedAt:         timestampToPtr(a.ArchivedAt),
 		ArchivedBy:         uuidToPtr(a.ArchivedBy),
+	}, nil
+}
+
+func writeAgentResponseDecodeError(w http.ResponseWriter, r *http.Request, agentID string, err error) {
+	attrs := logger.RequestAttrs(r)
+	if agentID != "" {
+		attrs = append(attrs, "agent_id", agentID)
 	}
+	slog.Error("decode agent response failed", append(attrs, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode agent configuration")
 }
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
 // mask sentinel when a non-empty value is present. No-op for any other
-// shape so non-gateway runtime configs pass through untouched.
-func maskGatewayToken(rc any) {
-	root, ok := rc.(map[string]any)
-	if !ok {
-		return
-	}
-	gw, ok := root["gateway"].(map[string]any)
+// shape so non-openclaw / non-gateway agents pass through untouched.
+func maskGatewayToken(rc map[string]any) {
+	gw, ok := rc["gateway"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -168,12 +176,8 @@ func maskGatewayToken(rc any) {
 // after a GET would round-trip the masked sentinel into the database and
 // silently destroy the real secret. The previous value is taken from the
 // agent row the handler has just loaded for ownership / scoping checks.
-func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
-	root, ok := incoming.(map[string]any)
-	if !ok {
-		return
-	}
-	gw, ok := root["gateway"].(map[string]any)
+func preserveMaskedGatewayToken(incoming map[string]any, persistedRuntimeConfig []byte) {
+	gw, ok := incoming["gateway"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -199,49 +203,6 @@ func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
 	gw["token"] = prev.Gateway.Token
 }
 
-// RepoData holds repository information included in claim responses so the
-// daemon can set up worktrees for each workspace repo.
-type RepoData struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
-}
-
-// ProjectResourceData is the wire shape for a project resource included in a
-// claim response. The daemon reads this list and writes it into the agent's
-// working directory so skills/agents can discover project-scoped context.
-//
-// resource_ref is type-specific JSON; the daemon doesn't interpret it beyond
-// well-known fields like url for github_repo. New types can be added without
-// changing this struct.
-type ProjectResourceData struct {
-	ID           string          `json:"id"`
-	ResourceType string          `json:"resource_type"`
-	ResourceRef  json.RawMessage `json:"resource_ref"`
-	Label        string          `json:"label,omitempty"`
-}
-
-// IssueExecutionSpaceData tells the daemon to use one stable, issue-scoped
-// worktree for every agent task on the issue instead of a task-scoped scratch
-// workdir. The daemon owns the concrete local path because it is host-local.
-type IssueExecutionSpaceData struct {
-	Enabled        bool   `json:"enabled"`
-	IssueID        string `json:"issue_id"`
-	PrimaryRepoURL string `json:"primary_repo_url"`
-	Ref            string `json:"ref,omitempty"`
-}
-
-// TaskExecutionPolicyData is a daemon-facing capability policy for the current
-// task. It is derived from the agent's role in a squad/profile, not from the
-// runtime provider.
-type TaskExecutionPolicyData struct {
-	RoleKey              string   `json:"role_key,omitempty"`
-	RoleKind             string   `json:"role_kind,omitempty"`
-	CanAccessRepo        bool     `json:"can_access_repo"`
-	CanEditRepo          bool     `json:"can_edit_repo"`
-	ProjectSkillMode     string   `json:"project_skill_mode,omitempty"` // none, stage, implementation, verification, all
-	AllowedProjectSkills []string `json:"allowed_project_skills,omitempty"`
-}
-
 type AgentTaskResponse struct {
 	ID          string `json:"id"`
 	AgentID     string `json:"agent_id"`
@@ -253,33 +214,33 @@ type AgentTaskResponse struct {
 	// as `## Workspace Context` so every agent running in this workspace —
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
-	WorkspaceContext    string                   `json:"workspace_context,omitempty"`
-	ThreadName          string                   `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
-	Status              string                   `json:"status"`
-	Priority            int32                    `json:"priority"`
-	DispatchedAt        *string                  `json:"dispatched_at"`
-	StartedAt           *string                  `json:"started_at"`
-	CompletedAt         *string                  `json:"completed_at"`
-	Result              any                      `json:"result"`
-	Error               *string                  `json:"error"`
-	FailureReason       string                   `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
-	Attempt             int32                    `json:"attempt"`
-	MaxAttempts         int32                    `json:"max_attempts"`
-	ParentTaskID        *string                  `json:"parent_task_id,omitempty"`
-	IsLeaderTask        bool                     `json:"is_leader_task,omitempty"`
-	Agent               *TaskAgentData           `json:"agent,omitempty"`
-	Repos               []RepoData               `json:"repos,omitempty"`
-	ProjectID           string                   `json:"project_id,omitempty"`        // issue's project, when present
-	ProjectTitle        string                   `json:"project_title,omitempty"`     // for surfacing in agent context
-	ProjectResources    []ProjectResourceData    `json:"project_resources,omitempty"` // resources attached to the project
-	IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space,omitempty"`
-	ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy,omitempty"`
-	SourceContext       *TaskSourceContext       `json:"source_context,omitempty"` // structured source/MCP context for TAPD/Gongfeng-backed tasks
-	SourceSummaryPrompt string                   `json:"source_summary_prompt,omitempty"`
-	CreatedAt           string                   `json:"created_at"`
-	PriorSessionID      string                   `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
-	PriorWorkDir        string                   `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
-	WorkDir             string                   `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
+	WorkspaceContext    string                            `json:"workspace_context,omitempty"`
+	ThreadName          string                            `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
+	Status              string                            `json:"status"`
+	Priority            int32                             `json:"priority"`
+	DispatchedAt        *string                           `json:"dispatched_at"`
+	StartedAt           *string                           `json:"started_at"`
+	CompletedAt         *string                           `json:"completed_at"`
+	Result              any                               `json:"result"`
+	Error               *string                           `json:"error"`
+	FailureReason       string                            `json:"failure_reason,omitempty"` // drives the task auto-retry policy
+	Attempt             int32                             `json:"attempt"`
+	MaxAttempts         int32                             `json:"max_attempts"`
+	ParentTaskID        *string                           `json:"parent_task_id,omitempty"`
+	IsLeaderTask        bool                              `json:"is_leader_task,omitempty"`
+	Agent               *protocol.TaskAgent               `json:"agent,omitempty"`
+	Repos               []protocol.TaskRepository         `json:"repos,omitempty"`
+	ProjectID           string                            `json:"project_id,omitempty"`        // issue's project, when present
+	ProjectTitle        string                            `json:"project_title,omitempty"`     // for surfacing in agent context
+	ProjectResources    []protocol.TaskProjectResource    `json:"project_resources,omitempty"` // resources attached to the project
+	IssueExecutionSpace *protocol.TaskIssueExecutionSpace `json:"issue_execution_space,omitempty"`
+	ExecutionPolicy     *executionpolicy.Policy           `json:"execution_policy,omitempty"`
+	SourceContext       *protocol.TaskSourceContext       `json:"source_context,omitempty"` // structured source/MCP context for TAPD/Gongfeng-backed tasks
+	SourceSummaryPrompt string                            `json:"source_summary_prompt,omitempty"`
+	CreatedAt           string                            `json:"created_at"`
+	PriorSessionID      string                            `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
+	PriorWorkDir        string                            `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
+	WorkDir             string                            `json:"work_dir,omitempty"`         // local working directory pinned for this task; populated once the daemon reports it
 	// RelativeWorkDir is a privacy-safe display form of WorkDir intended for
 	// the UI. For standard tasks it strips the daemon's workspaces root so
 	// the user sees `<wsUUID>/<taskShort>/workdir`; for local_directory
@@ -290,37 +251,35 @@ type AgentTaskResponse struct {
 	// when WorkDir is empty, or when stripping leaves nothing. See
 	// relativeWorkDir() for the full rules. Older clients can still read
 	// WorkDir directly; newer UIs should prefer RelativeWorkDir.
-	RelativeWorkDir          string               `json:"relative_work_dir,omitempty"`
-	TriggerCommentID         *string              `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
-	TriggerThreadID          string               `json:"trigger_thread_id,omitempty"`           // root comment ID for the triggering thread
-	TriggerCommentContent    string               `json:"trigger_comment_content,omitempty"`     // content of the triggering comment
-	TriggerSummary           *string              `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
-	TriggerAuthorType        string               `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
-	TriggerAuthorName        string               `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
-	TriggerCommentCreatedAt  string               `json:"trigger_comment_created_at,omitempty"`  // timestamp of the triggering comment for responsibility-window timelines
-	NewCommentCount          int                  `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
-	NewCommentsSince         string               `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
-	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatMessage              string               `json:"chat_message,omitempty"`                // user message for chat tasks
-	ChatMessageAttachments   []ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
-	AutopilotRunID           string               `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
-	AutopilotID              string               `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
-	AutopilotTitle           string               `json:"autopilot_title,omitempty"`             // autopilot title used as task context
-	AutopilotDescription     string               `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
-	AutopilotSource          string               `json:"autopilot_source,omitempty"`            // manual, schedule, webhook, or api
-	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
-	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
-	QuickCreateAttachmentIDs []string             `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
-	QuickCreateStatus        string               `json:"quick_create_status,omitempty"`
-	QuickCreatePriority      string               `json:"quick_create_priority,omitempty"`
-	QuickCreateAssigneeType  string               `json:"quick_create_assignee_type,omitempty"`
-	QuickCreateAssigneeID    string               `json:"quick_create_assignee_id,omitempty"`
-	QuickCreateStartDate     string               `json:"quick_create_start_date,omitempty"`
-	QuickCreateDueDate       string               `json:"quick_create_due_date,omitempty"`
-	SquadID                  string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string               `json:"squad_name,omitempty"`              // display name for the picker squad
-	ParentIssueID            string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	RelativeWorkDir          string                        `json:"relative_work_dir,omitempty"`
+	TriggerCommentID         *string                       `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
+	TriggerThreadID          string                        `json:"trigger_thread_id,omitempty"`           // root comment ID for the triggering thread
+	TriggerCommentContent    string                        `json:"trigger_comment_content,omitempty"`     // content of the triggering comment
+	TriggerSummary           *string                       `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
+	TriggerAuthorType        string                        `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
+	TriggerAuthorName        string                        `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
+	TriggerCommentCreatedAt  string                        `json:"trigger_comment_created_at,omitempty"`  // timestamp of the triggering comment for responsibility-window timelines
+	NewCommentCount          int                           `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
+	NewCommentsSince         string                        `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
+	ChatSessionID            string                        `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
+	ChatMessage              string                        `json:"chat_message,omitempty"`                // user message for chat tasks
+	ChatMessageAttachments   []protocol.ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
+	AutopilotRunID           string                        `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
+	AutopilotID              string                        `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
+	AutopilotTitle           string                        `json:"autopilot_title,omitempty"`             // autopilot title used as task context
+	AutopilotDescription     string                        `json:"autopilot_description,omitempty"`       // autopilot description used as task prompt
+	AutopilotSource          string                        `json:"autopilot_source,omitempty"`            // manual, schedule, or webhook
+	AutopilotTriggerPayload  json.RawMessage               `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook runs
+	QuickCreatePrompt        string                        `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
+	QuickCreateAttachmentIDs []string                      `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
+	QuickCreateStatus        string                        `json:"quick_create_status,omitempty"`
+	QuickCreatePriority      string                        `json:"quick_create_priority,omitempty"`
+	QuickCreateStartDate     string                        `json:"quick_create_start_date,omitempty"`
+	QuickCreateDueDate       string                        `json:"quick_create_due_date,omitempty"`
+	SquadID                  string                        `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string                        `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID            string                        `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string                        `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and
@@ -358,64 +317,6 @@ type AgentTaskResponse struct {
 	AuthToken string `json:"auth_token,omitempty"`
 }
 
-type TaskSourceContext struct {
-	Provider            string                                   `json:"provider,omitempty"`
-	URL                 string                                   `json:"url,omitempty"`
-	TAPD                *TAPDTaskSourceContext                   `json:"tapd,omitempty"`
-	ExternalCredentials map[string]TaskExternalCredentialContext `json:"external_credentials,omitempty"`
-}
-
-type TAPDTaskSourceContext struct {
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	ResourceType  string `json:"resource_type,omitempty"`
-	ResourceID    string `json:"resource_id,omitempty"`
-	FetchProvider string `json:"fetch_provider,omitempty"`
-	FetchStatus   string `json:"fetch_status,omitempty"`
-	FetchError    string `json:"fetch_error,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Summary       string `json:"summary,omitempty"`
-	BodyExcerpt   string `json:"body_excerpt,omitempty"`
-	Version       string `json:"version,omitempty"`
-}
-
-type TaskExternalCredentialContext struct {
-	Provider      string `json:"provider"`
-	Scope         string `json:"scope"`
-	Inheritance   string `json:"inheritance"`
-	UserID        string `json:"user_id,omitempty"`
-	ProfileID     string `json:"profile_id,omitempty"`
-	ProfileName   string `json:"profile_name,omitempty"`
-	ProfileStatus string `json:"profile_status,omitempty"`
-	MCPServer     string `json:"mcp_server,omitempty"`
-	Configured    bool   `json:"configured"`
-}
-
-// ChatAttachmentMeta is the structured attachment metadata embedded in
-// claim responses for chat tasks. The agent uses these to run
-// `multica attachment download <id>` rather than guessing from the
-// markdown URL (which is signed and 30-min expiring on private CDN).
-// The mirror struct on the daemon side lives in internal/daemon/types.go
-// and uses the same JSON field names.
-type ChatAttachmentMeta struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type,omitempty"`
-}
-
-// TaskAgentData holds agent info included in claim responses so the daemon
-// can set up the execution environment (branch naming, skill files, instructions).
-type TaskAgentData struct {
-	ID            string                   `json:"id"`
-	Name          string                   `json:"name"`
-	Instructions  string                   `json:"instructions"`
-	Skills        []service.AgentSkillData `json:"skills,omitempty"`
-	CustomEnv     map[string]string        `json:"custom_env,omitempty"`
-	CustomArgs    []string                 `json:"custom_args,omitempty"`
-	McpConfig     json.RawMessage          `json:"mcp_config,omitempty"`
-	Model         string                   `json:"model,omitempty"`
-	ThinkingLevel string                   `json:"thinking_level,omitempty"`
-}
-
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
 // in because the row itself doesn't carry one (workspace lives on the agent
 // / issue / chat session) — we ask the caller to resolve it once and pass it
@@ -425,7 +326,9 @@ type TaskAgentData struct {
 func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	var result any
 	if t.Result != nil {
-		json.Unmarshal(t.Result, &result)
+		if err := json.Unmarshal(t.Result, &result); err != nil {
+			slog.Warn("decode agent task result failed", "task_id", uuidToString(t.ID), "error", err)
+		}
 	}
 	failureReason := ""
 	if t.FailureReason.Valid {
@@ -465,6 +368,14 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		AutopilotRunID: uuidToString(t.AutopilotRunID),
 		Kind:           computeTaskKind(t),
 	}
+}
+
+func agentTasksToResponses(tasks []db.AgentTaskQueue, workspaceID string) []AgentTaskResponse {
+	responses := make([]AgentTaskResponse, len(tasks))
+	for i, task := range tasks {
+		responses[i] = taskToResponse(task, workspaceID)
+	}
+	return responses
 }
 
 // relativeWorkDir produces a privacy-safe display form of the daemon-reported
@@ -596,19 +507,16 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
 	userID := requestUserID(r)
 
-	var agents []db.Agent
-	var err error
-	if r.URL.Query().Get("include_archived") == "true" {
-		agents, err = h.Queries.ListAllAgents(r.Context(), parseUUID(workspaceID))
-	} else {
-		agents, err = h.Queries.ListAgents(r.Context(), parseUUID(workspaceID))
-	}
+	agents, err := h.Queries.ListAgents(r.Context(), db.ListAgentsParams{
+		WorkspaceID:     parseUUID(workspaceID),
+		IncludeArchived: r.URL.Query().Get("include_archived") == "true",
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agents")
 		return
@@ -646,7 +554,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	// Resolve the request actor once. Agents bypass the personal-agent gate
 	// to preserve A2A collaboration; members must be in allowed_principals
 	// (agent owner or workspace owner/admin) to see personal agents.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
 		if a.Scope == scopePersonal && actorType == "member" {
@@ -654,7 +562,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		resp := agentToResponse(a)
+		resp, err := agentToResponse(a)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, uuidToString(a.ID), err)
+			return
+		}
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
 		}
@@ -683,17 +595,20 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// render an explicit "no access" placeholder instead of a 404 — see
 	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	actorType, actorID := resolveActor(r, requestUserID(r))
+	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
-	resp := agentToResponse(agent)
+	resp, err := agentToResponse(agent)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
 	// Use the summary query (no `content` column) — the embedded
 	// AgentSkillSummary only needs id/name/description, and reading large
 	// SKILL.md bodies just to discard them is the exact regression we fixed
 	// in #2174.
-	if err := h.attachAgentSkills(r.Context(), &resp, agent.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), h.Queries, &resp, agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
@@ -711,7 +626,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// Agent actors NEVER see mcp_config (see ListAgents for the rationale).
 	if actorType == "agent" || alwaysRedact {
 		redactMcpConfig(&resp)
-	} else if member, ok := ctxMember(r.Context()); ok {
+	} else if member, ok := requestctx.WorkspaceMember(r.Context()); ok {
 		if !canViewAgentSecrets(agent, userID, member.Role) {
 			redactMcpConfig(&resp)
 		}
@@ -726,7 +641,7 @@ type CreateAgentRequest struct {
 	Instructions       string            `json:"instructions"`
 	AvatarURL          *string           `json:"avatar_url"`
 	RuntimeID          string            `json:"runtime_id"`
-	RuntimeConfig      any               `json:"runtime_config"`
+	RuntimeConfig      map[string]any    `json:"runtime_config"`
 	CustomEnv          map[string]string `json:"custom_env"`
 	CustomArgs         []string          `json:"custom_args"`
 	McpConfig          json.RawMessage   `json:"mcp_config"`
@@ -734,12 +649,6 @@ type CreateAgentRequest struct {
 	MaxConcurrentTasks int32             `json:"max_concurrent_tasks"`
 	Model              string            `json:"model"`
 	ThinkingLevel      string            `json:"thinking_level"`
-	// Template records which template slug was used to seed this agent
-	// (e.g. "coding" / "planning" / "writing" / "assistant"). Empty when
-	// the caller didn't come from a template picker — the `agent_created`
-	// event still fires with `template=""`, which is the correct signal
-	// for "manually authored agent".
-	Template string `json:"template"`
 }
 
 func decodeJSONBodyWithRawFields(body io.Reader, dst any) (map[string]json.RawMessage, error) {
@@ -809,25 +718,8 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
-		ID:          runtimeUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid runtime_id")
-		return
-	}
-
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	runtime, ok := h.authorizeAgentCreationRuntime(w, r, wsUUID, ownerID, runtimeUUID, req.Scope)
 	if !ok {
-		return
-	}
-	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
-		return
-	}
-	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -840,13 +732,13 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Probe workspace agent count BEFORE the insert so the funnel has a
-	// clean "first agent ever in this workspace" signal — Step 4 of
-	// onboarding always lands in this branch. A non-fatal read: if the
-	// list fails we fall through with isFirstAgent=false rather than
-	// blocking creation, since the primary DB operation is the insert.
+	// Probe workspace agent count before the insert so analytics can identify
+	// the first agent in a workspace. This read is non-fatal: creation remains
+	// the primary operation if the count cannot be loaded.
 	isFirstAgent := false
-	if existing, listErr := h.Queries.ListAgents(r.Context(), wsUUID); listErr == nil {
+	if existing, listErr := h.Queries.ListAgents(r.Context(), db.ListAgentsParams{
+		WorkspaceID: wsUUID,
+	}); listErr == nil {
 		isFirstAgent = len(existing) == 0
 	}
 
@@ -854,29 +746,81 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// public mask sentinel as gateway.token (e.g. replayed a masked GET body)
 	// drop it rather than persisting a literal "***" as a real bearer token.
 	preserveMaskedGatewayToken(req.RuntimeConfig, nil)
-	rc, _ := json.Marshal(req.RuntimeConfig)
+	rc, err := json.Marshal(req.RuntimeConfig)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "runtime_config must be a JSON object")
+		return
+	}
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
 	}
 
-	ce, _ := json.Marshal(req.CustomEnv)
+	ce, err := json.Marshal(req.CustomEnv)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "custom_env must be an object of string values")
+		return
+	}
 	if req.CustomEnv == nil {
 		ce = []byte("{}")
 	}
 
-	ca, _ := json.Marshal(req.CustomArgs)
+	ca, err := json.Marshal(req.CustomArgs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "custom_args must be an array of strings")
+		return
+	}
 	if req.CustomArgs == nil {
 		ca = []byte("[]")
 	}
 
 	model := agentModelForRuntime(runtime.Provider, req.Model)
+	req.Model = model
 
 	var mc []byte
 	if rawMcpConfig, ok := rawFields["mcp_config"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null")) {
-		mc = append([]byte(nil), rawMcpConfig...)
+		var valid bool
+		mc, valid = jsonObjectBytesOrDefault(w, rawMcpConfig, "mcp_config", nil)
+		if !valid {
+			return
+		}
+	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create agent")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	operationActorID := parseUUID(ownerID)
+	loadReplay := func() (AgentResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, operationActorID, resourceTypeAgent,
+			idempotencyKey, requestHash,
+			func(response AgentResponse) bool { return response.ID != "" },
+		)
+	}
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, h.writeAgentCreateReplayError) {
+		return
 	}
 
-	created, err := h.Queries.CreateAgent(r.Context(), db.CreateAgentParams{
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start agent create")
+	if !ok {
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent, idempotencyKey, requestHash)
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		h.writeAgentCreateReplayError,
+		"failed to reserve agent request",
+		http.StatusCreated,
+	) {
+		return
+	}
+
+	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:        wsUUID,
 		Name:               req.Name,
 		Description:        req.Description,
@@ -905,15 +849,36 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create agent: "+err.Error())
 		return
 	}
-	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "name", created.Name, "workspace_id", workspaceID)...)
 
 	if runtime.Status == "online" {
-		h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
-		created, _ = h.Queries.GetAgent(r.Context(), created.ID)
+		created, err = qtx.RefreshAgentStatusFromTasks(r.Context(), created.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to initialize agent status")
+			return
+		}
 	}
 
-	resp := agentToResponse(created)
-	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
+	resp, err := agentToResponse(created)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, uuidToString(created.ID), err)
+		return
+	}
+	actorType, actorID := resolveActor(r, ownerID)
+	replayResponse := resp
+	redactAgentResponseForActor(&replayResponse, actorType)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent,
+		idempotencyKey, requestHash, created.ID, replayResponse,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete agent request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent create")
+		return
+	}
+
+	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "name", created.Name, "workspace_id", workspaceID)...)
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AgentCreated(
@@ -922,21 +887,28 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		uuidToString(created.ID),
 		runtime.Provider,
 		runtime.RuntimeMode,
-		req.Template,
+		"",
 		isFirstAgent,
 	))
 
-	redactAgentResponseForActor(&resp, actorType)
-	writeJSON(w, http.StatusCreated, resp)
+	writeJSON(w, http.StatusCreated, replayResponse)
+}
+
+func (h *Handler) writeAgentCreateReplayError(w http.ResponseWriter, err error) {
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different request",
+		"failed to replay agent create",
+	)
 }
 
 type UpdateAgentRequest struct {
-	Name          *string `json:"name"`
-	Description   *string `json:"description"`
-	Instructions  *string `json:"instructions"`
-	AvatarURL     *string `json:"avatar_url"`
-	RuntimeID     *string `json:"runtime_id"`
-	RuntimeConfig any     `json:"runtime_config"`
+	Name          *string         `json:"name"`
+	Description   *string         `json:"description"`
+	Instructions  *string         `json:"instructions"`
+	AvatarURL     *string         `json:"avatar_url"`
+	RuntimeID     *string         `json:"runtime_id"`
+	RuntimeConfig *map[string]any `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path is
 	// owner/admin-only, denies agent actors, and writes a persisted
@@ -965,23 +937,19 @@ type UpdateAgentRequest struct {
 // into unconditional redaction of secret-bearing fields (currently
 // `mcp_config`) on read responses, regardless of the caller's role.
 //
-// The legacy JSON key is still `always_redact_env` for backwards-
-// compatibility with workspaces that flipped the setting before MUL-2600
-// shipped. The setting no longer affects `custom_env` because that field
-// is never serialized on agent resources anymore — secrets there are
-// fetched exclusively through `GET /api/agents/{id}/env` with audit
-// logging — so the flag now only governs `mcp_config` exposure.
+// The setting governs mcp_config exposure. custom_env is never serialized on
+// agent resources and is fetched only through the audited env endpoint.
 func workspaceAlwaysRedactSecrets(settings []byte) bool {
 	if len(settings) == 0 {
 		return false
 	}
 	var s struct {
-		AlwaysRedactEnv bool `json:"always_redact_env"`
+		AlwaysRedactSecrets bool `json:"always_redact_secrets"`
 	}
 	if err := json.Unmarshal(settings, &s); err != nil {
 		return false
 	}
-	return s.AlwaysRedactEnv
+	return s.AlwaysRedactSecrets
 }
 
 // canViewAgentSecrets checks whether the requesting user is allowed to
@@ -1113,18 +1081,30 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// public mask sentinel. Without this, a UI that GETs the agent and
 		// PATCHes the same payload back round-trips "***" into the database
 		// and silently destroys the real secret (issue #3260).
-		preserveMaskedGatewayToken(req.RuntimeConfig, existing.RuntimeConfig)
-		rc, _ := json.Marshal(req.RuntimeConfig)
+		preserveMaskedGatewayToken(*req.RuntimeConfig, existing.RuntimeConfig)
+		rc, err := json.Marshal(*req.RuntimeConfig)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "runtime_config must be a JSON object")
+			return
+		}
 		params.RuntimeConfig = rc
 	}
 	if req.CustomArgs != nil {
-		ca, _ := json.Marshal(*req.CustomArgs)
+		ca, err := json.Marshal(*req.CustomArgs)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "custom_args must be an array of strings")
+			return
+		}
 		params.CustomArgs = ca
 	}
 	rawMcpConfig, hasMcpConfig := rawFields["mcp_config"]
 	shouldClearMcpConfig := hasMcpConfig && bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null"))
 	if hasMcpConfig && !shouldClearMcpConfig {
-		params.McpConfig = append([]byte(nil), rawMcpConfig...)
+		var valid bool
+		params.McpConfig, valid = jsonObjectBytesOrDefault(w, rawMcpConfig, "mcp_config", nil)
+		if !valid {
+			return
+		}
 	}
 
 	// Resolve the runtime that will be in force after this update so the
@@ -1151,11 +1131,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// Same gate as CreateAgent — prevents UpdateAgent from being used to
 		// re-bind an agent onto someone else's personal runtime, which would
 		// otherwise be a quiet end-run around the CreateAgent check.
-		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		member, ok := requireWorkspaceMemberContext(w, r)
 		if !ok {
 			return
 		}
-		if !canUseRuntimeForAgent(member, runtime) {
+		if !canAccessRuntime(member, runtime) {
 			writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can move agents onto it")
 			return
 		}
@@ -1273,48 +1253,45 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	params.ClearMcpConfig = shouldClearMcpConfig
+	params.ClearThinkingLevel = shouldClearThinkingLevel
 
-	updated, err := h.Queries.UpdateAgent(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin agent update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UpdateAgent(r.Context(), params)
 	if err != nil {
 		slog.Warn("update agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to update agent: "+err.Error())
 		return
 	}
 
-	// mcp_config / thinking_level: null/empty in the request means explicitly
-	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL,
-	// so we use dedicated clear queries.
-	if shouldClearMcpConfig {
-		updated, err = h.Queries.ClearAgentMcpConfig(r.Context(), updated.ID)
-		if err != nil {
-			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config: "+err.Error())
-			return
-		}
+	resp, err := agentToResponse(updated)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
 	}
-	if shouldClearThinkingLevel {
-		updated, err = h.Queries.ClearAgentThinkingLevel(r.Context(), updated.ID)
-		if err != nil {
-			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level: "+err.Error())
-			return
-		}
-	}
-
-	resp := agentToResponse(updated)
 	// agentToResponse always initialises Skills as []; junction-table rows
 	// are untouched by the SQL update, so we reload them here to keep the
 	// response (and the broadcast that mirrors it) in sync with reality.
 	// Without this, callers see "skills": [] after every metadata-only
 	// update and assume their bindings were cleared — see #3459.
-	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), qtx, &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after update failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent update")
+		return
+	}
 	slog.Info("agent updated", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", uuidToString(updated.WorkspaceID))...)
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(updated.WorkspaceID))
+	actorType, actorID := resolveActor(r, userID)
 	h.publish(protocol.EventAgentStatus, uuidToString(updated.WorkspaceID), actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
@@ -1324,13 +1301,22 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 // table for the given agent. agentToResponse zeros the field; mutation
 // handlers that don't refresh it would otherwise serve a misleading
 // empty array on every successful response (#3459).
-func (h *Handler) attachAgentSkills(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) error {
-	skills, err := h.Queries.ListAgentSkillSummaries(ctx, agentID)
+func attachAgentSkills(ctx context.Context, queries *db.Queries, resp *AgentResponse, agentID pgtype.UUID) error {
+	skilled, err := loadAgentSkillSummaries(ctx, queries, agentID)
 	if err != nil {
 		return err
 	}
+	resp.Skills = skilled
+	return nil
+}
+
+func loadAgentSkillSummaries(ctx context.Context, queries *db.Queries, agentID pgtype.UUID) ([]AgentSkillSummary, error) {
+	skills, err := queries.ListAgentSkillSummaries(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
 	if len(skills) == 0 {
-		return nil
+		return []AgentSkillSummary{}, nil
 	}
 	out := make([]AgentSkillSummary, len(skills))
 	for i, s := range skills {
@@ -1340,8 +1326,7 @@ func (h *Handler) attachAgentSkills(ctx context.Context, resp *AgentResponse, ag
 			Description: s.Description,
 		}
 	}
-	resp.Skills = out
-	return nil
+	return out, nil
 }
 
 // resolveAgentProvider returns the provider name for the runtime that
@@ -1374,7 +1359,14 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := requestUserID(r)
-	archived, err := h.Queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	archived, err := queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,
 		ArchivedBy: parseUUID(userID),
 	})
@@ -1384,25 +1376,39 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel all pending/active tasks for this agent. Discard the returned
-	// rows here — the agent:archived event below already triggers a full
-	// active-tasks invalidation on every connected client, so per-task
-	// task:cancelled events would be redundant noise.
-	if cancelled, err := h.Queries.CancelAgentTasksByAgent(r.Context(), agent.ID); err != nil {
+	cancelled, err := queries.CancelAgentTasksByAgent(r.Context(), agent.ID)
+	if err != nil {
 		slog.Warn("cancel agent tasks on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-	} else {
-		h.TaskService.CaptureCancelledTasks(r.Context(), cancelled)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	cancelledEvents, err := h.TaskService.EnqueueCancelledTaskEvents(r.Context(), queries, cancelled)
+	if err != nil {
+		slog.Warn("enqueue cancelled agent task events failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
 	}
 
 	wsID := uuidToString(archived.WorkspaceID)
-	slog.Info("agent archived", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
-	resp := agentToResponse(archived)
-	if err := h.attachAgentSkills(r.Context(), &resp, archived.ID); err != nil {
+	resp, err := agentToResponse(archived)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
+	if err := attachAgentSkills(r.Context(), queries, &resp, archived.ID); err != nil {
 		slog.Warn("load agent skills after archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
-	actorType, actorID := h.resolveActor(r, userID, wsID)
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit archive agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+
+	h.TaskService.PublishCancelledTasks(r.Context(), cancelled, cancelledEvents)
+	slog.Info("agent archived", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
+	actorType, actorID := resolveActor(r, userID)
 	h.publish(protocol.EventAgentArchived, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
@@ -1422,7 +1428,14 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	restored, err := h.Queries.RestoreAgent(r.Context(), agent.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin agent restore")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	restored, err := queries.RestoreAgent(r.Context(), agent.ID)
 	if err != nil {
 		slog.Warn("restore agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to restore agent")
@@ -1431,231 +1444,23 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 
 	wsID := uuidToString(restored.WorkspaceID)
 	slog.Info("agent restored", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
-	resp := agentToResponse(restored)
-	if err := h.attachAgentSkills(r.Context(), &resp, restored.ID); err != nil {
+	resp, err := agentToResponse(restored)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
+	if err := attachAgentSkills(r.Context(), queries, &resp, restored.ID); err != nil {
 		slog.Warn("load agent skills after restore failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent restore")
+		return
+	}
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, wsID)
+	actorType, actorID := resolveActor(r, userID)
 	h.publish(protocol.EventAgentRestored, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// CancelAgentTasks bulk-cancels every active task (queued/dispatched/running)
-// belonging to an agent. Powers the agents-list "Cancel all tasks" row
-// action. Same permission gate as archive (canManageAgent — owner or
-// workspace admin/owner). Each cancelled row triggers a task:cancelled WS
-// event so connected clients clear their live cards immediately.
-//
-// Note: a `running` task on the daemon side won't actually halt for up to
-// ~5 seconds (daemon polls GetTaskStatus on that interval). The DB row is
-// marked cancelled instantly, but the child process keeps going briefly;
-// see daemon/daemon.go:919-942 for the polling loop. Surface this in the
-// confirm-dialog copy so users aren't surprised by trailing transcript
-// lines.
-type cancelAgentTasksResponse struct {
-	Cancelled int `json:"cancelled"`
-}
-
-func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, id)
-	if !ok {
-		return
-	}
-	if !h.canManageAgent(w, r, agent) {
-		return
-	}
-
-	cancelled, err := h.TaskService.CancelTasksForAgent(r.Context(), parseUUID(id))
-	if err != nil {
-		slog.Warn("cancel agent tasks failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-		writeError(w, http.StatusInternalServerError, "failed to cancel tasks")
-		return
-	}
-
-	slog.Info("agent tasks cancelled",
-		append(logger.RequestAttrs(r), "agent_id", id, "count", len(cancelled))...)
-	writeJSON(w, http.StatusOK, cancelAgentTasksResponse{Cancelled: len(cancelled)})
-}
-
-func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, id)
-	if !ok {
-		return
-	}
-	// Run history is part of the personal-agent gate ("查看历史会话"). Same
-	// 403 semantics as GetAgent.
-	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
-	}
-
-	tasks, err := h.Queries.ListAgentTasks(r.Context(), agent.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list agent tasks")
-		return
-	}
-
-	resp := make([]AgentTaskResponse, len(tasks))
-	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// AgentActivityBucket is one day-bucketed throughput sample for the
-// Agents-list ACTIVITY sparkline. bucket_at is midnight UTC of the day.
-type AgentActivityBucket struct {
-	AgentID     string `json:"agent_id"`
-	BucketAt    string `json:"bucket_at"`
-	TaskCount   int32  `json:"task_count"`
-	FailedCount int32  `json:"failed_count"`
-}
-
-// AgentRunCount is the trailing-30-day total task run count per agent,
-// powering the Agents-list RUNS column.
-type AgentRunCount struct {
-	AgentID  string `json:"agent_id"`
-	RunCount int32  `json:"run_count"`
-}
-
-// GetWorkspaceAgentRunCounts returns 30-day total run counts for every
-// agent in the workspace. Same single-fetch pattern as live-tasks /
-// activity to keep the Agents list cheap regardless of agent count.
-func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
-		return
-	}
-
-	rows, err := h.Queries.GetWorkspaceAgentRunCounts(r.Context(), parseUUID(workspaceID))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get agent run counts")
-		return
-	}
-
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
-		return
-	}
-
-	resp := make([]AgentRunCount, 0, len(rows))
-	for _, row := range rows {
-		agentID := uuidToString(row.AgentID)
-		if _, ok := allowed[agentID]; !ok {
-			continue
-		}
-		resp = append(resp, AgentRunCount{
-			AgentID:  agentID,
-			RunCount: row.RunCount,
-		})
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// GetWorkspaceAgentActivity30d returns per-agent daily task counts for the
-// last 30 days, anchored on completed_at. Single workspace-wide read backs
-// both the Agents list sparkline (uses the trailing 7 buckets) and the
-// agent detail "Last 30 days" panel (uses all 30) — one fetch is cheaper
-// than two. Front-end fills missing days with zero; the back-end omits
-// empty buckets to keep the response small.
-func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
-		return
-	}
-
-	rows, err := h.Queries.GetWorkspaceAgentActivity30d(r.Context(), parseUUID(workspaceID))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get agent activity")
-		return
-	}
-
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
-		return
-	}
-
-	resp := make([]AgentActivityBucket, 0, len(rows))
-	for _, row := range rows {
-		agentID := uuidToString(row.AgentID)
-		if _, ok := allowed[agentID]; !ok {
-			continue
-		}
-		resp = append(resp, AgentActivityBucket{
-			AgentID:     agentID,
-			BucketAt:    timestampToString(row.Bucket),
-			TaskCount:   row.TaskCount,
-			FailedCount: row.FailedCount,
-		})
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// ListWorkspaceAgentTaskSnapshot returns the task data the front-end needs to
-// derive each agent's presence: every active task (queued/dispatched/running)
-// plus each agent's most recent OUTCOME task (completed/failed only). Cancelled
-// tasks are excluded from the outcome half by design — cancel is a procedural
-// signal ("attempt aborted"), not an outcome, so it must not mask a prior
-// failure. The front-end picks "active wins, else latest outcome"; a failed
-// outcome stays sticky until the user starts a new task or one succeeds.
-// Per-agent filtering happens in the front-end against this workspace-wide
-// snapshot.
-func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
-		return
-	}
-
-	tasks, err := h.Queries.ListWorkspaceAgentTaskSnapshot(r.Context(), parseUUID(workspaceID))
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to list agent task snapshot")
-		return
-	}
-
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
-		return
-	}
-
-	resp := make([]AgentTaskResponse, 0, len(tasks))
-	for _, t := range tasks {
-		if _, ok := allowed[uuidToString(t.AgentID)]; !ok {
-			continue
-		}
-		resp = append(resp, taskToResponse(t, workspaceID))
-	}
-
 	writeJSON(w, http.StatusOK, resp)
 }

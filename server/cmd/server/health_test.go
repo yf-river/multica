@@ -14,13 +14,11 @@ import (
 )
 
 type stubReadinessDB struct {
-	pingErr    error
-	queryErr   error
-	matches    bool
-	version    int
-	hash       string
-	pingCalls  atomic.Int32
-	queryCalls atomic.Int32
+	pingErr      error
+	queryErr     error
+	appliedCount int
+	pingCalls    atomic.Int32
+	queryCalls   atomic.Int32
 }
 
 func (s *stubReadinessDB) Ping(context.Context) error {
@@ -30,23 +28,19 @@ func (s *stubReadinessDB) Ping(context.Context) error {
 
 func (s *stubReadinessDB) QueryRow(context.Context, string, ...any) pgx.Row {
 	s.queryCalls.Add(1)
-	return stubRow{matches: s.matches, version: s.version, hash: s.hash, err: s.queryErr}
+	return stubRow{appliedCount: s.appliedCount, err: s.queryErr}
 }
 
 type stubRow struct {
-	matches bool
-	version int
-	hash    string
-	err     error
+	appliedCount int
+	err          error
 }
 
 func (r stubRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	*(dest[0].(*bool)) = r.matches
-	*(dest[1].(*int)) = r.version
-	*(dest[2].(*string)) = r.hash
+	*(dest[0].(*int)) = r.appliedCount
 	return nil
 }
 
@@ -68,56 +62,36 @@ func readReadyResponse(t *testing.T, h *serverHealth, wantStatus int) readinessR
 	return resp
 }
 
-func TestServerHealthReadyHandlerDBPingFailure(t *testing.T) {
-	db := &stubReadinessDB{pingErr: errors.New("db unavailable")}
-	h := &serverHealth{db: db}
+func TestServerHealthReadyHandlerFailures(t *testing.T) {
+	tests := []struct {
+		name               string
+		db                 *stubReadinessDB
+		requiredMigrations []string
+		wantDB             string
+		wantMigrations     string
+	}{
+		{name: "database unavailable", db: &stubReadinessDB{pingErr: errors.New("db unavailable")}, requiredMigrations: []string{"056_example"}, wantDB: "error", wantMigrations: "unknown"},
+		{name: "migration missing", db: &stubReadinessDB{}, requiredMigrations: []string{"056_example"}, wantDB: "ok", wantMigrations: "out_of_date"},
+		{name: "migration partially applied", db: &stubReadinessDB{appliedCount: 2}, requiredMigrations: []string{"120_a", "120_b", "121_c"}, wantDB: "ok", wantMigrations: "out_of_date"},
+	}
 
-	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
-	if resp.Status != "not_ready" {
-		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
-	}
-	if resp.Checks.DB != "error" {
-		t.Fatalf("db check = %q, want %q", resp.Checks.DB, "error")
-	}
-	if resp.Checks.Schema != "unknown" {
-		t.Fatalf("schema check = %q, want %q", resp.Checks.Schema, "unknown")
-	}
-}
-
-func TestServerHealthReadyHandlerSchemaMismatch(t *testing.T) {
-	db := &stubReadinessDB{hash: "wrong"}
-	h := &serverHealth{db: db}
-
-	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
-	if resp.Status != "not_ready" {
-		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
-	}
-	if resp.Checks.DB != "ok" {
-		t.Fatalf("db check = %q, want %q", resp.Checks.DB, "ok")
-	}
-	if resp.Checks.Schema != "error" {
-		t.Fatalf("schema check = %q, want %q", resp.Checks.Schema, "error")
-	}
-}
-
-func TestServerHealthReadyHandlerSchemaQueryFailure(t *testing.T) {
-	db := &stubReadinessDB{queryErr: errors.New("schema marker unavailable")}
-	h := &serverHealth{db: db}
-
-	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
-	if resp.Status != "not_ready" {
-		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
-	}
-	if resp.Checks.Schema != "error" {
-		t.Fatalf("schema check = %q, want %q", resp.Checks.Schema, "error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &serverHealth{db: tt.db, requiredMigrations: tt.requiredMigrations}
+			resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
+			if resp.Status != "not_ready" || resp.Checks.DB != tt.wantDB || resp.Checks.Migrations != tt.wantMigrations {
+				t.Fatalf("readiness = %+v, want status=not_ready db=%s migrations=%s", resp, tt.wantDB, tt.wantMigrations)
+			}
+		})
 	}
 }
 
 func TestServerHealthReadinessCachesResult(t *testing.T) {
-	db := &stubReadinessDB{matches: true}
+	db := &stubReadinessDB{appliedCount: 1}
 	h := &serverHealth{
-		db:       db,
-		cacheTTL: time.Minute,
+		db:                 db,
+		requiredMigrations: []string{"056_example"},
+		cacheTTL:           time.Minute,
 	}
 
 	resp1, status1 := h.readiness(context.Background())

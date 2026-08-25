@@ -9,57 +9,37 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/requestctx"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestRuntimeToResponseRejectsNonObjectMetadata(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := runtimeToResponse(db.AgentRuntime{Metadata: raw}); err == nil {
+			t.Fatalf("runtimeToResponse metadata=%s expected an error", raw)
+		}
+	}
+	response, err := runtimeToResponse(db.AgentRuntime{Metadata: []byte(`{"version":"1.2.3"}`)})
+	if err != nil {
+		t.Fatalf("runtimeToResponse object metadata: %v", err)
+	}
+	if response.Metadata["version"] != "1.2.3" {
+		t.Fatalf("metadata = %#v", response.Metadata)
+	}
+}
 
 func TestRuntimeHandlersRejectMalformedRuntimeID(t *testing.T) {
 	tests := []struct {
-		name   string
-		method string
-		path   string
-		handle func(http.ResponseWriter, *http.Request)
+		name, method, path string
+		handle             func(http.ResponseWriter, *http.Request)
 	}{
-		{
-			name:   "usage",
-			method: "GET",
-			path:   "/api/runtimes/not-a-uuid/usage",
-			handle: testHandler.GetRuntimeUsage,
-		},
-		{
-			name:   "usage by task",
-			method: "GET",
-			path:   "/api/runtimes/not-a-uuid/usage/by-task",
-			handle: testHandler.GetRuntimeUsageByTask,
-		},
-		{
-			name:   "task activity",
-			method: "GET",
-			path:   "/api/runtimes/not-a-uuid/task-activity",
-			handle: testHandler.GetRuntimeTaskActivity,
-		},
-		{
-			name:   "delete",
-			method: "DELETE",
-			path:   "/api/runtimes/not-a-uuid",
-			handle: testHandler.DeleteAgentRuntime,
-		},
-		{
-			name:   "archive-agents-and-delete",
-			method: "POST",
-			path:   "/api/runtimes/not-a-uuid/archive-agents-and-delete",
-			handle: testHandler.ArchiveAgentsAndDeleteRuntime,
-		},
-		{
-			name:   "models",
-			method: "POST",
-			path:   "/api/runtimes/not-a-uuid/models",
-			handle: testHandler.InitiateListModels,
-		},
-		{
-			name:   "local skills",
-			method: "POST",
-			path:   "/api/runtimes/not-a-uuid/local-skills",
-			handle: testHandler.InitiateListLocalSkills,
-		},
+		{"usage", http.MethodGet, "/api/runtimes/not-a-uuid/usage", testHandler.GetRuntimeUsage},
+		{"usage by task", http.MethodGet, "/api/runtimes/not-a-uuid/usage/by-task", testHandler.GetRuntimeUsageByTask},
+		{"task activity", http.MethodGet, "/api/runtimes/not-a-uuid/task-activity", testHandler.GetRuntimeTaskActivity},
+		{"delete", http.MethodDelete, "/api/runtimes/not-a-uuid", testHandler.DeleteAgentRuntime},
+		{"archive-agents-and-delete", http.MethodPost, "/api/runtimes/not-a-uuid/archive-agents-and-delete", testHandler.ArchiveAgentsAndDeleteRuntime},
+		{"models", http.MethodPost, "/api/runtimes/not-a-uuid/models", testHandler.InitiateListModels},
+		{"local skills", http.MethodPost, "/api/runtimes/not-a-uuid/local-skills", testHandler.InitiateListLocalSkills},
 	}
 
 	for _, tt := range tests {
@@ -80,7 +60,11 @@ func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	member, err := testHandler.getWorkspaceMember(context.Background(), testUserID, testWorkspaceID)
+	if err != nil {
+		t.Fatalf("load workspace member: %v", err)
+	}
+	ctx, cancel := context.WithCancel(requestctx.WithWorkspace(context.Background(), testWorkspaceID, member))
 	cancel()
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodGet, "/api/runtimes?workspace_id="+testWorkspaceID, nil).WithContext(ctx)
@@ -92,8 +76,8 @@ func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
 	}
 }
 
-func TestUsageCostResponse(t *testing.T) {
-	priced := usageCostResponse("codex", "gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+func TestNewUsageResponseIncludesCost(t *testing.T) {
+	priced := newUsageResponse("codex", "gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !priced.Priced {
 		t.Fatalf("expected spark row to be priced")
 	}
@@ -103,8 +87,19 @@ func TestUsageCostResponse(t *testing.T) {
 	if priced.InputCostUSD != 1.75 || priced.OutputCostUSD != 14 || priced.CacheReadCostUSD != 0.175 || priced.CacheWriteCostUSD != 0.175 {
 		t.Fatalf("unexpected breakdown: %+v", priced)
 	}
+	encoded, err := json.Marshal(priced)
+	if err != nil {
+		t.Fatalf("marshal usage response: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("decode usage response: %v", err)
+	}
+	if wire["provider"] != "codex" || wire["input_tokens"] != float64(1_000_000) || wire["cost_usd"] != 16.1 || wire["priced"] != true {
+		t.Fatalf("usage response wire fields = %#v", wire)
+	}
 
-	unpriced := usageCostResponse("fictional", "unknown-model", 1_000_000, 0, 0, 0)
+	unpriced := newUsageResponse("fictional", "unknown-model", 1_000_000, 0, 0, 0)
 	if unpriced.Priced {
 		t.Fatalf("expected unknown model to be unpriced")
 	}
@@ -113,19 +108,12 @@ func TestUsageCostResponse(t *testing.T) {
 	}
 }
 
-// TestGetRuntimeUsage_BucketsByUsageTime ensures a task that was enqueued on
-// one calendar day but whose tokens were reported the next day (e.g. execution
-// crossed midnight, or the task sat in the queue) is attributed to the day
-// tokens were actually produced, not the enqueue day. It also verifies the
-// ?days=N cutoff covers the full earliest calendar day, not just "now minus N
-// days" which would clip the morning of that day.
 func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
 
-	// Pick a runtime bound to the fixture workspace.
 	var runtimeID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1
@@ -139,7 +127,6 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Fatalf("fetch agent: %v", err)
 	}
 
-	// Create an issue for the tasks to reference.
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_id, creator_type)
@@ -149,19 +136,16 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
-	// enqueued yesterday 23:58 UTC, finished today 00:05 UTC — tokens belong to today.
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	yesterdayLate := today.Add(-2 * time.Minute)
 	todayEarly := today.Add(5 * time.Minute)
-	// Task that ran entirely yesterday around 05:00 — used to verify the
-	// ?days cutoff isn't clipping yesterday's morning.
 	yesterdayMorning := today.Add(-19 * time.Hour)
 
-	insertTaskWithUsage := func(enqueueAt, usageAt time.Time, inputTokens int64) string {
+	insertTaskWithUsage := func(enqueueAt, usageAt time.Time, inputTokens int64) {
 		var taskID string
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
@@ -177,36 +161,26 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 			t.Fatalf("insert task_usage: %v", err)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+			mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 		})
-		return taskID
 	}
 
 	insertTaskWithUsage(yesterdayLate, todayEarly, 1000)          // cross-midnight
 	insertTaskWithUsage(yesterdayMorning, yesterdayMorning, 2000) // full-day yesterday
 
-	// ListRuntimeUsage reads from task_usage_hourly,
-	// aggregated to per-(date, provider, model) at query time. The
-	// window function is idempotent, so re-running this test rewrites
-	// the same totals.
 	if _, err := testPool.Exec(ctx, `
 		SELECT rollup_task_usage_hourly_window('-infinity'::timestamptz, 'infinity'::timestamptz)
 	`); err != nil {
 		t.Fatalf("rollup window: %v", err)
 	}
 	t.Cleanup(func() {
-		// Hourly buckets touched by this test cover the two calendar
-		// days in fixture data (today and yesterday in UTC, which is
-		// what the test uses for `today` / `yesterday` mocks).
-		testPool.Exec(ctx, `
+		mustExec(t, ctx, `
 			DELETE FROM task_usage_hourly
 			 WHERE runtime_id = $1
 			   AND DATE(bucket_hour AT TIME ZONE 'UTC') IN ($2::date, $3::date)
 		`, runtimeID, today, today.Add(-24*time.Hour))
 	})
 
-	// Call the handler with ?days=1 at whatever "now" is. That should include
-	// both today and yesterday in full.
 	w := httptest.NewRecorder()
 	req := newRequest("GET", "/api/runtimes/"+runtimeID+"/usage?days=1", nil)
 	req = withURLParam(req, "runtimeId", runtimeID)
@@ -215,7 +189,7 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Fatalf("GetRuntimeUsage: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp []RuntimeUsageResponse
+	var resp []runtimeUsageResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -228,13 +202,9 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 	todayKey := today.Format("2006-01-02")
 	yesterdayKey := today.Add(-24 * time.Hour).Format("2006-01-02")
 
-	// Cross-midnight task must attribute to today (tu.created_at), not yesterday
-	// (atq.created_at). Before the fix this was 0 on today / 1000 on yesterday.
 	if byDate[todayKey] != 1000 {
 		t.Errorf("cross-midnight task: today bucket expected 1000 input tokens, got %d (full map: %v)", byDate[todayKey], byDate)
 	}
-	// Yesterday's morning task must still be included — this is what breaks
-	// when ?days=N is interpreted as a rolling window instead of calendar days.
 	if byDate[yesterdayKey] != 2000 {
 		t.Errorf("yesterday morning task: yesterday bucket expected 2000 input tokens, got %d (full map: %v)", byDate[yesterdayKey], byDate)
 	}
@@ -263,7 +233,7 @@ func TestGetRuntimeUsageByTask_GroupsByTaskAndModel(t *testing.T) {
 	`, testWorkspaceID, testUserID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	now := time.Now().UTC()
 	var taskID string
@@ -295,12 +265,12 @@ func TestGetRuntimeUsageByTask_GroupsByTaskAndModel(t *testing.T) {
 		t.Fatalf("GetRuntimeUsageByTask: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp []RuntimeUsageByTaskResponse
+	var resp []runtimeUsageByTaskResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	byModel := map[string]RuntimeUsageByTaskResponse{}
+	byModel := map[string]runtimeUsageByTaskResponse{}
 	for _, row := range resp {
 		if row.TaskID == taskID {
 			byModel[row.Model] = row
@@ -327,10 +297,6 @@ func TestGetRuntimeUsageByTask_GroupsByTaskAndModel(t *testing.T) {
 	}
 }
 
-// TestListRuntimeUsageBucketsByViewerTimezone proves the runtime trend reads
-// bucket the day boundary in the VIEWER's tz (the argument passed to
-// listRuntimeUsage). The viewer tz is Asia/Shanghai; assertions only pass if
-// listRuntimeUsage applies that tz correctly.
 func TestListRuntimeUsageBucketsByViewerTimezone(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -347,12 +313,9 @@ func TestListRuntimeUsageBucketsByViewerTimezone(t *testing.T) {
 	extraDate := cutoff.AddDate(0, 0, -1).Format("2006-01-02")
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'cutoff-test'`, runtimeID)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'cutoff-test'`, runtimeID)
 	})
 
-	// Seed task_usage_hourly directly with one bucket per Shanghai calendar
-	// day. Pick 04:00 local (= 20:00 UTC the previous day) to catch
-	// off-by-one tz-cutoff bugs.
 	var agentID pgtype.UUID
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY id LIMIT 1
@@ -401,9 +364,6 @@ func TestListRuntimeUsageBucketsByViewerTimezone(t *testing.T) {
 	}
 }
 
-// TestResolveViewingTZ covers the three legs of resolveViewingTZ:
-// explicit `?tz=` query param, the authenticated user's stored
-// user.timezone, and the UTC fallback when neither yields a valid zone.
 func TestResolveViewingTZ(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -417,30 +377,8 @@ func TestResolveViewingTZ(t *testing.T) {
 	).Scan(&userID); err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, userID) })
 
-	// Explicit ?tz= wins over the stored preference.
-	req := newRequest("GET", "/api/dashboard/usage/daily?tz=America/New_York", nil)
-	req.Header.Set("X-User-ID", userID)
-	if got := testHandler.resolveViewingTZ(req); got != "America/New_York" {
-		t.Fatalf("query param: expected America/New_York, got %q", got)
-	}
-
-	// No ?tz= → falls back to the authenticated user's stored timezone.
-	req = newRequest("GET", "/api/dashboard/usage/daily", nil)
-	req.Header.Set("X-User-ID", userID)
-	if got := testHandler.resolveViewingTZ(req); got != "Asia/Tokyo" {
-		t.Fatalf("stored fallback: expected Asia/Tokyo, got %q", got)
-	}
-
-	// An unparseable ?tz= is ignored, falling through to the stored value.
-	req = newRequest("GET", "/api/dashboard/usage/daily?tz=Mars/Olympus", nil)
-	req.Header.Set("X-User-ID", userID)
-	if got := testHandler.resolveViewingTZ(req); got != "Asia/Tokyo" {
-		t.Fatalf("invalid query param: expected Asia/Tokyo fallback, got %q", got)
-	}
-
-	// No ?tz= and no stored value → UTC.
 	var bareUserID string
 	if err := testPool.QueryRow(ctx,
 		`INSERT INTO "user" (name, account)
@@ -448,17 +386,7 @@ func TestResolveViewingTZ(t *testing.T) {
 	).Scan(&bareUserID); err != nil {
 		t.Fatalf("insert bare user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, bareUserID) })
-	req = newRequest("GET", "/api/dashboard/usage/daily", nil)
-	req.Header.Set("X-User-ID", bareUserID)
-	if got := testHandler.resolveViewingTZ(req); got != "UTC" {
-		t.Fatalf("no preference: expected UTC, got %q", got)
-	}
-
-	// A stored timezone that is itself an invalid IANA zone — e.g. a row
-	// written before server-side validation existed — must fall through
-	// to UTC. Without the LoadLocation guard on the stored value this
-	// string would reach SQL `AT TIME ZONE` and 500 every dashboard read.
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, bareUserID) })
 	var badTZUserID string
 	if err := testPool.QueryRow(ctx,
 		`INSERT INTO "user" (name, account, timezone)
@@ -466,25 +394,30 @@ func TestResolveViewingTZ(t *testing.T) {
 	).Scan(&badTZUserID); err != nil {
 		t.Fatalf("insert bad-tz user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, badTZUserID) })
-	req = newRequest("GET", "/api/dashboard/usage/daily", nil)
-	req.Header.Set("X-User-ID", badTZUserID)
-	if got := testHandler.resolveViewingTZ(req); got != "UTC" {
-		t.Fatalf("invalid stored tz: expected UTC fallback, got %q", got)
-	}
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, badTZUserID) })
 
-	// No X-User-ID header and no ?tz= — an unauthenticated caller has
-	// neither signal, so the resolver must return UTC without attempting
-	// (and panicking on) a GetUser lookup.
-	req = newRequest("GET", "/api/dashboard/usage/daily", nil)
-	if got := testHandler.resolveViewingTZ(req); got != "UTC" {
-		t.Fatalf("unauthenticated caller: expected UTC, got %q", got)
+	for _, tc := range []struct {
+		name, path, userID, want string
+	}{
+		{"query override", "/api/dashboard/usage/daily?tz=America/New_York", userID, "America/New_York"},
+		{"stored timezone", "/api/dashboard/usage/daily", userID, "Asia/Tokyo"},
+		{"invalid query uses stored", "/api/dashboard/usage/daily?tz=Mars/Olympus", userID, "Asia/Tokyo"},
+		{"missing preference", "/api/dashboard/usage/daily", bareUserID, "UTC"},
+		{"invalid stored timezone", "/api/dashboard/usage/daily", badTZUserID, "UTC"},
+		{"unauthenticated", "/api/dashboard/usage/daily", "", "UTC"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newRequest(http.MethodGet, tc.path, nil)
+			if tc.userID != "" {
+				req.Header.Set("X-User-ID", tc.userID)
+			}
+			if got := testHandler.resolveViewingTZ(req); got != tc.want {
+				t.Fatalf("resolveViewingTZ = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
-// TestRuntimeHeatmapEndpointsUseViewerTZ verifies that the hour-of-day
-// heatmap endpoints (GetRuntimeUsageByHour and GetRuntimeTaskActivity) bucket
-// in the viewer's tz supplied via ?tz= and return 200.
 func TestRuntimeHeatmapEndpointsUseViewerTZ(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

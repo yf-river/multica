@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import { ListTodo, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import {
   childIssueProgressOptions,
@@ -14,7 +14,7 @@ import {
 import {
   actorIssuesViewStore,
   type ActorIssuesScope,
-} from "@multica/core/issues/stores/actor-issues-view-store";
+} from "@multica/core/issues/stores/scoped-issue-view-stores";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { useClearFiltersOnWorkspaceChange } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
@@ -26,10 +26,10 @@ import { ListView } from "../issues/components/list-view";
 import { BatchActionToolbar } from "../issues/components/batch-action-toolbar";
 import { IssueDisplayControls } from "../issues/components/issues-header";
 import { filterIssues } from "../issues/utils/filter";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
-export type TaskActorType = "member" | "agent";
+type TaskActorType = "member" | "agent";
 
 const SCOPE_VALUES: ActorIssuesScope[] = ["assigned", "created"];
 
@@ -125,9 +125,8 @@ export function ActorIssuesPanel({
     return filteredIssues.filter((issue) => {
       const title = issue.title ?? "";
       return (
-        title.toLowerCase().includes(query) ||
-        issue.identifier.toLowerCase().includes(query) ||
-        matchesPinyin(title, query)
+        matchesTextQuery(title, query) ||
+        issue.identifier.toLowerCase().includes(query)
       );
     });
   }, [filteredIssues, search]);

@@ -1,26 +1,46 @@
 package analytics
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestRuntimeReadyOmitsUnmeasuredDuration(t *testing.T) {
-	ev := RuntimeReady("user-1", "workspace-1", "runtime-1", "daemon-1", "codex", 0)
+	ev := RuntimeReady("codex", 0)
 	if _, ok := ev.Properties["ready_duration_ms"]; ok {
 		t.Fatalf("ready_duration_ms should be omitted until it is measured")
 	}
 
-	ev = RuntimeReady("user-1", "workspace-1", "runtime-1", "daemon-1", "codex", 123)
+	ev = RuntimeReady("codex", 123)
 	if got := ev.Properties["ready_duration_ms"]; got != int64(123) {
 		t.Fatalf("ready_duration_ms = %v, want 123", got)
 	}
 }
 
-func TestFailedEventsUseWillRetry(t *testing.T) {
-	runEv := AutopilotRunFailed("user-1", "workspace-1", "autopilot-1", "run-1", "manual", AutopilotAssignee{AgentID: "agent-1", AssigneeType: "agent"}, "manual", "task failed", "task_error", false, 10)
-	if got := runEv.Properties["will_retry"]; got != false {
-		t.Fatalf("autopilot will_retry = %v, want false", got)
+func TestMetricsOnlyEventsContainOnlyMetricInputs(t *testing.T) {
+	cases := []Event{
+		RuntimeRegistered("codex"),
+		RuntimeReady("codex", 123),
+		RuntimeFailed("codex", "registration_failed", true),
+		RuntimeOffline("codex"),
+		AutopilotRunStarted("manual"),
+		AutopilotRunCompleted("manual"),
+		AutopilotRunFailed("manual"),
 	}
-	if _, ok := runEv.Properties["recoverable"]; ok {
-		t.Fatalf("autopilot failure should not emit recoverable")
+	for _, event := range cases {
+		var want map[string]any
+		if event.Name == EventRuntimeReady {
+			want = map[string]any{"runtime_mode": "local", "provider": "codex", "ready_duration_ms": int64(123)}
+		} else if event.Name == EventRuntimeFailed {
+			want = map[string]any{"runtime_mode": "local", "provider": "codex", "failure_reason": "registration_failed", "recoverable": true}
+		} else if event.Name == EventRuntimeRegistered || event.Name == EventRuntimeOffline {
+			want = map[string]any{"runtime_mode": "local", "provider": "codex"}
+		} else {
+			want = map[string]any{"cadence": "manual", "trigger_kind": "manual"}
+		}
+		if !reflect.DeepEqual(event.Properties, want) {
+			t.Errorf("%s properties = %#v, want %#v", event.Name, event.Properties, want)
+		}
 	}
 }
 

@@ -33,25 +33,19 @@ func (e *requestError) Error() string {
 // running, so it can interrupt the agent rather than letting it keep
 // emitting tool calls against a dead task.
 func isTaskNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "task not found")
+	return matchesRequestError(err, http.StatusNotFound, "task not found")
 }
 
 func isTaskStartConflictError(err error) bool {
+	return matchesRequestError(err, http.StatusConflict, "task is no longer startable")
+}
+
+func matchesRequestError(err error, status int, bodySubstring string) bool {
 	var reqErr *requestError
 	if !errors.As(err, &reqErr) {
 		return false
 	}
-	if reqErr.StatusCode != http.StatusConflict {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "task is no longer startable")
+	return reqErr.StatusCode == status && strings.Contains(strings.ToLower(reqErr.Body), bodySubstring)
 }
 
 // isUnauthorizedError returns true if the error is a 401 from the server.
@@ -75,14 +69,7 @@ func isUnauthorizedError(err error) bool {
 // errors return 500), so a transient DB hiccup cannot make the daemon
 // self-cleanup.
 func isRuntimeNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "runtime not found")
+	return matchesRequestError(err, http.StatusNotFound, "runtime not found")
 }
 
 // Client handles HTTP communication with the Multica server daemon API.
@@ -104,22 +91,7 @@ func NewClient(baseURL string) *Client {
 		baseURL:  baseURL,
 		client:   &http.Client{Timeout: 30 * time.Second},
 		platform: "daemon",
-		os:       normalizeGOOS(runtime.GOOS),
-	}
-}
-
-// normalizeGOOS maps Go's runtime.GOOS values to the protocol vocabulary
-// used by X-Client-OS / client_os ("macos" / "windows" / "linux").
-func normalizeGOOS(goos string) string {
-	switch goos {
-	case "darwin":
-		return "macos"
-	case "windows":
-		return "windows"
-	case "linux":
-		return "linux"
-	default:
-		return goos
+		os:       protocol.NormalizeGOOS(runtime.GOOS),
 	}
 }
 
@@ -147,11 +119,6 @@ func (c *Client) SetToken(token string) {
 	c.token = token
 }
 
-// Token returns the current auth token.
-func (c *Client) Token() string {
-	return c.token
-}
-
 func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error) {
 	var resp struct {
 		Task *Task `json:"task"`
@@ -167,64 +134,32 @@ func (c *Client) StartTask(ctx context.Context, taskID string) error {
 }
 
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), map[string]any{
-		"summary": summary,
-		"step":    step,
-		"total":   total,
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), protocol.DaemonTaskProgressRequest{
+		Summary: summary,
+		Step:    step,
+		Total:   total,
 	}, nil)
 }
 
-// TaskMessageData represents a single agent execution message for batch reporting.
-type TaskMessageData struct {
-	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`
-	Tool    string         `json:"tool,omitempty"`
-	Content string         `json:"content,omitempty"`
-	Input   map[string]any `json:"input,omitempty"`
-	Output  string         `json:"output,omitempty"`
-}
-
-func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
-		"messages": messages,
-	}, nil)
+func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []protocol.TaskMessage) error {
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), protocol.DaemonTaskMessagesRequest{Messages: messages}, taskReportRetrySchedule)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
-	body := map[string]any{"output": output}
-	if branchName != "" {
-		body["branch_name"] = branchName
-	}
-	if sessionID != "" {
-		body["session_id"] = sessionID
-	}
-	if workDir != "" {
-		body["work_dir"] = workDir
-	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, defaultTerminalRetrySchedule)
+	body := protocol.DaemonTaskCompleteRequest{Output: output, BranchName: branchName, SessionID: sessionID, WorkDir: workDir}
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, defaultTerminalRetrySchedule)
 }
 
-func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []TaskUsageEntry) error {
+func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []protocol.TaskUsage) error {
 	if len(usage) == 0 {
 		return nil
 	}
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), map[string]any{
-		"usage": usage,
-	}, nil)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), protocol.DaemonTaskUsageRequest{Usage: usage}, taskReportRetrySchedule)
 }
 
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string) error {
-	body := map[string]any{"error": errMsg}
-	if sessionID != "" {
-		body["session_id"] = sessionID
-	}
-	if workDir != "" {
-		body["work_dir"] = workDir
-	}
-	if failureReason != "" {
-		body["failure_reason"] = failureReason
-	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, defaultTerminalRetrySchedule)
+	body := protocol.DaemonTaskFailureRequest{Error: errMsg, SessionID: sessionID, WorkDir: workDir, FailureReason: failureReason}
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, defaultTerminalRetrySchedule)
 }
 
 // PinTaskSession persists the agent's session_id and work_dir on the task
@@ -233,13 +168,7 @@ func (c *Client) PinTaskSession(ctx context.Context, taskID, sessionID, workDir 
 	if sessionID == "" && workDir == "" {
 		return nil
 	}
-	body := map[string]any{}
-	if sessionID != "" {
-		body["session_id"] = sessionID
-	}
-	if workDir != "" {
-		body["work_dir"] = workDir
-	}
+	body := protocol.DaemonTaskSessionRequest{SessionID: sessionID, WorkDir: workDir}
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/session", taskID), body, nil)
 }
 
@@ -263,56 +192,13 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 	return resp.Status, nil
 }
 
-// HeartbeatResponse and pending request types alias the wire types so HTTP and
-// WS heartbeat paths share a single decoder shape.
-type (
-	HeartbeatResponse       = protocol.DaemonHeartbeatAckPayload
-	PendingModelList        = protocol.DaemonHeartbeatPendingModelList
-	PendingLocalSkills      = protocol.DaemonHeartbeatPendingLocalSkills
-	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
-)
-
-func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*HeartbeatResponse, error) {
-	var resp HeartbeatResponse
-	body := map[string]any{
-		"runtime_id": runtimeID,
-	}
-	if len(metadata) > 0 {
-		body["metadata"] = metadata
-	}
+func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*protocol.DaemonHeartbeatAckPayload, error) {
+	var resp protocol.DaemonHeartbeatAckPayload
+	body := protocol.DaemonHeartbeatRequestPayload{RuntimeID: runtimeID, Metadata: metadata}
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
-}
-
-// ReportModelListResult sends the model-discovery result back to the server.
-func (c *Client) ReportModelListResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/models/%s/result", runtimeID, requestID), result, nil)
-}
-
-// ReportLocalSkillListResult sends the runtime-local-skill inventory back to the server.
-func (c *Client) ReportLocalSkillListResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/%s/result", runtimeID, requestID), result, nil)
-}
-
-// ReportLocalSkillImportResult sends a runtime-local-skill bundle back to the server.
-func (c *Client) ReportLocalSkillImportResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/import/%s/result", runtimeID, requestID), result, nil)
-}
-
-// WorkspaceInfo holds minimal workspace metadata returned by the API.
-type WorkspaceInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// RenewTokenResponse mirrors handler.RenewPATResponse — kept loose (string +
-// bool) because the daemon never parses the timestamp itself; it just logs it
-// for operator visibility.
-type RenewTokenResponse struct {
-	ExpiresAt string `json:"expires_at"`
-	Renewed   bool   `json:"renewed"`
 }
 
 // RenewToken asks the server to extend the daemon's current PAT in place when
@@ -320,8 +206,8 @@ type RenewTokenResponse struct {
 // the threshold — the daemon doesn't know the token's expires_at locally —
 // so this is safe to call on any cadence; the only thing extra calls cost is
 // one round trip and one cheap SELECT.
-func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
-	var resp RenewTokenResponse
+func (c *Client) RenewToken(ctx context.Context) (*protocol.PersonalAccessTokenRenewalResponse, error) {
+	var resp protocol.PersonalAccessTokenRenewalResponse
 	if err := c.postJSON(ctx, "/api/tokens/current/renew", map[string]any{}, &resp); err != nil {
 		return nil, err
 	}
@@ -329,78 +215,22 @@ func (c *Client) RenewToken(ctx context.Context) (*RenewTokenResponse, error) {
 }
 
 // ListWorkspaces fetches all workspaces the authenticated user belongs to.
-func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
-	var workspaces []WorkspaceInfo
+func (c *Client) ListWorkspaces(ctx context.Context) ([]protocol.WorkspaceResponse, error) {
+	var workspaces []protocol.WorkspaceResponse
 	if err := c.getJSON(ctx, "/api/workspaces", &workspaces); err != nil {
 		return nil, err
 	}
 	return workspaces, nil
 }
 
-// IssueGCStatus holds the minimal issue info returned by the GC check endpoint.
-type IssueGCStatus struct {
+type gcStatus struct {
 	Status    string    `json:"status"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// GetIssueGCCheck returns the status and updated_at of an issue for GC decisions.
-func (c *Client) GetIssueGCCheck(ctx context.Context, issueID string) (*IssueGCStatus, error) {
-	var resp IssueGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ChatSessionGCStatus mirrors IssueGCStatus for chat sessions.
-type ChatSessionGCStatus struct {
-	Status    string    `json:"status"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// GetChatSessionGCCheck returns the status of a chat session for GC decisions.
-// A 404 from this endpoint indicates the session row was hard-deleted (the
-// user explicitly removed it), which the caller treats as an immediate-clean
-// signal.
-func (c *Client) GetChatSessionGCCheck(ctx context.Context, sessionID string) (*ChatSessionGCStatus, error) {
-	var resp ChatSessionGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/chat-sessions/%s/gc-check", sessionID), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// AutopilotRunGCStatus carries the status of an autopilot run. CompletedAt
-// is the run's terminal timestamp (zero for non-terminal runs). The GC loop
-// reclaims a terminal run's never-reused workdir as soon as it sees the
-// terminal status, so it no longer gates on CompletedAt; the field is kept for
-// the API response contract and diagnostics.
-type AutopilotRunGCStatus struct {
-	Status      string    `json:"status"`
-	CompletedAt time.Time `json:"completed_at"`
-}
-
-// GetAutopilotRunGCCheck returns the status of an autopilot run for GC decisions.
-func (c *Client) GetAutopilotRunGCCheck(ctx context.Context, runID string) (*AutopilotRunGCStatus, error) {
-	var resp AutopilotRunGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/autopilot-runs/%s/gc-check", runID), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// TaskGCStatus carries the agent_task_queue status for quick-create cleanup.
-// Quick-create tasks have no separate parent record, so GC keys directly on
-// the task itself.
-type TaskGCStatus struct {
-	Status      string    `json:"status"`
-	CompletedAt time.Time `json:"completed_at"`
-}
-
-// GetTaskGCCheck returns the status of an agent task for GC decisions.
-func (c *Client) GetTaskGCCheck(ctx context.Context, taskID string) (*TaskGCStatus, error) {
-	var resp TaskGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/gc-check", taskID), &resp); err != nil {
+func (c *Client) getGCStatus(ctx context.Context, path string) (*gcStatus, error) {
+	var resp gcStatus
+	if err := c.getJSON(ctx, path, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -414,13 +244,13 @@ func (c *Client) Deregister(ctx context.Context, runtimeIDs []string) error {
 
 // RegisterResponse holds the server's response to a daemon registration.
 type RegisterResponse struct {
-	Runtimes     []Runtime       `json:"runtimes"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
+	Runtimes     []Runtime                 `json:"runtimes"`
+	Repos        []protocol.TaskRepository `json:"repos"`
+	ReposVersion string                    `json:"repos_version"`
+	Settings     json.RawMessage           `json:"settings,omitempty"`
 }
 
-func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterResponse, error) {
+func (c *Client) Register(ctx context.Context, req protocol.DaemonRegisterRequest) (*RegisterResponse, error) {
 	var resp RegisterResponse
 	if err := c.postJSON(ctx, "/api/daemon/register", req, &resp); err != nil {
 		return nil, err
@@ -428,53 +258,20 @@ func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterRes
 	return &resp, nil
 }
 
-type WorkspaceReposResponse struct {
-	WorkspaceID  string          `json:"workspace_id"`
-	Repos        []RepoData      `json:"repos"`
-	ReposVersion string          `json:"repos_version"`
-	Settings     json.RawMessage `json:"settings,omitempty"`
-}
-
-func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {
-	var resp WorkspaceReposResponse
+func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*protocol.DaemonWorkspaceReposResponse, error) {
+	var resp protocol.DaemonWorkspaceReposResponse
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/repos", workspaceID), &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
 }
 
-// RuntimeProfile mirrors the server's workspace custom runtime profile
-// (MUL-3284). protocol_family is the provider used for task routing (it
-// selects the agent backend), while command_name is the actual executable
-// the daemon resolves on PATH and launches. fixed_args are launch arguments
-// every agent on this runtime inherits — wiring them into the spawned command
-// is best-effort and may not be plumbed yet (see the TODO in runTask).
-type RuntimeProfile struct {
-	ID             string   `json:"id"`
-	WorkspaceID    string   `json:"workspace_id"`
-	DisplayName    string   `json:"display_name"`
-	ProtocolFamily string   `json:"protocol_family"`
-	CommandName    string   `json:"command_name"`
-	Description    *string  `json:"description"`
-	FixedArgs      []string `json:"fixed_args"`
-	Visibility     string   `json:"visibility"`
-	Enabled        bool     `json:"enabled"`
-}
-
-// RuntimeProfilesResponse is the body of
-// GET /api/daemon/workspaces/{workspaceID}/runtime-profiles. The server only
-// returns enabled profiles for the workspace.
-type RuntimeProfilesResponse struct {
-	WorkspaceID     string           `json:"workspace_id"`
-	RuntimeProfiles []RuntimeProfile `json:"runtime_profiles"`
-}
-
 // GetRuntimeProfiles fetches the workspace's enabled custom runtime profiles.
-// Mirrors GetWorkspaceRepos. Callers must treat this as best-effort: an older
-// server with no profiles route returns 404, which the daemon swallows and
-// continues with built-in runtimes only.
-func (c *Client) GetRuntimeProfiles(ctx context.Context, workspaceID string) (*RuntimeProfilesResponse, error) {
-	var resp RuntimeProfilesResponse
+// Mirrors GetWorkspaceRepos. A fetch failure is isolated from built-in runtime
+// registration so a transient profile-service outage does not take the whole
+// daemon offline.
+func (c *Client) GetRuntimeProfiles(ctx context.Context, workspaceID string) (*protocol.RuntimeProfilesResponse, error) {
+	var resp protocol.RuntimeProfilesResponse
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/runtime-profiles", workspaceID), &resp); err != nil {
 		return nil, err
 	}
@@ -493,6 +290,15 @@ var defaultTerminalRetrySchedule = []time.Duration{
 	16 * time.Second,
 	32 * time.Second,
 	64 * time.Second,
+}
+
+// Task messages and usage are reported on the execution path, so retries must
+// fit inside the message flush call's five-second context. Both server writes
+// are idempotent, making response-loss retries safe.
+var taskReportRetrySchedule = []time.Duration{
+	200 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
 }
 
 // retrySleep is the sleep used between retry attempts. Pulled into a package
@@ -552,7 +358,7 @@ func isTransientError(err error) bool {
 // The server-side CompleteTask / FailTask treat "already terminal" as an
 // idempotent success (see service/task.go), so a duplicate replay from a
 // retry is safe even if the server's prior response was lost in transit.
-func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any, respBody any, schedule []time.Duration) error {
+func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any, schedule []time.Duration) error {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -561,7 +367,7 @@ func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any
 			}
 			return err
 		}
-		err := c.postJSON(ctx, path, reqBody, respBody)
+		err := c.postJSON(ctx, path, reqBody, nil)
 		if err == nil {
 			return nil
 		}
@@ -578,7 +384,7 @@ func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any
 	}
 }
 
-func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBody any) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {
 	var body io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -588,56 +394,50 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 		body = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	c.setIdentityHeaders(req)
 
+	return c.executeRequest(req, path, respBody, "")
+}
+
+func requestResponseError(resp *http.Response, method, path string) error {
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return &requestError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+}
+
+func (c *Client) executeRequest(req *http.Request, path string, respBody any, decodeContext string) error {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+		return requestResponseError(resp, req.Method, path)
 	}
 	if respBody == nil {
-		io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(respBody)
+	err = json.NewDecoder(resp.Body).Decode(respBody)
+	if err != nil && decodeContext != "" {
+		return fmt.Errorf("%s: %w", decodeContext, err)
+	}
+	return err
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBody any) error {
+	return c.doJSON(ctx, http.MethodPost, path, reqBody, respBody)
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	c.setIdentityHeaders(req)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	if respBody == nil {
-		io.Copy(io.Discard, resp.Body)
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(respBody)
+	return c.doJSON(ctx, http.MethodGet, path, nil, respBody)
 }

@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
+  BatchDeleteIssuesResponseSchema,
+  BatchUpdateIssuesResponseSchema,
+  DashboardAgentRunTimeListSchema,
+  DashboardUsageByAgentListSchema,
+  DashboardUsageDailyListSchema,
   EMPTY_USER,
   ListIssuesResponseSchema,
-  RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByTaskListSchema,
-  RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
-  ObservabilitySummarySchema,
   PromptEvaluationAssetListResponseSchema,
-  PromptEvaluationAssetSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryItemSchema,
   SquadListSchema,
-  SquadSchema,
   TimelineEntriesSchema,
   UserSchema,
 } from "./schemas";
@@ -42,6 +42,44 @@ const baseIssue = {
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
+
+describe("BatchDeleteIssuesResponseSchema", () => {
+  it("preserves the failed issue identities used for cache reconciliation", () => {
+    expect(BatchDeleteIssuesResponseSchema.parse({
+      deleted: 1,
+      failed: [{ issue_id: "issue-2", code: "delete_failed" }],
+    })).toEqual({
+      deleted: 1,
+      failed: [{ issue_id: "issue-2", code: "delete_failed" }],
+    });
+  });
+
+  it("rejects failures without an issue identity", () => {
+    expect(BatchDeleteIssuesResponseSchema.safeParse({
+      deleted: 0,
+      failed: [{ code: "delete_failed" }],
+    }).success).toBe(false);
+  });
+});
+
+describe("BatchUpdateIssuesResponseSchema", () => {
+  it("preserves the result counts used by the batch toolbar", () => {
+    const parsed = BatchUpdateIssuesResponseSchema.parse({
+      updated: 1,
+      blocked: [{
+        issue_id: "issue-2",
+        identifier: "MUL-2",
+        title: "Parent",
+        incomplete_children: [],
+      }],
+      blocked_reason: "child_issues_not_done",
+      failed: [{ issue_id: "issue-3", code: "event_failed" }],
+    });
+    expect(parsed.updated).toBe(1);
+    expect(parsed.blocked).toHaveLength(1);
+    expect(parsed.failed).toHaveLength(1);
+  });
+});
 
 describe("IssueSchema (via ListIssuesResponseSchema)", () => {
   it("accepts a primitive metadata KV map", () => {
@@ -97,23 +135,15 @@ describe("TimelineEntriesSchema", () => {
   });
 });
 
-// `user.timezone` (Viewing tz) was added in the timezone-architecture RFC.
-// A desktop build older than the server — or a server predating the
-// `user.timezone` migration — will return a `/api/me` body with no
-// `timezone` key. The schema must not fail closed on that: the field
-// defaults to `null`, which the frontend resolves to the browser-detected
-// tz at render time.
-describe("UserSchema timezone drift", () => {
+describe("UserSchema timezone contract", () => {
   const base = {
     id: "11111111-1111-1111-1111-111111111111",
     name: "Ada",
     account: "ada",
+    avatar_url: null,
+    profile_description: "",
+    timezone: null,
   };
-
-  it("defaults timezone to null when the field is absent", () => {
-    const parsed = UserSchema.parse(base);
-    expect(parsed.timezone).toBe(null);
-  });
 
   it("preserves an explicit IANA timezone", () => {
     const parsed = UserSchema.parse({ ...base, timezone: "Asia/Tokyo" });
@@ -154,40 +184,11 @@ describe("SquadListSchema member preview drift", () => {
     updated_at: "2026-05-01T00:00:00Z",
     archived_at: null,
     archived_by: null,
+    sop_profile: {},
+    scope: "workspace" as const,
+    member_count: 0,
+    member_preview: [],
   };
-
-  it("defaults preview fields when an older backend omits them", () => {
-    const parsed = SquadListSchema.parse([baseSquad]);
-    expect(parsed[0]?.member_count).toBe(0);
-    expect(parsed[0]?.member_preview).toEqual([]);
-  });
-
-  it("defaults preview fields on a single squad response", () => {
-    const parsed = SquadSchema.parse(baseSquad);
-    expect(parsed.member_count).toBe(0);
-    expect(parsed.member_preview).toEqual([]);
-    expect(parsed.sop_profile).toEqual({});
-  });
-
-  it("preserves project SOP profile fields", () => {
-    const parsed = SquadSchema.parse({
-      ...baseSquad,
-      sop_profile: {
-        project: "user-center",
-        repo: "/data/ida/user-center",
-        mode: "stage_chain",
-        stage_skills: ["user-center/01-clarify", "user-center/02-design"],
-        operation_skills: ["user-center/add-api"],
-        acceptance: ["阶段产物完整", "测试证据完整"],
-      },
-    });
-
-    expect(parsed.sop_profile).toMatchObject({
-      project: "user-center",
-      repo: "/data/ida/user-center",
-      mode: "stage_chain",
-    });
-  });
 
   it("preserves lightweight member preview rows", () => {
     const parsed = SquadListSchema.parse([
@@ -202,47 +203,42 @@ describe("SquadListSchema member preview drift", () => {
     ]);
     expect(parsed[0]?.member_count).toBe(2);
     expect(parsed[0]?.member_preview).toHaveLength(2);
-    expect(parsed[0]?.member_preview?.[0]?.role).toBe("leader");
+    expect(parsed[0]?.member_preview?.[0]).toEqual({
+      member_type: "agent",
+      member_id: "agent-1",
+    });
   });
 });
 
 describe("PromptLibraryItemSchema", () => {
   const basePrompt = {
     id: "prompt-1",
-    workspace_id: "ws-1",
-    project_id: null,
     name: "user-center 需求澄清提示词",
     description: "小队队长使用",
-    prompt_type: "需求澄清",
     content: "请澄清目标、边界、验收条件和风险。",
-    variables: [{ name: "issue_title", label: "任务标题", required: true }],
-    tags: ["user-center", "小队"],
-    status: "启用",
     version: 1,
-    created_by: "user-1",
-    created_at: "2026-06-21T00:00:00Z",
-    updated_at: "2026-06-21T00:00:00Z",
   };
 
-  it("preserves Chinese prompt library fields", () => {
+  it("parses the current prompt library projection", () => {
     const parsed = PromptLibraryItemSchema.parse(basePrompt);
     expect(parsed.name).toBe("user-center 需求澄清提示词");
-    expect(parsed.prompt_type).toBe("需求澄清");
-    expect(parsed.status).toBe("启用");
-    expect(parsed.variables[0]?.label).toBe("任务标题");
-    expect(parsed.tags).toEqual(["user-center", "小队"]);
+    expect(parsed.description).toBe("小队队长使用");
+    expect(parsed.content).toContain("验收条件");
+    expect(parsed.version).toBe(1);
   });
 
   it("defaults list response shape", () => {
     const parsed = PromptLibraryItemListResponseSchema.parse({});
-    expect(parsed.items).toEqual([]);
-    expect(parsed.total).toBe(0);
+    expect(parsed).toEqual([]);
   });
 });
 
 describe("PromptEvaluationAssetSchema", () => {
+  const parseAsset = (asset: unknown) => PromptEvaluationAssetListResponseSchema.parse({ items: [asset] })[0]!;
+  const acceptsAsset = (asset: unknown) => PromptEvaluationAssetListResponseSchema.safeParse({ items: [asset] }).success;
+
   it("preserves Chinese evaluation asset semantics", () => {
-    const parsed = PromptEvaluationAssetSchema.parse({
+    const parsed = parseAsset({
       id: "asset-1",
       workspace_id: "ws-1",
       prompt_id: "prompt-1",
@@ -252,17 +248,15 @@ describe("PromptEvaluationAssetSchema", () => {
       payload: {
         schema_version: 1,
         schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
         cases: [{ case_name: "登录失败澄清", variables: { issue_title: "登录失败" }, expected_contains: ["验收条件"] }],
+        metric_contract: ["pass_rate"],
+        metric_notes: ["仅统计当前快照"],
+        experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
+        experiment_target: "current prompt",
+        baseline_output: "current output",
+        agent_id: "agent-1",
       },
       status: "启用",
-      structure_schema: "multica.training_evaluation.asset_profile.v1",
-      structured_case_count: 1,
-      structured_variable_count: 1,
-      structured_assertion_count: 1,
-      linked_dataset_count: 0,
-      linked_prompt_count: 1,
-      evaluation_dimension_count: 2,
       created_by: "user-1",
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
@@ -270,13 +264,19 @@ describe("PromptEvaluationAssetSchema", () => {
 
     expect(parsed.asset_type).toBe("数据集");
     expect(parsed.payload).toMatchObject({ cases: [{ case_name: "登录失败澄清" }] });
-    expect(parsed.structured_case_count).toBe(1);
-    expect(parsed.evaluation_dimension_count).toBe(2);
+    expect(parsed.payload).toMatchObject({
+      metric_contract: ["pass_rate"],
+      metric_notes: ["仅统计当前快照"],
+      experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
+      experiment_target: "current prompt",
+      baseline_output: "current output",
+      agent_id: "agent-1",
+    });
   });
 
   it("rejects invalid strict training evaluation payloads", () => {
     expect(
-      PromptEvaluationAssetSchema.safeParse({
+      acceptsAsset({
         id: "asset-invalid",
         workspace_id: "ws-1",
         name: "坏数据集",
@@ -288,24 +288,55 @@ describe("PromptEvaluationAssetSchema", () => {
         },
         created_at: "2026-06-21T00:00:00Z",
         updated_at: "2026-06-21T00:00:00Z",
-      }).success,
+      }),
     ).toBe(false);
+  });
+
+  it("rejects malformed current metric and experiment contracts", () => {
+    const base = {
+      id: "asset-invalid-contract",
+      workspace_id: "ws-1",
+      name: "坏维度契约",
+      asset_type: "测试套件",
+      payload: {
+        schema_version: 1,
+        schema: "multica.training_evaluation.payload.v1",
+        cases: [],
+      },
+      created_at: "2026-06-21T00:00:00Z",
+      updated_at: "2026-06-21T00:00:00Z",
+    };
+    expect(acceptsAsset({
+      ...base,
+      payload: { ...base.payload, metric_notes: "not-an-array" },
+    })).toBe(false);
+    expect(acceptsAsset({
+      ...base,
+      payload: { ...base.payload, experiment_dimensions: [{ weight: 2 }] },
+    })).toBe(false);
+    expect(acceptsAsset({
+      ...base,
+      payload: { ...base.payload, baseline_output: { text: "not-a-string" } },
+    })).toBe(false);
+    expect(acceptsAsset({
+      ...base,
+      payload: { ...base.payload, agent_id: "" },
+    })).toBe(false);
   });
 
   it("defaults evaluation asset list response shape", () => {
     const parsed = PromptEvaluationAssetListResponseSchema.parse({});
-    expect(parsed.items).toEqual([]);
-    expect(parsed.total).toBe(0);
+    expect(parsed).toEqual([]);
   });
 
-  it("rejects removed optimization run assets", () => {
-    expect(() => PromptEvaluationAssetSchema.parse({
+  it("rejects unsupported asset types", () => {
+    expect(() => parseAsset({
       id: "asset-2",
       workspace_id: "ws-1",
       prompt_id: "prompt-1",
-      name: "澄清提示词优化运行",
-      asset_type: "优化运行",
-      payload: { 候选版本数: 3, 指标: ["完整性", "可执行性"] },
+      name: "未知类型资产",
+      asset_type: "未知类型",
+      payload: {},
       status: "启用",
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
@@ -313,27 +344,52 @@ describe("PromptEvaluationAssetSchema", () => {
   });
 });
 
-// The workspace dashboard and runtime-detail pages were re-pointed at the
-// unified `task_usage_hourly` rollup. Every numeric field drives chart /
-// KPI math, and string keys (date / agent_id / model) bucket the series.
-// The contract these schemas must hold: a row missing a field degrades
-// that field to a sane default rather than dropping the WHOLE array to
-// the `[]` fallback — one drifted row must not blank the entire chart.
-describe("runtime usage schema drift", () => {
-  it("coerces missing fields on every runtime usage schema", () => {
-    expect(RuntimeUsageListSchema.parse([{ date: "2026-05-19" }])[0]?.input_tokens).toBe(0);
-    expect(RuntimeHourlyActivityListSchema.parse([{ hour: 9 }])[0]?.count).toBe(0);
-    expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.agent_id).toBe("");
-    expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.task_id).toBe("");
-    expect(RuntimeUsageByHourListSchema.parse([{ hour: 9 }])[0]?.model).toBe("");
+describe("dashboard + runtime usage schema drift", () => {
+  it("coerces a missing numeric field to 0 instead of dropping the array", () => {
+    const parsed = DashboardUsageDailyListSchema.parse([
+      { date: "2026-05-19", input_tokens: 100 },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.output_tokens).toBe(0);
+    expect(parsed[0]?.cache_read_tokens).toBe(0);
+    expect(parsed[0]?.cache_write_tokens).toBe(0);
   });
 
-  it("defaults a missing provider to \"\" so an older server's rows still price by bare model", () => {
-    // provider was added for cross-provider model disambiguation; a server
-    // predating it omits the field. The schema must fill "" (→ bare-model
-    // pricing lookup) rather than drop the row.
-    expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
-    expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
+  it("coerces a missing date key to \"\" so the rest of the series survives", () => {
+    const parsed = DashboardUsageDailyListSchema.parse([
+      { input_tokens: 5 },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.date).toBe("");
+  });
+
+  it("coerces a missing agent_id key to \"\" for the agent-runtime panel", () => {
+    const parsed = DashboardAgentRunTimeListSchema.parse([
+      { total_seconds: 42, task_count: 3, failed_count: 0 },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.agent_id).toBe("");
+  });
+
+  it("coerces a missing agent_id key to \"\" for the usage-by-agent panel", () => {
+    const parsed = DashboardUsageByAgentListSchema.parse([
+      { provider: "anthropic", input_tokens: 7 },
+    ]);
+    expect(parsed[0]?.agent_id).toBe("");
+  });
+
+  it("coerces missing fields on every runtime usage schema", () => {
+    expect(RuntimeUsageListSchema.parse([{ date: "2026-05-19" }])[0]?.input_tokens).toBe(0);
+    expect(RuntimeUsageByAgentListSchema.parse([{}])[0]?.agent_id).toBe("");
+    expect(RuntimeUsageByTaskListSchema.parse([{}])[0]?.task_id).toBe("");
+  });
+
+  it("defaults a missing provider on attribution rows", () => {
+    expect(
+      DashboardUsageByAgentListSchema.parse([{}])[0]?.provider,
+    ).toBe("");
+    expect(RuntimeUsageByAgentListSchema.parse([{}])[0]?.provider).toBe("");
+    expect(RuntimeUsageByTaskListSchema.parse([{}])[0]?.provider).toBe("");
   });
 
   it("rejects a non-array body so parseWithFallback can return its fallback", () => {
@@ -348,34 +404,16 @@ describe("runtime usage schema drift", () => {
   });
 });
 
-describe("ObservabilitySummarySchema full-summary defaults", () => {
-  it("defaults missing completeness fields to full-summary semantics", () => {
-    const parsed = ObservabilitySummarySchema.parse({});
-    expect(parsed.sample_limit).toBe(0);
-    expect(parsed.summary_completeness["采样上限"]).toBe(0);
-    expect(parsed.summary_completeness["说明"]).toContain("全量汇总");
-    expect(parsed.sop_run_maybe_truncated).toBe(false);
-    expect(parsed.task_trace_maybe_truncated).toBe(false);
-  });
-});
-
-describe("AppConfigSchema cdn_signed drift", () => {
-  it("defaults cdn_signed to false when the server omits it (pre-MUL-3254 servers)", () => {
-    const parsed = AppConfigSchema.parse({ cdn_domain: "cdn.example.com" });
-    expect(parsed.cdn_signed).toBe(false);
-  });
-
-  it("coerces a malformed cdn_signed to false instead of failing the whole config", () => {
+describe("AppConfigSchema current contract", () => {
+  it("keeps cdn_signed=true from a signing-enabled server", () => {
     const parsed = AppConfigSchema.parse({
       cdn_domain: "cdn.example.com",
-      cdn_signed: "yes",
+      cdn_signed: true,
+      posthog_key: "",
+      posthog_host: "",
+      analytics_environment: "test",
+      workspace_creation_disabled: false,
     });
-    expect(parsed.cdn_signed).toBe(false);
-    expect(parsed.cdn_domain).toBe("cdn.example.com");
-  });
-
-  it("keeps cdn_signed=true from a signing-enabled server", () => {
-    const parsed = AppConfigSchema.parse({ cdn_signed: true });
     expect(parsed.cdn_signed).toBe(true);
   });
 });

@@ -32,8 +32,16 @@ The CLI defaults to `--on-conflict fail`. Current CLIs send:
 
 ```text
 POST /api/skills/import
+Idempotency-Key: <caller-generated UUID>
 body: { "url": "<url>", "on_conflict": "fail" }
 ```
+
+The request identity is mandatory. The CLI generates one UUID per logical
+import and retries an unknown transport outcome once with the same UUID. A
+completed retry returns the original status and response without importing a
+second skill. Direct API callers must follow the same rule: reuse a key only
+for the same logical request; a different URL or conflict strategy with the
+same key returns `409 idempotency_conflict`.
 
 Do not finish with `npx skills add`. That installs into an external/local skill
 environment, not the Multica workspace DB, so Multica cannot manage or bind it.
@@ -169,8 +177,8 @@ multica skill import --url https://skills.sh/acme/repo/review-helper --on-confli
 multica skill import --url https://skills.sh/acme/repo/review-helper --on-conflict skip --output json
 ```
 
-The endpoint always returns the structured result contract. A duplicate import
-with the default `fail` strategy returns `409` and the body carries the existing
+The Web import dialog omits `on_conflict` because it supports create-or-show-
+conflict. A duplicate import returns `409` and the body carries the existing
 workspace skill identity:
 
 ```json
@@ -184,16 +192,15 @@ workspace skill identity:
 }
 ```
 
-The CLI exits non-zero for the default `fail` strategy. Treat
-`existing_skill.id` and `existing_skill.name` as the source of truth, then fetch
-details if needed:
+Treat `existing_skill.id` and `existing_skill.name` as the source of truth,
+then fetch details if needed:
 
 ```bash
 multica skill get <skill-id> --output json
 ```
 
-Do not retry in a loop, and do not create a second skill under a different name
-just to dodge the conflict.
+Do not retry application-level `4xx` responses in a loop, and do not create a
+second skill under a different name just to dodge the conflict.
 
 ## Incorrect → correct
 

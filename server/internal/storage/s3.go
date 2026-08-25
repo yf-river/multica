@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -26,23 +27,22 @@ type S3Storage struct {
 }
 
 // NewS3StorageFromEnv creates an S3Storage from environment variables.
-// Returns nil if S3_BUCKET is not set.
+// An empty S3_BUCKET explicitly selects the local backend. Once an operator
+// opts into S3, malformed or incomplete configuration is returned as an error
+// so the server cannot silently fall back to a different persistence model.
 //
 // Environment variables:
 //   - S3_BUCKET (required)
 //   - S3_REGION (default: us-west-2)
 //   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional; falls back to default credential chain)
-func NewS3StorageFromEnv() *S3Storage {
-	bucket := os.Getenv("S3_BUCKET")
+func NewS3StorageFromEnv() (*S3Storage, error) {
+	bucket := strings.TrimSpace(os.Getenv("S3_BUCKET"))
 	if bucket == "" {
 		slog.Info("S3_BUCKET not set, cloud upload disabled")
-		return nil
+		return nil, nil
 	}
 	if looksLikeS3Hostname(bucket) {
-		slog.Warn(
-			"S3_BUCKET looks like a hostname rather than a bucket name — uploads and public URLs will likely both fail. Use only the bucket name (e.g. \"my-bucket\"), not \"<bucket>.s3.<region>.amazonaws.com\".",
-			"value", bucket,
-		)
+		return nil, fmt.Errorf("S3_BUCKET must be a bucket name, not an S3 hostname")
 	}
 
 	region := os.Getenv("S3_REGION")
@@ -54,8 +54,11 @@ func NewS3StorageFromEnv() *S3Storage {
 		config.WithRegion(region),
 	}
 
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	accessKey := strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID"))
+	secretKey := strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY"))
+	if (accessKey == "") != (secretKey == "") {
+		return nil, fmt.Errorf("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be configured together")
+	}
 	if accessKey != "" && secretKey != "" {
 		opts = append(opts, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
@@ -64,15 +67,18 @@ func NewS3StorageFromEnv() *S3Storage {
 
 	cfg, err := config.LoadDefaultConfig(context.Background(), opts...)
 	if err != nil {
-		slog.Error("failed to load AWS config", "error", err)
-		return nil
+		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
 
 	cdnDomain := os.Getenv("CLOUDFRONT_DOMAIN")
 
-	endpointURL := os.Getenv("AWS_ENDPOINT_URL")
+	endpointURL := strings.TrimSpace(os.Getenv("AWS_ENDPOINT_URL"))
 	s3Opts := []func(*s3.Options){}
 	if endpointURL != "" {
+		parsed, err := url.ParseRequestURI(endpointURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, fmt.Errorf("AWS_ENDPOINT_URL must be an absolute http(s) URL")
+		}
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(endpointURL)
 			o.UsePathStyle = true
@@ -86,7 +92,7 @@ func NewS3StorageFromEnv() *S3Storage {
 		region:      region,
 		cdnDomain:   cdnDomain,
 		endpointURL: endpointURL,
-	}
+	}, nil
 }
 
 func (s *S3Storage) CdnDomain() string {
@@ -123,8 +129,8 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 		}
 	}
 
-	// Strip known "https://host/" prefixes.
-	prefixes := make([]string, 0, 4)
+	// Strip the URL prefixes emitted by the current upload path.
+	prefixes := make([]string, 0, 3)
 	if s.cdnDomain != "" {
 		prefixes = append(prefixes, "https://"+s.cdnDomain+"/")
 	}
@@ -163,10 +169,6 @@ func (s *S3Storage) GetReader(ctx context.Context, key string) (io.ReadCloser, e
 	return out.Body, nil
 }
 
-func (s *S3Storage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
-	return s.PresignGetWithContentDisposition(ctx, key, ttl, "")
-}
-
 func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key string, ttl time.Duration, contentDisposition string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("s3 PresignGet: empty key")
@@ -190,25 +192,19 @@ func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key st
 	return out.URL, nil
 }
 
-// Delete removes an object from S3. Errors are logged but not fatal.
-func (s *S3Storage) Delete(ctx context.Context, key string) {
+// Delete removes an object from S3.
+func (s *S3Storage) Delete(ctx context.Context, key string) error {
 	if key == "" {
-		return
+		return nil
 	}
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		slog.Error("s3 DeleteObject failed", "key", key, "error", err)
+		return fmt.Errorf("s3 DeleteObject: %w", err)
 	}
-}
-
-// DeleteKeys removes multiple objects from S3. Best-effort, errors are logged.
-func (s *S3Storage) DeleteKeys(ctx context.Context, keys []string) {
-	for _, key := range keys {
-		s.Delete(ctx, key)
-	}
+	return nil
 }
 
 func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {

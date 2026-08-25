@@ -11,7 +11,7 @@ import {
   CODE_LIGATURE_DESCENDANT_CLASS,
 } from '@multica/ui/lib/code-style'
 
-export interface CodeBlockProps {
+interface CodeBlockProps {
   code: string
   language?: string
   className?: string

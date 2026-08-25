@@ -1,14 +1,12 @@
 package handler
 
 import (
-	"crypto/hmac"
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -26,18 +24,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// SignupError represents signup restriction errors
-type SignupError struct {
-	Message string
-}
-
-func (e SignupError) Error() string {
-	return e.Message
-}
-
-var ErrSignupProhibited = SignupError{Message: "user registration is disabled on this self-hosted instance"}
-var ErrAccountNotAllowed = SignupError{Message: "account not allowed on this instance"}
-
 type UserResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
@@ -47,7 +33,6 @@ type UserResponse struct {
 	Timezone                *string         `json:"timezone"`
 	OnboardedAt             *string         `json:"onboarded_at"`
 	OnboardingQuestionnaire json.RawMessage `json:"onboarding_questionnaire"`
-	StarterContentState     *string         `json:"starter_content_state"`
 	ProfileDescription      string          `json:"profile_description"`
 	CreatedAt               string          `json:"created_at"`
 	UpdatedAt               string          `json:"updated_at"`
@@ -60,13 +45,6 @@ type UserResponse struct {
 const MaxProfileDescriptionLen = 2000
 
 func userToResponse(u db.User) UserResponse {
-	// JSONB column is []byte with DEFAULT '{}', so it's never nil at the DB
-	// level. Defensive coalesce just in case a future ALTER makes the column
-	// nullable and some row comes back with no default applied.
-	q := u.OnboardingQuestionnaire
-	if len(q) == 0 {
-		q = []byte("{}")
-	}
 	return UserResponse{
 		ID:                      uuidToString(u.ID),
 		Name:                    u.Name,
@@ -74,8 +52,7 @@ func userToResponse(u db.User) UserResponse {
 		AvatarURL:               textToPtr(u.AvatarUrl),
 		Timezone:                textToPtr(u.Timezone),
 		OnboardedAt:             timestampToPtr(u.OnboardedAt),
-		OnboardingQuestionnaire: json.RawMessage(q),
-		StarterContentState:     textToPtr(u.StarterContentState),
+		OnboardingQuestionnaire: json.RawMessage(u.OnboardingQuestionnaire),
 		ProfileDescription:      u.ProfileDescription,
 		CreatedAt:               timestampToString(u.CreatedAt),
 		UpdatedAt:               timestampToString(u.UpdatedAt),
@@ -87,11 +64,6 @@ type LoginResponse struct {
 	User  UserResponse `json:"user"`
 }
 
-type PasswordLoginRequest struct {
-	Account  string `json:"account"`
-	Password string `json:"password"`
-}
-
 const (
 	passwordHashAlgorithm  = "pbkdf2_sha256"
 	passwordHashIterations = 210000
@@ -99,6 +71,7 @@ const (
 	passwordKeyBytes       = 32
 	minPasswordLen         = 8
 	maxPasswordLen         = 32
+	allowedPasswordSpecial = `!"#$%&'()*+,-./:;<=>?@[]^_\` + "`{|}~"
 )
 
 // validatePassword checks password strength:
@@ -122,18 +95,8 @@ func validatePassword(password string) string {
 			hasLower = true
 		case ch >= '0' && ch <= '9':
 			hasDigit = true
-		case ch >= 0x20 && ch <= 0x7E:
-			// Check against the allowed special character set
-			// ! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ ] ^ _ ` { | } ~
-			for _, sc := range `!"#$%&'()*+,-./:;<=>?@[]^_\` + "`{|}~" {
-				if ch == sc {
-					hasSpecial = true
-					break
-				}
-			}
-			if !hasSpecial {
-				return "password contains invalid characters"
-			}
+		case strings.ContainsRune(allowedPasswordSpecial, ch):
+			hasSpecial = true
 		default:
 			return "password contains invalid characters"
 		}
@@ -173,30 +136,8 @@ func normalizeAccount(account string) (string, bool) {
 	return account, true
 }
 
-func derivePasswordKey(password string, salt []byte, iterations int) []byte {
-	mac := hmac.New(sha256.New, []byte(password))
-	hashLen := mac.Size()
-	blocks := (passwordKeyBytes + hashLen - 1) / hashLen
-	out := make([]byte, 0, blocks*hashLen)
-	var blockBuf [4]byte
-	for block := 1; block <= blocks; block++ {
-		mac.Reset()
-		mac.Write(salt)
-		binary.BigEndian.PutUint32(blockBuf[:], uint32(block))
-		mac.Write(blockBuf[:])
-		u := mac.Sum(nil)
-		t := append([]byte(nil), u...)
-		for i := 1; i < iterations; i++ {
-			mac.Reset()
-			mac.Write(u)
-			u = mac.Sum(nil)
-			for j := range t {
-				t[j] ^= u[j]
-			}
-		}
-		out = append(out, t...)
-	}
-	return out[:passwordKeyBytes]
+func derivePasswordKey(password string, salt []byte, iterations int) ([]byte, error) {
+	return pbkdf2.Key(sha256.New, password, salt, iterations, passwordKeyBytes)
 }
 
 func hashPassword(password string) (string, error) {
@@ -204,7 +145,10 @@ func hashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := derivePasswordKey(password, salt, passwordHashIterations)
+	key, err := derivePasswordKey(password, salt, passwordHashIterations)
+	if err != nil {
+		return "", err
+	}
 	return strings.Join([]string{
 		passwordHashAlgorithm,
 		strconv.Itoa(passwordHashIterations),
@@ -230,7 +174,10 @@ func verifyPassword(password, encoded string) bool {
 	if err != nil || len(want) == 0 {
 		return false
 	}
-	got := derivePasswordKey(password, salt, iterations)
+	got, err := derivePasswordKey(password, salt, iterations)
+	if err != nil {
+		return false
+	}
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
@@ -245,25 +192,20 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 	return token.SignedString(auth.JWTSecret())
 }
 
-func (h *Handler) checkSignupAllowed(account string, isNewUser bool) error {
-	if !isNewUser {
-		return nil // existing users always allowed to log in
-	}
-
-	account = strings.ToLower(strings.TrimSpace(account))
+func (h *Handler) signupRestriction(account string) string {
 	if len(h.cfg.AllowedAccounts) > 0 && contains(h.cfg.AllowedAccounts, account) {
-		return nil
+		return ""
 	}
 
 	if !h.cfg.AllowSignup {
-		return ErrSignupProhibited
+		return "user registration is disabled on this self-hosted instance"
 	}
 
 	if len(h.cfg.AllowedAccounts) > 0 {
-		return ErrAccountNotAllowed
+		return "account not allowed on this instance"
 	}
 
-	return nil
+	return ""
 }
 
 func contains(slice []string, s string) bool {
@@ -276,9 +218,11 @@ func contains(slice []string, s string) bool {
 }
 
 func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
-	var req PasswordLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	var req struct {
+		Account  string `json:"account"`
+		Password string `json:"password"`
+	}
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -299,13 +243,8 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, msg)
 			return
 		}
-		if err := h.checkSignupAllowed(account, true); err != nil {
-			var signupErr SignupError
-			if errors.As(err, &signupErr) {
-				writeError(w, http.StatusForbidden, signupErr.Error())
-			} else {
-				writeError(w, http.StatusForbidden, "user registration is disabled")
-			}
+		if restriction := h.signupRestriction(account); restriction != "" {
+			writeError(w, http.StatusForbidden, restriction)
 			return
 		}
 		passwordHash, err := hashPassword(req.Password)
@@ -367,13 +306,21 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+	user, ok := h.loadCurrentUser(w, r, userID)
+	if !ok {
 		return
 	}
 
 	writeJSON(w, http.StatusOK, userToResponse(user))
+}
+
+func (h *Handler) loadCurrentUser(w http.ResponseWriter, r *http.Request, userID string) (db.User, bool) {
+	user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
+	if err == nil {
+		return user, true
+	}
+	writeEntityLoadError(w, err, "user", "user_id", userID)
+	return db.User{}, false
 }
 
 type UpdateMeRequest struct {
@@ -393,9 +340,8 @@ func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+	user, ok := h.loadCurrentUser(w, r, userID)
+	if !ok {
 		return
 	}
 
@@ -421,14 +367,12 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateMeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
-	currentUser, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+	currentUser, ok := h.loadCurrentUser(w, r, userID)
+	if !ok {
 		return
 	}
 

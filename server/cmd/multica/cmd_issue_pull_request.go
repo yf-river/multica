@@ -4,27 +4,16 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
-var issuePullRequestCmd = &cobra.Command{
-	Use:   "pull-request",
-	Short: "Work with a single issue pull request or merge request",
-}
-
 var issueMRCmd = &cobra.Command{
 	Use:   "mr",
 	Short: "Work with issue merge requests",
-}
-
-var issuePullRequestLinkCmd = &cobra.Command{
-	Use:   "link <issue-id>",
-	Short: "Link a Gongfeng/GitHub merge request to an issue",
-	Args:  exactArgs(1),
-	RunE:  runIssuePullRequestLink,
 }
 
 var issueMRCreateCmd = &cobra.Command{
@@ -49,12 +38,9 @@ var issueMRListCmd = &cobra.Command{
 }
 
 func init() {
-	issueCmd.AddCommand(issuePullRequestCmd)
 	issueCmd.AddCommand(issueMRCmd)
-	issuePullRequestCmd.AddCommand(issuePullRequestLinkCmd)
 	issueMRCmd.AddCommand(issueMRCreateCmd, issueMRLinkCmd, issueMRListCmd)
 
-	addIssuePullRequestLinkFlags(issuePullRequestLinkCmd)
 	addIssuePullRequestLinkFlags(issueMRLinkCmd)
 	addIssueMRCreateFlags(issueMRCreateCmd)
 	issueMRListCmd.Flags().String("output", "table", "Output format: table or json")
@@ -96,7 +82,7 @@ func addIssueMRCreateFlags(cmd *cobra.Command) {
 }
 
 func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -134,7 +120,7 @@ func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueMRCreate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -170,8 +156,7 @@ func runIssueMRCreate(cmd *cobra.Command, args []string) error {
 }
 
 func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	pr, _ := result["pull_request"].(map[string]any)
@@ -180,28 +165,5 @@ func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]a
 }
 
 func flagNameToJSONKey(name string) string {
-	switch name {
-	case "project-path":
-		return "project_path"
-	case "repo-url":
-		return "repo_url"
-	case "html-url":
-		return "html_url"
-	case "source-branch":
-		return "source_branch"
-	case "target-branch":
-		return "target_branch"
-	case "author-login":
-		return "author_login"
-	case "head-sha":
-		return "head_sha"
-	case "changed-files":
-		return "changed_files"
-	case "close-intent":
-		return "close_intent"
-	case "remove-source-branch":
-		return "remove_source_branch"
-	default:
-		return name
-	}
+	return strings.ReplaceAll(name, "-", "_")
 }

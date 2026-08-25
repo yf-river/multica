@@ -23,10 +23,8 @@ import (
 // binding.
 const CloudPATPrefix = "mcn_"
 
-// cloudPATCachePrefix namespaces cloud-PAT cache keys away from
-// mul_/mdt_ caches so the three token kinds can't accidentally share
-// keys. The trailing slash mirrors the existing patCachePrefix /
-// daemonTokenCachePrefix conventions.
+// cloudPATCachePrefix namespaces cloud-PAT cache keys away from local mul_
+// PAT keys. The trailing slash mirrors patCachePrefix.
 const cloudPATCachePrefix = "mul:auth:mcn:"
 
 // cloudPATCacheTTL bounds how long a verified mcn_ token stays cached
@@ -83,25 +81,12 @@ var (
 	ErrCloudPATNotConfigured = errors.New("cloud pat verifier not configured")
 )
 
-// CloudPATIdentity is what a successful verify resolves to. We keep
-// only the fields the auth path actually needs:
-//
-//   - OwnerID is the user whose request this is (mapped to X-User-ID).
-//   - InstanceID / InstanceRecordID are recorded so downstream code can
-//     correlate the request with a specific cloud node; they are not
-//     used for authorization today, but stashing them now keeps the
-//     wire shape stable for callers that later want to assert a
-//     particular instance binding.
-//
-// We deliberately drop token_last4, status, issued_at, etc. — those
-// are diagnostic fields that don't belong in cached auth state.
+// CloudPATIdentity is the current authenticated identity returned by Fleet.
 type CloudPATIdentity struct {
-	OwnerID          string `json:"o"`
-	InstanceID       string `json:"i"`
-	InstanceRecordID string `json:"r"`
+	OwnerID string `json:"o"`
 }
 
-// CloudPATInvalidError carries the Fleet-reported reason for a
+// cloudPATInvalidError carries the Fleet-reported reason for a
 // valid=false response. The middleware uses this to log why an mcn_
 // token was rejected without exposing the reason in the 401 body —
 // per the Cloud doc, callers shouldn't differentiate token_not_found
@@ -112,11 +97,11 @@ type CloudPATIdentity struct {
 // a real user in our DB. Treating that as a Cloud-style "invalid"
 // keeps the middleware's response shape uniform — the result is the
 // same: 401, drop the token.
-type CloudPATInvalidError struct {
+type cloudPATInvalidError struct {
 	Reason string
 }
 
-func (e *CloudPATInvalidError) Error() string {
+func (e *cloudPATInvalidError) Error() string {
 	if e == nil || e.Reason == "" {
 		return "cloud pat invalid"
 	}
@@ -124,20 +109,20 @@ func (e *CloudPATInvalidError) Error() string {
 }
 
 // Is lets errors.Is(err, ErrCloudPATInvalid) match any
-// CloudPATInvalidError, so callers can branch on the category without
+// cloudPATInvalidError, so callers can branch on the category without
 // caring about the exact reason string.
-func (e *CloudPATInvalidError) Is(target error) bool {
+func (e *cloudPATInvalidError) Is(target error) bool {
 	return target == ErrCloudPATInvalid
 }
 
-// CloudPATInvalidReasonOwnerUnknown is the synthetic reason emitted
+// cloudPATInvalidReasonOwnerUnknown is the synthetic reason emitted
 // when Cloud verified the token but the returned owner_id was not
 // found in the local users table. The Cloud `owner_id` and our
 // `users.id` share the same UUID space by contract; a mismatch means
 // either the user has been deleted on our side after the node was
 // minted, or (worse) something is impersonating Cloud and trying to
 // surface a forged owner_id. Either way the request must be rejected.
-const CloudPATInvalidReasonOwnerUnknown = "owner_unknown"
+const cloudPATInvalidReasonOwnerUnknown = "owner_unknown"
 
 // OwnerLookupFunc is the user-existence check Verify runs against
 // Cloud's owner_id before caching / returning the identity. The
@@ -170,44 +155,19 @@ type CloudPATVerifier struct {
 	rdb     *redis.Client // may be nil — disables caching
 }
 
-// CloudPATVerifierConfig assembles the dependencies for
-// NewCloudPATVerifier. Keeping this a struct (vs positional args)
-// leaves room for future knobs (custom TTL, expected_owner_id binding)
-// without churning every call site.
-type CloudPATVerifierConfig struct {
-	// FleetBaseURL is the Cloud Fleet base URL (e.g.
-	// https://fleet.multica.cloud). Trailing slashes are trimmed.
-	// Empty disables the verifier — NewCloudPATVerifier returns nil.
-	FleetBaseURL string
-
-	// HTTPClient is the client used for verify calls. Optional —
-	// when nil, a client with cloudPATDefaultTimeout is created.
-	// Pass a shared client when you want connection pooling /
-	// per-deployment transport tuning.
-	HTTPClient *http.Client
-
-	// Redis backs the positive-result cache. Nil disables caching —
-	// every Verify call hits Fleet. Same nil-safe contract as
-	// PATCache / DaemonTokenCache.
-	Redis *redis.Client
-}
-
-// NewCloudPATVerifier returns a verifier for cfg.FleetBaseURL. If the
+// NewCloudPATVerifier returns a verifier for fleetBaseURL. If the
 // URL is empty after trimming, returns nil — callers (router /
 // middleware) treat nil as "mcn_ not supported on this deployment".
-func NewCloudPATVerifier(cfg CloudPATVerifierConfig) *CloudPATVerifier {
-	base := strings.TrimRight(strings.TrimSpace(cfg.FleetBaseURL), "/")
+// Redis may be nil, which disables the positive-result cache.
+func NewCloudPATVerifier(fleetBaseURL string, rdb *redis.Client) *CloudPATVerifier {
+	base := strings.TrimRight(strings.TrimSpace(fleetBaseURL), "/")
 	if base == "" {
 		return nil
 	}
-	client := cfg.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: cloudPATDefaultTimeout}
-	}
 	return &CloudPATVerifier{
 		baseURL: base,
-		http:    client,
-		rdb:     cfg.Redis,
+		http:    &http.Client{Timeout: cloudPATDefaultTimeout},
+		rdb:     rdb,
 	}
 }
 
@@ -220,7 +180,7 @@ func NewCloudPATVerifier(cfg CloudPATVerifierConfig) *CloudPATVerifier {
 //     a fully-validated decision.
 //  2. Fleet POST /api/v1/pat/verify. The response distinguishes:
 //     - HTTP 200 + valid=true   → continues to step 3
-//     - HTTP 200 + valid=false  → CloudPATInvalidError{Reason:...}
+//     - HTTP 200 + valid=false  → cloudPATInvalidError{Reason:...}
 //     (also wraps as ErrCloudPATInvalid via Is)
 //     - HTTP 4xx/5xx, network, timeout, decode failure
 //     → ErrCloudPATUnavailable
@@ -277,7 +237,7 @@ func (v *CloudPATVerifier) Verify(ctx context.Context, token string, lookup Owne
 			// user is created later, the next request must succeed
 			// without waiting for the TTL.
 			slog.Warn("cloud_pat: cloud-verified owner_id has no local user", "owner_id", id.OwnerID)
-			return CloudPATIdentity{}, &CloudPATInvalidError{Reason: CloudPATInvalidReasonOwnerUnknown}
+			return CloudPATIdentity{}, &cloudPATInvalidError{Reason: cloudPATInvalidReasonOwnerUnknown}
 		}
 	}
 
@@ -285,11 +245,7 @@ func (v *CloudPATVerifier) Verify(ctx context.Context, token string, lookup Owne
 	return id, nil
 }
 
-// fleetVerifyRequest mirrors the Cloud doc's request schema. We only
-// send `token` today — `expected_owner_id` / `expected_instance_id`
-// would let the verifier fail a token bound to a different user than
-// the request claims, but at this layer we don't yet know the
-// "claimed" user. Wiring those in is a future hardening step.
+// fleetVerifyRequest mirrors the current Fleet request schema.
 type fleetVerifyRequest struct {
 	Token string `json:"token"`
 }
@@ -299,11 +255,9 @@ type fleetVerifyRequest struct {
 // Cloud doc, mismatch responses deliberately omit binding info to
 // avoid serving as a probing oracle).
 type fleetVerifyResponse struct {
-	Valid            bool   `json:"valid"`
-	Reason           string `json:"reason,omitempty"`
-	OwnerID          string `json:"owner_id,omitempty"`
-	InstanceID       string `json:"instance_id,omitempty"`
-	InstanceRecordID string `json:"instance_record_id,omitempty"`
+	Valid   bool   `json:"valid"`
+	Reason  string `json:"reason,omitempty"`
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIdentity, error) {
@@ -336,7 +290,7 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 		slog.Warn("cloud_pat: verify request failed", "error", err)
 		return CloudPATIdentity{}, ErrCloudPATUnavailable
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		// Per the Cloud doc, 400 means our request was malformed and
@@ -371,7 +325,7 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 	if !parsed.Valid {
 		// Surface the reason in the error so the middleware can log
 		// "why" while still returning a generic 401 to the client.
-		return CloudPATIdentity{}, &CloudPATInvalidError{Reason: parsed.Reason}
+		return CloudPATIdentity{}, &cloudPATInvalidError{Reason: parsed.Reason}
 	}
 
 	if parsed.OwnerID == "" {
@@ -383,11 +337,7 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 		return CloudPATIdentity{}, ErrCloudPATUnavailable
 	}
 
-	return CloudPATIdentity{
-		OwnerID:          parsed.OwnerID,
-		InstanceID:       parsed.InstanceID,
-		InstanceRecordID: parsed.InstanceRecordID,
-	}, nil
+	return CloudPATIdentity{OwnerID: parsed.OwnerID}, nil
 }
 
 func cloudPATCacheKey(hash string) string { return cloudPATCachePrefix + hash }

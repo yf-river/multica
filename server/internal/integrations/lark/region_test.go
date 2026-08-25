@@ -47,6 +47,19 @@ func TestRegion_OpenPlatformBaseURL(t *testing.T) {
 	}
 }
 
+func TestParseRegionRejectsInvalidStoredValues(t *testing.T) {
+	for _, value := range []string{"", "LARK", "intl"} {
+		if _, err := ParseRegion(value); err == nil {
+			t.Errorf("ParseRegion(%q) succeeded", value)
+		}
+	}
+	for value, want := range map[string]Region{"feishu": RegionFeishu, "lark": RegionLark} {
+		if got, err := ParseRegion(value); err != nil || got != want {
+			t.Errorf("ParseRegion(%q) = %q, %v; want %q", value, got, err, want)
+		}
+	}
+}
+
 // TestHTTPClient_ResolvesHostFromRegion is the core dual-region guarantee:
 // with NO deployment-wide BaseURL override, the open-platform host is
 // chosen per call from InstallationCredentials.Region, so Feishu and Lark
@@ -64,7 +77,8 @@ func TestHTTPClient_ResolvesHostFromRegion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &capturingRoundTripper{}
 			// No BaseURL → region resolution governs the host.
-			c := NewHTTPAPIClient(HTTPClientConfig{HTTPClient: &http.Client{Transport: rt}})
+			c := NewHTTPAPIClient(HTTPClientConfig{}).(*httpAPIClient)
+			c.httpClient = &http.Client{Transport: rt}
 			if _, err := c.GetBotInfo(context.Background(), InstallationCredentials{
 				AppID: "cli_x", AppSecret: "s", Region: tc.region,
 			}); err != nil {
@@ -87,10 +101,8 @@ func TestHTTPClient_ResolvesHostFromRegion(t *testing.T) {
 // existing test suite (and MULTICA_LARK_HTTP_BASE_URL) keeps working.
 func TestHTTPClient_BaseURLOverridesRegion(t *testing.T) {
 	rt := &capturingRoundTripper{}
-	c := NewHTTPAPIClient(HTTPClientConfig{
-		BaseURL:    "https://override.example.com",
-		HTTPClient: &http.Client{Transport: rt},
-	})
+	c := NewHTTPAPIClient(HTTPClientConfig{BaseURL: "https://override.example.com"}).(*httpAPIClient)
+	c.httpClient = &http.Client{Transport: rt}
 	if _, err := c.GetBotInfo(context.Background(), InstallationCredentials{
 		AppID: "cli_x", AppSecret: "s", Region: RegionLark, // would be larksuite, but override wins
 	}); err != nil {
@@ -116,12 +128,11 @@ func TestWSEndpoint_ResolvesHostFromRegion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rt := &wsEndpointRoundTripper{}
-		f, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{
-			HTTPClient: &http.Client{Transport: rt},
-		})
+		f, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{})
 		if err != nil {
 			t.Fatalf("NewHTTPConnectionTokenFetcher: %v", err)
 		}
+		f.httpClient = &http.Client{Transport: rt}
 		if _, err := f.Endpoint(context.Background(), InstallationCredentials{
 			AppID: "cli_x", AppSecret: "s", Region: tc.region,
 		}); err != nil {

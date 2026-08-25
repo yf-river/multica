@@ -45,12 +45,25 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, request_key, request_hash
 ) VALUES (
     $1, $2, sqlc.narg('description'), $3, $4,
     $5, $6, sqlc.narg('issue_title_template'), sqlc.narg('project_id'),
-    $7, $8
+    $7, $8, sqlc.narg('request_key'), sqlc.narg('request_hash')
 ) RETURNING *;
+
+-- name: GetAutopilotByCreateRequest :one
+SELECT * FROM autopilot
+WHERE workspace_id = $1
+  AND created_by_type = $2
+  AND created_by_id = $3
+  AND request_key = $4;
+
+-- name: SetAutopilotInitialTrigger :one
+UPDATE autopilot
+SET initial_trigger_id = $2
+WHERE id = $1
+RETURNING *;
 
 -- name: UpdateAutopilot :one
 UPDATE autopilot SET
@@ -143,8 +156,8 @@ WHERE id = $1;
 
 -- name: RotateAutopilotTriggerWebhookToken :one
 -- Rotates the bearer token for a webhook trigger. Restricted to kind='webhook'
--- so an accidental call against a schedule/api trigger is a no-op (returns no
--- rows) rather than corrupting unrelated state.
+-- so an accidental call against a schedule trigger is a no-op (returns no rows)
+-- rather than corrupting unrelated state.
 UPDATE autopilot_trigger
 SET webhook_token = $2,
     updated_at = now()
@@ -175,11 +188,18 @@ RETURNING *;
 -- agent_id on agent_task_queue still records who actually ran the work
 -- (the squad leader); squad_id lets reports group by squad without a join.
 INSERT INTO autopilot_run (
-    autopilot_id, trigger_id, source, status, trigger_payload, squad_id
+    autopilot_id, trigger_id, source, status, trigger_payload, squad_id,
+    request_key
 ) VALUES (
     $1, sqlc.narg('trigger_id'), $2, $3, sqlc.narg('trigger_payload'),
-    sqlc.narg('squad_id')
+    sqlc.narg('squad_id'), sqlc.narg('request_key')
 ) RETURNING *;
+
+-- name: GetAutopilotRunByRequestKey :one
+SELECT * FROM autopilot_run
+WHERE autopilot_id = $1
+  AND source = $2
+  AND request_key = $3;
 
 -- name: GetAutopilotRun :one
 SELECT * FROM autopilot_run
@@ -207,12 +227,14 @@ RETURNING *;
 UPDATE autopilot_run
 SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
 WHERE id = $1
+  AND status IN ('issue_created', 'running')
 RETURNING *;
 
 -- name: UpdateAutopilotRunFailed :one
 UPDATE autopilot_run
 SET status = 'failed', completed_at = now(), failure_reason = $2
 WHERE id = $1
+  AND status IN ('issue_created', 'running')
 RETURNING *;
 
 -- name: UpdateAutopilotRunSkipped :one
@@ -226,10 +248,6 @@ UPDATE autopilot_run
 SET status = 'skipped', completed_at = now(), failure_reason = $2
 WHERE id = $1
 RETURNING *;
-
--- =====================
--- Scheduler Queries
--- =====================
 
 -- name: ClaimDueScheduleTriggers :many
 -- Atomically claim all due schedule triggers to prevent concurrent execution.

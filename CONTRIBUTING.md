@@ -251,7 +251,8 @@ make stop
 make check
 make dev
 make test
-make schema-init
+make migrate-up
+make migrate-down # rolls back one applied migration
 ```
 
 这些通用 target 要求当前目录存在合法的 env 文件。
@@ -266,7 +267,9 @@ make schema-init
 - `make start`
 - `make dev`
 - `make test`
-- `make schema-init`
+- `make migrate-up`
+- `make migrate-down` rolls back only the latest applied migration. Full rollback is
+  intentionally explicit: `make migrate-down-all CONFIRM=yes`.
 - `make check`
 
 该逻辑位于 `scripts/ensure-postgres.sh`。

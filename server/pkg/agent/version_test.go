@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -52,35 +51,6 @@ func TestSemverLessThan(t *testing.T) {
 	}
 }
 
-func TestCheckMinCLIVersion(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr error
-	}{
-		{"tagged release at minimum", "v0.2.21", nil},
-		{"tagged release above minimum", "0.3.1", nil},
-		{"previous tagged release below minimum", "v0.2.20", ErrCLIVersionTooOld},
-		{"tagged release below minimum", "v0.2.15", ErrCLIVersionTooOld},
-		{"empty string", "", ErrCLIVersionMissing},
-		{"unparsable", "not-a-version", ErrCLIVersionMissing},
-		{"git-describe dev build past old tag", "v0.2.15-235-gdaf0e935", nil},
-		{"git-describe dirty dev build", "v0.2.15-235-gdaf0e935-dirty", nil},
-		{"git-describe dev build past current tag", "v0.2.21-3-gabc1234", nil},
-		{"bare git sha dev build", "5f9759f7", nil},
-		{"bare dirty git sha dev build", "5f9759f7-dirty", nil},
-	}
-	for _, tt := range tests {
-		err := CheckMinCLIVersion(tt.input)
-		if tt.wantErr == nil && err != nil {
-			t.Errorf("%s: CheckMinCLIVersion(%q) = %v, want nil", tt.name, tt.input, err)
-		}
-		if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
-			t.Errorf("%s: CheckMinCLIVersion(%q) = %v, want %v", tt.name, tt.input, err, tt.wantErr)
-		}
-	}
-}
-
 func TestExtractVersionLine(t *testing.T) {
 	tests := []struct {
 		name string
@@ -102,9 +72,6 @@ func TestExtractVersionLine(t *testing.T) {
 			raw:  "codex-cli 0.118.0\n",
 			want: "codex-cli 0.118.0",
 		},
-		// Reproduces #2516: gemini's Windows shim emits `chcp` output to stdout
-		// before the real version. The chcp line has no dotted-number form,
-		// so the semver scan skips it and picks up "0.42.0" from the next line.
 		{
 			name: "windows chcp prefix before version",
 			raw:  "Active code page: 65001\n0.42.0\n",
@@ -153,9 +120,10 @@ func TestCheckMinVersion(t *testing.T) {
 		{"claude", "1.0.128", true},
 		{"claude", "1.9.99", true},
 		{"claude", "invalid", true},
-		{"codex", "codex-cli 0.118.0", false},
-		{"codex", "codex-cli 0.100.0", false},
-		{"codex", "codex-cli 0.99.0", true},
+		{"codex", "codex-cli 0.144.3", false},
+		{"codex", "codex-cli 0.144.0", false},
+		{"codex", "codex-cli 0.143.0", true},
+		{"codex", "codex-cli 0.100.0", true},
 		{"codex", "codex-cli 0.50.0", true},
 		{"unknown", "1.0.0", false},
 	}

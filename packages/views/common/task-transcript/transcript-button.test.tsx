@@ -35,7 +35,6 @@ const task: AgentTask = {
   runtime_id: "",
   issue_id: "issue-1",
   status: "completed",
-  priority: 0,
   dispatched_at: "2026-05-15T10:00:05.000Z",
   started_at: "2026-05-15T10:00:06.000Z",
   completed_at: "2026-05-15T10:00:10.000Z",

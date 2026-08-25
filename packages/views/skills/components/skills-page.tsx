@@ -21,7 +21,7 @@ import type {
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
@@ -50,12 +50,17 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { useNavigation, useRowLink } from "../../navigation";
+import { indexBy } from "../../common/collections";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { PageHeader } from "../../layout/page-header";
-import { canEditSkill } from "../hooks/use-can-edit-skill";
+import { canEditSkill, canManageWorkspace } from "@multica/core/permissions";
 import { readOrigin, type OriginInfo } from "../lib/origin";
 import { CreateSkillDialog } from "./create-skill-dialog";
 import {
@@ -90,7 +95,7 @@ import { useT, useTimeAgo } from "../../i18n";
 // track exactly like the old max-content placeholder did; the empty
 // placeholder cell stays rendered to keep subgrid auto-placement intact.
 //
-// TWO-ZONE RESPONSIVENESS (replaces the retired per-tier breakpoints):
+// TWO-ZONE RESPONSIVENESS:
 // - Container ≥ @2xl (672px): WYSIWYG — every user-enabled column renders.
 //   The grid carries min-width = Σ(enabled tracks + gaps) so when the
 //   enabled set outgrows the container the wrapper scrolls horizontally.
@@ -122,31 +127,13 @@ const COLUMN_WIDTHS: Record<SkillColumnKey, number> = {
 // still carry gaps).
 const FIXED_TRACKS_WIDTH = 268 + 9 * 12;
 
-function columnTrackVars(
-  isVisible: (key: SkillColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: SkillColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as SkillColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--lgc-usedby": width("usedBy"),
-    "--lgc-source": width("source"),
-    "--lgc-creator": width("creator"),
-    "--lgc-updated": width("updated"),
-    "--lgc-created": width("created"),
-    "--lgc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
-
-// Sort/filter/column types and defaults live in the core view store
-// (@multica/core/skills/stores/view-store) so the persisted state and the
-// UI share one definition.
-type SortField = SkillSortField;
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  usedBy: "--lgc-usedby",
+  source: "--lgc-source",
+  creator: "--lgc-creator",
+  updated: "--lgc-updated",
+  created: "--lgc-created",
+}, "--lgc-minw");
 
 export interface SkillRow {
   skill: SkillSummary;
@@ -192,8 +179,6 @@ function PageHeaderBar({
           </a>
         </p>
       </div>
-      {/* Quiet chrome button (outline, icon-only below md) — primary is
-          reserved for the empty state's single CTA. */}
       <Button
         type="button"
         size="sm"
@@ -389,16 +374,16 @@ function SkillListHeader({
   onToggleAll,
   isColVisible,
 }: {
-  sortField: SortField;
+  sortField: SkillSortField;
   sortDirection: ListGridSortDirection;
-  onSort: (field: SortField) => void;
+  onSort: (field: SkillSortField) => void;
   allSelected: boolean;
   someSelected: boolean;
   onToggleAll: () => void;
   isColVisible: (key: SkillColumnKey) => boolean;
 }) {
   const { t } = useT("skills");
-  const sorted = (field: SortField) =>
+  const sorted = (field: SkillSortField) =>
     sortField === field ? sortDirection : false;
   return (
     <ListGridHeader>
@@ -410,52 +395,35 @@ function SkillListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.table.name)}
       </ListGridHeaderCell>
-      {isColVisible("usedBy") ? (
-        <ListGridHeaderCell
-          sorted={sorted("usedBy")}
-          onSort={() => onSort("usedBy")}
-        >
-          {t(($) => $.table.used_by)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="px-0" />
-      )}
-      {isColVisible("source") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.table.source)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("creator") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.table.created_by)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("updated") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("updated")}
-          onSort={() => onSort("updated")}
-        >
-          {t(($) => $.table.updated)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("usedBy")}
+        sorted={sorted("usedBy")}
+        onSort={() => onSort("usedBy")}
+      >
+        {t(($) => $.table.used_by)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("source")} className="hidden @2xl:flex">
+        {t(($) => $.table.source)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("creator")} className="hidden @2xl:flex">
+        {t(($) => $.table.created_by)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("updated")}
+        className="hidden @2xl:flex"
+        sorted={sorted("updated")}
+        onSort={() => onSort("updated")}
+      >
+        {t(($) => $.table.updated)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.table.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );
@@ -543,9 +511,7 @@ export default function SkillsPage() {
   );
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [search, setSearch] = useState("");
 
   // Persisted view preferences (per workspace, per user/device). Header sort
@@ -565,33 +531,15 @@ export default function SkillsPage() {
 
   const isColVisible = (key: SkillColumnKey) => !hiddenColumns.includes(key);
 
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const assignments = useMemo(() => selectSkillAssignments(agents), [agents]);
 
-  const membersById = useMemo(() => {
-    const map = new Map<string, MemberWithUser>();
-    for (const m of members) map.set(m.user_id, m);
-    return map;
-  }, [members]);
-
-  const runtimesById = useMemo(() => {
-    const map = new Map<string, AgentRuntime>();
-    for (const r of runtimes) map.set(r.id, r);
-    return map;
-  }, [runtimes]);
+  const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
+  const runtimesById = useMemo(() => indexBy(runtimes, (runtime) => runtime.id), [runtimes]);
 
   const myRole =
     members.find((m: MemberWithUser) => m.user_id === currentUserId)?.role ??
     null;
-  const isAdmin = myRole === "owner" || myRole === "admin";
+  const isAdmin = canManageWorkspace(myRole);
 
   const actionsCtx: SkillActionsContext = {
     wsId,
@@ -616,7 +564,10 @@ export default function SkillsPage() {
           : null,
         runtime,
         originType: origin.type,
-        canEdit: canEditSkill(skill, { userId: currentUserId, role: myRole }),
+        canEdit: canEditSkill(skill, {
+          userId: currentUserId,
+          role: myRole,
+        }).allowed,
       };
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);
@@ -681,8 +632,7 @@ export default function SkillsPage() {
   // padding on the rows wrapper, so the mounted rows remain direct subgrid
   // children and column alignment is untouched. Fixed ROW_HEIGHT rows mean
   // no per-row measurement. The scroll element is the SINGLE outer
-  // scroller (both axes) — see ListGridBody's comment for why the split
-  // scroll structure was retired.
+  // scroller (both axes) so horizontal and vertical offsets share one owner.
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -695,14 +645,15 @@ export default function SkillsPage() {
     navigation.push(paths.skillDetail(skill.id));
   };
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
   const selectedRows = rows.filter((row) => selectedIds.has(row.skill.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
-  const someSelected = selectedRows.length > 0 && !allSelected;
-  const handleToggleAll = () => {
-    setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.skill.id)),
-    );
-  };
+  const { allSelected, someSelected } = getListGridSelectionState(
+    rows.map((row) => row.skill.id),
+    selectedIds,
+  );
+  const handleToggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((row) => row.skill.id)));
 
   // --- List request error ---
   if (listError) {

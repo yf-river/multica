@@ -40,12 +40,7 @@ func TestPostHogClient_Batching(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewPostHogClient(PostHogConfig{
-		APIKey:     "test-key",
-		Host:       srv.URL,
-		BatchSize:  2,
-		FlushEvery: time.Hour, // irrelevant, we hit the size trigger
-	})
+	c := newPostHogClient("test-key", srv.URL, "test")
 
 	c.Capture(Event{Name: "signup", DistinctID: "u1", WorkspaceID: "w1"})
 	c.Capture(Event{Name: "workspace_created", DistinctID: "u1", WorkspaceID: "w1"})
@@ -80,20 +75,16 @@ func TestPostHogClient_DropsWhenFull(t *testing.T) {
 		<-block
 	}))
 	defer srv.Close()
-	defer close(block)
 
-	c := NewPostHogClient(PostHogConfig{
-		APIKey:     "test-key",
-		Host:       srv.URL,
-		QueueSize:  2,
-		BatchSize:  1,
-		FlushEvery: time.Hour,
-	})
-	defer c.Close()
+	c := newPostHogClient("test-key", srv.URL, "test")
+	defer func() {
+		close(block)
+		c.Close()
+	}()
 
 	// First event may be consumed by the worker (which is now blocked in send).
 	// Next events will sit in the queue (cap=2) until it's full and then drop.
-	for i := 0; i < 20; i++ {
+	for i := 0; i < defaultQueueSize*2; i++ {
 		c.Capture(Event{Name: "spam", DistinctID: "u"})
 	}
 	// Give the worker a chance to pick up at least one.

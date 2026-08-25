@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
-import { ImageExtension } from "./index";
+import { createEditorExtensions } from "./index";
+
+const ImageExtension = createEditorExtensions({}).find(
+  ({ name }) => name === "image",
+)!;
 
 const IMAGE_URL = "https://cdn.example.com/screen.png";
 const IMAGE_MD = `![screen](${IMAGE_URL})`;

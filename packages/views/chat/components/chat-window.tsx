@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -13,21 +13,16 @@ import {
   PopoverTrigger,
 } from "@multica/ui/components/ui/popover";
 import { toast } from "sonner";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
-import { canAssignAgent } from "@multica/views/issues/components";
+import { resolveCurrentMember } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
+import { getCurrentSlug } from "@multica/core/platform";
+import { createSafeId } from "@multica/core/utils";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
-import {
-  PickerEmpty,
-  PickerItem,
-  PickerSection,
-  PropertyPicker,
-} from "../../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { OfflineBanner } from "./offline-banner";
 import { NoAgentBanner } from "./no-agent-banner";
 import {
@@ -39,136 +34,49 @@ import {
   isTaskMessageTaskId,
 } from "@multica/core/chat/queries";
 import {
+  claimPendingChatOperation,
+  releasePendingChatOperation,
+  useChatStore,
+  usePendingChatOperationStore,
+} from "@multica/core/chat";
+import {
   useCreateChatSession,
   useDeleteChatSession,
   useMarkChatSessionRead,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
-import { useChatStore } from "@multica/core/chat";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
+import {
+  isOutcomeUnknownMutationError,
+  reconcileChatSendFailure,
+} from "./chat-send-failure";
+import { useChatOperationRecovery } from "./use-chat-operation-recovery";
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatMessagesPage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { AgentDropdown } from "./chat-agent-dropdown";
+import { ChatEmptyState } from "./chat-empty-state";
+import {
+  appendChatMessageToLatestPageCache,
+  getVisibleChatAgents,
+  removeChatMessageFromCache,
+  replaceOptimisticChatMessageId,
+} from "./chat-window-model";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
-export function getVisibleChatAgents(
-  agents: Agent[],
-  userId: string | undefined,
-  memberRole: string | undefined,
-): Agent[] {
-  return agents.filter(
-    (agent) =>
-      !agent.archived_at &&
-      canAssignAgent(agent, userId, memberRole),
-  );
-}
-
-function appendChatMessageToLatestPageCache(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  message: ChatMessage,
-) {
-  qc.setQueryData<InfiniteData<ChatMessagesPage>>(
-    chatKeys.messagesPage(sessionId),
-    (old) => {
-      if (!old) {
-        return {
-          pages: [{
-            messages: [message],
-            limit: 50,
-            has_more: false,
-            next_cursor: null,
-          }],
-          pageParams: [null],
-        };
-      }
-      if (old.pages.some((page) => page.messages.some((m) => m.id === message.id))) {
-        return old;
-      }
-      return {
-        ...old,
-        pages: old.pages.map((page, index) =>
-          index === 0 ? { ...page, messages: [...page.messages, message] } : page,
-        ),
-      };
-    },
-  );
-}
-
-function removeChatMessageFromPageCache(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  messageId: string,
-) {
-  qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
-    chatKeys.messagesPage(sessionId),
-    (old) => {
-      if (!old) return old;
-      return {
-        ...old,
-        pages: old.pages.map((page) => ({
-          ...page,
-          messages: page.messages.filter((m) => m.id !== messageId),
-        })),
-      };
-    },
-  );
-}
-
-function removeChatMessageFromCaches(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  messageId: string,
-) {
-  qc.setQueryData<ChatMessage[]>(
-    chatKeys.messages(sessionId),
-    (old) => old?.filter((m) => m.id !== messageId) ?? old,
-  );
-  removeChatMessageFromPageCache(qc, sessionId, messageId);
-}
-
-function replaceOptimisticChatMessageId(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  optimisticId: string,
-  messageId: string,
+type CancelChatTask = (
   taskId: string,
-) {
-  const replace = (messages: ChatMessage[] | undefined) => {
-    if (!messages) return messages;
-    if (messages.some((m) => m.id === messageId)) {
-      return messages.filter((m) => m.id !== optimisticId);
-    }
-    return messages.map((m) =>
-      m.id === optimisticId ? { ...m, id: messageId, task_id: taskId } : m,
-    );
-  };
+  sessionId: string,
+  options: { restoreDraftToInput: boolean; source: string },
+) => Promise<void>;
 
-  qc.setQueryData<ChatMessage[]>(
-    chatKeys.messages(sessionId),
-    replace,
-  );
-  qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
-    chatKeys.messagesPage(sessionId),
-    (old) => {
-      if (!old) return old;
-      return {
-        ...old,
-        pages: old.pages.map((page) => ({
-          ...page,
-          messages: replace(page.messages) ?? page.messages,
-        })),
-      };
-    },
-  );
-}
 
 export function ChatWindow() {
   const { t } = useT("chat");
@@ -180,6 +88,7 @@ export function ChatWindow() {
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
   const user = useAuthStore((s) => s.user);
+  useChatOperationRecovery(wsId);
   const { data: agents = [] } = useQuery({
     ...agentListOptions(wsId),
     enabled: isOpen,
@@ -188,6 +97,7 @@ export function ChatWindow() {
     ...memberListOptions(wsId),
     enabled: isOpen,
   });
+  const { role: memberRole } = resolveCurrentMember(members, user?.id);
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
   const { data: sessions = [] } = useQuery({
@@ -232,33 +142,23 @@ export function ChatWindow() {
   });
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
+  const activeOperationIdRef = useRef<string | null>(null);
   const [restoreDraftRequest, setRestoreDraftRequest] = useState<{
     id: string;
     content: string;
     attachments?: Attachment[];
-    sessionId?: string;
+    sessionId: string;
   } | null>(null);
   const handleRestoreDraftConsumed = useCallback(() => {
     setRestoreDraftRequest(null);
   }, []);
 
-  // Legacy archived sessions (the old soft-archive feature was removed but
-  // pre-existing rows with status='archived' may still exist) are excluded
-  // from the history dropdown. If one is still the active session, ChatInput
-  // is disabled and the server still rejects POST /messages for it.
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
-  const isSessionArchived = currentSession?.status === "archived";
-
   const qc = useQueryClient();
   const createSession = useCreateChatSession();
   const markRead = useMarkChatSessionRead();
 
-  const currentMember = members.find((m) => m.user_id === user?.id);
-  const memberRole = currentMember?.role;
   const availableAgents = useMemo(
-    () => getVisibleChatAgents(agents, user?.id, memberRole),
+    () => getVisibleChatAgents(agents, user?.id, memberRole ?? undefined),
     [agents, user?.id, memberRole],
   );
 
@@ -349,7 +249,7 @@ export function ChatWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- markRead ref stable
   }, [isOpen, activeSessionId, currentHasUnread]);
 
-  const { uploadWithToast } = useFileUpload(api);
+  const { uploadWithToast } = useFileUpload();
 
   // Lazy-creates a chat_session the first time the user needs an id —
   // either to send a message or to attach an uploaded file. Pulled out of
@@ -370,14 +270,12 @@ export function ChatWindow() {
   // in. A follow-up task may back-fill the real title from the first user
   // message — until then this keeps the session list scannable across locales.
   //
-  // NOTE: ensureSession does NOT flip `activeSessionId` itself. Callers must
-  // seed `chatKeys.messages(sessionId)` in the Query cache BEFORE calling
-  // `setActiveSession(sessionId)`, otherwise the first useQuery subscription
-  // for the new key reports `isLoading: true` and renders ChatMessageSkeleton
-  // for one frame (the "new-chat first-message" white flash).
+  // NOTE: ensureSession does NOT flip `activeSessionId` itself. Callers seed
+  // the paged query before switching sessions so the first infinite-query
+  // subscription does not flash a loading skeleton.
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
-    async (titleSeed: string): Promise<string | null> => {
+    async (titleSeed: string, idempotencyKey: string): Promise<string | null> => {
       if (activeSessionId) return activeSessionId;
       if (!activeAgent) return null;
       if (sessionPromiseRef.current) return sessionPromiseRef.current;
@@ -387,6 +285,7 @@ export function ChatWindow() {
           const session = await createSession.mutateAsync({
             agent_id: activeAgent.id,
             title: titleSeed.slice(0, 50),
+            idempotencyKey,
           });
           return session.id;
         } finally {
@@ -411,7 +310,7 @@ export function ChatWindow() {
     [activeAgent, uploadWithToast],
   );
 
-  const cancelChatTask = useCallback(
+  const cancelChatTask: CancelChatTask = useCallback(
     async (
       taskId: string,
       sessionId: string,
@@ -422,13 +321,20 @@ export function ChatWindow() {
         sessionId,
         source: options.source,
       });
+      qc.setQueryData<PendingChatTasksResponse>(chatKeys.pendingTasks(wsId), (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          tasks: current.tasks.filter((task) => task.task_id !== taskId),
+        };
+      });
       qc.setQueryData(chatKeys.pendingTask(sessionId), {});
 
       try {
         const result = await api.cancelTaskById(taskId);
         const restored = result.cancelled_chat_message;
         if (restored?.restore_to_input) {
-          removeChatMessageFromCaches(qc, restored.chat_session_id, restored.message_id);
+          removeChatMessageFromCache(qc, restored.chat_session_id, restored.message_id);
           if (options.restoreDraftToInput && restored.chat_session_id === sessionId) {
             setRestoreDraftRequest({
               id: restored.message_id,
@@ -438,26 +344,26 @@ export function ChatWindow() {
             });
           }
         }
-        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
-        qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
         apiLogger.info("cancelTask.success", {
           taskId,
           sessionId,
+          source: options.source,
           restoredToInput: !!restored?.restore_to_input && options.restoreDraftToInput,
         });
-        return result;
       } catch (err) {
         apiLogger.warn("cancelTask.error (task may have already finished)", {
           taskId,
           sessionId,
+          source: options.source,
           err,
         });
-        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+      } finally {
         qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
-        return null;
+        qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+        qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
       }
     },
-    [qc],
+    [qc, wsId],
   );
 
   const handleSend = useCallback(
@@ -467,12 +373,39 @@ export function ChatWindow() {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
     ): Promise<boolean> => {
-      if (!activeAgent) {
-        apiLogger.warn("sendChatMessage skipped: no active agent");
+      if (!activeAgent || !user || !wsId || !getCurrentSlug()) {
+        apiLogger.warn("sendChatMessage skipped: missing active scope");
         return false;
       }
 
       const finalContent = content;
+      const requestedAttachmentIds = [...new Set(attachmentIds ?? [])].sort();
+      const operationId = createSafeId();
+      if (!claimPendingChatOperation(operationId)) return false;
+      activeOperationIdRef.current = operationId;
+      usePendingChatOperationStore.getState().start({
+        id: operationId,
+        accountId: user.id,
+        workspaceId: wsId,
+        agentId: activeAgent.id,
+        sessionId: activeSessionId,
+        title: finalContent.slice(0, 50),
+        content: finalContent,
+        attachmentIds: requestedAttachmentIds,
+        stage: activeSessionId ? "sending-message" : "creating-session",
+        cancelRequested: false,
+        createdAt: Date.now(),
+      });
+      const finishOperation = (remove: boolean) => {
+        if (remove) usePendingChatOperationStore.getState().remove(operationId);
+        releasePendingChatOperation(operationId);
+        if (activeOperationIdRef.current === operationId) {
+          activeOperationIdRef.current = null;
+        }
+      };
+      const operationStillOwnedByCurrentAccount = () =>
+        usePendingChatOperationStore.getState().operations[operationId]?.accountId ===
+        useAuthStore.getState().user?.id;
 
       const isNewSession = !activeSessionId;
 
@@ -481,21 +414,48 @@ export function ChatWindow() {
         isNewSession,
         agentId: activeAgent.id,
         contentLength: finalContent.length,
-        attachmentCount: attachmentIds?.length ?? 0,
+        operationId,
+        attachmentCount: requestedAttachmentIds.length,
       });
 
       let sessionId: string | null = null;
       try {
-        sessionId = await ensureSession(finalContent);
+        sessionId = await ensureSession(finalContent, operationId);
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
+        if (isOutcomeUnknownMutationError(err)) {
+          if (!operationStillOwnedByCurrentAccount()) {
+            finishOperation(false);
+            return true;
+          }
+          const live = useChatStore.getState();
+          const stillOnSourceSession =
+            live.activeSessionId === activeSessionId &&
+            (activeSessionId !== null || live.selectedAgentId === selectedAgentId);
+          commitInput?.({ clearEditor: stillOnSourceSession });
+          finishOperation(false);
+          toast.warning(t(($) => $.input.send_status_unknown_toast));
+          return true;
+        }
+        finishOperation(true);
         toast.error(t(($) => $.input.send_failed_toast));
         return false;
       }
       if (!sessionId) {
+        finishOperation(true);
         apiLogger.warn("sendChatMessage aborted: ensureSession returned null");
         return false;
       }
+      if (!operationStillOwnedByCurrentAccount()) {
+        // Logout/account cleanup won the race with session creation. Do not
+        // issue the message request or repopulate the cleared query cache.
+        finishOperation(false);
+        return true;
+      }
+      usePendingChatOperationStore.getState().update(operationId, {
+        sessionId,
+        stage: "sending-message",
+      });
 
       // Optimistic burst — everything that gives the user "I sent a message
       // and the agent is now working" feedback fires BEFORE the HTTP roundtrip.
@@ -504,12 +464,10 @@ export function ChatWindow() {
       // user's message — small but visible "did it actually send?" gap.
       const sentAt = new Date().toISOString();
       const optimistic: ChatMessage = {
-        id: `optimistic-${Date.now()}`,
-        chat_session_id: sessionId,
+        id: `optimistic-chat:${operationId}`,
         role: "user",
         content: finalContent,
         task_id: null,
-        created_at: sentAt,
         attachments: draftAttachments,
       };
       // Seed cache BEFORE flipping activeSessionId. If we set the active
@@ -519,10 +477,6 @@ export function ChatWindow() {
       // the very first read after activeSessionId flips hits data
       // synchronously and ChatMessageList mounts directly.
       appendChatMessageToLatestPageCache(qc, sessionId, optimistic);
-      qc.setQueryData<ChatMessage[]>(
-        chatKeys.messages(sessionId),
-        (old) => (old ? [...old, optimistic] : [optimistic]),
-      );
       // Seed the pending-task with a temporary id so the StatusPill mounts
       // and starts ticking the instant the user clicks send. Real task_id
       // and server-authoritative created_at land below; until then the pill
@@ -553,12 +507,42 @@ export function ChatWindow() {
 
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(
+          sessionId,
+          finalContent,
+          operationId,
+          requestedAttachmentIds,
+        );
       } catch (err) {
+        if (!operationStillOwnedByCurrentAccount()) {
+          finishOperation(false);
+          return true;
+        }
+        const disposition = reconcileChatSendFailure(err, {
+          refreshServerState: () => {
+            qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
+            qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+            qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
+            qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+          },
+          rollbackOptimisticState: () => {
+            stopRequestedBeforeTaskRef.current = false;
+            removeChatMessageFromCache(qc, sessionId, optimistic.id);
+            qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+          },
+        });
+        if (disposition === "outcome-unknown") {
+          apiLogger.warn("sendChatMessage.response.invalid.reconcile", {
+            sessionId,
+            optimisticId: optimistic.id,
+            err,
+          });
+          toast.warning(t(($) => $.input.send_status_unknown_toast));
+          finishOperation(false);
+          return true;
+        }
+        finishOperation(true);
         apiLogger.error("sendChatMessage.error.rollback", { sessionId, optimisticId: optimistic.id, err });
-        stopRequestedBeforeTaskRef.current = false;
-        removeChatMessageFromCaches(qc, sessionId, optimistic.id);
-        qc.setQueryData(chatKeys.pendingTask(sessionId), {});
         setRestoreDraftRequest({
           id: `send-failed-${optimistic.id}`,
           content: finalContent,
@@ -570,6 +554,10 @@ export function ChatWindow() {
         });
         toast.error(t(($) => $.input.send_failed_toast));
         return false;
+      }
+      if (!operationStillOwnedByCurrentAccount()) {
+        finishOperation(false);
+        return true;
       }
       apiLogger.info("sendChatMessage.success", {
         sessionId,
@@ -585,8 +573,12 @@ export function ChatWindow() {
         status: "queued",
         created_at: result.created_at,
       });
-      if (stopRequestedBeforeTaskRef.current) {
+      const cancelRequested =
+        stopRequestedBeforeTaskRef.current ||
+        usePendingChatOperationStore.getState().operations[operationId]?.cancelRequested;
+      if (cancelRequested) {
         stopRequestedBeforeTaskRef.current = false;
+        finishOperation(true);
         await cancelChatTask(result.task_id, sessionId, {
           restoreDraftToInput: true,
           source: "deferred-send",
@@ -595,11 +587,10 @@ export function ChatWindow() {
       }
       // The server reports which attachment ids it actually bound. Diff
       // against what we requested so a silent bind failure surfaces to the
-      // user — no extra fetch. Skip the check on servers that predate the
-      // field (attachment_ids undefined) rather than false-alarm.
-      if (attachmentIds && attachmentIds.length > 0 && result.attachment_ids) {
+      // user — no extra fetch.
+      if (requestedAttachmentIds.length > 0) {
         const boundIds = new Set(result.attachment_ids);
-        const missing = attachmentIds.filter((id) => !boundIds.has(id));
+        const missing = requestedAttachmentIds.filter((id) => !boundIds.has(id));
         if (missing.length > 0) {
           apiLogger.warn("sendChatMessage.attachments missing after send", {
             sessionId,
@@ -609,8 +600,8 @@ export function ChatWindow() {
           toast.error(t(($) => $.input.attachment_bind_failed_toast));
         }
       }
-      qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
       qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
+      finishOperation(true);
       return true;
     },
     [
@@ -622,8 +613,21 @@ export function ChatWindow() {
       qc,
       setActiveSession,
       t,
+      user,
+      wsId,
     ],
   );
+
+  useEffect(() => {
+    if (!stopRequestedBeforeTaskRef.current) return;
+    if (!pendingTaskId || !activeSessionId || !isTaskMessageTaskId(pendingTaskId)) return;
+
+    stopRequestedBeforeTaskRef.current = false;
+    void cancelChatTask(pendingTaskId, activeSessionId, {
+      restoreDraftToInput: true,
+      source: "reconciled-send",
+    });
+  }, [pendingTaskId, activeSessionId, cancelChatTask]);
 
   const handleStop = useCallback(() => {
     if (!pendingTaskId || !activeSessionId) {
@@ -632,9 +636,14 @@ export function ChatWindow() {
     }
     if (!isTaskMessageTaskId(pendingTaskId)) {
       stopRequestedBeforeTaskRef.current = true;
+      const operationId = activeOperationIdRef.current;
+      if (operationId) {
+        usePendingChatOperationStore.getState().requestCancel(operationId);
+      }
       apiLogger.info("cancelTask.deferred until server task id", {
         taskId: pendingTaskId,
         sessionId: activeSessionId,
+        operationId,
       });
       return;
     }
@@ -761,6 +770,7 @@ export function ChatWindow() {
             isOpen={isOpen}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
+            onCancelTask={cancelChatTask}
           />
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
@@ -814,7 +824,7 @@ export function ChatWindow() {
           onLoadOlderMessages={() => void fetchOlderMessages()}
         />
       ) : (
-        <EmptyState
+        <ChatEmptyState
           hasSessions={sessions.length > 0}
           agentName={activeAgent?.name}
           onPickPrompt={(text) => handleSend(text)}
@@ -836,8 +846,7 @@ export function ChatWindow() {
         <OfflineBanner agentName={activeAgent?.name} availability={availability} />
       )}
 
-      {/* Input — disabled for legacy archived sessions; locked out entirely
-       *  when there's no agent (the EmptyState above carries the CTA). */}
+      {/* Input is locked out when there is no agent; the EmptyState above carries the CTA. */}
       <ChatInput
         onSend={handleSend}
         restoreDraftRequest={restoreDraftRequest}
@@ -845,7 +854,6 @@ export function ChatWindow() {
         onUploadFile={handleUploadFile}
         onStop={handleStop}
         isRunning={!!pendingTaskId}
-        disabled={isSessionArchived}
         noAgent={noAgent}
         agentName={activeAgent?.name}
         leftAdornment={
@@ -867,156 +875,96 @@ export function ChatWindow() {
  * different agent = switch agent + start a fresh chat (session=null).
  * The current agent is marked with a check and not clickable.
  */
-export function AgentDropdown({
-  agents,
-  activeAgent,
-  userId,
-  onSelect,
-}: {
-  agents: Agent[];
-  activeAgent: Agent | null;
-  userId: string | undefined;
-  onSelect: (agent: Agent) => void;
-}) {
-  const { t } = useT("chat");
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState("");
-  // Split into the user's own agents and everyone else so the menu groups
-  // them — matches the old AgentSelector layout.
-  const { mine, others } = useMemo(() => {
-    const mine: Agent[] = [];
-    const others: Agent[] = [];
-    for (const a of agents) {
-      if (a.owner_id === userId) mine.push(a);
-      else others.push(a);
-    }
-    return { mine, others };
-  }, [agents, userId]);
-
-  const query = filter.trim().toLowerCase();
-  const matches = (name: string) =>
-    !query || name.toLowerCase().includes(query) || matchesPinyin(name, query);
-  const filteredMine = mine.filter((agent) => matches(agent.name));
-  const filteredOthers = others.filter((agent) => matches(agent.name));
-
-  const handlePick = (agent: Agent) => {
-    onSelect(agent);
-    setOpen(false);
-  };
-
-  if (!activeAgent) {
-    return <span className="text-xs text-muted-foreground">{t(($) => $.window.no_agents)}</span>;
-  }
-
-  return (
-    <PropertyPicker
-      open={open}
-      onOpenChange={setOpen}
-      width="w-64"
-      align="start"
-      side="top"
-      searchable
-      searchPlaceholder={t(($) => $.window.agent_filter_placeholder)}
-      onSearchChange={setFilter}
-      triggerRender={
-        <button
-          type="button"
-          className="flex items-center gap-1.5 rounded-md px-1.5 py-1 -ml-1 cursor-pointer outline-none transition-colors hover:bg-accent aria-expanded:bg-accent"
-        />
-      }
-      trigger={
-        <>
-          <ActorAvatar
-            actorType="agent"
-            actorId={activeAgent.id}
-            size={24}
-            enableHoverCard
-            showStatusDot
-          />
-          <span className="text-xs font-medium max-w-28 truncate">{activeAgent.name}</span>
-          <ChevronDown className="size-3 text-muted-foreground shrink-0" />
-        </>
-      }
-    >
-      {filteredMine.length === 0 && filteredOthers.length === 0 ? (
-        <PickerEmpty />
-      ) : (
-        <>
-          {filteredMine.length > 0 && (
-            <PickerSection label={t(($) => $.window.my_agents)}>
-              {filteredMine.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === activeAgent.id}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-          {filteredOthers.length > 0 && (
-            <PickerSection label={t(($) => $.window.others)}>
-              {filteredOthers.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === activeAgent.id}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-        </>
-      )}
-    </PropertyPicker>
-  );
-}
-
-function AgentPickerItem({
-  agent,
-  isCurrent,
-  onSelect,
-}: {
-  agent: Agent;
-  isCurrent: boolean;
-  onSelect: (agent: Agent) => void;
-}) {
-  return (
-    <PickerItem
-      selected={isCurrent}
-      onClick={() => onSelect(agent)}
-    >
-      <ActorAvatar
-        actorType="agent"
-        actorId={agent.id}
-        size={24}
-        enableHoverCard
-        showStatusDot
-      />
-      <span className="truncate flex-1">{agent.name}</span>
-    </PickerItem>
-  );
-}
 
 /**
- * Session dropdown: a flat "Chat history" list of all non-archived
- * sessions. Selecting a session from a different agent implicitly
+ * Session dropdown: a flat "Chat history" list. Archived responses from an
+ * older backend stay hidden. Selecting a session from a different agent implicitly
  * switches the agent too
  * (sessions are bound 1:1 to an agent). "New chat" lives in the header's
  * ⊕ button, not inside this dropdown.
  */
+function SessionHistoryButton({
+  onActivate,
+  className,
+  disabled,
+  label,
+  children,
+}: {
+  onActivate: () => void;
+  className: string;
+  disabled?: boolean;
+  label?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onActivate();
+      }}
+      disabled={disabled}
+      className={className}
+      aria-label={label}
+      title={label}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SessionHistoryConfirmationActions({
+  cancelLabel,
+  confirmLabel,
+  disabled,
+  onCancel,
+  onConfirm,
+}: {
+  cancelLabel: string;
+  confirmLabel: string;
+  disabled: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <SessionHistoryButton
+        onActivate={onCancel}
+        disabled={disabled}
+        className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+      >
+        {cancelLabel}
+      </SessionHistoryButton>
+      <SessionHistoryButton
+        onActivate={onConfirm}
+        disabled={disabled}
+        className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+      >
+        {confirmLabel}
+      </SessionHistoryButton>
+    </div>
+  );
+}
+
 function SessionDropdown({
   sessions,
   agents,
   isOpen,
   activeSessionId,
   onSelectSession,
+  onCancelTask,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
   isOpen: boolean;
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
+  onCancelTask: CancelChatTask;
 }) {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
@@ -1024,13 +972,6 @@ function SessionDropdown({
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
-
-  // The old soft-archive feature was removed. Pre-existing rows with
-  // status='archived' are legacy dead data and are excluded from history.
-  const historySessions = useMemo(
-    () => sessions.filter((s) => s.status !== "archived"),
-    [sessions],
-  );
 
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -1046,7 +987,6 @@ function SessionDropdown({
   const deleteSession = useDeleteChatSession();
   const updateSession = useUpdateChatSession();
   const setActiveSession = useChatStore((s) => s.setActiveSession);
-  const queryClient = useQueryClient();
   const formatTimeAgo = useFormatTimeAgo();
 
   // Aggregate "which sessions have an in-flight task right now". Reuses
@@ -1156,37 +1096,10 @@ function SessionDropdown({
       [...previousInFlightRef.current].filter((sessionId) => sessionId !== session.id),
     );
 
-    // Same optimistic behavior as the active chat Stop button: remove the
-    // running affordance immediately, then let task:cancelled / refetches
-    // converge every open surface on the server truth.
-    queryClient.setQueryData<PendingChatTasksResponse>(chatKeys.pendingTasks(wsId), (current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        tasks: current.tasks.filter((item) => item.task_id !== task.task_id),
-      };
-    });
-    queryClient.setQueryData(chatKeys.pendingTask(session.id), {});
-    queryClient.invalidateQueries({ queryKey: chatKeys.messages(session.id) });
-    queryClient.invalidateQueries({ queryKey: chatKeys.messagesPage(session.id) });
-
-    api.cancelTaskById(task.task_id).then(
-      (result) => {
-        const restored = result.cancelled_chat_message;
-        if (restored?.restore_to_input) {
-          removeChatMessageFromCaches(queryClient, restored.chat_session_id, restored.message_id);
-        }
-        apiLogger.info("cancelTask.success (history row)", { taskId: task.task_id, sessionId: session.id });
-      },
-      (err) =>
-        apiLogger.warn("cancelTask.error (history row; task may have already finished)", {
-          taskId: task.task_id,
-          sessionId: session.id,
-          err,
-        }),
-    ).finally(() => {
-      queryClient.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
-      queryClient.invalidateQueries({ queryKey: chatKeys.pendingTask(session.id) });
+    void onCancelTask(task.task_id, session.id, {
+      restoreDraftToInput: false,
+      source: "history-row",
+    }).finally(() => {
       setStoppingTaskId(null);
       setConfirmingStopId(null);
     });
@@ -1274,79 +1187,25 @@ function SessionDropdown({
         </div>
         {!isRenaming && (
           isConfirmingDelete ? (
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setConfirmingDeleteId(null);
-                }}
-                disabled={deleteSession.isPending}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-              >
-                {t(($) => $.session_history.delete_dialog.cancel)}
-              </button>
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  handleConfirmDelete(session);
-                }}
-                disabled={deleteSession.isPending}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {deleteSession.isPending
-                  ? t(($) => $.session_history.delete_dialog.confirming)
-                  : t(($) => $.session_history.delete_dialog.confirm)}
-              </button>
-            </div>
+            <SessionHistoryConfirmationActions
+              cancelLabel={t(($) => $.session_history.delete_dialog.cancel)}
+              confirmLabel={deleteSession.isPending
+                ? t(($) => $.session_history.delete_dialog.confirming)
+                : t(($) => $.session_history.delete_dialog.confirm)}
+              disabled={deleteSession.isPending}
+              onCancel={() => setConfirmingDeleteId(null)}
+              onConfirm={() => handleConfirmDelete(session)}
+            />
           ) : isConfirmingStop && pendingTask ? (
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setConfirmingStopId(null);
-                }}
-                disabled={stoppingTaskId === pendingTask.task_id}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-              >
-                {t(($) => $.session_history.stop_dialog.cancel)}
-              </button>
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  handleConfirmStop(session, pendingTask);
-                }}
-                disabled={stoppingTaskId === pendingTask.task_id}
-                className="inline-flex h-7 items-center rounded px-2 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {stoppingTaskId === pendingTask.task_id
-                  ? t(($) => $.session_history.stop_dialog.confirming)
-                  : t(($) => $.session_history.stop_dialog.confirm)}
-              </button>
-            </div>
+            <SessionHistoryConfirmationActions
+              cancelLabel={t(($) => $.session_history.stop_dialog.cancel)}
+              confirmLabel={stoppingTaskId === pendingTask.task_id
+                ? t(($) => $.session_history.stop_dialog.confirming)
+                : t(($) => $.session_history.stop_dialog.confirm)}
+              disabled={stoppingTaskId === pendingTask.task_id}
+              onCancel={() => setConfirmingStopId(null)}
+              onConfirm={() => handleConfirmStop(session, pendingTask)}
+            />
           ) : (
             <div className="flex shrink-0 items-center">
               <div className="flex h-7 items-center justify-end gap-1.5 text-xs text-muted-foreground group-hover/history-row:hidden">
@@ -1363,61 +1222,31 @@ function SessionDropdown({
               </div>
               <div className="hidden h-7 items-center gap-0.5 group-hover/history-row:flex">
                 {isRunning && pendingTask && (
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      setConfirmingStopId(session.id);
-                    }}
+                  <SessionHistoryButton
+                    onActivate={() => setConfirmingStopId(session.id)}
                     className="inline-flex h-7 items-center gap-1 rounded px-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none"
-                    aria-label={t(($) => $.session_history.row_stop_aria)}
-                    title={t(($) => $.session_history.row_stop_aria)}
+                    label={t(($) => $.session_history.row_stop_aria)}
                   >
                     <Square className="size-2.5 fill-current" />
                     {t(($) => $.session_history.stop_action)}
-                  </button>
+                  </SessionHistoryButton>
                 )}
                 {!isRunning && (
                   <>
-                    <button
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setRenamingId(session.id);
-                      }}
+                    <SessionHistoryButton
+                      onActivate={() => setRenamingId(session.id)}
                       className="inline-flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none"
-                      aria-label={t(($) => $.session_history.row_rename_aria)}
-                      title={t(($) => $.session_history.row_rename_aria)}
+                      label={t(($) => $.session_history.row_rename_aria)}
                     >
                       <Pencil className="size-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setConfirmingDeleteId(session.id);
-                      }}
+                    </SessionHistoryButton>
+                    <SessionHistoryButton
+                      onActivate={() => setConfirmingDeleteId(session.id)}
                       className="inline-flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none"
-                      aria-label={t(($) => $.session_history.row_delete_aria)}
-                      title={t(($) => $.session_history.row_delete_aria)}
+                      label={t(($) => $.session_history.row_delete_aria)}
                     >
                       <Trash2 className="size-3.5" />
-                    </button>
+                    </SessionHistoryButton>
                   </>
                 )}
               </div>
@@ -1476,7 +1305,7 @@ function SessionDropdown({
           className="max-h-96 w-auto min-w-[max(16rem,var(--anchor-width,16rem))] max-w-96 gap-0 overflow-y-auto p-1"
           onClick={(e) => e.stopPropagation()}
         >
-          {historySessions.length === 0 ? (
+          {sessions.length === 0 ? (
             <div className="px-2 py-1.5 text-xs text-muted-foreground">
               {t(($) => $.window.no_previous)}
             </div>
@@ -1485,7 +1314,7 @@ function SessionDropdown({
               <div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">
                 {t(($) => $.window.history_group)}
               </div>
-              {historySessions.map(renderRow)}
+              {sessions.map(renderRow)}
             </div>
           )}
         </PopoverContent>
@@ -1592,81 +1421,3 @@ function useFormatTimeAgo(): (dateStr: string) => string {
 // Three starter prompts shown on the empty state. Each is keyed into the
 // chat namespace so labels translate per locale; the icon stays raw since
 // emojis are locale-neutral.
-const STARTER_KEYS: ("list_open" | "summarize_today" | "plan_next")[] = [
-  "list_open",
-  "summarize_today",
-  "plan_next",
-];
-const STARTER_ICONS: Record<(typeof STARTER_KEYS)[number], string> = {
-  list_open: "📋",
-  summarize_today: "📝",
-  plan_next: "💡",
-};
-
-function EmptyState({
-  hasSessions,
-  agentName,
-  onPickPrompt,
-}: {
-  hasSessions: boolean;
-  agentName?: string;
-  onPickPrompt: (text: string) => void;
-}) {
-  const { t } = useT("chat");
-  // First-time experience: the user has never started a chat in this
-  // workspace. Educate before suggesting actions — starter prompts
-  // presume the user already knows what chat is for.
-  if (!hasSessions) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-8">
-        <div className="text-center space-y-3">
-          <h3 className="text-base font-semibold">
-            {t(($) => $.empty_state.first_time_title)}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {t(($) => $.empty_state.first_time_intro)}{" "}
-            <span className="font-medium text-foreground">
-              {t(($) => $.empty_state.first_time_pillars)}
-            </span>
-            {t(($) => $.empty_state.first_time_pillars_suffix)}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {t(($) => $.empty_state.first_time_actions)}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Returning user: starter prompts are the fastest path back to action.
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 py-8">
-      <div className="text-center space-y-1">
-        <h3 className="text-base font-semibold">
-          {agentName
-            ? t(($) => $.empty_state.returning_title_named, { name: agentName })
-            : t(($) => $.empty_state.returning_title_default)}
-        </h3>
-        <p className="text-sm text-muted-foreground">
-          {t(($) => $.empty_state.returning_subtitle)}
-        </p>
-      </div>
-      <div className="w-full max-w-xs space-y-2">
-        {STARTER_KEYS.map((key) => {
-          const text = t(($) => $.starter_prompts[key]);
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onPickPrompt(text)}
-              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent hover:border-brand/40"
-            >
-              <span className="mr-2">{STARTER_ICONS[key]}</span>
-              {text}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

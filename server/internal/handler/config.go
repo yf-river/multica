@@ -9,7 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 )
 
-type AppConfig struct {
+type appConfig struct {
 	CdnDomain string `json:"cdn_domain"`
 	// CdnSigned tells clients that the CDN domain above serves PRIVATE
 	// content through time-bounded signed URLs (CloudFront signing is
@@ -17,18 +17,15 @@ type AppConfig struct {
 	// publicly fetchable — renderers must not pick it as a native
 	// <img>/<video> source and should fall back to the per-attachment
 	// API endpoint or a freshly signed download_url instead (MUL-3254).
-	// Omitted when false so older clients see the previous shape.
-	CdnSigned bool `json:"cdn_signed,omitempty"`
+	CdnSigned bool `json:"cdn_signed"`
 	// Public auth config consumed by the web app at runtime so self-hosted
 	// deployments do not need to rebuild the frontend image when operators
 	// toggle signup.
 	AllowSignup bool `json:"allow_signup"`
 	// WorkspaceCreationDisabled mirrors the server-side
 	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
-	// "Create workspace" affordance on self-hosted instances. Omitted
-	// from the JSON when false to keep responses identical to the
-	// previous shape for the common managed-cloud case (#3433).
-	WorkspaceCreationDisabled bool `json:"workspace_creation_disabled,omitempty"`
+	// "Create workspace" affordance on self-hosted instances.
+	WorkspaceCreationDisabled bool `json:"workspace_creation_disabled"`
 	// Public daemon setup config consumed by the web app at runtime so
 	// self-hosted instances can show `multica setup self-host` commands
 	// with the operator's own domains instead of Multica Cloud defaults.
@@ -50,7 +47,7 @@ type AppConfig struct {
 // add fields here that are safe to expose to anonymous callers — never user- or
 // tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	config := AppConfig{
+	config := appConfig{
 		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 	}
@@ -77,9 +74,6 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 func daemonSetupURLsFromEnv() (string, string) {
 	serverURL := normalizePublicURL(os.Getenv("MULTICA_PUBLIC_URL"))
 	appURL := normalizePublicURL(os.Getenv("MULTICA_APP_URL"))
-	if appURL == "" {
-		appURL = normalizePublicURL(os.Getenv("FRONTEND_ORIGIN"))
-	}
 	if appURL == "" {
 		return "", ""
 	}

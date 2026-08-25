@@ -13,11 +13,6 @@ import (
 // browser/desktop client — one human, one session — but break for
 // group chat_sessions where many Lark users converse with one Bot.
 //
-// Concrete implementation lands in a follow-up PR (MUL-2671). The
-// interface is declared here so the migration + service boundary PR
-// can establish the architectural cut without dragging in OAuth, WS,
-// and card-patching code.
-//
 // Inbound contract (enforced by the implementation):
 //
 //   - EnsureChatSession is the ONLY way Lark code creates / looks up a
@@ -61,15 +56,12 @@ type EnsureChatSessionParams struct {
 // Lark-side message id used for idempotency dedup.
 //
 // ClaimToken is the owner-fencing token returned by the dispatcher's
-// ClaimLarkInboundDedup call. When ClaimToken.Valid is true,
-// AppendUserMessage runs MarkLarkInboundDedupProcessed INSIDE its own
+// ClaimLarkInboundDedup call. AppendUserMessage runs
+// MarkLarkInboundDedupProcessed INSIDE its own
 // chat_message+session transaction, gated on this token. A mismatched
 // token (another worker re-claimed the row while we were running)
 // returns ErrClaimLost and rolls back the entire transaction, so no
-// second chat_message can land for the same Lark message_id. Pass an
-// invalid (zero) UUID to skip the in-tx Mark — useful for tests and
-// for callers that have already finalized dedup outside the
-// transaction.
+// second chat_message can land for the same Lark message_id.
 type AppendUserMessageParams struct {
 	ChatSessionID pgtype.UUID
 	Sender        pgtype.UUID
@@ -77,9 +69,7 @@ type AppendUserMessageParams struct {
 	// quoted-reply / forwarded context the enricher inlined.
 	Body string
 	// CommandBody is the user's own typed text, used as the `/issue`
-	// command source. It is the un-enriched Body; when empty (callers
-	// that don't set it), `/issue` parsing falls back to Body so
-	// behavior is unchanged for the non-enriched path.
+	// command source. It is the un-enriched Body.
 	CommandBody    string
 	InstallationID pgtype.UUID
 	LarkMessageID  string
@@ -97,12 +87,6 @@ type AppendResult struct {
 	// with `/issue`. The caller passes this to
 	// service.IssueService.Create.
 	IssueCommand *IssueCommand
-	// DedupMarked is true when AppendUserMessage finalized the dedup
-	// claim in its own transaction (i.e. ClaimToken was supplied and
-	// the Mark succeeded). The dispatcher uses this to skip the
-	// post-pipeline finalize, since the row is already in its
-	// terminal state.
-	DedupMarked bool
 }
 
 // IssueCommand is the parsed shape of a user-typed `/issue ...`
@@ -111,13 +95,6 @@ type AppendResult struct {
 type IssueCommand struct {
 	Title       string
 	Description string
-}
-
-// AuditLogger records dropped inbound events to lark_inbound_audit.
-// The interface deliberately does not accept a message body — see the
-// drop-audit policy in MUL-2671 §4.7.
-type AuditLogger interface {
-	RecordDrop(ctx context.Context, p AuditDropParams) error
 }
 
 type AuditDropParams struct {

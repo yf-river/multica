@@ -36,6 +36,7 @@ WITH RECURSIVE selected_roots AS (
     WHERE c.issue_id = @issue_id
       AND c.workspace_id = @workspace_id
       AND c.parent_id IS NULL
+      AND (sqlc.narg('since')::timestamptz IS NULL OR c.created_at > sqlc.narg('since'))
     ORDER BY c.created_at ASC, c.id ASC
     LIMIT @row_limit
 ),
@@ -56,54 +57,7 @@ thread_stats AS (
     FROM membership
     GROUP BY root_id
 )
-SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-       c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-       c.resolved_at, c.resolved_by_type, c.resolved_by_id,
-       ts.reply_count AS reply_count,
-       ts.last_activity_at AS last_activity_at
-FROM selected_roots sr
-JOIN comment c ON c.id = sr.id
-JOIN thread_stats ts ON ts.root_id = sr.id
-ORDER BY c.created_at ASC, c.id ASC;
-
--- name: ListRootCommentsSinceForIssue :many
--- Top-level comments created strictly after @since, each annotated with the
--- same reply_count / last_activity_at stats as ListRootCommentsForIssue. The
--- @since filter narrows which roots are returned; the stats are still computed
--- over each selected thread's full subtree (so a freshly created root with no
--- replies reports reply_count 0 and last_activity_at = its own created_at).
--- selected_roots applies the @since + @row_limit cut up front so the recursive
--- membership walk only touches the subtrees of the roots we actually return.
-WITH RECURSIVE selected_roots AS (
-    SELECT c.id, c.created_at
-    FROM comment c
-    WHERE c.issue_id = @issue_id
-      AND c.workspace_id = @workspace_id
-      AND c.parent_id IS NULL
-      AND c.created_at > @since
-    ORDER BY c.created_at ASC, c.id ASC
-    LIMIT @row_limit
-),
-membership(id, root_id, comment_created_at) AS (
-    SELECT sr.id, sr.id AS root_id, sr.created_at
-    FROM selected_roots sr
-    UNION ALL
-    SELECT c.id, m.root_id, c.created_at
-    FROM comment c
-    JOIN membership m ON c.parent_id = m.id
-    WHERE c.issue_id = @issue_id
-      AND c.workspace_id = @workspace_id
-),
-thread_stats AS (
-    SELECT root_id,
-           (COUNT(*) - 1)::int AS reply_count,
-           MAX(comment_created_at)::timestamptz AS last_activity_at
-    FROM membership
-    GROUP BY root_id
-)
-SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-       c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-       c.resolved_at, c.resolved_by_type, c.resolved_by_id,
+SELECT sqlc.embed(c),
        ts.reply_count AS reply_count,
        ts.last_activity_at AS last_activity_at
 FROM selected_roots sr
@@ -133,24 +87,19 @@ descendants AS (
     -- Start from the root, then keep adding any comment whose parent is
     -- already in the set. Cycle-safe under PK constraint (a comment cannot
     -- be its own ancestor).
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN thread_root tr ON c.id = tr.id
     UNION
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN descendants d ON c.parent_id = d.id
     WHERE c.issue_id = @issue_id AND c.workspace_id = @workspace_id
 )
-SELECT id, issue_id, author_type, author_id, content, type,
-       created_at, updated_at, parent_id, workspace_id,
-       resolved_at, resolved_by_type, resolved_by_id
-FROM descendants
-ORDER BY created_at ASC, id ASC
+SELECT sqlc.embed(c)
+FROM descendants d
+JOIN comment c ON c.id = d.id
+ORDER BY c.created_at ASC, c.id ASC
 LIMIT @row_limit;
 
 -- name: ListThreadCommentsForIssuePaged :many
@@ -182,48 +131,38 @@ thread_root AS (
     SELECT id FROM root_of WHERE parent_id IS NULL LIMIT 1
 ),
 descendants AS (
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN thread_root tr ON c.id = tr.id
     UNION
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN descendants d ON c.parent_id = d.id
     WHERE c.issue_id = @issue_id AND c.workspace_id = @workspace_id
 ),
 reply_page AS (
-    SELECT d.id, d.issue_id, d.author_type, d.author_id, d.content, d.type,
-           d.created_at, d.updated_at, d.parent_id, d.workspace_id,
-           d.resolved_at, d.resolved_by_type, d.resolved_by_id
+    SELECT c.id
     FROM descendants d
-    WHERE d.id NOT IN (SELECT id FROM thread_root)
+    JOIN comment c ON c.id = d.id
+    WHERE c.id NOT IN (SELECT id FROM thread_root)
       AND (
           @has_cursor::boolean = FALSE
-          OR (d.created_at, d.id) < (@before_at::timestamptz, @before_id::uuid)
+          OR (c.created_at, c.id) < (@before_at::timestamptz, @before_id::uuid)
       )
-    ORDER BY d.created_at DESC, d.id DESC
+    ORDER BY c.created_at DESC, c.id DESC
     LIMIT @reply_limit
-)
-SELECT id, issue_id, author_type, author_id, content, type,
-       created_at, updated_at, parent_id, workspace_id,
-       resolved_at, resolved_by_type, resolved_by_id
-FROM (
-    SELECT d.id, d.issue_id, d.author_type, d.author_id, d.content, d.type,
-           d.created_at, d.updated_at, d.parent_id, d.workspace_id,
-           d.resolved_at, d.resolved_by_type, d.resolved_by_id
+),
+selected AS (
+    SELECT d.id
     FROM descendants d
     JOIN thread_root tr ON d.id = tr.id
     UNION ALL
-    SELECT id, issue_id, author_type, author_id, content, type,
-           created_at, updated_at, parent_id, workspace_id,
-           resolved_at, resolved_by_type, resolved_by_id
-    FROM reply_page
-) combined
-ORDER BY created_at ASC, id ASC;
+    SELECT id FROM reply_page
+)
+SELECT sqlc.embed(c)
+FROM selected s
+JOIN comment c ON c.id = s.id
+ORDER BY c.created_at ASC, c.id ASC;
 
 -- name: ListRecentThreadCommentsForIssue :many
 -- Returns the N most recently active threads (root + every descendant) rather
@@ -282,9 +221,7 @@ picked AS (
     ORDER BY ts.last_activity_at DESC, ts.root_id DESC
     LIMIT @thread_limit
 )
-SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-       c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-       c.resolved_at, c.resolved_by_type, c.resolved_by_id,
+SELECT sqlc.embed(c),
        p.root_id AS thread_root_id,
        p.last_activity_at AS thread_last_activity_at
 FROM picked p
@@ -338,6 +275,17 @@ WHERE c.id = (SELECT id FROM root_of WHERE parent_id IS NULL LIMIT 1);
 INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, source_task_id)
 VALUES ($1, $2, $3, $4, $5, $6, sqlc.narg(parent_id), sqlc.narg(source_task_id))
 RETURNING *;
+
+-- name: GetSystemCommentByIssueAndContent :one
+-- Used by idempotent automatic projections that may be replaying state written
+-- by an older build before source_task_id was populated.
+SELECT * FROM comment
+WHERE issue_id = $1
+  AND workspace_id = $2
+  AND author_type = 'system'
+  AND content = $3
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
 
 -- name: UpdateComment :one
 UPDATE comment SET
@@ -431,4 +379,16 @@ UPDATE comment SET
     resolved_by_id = NULL,
     updated_at = CASE WHEN resolved_at IS NOT NULL THEN now() ELSE updated_at END
 WHERE id = $1
+RETURNING *;
+
+-- name: UnresolveCommentIfResolved :one
+-- Atomically clears a current resolution and returns no row when the comment
+-- was already unresolved. Reply creation uses this to decide whether a
+-- comment:unresolved event belongs to the same transaction as the reply.
+UPDATE comment SET
+    resolved_at = NULL,
+    resolved_by_type = NULL,
+    resolved_by_id = NULL,
+    updated_at = now()
+WHERE id = $1 AND resolved_at IS NOT NULL
 RETURNING *;

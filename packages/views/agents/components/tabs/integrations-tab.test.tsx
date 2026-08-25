@@ -3,11 +3,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
-import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/zh-Hans/common.json";
 import enAgents from "../../../locales/zh-Hans/agents.json";
 import enSettings from "../../../locales/zh-Hans/settings.json";
+import { makeAgent } from "../../../test/agent-fixtures";
 
 // IntegrationsTab's job is to pick which copy sits beside the bind entry
 // based on (configured / install_supported / role). The bind entry itself
@@ -38,7 +38,7 @@ vi.mock("@tanstack/react-query", () => ({
   queryOptions: <T,>(opts: T) => opts,
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
@@ -74,28 +74,7 @@ const TEST_RESOURCES = {
   "zh-Hans": { common: enCommon, agents: enAgents, settings: enSettings },
 };
 
-const agent: Agent = {
-  id: "agent-1",
-  workspace_id: "ws-1",
-  runtime_id: "runtime-1",
-  name: "Agent",
-  description: "",
-  instructions: "",
-  avatar_url: null,
-  runtime_mode: "local",
-  runtime_config: {},
-  custom_args: [],
-  scope: "workspace",
-  status: "idle",
-  max_concurrent_tasks: 1,
-  model: "",
-  owner_id: "user-1",
-  skills: [],
-  created_at: "2026-04-16T00:00:00Z",
-  updated_at: "2026-04-16T00:00:00Z",
-  archived_at: null,
-  archived_by: null,
-};
+const agent = makeAgent();
 
 function renderTab(children: ReactNode) {
   return render(

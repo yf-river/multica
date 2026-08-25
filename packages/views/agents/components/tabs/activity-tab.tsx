@@ -4,11 +4,16 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
   ArrowUpRight,
+  CheckCircle2,
   CircleHelp,
+  Clock,
   Hash,
+  Loader2,
   MessageSquare,
+  Play,
   Workflow,
   X,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -27,21 +32,32 @@ import {
   type AgentActivity,
   agentTaskSnapshotOptions,
   agentTasksOptions,
+  isActiveAgentTaskStatus,
   summarizeActivityWindow,
   useWorkspaceActivityMap,
 } from "@multica/core/agents";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { AppLink } from "../../../navigation";
 import { TranscriptButton } from "../../../common/task-transcript";
-import { taskStatusConfig } from "../../config";
 import { failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
 import { useT, useTimeAgo } from "../../../i18n";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const TASK_STATUS_VISUAL: Record<
+  string,
+  { icon: typeof CheckCircle2; color: string }
+> = {
+  queued: { icon: Clock, color: "text-muted-foreground" },
+  dispatched: { icon: Play, color: "text-info" },
+  running: { icon: Loader2, color: "text-brand" },
+  completed: { icon: CheckCircle2, color: "text-success" },
+  failed: { icon: XCircle, color: "text-destructive" },
+  cancelled: { icon: XCircle, color: "text-muted-foreground" },
+};
 // Recent work pagination: small initial cohort to keep the section
 // scannable, then "Show more" reveals 20 at a time. Tasks are already
 // fully cached client-side (one listAgentTasks for the whole agent), so
@@ -87,9 +103,7 @@ export function ActivityTab({ agent }: ActivityTabProps) {
       (t) =>
         t.agent_id === agent.id &&
         isWorkflowTask(t) &&
-        (t.status === "running" ||
-          t.status === "queued" ||
-          t.status === "dispatched"),
+        isActiveAgentTaskStatus(t.status),
     );
   }, [snapshot, agent.id]);
 
@@ -355,7 +369,7 @@ function TaskRow({
   const timeAgo = useTimeAgo();
   const paths = useWorkspacePaths();
   const [cancelling, setCancelling] = useState(false);
-  const cfg = taskStatusConfig[task.status] ?? taskStatusConfig.queued!;
+  const cfg = TASK_STATUS_VISUAL[task.status] ?? TASK_STATUS_VISUAL.queued!;
   const Icon = cfg.icon;
   const hasIssue = task.issue_id !== "";
   const issue = hasIssue ? issueMap.get(task.issue_id) : undefined;
@@ -367,9 +381,7 @@ function TaskRow({
   // (completed / failed / cancelled) hide the button entirely.
   const showCancel =
     timeMode === "active" &&
-    (task.status === "queued" ||
-      task.status === "dispatched" ||
-      task.status === "running");
+    isActiveAgentTaskStatus(task.status);
 
   const handleCancel = async () => {
     if (cancelling) return;
@@ -617,7 +629,7 @@ function activeTaskTimeText(task: AgentTask, t: AgentsT, timeAgo: TimeAgoFn): st
  * lands in the last 30 days. Pure function so callers can pass a
  * deterministic `now` in tests.
  */
-export function deriveAvgDurationLast30d(
+function deriveAvgDurationLast30d(
   tasks: readonly AgentTask[],
   now: number,
 ): number {
@@ -643,7 +655,7 @@ export function deriveAvgDurationLast30d(
  * seconds inside the minute formatter so the column stays visually
  * aligned across rows.
  */
-export function formatDurationMs(ms: number): string {
+function formatDurationMs(ms: number): string {
   if (ms <= 0) return "—";
   if (ms < 60_000) {
     return `${Math.max(1, Math.round(ms / 1000))}s`;

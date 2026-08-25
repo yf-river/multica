@@ -2,9 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -164,7 +162,7 @@ func parseMetadataValue(raw, forcedType string) (json.RawMessage, error) {
 }
 
 func runIssueMetadataList(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -172,20 +170,6 @@ func runIssueMetadataList(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
-		// Best-effort degradation: when the server does not expose the
-		// per-issue metadata endpoint (self-hosted backends running an
-		// older build, missing migration, or routing issues that surface
-		// as 404), an agent's bootstrap "metadata list" must not fail
-		// the entire run. Emit an empty map and exit 0 so the agent
-		// still gets the empty-metadata signal it would have gotten on
-		// a fresh issue. Other status codes (auth, server errors) keep
-		// real error semantics, and metadata get/set/delete are
-		// unaffected — those callers still need to know when something
-		// went wrong.
-		var httpErr *cli.HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			return printMetadataMapResult(cmd, map[string]any{})
-		}
 		return fmt.Errorf("list metadata: %w", err)
 	}
 	return printMetadataMapResult(cmd, resultMetadataMap(result))
@@ -197,7 +181,7 @@ func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--key is required")
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -213,8 +197,7 @@ func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("key %q not found on issue", key)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, value)
 	}
 	headers := []string{"KEY", "VALUE", "TYPE"}
@@ -238,7 +221,7 @@ func runIssueMetadataSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -259,7 +242,7 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--key is required")
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newResolvedAPIClientContext(cmd, args[0], "issue", resolveIssueRef)
 	if err != nil {
 		return err
 	}
@@ -272,12 +255,11 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 
 	// Refresh the metadata so the user sees the result.
 	var result map[string]any
-	output, _ := cmd.Flags().GetString("output")
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
-		if output == "json" {
+		if wantsJSONOutput(cmd) {
 			return cli.PrintJSON(os.Stdout, map[string]any{"deleted": true})
 		}
-		fmt.Fprintln(os.Stdout, "Key deleted.")
+		_, _ = fmt.Fprintln(os.Stdout, "Key deleted.")
 		return nil
 	}
 	return printMetadataMapResult(cmd, resultMetadataMap(result))
@@ -289,8 +271,7 @@ func resultMetadataMap(result map[string]any) map[string]any {
 }
 
 func printMetadataMapResult(cmd *cobra.Command, metadata map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, metadata)
 	}
 	printMetadataTable(metadata)

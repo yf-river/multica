@@ -1,5 +1,6 @@
 import type {
   AgentRuntime,
+  DashboardUsageDaily,
   RuntimeUsage,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
@@ -97,6 +98,23 @@ export function formatTokens(n: number): string {
   return n.toLocaleString();
 }
 
+type UsageTimeDimension = "daily" | "weekly";
+
+export const DEFAULT_USAGE_DAYS_BY_DIM = {
+  daily: 30,
+  weekly: 90,
+} as const;
+
+export function usageRangesForDimension<
+  T extends { dims: readonly UsageTimeDimension[] },
+>(ranges: readonly T[], dimension: UsageTimeDimension): T[] {
+  return ranges.filter((range) => range.dims.includes(dimension));
+}
+
+export function formatUsageCost(value: number): string {
+  return value >= 100 ? `$${value.toFixed(0)}` : `$${value.toFixed(2)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Cost estimation
 // ---------------------------------------------------------------------------
@@ -129,16 +147,16 @@ function pricingKey(model: string, provider?: string): string {
 // providers reporting the same bare id do not merge into one mislabeled row.
 function modelGroupingKey(model: string, provider?: string): string {
   if (!model) return normalizeProvider(provider) || "unknown";
-  return isVendorPrefixedModel(model) ? model : pricingKey(model, provider);
-}
-
-function isVendorPrefixedModel(model: string): boolean {
-  return /^(claude|gpt|o3|o4|glm|deepseek|kimi|gemini|minimax)-/.test(model);
+  return /^(claude|gpt|o3|o4|glm|deepseek|kimi|gemini|minimax)-/.test(model)
+    ? model
+    : pricingKey(model, provider);
 }
 
 // Returns the unique, sorted list of server-unpriced model keys present in
 // `rows`. Empty when everything's priced or there are no rows.
-export function collectUnmappedModels(rows: readonly Priceable[]): string[] {
+export function collectUnmappedModels(
+  rows: readonly (Priceable & Pick<RuntimeUsage, "model">)[],
+): string[] {
   const set = new Set<string>();
   for (const r of rows) {
     if (r.model && r.priced !== true) {
@@ -150,7 +168,6 @@ export function collectUnmappedModels(rows: readonly Priceable[]): string[] {
 
 type Priceable = Pick<
   RuntimeUsage,
-  | "model"
   | "input_tokens"
   | "output_tokens"
   | "cache_read_tokens"
@@ -162,7 +179,6 @@ type Priceable = Pick<
       | "cost_usd"
       | "input_cost_usd"
       | "output_cost_usd"
-      | "cache_read_cost_usd"
       | "cache_write_cost_usd"
       | "cache_savings_usd"
       | "priced"
@@ -173,22 +189,14 @@ export function estimateCost(usage: Priceable): number {
   return usage.cost_usd ?? 0;
 }
 
-function isCodeBuddyUsage(provider?: string | null): boolean {
-  return (provider ?? "").trim().toLowerCase() === "codebuddy";
-}
-
 export function usageTokenTotal(
   usage: Pick<
     RuntimeUsage,
     "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens"
   > & { provider?: string | null },
 ): number {
-  if (isCodeBuddyUsage(usage.provider)) {
-    const input =
-      usage.input_tokens < usage.cache_read_tokens + usage.cache_write_tokens
-        ? usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
-        : usage.input_tokens;
-    return input + usage.output_tokens;
+  if ((usage.provider ?? "").trim().toLowerCase() === "codebuddy") {
+    return usage.input_tokens + usage.output_tokens;
   }
   return (
     usage.input_tokens +
@@ -198,18 +206,10 @@ export function usageTokenTotal(
   );
 }
 
-interface CostBreakdown {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-function estimateCostBreakdown(usage: Priceable): CostBreakdown {
+function estimateCostBreakdown(usage: Priceable) {
   return {
     input: usage.input_cost_usd ?? 0,
     output: usage.output_cost_usd ?? 0,
-    cacheRead: usage.cache_read_cost_usd ?? 0,
     cacheWrite: usage.cache_write_cost_usd ?? 0,
   };
 }
@@ -232,12 +232,6 @@ export interface DailyTokenData {
   cacheWrite: number;
 }
 
-export interface DailyCostData {
-  date: string;
-  label: string;
-  cost: number;
-}
-
 // Stacked variant — splits the daily $ figure into the three components that
 // drive billing (cache reads excluded; their cost is tracked separately as
 // "savings" since they're typically dominated by the cached-input discount).
@@ -248,12 +242,6 @@ export interface DailyCostStackData {
   output: number;
   cacheWrite: number;
   total: number;
-}
-
-export interface ModelDistribution {
-  model: string;
-  tokens: number;
-  cost: number;
 }
 
 export interface WeeklyTokenData {
@@ -287,19 +275,17 @@ export interface WeeklyCostStackData {
   total: number;
 }
 
-export function aggregateByDate(usage: RuntimeUsage[]): {
+export function aggregateByDate(
+  usage: Array<RuntimeUsage | DashboardUsageDaily>,
+): {
   dailyTokens: DailyTokenData[];
-  dailyCost: DailyCostData[];
   dailyCostStack: DailyCostStackData[];
-  modelDist: ModelDistribution[];
 } {
   const dateMap = new Map<string, Omit<DailyTokenData, "label">>();
-  const costMap = new Map<string, number>();
   const stackMap = new Map<
     string,
     { input: number; output: number; cacheWrite: number }
   >();
-  const modelMap = new Map<string, { tokens: number; cost: number }>();
 
   for (const u of usage) {
     const existing = dateMap.get(u.date) ?? {
@@ -315,9 +301,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
     existing.cacheWrite += u.cache_write_tokens;
     dateMap.set(u.date, existing);
 
-    const dayCost = (costMap.get(u.date) ?? 0) + estimateCost(u);
-    costMap.set(u.date, dayCost);
-
     const breakdown = estimateCostBreakdown(u);
     const stack = stackMap.get(u.date) ?? {
       input: 0,
@@ -328,12 +311,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
     stack.output += breakdown.output;
     stack.cacheWrite += breakdown.cacheWrite;
     stackMap.set(u.date, stack);
-
-    const modelName = modelGroupingKey(u.model, u.provider);
-    const m = modelMap.get(modelName) ?? { tokens: 0, cost: 0 };
-    m.tokens += usageTokenTotal(u);
-    m.cost += estimateCost(u);
-    modelMap.set(modelName, m);
   }
 
   const formatLabel = (d: string) => {
@@ -344,14 +321,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
   const dailyTokens = Array.from(dateMap.values())
     .toSorted((a, b) => a.date.localeCompare(b.date))
     .map((d) => ({ ...d, label: formatLabel(d.date) }));
-
-  const dailyCost = Array.from(costMap.entries())
-    .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([date, cost]) => ({
-      date,
-      label: formatLabel(date),
-      cost: Math.round(cost * 100) / 100,
-    }));
 
   const dailyCostStack = Array.from(stackMap.entries())
     .toSorted(([a], [b]) => a.localeCompare(b))
@@ -370,11 +339,7 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
       };
     });
 
-  const modelDist = [...modelMap.entries()]
-    .map(([model, data]) => ({ model, ...data }))
-    .sort((a, b) => b.tokens - a.tokens);
-
-  return { dailyTokens, dailyCost, dailyCostStack, modelDist };
+  return { dailyTokens, dailyCostStack };
 }
 
 // Fold daily-grain rows into ISO calendar weeks (Mon–Sun). Reuses the same
@@ -395,7 +360,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
 type WeeklyAggregable = Pick<
   RuntimeUsage,
   | "date"
-  | "model"
   | "input_tokens"
   | "output_tokens"
   | "cache_read_tokens"
@@ -518,7 +482,7 @@ export function sliceWindow(
   };
 }
 
-function diffDaysIso(from: string, to: string): number {
+export function diffDaysIso(from: string, to: string): number {
   const [y1, m1, d1] = from.split("-").map(Number);
   const [y2, m2, d2] = to.split("-").map(Number);
   const a = Date.UTC(y1 ?? 1970, (m1 ?? 1) - 1, d1 ?? 1);

@@ -66,7 +66,7 @@ Multica 服务器每 30 秒扫描一次，有两种超时会触发失败：
 <Callout type="warning">
 **Autopilots 任务不自动重试**是刻意设计。Autopilot 有自己的触发周期（例如每天一次）；如果失败又自动重试，会和下一个周期的任务重叠。需要失败后立即重跑，用手动重跑（下一节）。
 
-**怎么知道 Autopilot 失败了**：失败的 Autopilot 任务会在你的 [收件箱](/inbox) 里出现一条通知，关联的 issue 状态也会从 `in_progress` 退回 `todo`。直接打开 [Autopilots](/autopilots) 页面也能看到每条 autopilot 的最近运行结果。
+**怎么知道 Autopilot 失败了**：直接打开 [Autopilots](/autopilots) 页面查看每条 Autopilot 的运行历史。单次失败不会发收件箱通知；系统只会在连续失败达到自动暂停阈值时通知负责人。
 </Callout>
 
 ## 手动重跑和自动重试的区别
@@ -83,6 +83,7 @@ multica issue rerun <issue-id>
 - 执行日志里某一行的 retry 按钮会把这一行的 task ID 一并发出，rerun 会**针对那一行原本的 agent**，而不是当前分配人。这让 squad worker、并行的 @-mention agent、或者已经被新分配人替代的旧任务行的 retry 按钮都能符合直觉地工作。
 - **取消**目标 agent 在这条 issue 上 queued / running 的任务（如果有）。同 issue 上其它 agent 的任务（例如 @-mention 触发的并行任务）不会被一起取消。
 - 创建一个**全新**的执行任务——尝试次数重置为 1，即使原任务已达最大尝试。
+- UI 和 CLI 会为这一次操作携带稳定的请求 ID。若网络在服务端提交后中断，恢复请求返回同一条新任务，不会取消它再创建第二条任务。
 - 启动**全新的智能体会话**——**不**继承之前的会话 ID。手动重跑意味着你已经判定上一次的产出不行，再继续之前的对话只会重放被污染的上下文。（自动重试则相反，会继承会话——那条路径处理的是基础设施层面的失败，不是产出不好。）
 
 对比：

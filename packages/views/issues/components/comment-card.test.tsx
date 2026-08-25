@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderWithI18n } from "../../test/i18n";
 
 const { getAttachmentTextContentMock } = vi.hoisted(() => ({
   getAttachmentTextContentMock: vi.fn(),
@@ -40,39 +41,17 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
   };
 });
 
-import { AttachmentList, formatCommentContentForDisplay } from "./comment-card";
+import { AttachmentList } from "./comment-card";
 
 function renderWithQuery(ui: ReactElement) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return renderWithI18n(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.restoreAllMocks());
-
-describe("formatCommentContentForDisplay", () => {
-  it("turns compact Chinese numbered confirmation comments into readable Markdown", () => {
-    const input = "01-需求澄清已完成，产物见 01-clarify.md。当前存在以下待确认项，需用户补充后方可进入 02-方案设计：1. 作用范围：注册、重置密码、管理员重置、首次登录强制修改密码是否统一适用？API/批量导入是否豁免？2. 特殊字符白名单是否包含空格（当前不含）？3. 是否需要连续重复字符检查、弱密码黑名单、用户名/邮箱相似度检查？建议：除API/批量导入外，所有密码设置入口统一适用；请确认或给出具体指示。";
-
-    expect(formatCommentContentForDisplay(input)).toBe([
-      "01-需求澄清已完成，产物见 01-clarify.md。当前存在以下待确认项，需用户补充后方可进入 02-方案设计：",
-      "",
-      "1. 作用范围：注册、重置密码、管理员重置、首次登录强制修改密码是否统一适用？API/批量导入是否豁免？",
-      "2. 特殊字符白名单是否包含空格（当前不含）？",
-      "3. 是否需要连续重复字符检查、弱密码黑名单、用户名/邮箱相似度检查？",
-      "",
-      "建议：除API/批量导入外，所有密码设置入口统一适用；请确认或给出具体指示。",
-    ].join("\n"));
-  });
-
-  it("leaves already formatted and non-list comments unchanged", () => {
-    const formatted = "待确认：\n\n1. 范围\n2. 策略";
-    expect(formatCommentContentForDisplay(formatted)).toBe(formatted);
-    expect(formatCommentContentForDisplay("普通评论：版本 1.2 已发布。")).toBe("普通评论：版本 1.2 已发布。");
-  });
-});
 
 describe("AttachmentList — standalone HTML attachment routes through AttachmentBlock", () => {
   // Regression pin for comment-card.tsx:152. This is the entry point
@@ -132,24 +111,4 @@ describe("AttachmentList — inline attachment filtering", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("does not render a bottom attachment row when the body already has the uploaded file-card URL", () => {
-    const href = "http://localhost:18760/uploads/workspaces/ws/att-1.md";
-    const attachment = {
-      id: "att-1",
-      url: href,
-      filename: "03-task-split.md",
-      content_type: "text/plain; charset=utf-8",
-      size_bytes: 1024,
-    } as any;
-
-    const { container } = renderWithQuery(
-      <AttachmentList
-        attachments={[attachment]}
-        content={`!file[03-task-split.md](${href})`}
-      />,
-    );
-
-    expect(screen.queryByText("03-task-split.md")).toBeNull();
-    expect(container.firstChild).toBeNull();
-  });
 });

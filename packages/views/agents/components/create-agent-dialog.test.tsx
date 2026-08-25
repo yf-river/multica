@@ -3,12 +3,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
-import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
+import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enAgents from "../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../test/agent-fixtures";
 
 const navigationStub: NavigationAdapter = {
   push: vi.fn(),
@@ -21,9 +22,12 @@ const navigationStub: NavigationAdapter = {
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
+vi.mock("@multica/core/paths", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
+    "@multica/core/paths",
+  );
+  return { ...actual, useWorkspaceId: () => "ws-1" };
+});
 
 // ModelDropdown talks to the api; the create dialog only needs it as a
 // stand-in here, so swap it out.
@@ -54,29 +58,24 @@ const members: MemberWithUser[] = [
   {
     id: "m-me",
     user_id: ME,
-    workspace_id: "ws-1",
     role: "member",
     name: "Me",
     account: "me",
     avatar_url: null,
-    created_at: "2026-01-01T00:00:00Z",
   },
   {
     id: "m-other",
     user_id: OTHER,
-    workspace_id: "ws-1",
     role: "member",
     name: "其他",
     account: "other",
     avatar_url: null,
-    created_at: "2026-01-01T00:00:00Z",
   },
 ];
 
-function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
+function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
   return {
     id: "rt",
-    workspace_id: "ws-1",
     daemon_id: null,
     name: "Test Runtime",
     runtime_mode: "local",
@@ -87,43 +86,27 @@ function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
     metadata: {},
     owner_id: ME,
     scope: "personal",
+    profile_id: null,
     last_seen_at: "2026-04-27T11:59:50Z",
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
     ...overrides,
   };
 }
 
 function makeTemplate(runtimeId: string): Agent {
-  return {
+  return makeAgent({
     id: "agent-template",
-    workspace_id: "ws-1",
     runtime_id: runtimeId,
     name: "Template Agent",
-    description: "",
-    instructions: "",
-    avatar_url: null,
-    runtime_mode: "local",
-    runtime_config: {},
-    custom_args: [],
     scope: "personal",
-    status: "idle",
-    max_concurrent_tasks: 1,
-    model: "",
     owner_id: ME,
-    skills: [],
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
-    archived_at: null,
-    archived_by: null,
-  };
+  });
 }
 
-function renderDialog(runtimes: RuntimeDevice[], template?: Agent) {
+function renderDialog(runtimes: AgentRuntime[], template?: Agent) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const onCreate = vi.fn().mockResolvedValue(undefined);
+  const onCreate = vi.fn().mockResolvedValue(makeTemplate("rt"));
   const onClose = vi.fn();
   render(
     <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
@@ -256,7 +239,7 @@ describe("CreateAgentDialog runtime scope gate", () => {
     expect(screen.getByText("My Runtime", { selector: "span.truncate" })).toBeInTheDocument();
   });
 
-  it("prefers codebuddy and submits the DeepSeek default model", async () => {
+  it("prefers codebuddy and leaves default-model selection to the server", async () => {
     const claude = makeRuntime({
       id: "rt-claude",
       name: "Claude Runtime",
@@ -282,10 +265,9 @@ describe("CreateAgentDialog runtime scope gate", () => {
     });
     fireEvent.click(screen.getByText("创建"));
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
-    expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
-      runtime_id: "rt-codebuddy",
-      model: "deepseek-v4-pro-ioa",
-    });
+    const request = onCreate.mock.calls[0]?.[0];
+    expect(request).toMatchObject({ runtime_id: "rt-codebuddy" });
+    expect(request).not.toHaveProperty("model");
   });
 
   it("in duplicate mode, does not pre-fill the template's runtime when it's now locked", async () => {
@@ -305,7 +287,10 @@ describe("CreateAgentDialog runtime scope gate", () => {
       owner_id: ME,
       scope: "personal",
     });
-    const template = makeTemplate("rt-others-private");
+    const template = {
+      ...makeTemplate("rt-others-private"),
+      model: "explicit-model",
+    };
     const { onCreate } = renderDialog([othersPrivate, mine], template);
 
     expect(
@@ -320,6 +305,7 @@ describe("CreateAgentDialog runtime scope gate", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(onCreate.mock.calls[0]?.[0].runtime_id).toBe("rt-mine");
+    expect(onCreate.mock.calls[0]?.[0].model).toBe("explicit-model");
   });
 
   it("disables 创建 when the selected runtime is locked (template + no usable fallback)", () => {

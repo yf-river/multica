@@ -7,7 +7,6 @@ import type { ExternalCredentialProfile } from "@multica/core/types";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enSettings from "../../locales/zh-Hans/settings.json";
 
-const mockListPersonalAccessTokens = vi.hoisted(() => vi.fn());
 const mockCreateProfile = vi.hoisted(() => vi.fn());
 const mockUpdateProfile = vi.hoisted(() => vi.fn());
 const mockDeleteProfile = vi.hoisted(() => vi.fn());
@@ -16,40 +15,25 @@ const mockProfiles = vi.hoisted(() => ({
   current: [
     {
       id: "credential-1",
-      user_id: "user-1",
-      scope: "account",
       provider: "gongfeng",
       name: "gongfeng-default",
       secret_binding: {
         configured: true,
-        redacted: true,
         mode: "encrypted_secret",
         hint: "GONGFENG_PRIVATE_TOKEN",
       },
-      capabilities: {},
       status: "verified",
-      last_verified_at: null,
-      created_at: "2026-06-28T00:00:00Z",
-      updated_at: "2026-06-28T00:00:00Z",
     },
   ] as ExternalCredentialProfile[],
-}));
-
-vi.mock("@multica/core/api", () => ({
-  api: {
-    listPersonalAccessTokens: mockListPersonalAccessTokens,
-  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const provider = options.queryKey?.[2];
     return {
-      data: {
-        profiles: typeof provider === "string"
-          ? mockProfiles.current.filter((profile) => profile.provider === provider)
-          : mockProfiles.current,
-      },
+      data: typeof provider === "string"
+        ? mockProfiles.current.filter((profile) => profile.provider === provider)
+        : mockProfiles.current,
     };
   },
 }));
@@ -87,43 +71,28 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 describe("TokensTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListPersonalAccessTokens.mockResolvedValue([]);
     mockProfiles.current = [
       {
         id: "credential-1",
-        user_id: "user-1",
-        scope: "account",
         provider: "gongfeng",
         name: "gongfeng-default",
         secret_binding: {
           configured: true,
-          redacted: true,
           mode: "encrypted_secret",
           hint: "GONGFENG_PRIVATE_TOKEN",
         },
-        capabilities: {},
         status: "verified",
-        last_verified_at: null,
-        created_at: "2026-06-28T00:00:00Z",
-        updated_at: "2026-06-28T00:00:00Z",
       },
       {
         id: "credential-2",
-        user_id: "user-1",
-        scope: "account",
         provider: "tapd",
         name: "tapd-default",
         secret_binding: {
           configured: true,
-          redacted: true,
           mode: "encrypted_secret",
           hint: "TAPD_ACCESS_TOKEN",
         },
-        capabilities: {},
         status: "verified",
-        last_verified_at: null,
-        created_at: "2026-06-28T00:00:00Z",
-        updated_at: "2026-06-28T00:00:00Z",
       },
     ];
   });
@@ -139,7 +108,7 @@ describe("TokensTab", () => {
     const panel = within(screen.getByTestId("settings-gongfeng-credential-panel"));
     expect(panel.getByRole("heading", { name: "工蜂访问凭据" })).toBeTruthy();
     expect(panel.getByText("已设置 · GONGFENG_PRIVATE_TOKEN")).toBeTruthy();
-    expect(panel.getByText(/GONGFENG_ACCESS_TOKEN \/ GONGFENG_PRIVATE_TOKEN/)).toBeTruthy();
+    expect(panel.getByText(/注入 GONGFENG_PRIVATE_TOKEN/)).toBeTruthy();
     expect(panel.getByText("注入变量")).toBeTruthy();
     expect(panel.getByText("当前绑定")).toBeTruthy();
     expect(panel.getByText("凭据方式")).toBeTruthy();
@@ -151,7 +120,6 @@ describe("TokensTab", () => {
     expect(panel.queryByRole("button", { name: "保存凭据" })).toBeNull();
     expect(panel.queryByPlaceholderText("输入新 token 可替换当前凭据")).toBeNull();
     expect(screen.getByTestId("settings-tapd-credential-panel")).toBeTruthy();
-    expect(mockListPersonalAccessTokens).not.toHaveBeenCalled();
   });
 
   it("点击更换凭据后显示工蜂凭据编辑表单", async () => {
@@ -193,7 +161,7 @@ describe("TokensTab", () => {
     await user.click(panel.getByRole("button", { name: "测试连接" }));
 
     expect(mockTestProfile).toHaveBeenCalledWith(
-      { provider: "gongfeng", secret_ref: "env:GONGFENG_ACCESS_TOKEN" },
+      { provider: "gongfeng", secret_ref: "env:GONGFENG_PRIVATE_TOKEN" },
       expect.any(Object),
     );
     expect(mockUpdateProfile).not.toHaveBeenCalled();
@@ -220,22 +188,15 @@ describe("TokensTab", () => {
     mockProfiles.current = [
       {
         id: "credential-1",
-        user_id: "user-1",
-        scope: "account",
         provider: "gongfeng",
         name: "gongfeng-default",
         secret_binding: {
           configured: true,
-          redacted: true,
           mode: "encrypted_secret",
           hint: "GONGFENG_PRIVATE_TOKEN",
         },
-        capabilities: {},
         status: "failed",
         last_error: "token 无法访问工蜂",
-        last_verified_at: null,
-        created_at: "2026-06-28T00:00:00Z",
-        updated_at: "2026-06-28T00:00:00Z",
       },
     ];
 

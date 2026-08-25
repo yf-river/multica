@@ -1,5 +1,5 @@
-// Package-level note for PR4 (MUL-2947): the sampler runs at /metrics scrape
-// time, hits the read replica via the existing pgxpool, and is opt-in. Every
+// The sampler runs at /metrics scrape time, hits the read replica via the
+// existing pgxpool, and is opt-in. Every
 // individual SQL statement runs in its own short read-only transaction with
 // `SET LOCAL statement_timeout = '500ms'` and a hard `LIMIT 100` so a slow
 // table or a hung connection cannot drag /metrics — and by extension the
@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,7 +31,7 @@ const (
 	samplerRowLimit            = 100
 
 	// Active-user / active-workspace DB windows. Keep this DB-sampled path
-	// to the short window only: PR2's counters do not carry user/workspace
+	// to the short window only: request counters do not carry user/workspace
 	// IDs, so PromQL cannot derive distinct 1h/24h active estimates without
 	// adding high-cardinality labels. Long-window actives need a separate
 	// counter-derived aggregation, not expanding this sampler over history.
@@ -56,39 +57,16 @@ var samplerWindows = []struct {
 	{windowFiveMinutes, 5 * time.Minute},
 }
 
-// BusinessSamplerOptions configures the BusinessSamplerCollector. A nil
-// receiver in the registry means the sampler is disabled, which is the
-// expected state for unit tests and any deployment where the operator does
-// not opt in.
-type BusinessSamplerOptions struct {
-	// Pool is the dedicated pgxpool used by the sampler. Callers SHOULD
-	// build a small pool (MaxConns 1–2) pointed at the same database as
-	// the main app pool, so a sampler stall cannot starve business
-	// traffic. If a caller really wants to share the main pool, they may
-	// pass it here — the per-query statement_timeout still bounds the
-	// blast radius.
-	Pool *pgxpool.Pool
-
-	// CacheTTL is how long a successful sample is reused before the next
-	// scrape triggers a refresh. Defaults to 8s. The spec calls for
-	// 5–10s; values outside that range are accepted but logged.
-	CacheTTL time.Duration
-
-	// QueryTimeout is the per-query statement_timeout pushed to Postgres
-	// via SET LOCAL. Defaults to 500ms.
-	QueryTimeout time.Duration
-}
-
 // samplerQuerier is the minimal pgx surface the sampler needs. Splitting it
 // out lets unit tests inject a fake without spinning up a real database.
 type samplerQuerier interface {
 	Acquire(ctx context.Context) (*pgxpool.Conn, error)
 }
 
-// BusinessSamplerCollector implements prometheus.Collector by issuing a fixed
+// businessSamplerCollector implements prometheus.Collector by issuing a fixed
 // set of read-only SQL queries on each scrape and exposing the results as
 // gauges. See the package note above for the safety contract.
-type BusinessSamplerCollector struct {
+type businessSamplerCollector struct {
 	pool         samplerQuerier
 	cacheTTL     time.Duration
 	queryTimeout time.Duration
@@ -123,25 +101,16 @@ type BusinessSamplerCollector struct {
 	snapshot *samplerSnapshot
 }
 
-// NewBusinessSamplerCollector builds the collector. Returns nil when opts
-// is nil or has a nil Pool — that signals "sampler disabled" to the
-// registry without forcing every test to provide a stub.
-func NewBusinessSamplerCollector(opts *BusinessSamplerOptions) *BusinessSamplerCollector {
-	if opts == nil || opts.Pool == nil {
+// newBusinessSamplerCollector builds the collector around its dedicated pool.
+// A nil pool signals that sampling is disabled.
+func newBusinessSamplerCollector(pool *pgxpool.Pool) *businessSamplerCollector {
+	if pool == nil {
 		return nil
 	}
-	cacheTTL := opts.CacheTTL
-	if cacheTTL <= 0 {
-		cacheTTL = defaultSamplerCacheTTL
-	}
-	queryTimeout := opts.QueryTimeout
-	if queryTimeout <= 0 {
-		queryTimeout = defaultSamplerQueryTimeout
-	}
-	c := &BusinessSamplerCollector{
-		pool:         opts.Pool,
-		cacheTTL:     cacheTTL,
-		queryTimeout: queryTimeout,
+	c := &businessSamplerCollector{
+		pool:         pool,
+		cacheTTL:     defaultSamplerCacheTTL,
+		queryTimeout: defaultSamplerQueryTimeout,
 		now:          time.Now,
 		logger:       slog.Default(),
 
@@ -149,7 +118,7 @@ func NewBusinessSamplerCollector(opts *BusinessSamplerOptions) *BusinessSamplerC
 			Namespace: "multica",
 			Subsystem: "business_sampler",
 			Name:      "query_seconds",
-			Help:      "Per-query duration of the BusinessSamplerCollector. The `name` label is one of the fixed query identifiers and never user-controlled.",
+			Help:      "Per-query duration of the business sampler. The `name` label is one of the fixed query identifiers and never user-controlled.",
 			Buckets:   []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5},
 		}, []string{"name"}),
 		queryErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -199,7 +168,7 @@ func NewBusinessSamplerCollector(opts *BusinessSamplerOptions) *BusinessSamplerC
 // Collectors returns every prometheus.Collector that the registry must mount
 // to expose this sampler — the gauges (the receiver itself) plus the query
 // duration histogram and error counter.
-func (c *BusinessSamplerCollector) Collectors() []prometheus.Collector {
+func (c *businessSamplerCollector) Collectors() []prometheus.Collector {
 	if c == nil {
 		return nil
 	}
@@ -207,7 +176,7 @@ func (c *BusinessSamplerCollector) Collectors() []prometheus.Collector {
 }
 
 // Describe implements prometheus.Collector.
-func (c *BusinessSamplerCollector) Describe(ch chan<- *prometheus.Desc) {
+func (c *businessSamplerCollector) Describe(ch chan<- *prometheus.Desc) {
 	if c == nil {
 		return
 	}
@@ -228,9 +197,8 @@ func (c *BusinessSamplerCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements prometheus.Collector. It returns the cached snapshot
 // when fresh; otherwise it triggers a refresh under the mutex so concurrent
 // scrapes share one DB round-trip. A refresh failure is logged and the last
-// known snapshot is reused — this is the "metric briefly stale, sampler
-// does not crash" behavior the PR4 spec requires under DB hangs.
-func (c *BusinessSamplerCollector) Collect(ch chan<- prometheus.Metric) {
+// known snapshot is reused so a degraded database cannot break metric scrapes.
+func (c *businessSamplerCollector) Collect(ch chan<- prometheus.Metric) {
 	if c == nil || c.pool == nil {
 		return
 	}
@@ -241,7 +209,7 @@ func (c *BusinessSamplerCollector) Collect(ch chan<- prometheus.Metric) {
 	c.emit(ch, snap)
 }
 
-func (c *BusinessSamplerCollector) maybeRefresh() *samplerSnapshot {
+func (c *businessSamplerCollector) maybeRefresh() *samplerSnapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -265,7 +233,7 @@ func (c *BusinessSamplerCollector) maybeRefresh() *samplerSnapshot {
 
 // emit walks a snapshot and writes one prometheus.Metric per (desc, labels)
 // pair. Pure data-shaping; no DB or locking.
-func (c *BusinessSamplerCollector) emit(ch chan<- prometheus.Metric, snap *samplerSnapshot) {
+func (c *businessSamplerCollector) emit(ch chan<- prometheus.Metric, snap *samplerSnapshot) {
 	for _, w := range samplerWindows {
 		ch <- prometheus.MustNewConstMetric(
 			c.descActiveUsers, prometheus.GaugeValue, snap.activeUsers[w.label], w.label)
@@ -313,8 +281,6 @@ func (c *BusinessSamplerCollector) emit(ch chan<- prometheus.Metric, snap *sampl
 }
 
 // knownSourceLabels enumerates the source values we always emit a zero for.
-// Pulled from the existing BusinessMetrics whitelist so the sampler never
-// invents a new bucket.
 func knownSourceLabels() []string {
 	return []string{"chat", "issue", "autopilot", "autopilot_issue", "quick_create", "manual", "api", "other"}
 }
@@ -386,7 +352,7 @@ func newSamplerSnapshot(t time.Time) *samplerSnapshot {
 // with SET LOCAL statement_timeout, so a hang on one statement cannot
 // poison the others. Errors are logged-and-continued: a partial snapshot is
 // strictly better than a missing one.
-func (c *BusinessSamplerCollector) refreshFromDB(ctx context.Context, now time.Time) *samplerSnapshot {
+func (c *businessSamplerCollector) refreshFromDB(ctx context.Context, now time.Time) *samplerSnapshot {
 	conn, err := c.pool.Acquire(ctx)
 	if err != nil {
 		c.queryErrors.WithLabelValues("acquire").Inc()
@@ -431,7 +397,7 @@ func (c *BusinessSamplerCollector) refreshFromDB(ctx context.Context, now time.T
 // counter and the query duration histogram, but never propagate; the
 // snapshot is left with whatever default value (typically 0) the caller
 // pre-seeded.
-func (c *BusinessSamplerCollector) runQuery(
+func (c *businessSamplerCollector) runQuery(
 	ctx context.Context,
 	conn *pgxpool.Conn,
 	name string,
@@ -504,20 +470,8 @@ func isStatementTimeout(err error) bool {
 		return true
 	}
 	// pgx surfaces SQLSTATE 57014 ("query_canceled") on statement_timeout.
-	// We don't import the pgconn type just to type-assert here; a
-	// substring check is good enough for a log-level decision.
+	// This only selects a log level, so matching the stable SQLSTATE/message
+	// avoids coupling the sampler to a concrete pgconn error type.
 	msg := err.Error()
-	return contains(msg, "57014") || contains(msg, "canceling statement due to statement timeout")
-}
-
-func contains(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(msg, "57014") || strings.Contains(msg, "canceling statement due to statement timeout")
 }

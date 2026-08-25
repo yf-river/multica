@@ -38,6 +38,7 @@ export function ModelDropdown({
   const [open, setOpen] = useState(false);
   const {
     canCreate,
+    filteredModels,
     models,
     modelsQuery,
     search,
@@ -45,7 +46,10 @@ export function ModelDropdown({
     supported,
     trimmedSearch,
   } = useRuntimeModelPickerState({ runtimeId, runtimeOnline });
-  const grouped = useMemo(() => groupByProvider(models), [models]);
+  const grouped = useMemo(
+    () => groupByProvider(filteredModels),
+    [filteredModels],
+  );
 
   // When the selected runtime reports it doesn't support per-agent
   // model selection, clear any previously-saved value so we don't
@@ -55,21 +59,6 @@ export function ModelDropdown({
       onChange("");
     }
   }, [supported, value, onChange]);
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return grouped;
-    const needle = search.toLowerCase();
-    const out: Record<string, RuntimeModel[]> = {};
-    for (const [provider, list] of Object.entries(grouped)) {
-      const matches = list.filter(
-        (m) =>
-          m.id.toLowerCase().includes(needle) ||
-          m.label.toLowerCase().includes(needle),
-      );
-      if (matches.length > 0) out[provider] = matches;
-    }
-    return out;
-  }, [grouped, search]);
 
   const select = (id: string) => {
     onChange(id);
@@ -166,7 +155,7 @@ export function ModelDropdown({
             )}
 
             {!modelsQuery.isLoading &&
-              Object.entries(filtered).map(([provider, list]) => (
+              Object.entries(grouped).map(([provider, list]) => (
                 <div key={provider} className="mb-1">
                   {provider && (
                     <div className="px-2 pt-1.5 pb-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -199,7 +188,7 @@ export function ModelDropdown({
               ))}
 
             {!modelsQuery.isLoading &&
-              Object.keys(filtered).length === 0 &&
+              Object.keys(grouped).length === 0 &&
               !canCreate && (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">
                   {t(($) => $.pickers.model_empty_with_dot)}

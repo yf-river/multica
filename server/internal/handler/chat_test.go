@@ -10,16 +10,12 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// withChatTestWorkspaceCtx injects the workspace+member context that the
-// real chi middleware chain would normally set. SendChatMessage (and most
-// other chat handlers) read workspace ID from ctxWorkspaceID; without this
-// the test harness, which calls handlers directly, gets "invalid workspace
-// id" on the parseUUIDOrBadRequest call inside SendChatMessage.
 func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 	t.Helper()
 	memberRow, err := testHandler.Queries.GetMemberByUserAndWorkspace(context.Background(), db.GetMemberByUserAndWorkspaceParams{
@@ -29,7 +25,7 @@ func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 	if err != nil {
 		t.Fatalf("load test member row: %v", err)
 	}
-	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
+	return req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, memberRow))
 }
 
 func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) AttachmentResponse {
@@ -38,16 +34,17 @@ func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) Attac
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, _ := writer.CreateFormFile("file", filename)
-	part.Write([]byte("\x89PNG\r\n\x1a\nbytes"))
+	_, _ = part.Write([]byte("\x89PNG\r\n\x1a\nbytes"))
 	if sessionID != "" {
-		writer.WriteField("chat_session_id", sessionID)
+		_ = writer.WriteField("chat_session_id", sessionID)
 	}
-	writer.Close()
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("X-User-ID", testUserID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 
 	w := httptest.NewRecorder()
 	testHandler.UploadFile(w, req)
@@ -59,7 +56,7 @@ func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) Attac
 		t.Fatalf("decode upload: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
 	})
 	return resp
 }
@@ -68,6 +65,7 @@ func sendChatMessageForTest(t *testing.T, sessionID string, body map[string]any)
 	t.Helper()
 
 	req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", body)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	req = withURLParam(req, "sessionId", sessionID)
 	req = withChatTestWorkspaceCtx(t, req)
 	w := httptest.NewRecorder()
@@ -83,15 +81,12 @@ func sendChatMessageForTest(t *testing.T, sessionID string, body map[string]any)
 	return resp
 }
 
-// TestSendChatMessage_LinksAttachments verifies that attachments uploaded
-// against a chat_session (chat_message_id NULL) are back-filled with the
-// message_id when SendChatMessage receives the matching attachment_ids.
 func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	agentID := createHandlerTestAgent(t, "ChatSendAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatSendAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	uploadResp := uploadChatAttachmentForTest(t, "send-link.png", sessionID)
@@ -120,7 +115,6 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 		t.Fatalf("chat message task_id mismatch: want %s, got %s", sendResp.TaskID, messageTaskID)
 	}
 
-	// 3. Verify the attachment row now points at the new message.
 	var dbMessageID *string
 	if err := testPool.QueryRow(
 		context.Background(),
@@ -137,15 +131,12 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	}
 }
 
-// TestSendChatMessage_LinksUnattachedAttachments verifies the new compose
-// path: upload creates a workspace-scoped unattached attachment, and chat send
-// binds it to both the session and the user message.
 func TestSendChatMessage_LinksUnattachedAttachments(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	agentID := createHandlerTestAgent(t, "ChatSendUnattachedAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatSendUnattachedAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	uploadResp := uploadChatAttachmentForTest(t, "send-unattached.png", "")
@@ -178,10 +169,8 @@ func TestSendChatMessage_LinksUnattachedAttachments(t *testing.T) {
 	}
 }
 
-// TestUpdateChatSession_RenamesTitle confirms PATCH writes the new title,
-// returns the updated row, and the server-side row reflects it.
 func TestUpdateChatSession_RenamesTitle(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatRenameAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatRenameAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest("PATCH", "/api/chat/sessions/"+sessionID, map[string]any{
@@ -195,7 +184,7 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 		t.Fatalf("UpdateChatSession: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp ChatSessionResponse
+	var resp chatSessionResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode update: %v", err)
 	}
@@ -216,10 +205,78 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 	}
 }
 
-// TestUpdateChatSession_RejectsBlank refuses an empty/whitespace title with 400.
-// (Untitled is a render-side fallback, not a stored value.)
+func TestListChatSessionsReturnsCreatedSession(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatListCurrentAgent", nil)
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	req := newRequest(http.MethodGet, "/api/chat/sessions", nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.ListChatSessions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListChatSessions: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var sessions []chatSessionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("decode sessions: %v", err)
+	}
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			return
+		}
+	}
+	t.Fatalf("created session %s missing from list", sessionID)
+}
+
+func TestGetChatSessionClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "ChatCanceledReadAgent", nil)
+	sessionID := createHandlerTestChatSession(t, agentID)
+	req := newRequest(http.MethodGet, "/api/chat/sessions/"+sessionID, nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "sessionId", sessionID)
+
+	w := httptest.NewRecorder()
+	testHandler.GetChatSession(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled chat-session read, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetPendingChatTaskWithoutTaskReturnsEmptyObject(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "ChatNoPendingTaskAgent", nil)
+	sessionID := createHandlerTestChatSession(t, agentID)
+	req := newRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/pending-task", nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	req = withURLParam(req, "sessionId", sessionID)
+
+	w := httptest.NewRecorder()
+	testHandler.GetPendingChatTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response) != 0 {
+		t.Fatalf("pending-task response = %#v, want empty object", response)
+	}
+}
+
 func TestUpdateChatSession_RejectsBlank(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatRenameBlankAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatRenameBlankAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest("PATCH", "/api/chat/sessions/"+sessionID, map[string]any{
@@ -234,16 +291,15 @@ func TestUpdateChatSession_RejectsBlank(t *testing.T) {
 	}
 }
 
-// TestSendChatMessage_InvalidAttachmentIDs rejects malformed UUIDs in
-// attachment_ids with 400 before any side effects (no message row created).
 func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatBadAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatBadAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
 		"content":        "hi",
 		"attachment_ids": []string{"not-a-uuid"},
 	})
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	req = withURLParam(req, "sessionId", sessionID)
 	req = withChatTestWorkspaceCtx(t, req)
 	w := httptest.NewRecorder()
@@ -252,7 +308,6 @@ func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 		t.Fatalf("SendChatMessage with bad attachment id: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Confirm no message row was created.
 	var count int
 	if err := testPool.QueryRow(
 		context.Background(),
@@ -266,7 +321,7 @@ func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 	}
 }
 
-func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Values) ChatMessagesPageResponse {
+func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Values) chatMessagesPageResponse {
 	t.Helper()
 	target := "/api/chat/sessions/" + sessionID + "/messages/page"
 	if encoded := params.Encode(); encoded != "" {
@@ -281,15 +336,15 @@ func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Val
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListChatMessagesPage: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var page ChatMessagesPageResponse
+	var page chatMessagesPageResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page messages: %v", err)
 	}
 	return page
 }
 
-func TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatCursorPaginationAgent", []byte("[]"))
+func TestListChatMessagesPage_UsesCursor(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatCursorPaginationAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	for i, content := range []string{"oldest", "middle", "newest"} {
@@ -304,23 +359,6 @@ func TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList(t *testing.T) 
 		if err != nil {
 			t.Fatalf("insert chat message %d: %v", i, err)
 		}
-	}
-
-	legacyReq := httptest.NewRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/messages", nil)
-	legacyReq.Header.Set("X-User-ID", testUserID)
-	legacyReq = withURLParam(legacyReq, "sessionId", sessionID)
-	legacyReq = withChatTestWorkspaceCtx(t, legacyReq)
-	legacyW := httptest.NewRecorder()
-	testHandler.ListChatMessages(legacyW, legacyReq)
-	if legacyW.Code != http.StatusOK {
-		t.Fatalf("ListChatMessages: expected 200, got %d: %s", legacyW.Code, legacyW.Body.String())
-	}
-	var legacy []ChatMessageResponse
-	if err := json.Unmarshal(legacyW.Body.Bytes(), &legacy); err != nil {
-		t.Fatalf("decode legacy messages: %v", err)
-	}
-	if len(legacy) != 3 || legacy[0].Content != "oldest" || legacy[2].Content != "newest" {
-		t.Fatalf("legacy messages = %#v", legacy)
 	}
 
 	latest := fetchChatMessagesPageForTest(t, sessionID, url.Values{"limit": {"2"}})
@@ -345,7 +383,7 @@ func TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList(t *testing.T) 
 }
 
 func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatCursorTieBreakAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatCursorTieBreakAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	contents := []string{"a", "b", "c", "d", "e"}
@@ -393,9 +431,6 @@ func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *
 	if len(ordered) != len(contents) {
 		t.Fatalf("expected %d messages across pages, got %d: %v", len(contents), len(ordered), ordered)
 	}
-	// Pages are newest-window first and chronological within each page. With all
-	// timestamps equal, the id tie-break must still produce a deterministic,
-	// gap-free traversal.
 	for _, content := range contents {
 		found := false
 		for _, got := range ordered {
@@ -411,7 +446,7 @@ func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *
 }
 
 func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatPaginationBadLimitAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatPaginationBadLimitAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/messages/page?limit=0", nil)
@@ -422,5 +457,83 @@ func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
 	testHandler.ListChatMessagesPage(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("ListChatMessagesPage invalid limit: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatDeleteCancelTraceAgent", nil)
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id, started_at)
+		VALUES ($1, $2, 'running', 0, $3, now())
+		RETURNING id
+	`, agentID, handlerTestRuntimeID(t), sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("seed chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	req := newRequest("DELETE", "/api/chat/sessions/"+sessionID, nil)
+	req = withURLParam(req, "sessionId", sessionID)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.DeleteChatSession(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DeleteChatSession: expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var taskStatus string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT status FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load cancelled task: %v", err)
+	}
+	if taskStatus != "cancelled" {
+		t.Fatalf("task status: want cancelled, got %q", taskStatus)
+	}
+
+	var (
+		eventCount int
+		eventType  string
+		metadata   []byte
+	)
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int
+		FROM task_trace_event
+		WHERE task_id = $1 AND event_type = 'task.cancelled'
+	`, taskID).Scan(&eventCount); err != nil {
+		t.Fatalf("count cancel traces: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected exactly one task.cancelled trace, got %d", eventCount)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT event_type, metadata
+		FROM task_trace_event
+		WHERE task_id = $1 AND event_type = 'task.cancelled'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, taskID).Scan(&eventType, &metadata); err != nil {
+		t.Fatalf("load cancel trace: %v", err)
+	}
+	if eventType != "task.cancelled" {
+		t.Fatalf("event_type: want task.cancelled, got %q", eventType)
+	}
+	if !bytes.Contains(metadata, []byte(sessionID)) {
+		t.Fatalf("cancel trace metadata missing session id %s: %s", sessionID, string(metadata))
+	}
+
+	var sessionGone bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT NOT EXISTS(SELECT 1 FROM chat_session WHERE id = $1)
+	`, sessionID).Scan(&sessionGone); err != nil {
+		t.Fatalf("check session deleted: %v", err)
+	}
+	if !sessionGone {
+		t.Fatal("expected chat session hard-deleted")
 	}
 }

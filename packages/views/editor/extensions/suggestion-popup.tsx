@@ -1,6 +1,13 @@
 "use client";
 
-import type { ComponentType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
+import { isImeComposing } from "@multica/core/utils";
 import { autoUpdate, computePosition, flip, offset, shift, size } from "@floating-ui/dom";
 import { ReactRenderer } from "@tiptap/react";
 import { exitSuggestion, type SuggestionKeyDownProps, type SuggestionProps } from "@tiptap/suggestion";
@@ -19,6 +26,63 @@ interface SuggestionPopupRenderOptions<
     ref: TRef | null | undefined,
     props: SuggestionKeyDownProps,
   ) => boolean;
+}
+
+export interface SuggestionSelectionRef {
+  onKeyDown: (props: { event: KeyboardEvent }) => boolean;
+}
+
+export function useSuggestionSelection<T>(
+  items: T[],
+  onSelect: (item: T) => void,
+  handleEmptyKeys = false,
+) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [items]);
+
+  useEffect(() => {
+    itemRefs.current[selectedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
+
+  const selectItem = useCallback(
+    (index: number) => {
+      const item = items[index];
+      if (!item) return;
+      onSelect(item);
+    },
+    [items, onSelect],
+  );
+
+  const onKeyDown = useCallback(
+    ({ event }: { event: KeyboardEvent }) => {
+      if (isImeComposing(event)) return false;
+      if (event.key === "ArrowUp") {
+        if (items.length === 0) return handleEmptyKeys;
+        setSelectedIndex((index) =>
+          (index + items.length - 1) % items.length,
+        );
+        return true;
+      }
+      if (event.key === "ArrowDown") {
+        if (items.length === 0) return handleEmptyKeys;
+        setSelectedIndex((index) => (index + 1) % items.length);
+        return true;
+      }
+      if (event.key === "Enter") {
+        if (items.length === 0) return handleEmptyKeys;
+        selectItem(selectedIndex);
+        return true;
+      }
+      return false;
+    },
+    [handleEmptyKeys, items.length, selectItem, selectedIndex],
+  );
+
+  return { itemRefs, onKeyDown, selectedIndex, selectItem };
 }
 
 export function createSuggestionPopupRender<

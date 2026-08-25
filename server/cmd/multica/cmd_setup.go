@@ -21,23 +21,18 @@ var setupCmd = &cobra.Command{
 	Short: "配置 CLI、登录并启动 daemon",
 	Long: `配置 CLI、通过浏览器登录，并启动本机 Agent daemon。
 
-如果已有配置，命令会在覆盖前确认。
-
-团队内部或自部署环境请使用 'multica setup self-host'。
-不带子命令的 'multica setup' 保留为托管服务兼容入口。
+请选择当前部署类型：托管服务使用 'multica setup cloud'，
+团队内部或自部署环境使用 'multica setup self-host'。
 
 使用 --profile 可以为不同环境创建隔离配置：
   multica setup self-host --profile staging --server-url https://api-staging.co`,
-	RunE: runSetupCloud,
 }
 
 var setupCloudCmd = &cobra.Command{
 	Use:   "cloud",
 	Short: "配置 CLI 连接托管 Multica 服务",
-	Long: `显式配置 CLI 连接托管 Multica 服务。
-
-这等同于运行不带子命令的 'multica setup'。团队内部或自部署环境请使用 'multica setup self-host'。`,
-	RunE: runSetupCloud,
+	Long:  `配置 CLI 连接托管 Multica 服务。团队内部或自部署环境请使用 'multica setup self-host'。`,
+	RunE:  runSetupCloud,
 }
 
 var setupSelfHostCmd = &cobra.Command{
@@ -84,13 +79,13 @@ func printConfigLocation(profile string) {
 
 // confirmOverwrite checks for an existing config and prompts the user.
 // Returns true if we should proceed, false if the user declined.
-func confirmOverwrite(profile string) (bool, error) {
+func confirmOverwrite(profile string) bool {
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
 	if err != nil {
-		return true, nil // can't load → treat as no config
+		return true // can't load → treat as no config
 	}
 	if cfg.ServerURL == "" {
-		return true, nil // no server configured → fresh config
+		return true // no server configured → fresh config
 	}
 
 	fmt.Fprintln(os.Stderr, "Current configuration:")
@@ -107,18 +102,15 @@ func confirmOverwrite(profile string) (bool, error) {
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	if answer != "y" && answer != "yes" {
 		fmt.Fprintln(os.Stderr, "Aborted.")
-		return false, nil
+		return false
 	}
-	return true, nil
+	return true
 }
 
 func runSetupCloud(cmd *cobra.Command, args []string) error {
 	profile := resolveProfile(cmd)
 
-	ok, err := confirmOverwrite(profile)
-	if err != nil {
-		return err
-	}
+	ok := confirmOverwrite(profile)
 	if !ok {
 		return nil
 	}
@@ -154,10 +146,7 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	profile := resolveProfile(cmd)
 
-	ok, err := confirmOverwrite(profile)
-	if err != nil {
-		return err
-	}
+	ok := confirmOverwrite(profile)
 	if !ok {
 		return nil
 	}
@@ -169,7 +158,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	// MULTICA_SERVER_URL still got the localhost default and an "unreachable"
 	// error (GitHub #3912).
 	serverURL, userProvidedServerURL := resolveSelfHostServerURL(cmd)
-	appURL := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", "")
+	appURL := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL")
 	frontendPort, _ := cmd.Flags().GetInt("frontend-port")
 
 	if appURL == "" {
@@ -177,10 +166,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 			// We can't guess the frontend URL for a remote server: api.x.co
 			// and app.x.co, or an https-fronted deployment, would silently
 			// produce a broken login URL. Ask the user instead.
-			entered, err := promptAppURL(serverURL)
-			if err != nil {
-				return err
-			}
+			entered := promptAppURL(serverURL)
 			if entered == "" {
 				return fmt.Errorf("--app-url is required when --server-url points at a remote host (e.g. --app-url https://app.internal.co)")
 			}
@@ -259,7 +245,7 @@ func persistSelfHostConfigIfReachable(serverURL, appURL, profile string, probe f
 // are accepted and converted to the http(s) base that the reachability probe
 // and the stored server_url expect.
 func resolveSelfHostServerURL(cmd *cobra.Command) (serverURL string, userProvided bool) {
-	if v := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", ""); v != "" {
+	if v := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL"); v != "" {
 		return normalizeAPIBaseURL(v), true
 	}
 	port, _ := cmd.Flags().GetInt("port")
@@ -288,15 +274,15 @@ func serverHostIsLocal(serverURL string) bool {
 // derive it from a remote server_url — api.example.com ≠ app.example.com in
 // most production setups — so guessing would just defer the failure to the
 // browser login step. Returns an empty string if the user hits enter.
-func promptAppURL(serverURL string) (string, error) {
+func promptAppURL(serverURL string) string {
 	fmt.Fprintf(os.Stderr, "No --app-url provided, and --server-url (%s) is remote.\n", serverURL)
 	fmt.Fprint(os.Stderr, "Enter the frontend app URL (e.g. https://app.internal.co): ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
-		return "", nil
+		return ""
 	}
-	return strings.TrimRight(strings.TrimSpace(line), "/"), nil
+	return strings.TrimRight(strings.TrimSpace(line), "/")
 }
 
 // probeServer checks whether a Multica backend is reachable at the given URL.
@@ -314,6 +300,6 @@ func probeServer(baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }

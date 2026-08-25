@@ -17,7 +17,7 @@ function canMergeStreamingText(prev: TimelineItem, next: TimelineItem): boolean 
 }
 
 /** Merge adjacent text/thinking fragments that were split only by daemon flush timing. */
-export function coalesceTimelineItems(items: TimelineItem[]): TimelineItem[] {
+function coalesceTimelineItems(items: TimelineItem[]): TimelineItem[] {
   const sorted = [...items].sort((a, b) => a.seq - b.seq);
   const out: TimelineItem[] = [];
 
@@ -35,10 +35,6 @@ export function coalesceTimelineItems(items: TimelineItem[]): TimelineItem[] {
   }
 
   return out;
-}
-
-export function appendTimelineItem(items: TimelineItem[], item: TimelineItem): TimelineItem[] {
-  return coalesceTimelineItems([...items, item]);
 }
 
 function redactTimelineItems(items: TimelineItem[]): TimelineItem[] {

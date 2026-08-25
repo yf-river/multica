@@ -119,7 +119,7 @@ multica.example.com {
 ## 7. 用量汇总（无需运维操作）
 
 <Callout type="info">
-Usage / Runtime 看板读的是派生表 `task_usage_hourly`，由 `rollup_task_usage_hourly()` 周期性填充。从 MUL-2957 起，后端通过 DB 后端的调度器在进程内运行该 rollup —— 不再需要 `pg_cron`，外部 cron / systemd timer 也不再是推荐方案。默认的 `pgvector/pgvector:pg17` 镜像无需改动即可工作。
+Usage / Runtime 看板读的是派生表 `task_usage_hourly`，由 backend 的进程内调度器周期性执行 `rollup_task_usage_hourly()` 填充。无需配置外部 cron；默认的 `pgvector/pgvector:pg17` 镜像无需改动即可工作。
 </Callout>
 
 进程内调度器每 30 秒 tick 一次，通过 `sys_cron_executions` 表认领 5 分钟一档的 UTC plan。多 backend 副本同时跑也安全 —— 唯一键 `(job_name, scope_kind, scope_id, plan_time)` 保证每个 plan 只有一个赢家。新部署不需要任何额外配置。
@@ -168,11 +168,11 @@ multica setup self-host \
 
 只想拉最新镜像、不动 chart：`kubectl -n multica rollout restart deploy/multica-backend deploy/multica-frontend`。要锁到某个 Multica 版本，就在 values 文件里设 `images.backend.tag` / `images.frontend.tag`，再 `helm upgrade`。`helm -n multica uninstall multica` 只删工作负载，PVC 和 Secret 都保留；`kubectl delete namespace multica` 才会全清。
 
-完整参考——三种登录方式、为了绕过 web 镜像 build-time 写死的 `REMOTE_API_URL` 而加的 `backend` ExternalName 别名、资源限制、TLS——都在仓库的 [`SELF_HOSTING.md`](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative)。
+完整参考——三种登录方式、同域 API/WebSocket 路由、资源限制、TLS——都在仓库的 [`SELF_HOSTING.md`](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative)。
 
-## 生产演示与观测验收
+## 部署验证与运行观测
 
-服务跑起来只是第一步。给团队日常使用或领导演示前，还要证明真实 Agent、训练评估、SOP trace、token/成本和运行证据都已经接通。
+服务跑起来只是第一步。交付给团队使用前，还要证明真实 Agent、训练评估、SOP trace、token/成本和运行证据都已经接通。
 
 最短路径：
 
@@ -180,7 +180,7 @@ multica setup self-host \
 2. 打开 **运行历史**，展开最近一条 Agent 执行，确认能看到任务标识、模型、运行时、token、trace 和用例结果。
 3. 跑 `/health`、`/readyz`、真实 Agent E2E、日志检查和数据库抽查，把结果写进验收记录。
 
-完整命令和证据口径见 [生产演示与观测验收](/production-observability)。
+完整命令和当前观测接口见 [部署验证与运行观测](/production-observability)。
 
 ## 常见问题
 
@@ -192,6 +192,6 @@ multica setup self-host \
 
 - [环境变量](/environment-variables) —— 完整 env 清单
 - [登录与注册配置](/auth-setup) —— 注册控制详细配置
-- [生产演示与观测验收](/production-observability) —— 用页面、API、E2E、日志和数据库证明确实可用
-- [GitHub 集成](/github-integration) —— 连一个 GitHub App，让 PR 自动关联 issue、merge 时自动转 Done
+- [部署验证与运行观测](/production-observability) —— 用页面、API 和日志确认当前部署可用
+- [GitHub 集成](/github-integration) —— 连接 GitHub App，同步 PR 与检查状态，并把 PR 显式关联到 issue
 - [故障排查](/troubleshooting) —— 遇到问题先来这里

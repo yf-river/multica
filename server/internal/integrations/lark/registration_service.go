@@ -2,8 +2,6 @@ package lark
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -56,37 +55,6 @@ const (
 	RegistrationReasonInternalError        = "internal_error"
 )
 
-// RegistrationServiceConfig configures the service.
-type RegistrationServiceConfig struct {
-	// SessionTTL caps how long a successful or errored session stays in
-	// the in-process cache before GC. Default 30 minutes — long enough
-	// for the frontend to fetch the final status after the dialog
-	// closes, short enough that abandoned sessions do not pin memory
-	// forever. Independent of the device-flow expiry (Lark's
-	// expire_in, ~10 min).
-	SessionTTL time.Duration
-
-	// Now is overridable for deterministic expiry-bound tests.
-	Now func() time.Time
-
-	// Logger is used for protocol-level warnings (Lark error codes,
-	// post-success bot info failures). Nil uses slog.Default().
-	Logger *slog.Logger
-}
-
-func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
-	if c.SessionTTL == 0 {
-		c.SessionTTL = 30 * time.Minute
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.Logger == nil {
-		c.Logger = slog.Default()
-	}
-	return c
-}
-
 // RegistrationService owns the device-flow install lifecycle. It is the
 // one place that:
 //
@@ -103,32 +71,35 @@ func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
 // into Postgres would add a migration + GC sweep without delivering any
 // product capability the user can re-use across server restarts.
 type RegistrationService struct {
-	cfg         RegistrationServiceConfig
-	client      *RegistrationClient
-	api         APIClient
-	queries     *db.Queries
-	tx          TxStarter
-	installs    *InstallationService
-	binder      InstallerBinder
-	authQueries authQueriesAdapter
+	sessionTTL          time.Duration
+	now                 func() time.Time
+	logger              *slog.Logger
+	client              *RegistrationClient
+	api                 APIClient
+	queries             *db.Queries
+	tx                  TxStarter
+	installs            *InstallationService
+	bindInstaller       func(context.Context, *db.Queries, InstallerBindParams) error
+	getAgentInWorkspace func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error)
 
-	// bus is optional. When wired (SetEventBus), a successful install
-	// publishes lark_installation:created the moment the row commits, so
-	// every workspace client refreshes its connection badge without
-	// waiting for a browser to poll the status endpoint to success. Nil
-	// is valid — install still works, it just won't push the WS frame.
 	bus *events.Bus
 
 	mu       sync.Mutex
 	sessions map[string]*registrationSession
+	begins   map[beginInstallIdentity]*beginInstallCall
 }
 
-// authQueriesAdapter is the minimal lookup surface the service needs
-// before kicking off a session: agent ↔ workspace ownership validation.
-// Kept as an interface so tests can drop in a stub instead of a real
-// *db.Queries + Postgres fixture.
-type authQueriesAdapter interface {
-	GetAgentInWorkspace(ctx context.Context, params db.GetAgentInWorkspaceParams) (db.Agent, error)
+type beginInstallIdentity struct {
+	workspaceID [16]byte
+	agentID     [16]byte
+	initiatorID [16]byte
+	region      Region
+}
+
+type beginInstallCall struct {
+	done   chan struct{}
+	result BeginInstallResult
+	err    error
 }
 
 // NewRegistrationService wires the device-flow client, the APIClient
@@ -137,13 +108,13 @@ type authQueriesAdapter interface {
 // silent half-init at startup cannot leave the install button
 // returning 500s at runtime.
 func NewRegistrationService(
-	cfg RegistrationServiceConfig,
 	client *RegistrationClient,
 	api APIClient,
 	queries *db.Queries,
 	tx TxStarter,
 	installs *InstallationService,
-	binder InstallerBinder,
+	bindInstaller func(context.Context, *db.Queries, InstallerBindParams) error,
+	bus *events.Bus,
 ) (*RegistrationService, error) {
 	if client == nil {
 		return nil, errors.New("lark registration: RegistrationClient is required")
@@ -160,33 +131,30 @@ func NewRegistrationService(
 	if installs == nil {
 		return nil, errors.New("lark registration: InstallationService is required")
 	}
-	if binder == nil {
-		return nil, errors.New("lark registration: InstallerBinder is required")
+	if bindInstaller == nil {
+		return nil, errors.New("lark registration: bind installer function is required")
+	}
+	if bus == nil {
+		return nil, errors.New("lark registration: event bus is required")
 	}
 	return &RegistrationService{
-		cfg:         cfg.withDefaults(),
-		client:      client,
-		api:         api,
-		queries:     queries,
-		tx:          tx,
-		installs:    installs,
-		binder:      binder,
-		authQueries: queries,
-		sessions:    make(map[string]*registrationSession),
+		sessionTTL:          30 * time.Minute,
+		now:                 time.Now,
+		logger:              slog.Default(),
+		client:              client,
+		api:                 api,
+		queries:             queries,
+		tx:                  tx,
+		installs:            installs,
+		bindInstaller:       bindInstaller,
+		bus:                 bus,
+		getAgentInWorkspace: queries.GetAgentInWorkspace,
+		sessions:            make(map[string]*registrationSession),
+		begins:              make(map[beginInstallIdentity]*beginInstallCall),
 	}, nil
 }
 
-// SetEventBus wires the optional event bus AFTER construction so the
-// six positional constructor-validation cases stay untouched and the
-// bus remains nil-safe. With it set, finishSuccess publishes
-// lark_installation:created at the row-commit point — the authoritative
-// moment of truth — instead of relying on the HTTP status-poll handler
-// to emit it only when a browser happens to poll to success.
-func (s *RegistrationService) SetEventBus(bus *events.Bus) {
-	s.bus = bus
-}
-
-// publishInstalled emits lark_installation:created on the optional bus.
+// publishInstalled emits lark_installation:created at the row-commit point.
 // Mirrors the revoke path (RevokeLarkInstallation publishes
 // lark_installation:revoked from its handler): both events broadcast to
 // the whole workspace via the SubscribeAll fanout, and the frontend
@@ -194,16 +162,13 @@ func (s *RegistrationService) SetEventBus(bus *events.Bus) {
 // every mounted surface (agent Integrations tab, inspector, Settings)
 // refreshes its connection badge with no page reload. Covers fresh
 // installs and revoked→active re-installs alike — both ride the same
-// UpsertLarkInstallation write. Nil-safe.
+// UpsertLarkInstallation write.
 func (s *RegistrationService) publishInstalled(workspaceID, installationID pgtype.UUID) {
-	if s.bus == nil {
-		return
-	}
 	s.bus.Publish(events.Event{
 		Type:        protocol.EventLarkInstallationCreated,
-		WorkspaceID: uuidString(workspaceID),
+		WorkspaceID: util.UUIDToString(workspaceID),
 		ActorType:   "system",
-		Payload:     map[string]any{"installation_id": uuidString(installationID)},
+		Payload:     map[string]any{"installation_id": util.UUIDToString(installationID)},
 	})
 }
 
@@ -239,7 +204,6 @@ func (s *registrationSession) snapshot() RegistrationSessionState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return RegistrationSessionState{
-		ID:             s.id,
 		Status:         s.status,
 		InstallationID: s.installationID,
 		ErrorReason:    s.errorReason,
@@ -273,7 +237,6 @@ func (s *registrationSession) markError(reason, msg string, gcAfter time.Time) {
 // RegistrationSessionState is the read-only snapshot the handler
 // serializes to the frontend. Internal mutex is hidden by construction.
 type RegistrationSessionState struct {
-	ID             string
 	Status         RegistrationSessionStatus
 	InstallationID pgtype.UUID
 	ErrorReason    string
@@ -288,7 +251,13 @@ type BeginInstallParams struct {
 	WorkspaceID pgtype.UUID
 	AgentID     pgtype.UUID
 	InitiatorID pgtype.UUID
-	// Region picks which cloud's accounts host the device-flow begins against.
+	// Region picks which cloud's accounts host the device-flow begins
+	// against — Feishu (mainland, accounts.feishu.cn) or Lark
+	// (international, accounts.larksuite.com). The user picks this
+	// explicitly in the UI ("Bind to Feishu" vs "Bind to Lark") so the
+	// QR rendered up front already targets the right cloud and Lark
+	// users do not have to hit a Feishu URL first and rely on the
+	// tenant-brand auto-switch. The handler requires this value explicitly.
 	Region Region
 }
 
@@ -303,10 +272,12 @@ type BeginInstallResult struct {
 	PollIntervalSeconds int
 }
 
-// BeginInstall opens a fresh device-flow session and kicks off the
-// background polling goroutine. The returned payload feeds the QR-code
-// dialog on the frontend; the polling goroutine runs until success,
-// terminal failure, or device_code expiry.
+// BeginInstall returns the current pending session for the same
+// workspace/agent/initiator/region, or opens one device-flow session and kicks
+// off its polling goroutine. This makes StrictMode duplicate mounts and an
+// unknown HTTP response recover the same QR instead of creating parallel
+// external sessions. A terminal session is never replayed; an explicit retry
+// starts fresh.
 //
 // The session_id is the only opaque token returned to the browser —
 // the device_code is server-side only (Lark would honor a poll from
@@ -315,7 +286,7 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 	if !p.WorkspaceID.Valid || !p.AgentID.Valid || !p.InitiatorID.Valid {
 		return BeginInstallResult{}, errors.New("lark registration: workspace, agent, and initiator are required")
 	}
-	if p.Region != RegionFeishu && p.Region != RegionLark {
+	if !isSupportedRegion(p.Region) {
 		return BeginInstallResult{}, errors.New("lark registration: region must be feishu or lark")
 	}
 	// Agent ownership pre-check — without this, a workspace admin
@@ -327,21 +298,42 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 	// We keep the agent: its name pre-fills the bot name on Lark's
 	// PersonalAgent creation form (see botNamePreset) so the installed
 	// bot reads "<agent> - Multica" instead of "{用户姓名}的智能助手".
-	agent, err := s.authQueries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+	agent, err := s.getAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          p.AgentID,
 		WorkspaceID: p.WorkspaceID,
 	})
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: agent not in workspace: %w", err)
 	}
+	beginKey := beginInstallIdentity{
+		workspaceID: p.WorkspaceID.Bytes,
+		agentID:     p.AgentID.Bytes,
+		initiatorID: p.InitiatorID.Bytes,
+		region:      p.Region,
+	}
+	call, owner := s.reservePendingBegin(beginKey)
+	if !owner {
+		select {
+		case <-ctx.Done():
+			return BeginInstallResult{}, ctx.Err()
+		case <-call.done:
+			return call.result, call.err
+		}
+	}
 
-	begin, err := s.client.Begin(ctx, botNamePreset(agent.Name), p.Region)
+	result, err := s.openRegistrationSession(ctx, p, agent.Name)
+	s.completePendingBegin(beginKey, call, result, err)
+	return result, err
+}
+
+func (s *RegistrationService) openRegistrationSession(ctx context.Context, p BeginInstallParams, agentName string) (BeginInstallResult, error) {
+	begin, err := s.client.begin(ctx, botNamePreset(agentName), p.Region)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: begin: %w", err)
 	}
 
-	now := s.cfg.Now()
-	sessionID, err := randomSessionID()
+	now := s.now()
+	sessionID, err := randomToken(24)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: mint session id: %w", err)
 	}
@@ -375,6 +367,41 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		ExpiresInSeconds:    int(begin.ExpiresIn / time.Second),
 		PollIntervalSeconds: int(begin.Interval / time.Second),
 	}, nil
+}
+
+func (s *RegistrationService) reservePendingBegin(key beginInstallIdentity) (*beginInstallCall, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.begins == nil {
+		s.begins = make(map[beginInstallIdentity]*beginInstallCall)
+	}
+	if existing := s.begins[key]; existing != nil {
+		select {
+		case <-existing.done:
+			if existing.err == nil {
+				if session := s.sessions[existing.result.SessionID]; session != nil && session.snapshot().Status == RegistrationStatusPending {
+					return existing, false
+				}
+			}
+			delete(s.begins, key)
+		default:
+			return existing, false
+		}
+	}
+	call := &beginInstallCall{done: make(chan struct{})}
+	s.begins[key] = call
+	return call, true
+}
+
+func (s *RegistrationService) completePendingBegin(key beginInstallIdentity, call *beginInstallCall, result BeginInstallResult, err error) {
+	s.mu.Lock()
+	call.result = result
+	call.err = err
+	close(call.done)
+	if err != nil {
+		delete(s.begins, key)
+	}
+	s.mu.Unlock()
 }
 
 // GetSession returns the current state of an in-flight or recently-
@@ -433,26 +460,23 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 	// — never by string-matching accounts hostnames (so staging/mock
 	// domains classify correctly too).
 	region := sess.region
-	if region == "" {
-		region = RegionFeishu
-	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			s.cfg.Logger.Info("lark registration: session expired",
+			s.logger.Info("lark registration: session expired",
 				"session_id", sess.id,
-				"workspace_id", uuidString(sess.workspaceID))
+				"workspace_id", util.UUIDToString(sess.workspaceID))
 			sess.markError(RegistrationReasonExpired, "QR expired before authorization", s.gcDeadline())
 			return
 		case <-time.After(interval):
 		}
 
-		res, err := s.client.Poll(ctx, domain, deviceCode)
+		res, err := s.client.poll(ctx, domain, deviceCode)
 		if err != nil {
 			var re *RegistrationError
 			if errors.As(err, &re) {
-				s.cfg.Logger.Warn("lark registration: protocol error",
+				s.logger.Warn("lark registration: protocol error",
 					"session_id", sess.id, "code", re.Code, "desc", re.Description)
 				sess.markError(RegistrationReasonProtocol, re.Error(), s.gcDeadline())
 				return
@@ -460,7 +484,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			// Transient transport error (DNS, network) — log and try
 			// again on the next tick rather than killing the session,
 			// which lets a 30-second cross-region blip self-heal.
-			s.cfg.Logger.Warn("lark registration: transport error, will retry",
+			s.logger.Warn("lark registration: transport error, will retry",
 				"session_id", sess.id, "err", err)
 			continue
 		}
@@ -482,7 +506,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			// hostname-prefix matching.
 			domain = res.SwitchedDomain
 			region = res.SwitchedRegion
-			s.cfg.Logger.Info("lark registration: switched cloud after tenant-brand mismatch",
+			s.logger.Info("lark registration: switched cloud after tenant-brand mismatch",
 				"session_id", sess.id, "domain", domain, "region", string(region))
 			continue
 		case res.ClientID != "" && res.ClientSecret != "":
@@ -490,12 +514,13 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			return
 		case res.Err != nil:
 			reason := RegistrationReasonProtocol
-			if res.Err.Code == "access_denied" {
+			switch res.Err.Code {
+			case "access_denied":
 				reason = RegistrationReasonAccessDenied
-			} else if res.Err.Code == "expired_token" {
+			case "expired_token":
 				reason = RegistrationReasonExpired
 			}
-			s.cfg.Logger.Info("lark registration: terminal error",
+			s.logger.Info("lark registration: terminal error",
 				"session_id", sess.id, "code", res.Err.Code, "desc", res.Err.Description)
 			sess.markError(reason, res.Err.Error(), s.gcDeadline())
 			return
@@ -518,7 +543,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	creds := InstallationCredentials{AppID: res.ClientID, AppSecret: res.ClientSecret, Region: region}
 	info, err := s.api.GetBotInfo(ctx, creds)
 	if err != nil {
-		s.cfg.Logger.Warn("lark registration: bot info failed",
+		s.logger.Warn("lark registration: bot info failed",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonBotInfoFailed, err.Error(), s.gcDeadline())
 		return
@@ -528,14 +553,11 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		return
 	}
 
-	// Encrypt the app_secret before the transaction so the seal cost
-	// doesn't sit inside the DB lock. The InstallationService's Upsert
-	// would do this for us, but we need the encrypted blob inside the
-	// transaction-scoped queries handle so the installer-bind commits
-	// alongside the installation insert — replicate the Seal here.
+	// Encrypt before opening the transaction so the crypto work does not hold
+	// database locks. Installation and installer binding then commit together.
 	sealed, err := s.installs.box.Seal([]byte(res.ClientSecret))
 	if err != nil {
-		s.cfg.Logger.Error("lark registration: seal app_secret",
+		s.logger.Error("lark registration: seal app_secret",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
@@ -543,12 +565,12 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		s.cfg.Logger.Error("lark registration: begin tx",
+		s.logger.Error("lark registration: begin tx",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	inst, err := qtx.UpsertLarkInstallation(ctx, db.UpsertLarkInstallationParams{
@@ -562,26 +584,26 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		Region:             string(region),
 	})
 	if err != nil {
-		s.cfg.Logger.Warn("lark registration: upsert installation",
+		s.logger.Warn("lark registration: upsert installation",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInstallationConflict, err.Error(), s.gcDeadline())
 		return
 	}
 
-	if err := s.binder.BindInstallerTx(ctx, qtx, InstallerBindParams{
+	if err := s.bindInstaller(ctx, qtx, InstallerBindParams{
 		WorkspaceID:    sess.workspaceID,
 		InstallationID: inst.ID,
 		MulticaUserID:  sess.initiatorID,
 		LarkOpenID:     res.OpenID,
 	}); err != nil {
-		s.cfg.Logger.Warn("lark registration: bind installer",
+		s.logger.Warn("lark registration: bind installer",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInstallerBindFailed, err.Error(), s.gcDeadline())
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		s.cfg.Logger.Error("lark registration: commit",
+		s.logger.Error("lark registration: commit",
 			"session_id", sess.id, "err", err)
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
@@ -591,15 +613,15 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	// workspace client without a page refresh — not only on the tab that
 	// happens to poll the status endpoint to success.
 	s.publishInstalled(sess.workspaceID, inst.ID)
-	s.cfg.Logger.Info("lark registration: install complete",
+	s.logger.Info("lark registration: install complete",
 		"session_id", sess.id,
-		"workspace_id", uuidString(sess.workspaceID),
-		"agent_id", uuidString(sess.agentID),
-		"installation_id", uuidString(inst.ID))
+		"workspace_id", util.UUIDToString(sess.workspaceID),
+		"agent_id", util.UUIDToString(sess.agentID),
+		"installation_id", util.UUIDToString(inst.ID))
 }
 
 func (s *RegistrationService) gcDeadline() time.Time {
-	return s.cfg.Now().Add(s.cfg.SessionTTL)
+	return s.now().Add(s.sessionTTL)
 }
 
 // gcExpiredLocked drops any session whose `gcAfter` is in the past.
@@ -607,7 +629,7 @@ func (s *RegistrationService) gcDeadline() time.Time {
 // gcAfter when it terminates, and an expired-by-deadline session
 // closes itself.
 func (s *RegistrationService) gcExpiredLocked() {
-	now := s.cfg.Now()
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, sess := range s.sessions {
@@ -618,25 +640,23 @@ func (s *RegistrationService) gcExpiredLocked() {
 			delete(s.sessions, id)
 		}
 	}
+	for key, call := range s.begins {
+		select {
+		case <-call.done:
+			if call.err != nil || s.sessions[call.result.SessionID] == nil {
+				delete(s.begins, key)
+			}
+		default:
+		}
+	}
 }
 
 // ErrRegistrationSessionNotFound is what the service returns for
 // unknown / GC'd sessions. The handler maps it to 404.
 var ErrRegistrationSessionNotFound = errors.New("lark registration: session not found")
 
-func randomSessionID() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
 func uuidEqual(a, b pgtype.UUID) bool {
-	if !a.Valid || !b.Valid {
-		return false
-	}
-	return a.Bytes == b.Bytes
+	return a.Valid && b.Valid && a.Bytes == b.Bytes
 }
 
 // botNamePreset builds the display name we pre-fill on Lark's
@@ -653,12 +673,3 @@ func botNamePreset(agentName string) string {
 	}
 	return name + " - Multica"
 }
-
-// uuidString is the package-local UUID-to-string helper defined in
-// hub.go; redeclared `func uuidString(u pgtype.UUID) string` removed
-// to avoid the symbol collision.
-//
-// InstallationService.box is unexported but reachable from this file
-// because both live in package `lark`; we read it directly in
-// finishSuccess so the Seal happens outside the DB transaction (which
-// would otherwise hold a row lock across the crypto call).

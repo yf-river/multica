@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiClient } from "./client";
-import { parseWithFallback } from "./schema";
+import { noopLogger } from "../logger";
+import { ApiResponseValidationError, parseOrThrow, parseWithFallback, setSchemaLogger } from "./schema";
 
 // Helper: stub fetch with a single JSON response. Status defaults to 200.
 function stubFetchJson(body: unknown, status = 200) {
@@ -18,6 +19,7 @@ function stubFetchJson(body: unknown, status = 200) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setSchemaLogger(noopLogger);
 });
 
 // These tests cover the five failure modes that white-screened the desktop
@@ -94,38 +96,32 @@ describe("ApiClient schema fallback", () => {
   describe("listAutopilots", () => {
     const baseAutopilot = {
       id: "ap-1",
-      workspace_id: "ws-1",
       title: "Daily triage",
       description: null,
+      assignee_type: "agent",
       assignee_id: "agent-1",
       status: "active",
       execution_mode: "run_only",
-      issue_title_template: null,
       created_by_type: "member",
       created_by_id: "user-1",
       last_run_at: null,
       created_at: "2026-06-01T00:00:00Z",
-      updated_at: "2026-06-01T00:00:00Z",
     };
 
     it("falls back to an empty list when the response is malformed", async () => {
       stubFetchJson({ autopilots: "not-an-array", total: 1 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
-      expect(res).toEqual({ autopilots: [], total: 0 });
+      expect(res).toEqual([]);
     });
 
-    it("accepts an old-server row without assignee_type or derived fields", async () => {
-      // Pre-MUL-2429 servers omit assignee_type; servers older than the
-      // list-derived-fields change omit trigger_kinds/next_run_at/
-      // last_run_status. Both must parse, not fall back.
+    it("accepts a current row without list-only derived fields", async () => {
       stubFetchJson({ autopilots: [baseAutopilot], total: 1 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
-      expect(res.autopilots).toHaveLength(1);
-      expect(res.autopilots[0]?.assignee_type).toBe("agent");
-      expect(res.autopilots[0]?.trigger_kinds).toBeUndefined();
-      expect(res.autopilots[0]?.last_run_status).toBeUndefined();
+      expect(res).toHaveLength(1);
+      expect(res[0]?.trigger_kinds).toBeUndefined();
+      expect(res[0]?.last_run_status).toBeUndefined();
     });
 
     it("passes derived fields through and tolerates enum drift", async () => {
@@ -143,12 +139,12 @@ describe("ApiClient schema fallback", () => {
       });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
-      expect(res.autopilots[0]?.trigger_kinds).toEqual([
+      expect(res[0]?.trigger_kinds).toEqual([
         "schedule",
         "some_future_kind",
       ]);
-      expect(res.autopilots[0]?.next_run_at).toBe("2026-06-13T09:00:00Z");
-      expect(res.autopilots[0]?.last_run_status).toBe("some_future_status");
+      expect(res[0]?.next_run_at).toBe("2026-06-13T09:00:00Z");
+      expect(res[0]?.last_run_status).toBe("some_future_status");
     });
   });
 
@@ -156,7 +152,10 @@ describe("ApiClient schema fallback", () => {
     it("drops malformed daemon setup URLs instead of throwing", async () => {
       stubFetchJson({
         cdn_domain: "cdn.example.com",
-        allow_signup: true,
+        cdn_signed: false,
+        posthog_key: "",
+        posthog_host: "",
+        analytics_environment: "test",
         daemon_server_url: { wrong: "shape" },
         daemon_app_url: 123,
         workspace_creation_disabled: false,
@@ -164,36 +163,40 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const config = await client.getConfig();
       expect(config.cdn_domain).toBe("cdn.example.com");
-      expect(config.allow_signup).toBe(true);
       expect(config.daemon_server_url).toBeUndefined();
       expect(config.daemon_app_url).toBeUndefined();
     });
   });
 
   describe("listGroupedIssues", () => {
-    it("falls back to empty groups when the response is malformed", async () => {
+    it("reuses list filters and falls back to empty groups when the response is malformed", async () => {
       stubFetchJson({ groups: "not-an-array" });
       const client = new ApiClient("https://api.example.test");
-      const res = await client.listGroupedIssues({ group_by: "assignee" });
+      const res = await client.listGroupedIssues({
+        group_by: "assignee",
+        limit: 12,
+        metadata: { source: "tapd" },
+        date_start: "2026-07-01",
+        sort_direction: "desc",
+      });
       expect(res).toEqual({ groups: [] });
-    });
-  });
-
-  describe("listComments", () => {
-    it("returns [] when the response is not an array", async () => {
-      stubFetchJson({ wrong: "shape" });
-      const client = new ApiClient("https://api.example.test");
-      const comments = await client.listComments("issue-1");
-      expect(comments).toEqual([]);
+      const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]));
+      expect(Object.fromEntries(url.searchParams)).toMatchObject({
+        group_by: "assignee",
+        limit: "12",
+        metadata: JSON.stringify({ source: "tapd" }),
+        date_start: "2026-07-01",
+        direction: "desc",
+      });
     });
   });
 
   describe("previewCommentTriggers", () => {
-    it("returns an empty agent list when the response is malformed", async () => {
+    it("returns an empty enhancement when the response is malformed", async () => {
       stubFetchJson({ agents: "not-an-array" });
       const client = new ApiClient("https://api.example.test");
-      const preview = await client.previewCommentTriggers("issue-1", "hello");
-      expect(preview).toEqual({ agents: [] });
+      await expect(client.previewCommentTriggers("issue-1", "hello"))
+        .resolves.toEqual({ agents: [] });
     });
   });
 
@@ -220,14 +223,14 @@ describe("ApiClient schema fallback", () => {
       stubFetchJson(null);
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilotDeliveries("ap-1");
-      expect(res).toEqual({ deliveries: [], total: 0 });
+      expect(res).toEqual([]);
     });
 
     it("falls back to an empty list when `deliveries` is not an array", async () => {
       stubFetchJson({ deliveries: "not-an-array", total: 0 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilotDeliveries("ap-1");
-      expect(res).toEqual({ deliveries: [], total: 0 });
+      expect(res).toEqual([]);
     });
 
     it("accepts an unknown future status value rather than dropping the row", async () => {
@@ -238,9 +241,6 @@ describe("ApiClient schema fallback", () => {
         deliveries: [
           {
             id: "d-1",
-            workspace_id: "ws-1",
-            autopilot_id: "ap-1",
-            trigger_id: "t-1",
             provider: "github",
             event: "pull_request.opened",
             dedupe_key: "abc",
@@ -250,7 +250,6 @@ describe("ApiClient schema fallback", () => {
             attempt_count: 1,
             content_type: "application/json",
             response_status: 200,
-            autopilot_run_id: null,
             replayed_from_delivery_id: null,
             error: null,
             received_at: "2026-01-01T00:00:00Z",
@@ -262,8 +261,8 @@ describe("ApiClient schema fallback", () => {
       });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilotDeliveries("ap-1");
-      expect(res.deliveries).toHaveLength(1);
-      expect(res.deliveries[0]?.status).toBe("quarantined");
+      expect(res).toHaveLength(1);
+      expect(res[0]?.status).toBe("quarantined");
     });
   });
 
@@ -273,9 +272,9 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const detail = await client.getAutopilotDelivery("ap-1", "d-1");
       expect(detail.id).toBe("d-1");
-      expect(detail.autopilot_id).toBe("ap-1");
     });
   });
+
 });
 
 // Direct tests for the helper, decoupled from any specific endpoint —
@@ -301,5 +300,88 @@ describe("parseWithFallback", () => {
     const fallback = { id: "fallback" };
     const out = parseWithFallback(null, schema, fallback, opts);
     expect(out).toBe(fallback);
+  });
+
+  it("logs contract shape without leaking response values", () => {
+    const warn = vi.fn();
+    setSchemaLogger({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn,
+      error: vi.fn(),
+    });
+    const schema = z.object({ id: z.string() });
+    const secret = "sk-private-response-value";
+
+    parseWithFallback(
+      {
+        id: 123,
+        prompt: "private prompt evidence",
+        api_key: secret,
+      },
+      schema,
+      { id: "fallback" },
+      opts,
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    const context = warn.mock.calls[0]?.[1];
+    expect(context).toEqual({
+      endpoint: opts.endpoint,
+      issues: [{ code: "invalid_type", path: ["id"] }],
+      received: {
+        kind: "object",
+        keys: ["id", "prompt", "api_key"],
+      },
+    });
+    const serialized = JSON.stringify(context);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain("private prompt evidence");
+  });
+});
+
+describe("parseOrThrow", () => {
+  it("throws a sanitized contract error instead of returning a false success", () => {
+    const warn = vi.fn();
+    setSchemaLogger({ debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() });
+    const secret = "sk-mutation-response-secret";
+
+    expect(() => parseOrThrow(
+      { id: 42, token: secret },
+      z.object({ id: z.string() }),
+      { endpoint: "POST /api/items" },
+    )).toThrow(ApiResponseValidationError);
+
+    try {
+      parseOrThrow(
+        { id: 42 },
+        z.object({ id: z.string() }),
+        { endpoint: "POST /api/items" },
+      );
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "api_response_contract_invalid",
+        endpoint: "POST /api/items",
+        mayHaveCommitted: true,
+      });
+    }
+
+    expect(JSON.stringify(warn.mock.calls[0]?.[1])).not.toContain(secret);
+  });
+
+  it("returns the parsed value on success", () => {
+    expect(parseOrThrow(
+      { id: "item-1", ignored: true },
+      z.object({ id: z.string() }),
+      { endpoint: "POST /api/items" },
+    )).toEqual({ id: "item-1" });
+  });
+
+  it("rejects empty required values when the schema establishes that invariant", () => {
+    expect(() => parseOrThrow(
+      { token: "" },
+      z.object({ token: z.string().min(1) }),
+      { endpoint: "POST /api/token" },
+    )).toThrow(ApiResponseValidationError);
   });
 });

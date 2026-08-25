@@ -1,0 +1,235 @@
+import { useEffect } from "react";
+import {
+  createMemoryRouter,
+  Navigate,
+  Outlet,
+  useMatches,
+} from "react-router-dom";
+import type { RouteObject } from "react-router-dom";
+import { IssueDetailPage } from "./pages/issue-detail-page";
+import { ProjectDetailPage } from "./pages/project-detail-page";
+import { AutopilotDetailPage } from "./pages/autopilot-detail-page";
+import { SkillDetailPage } from "./pages/skill-detail-page";
+import { AgentDetailPage } from "./pages/agent-detail-page";
+import { MemberDetailPage } from "./pages/member-detail-page";
+import { RuntimeDetailPage } from "./pages/runtime-detail-page";
+import { AttachmentPreviewRoute } from "./pages/attachment-preview-page";
+import { IssuesPage } from "@multica/views/issues/components";
+import { ProjectsPage } from "@multica/views/projects/components";
+import { DashboardPage } from "@multica/views/dashboard";
+import { AutopilotsPage } from "@multica/views/autopilots/components";
+import { MyIssuesPage } from "@multica/views/my-issues";
+import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { AgentPlaygroundPage } from "@multica/views/agent-playground";
+import { RunReviewsPage } from "@multica/views/run-reviews";
+import { SkillsPage } from "@multica/views/skills";
+import { AgentsPage } from "@multica/views/agents";
+import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
+import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads";
+import { InboxPage } from "@multica/views/inbox";
+import { SettingsPage } from "@multica/views/settings";
+import { useT } from "@multica/views/i18n";
+import { Download, Server } from "lucide-react";
+import { DaemonSettingsTab } from "./components/daemon-settings-tab";
+import { UpdatesSettingsTab } from "./components/updates-settings-tab";
+import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
+import { DesktopRouteErrorPage } from "./components/route-error-page";
+
+/**
+ * Wraps `SettingsPage` so the desktop-only extra tabs can pull their labels
+ * from i18n. The route element has to be a component (not a literal JSX
+ * value) for `useT` to run.
+ */
+function DesktopSettingsRoute() {
+  const { t } = useT("settings");
+  return (
+    <SettingsPage
+      extraAccountTabs={[
+        {
+          value: "daemon",
+          label: "守护进程",
+          icon: Server,
+          content: <DaemonSettingsTab />,
+        },
+        {
+          value: "updates",
+          label: t(($) => $.desktop.tabs.updates),
+          icon: Download,
+          content: <UpdatesSettingsTab />,
+        },
+      ]}
+    />
+  );
+}
+
+/**
+ * Sets document.title from the deepest matched route's handle.title.
+ * The tab system observes document.title via MutationObserver.
+ * Pages with dynamic titles (e.g. issue detail) override by setting
+ * document.title directly via useDocumentTitle().
+ */
+function TitleSync() {
+  const matches = useMatches();
+  const title = [...matches]
+    .reverse()
+    .find((m) => (m.handle as { title?: string })?.title)
+    ?.handle as { title?: string } | undefined;
+
+  useEffect(() => {
+    if (title?.title) document.title = title.title;
+  }, [title?.title]);
+
+  return null;
+}
+
+/** Wrapper that renders route children + TitleSync */
+function PageShell() {
+  return (
+    <>
+      <TitleSync />
+      <Outlet />
+    </>
+  );
+}
+
+/**
+ * Route definitions shared by all tabs.
+ *
+ * Every tab path is workspace-scoped: `/{slug}/{route}/...`. Creating the
+ * first workspace is NOT a route — it renders as a window-level overlay via
+ * `WorkspaceCreationOverlay`, dispatched by the navigation adapter's
+ * transition-path interception. The `activeWorkspaceSlug` in the
+ * tab store decides which workspace's tabs are visible in the TabBar;
+ * workspace-less state (zero-workspace user) shows the overlay instead.
+ *
+ * The root index route supports the current workspace-creation overlay,
+ * which parks the active tab router at `/` while no workspace route should
+ * remain mounted.
+ */
+const appRoutes: RouteObject[] = [
+  {
+    element: <PageShell />,
+    errorElement: <DesktopRouteErrorPage />,
+    children: [
+      { index: true, element: null },
+      {
+        path: ":workspaceSlug",
+        element: <WorkspaceRouteLayout />,
+        children: [
+          { index: true, element: <Navigate to="issues" replace /> },
+          {
+            path: "issues",
+            element: <IssuesPage />,
+            handle: { title: "任务" },
+          },
+          {
+            path: "issues/:id",
+            element: <IssueDetailPage />,
+            handle: { title: "任务详情" },
+          },
+          {
+            path: "projects",
+            element: <ProjectsPage />,
+            handle: { title: "项目" },
+          },
+          {
+            path: "projects/:id",
+            element: <ProjectDetailPage />,
+            handle: { title: "项目详情" },
+          },
+          {
+            path: "autopilots",
+            element: <AutopilotsPage />,
+            handle: { title: "自动化" },
+          },
+          {
+            path: "autopilots/:id",
+            element: <AutopilotDetailPage />,
+            handle: { title: "自动化详情" },
+          },
+          {
+            path: "my-issues",
+            element: <MyIssuesPage />,
+            handle: { title: "我的任务" },
+          },
+          {
+            path: "runtimes",
+            element: <DesktopRuntimesPage />,
+            handle: { title: "运行时" },
+          },
+          {
+            path: "runtimes/:id",
+            element: <RuntimeDetailPage />,
+            handle: { title: "运行时" },
+          },
+          {
+            path: "debug",
+            handle: { title: "调试" },
+            children: [
+              { index: true, element: <Navigate to="prompts" replace /> },
+              { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "调试" } },
+              { path: "agent-playground", element: <AgentPlaygroundPage />, handle: { title: "调试" } },
+            ],
+          },
+          {
+            path: "evaluation",
+            handle: { title: "评估" },
+            children: [
+              { index: true, element: <Navigate to="datasets" replace /> },
+              { path: "datasets", element: <PromptLibraryPage activeView="datasets" />, handle: { title: "评估" } },
+              { path: "test-suites", element: <PromptLibraryPage activeView="test-suites" />, handle: { title: "评估" } },
+              { path: "runs", element: <PromptLibraryPage activeView="evaluation-runs" />, handle: { title: "评估" } },
+            ],
+          },
+          { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
+          {
+            path: "skills/:id",
+            element: <SkillDetailPage />,
+            handle: { title: "技能" },
+          },
+          { path: "agents", element: <AgentsPage />, handle: { title: "智能体" } },
+          {
+            path: "agents/:id",
+            element: <AgentDetailPage />,
+            handle: { title: "智能体" },
+          },
+          {
+            path: "members/:id",
+            element: <MemberDetailPage />,
+            handle: { title: "成员" },
+          },
+          { path: "squads", element: <SquadsPage />, handle: { title: "小队" } },
+          {
+            path: "squads/:id",
+            element: <SquadDetailPageView />,
+            handle: { title: "小队" },
+          },
+          { path: "inbox", element: <InboxPage />, handle: { title: "收件箱" } },
+          { path: "run-reviews", element: <RunReviewsPage />, handle: { title: "运行复盘" } },
+          {
+            path: "attachments/:id/preview",
+            element: <AttachmentPreviewRoute />,
+            handle: { title: "Attachment" },
+          },
+          {
+            path: "usage",
+            element: <DashboardPage />,
+            handle: { title: "Usage" },
+          },
+          {
+            path: "settings",
+            element: <DesktopSettingsRoute />,
+            handle: { title: "Settings" },
+          },
+        ],
+      },
+    ],
+  },
+];
+
+/** Create an independent memory router for a tab. */
+export function createTabRouter(initialPath: string) {
+  return createMemoryRouter(appRoutes, {
+    initialEntries: [initialPath],
+  });
+}

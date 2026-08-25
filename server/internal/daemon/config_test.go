@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 func TestPatternsFromEnv_DefaultsWhenUnset(t *testing.T) {
 	t.Setenv("MULTICA_GC_ARTIFACT_PATTERNS", "")
 	defaults := []string{"node_modules", ".next", ".turbo"}
-	got := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", defaults)
+	got := patternsFromEnv(defaults)
 	if !reflect.DeepEqual(got, defaults) {
 		t.Fatalf("expected defaults %v, got %v", defaults, got)
 	}
@@ -28,7 +29,7 @@ func TestPatternsFromEnv_DefaultsWhenUnset(t *testing.T) {
 
 func TestPatternsFromEnv_DropsSeparatorBearingEntries(t *testing.T) {
 	t.Setenv("MULTICA_GC_ARTIFACT_PATTERNS", "node_modules, .next ,foo/bar, ../etc, ,target")
-	got := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", nil)
+	got := patternsFromEnv(nil)
 	want := []string{"node_modules", ".next", "target"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
@@ -98,7 +99,7 @@ func TestEnsureCodexRuntimeProfileSeedsFromUserHome(t *testing.T) {
 	t.Setenv("CODEX_HOME", source)
 	t.Setenv("MULTICA_CODEX_HOME", target)
 
-	if err := ensureCodexRuntimeProfile("daemon/test"); err != nil {
+	if err := ensureCodexRuntimeProfile(); err != nil {
 		t.Fatalf("ensureCodexRuntimeProfile: %v", err)
 	}
 	if got := os.Getenv("CODEX_HOME"); got != target {
@@ -123,7 +124,7 @@ func TestEnsureCodexRuntimeProfileUsesCodexHomeByDefault(t *testing.T) {
 	}
 	t.Setenv("CODEX_HOME", source)
 
-	if err := ensureCodexRuntimeProfile("daemon/test"); err != nil {
+	if err := ensureCodexRuntimeProfile(); err != nil {
 		t.Fatalf("ensureCodexRuntimeProfile: %v", err)
 	}
 	if got := os.Getenv("CODEX_HOME"); got != source {
@@ -146,7 +147,7 @@ func TestEnsureCodexRuntimeProfileDoesNotOverwriteExistingAuth(t *testing.T) {
 	t.Setenv("CODEX_HOME", source)
 	t.Setenv("MULTICA_CODEX_HOME", target)
 
-	if err := ensureCodexRuntimeProfile("daemon/test"); err != nil {
+	if err := ensureCodexRuntimeProfile(); err != nil {
 		t.Fatalf("ensureCodexRuntimeProfile: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(target, "auth.json"))
@@ -174,7 +175,7 @@ func TestBuildLoginShellResolveScript_ShapeAndContent(t *testing.T) {
 	if idxUnalias < 0 || idxUnsetFn < 0 || idxLookup < 0 {
 		t.Fatalf("script missing unalias/unset -f/command -v steps:\n%s", got)
 	}
-	if !(idxUnalias < idxLookup && idxUnsetFn < idxLookup) {
+	if idxUnalias >= idxLookup || idxUnsetFn >= idxLookup {
 		t.Errorf("unalias/unset -f must precede command -v:\n%s", got)
 	}
 	// Must canonicalise via `cd ... && pwd -P` to break out of symlinked
@@ -188,20 +189,8 @@ func TestBuildLoginShellResolveScript_ShapeAndContent(t *testing.T) {
 	}
 }
 
-// TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell verifies the
-// motivating bug scenario: a binary that lives in a directory which is NOT on
-// the daemon's PATH but IS added to PATH by the user's interactive shell rc
-// file gets resolved to a canonical absolute path.
-//
-// We simulate this by:
-//   - creating a temp dir containing an executable named "fakeclaude"
-//   - removing every other dir from PATH (so exec.LookPath misses)
-//   - pointing SHELL at /bin/sh and using ENV (sourced on -i) to add the dir
-//
-// Skipped on Windows (no POSIX shell), and skipped if /bin/sh is missing or
-// doesn't honour ENV (which would defeat the simulation — not the function's
-// fault).
-func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
+func stageLoginShellCommand(t *testing.T, extraRC string) (string, string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell not available on Windows")
 	}
@@ -217,23 +206,23 @@ func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
 	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write fake binary: %v", err)
 	}
-
-	// Prove the precondition: with binDir absent from PATH, the daemon
-	// would normally miss this binary.
 	t.Setenv("PATH", "/usr/bin:/bin")
-	if _, err := lookPathInPath("fakeclaude"); err == nil {
+	if _, err := exec.LookPath("fakeclaude"); err == nil {
 		t.Skip("PATH leak — test environment already exposes fakeclaude without shell help")
 	}
-
-	// Wire the interactive shell to add binDir to PATH on startup. POSIX
-	// sh reads $ENV when invoked with -i, so we write a tiny rc file that
-	// prepends binDir.
 	rc := filepath.Join(t.TempDir(), "sh.rc")
-	if err := os.WriteFile(rc, []byte("export PATH=\""+binDir+":$PATH\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(rc, []byte("export PATH=\""+binDir+":$PATH\"\n"+extraRC), 0o644); err != nil {
 		t.Fatalf("write rc: %v", err)
 	}
 	t.Setenv("SHELL", sh)
 	t.Setenv("ENV", rc)
+	return sh, binPath
+}
+
+// A command available only through interactive shell setup must resolve to a
+// canonical executable path.
+func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
+	_, binPath := stageLoginShellCommand(t, "")
 
 	got := resolveAgentsViaLoginShell([]string{"fakeclaude", "kiro-cli"})
 	resolved, ok := got["fakeclaude"]
@@ -255,35 +244,24 @@ func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
 	}
 }
 
-func TestResolveAgentsViaLoginShell_SkipsUnsupportedShell(t *testing.T) {
-	t.Setenv("SHELL", "/usr/bin/fish")
-	got := resolveAgentsViaLoginShell([]string{"claude"})
-	if len(got) != 0 {
-		t.Errorf("expected empty map for unsupported shell, got %v", got)
+func TestResolveAgentsViaLoginShellRejectsInvalidInputs(t *testing.T) {
+	tests := []struct {
+		name  string
+		shell string
+		names []string
+	}{
+		{name: "unsupported shell", shell: "/usr/bin/fish", names: []string{"claude"}},
+		{name: "empty shell", names: []string{"claude"}},
+		{name: "empty command list", shell: "/bin/sh"},
 	}
-}
-
-func TestResolveAgentsViaLoginShell_EmptyShellNoCrash(t *testing.T) {
-	t.Setenv("SHELL", "")
-	got := resolveAgentsViaLoginShell([]string{"claude"})
-	if len(got) != 0 {
-		t.Errorf("expected empty map when SHELL unset, got %v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SHELL", tc.shell)
+			if got := resolveAgentsViaLoginShell(tc.names); len(got) != 0 {
+				t.Fatalf("resolved commands = %v, want none", got)
+			}
+		})
 	}
-}
-
-func TestResolveAgentsViaLoginShell_EmptyInput(t *testing.T) {
-	t.Setenv("SHELL", "/bin/sh")
-	got := resolveAgentsViaLoginShell(nil)
-	if len(got) != 0 {
-		t.Errorf("expected empty map for nil input, got %v", got)
-	}
-}
-
-// lookPathInPath is a thin wrapper used by the test above; matches what
-// exec.LookPath would do but lets the test be explicit about which call it's
-// asserting against.
-func lookPathInPath(name string) (string, error) {
-	return exec.LookPath(name)
 }
 
 // stageFakeAgent writes an executable `claude` script into a temp dir and
@@ -305,51 +283,13 @@ func stageFakeAgent(t *testing.T) string {
 	return binDir
 }
 
-// TestResolveAgentsViaLoginShell_StripsAliasShadowing locks down the fix for
-// #2512: when the user's rc file declares an alias with the same name as the
-// agent CLI, the resolver must still return the real binary on PATH, not the
-// alias text. The previous revision of this code passed the rest of the test
-// suite but silently dropped this case (alias text is not absolute, so the
-// `case "$p" in /*)` filter rejected it).
+// Alias shadows must not hide the real executable on PATH.
 func TestResolveAgentsViaLoginShell_StripsAliasShadowing(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX shell not available on Windows")
-	}
-	sh := "/bin/sh"
-	if _, err := os.Stat(sh); err != nil {
-		t.Skipf("no /bin/sh available: %v", err)
-	}
-
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "fakeclaude")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake binary: %v", err)
-	}
-
-	// rc adds binDir to PATH AND defines an alias that shadows the bare
-	// name with a non-existent path. The pre-fix script would see the
-	// alias, see that its target isn't absolute, and silently drop the
-	// agent. With unalias/unset -f in place, command -v falls through to
-	// the PATH search and finds binPath.
-	rc := filepath.Join(t.TempDir(), "sh.rc")
-	rcBody := "export PATH=\"" + binDir + ":$PATH\"\n" +
-		"alias fakeclaude=\"/nonexistent/wrapper-from-rc\"\n"
-	if err := os.WriteFile(rc, []byte(rcBody), 0o644); err != nil {
-		t.Fatalf("write rc: %v", err)
-	}
-
-	// Strip PATH so exec.LookPath misses fakeclaude — same precondition as
-	// the happy-path test, so we know the shell did the resolution.
-	t.Setenv("PATH", "/usr/bin:/bin")
-	if _, err := lookPathInPath("fakeclaude"); err == nil {
-		t.Skip("PATH leak — fakeclaude already visible to the daemon without shell help")
-	}
+	sh, binPath := stageLoginShellCommand(t, "alias fakeclaude=\"/nonexistent/wrapper-from-rc\"\n")
 	// Sanity-check that the simulated environment can actually load aliases.
 	// If the host /bin/sh doesn't honour $ENV in -i mode (rare but possible
 	// on minimal Linux images), skipping is more honest than asserting on a
 	// scenario the test couldn't actually set up.
-	t.Setenv("SHELL", sh)
-	t.Setenv("ENV", rc)
 	probe, err := exec.Command(sh, "-ilc", "alias fakeclaude 2>/dev/null").Output()
 	if err != nil || !strings.Contains(string(probe), "fakeclaude") {
 		t.Skipf("test host's /bin/sh did not load alias from $ENV; cannot simulate shadowing (probe=%q err=%v)", string(probe), err)
@@ -564,8 +504,172 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_MalformedConfigFileNonFatal verifies the fail-soft contract:
-// a corrupt config.json
+func TestApplyOpenclawOverride_DoesNothingWhenNil(t *testing.T) {
+	// Pre-set both env vars to known values; verify they survive untouched.
+	t.Setenv("MULTICA_OPENCLAW_PATH", "/before/openclaw")
+	t.Setenv("OPENCLAW_STATE_DIR", "/before/state")
+
+	applyOpenclawOverride(nil)
+
+	if got := os.Getenv("MULTICA_OPENCLAW_PATH"); got != "/before/openclaw" {
+		t.Errorf("MULTICA_OPENCLAW_PATH mutated: got %q, want /before/openclaw", got)
+	}
+	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/before/state" {
+		t.Errorf("OPENCLAW_STATE_DIR mutated: got %q, want /before/state", got)
+	}
+}
+
+func TestApplyOpenclawOverride_SetsBothWhenEnvUnset(t *testing.T) {
+	t.Setenv("MULTICA_OPENCLAW_PATH", "")
+	t.Setenv("OPENCLAW_STATE_DIR", "")
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	t.Cleanup(func() {
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	})
+
+	applyOpenclawOverride(&cli.OpenClawOverride{
+		BinaryPath: "/from/config/openclaw",
+		StateDir:   "/from/config/state",
+	})
+
+	if got := os.Getenv("MULTICA_OPENCLAW_PATH"); got != "/from/config/openclaw" {
+		t.Errorf("MULTICA_OPENCLAW_PATH: got %q, want /from/config/openclaw", got)
+	}
+	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/from/config/state" {
+		t.Errorf("OPENCLAW_STATE_DIR: got %q, want /from/config/state", got)
+	}
+}
+
+// Explicit process environment takes precedence over local config.
+func TestApplyOpenclawOverride_EnvWinsOverConfig(t *testing.T) {
+	// User has already exported these in their shell.
+	t.Setenv("MULTICA_OPENCLAW_PATH", "/from/env/openclaw")
+	t.Setenv("OPENCLAW_STATE_DIR", "/from/env/state")
+
+	applyOpenclawOverride(&cli.OpenClawOverride{
+		BinaryPath: "/from/config/openclaw",
+		StateDir:   "/from/config/state",
+	})
+
+	if got := os.Getenv("MULTICA_OPENCLAW_PATH"); got != "/from/env/openclaw" {
+		t.Errorf("MULTICA_OPENCLAW_PATH: env should win, got %q want /from/env/openclaw", got)
+	}
+	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/from/env/state" {
+		t.Errorf("OPENCLAW_STATE_DIR: env should win, got %q want /from/env/state", got)
+	}
+}
+
+// Empty override fields must not mask normal discovery.
+func TestApplyOpenclawOverride_PartialFields_OnlySetsConfigured(t *testing.T) {
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	t.Cleanup(func() {
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	})
+
+	applyOpenclawOverride(&cli.OpenClawOverride{
+		StateDir: "/from/config/state",
+		// BinaryPath intentionally empty — must NOT call Setenv("MULTICA_OPENCLAW_PATH", "")
+	})
+
+	if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); set {
+		t.Errorf("MULTICA_OPENCLAW_PATH should remain unset when BinaryPath is empty; got %q", os.Getenv("MULTICA_OPENCLAW_PATH"))
+	}
+	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/from/config/state" {
+		t.Errorf("OPENCLAW_STATE_DIR: got %q, want /from/config/state", got)
+	}
+}
+
+// Local backend config feeds discovery and the spawned tool environment.
+func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
+	stageFakeAgent(t)
+	// Add an OpenClaw executable outside normal PATH discovery.
+	customDir := t.TempDir()
+	customOpenclaw := filepath.Join(customDir, "non-default-openclaw")
+	if err := os.WriteFile(customOpenclaw, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake openclaw: %v", err)
+	}
+
+	// Make sure no env-var override is leaking in from the test runner.
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	t.Cleanup(func() {
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	})
+
+	homeForCLIConfig := t.TempDir()
+	t.Setenv("HOME", homeForCLIConfig)
+	var cfg cli.CLIConfig
+	configJSON, err := json.Marshal(map[string]any{
+		"server_url": "http://localhost:8080",
+		"backends": map[string]any{
+			"openclaw": map[string]string{
+				"binary_path": customOpenclaw,
+				"state_dir":   "/var/lib/openclaw-isolated",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal cli config: %v", err)
+	}
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
+		t.Fatalf("unmarshal cli config: %v", err)
+	}
+	if err := cli.SaveCLIConfigForProfile(cfg, ""); err != nil {
+		t.Fatalf("save cli config: %v", err)
+	}
+
+	loaded, err := LoadConfig(Overrides{
+		ServerURL:      "http://localhost:8080",
+		WorkspacesRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+
+	openclaw, ok := loaded.Agents["openclaw"]
+	if !ok {
+		t.Fatalf("agents map missing 'openclaw' key; got keys=%v", agentKeys(loaded.Agents))
+	}
+	if openclaw.Path != customOpenclaw {
+		t.Errorf("openclaw.Path: got %q, want %q (the binary configured in CLI config)", openclaw.Path, customOpenclaw)
+	}
+	if got := os.Getenv("OPENCLAW_STATE_DIR"); got != "/var/lib/openclaw-isolated" {
+		t.Errorf("OPENCLAW_STATE_DIR: got %q, want injected from config", got)
+	}
+}
+
+func TestLoadConfig_WithoutBackendConfigUsesPathDiscovery(t *testing.T) {
+	stageFakeAgent(t)
+
+	// Point HOME at an empty dir — no config.json present.
+	t.Setenv("HOME", t.TempDir())
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	t.Cleanup(func() {
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
+	})
+
+	_, err := LoadConfig(Overrides{
+		ServerURL:      "http://localhost:8080",
+		WorkspacesRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig with no config file should not fail: %v", err)
+	}
+
+	if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); set {
+		t.Errorf("OPENCLAW_STATE_DIR should remain unset when no config file is present; got %q", os.Getenv("OPENCLAW_STATE_DIR"))
+	}
+}
+
+// TestLoadConfig_BackendOverrides_MalformedConfigFileNonFatal verifies the
+// fail-soft contract documented inline in LoadConfig: a corrupt config.json
 // must not prevent daemon startup. This matters for diskcorruption /
 // partial-write recovery — the daemon should log and proceed using
 // env-var-only configuration.

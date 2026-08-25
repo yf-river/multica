@@ -1,60 +1,32 @@
 package agent
 
 import (
-	"context"
 	"log/slog"
-	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestBuildPiArgsNoToolAllowlist(t *testing.T) {
-	// Extension tools registered via Pi's registerTool() must not be
-	// filtered out by a hardcoded --tools allowlist. Omitting --tools
-	// lets Pi use its full tool registry. See #2379.
-	args := buildPiArgs("test prompt", "/tmp/session.jsonl", ExecOptions{}, slog.Default())
-	for i, arg := range args {
-		if arg == "--tools" {
-			t.Errorf("buildPiArgs emits --tools %q; should not restrict tool registry (see #2379)", args[i+1])
-		}
-	}
-}
-
-func TestBuildPiArgsBasicFlags(t *testing.T) {
-	args := buildPiArgs("hello world", "/tmp/s.jsonl", ExecOptions{
-		Model:        "anthropic/claude-sonnet-4-20250514",
-		SystemPrompt: "be helpful",
-	}, slog.Default())
-
-	joined := strings.Join(args, " ")
-	for _, want := range []string{"-p", "--mode json", "--session /tmp/s.jsonl", "--provider anthropic", "--model claude-sonnet-4-20250514", "--append-system-prompt"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("expected %q in args, got: %v", want, args)
-		}
-	}
-
-	// Prompt must be the last positional argument.
-	if args[len(args)-1] != "hello world" {
-		t.Errorf("prompt should be last arg, got %q", args[len(args)-1])
-	}
-}
-
-func TestBuildPiArgsCustomArgsAppended(t *testing.T) {
-	// Users can still restrict tools via custom_args if desired.
-	args := buildPiArgs("prompt", "/tmp/s.jsonl", ExecOptions{
-		CustomArgs: []string{"--tools", "read,bash"},
-	}, slog.Default())
-
-	found := false
-	for i, arg := range args {
-		if arg == "--tools" && i+1 < len(args) && args[i+1] == "read,bash" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("custom --tools should pass through via custom_args, got: %v", args)
+func TestBuildPiArgs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		prompt  string
+		session string
+		opts    ExecOptions
+		want    []string
+	}{
+		{name: "full registry by default", prompt: "test prompt", session: "/tmp/session.jsonl", want: []string{"-p", "--mode", "json", "--session", "/tmp/session.jsonl", "test prompt"}},
+		{name: "model and system prompt", prompt: "hello world", session: "/tmp/s.jsonl", opts: ExecOptions{Model: "anthropic/claude-sonnet-4-20250514", SystemPrompt: "be helpful"}, want: []string{"-p", "--mode", "json", "--session", "/tmp/s.jsonl", "--provider", "anthropic", "--model", "claude-sonnet-4-20250514", "--append-system-prompt", "be helpful", "hello world"}},
+		{name: "custom tool restriction", prompt: "prompt", session: "/tmp/s.jsonl", opts: ExecOptions{CustomArgs: []string{"--tools", "read,bash"}}, want: []string{"-p", "--mode", "json", "--session", "/tmp/s.jsonl", "--tools", "read,bash", "prompt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildPiArgs(tc.prompt, tc.session, tc.opts, slog.Default()); !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -76,7 +48,6 @@ func TestPiExecuteAttachesStdinPipe(t *testing.T) {
 		t.Skip("stdin fd inspection relies on /proc/self/fd/0")
 	}
 
-	fakePath := filepath.Join(t.TempDir(), "pi")
 	script := "#!/bin/sh\n" +
 		"kind=$(stat -c '%F' -L /proc/self/fd/0 2>/dev/null || echo unknown)\n" +
 		"case \"$kind\" in\n" +
@@ -88,65 +59,31 @@ func TestPiExecuteAttachesStdinPipe(t *testing.T) {
 		"esac\n" +
 		"printf 'stdin was %s; expected fifo\\n' \"$kind\" >&2\n" +
 		"exit 1\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("pi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new pi backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "completed" {
-			t.Fatalf("expected status=completed (stdin attached as fifo), got %q (error=%q)", result.Status, result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	result := executeBackendScript(t, "pi", "pi", script, ExecOptions{Timeout: 5 * time.Second})
+	if result.Status != "completed" {
+		t.Fatalf("expected status=completed (stdin attached as fifo), got %q (error=%q)", result.Status, result.Error)
 	}
 }
 
-func TestDrainPiTextBufferSplitToolCall(t *testing.T) {
-	chunks := []string{
-		"before ca",
-		`ll:bash{command:<|"|>ls -R repo/path`,
-		`/roles/example<|"|>}`,
-		" after",
-	}
-	var buf strings.Builder
-	var got strings.Builder
-	for _, chunk := range chunks {
-		got.WriteString(drainPiTextBuffer(&buf, chunk))
-	}
-	got.WriteString(flushPiTextBuffer(&buf))
-	if got.String() != "before  after" {
-		t.Fatalf("unexpected streamed text: %q", got.String())
-	}
-}
-
-func TestDrainPiTextBufferSplitControlToken(t *testing.T) {
-	chunks := []string{"before <|tu", "rn>model after"}
-	var buf strings.Builder
-	var got strings.Builder
-	for _, chunk := range chunks {
-		got.WriteString(drainPiTextBuffer(&buf, chunk))
-	}
-	got.WriteString(flushPiTextBuffer(&buf))
-	if got.String() != "before  after" {
-		t.Fatalf("unexpected streamed text: %q", got.String())
+func TestDrainPiTextBufferRemovesSplitProtocolTokens(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{name: "tool call", chunks: []string{"before ca", `ll:bash{command:<|"|>ls -R repo/path`, `/roles/example<|"|>}`, " after"}},
+		{name: "control token", chunks: []string{"before <|tu", "rn>model after"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf strings.Builder
+			var got strings.Builder
+			for _, chunk := range tc.chunks {
+				got.WriteString(drainPiTextBuffer(&buf, chunk))
+			}
+			got.WriteString(flushPiTextBuffer(&buf))
+			if got.String() != "before  after" {
+				t.Fatalf("unexpected streamed text: %q", got.String())
+			}
+		})
 	}
 }
 

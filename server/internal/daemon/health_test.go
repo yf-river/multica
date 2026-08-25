@@ -12,21 +12,24 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func newHealthTestDaemon(cliVersion string) *Daemon {
+	return &Daemon{
+		cfg:        Config{CLIVersion: cliVersion},
+		workspaces: map[string]*workspaceState{},
+		logger:     slog.Default(),
+	}
+}
 
 func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{
-		cfg: Config{
-			CLIVersion:    "v9.9.9",
-			DaemonID:      "daemon-test",
-			DeviceName:    "dev",
-			ServerBaseURL: "http://localhost:8080",
-		},
-		workspaces: map[string]*workspaceState{},
-		logger:     slog.Default(),
-	}
+	d := newHealthTestDaemon("v9.9.9")
+	d.cfg.DaemonID = "daemon-test"
+	d.cfg.DeviceName = "dev"
+	d.cfg.ServerBaseURL = "http://localhost:8080"
 	d.activeTasks.Store(3)
 	d.ready.Store(true) // preflight done -> status should be "running"
 
@@ -38,9 +41,7 @@ func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	// Decode into a raw map so the test locks in the exact wire-level JSON
-	// keys — the desktop TS client depends on snake_case (cli_version,
-	// active_task_count), so a silent struct-tag rename must fail here.
+	// Desktop consumes these exact snake_case keys and the daemon host OS.
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode raw response: %v", err)
@@ -48,23 +49,17 @@ func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
 	if got, want := raw["cli_version"], "v9.9.9"; got != want {
 		t.Errorf("cli_version key: got %v, want %q", got, want)
 	}
-	// JSON numbers decode to float64 through map[string]any.
 	if got, want := raw["active_task_count"], float64(3); got != want {
 		t.Errorf("active_task_count key: got %v, want %v", got, want)
 	}
 	if got, want := raw["status"], "running"; got != want {
 		t.Errorf("status key: got %v, want %q", got, want)
 	}
-	// The desktop relies on the `os` key (runtime.GOOS) to detect a daemon it
-	// can't manage (e.g. Linux-in-WSL behind a Windows desktop). A rename or
-	// drop would silently re-break #3916, so lock both the key and its value.
 	if got, want := raw["os"], runtime.GOOS; got != want {
 		t.Errorf("os key: got %v, want %q", got, want)
 	}
 
-	// Also round-trip into the typed struct as a separate check that the
-	// field values match, independent of key naming.
-	var resp HealthResponse
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode typed response: %v", err)
 	}
@@ -76,25 +71,17 @@ func TestHealthHandlerReportsCLIVersionAndActiveTaskCount(t *testing.T) {
 	}
 }
 
-// TestHealthHandlerReportsStartingUntilReady pins the liveness/readiness split:
-// the health server binds and answers before preflight finishes, but it must
-// report "starting" until d.ready is set, and only then "running". Otherwise a
-// slow or failing preflight would be misreported to `daemon start` (and the
-// desktop) as a fully started daemon.
+// A bound health port remains "starting" until preflight marks the daemon ready.
 func TestHealthHandlerReportsStartingUntilReady(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{
-		cfg:        Config{CLIVersion: "v1.0.0"},
-		workspaces: map[string]*workspaceState{},
-		logger:     slog.Default(),
-	}
+	d := newHealthTestDaemon("v1.0.0")
 	handler := d.healthHandler(time.Now())
 
 	readStatus := func() string {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
-		var resp HealthResponse
+		var resp healthResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
@@ -115,14 +102,9 @@ func TestHealthHandlerReportsStartingUntilReady(t *testing.T) {
 func TestHealthHandlerActiveTaskCountTracksCounter(t *testing.T) {
 	t.Parallel()
 
-	d := &Daemon{
-		cfg:        Config{CLIVersion: "v1.0.0"},
-		workspaces: map[string]*workspaceState{},
-		logger:     slog.Default(),
-	}
+	d := newHealthTestDaemon("v1.0.0")
 	handler := d.healthHandler(time.Now())
 
-	// Simulate the pollLoop increment/decrement protocol.
 	d.activeTasks.Add(1)
 	d.activeTasks.Add(1)
 	assertActiveTaskCount(t, handler, 2)
@@ -169,8 +151,6 @@ func TestShutdownHandlerRejectsNonPost(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rec.Code)
 	}
-	// Give the handler's deferred cancel goroutine a moment to fire
-	// in case a bug causes it to run anyway.
 	time.Sleep(10 * time.Millisecond)
 	if cancelled {
 		t.Fatal("GET request should not trigger cancellation")
@@ -198,7 +178,7 @@ func TestHealthHandlerRespondsWhileTaskRepoLookupWaits(t *testing.T) {
 
 	registerDone := make(chan struct{})
 	go func() {
-		d.registerTaskRepos(workspaceID, []RepoData{{URL: repoURL}})
+		d.registerTaskRepos(workspaceID, []protocol.TaskRepository{{URL: repoURL}})
 		close(registerDone)
 	}()
 	cache.waitForLookup(t)
@@ -283,7 +263,7 @@ func assertActiveTaskCount(t *testing.T, h http.HandlerFunc, want int64) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
-	var resp HealthResponse
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

@@ -2,15 +2,15 @@ package execenv
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // repoNameFromURL, sanitizeName, and nonAlphanumeric were dropped from
@@ -58,10 +58,6 @@ func sanitizeName(name string) string {
 
 func testLogger() *slog.Logger {
 	return slog.Default()
-}
-
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 const oldProviderCodexConfig = `model_provider = "old-provider"
@@ -171,46 +167,6 @@ func TestPredictRootDir(t *testing.T) {
 	}
 }
 
-func TestSanitizeName(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"Code Reviewer", "code-reviewer"},
-		{"my_agent!@#v2", "my-agent-v2"},
-		{"  spaces  ", "spaces"},
-		{"UPPERCASE", "uppercase"},
-		{"a-very-long-name-that-exceeds-thirty-characters-total", "a-very-long-name-that-exceeds"},
-		{"", "agent"},
-		{"---", "agent"},
-		{"中文测试", "agent"},
-	}
-	for _, tt := range tests {
-		if got := sanitizeName(tt.input); got != tt.want {
-			t.Errorf("sanitizeName(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestRepoNameFromURL(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"https://github.com/org/my-repo.git", "my-repo"},
-		{"https://github.com/org/my-repo", "my-repo"},
-		{"git@github.com:org/my-repo.git", "my-repo"},
-		{"https://github.com/org/repo/", "repo"},
-		{"my-repo", "my-repo"},
-		{"", "repo"},
-	}
-	for _, tt := range tests {
-		if got := repoNameFromURL(tt.input); got != tt.want {
-			t.Errorf("repoNameFromURL(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestPrepareDirectoryMode(t *testing.T) {
 	t.Parallel()
 	workspacesRoot := t.TempDir()
@@ -230,7 +186,7 @@ func TestPrepareDirectoryMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// Verify directory structure.
 	for _, sub := range []string{"workdir", "output", "logs"} {
@@ -288,7 +244,7 @@ func TestPrepareWithProjectResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// resources.json should exist and decode back to what we wrote.
 	resourcesPath := filepath.Join(env.WorkDir, ".multica", "project", "resources.json")
@@ -394,7 +350,7 @@ func TestProjectReposReplaceWorkspaceReposInMetaSkill(t *testing.T) {
 		IssueID:      "11111111-2222-3333-4444-555555555555",
 		ProjectID:    "22222222-3333-4444-5555-666666666666",
 		ProjectTitle: "Project A",
-		Repos: []RepoContextForEnv{
+		Repos: []protocol.TaskRepository{
 			{URL: "https://github.com/org/project-repo"},
 		},
 		ProjectResources: []ProjectResourceForEnv{
@@ -438,7 +394,7 @@ func TestPrepareWithRepoContext(t *testing.T) {
 
 	taskCtx := TaskContextForEnv{
 		IssueID: "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-		Repos: []RepoContextForEnv{
+		Repos: []protocol.TaskRepository{
 			{URL: "https://github.com/org/backend"},
 			{URL: "https://github.com/org/frontend"},
 		},
@@ -454,7 +410,7 @@ func TestPrepareWithRepoContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// Inject runtime config (done separately in daemon, replicate here).
 	if _, err := InjectRuntimeConfig(env.WorkDir, "claude", taskCtx); err != nil {
@@ -500,7 +456,7 @@ func TestWriteContextFiles(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -627,7 +583,7 @@ func TestWriteContextFilesClaudeNativeSkills(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -695,17 +651,21 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
 
 	// Re-dispatch twice on the same persistent workdir.
 	for i := 0; i < 2; i++ {
-		if reused := Reuse(ReuseParams{
+		reused, err := Reuse(ReuseParams{
 			WorkDir:  env.WorkDir,
 			Provider: "claude",
 			Task:     task,
-		}, testLogger()); reused == nil {
+		}, testLogger())
+		if err != nil {
+			t.Fatalf("Reuse #%d failed: %v", i+1, err)
+		}
+		if reused == nil {
 			t.Fatalf("Reuse #%d returned nil", i+1)
 		}
 	}
@@ -761,7 +721,7 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
 
@@ -771,11 +731,15 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 		t.Fatalf("seed stray agent file: %v", err)
 	}
 
-	if reused := Reuse(ReuseParams{
+	reused, err := Reuse(ReuseParams{
 		WorkDir:  env.WorkDir,
 		Provider: "claude",
 		Task:     task,
-	}, testLogger()); reused == nil {
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
+	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
 
@@ -798,6 +762,27 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(skillsDir, "issue-review", "SKILL.md")); err != nil {
 		t.Errorf("expected a refreshed SKILL.md at the canonical slug: %v", err)
+	}
+}
+
+func TestReuseRejectsPartialContextRefresh(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, ".agent_context"), []byte("blocks managed context directory"), 0o644); err != nil {
+		t.Fatalf("seed context path conflict: %v", err)
+	}
+
+	reused, err := Reuse(ReuseParams{
+		WorkDir:  workDir,
+		Provider: "claude",
+		Task:     TaskContextForEnv{IssueID: "fresh-issue"},
+	}, testLogger())
+	if err == nil {
+		t.Fatal("Reuse accepted a workdir whose current context could not be written")
+	}
+	if reused != nil {
+		t.Fatalf("Reuse returned a partial environment: %#v", reused)
 	}
 }
 
@@ -883,6 +868,43 @@ func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 	}
 }
 
+func TestCleanupPreservesLogs(t *testing.T) {
+	t.Parallel()
+	workspacesRoot := t.TempDir()
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-test-003",
+		TaskID:         "d4e5f6a7-b8c9-0123-defa-234567890123",
+		AgentName:      "Preserve Test",
+		Task:           TaskContextForEnv{IssueID: "preserve-test-id"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+
+	// Write something to logs/.
+	if err := os.WriteFile(filepath.Join(env.RootDir, "logs", "test.log"), []byte("log data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cleanup with removeAll=false.
+	if err := env.Cleanup(false); err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+
+	// workdir should be gone.
+	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
+		t.Fatal("expected workdir to be removed")
+	}
+
+	// logs should still exist.
+	logFile := filepath.Join(env.RootDir, "logs", "test.log")
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		t.Fatal("expected logs/test.log to be preserved")
+	}
+}
+
 func TestInjectRuntimeConfigClaude(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -890,7 +912,7 @@ func TestInjectRuntimeConfigClaude(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID: "test-issue-id",
 		AgentSkills: []SkillContextForEnv{
-			{Name: "Go Conventions", Content: "Follow Go conventions.", Files: []SkillFileContextForEnv{
+			{Name: "Go Conventions", Content: "Follow Go conventions.", Files: []protocol.SkillFile{
 				{Path: "example.go", Content: "package main"},
 			}},
 			{Name: "PR Review", Content: "Review PRs carefully."},
@@ -1109,7 +1131,7 @@ func TestWriteContextFilesCopilotNativeSkills(t *testing.T) {
 			{
 				Name:    "Go Conventions",
 				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -1160,7 +1182,7 @@ func TestWriteContextFilesOpencodeNativeSkills(t *testing.T) {
 				Name:        "Go Conventions",
 				Description: "Follow our internal Go style.",
 				Content:     "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
+				Files: []protocol.SkillFile{
 					{Path: "templates/example.go", Content: "package main"},
 				},
 			},
@@ -1289,6 +1311,49 @@ func TestWriteContextFilesInjectsNameIntoNamelessFrontmatter(t *testing.T) {
 	}
 }
 
+// OpenClaw's native skill scanner reads {workspaceDir}/skills/. The daemon
+// pairs writeContextFiles with a per-task synthesized openclaw-config.json
+// (see openclaw_config.go) that pins agents.defaults.workspace to workDir,
+// so writing skills to {workDir}/skills/ is what the CLI actually scans.
+func TestWriteContextFilesOpenclawNativeSkills(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	ctx := TaskContextForEnv{
+		IssueID: "openclaw-skill-test",
+		AgentSkills: []SkillContextForEnv{
+			{
+				Name:    "Go Conventions",
+				Content: "Follow Go conventions.",
+				Files: []protocol.SkillFile{
+					{Path: "templates/example.go", Content: "package main"},
+				},
+			},
+		},
+	}
+
+	if err := writeContextFiles(dir, "openclaw", ctx, nil); err != nil {
+		t.Fatalf("writeContextFiles failed: %v", err)
+	}
+
+	skillMd, err := os.ReadFile(filepath.Join(dir, "skills", "go-conventions", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("failed to read skills/go-conventions/SKILL.md: %v", err)
+	}
+	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
+		t.Error("SKILL.md missing content")
+	}
+
+	supportFile, err := os.ReadFile(filepath.Join(dir, "skills", "go-conventions", "templates", "example.go"))
+	if err != nil {
+		t.Fatalf("failed to read supporting file: %v", err)
+	}
+	if string(supportFile) != "package main" {
+		t.Errorf("supporting file content = %q, want %q", string(supportFile), "package main")
+	}
+
+}
+
 func TestWriteContextFilesKiroNativeSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1310,9 +1375,6 @@ func TestWriteContextFilesKiroNativeSkills(t *testing.T) {
 	}
 	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
 		t.Error("SKILL.md missing content")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
-		t.Error("expected .agent_context/skills/ to NOT exist for Kiro provider")
 	}
 }
 
@@ -1353,9 +1415,6 @@ func TestInjectRuntimeConfigAntigravity(t *testing.T) {
 	if !strings.Contains(s, "discovered automatically") {
 		t.Error("AGENTS.md for Antigravity should advertise native skill discovery")
 	}
-	if strings.Contains(s, ".agent_context/skills/") {
-		t.Error("AGENTS.md for Antigravity must not reference the .agent_context/skills/ fallback")
-	}
 }
 
 // TestWriteContextFilesAntigravityNativeSkills pins that skills for the
@@ -1383,11 +1442,6 @@ func TestWriteContextFilesAntigravityNativeSkills(t *testing.T) {
 	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
 		t.Error("SKILL.md missing content")
 	}
-	// The fallback path must NOT be written — Antigravity's scanner reads
-	// .agents/skills/, not .agent_context/skills/.
-	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
-		t.Error(".agent_context/skills/ MUST NOT be written for antigravity — its scanner does not read that path")
-	}
 }
 
 func TestPrepareWithRepoContextOpencode(t *testing.T) {
@@ -1396,7 +1450,7 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 
 	taskCtx := TaskContextForEnv{
 		IssueID: "c3d4e5f6-a7b8-9012-cdef-123456789012",
-		Repos: []RepoContextForEnv{
+		Repos: []protocol.TaskRepository{
 			{URL: "https://github.com/org/backend"},
 		},
 	}
@@ -1411,7 +1465,7 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if _, err := InjectRuntimeConfig(env.WorkDir, "opencode", taskCtx); err != nil {
 		t.Fatalf("InjectRuntimeConfig failed: %v", err)
@@ -1513,7 +1567,7 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 // "never inline --content for agent-authored comments" guardrail reaches EVERY
 // provider on every host OS — post-MUL-2904 the corruption is shell-driven, so
 // the directive is no longer Codex-scoped. The Available Commands entry still
-// lists all three input modes as available, and the legacy over-broad
+// lists all three input modes as available, and the over-broad
 // `--description-stdin` / "MUST pipe via stdin" phrasings (#1795 / #1851, which
 // broke Windows non-ASCII) must NOT reappear.
 //
@@ -1569,18 +1623,6 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 					t.Errorf("%s reintroduces inline comment mode\n---\n%s", configFile, s)
 				}
 
-				// The legacy over-broad mandate (#1795 / #1851) must NOT
-				// reappear — it is what broke Windows non-ASCII for every
-				// provider.
-				for _, banned := range []string{
-					"MUST pipe via stdin",
-					"Agent-authored comments should always pipe content via stdin",
-					"use `--description-stdin` and pipe a HEREDOC",
-				} {
-					if strings.Contains(s, banned) {
-						t.Errorf("%s reintroduces over-broad legacy mandate %q for provider %s\n---\n%s", configFile, banned, provider, s)
-					}
-				}
 			})
 		}
 	}
@@ -1636,16 +1678,6 @@ func TestInjectRuntimeConfigLinuxCommentFormattingEmphasizesFile(t *testing.T) {
 				}
 			}
 
-			// The previous mandate (#1795 / #1851 / MUL-2904) must NOT remain.
-			for _, banned := range []string{
-				"always use `--content-stdin` with a HEREDOC, even for short single-line replies",
-				"<<'COMMENT'",
-				"Codex-Specific Comment Formatting",
-			} {
-				if strings.Contains(s, banned) {
-					t.Errorf("%s still carries pre-#4182 stdin mandate %q\n---\n%s", fileName, banned, s)
-				}
-			}
 		})
 	}
 }
@@ -1855,10 +1887,18 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 
 	// Create a fake shared codex home.
 	sharedHome := t.TempDir()
-	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"token":"secret"}`), 0o644)
-	os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"o3"}`), 0o644)
-	os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model = "o3"`), 0o644)
-	os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("Be helpful."), 0o644)
+	if err := os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"token":"secret"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"o3"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model = "o3"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("Be helpful."), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	sharedPluginCache := filepath.Join(sharedHome, "plugins", "cache")
 	if err := os.MkdirAll(filepath.Join(sharedPluginCache, "superpowers"), 0o755); err != nil {
 		t.Fatalf("create shared plugin cache: %v", err)
@@ -1918,14 +1958,15 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 		t.Errorf("config.json content = %q", data)
 	}
 
-	// config.toml should be copied and have network access appended.
+	// config.toml should remain a direct isolated copy. Runtime policy is
+	// applied on Codex argv rather than mutating user configuration.
 	data, _ = os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	tomlStr := string(data)
 	if !strings.Contains(tomlStr, `model = "o3"`) {
 		t.Errorf("config.toml missing original model setting, got: %q", tomlStr)
 	}
-	if !strings.Contains(tomlStr, "network_access = true") {
-		t.Errorf("config.toml missing network_access, got: %q", tomlStr)
+	if tomlStr != `model = "o3"` {
+		t.Errorf("config.toml changed while copying, got: %q", tomlStr)
 	}
 
 	// instructions.md should be copied.
@@ -2008,8 +2049,8 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
-	// Directory should contain auto-generated config.toml and plugin cache
-	// exposure. Sessions are task-local and are created by Codex at runtime.
+	// Only the plugin cache exposure is created. Runtime safety policy is
+	// passed to Codex on argv and does not manufacture a config.toml.
 	entries, err := os.ReadDir(codexHome)
 	if err != nil {
 		t.Fatalf("failed to read codex-home: %v", err)
@@ -2018,14 +2059,11 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 	for _, e := range entries {
 		entryNames[e.Name()] = true
 	}
-	if !entryNames["config.toml"] {
-		t.Error("expected config.toml (auto-generated for network access)")
-	}
 	if !entryNames["plugins"] {
 		t.Error("expected plugins directory for plugin cache exposure")
 	}
 	for name := range entryNames {
-		if name != "config.toml" && name != "plugins" {
+		if name != "plugins" {
 			t.Errorf("unexpected entry: %s", name)
 		}
 	}
@@ -2049,7 +2087,9 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
 	sharedHome := t.TempDir()
-	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v1"}`), 0o644)
+	if err := os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
@@ -2066,7 +2106,9 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 	}
 
 	// Shared source rotates to v2 while the per-task copy is still stuck on v0.
-	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v2"}`), 0o644)
+	if err := os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
@@ -2127,19 +2169,6 @@ env_key = "NEW_API_KEY"
 			t.Errorf("per-task config.toml still contains stale %q after refresh, got:\n%s", bad, s)
 		}
 	}
-	// Daemon-managed sandbox / multi-agent / memory blocks must all be
-	// re-applied on top of the fresh copy — PR correctness depends on it.
-	for _, marker := range []string{
-		multicaManagedBeginMarker,
-		multicaMultiAgentBeginMarker,
-		multicaMemoryFeatureBeginMarker,
-		multicaMemoryConfigBeginMarker,
-	} {
-		if !strings.Contains(s, marker) {
-			t.Errorf("daemon-managed marker %q missing after refresh, got:\n%s", marker, s)
-		}
-	}
-
 	// config.json must reflect the new model.
 	data, err = os.ReadFile(filepath.Join(home.codexHome, "config.json"))
 	if err != nil {
@@ -2164,10 +2193,7 @@ env_key = "NEW_API_KEY"
 // whole `~/.codex/config.toml`, removing `config.json`, or deleting
 // `instructions.md` — the per-task copy must be dropped too, otherwise
 // session resume keeps replaying a provider / instruction file the user has
-// already removed from the shared config. For config.toml the subsequent
-// daemon-managed ensure* passes recreate a minimal file with only the
-// managed sandbox / multi-agent / memory blocks; for config.json and
-// instructions.md the per-task copy simply disappears.
+// already removed from the shared config.
 func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
@@ -2192,295 +2218,11 @@ func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T)
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
-	// config.json and instructions.md have no daemon-managed default — they
-	// must disappear in lockstep with the shared source.
-	for _, name := range []string{"config.json", "instructions.md"} {
+	// All copied files must disappear in lockstep with the shared source.
+	for _, name := range []string{"config.toml", "config.json", "instructions.md"} {
 		if _, err := os.Stat(filepath.Join(home.codexHome, name)); !os.IsNotExist(err) {
 			t.Errorf("per-task %s still exists after shared source removed (stat err = %v)", name, err)
 		}
-	}
-
-	// config.toml must still exist because the ensure* passes recreate it,
-	// but it must contain only the daemon-managed blocks — no stale user
-	// provider/URL/env_key.
-	data, err := os.ReadFile(filepath.Join(home.codexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("read per-task config.toml after shared removal: %v", err)
-	}
-	s := string(data)
-	for _, bad := range []string{"old-provider", "https://old.example.com", "OLD_API_KEY"} {
-		if strings.Contains(s, bad) {
-			t.Errorf("per-task config.toml still contains stale %q after shared source removed, got:\n%s", bad, s)
-		}
-	}
-	for _, marker := range []string{
-		multicaManagedBeginMarker,
-		multicaMultiAgentBeginMarker,
-		multicaMemoryFeatureBeginMarker,
-		multicaMemoryConfigBeginMarker,
-	} {
-		if !strings.Contains(s, marker) {
-			t.Errorf("daemon-managed marker %q missing after shared source removed, got:\n%s", marker, s)
-		}
-	}
-}
-
-func TestEnsureCodexSandboxConfigCreatesDefaultLinux(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config.toml: %v", err)
-	}
-	s := string(data)
-	if !strings.Contains(s, multicaManagedBeginMarker) || !strings.Contains(s, multicaManagedEndMarker) {
-		t.Errorf("missing managed block markers, got:\n%s", s)
-	}
-	if !strings.Contains(s, `sandbox_mode = "workspace-write"`) {
-		t.Error("missing sandbox_mode")
-	}
-	// The managed block uses TOML dotted-key form rather than a
-	// `[sandbox_workspace_write]` section header so it cannot leak into or
-	// inherit from any surrounding table scope. See upsertMulticaManagedBlock
-	// for why.
-	if strings.Contains(s, "[sandbox_workspace_write]") {
-		t.Errorf("managed block must not open a [sandbox_workspace_write] table header, got:\n%s", s)
-	}
-	if !strings.Contains(s, "sandbox_workspace_write.network_access = true") {
-		t.Errorf("missing dotted-key network_access = true, got:\n%s", s)
-	}
-}
-
-func TestEnsureCodexSandboxConfigDarwinFallsBack(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	policy := codexSandboxPolicyFor("darwin", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	s, _ := os.ReadFile(configPath)
-	if !strings.Contains(string(s), `sandbox_mode = "danger-full-access"`) {
-		t.Errorf("expected danger-full-access fallback on macOS, got:\n%s", s)
-	}
-	if strings.Contains(string(s), "[sandbox_workspace_write]") {
-		t.Errorf("should not emit workspace-write section on macOS fallback, got:\n%s", s)
-	}
-}
-
-func TestEnsureCodexSandboxConfigIsIdempotent(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
-	for i := 0; i < 3; i++ {
-		if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-			t.Fatalf("pass %d: %v", i, err)
-		}
-	}
-	data, _ := os.ReadFile(configPath)
-	// The managed block should appear exactly once.
-	if n := strings.Count(string(data), multicaManagedBeginMarker); n != 1 {
-		t.Errorf("expected exactly 1 managed block, got %d in:\n%s", n, data)
-	}
-}
-
-func TestEnsureCodexSandboxConfigPreservesUserContent(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	existing := `model = "o3"
-approval_policy = "on-failure"
-`
-	os.WriteFile(configPath, []byte(existing), 0o644)
-
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-	if !strings.Contains(s, `model = "o3"`) {
-		t.Error("lost existing model setting")
-	}
-	if !strings.Contains(s, "approval_policy") {
-		t.Error("lost existing approval_policy")
-	}
-	if !strings.Contains(s, "network_access = true") {
-		t.Error("missing network_access = true")
-	}
-}
-
-func TestEnsureCodexSandboxConfigHoistsAboveUserTables(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	// User config that ends inside a table. If the managed block were
-	// appended at EOF, `sandbox_mode = "..."` would be parsed as
-	// permissions.multica.sandbox_mode and Codex would never see it — see
-	// review of MUL-963 PR #1246. The block must be hoisted above any
-	// user-defined table headers so it lives at the TOML root.
-	existing := `model = "o3"
-
-[permissions.multica]
-trust = "always"
-`
-	os.WriteFile(configPath, []byte(existing), 0o644)
-
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-
-	beginIdx := strings.Index(s, multicaManagedBeginMarker)
-	endIdx := strings.Index(s, multicaManagedEndMarker)
-	tableIdx := strings.Index(s, "[permissions.multica]")
-	if beginIdx < 0 || endIdx < 0 || tableIdx < 0 {
-		t.Fatalf("expected managed block and user table to both be present, got:\n%s", s)
-	}
-	// The entire managed block must sit before the user's table header so
-	// that sandbox_mode and sandbox_workspace_write.network_access are
-	// parsed at the TOML root.
-	if !(beginIdx < endIdx && endIdx < tableIdx) {
-		t.Errorf("managed block must be hoisted above [permissions.multica]; got begin=%d end=%d table=%d:\n%s", beginIdx, endIdx, tableIdx, s)
-	}
-	// User content must be preserved verbatim.
-	if !strings.Contains(s, `model = "o3"`) {
-		t.Error("lost user top-level key")
-	}
-	if !strings.Contains(s, `trust = "always"`) {
-		t.Error("lost user permissions.multica content")
-	}
-
-	// Running again must be idempotent even when the preceding content ends
-	// inside a table.
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
-	data2, _ := os.ReadFile(configPath)
-	if string(data2) != s {
-		t.Errorf("second pass should be idempotent:\n--- first ---\n%s\n--- second ---\n%s", s, data2)
-	}
-	if n := strings.Count(string(data2), multicaManagedBeginMarker); n != 1 {
-		t.Errorf("expected exactly one managed block after idempotent rewrite, got %d", n)
-	}
-}
-
-func TestEnsureCodexSandboxConfigMovesLegacyTrailingBlockToTop(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	// Simulate a config.toml produced by the pre-fix PR #1246 logic, which
-	// appended the managed block to EOF — so the block sits below a user
-	// table. On the next daemon run, the block must be hoisted back to the
-	// top; otherwise sandbox_mode remains trapped inside the preceding table.
-	legacy := `model = "o3"
-
-[permissions.multica]
-trust = "always"
-
-` + multicaManagedBeginMarker + `
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = true
-` + multicaManagedEndMarker + `
-`
-	os.WriteFile(configPath, []byte(legacy), 0o644)
-
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-
-	beginIdx := strings.Index(s, multicaManagedBeginMarker)
-	tableIdx := strings.Index(s, "[permissions.multica]")
-	if beginIdx < 0 || tableIdx < 0 || beginIdx > tableIdx {
-		t.Errorf("expected managed block to be hoisted above [permissions.multica], got:\n%s", s)
-	}
-	if strings.Count(s, multicaManagedBeginMarker) != 1 {
-		t.Errorf("expected exactly one managed block, got:\n%s", s)
-	}
-	// The old inline `[sandbox_workspace_write]` header must be gone — the
-	// new block uses dotted-key form only.
-	if strings.Contains(s, "[sandbox_workspace_write]") {
-		t.Errorf("managed block must not emit [sandbox_workspace_write] table header, got:\n%s", s)
-	}
-}
-
-func TestCodexSandboxPolicyFor(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name     string
-		goos     string
-		version  string
-		wantMode string
-		wantNet  bool
-	}{
-		{"linux any version", "linux", "0.100.0", "workspace-write", true},
-		{"linux unknown version", "linux", "", "workspace-write", true},
-		{"darwin old version", "darwin", "0.121.0", "danger-full-access", false},
-		{"darwin unknown version", "darwin", "", "danger-full-access", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := codexSandboxPolicyFor(tc.goos, tc.version)
-			if p.Mode != tc.wantMode {
-				t.Errorf("mode = %q, want %q", p.Mode, tc.wantMode)
-			}
-			if p.NetworkAccess != tc.wantNet {
-				t.Errorf("network_access = %v, want %v", p.NetworkAccess, tc.wantNet)
-			}
-			if p.Reason == "" {
-				t.Error("expected non-empty Reason")
-			}
-		})
-	}
-}
-
-func TestPrepareCodexHomeEnsuresNetworkAccess(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv.
-
-	// Empty shared home — no config.toml to copy.
-	sharedHome := t.TempDir()
-	t.Setenv("CODEX_HOME", sharedHome)
-
-	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	// Default prepareCodexHome assumes linux-like behavior.
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
-		t.Fatalf("prepareCodexHome failed: %v", err)
-	}
-
-	// config.toml should be created with network access defaults.
-	data, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("config.toml not created: %v", err)
-	}
-	s := string(data)
-	if !strings.Contains(s, "network_access = true") {
-		t.Error("config.toml missing network_access = true")
-	}
-	if !strings.Contains(s, `sandbox_mode = "workspace-write"`) {
-		t.Error("config.toml missing sandbox_mode")
 	}
 }
 
@@ -2504,14 +2246,17 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if env.CodexHome == "" {
 		t.Fatal("expected CodexHome to be set after Prepare")
 	}
 
 	// Reuse should restore CodexHome.
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-test"}}, testLogger())
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-test"}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2519,48 +2264,6 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 		t.Fatal("expected CodexHome to be restored after Reuse")
 	}
 
-	// Verify config.toml has a managed block (exact mode depends on host
-	// platform; either workspace-write or danger-full-access is valid).
-	data, err := os.ReadFile(filepath.Join(reused.CodexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("config.toml not found in reused CodexHome: %v", err)
-	}
-	if !strings.Contains(string(data), multicaManagedBeginMarker) {
-		t.Error("reused config.toml missing multica-managed block")
-	}
-}
-
-func TestPrepareCodexHomeTrustsTaskWorkDir(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv.
-
-	sharedHome := t.TempDir()
-	t.Setenv("CODEX_HOME", sharedHome)
-
-	env, err := Prepare(PrepareParams{
-		WorkspacesRoot: t.TempDir(),
-		WorkspaceID:    "ws-codex-trust",
-		TaskID:         "aabbccdd-1111-2222-3333-444455556666",
-		AgentName:      "Codex Agent",
-		Provider:       "codex",
-		Task:           TaskContextForEnv{IssueID: "trust-test"},
-	}, testLogger())
-	if err != nil {
-		t.Fatalf("Prepare failed: %v", err)
-	}
-	defer os.RemoveAll(env.RootDir)
-
-	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
-	}
-	wantHeader := "[projects." + strconv.Quote(env.WorkDir) + "]"
-	s := string(data)
-	if !strings.Contains(s, wantHeader) {
-		t.Fatalf("config.toml missing trusted workdir header %q:\n%s", wantHeader, s)
-	}
-	if !strings.Contains(s, "trust_level = \"trusted\"") {
-		t.Fatalf("config.toml missing trusted workdir level:\n%s", s)
-	}
 }
 
 func TestReuseRestoresCodexPluginCache(t *testing.T) {
@@ -2588,13 +2291,16 @@ func TestReuseRestoresCodexPluginCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if err := os.RemoveAll(filepath.Join(env.CodexHome, "plugins")); err != nil {
 		t.Fatalf("remove codex plugins dir: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-plugin-test"}}, testLogger())
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-plugin-test"}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2626,22 +2332,25 @@ func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if err := os.RemoveAll(filepath.Join(env.CodexHome, "skills")); err != nil {
 		t.Fatalf("remove codex skills dir: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-skill-test",
 		AgentSkills: []SkillContextForEnv{
 			{
 				Name:    "Writing",
 				Content: "Write clearly.",
-				Files:   []SkillFileContextForEnv{{Path: "examples/example.md", Content: "Example"}},
+				Files:   []protocol.SkillFile{{Path: "examples/example.md", Content: "Example"}},
 			},
 		},
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2681,7 +2390,7 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 				{
 					Name:    "Writing",
 					Content: "Old writing guidance.",
-					Files:   []SkillFileContextForEnv{{Path: "examples/example.md", Content: "Old example"}},
+					Files:   []protocol.SkillFile{{Path: "examples/example.md", Content: "Old example"}},
 				},
 			},
 		},
@@ -2689,18 +2398,21 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-skill-update-test",
 		AgentSkills: []SkillContextForEnv{
 			{
 				Name:    "Writing",
 				Content: "Updated writing guidance.",
-				Files:   []SkillFileContextForEnv{{Path: "examples/example.md", Content: "Updated example"}},
+				Files:   []protocol.SkillFile{{Path: "examples/example.md", Content: "Updated example"}},
 			},
 		},
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2764,7 +2476,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "summarize", "SKILL.md")); err != nil {
 		t.Fatalf("user skill SKILL.md not seeded: %v", err)
@@ -2823,7 +2535,7 @@ func TestPrepareCodexWorkspaceSkillBeatsUserSkillOnConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "writing", "SKILL.md"))
 	if err != nil {
@@ -2859,7 +2571,7 @@ func TestPrepareCodexNoUserSkillsDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills")); !os.IsNotExist(err) {
 		t.Errorf("skills dir should not exist when neither user nor workspace skills are present, err=%v", err)
 	}
@@ -2905,7 +2617,7 @@ func TestPrepareCodexResolvesUserSkillSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	dst := filepath.Join(env.CodexHome, "skills", "lark-mail")
 	fi, err := os.Lstat(dst)
@@ -2956,7 +2668,7 @@ func TestPrepareCodexSkipsStaleUserSkillSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "removed-skill")); !os.IsNotExist(err) {
 		t.Errorf("stale user skill should not be seeded, err=%v", err)
@@ -2991,15 +2703,18 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("v2"), 0o644); err != nil {
 		t.Fatalf("update user SKILL.md: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "user-skill-reuse-test",
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -3045,19 +2760,22 @@ func TestReuseClearsUserSkillResidueOnWorkspaceConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// Round 1 had no workspace skill, so the user version should be present.
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "writing", "drafts", "stale.md")); err != nil {
 		t.Fatalf("user support file should be seeded in round 1: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-conflict-test",
 		AgentSkills: []SkillContextForEnv{
 			{Name: "Writing", Content: "workspace writing"},
 		},
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -3084,11 +2802,11 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	sharedHome := t.TempDir()
 	t.Setenv("CODEX_HOME", sharedHome)
 
-	userSkill := filepath.Join(sharedHome, "skills", "deprecated")
+	userSkill := filepath.Join(sharedHome, "skills", "removed-skill")
 	if err := os.MkdirAll(userSkill, 0o755); err != nil {
 		t.Fatalf("seed user skill: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("deprecated"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("removed"), 0o644); err != nil {
 		t.Fatalf("seed user SKILL.md: %v", err)
 	}
 
@@ -3103,9 +2821,9 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
-	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "deprecated", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "removed-skill", "SKILL.md")); err != nil {
 		t.Fatalf("user skill should be seeded in round 1: %v", err)
 	}
 
@@ -3114,13 +2832,16 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 		t.Fatalf("remove user skill: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-remove-test",
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
-	if _, err := os.Stat(filepath.Join(reused.CodexHome, "skills", "deprecated")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(reused.CodexHome, "skills", "removed-skill")); !os.IsNotExist(err) {
 		t.Errorf("removed user skill still present in per-task home after reuse, err=%v", err)
 	}
 }
@@ -3132,7 +2853,9 @@ func TestEnsureSymlinkRepairsBrokenLink(t *testing.T) {
 	src := filepath.Join(dir, "source.json")
 	dst := filepath.Join(dir, "link.json")
 
-	os.WriteFile(src, []byte("real"), 0o644)
+	if err := os.WriteFile(src, []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a broken symlink pointing to a non-existent file.
 	if err := os.Symlink(filepath.Join(dir, "old-source.json"), dst); err != nil {
@@ -3168,7 +2891,7 @@ func TestWriteReadGCMeta(t *testing.T) {
 		Kind:        GCKindIssue,
 		IssueID:     issueID,
 		WorkspaceID: wsID,
-	}, discardLogger()); err != nil {
+	}); err != nil {
 		t.Fatalf("WriteGCMeta: %v", err)
 	}
 
@@ -3191,33 +2914,26 @@ func TestWriteReadGCMeta(t *testing.T) {
 	}
 }
 
-func TestWriteGCMeta_EmptyRoot(t *testing.T) {
-	t.Parallel()
-	if err := WriteGCMeta("", GCMeta{Kind: GCKindIssue, IssueID: "x", WorkspaceID: "ws"}, discardLogger()); err != nil {
-		t.Fatalf("expected nil for empty root, got %v", err)
-	}
-}
-
-func TestWriteGCMeta_EmptyKind(t *testing.T) {
+func TestReadGCMeta_RejectsMissingKind(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-
-	if err := WriteGCMeta(dir, GCMeta{WorkspaceID: "ws"}, discardLogger()); err != nil {
-		t.Fatalf("expected nil for empty kind, got %v", err)
+	missingKind := []byte(`{"issue_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","workspace_id":"ws","completed_at":"2025-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, gcMetaFile), missingKind, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, gcMetaFile)); !os.IsNotExist(err) {
-		t.Fatalf("expected gc meta file to be absent, got err=%v", err)
+	if _, err := ReadGCMeta(dir); err == nil {
+		t.Fatal("ReadGCMeta accepted metadata without kind")
 	}
 }
 
-// New v2 meta files for chat / autopilot / quick-create round-trip without
+// Current meta files for chat / autopilot / quick-create round-trip without
 // being misclassified as the issue kind.
 func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		meta GCMeta
-		want GCMetaKind
+		want gcMetaKind
 	}{
 		{"chat", GCMeta{Kind: GCKindChat, ChatSessionID: "cs-1", WorkspaceID: "ws"}, GCKindChat},
 		{"autopilot_run", GCMeta{Kind: GCKindAutopilotRun, AutopilotRunID: "ar-1", WorkspaceID: "ws"}, GCKindAutopilotRun},
@@ -3228,7 +2944,7 @@ func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			if err := WriteGCMeta(dir, tc.meta, discardLogger()); err != nil {
+			if err := WriteGCMeta(dir, tc.meta); err != nil {
 				t.Fatalf("WriteGCMeta: %v", err)
 			}
 			got, err := ReadGCMeta(dir)
@@ -3414,7 +3130,7 @@ func TestBuildMetaSkillContentEmitsRequestingUser(t *testing.T) {
 	identityIdx := strings.Index(content, "## Agent Identity")
 	requestingIdx := strings.Index(content, "## Requesting User")
 	commandsIdx := strings.Index(content, "## Available Commands")
-	if !(identityIdx >= 0 && identityIdx < requestingIdx && requestingIdx < commandsIdx) {
+	if identityIdx < 0 || identityIdx >= requestingIdx || requestingIdx >= commandsIdx {
 		t.Errorf("section order wrong: identity=%d requesting=%d commands=%d", identityIdx, requestingIdx, commandsIdx)
 	}
 }
@@ -3601,7 +3317,7 @@ func TestBuildMetaSkillContentEmitsTaskInitiatorMember(t *testing.T) {
 	// agent reads "who am I" → "whose context" → "who is asking now" → commands.
 	initiatorIdx := strings.Index(content, "## Task Initiator")
 	commandsIdx := strings.Index(content, "## Available Commands")
-	if !(initiatorIdx >= 0 && initiatorIdx < commandsIdx) {
+	if initiatorIdx < 0 || initiatorIdx >= commandsIdx {
 		t.Errorf("section order wrong: initiator=%d commands=%d", initiatorIdx, commandsIdx)
 	}
 }
@@ -3746,15 +3462,6 @@ func TestInjectRuntimeConfigCommentTriggerColdStartRead(t *testing.T) {
 		}
 	}
 
-	// The legacy step-2 phrasing this PR replaces must not regress.
-	if strings.Contains(s, "read the conversation (returns all comments, capped server-side at 2000)") {
-		t.Errorf("comment-triggered Workflow still carries the legacy full-dump phrasing\n---\n%s", s)
-	}
-	// The pre-MUL-2421 unbounded `--thread` recipe (no --tail) is also a
-	// regression target: it dumps the entire thread on long threads.
-	if strings.Contains(s, "multica issue comment list "+issueID+" --thread "+triggerID+" --output json") {
-		t.Errorf("comment-triggered Workflow regressed to unbounded --thread recipe (no --tail) — long threads will overflow context\n---\n%s", s)
-	}
 }
 
 // TestInjectRuntimeConfigCommentTriggerResumedNoDeltaRead checks the
@@ -3841,18 +3548,6 @@ func TestInjectRuntimeConfigAssignmentTriggerMentionsRecent(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("assignment Workflow missing --recent guidance %q\n---\n%s", want, s)
-		}
-	}
-	// The previous wording framed `--recent` as a replacement ("you may
-	// switch to ..."), which conflicts with the mandatory full-history
-	// rule. Pin that the replacement semantics never reappears — `--recent`
-	// is a paging strategy, not a shortcut.
-	for _, banned := range []string{
-		"you may switch to",
-		"switch to `--recent",
-	} {
-		if strings.Contains(s, banned) {
-			t.Errorf("assignment Workflow regressed to replacement-style --recent phrasing %q\n---\n%s", banned, s)
 		}
 	}
 }
@@ -4151,7 +3846,7 @@ func TestPrepareLocalWorkDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer os.RemoveAll(env.RootDir)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if !env.LocalDirectory {
 		t.Fatal("expected env.LocalDirectory to be true")

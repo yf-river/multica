@@ -66,11 +66,8 @@ vi.mock("@multica/core/pins", () => ({
   useDeletePin: () => ({ mutate: mocks.deletePin }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "workspace-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "workspace-1",
   useWorkspacePaths: () => ({
     projectDetail: (id: string) => `/test-workspace/projects/${id}`,
     memberDetail: (id: string) => `/test-workspace/members/${id}`,
@@ -178,7 +175,6 @@ vi.mock("@multica/ui/components/ui/tooltip", () => ({
 
 const PROJECT: Project = {
   id: "project-1",
-  workspace_id: "workspace-1",
   title: "Launch Plan",
   description: null,
   icon: null,
@@ -187,7 +183,6 @@ const PROJECT: Project = {
   lead_type: null,
   lead_id: null,
   created_at: "2026-06-01T00:00:00Z",
-  updated_at: "2026-06-01T00:00:00Z",
   issue_count: 3,
   done_count: 1,
   resource_count: 0,
@@ -252,21 +247,6 @@ describe("ProjectsPage compact row navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows development acceptance projects as normal data", () => {
-    const fixtureProject: Project = {
-      ...PROJECT,
-      id: "project-fixture",
-      title: "curl gateway 1782316918018",
-      description: "curl user-center 小队真实端到端验收",
-    };
-    mocks.projects = [PROJECT, fixtureProject];
-
-    renderProjects();
-
-    expect(screen.getByText(PROJECT.title)).toBeInTheDocument();
-    expect(screen.getByText(fixtureProject.title)).toBeInTheDocument();
-  });
-
   it("navigates from the row surface", async () => {
     const user = userEvent.setup();
     const push = vi.fn();
@@ -293,6 +273,17 @@ describe("ProjectsPage compact row navigation", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("selects and clears a visible project through the shared list rules", async () => {
+    const user = userEvent.setup();
+    renderProjects();
+
+    await user.click(within(projectRow()).getByRole("button", { pressed: false }));
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "清除选择" }));
+    expect(screen.queryByText("已选 1 项")).not.toBeInTheDocument();
+  });
+
   it("uses the rowLink modifier and middle-click paths when openInNewTab is available", () => {
     const push = vi.fn();
     const openInNewTab = vi.fn();
@@ -306,7 +297,7 @@ describe("ProjectsPage compact row navigation", () => {
       button: 1,
       cancelable: true,
     });
-    row.dispatchEvent(middleClick);
+    fireEvent(row, middleClick);
 
     expect(middleClick.defaultPrevented).toBe(true);
     expect(openInNewTab).toHaveBeenCalledTimes(3);
@@ -328,7 +319,7 @@ describe("ProjectsPage compact row navigation", () => {
       button: 1,
       cancelable: true,
     });
-    row.dispatchEvent(middleClick);
+    fireEvent(row, middleClick);
 
     expect(middleClick.defaultPrevented).toBe(true);
     expect(push).toHaveBeenCalledTimes(3);

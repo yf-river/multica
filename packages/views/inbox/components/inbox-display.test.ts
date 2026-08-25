@@ -3,7 +3,6 @@ import type { InboxItem } from "@multica/core/types";
 import {
   getInboxDisplayTitle,
   getQuickCreateFailureDetail,
-  stripQuickCreatePrefix,
 } from "./inbox-display";
 
 function item(overrides: Partial<InboxItem>): InboxItem {
@@ -15,7 +14,6 @@ function item(overrides: Partial<InboxItem>): InboxItem {
     actor_type: "agent",
     actor_id: "agent-1",
     type: "new_comment",
-    severity: "info",
     issue_id: "issue-1",
     title: "任务标题",
     body: null,
@@ -29,19 +27,10 @@ function item(overrides: Partial<InboxItem>): InboxItem {
 }
 
 describe("inbox display helpers", () => {
-  it("removes legacy quick-create created prefixes from list titles", () => {
-    expect(
-      stripQuickCreatePrefix(
-        "Created MUL-1583: Fix agent list column widths",
-        "MUL-1583",
-      ),
-    ).toBe("Fix agent list column widths");
-  });
-
-  it("cleans quick-create success titles before rendering the inbox row", () => {
+  it("renders the current quick-create issue title unchanged", () => {
     const quickCreateItem = item({
       type: "quick_create_done",
-      title: "Created MUL-1583: Fix agent list column widths",
+      title: "Fix agent list column widths",
       details: { identifier: "MUL-1583" },
     });
 

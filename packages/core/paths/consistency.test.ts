@@ -2,11 +2,7 @@ import { describe, it, expect } from "vitest";
 import { paths, isGlobalPath } from "./paths";
 import { RESERVED_SLUGS } from "./reserved-slugs";
 
-// C4 — link-handler's WORKSPACE_ROUTE_SEGMENTS must match paths.workspace's
-// parameterless method names. We can't import WORKSPACE_ROUTE_SEGMENTS here
-// because link-handler is in packages/views (no inverse import allowed), so
-// we hardcode the expected list and assert paths.workspace produces the same
-// keys. If you change either, BOTH need to be updated — the test catches drift.
+// C4 — current workspace paths always include their workspace slug.
 describe("paths.workspace() shape", () => {
   it("exposes the expected parameterless workspace route methods", () => {
     const ws = paths.workspace("__probe__");
@@ -70,26 +66,19 @@ describe("global path / reserved slug consistency", () => {
   // must be reserved — otherwise a user could create a workspace with that slug
   // and shadow the global route's URL space.
   //
-  // GLOBAL_PREFIXES from paths.ts is private — we re-derive the list from
-  // probing isGlobalPath. Order matters: keep this list in sync with paths.ts.
-  const globalPrefixes = [
-    "/login",
-    "/logout",
-    "/signup",
-    "/workspaces/",
-  ];
+  const globalPaths = [paths.login(), paths.newWorkspace()];
 
-  it("isGlobalPath agrees with the canonical global prefix list", () => {
-    for (const prefix of globalPrefixes) {
-      expect(isGlobalPath(prefix)).toBe(true);
+  it("isGlobalPath agrees with the current global destinations", () => {
+    for (const path of globalPaths) {
+      expect(isGlobalPath(path)).toBe(true);
     }
     expect(isGlobalPath("/acme/issues")).toBe(false);
     expect(isGlobalPath("/")).toBe(false);
   });
 
   it("every global prefix's first path segment is a reserved slug", () => {
-    for (const prefix of globalPrefixes) {
-      const firstSegment = prefix.split("/").filter(Boolean)[0];
+    for (const path of globalPaths) {
+      const firstSegment = path.split("/").filter(Boolean)[0];
       if (!firstSegment) continue;
       expect(
         RESERVED_SLUGS.has(firstSegment),

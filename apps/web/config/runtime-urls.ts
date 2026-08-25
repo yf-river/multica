@@ -1,9 +1,6 @@
 type RuntimeEnv = Record<string, string | undefined>;
 
 export function resolveRemoteApiUrl(env: RuntimeEnv): string {
-  const goalTestRemote = env.GOAL_TEST_REMOTE_API_URL?.trim();
-  if (goalTestRemote) return goalTestRemote;
-
   const explicitRemote = env.REMOTE_API_URL?.trim();
   if (explicitRemote) return explicitRemote;
 
@@ -12,8 +9,6 @@ export function resolveRemoteApiUrl(env: RuntimeEnv): string {
 
   const port =
     env.BACKEND_PORT?.trim() ||
-    env.API_PORT?.trim() ||
-    env.SERVER_PORT?.trim() ||
     env.PORT?.trim();
   if (port) return `http://localhost:${port}`;
 

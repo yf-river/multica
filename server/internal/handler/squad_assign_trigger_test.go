@@ -13,52 +13,73 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestCreateIssueAssignedToSquadEnqueuesLeader verifies that creating an
-// issue with assignee_type=squad immediately enqueues a task for the squad
-// leader (mirrors the agent-assignee parking-lot rule: skip backlog only).
-func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
-	ctx := context.Background()
-
-	// Look up the seeded test agent — it has a runtime, so it can lead a squad.
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
+func oldestHandlerTestAgentID(t *testing.T) string {
+	t.Helper()
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
 		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
+	`, testWorkspaceID).Scan(&agentID); err != nil {
 		t.Fatalf("load test agent: %v", err)
 	}
+	return agentID
+}
 
-	// Create a squad with that agent as leader.
+func createSOPTestSquad(t *testing.T, name, leaderID string, profile any) string {
+	t.Helper()
+	profileJSON, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatalf("marshal SOP profile: %v", err)
+	}
 	var squadID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, '{"profile_key":"user-center-test","steps":[{"key":"clarify","name":"需求澄清","role_key":"captain"},{"key":"acceptance","name":"验收","role_key":"acceptor"}]}'::jsonb)
+		VALUES ($1, $2, '', $3, $4, $5::jsonb)
 		RETURNING id
-	`, testWorkspaceID, "Trigger Test Squad", leaderID, testUserID).Scan(&squadID); err != nil {
+	`, testWorkspaceID, name, leaderID, testUserID, profileJSON).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	return squadID
+}
 
-	// Create an issue assigned to the squad.
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+func createSOPTestIssue(t *testing.T, body map[string]any) IssueResponse {
+	t.Helper()
+	issue := createIssueThroughHandler(t, body)
+	t.Cleanup(func() { deleteIssueThroughHandler(t, issue.ID) })
+	return issue
+}
+
+func workspaceObservabilitySummary(t *testing.T, query string) map[string]any {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := withURLParam(newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary"+query, nil), "id", testWorkspaceID)
+	testHandler.GetWorkspaceObservabilitySummary(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("GetWorkspaceObservabilitySummary: expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	var summary map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&summary); err != nil {
+		t.Fatalf("decode observability summary: %v", err)
+	}
+	return summary
+}
+
+func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	leaderID := oldestHandlerTestAgentID(t)
+	squadID := createSOPTestSquad(t, "Trigger Test Squad", leaderID, map[string]any{
+		"profile_key": "user-center-test",
+		"steps": []map[string]string{
+			{"key": "clarify", "name": "需求澄清", "role_key": "captain"},
+			{"key": "acceptance", "name": "验收", "role_key": "acceptor"},
+		},
+	})
+	created := createSOPTestIssue(t, map[string]any{
 		"title":         "Squad-assigned at creation",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode issue: %v", err)
-	}
-	defer func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
-	}()
 
 	// A task for the squad leader should now exist for this issue.
 	var taskCount int
@@ -108,71 +129,6 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		t.Fatalf("ListIssueSOPRuns: expected 200, got %d: %s", listW.Code, listW.Body.String())
 	}
 
-	completeStepReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/clarify/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type": "步骤完成",
-		"evidence":   map[string]any{"阶段产物": "需求已澄清"},
-		"reason":     "进入验收阶段",
-	})
-	completeStepReq = withURLParams(completeStepReq, "runId", runID, "stepId", "clarify")
-	completeStepW := httptest.NewRecorder()
-	testHandler.RecordSOPStepEvent(completeStepW, completeStepReq)
-	if completeStepW.Code != http.StatusCreated {
-		t.Fatalf("RecordSOPStepEvent(clarify complete): expected 201, got %d: %s", completeStepW.Code, completeStepW.Body.String())
-	}
-	var currentStep, runStatus string
-	if err := testPool.QueryRow(ctx, `
-		SELECT current_step_key, status FROM squad_sop_run WHERE id = $1
-	`, runID).Scan(&currentStep, &runStatus); err != nil {
-		t.Fatalf("load progressed SOP run: %v", err)
-	}
-	if currentStep != "acceptance" || runStatus != "进行中" {
-		t.Fatalf("SOP run after clarify completion: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
-	}
-
-	unknownStepReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/deploy/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type": "追加证据",
-		"evidence":   map[string]any{"结果": "不应接受"},
-	})
-	unknownStepReq = withURLParams(unknownStepReq, "runId", runID, "stepId", "deploy")
-	unknownStepW := httptest.NewRecorder()
-	testHandler.RecordSOPStepEvent(unknownStepW, unknownStepReq)
-	if unknownStepW.Code != http.StatusBadRequest {
-		t.Fatalf("RecordSOPStepEvent(unknown step): expected 400, got %d: %s", unknownStepW.Code, unknownStepW.Body.String())
-	}
-
-	eventReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/acceptance/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type":      "测试结果",
-		"status":          "进行中",
-		"step_name":       "验收",
-		"role_key":        "acceptor",
-		"evidence":        map[string]any{"测试命令": "go test ./internal/handler", "结果": "通过"},
-		"reason":          "补充测试证据",
-		"duration_ms":     123,
-		"created_by_type": "agent",
-		"created_by_id":   leaderID,
-		"task_id":         taskID,
-	})
-	eventReq = withURLParams(eventReq, "runId", runID, "stepId", "acceptance")
-	eventW := httptest.NewRecorder()
-	testHandler.RecordSOPStepEvent(eventW, eventReq)
-	if eventW.Code != http.StatusCreated {
-		t.Fatalf("RecordSOPStepEvent: expected 201, got %d: %s", eventW.Code, eventW.Body.String())
-	}
-	var recordedEvent SquadSOPEventResponse
-	if err := json.NewDecoder(eventW.Body).Decode(&recordedEvent); err != nil {
-		t.Fatalf("decode SOP event: %v", err)
-	}
-	if recordedEvent.CreatedByType == "agent" {
-		t.Fatalf("SOP event actor trusted spoofed request payload: %#v", recordedEvent)
-	}
-	if err := testPool.QueryRow(ctx, `
-		SELECT current_step_key, status FROM squad_sop_run WHERE id = $1
-	`, runID).Scan(&currentStep, &runStatus); err != nil {
-		t.Fatalf("load SOP run after evidence event: %v", err)
-	}
-	if currentStep != "acceptance" || runStatus != "进行中" {
-		t.Fatalf("SOP run changed after 测试结果 evidence: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
-	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
 		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 120, 45, 9, 3)
@@ -214,28 +170,25 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	if len(stageMetrics) == 0 {
 		t.Fatalf("missing 阶段指标 in SOP metrics: %+v", metricsResp.Items[0].Metrics)
 	}
-	var acceptance map[string]any
+	var clarify map[string]any
 	for _, raw := range stageMetrics {
 		stage, _ := raw.(map[string]any)
-		if stage["step_key"] == "acceptance" {
-			acceptance = stage
+		if stage["step_key"] == "clarify" {
+			clarify = stage
 			break
 		}
 	}
-	if acceptance == nil {
-		t.Fatalf("acceptance stage metrics missing: %+v", stageMetrics)
+	if clarify == nil {
+		t.Fatalf("clarify stage metrics missing: %+v", stageMetrics)
 	}
-	if got := acceptance["duration_ms"]; got != float64(123) {
-		t.Fatalf("acceptance duration_ms = %v, want 123", got)
+	if got := clarify["input_tokens"]; got != float64(120) {
+		t.Fatalf("clarify input_tokens = %v, want 120", got)
 	}
-	if got := acceptance["input_tokens"]; got != float64(120) {
-		t.Fatalf("acceptance input_tokens = %v, want 120", got)
+	if got := clarify["output_tokens"]; got != float64(45) {
+		t.Fatalf("clarify output_tokens = %v, want 45", got)
 	}
-	if got := acceptance["output_tokens"]; got != float64(45) {
-		t.Fatalf("acceptance output_tokens = %v, want 45", got)
-	}
-	if got := acceptance["agent_turn_count"]; got != float64(2) {
-		t.Fatalf("acceptance agent_turn_count = %v, want 2", got)
+	if got := clarify["agent_turn_count"]; got != float64(2) {
+		t.Fatalf("clarify agent_turn_count = %v, want 2", got)
 	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_trace_event (
@@ -254,25 +207,8 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		t.Fatalf("insert leader trace: %v", err)
 	}
 
-	summaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary", nil)
-	summaryReq = withURLParam(summaryReq, "id", testWorkspaceID)
-	summaryW := httptest.NewRecorder()
-	testHandler.GetWorkspaceObservabilitySummary(summaryW, summaryReq)
-	if summaryW.Code != http.StatusOK {
-		t.Fatalf("GetWorkspaceObservabilitySummary: expected 200, got %d: %s", summaryW.Code, summaryW.Body.String())
-	}
-
-	agentSummaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary?agent_id="+leaderID, nil)
-	agentSummaryReq = withURLParam(agentSummaryReq, "id", testWorkspaceID)
-	agentSummaryW := httptest.NewRecorder()
-	testHandler.GetWorkspaceObservabilitySummary(agentSummaryW, agentSummaryReq)
-	if agentSummaryW.Code != http.StatusOK {
-		t.Fatalf("GetWorkspaceObservabilitySummary(agent): expected 200, got %d: %s", agentSummaryW.Code, agentSummaryW.Body.String())
-	}
-	var agentSummary map[string]any
-	if err := json.NewDecoder(agentSummaryW.Body).Decode(&agentSummary); err != nil {
-		t.Fatalf("decode agent summary: %v", err)
-	}
+	workspaceObservabilitySummary(t, "")
+	agentSummary := workspaceObservabilitySummary(t, "?agent_id="+leaderID)
 	agentMetrics := agentSummary["指标"].(map[string]any)
 	if got := agentMetrics["输入 token"]; got != float64(36) {
 		t.Fatalf("agent 输入 token = %v, want 36", got)
@@ -284,25 +220,22 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	if len(stageRows) == 0 {
 		t.Fatalf("agent summary missing sop_stage_breakdown: %#v", agentSummary)
 	}
-	var summaryAcceptance map[string]any
+	var summaryClarify map[string]any
 	for _, raw := range stageRows {
 		row, _ := raw.(map[string]any)
-		if row["step_key"] == "acceptance" {
-			summaryAcceptance = row
+		if row["step_key"] == "clarify" {
+			summaryClarify = row
 			break
 		}
 	}
-	if summaryAcceptance == nil {
-		t.Fatalf("acceptance stage missing from sop_stage_breakdown: %#v", stageRows)
+	if summaryClarify == nil {
+		t.Fatalf("clarify stage missing from sop_stage_breakdown: %#v", stageRows)
 	}
-	if got := summaryAcceptance["duration_ms"]; got != float64(123) {
-		t.Fatalf("summary acceptance duration_ms = %v, want 123", got)
+	if got := summaryClarify["input_tokens"]; got != float64(36) {
+		t.Fatalf("summary clarify input_tokens = %v, want 36", got)
 	}
-	if got := summaryAcceptance["input_tokens"]; got != float64(36) {
-		t.Fatalf("summary acceptance input_tokens = %v, want 36", got)
-	}
-	if got := summaryAcceptance["agent_turn_count"]; got != float64(2) {
-		t.Fatalf("summary acceptance agent_turn_count = %v, want 2", got)
+	if got := summaryClarify["agent_turn_count"]; got != float64(2) {
+		t.Fatalf("summary clarify agent_turn_count = %v, want 2", got)
 	}
 }
 
@@ -321,6 +254,7 @@ type startedSquadSOPRunOptions struct {
 	issueTitle       string
 	issueStatus      string
 	daemonName       string
+	skipStart        bool
 }
 
 func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts startedSquadSOPRunOptions) startedSquadSOPRunFixture {
@@ -337,48 +271,21 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 	`, testWorkspaceID, opts.agentDescription, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
 
-	profile, err := json.Marshal(map[string]any{
+	profile := map[string]any{
 		"profile_key": opts.profileKey,
 		"steps": []map[string]string{
 			{"key": "pm", "name": "pm", "role_key": "pm"},
 			{"key": "05-verify", "name": "05-测试", "role_key": "05-verify"},
 		},
-	})
-	if err != nil {
-		t.Fatalf("marshal sop profile: %v", err)
 	}
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5::jsonb)
-		RETURNING id
-	`, testWorkspaceID, opts.squadName, agentID, testUserID, string(profile)).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	squadID := createSOPTestSquad(t, opts.squadName, agentID, profile)
+	created := createSOPTestIssue(t, map[string]any{
 		"title":         opts.issueTitle,
 		"status":        opts.issueStatus,
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode issue: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
 	})
 
 	var taskID, runID string
@@ -396,12 +303,14 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 		t.Fatalf("mark task dispatched: %v", err)
 	}
 
-	startW := httptest.NewRecorder()
-	startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
-	startReq = withURLParam(startReq, "taskId", taskID)
-	testHandler.StartTask(startW, startReq)
-	if startW.Code != http.StatusOK {
-		t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
+	if !opts.skipStart {
+		startW := httptest.NewRecorder()
+		startReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
+		startReq = withURLParam(startReq, "taskId", taskID)
+		testHandler.StartTask(startW, startReq)
+		if startW.Code != http.StatusOK {
+			t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
+		}
 	}
 
 	return startedSquadSOPRunFixture{
@@ -411,6 +320,49 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 		taskID:     taskID,
 		daemonName: opts.daemonName,
 	}
+}
+
+func failStartedSOPTask(t *testing.T, fixture startedSquadSOPRunFixture, message, reason string) {
+	t.Helper()
+	response := httptest.NewRecorder()
+	request := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
+		"error": message, "failure_reason": reason,
+	}, testWorkspaceID, fixture.daemonName)
+	testHandler.FailTask(response, withURLParam(request, "taskId", fixture.taskID))
+	if response.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func loadSOPRunState(t *testing.T, runID string) (status, currentStep string, completedAt *time.Time) {
+	t.Helper()
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT status, current_step_key, completed_at FROM squad_sop_run WHERE id = $1
+	`, runID).Scan(&status, &currentStep, &completedAt); err != nil {
+		t.Fatalf("load SOP run: %v", err)
+	}
+	return status, currentStep, completedAt
+}
+
+func countSOPStepEvents(t *testing.T, runID, taskID, stepKey, eventType string) int {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM squad_sop_step_event
+		WHERE run_id = $1 AND task_id = $2 AND ($3 = '' OR step_key = $3) AND event_type = $4
+	`, runID, taskID, stepKey, eventType).Scan(&count); err != nil {
+		t.Fatalf("count %s events: %v", eventType, err)
+	}
+	return count
+}
+
+func loadSOPTestIssueStatus(t *testing.T, issueID string) string {
+	t.Helper()
+	var status string
+	if err := testPool.QueryRow(context.Background(), `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&status); err != nil {
+		t.Fatalf("load issue status: %v", err)
+	}
+	return status
 }
 
 func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
@@ -429,7 +381,7 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 	}
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/complete", map[string]any{
+	completeReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/complete", map[string]any{
 		"output": "verify passed",
 	}, testWorkspaceID, fixture.daemonName)
 	completeReq = withURLParam(completeReq, "taskId", fixture.taskID)
@@ -438,26 +390,11 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
 	}
 
-	var status, currentStep string
-	var completedAt *time.Time
-	if err := testPool.QueryRow(ctx, `
-		SELECT status, current_step_key, completed_at
-		FROM squad_sop_run
-		WHERE id = $1
-	`, fixture.runID).Scan(&status, &currentStep, &completedAt); err != nil {
-		t.Fatalf("load SOP run: %v", err)
-	}
+	status, currentStep, completedAt := loadSOPRunState(t, fixture.runID)
 	if status != "已完成" || currentStep != "pm" || completedAt == nil {
 		t.Fatalf("SOP run = status %s step %s completed_at %v, want 已完成/pm/non-nil", status, currentStep, completedAt)
 	}
-	var completedEvents int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM squad_sop_step_event
-		WHERE run_id = $1 AND task_id = $2 AND step_key = 'pm' AND event_type = '步骤完成'
-	`, fixture.runID, fixture.taskID).Scan(&completedEvents); err != nil {
-		t.Fatalf("count completed events: %v", err)
-	}
+	completedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "pm", "步骤完成")
 	if completedEvents != 1 {
 		t.Fatalf("completed event count = %d, want 1", completedEvents)
 	}
@@ -484,40 +421,15 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 		t.Fatalf("create continuation task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, continuationTaskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, continuationTaskID)
 	})
 
-	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
-		"error":          "provider failed after queuing continuation",
-		"failure_reason": "api_invalid_request",
-	}, testWorkspaceID, fixture.daemonName)
-	failReq = withURLParam(failReq, "taskId", fixture.taskID)
-	testHandler.FailTask(failW, failReq)
-	if failW.Code != http.StatusOK {
-		t.Fatalf("FailTask: expected 200, got %d: %s", failW.Code, failW.Body.String())
-	}
-
-	var status, currentStep string
-	var completedAt *time.Time
-	if err := testPool.QueryRow(ctx, `
-		SELECT status, current_step_key, completed_at
-		FROM squad_sop_run
-		WHERE id = $1
-	`, fixture.runID).Scan(&status, &currentStep, &completedAt); err != nil {
-		t.Fatalf("load SOP run: %v", err)
-	}
+	failStartedSOPTask(t, fixture, "provider failed after queuing continuation", "api_invalid_request")
+	status, currentStep, completedAt := loadSOPRunState(t, fixture.runID)
 	if status != "进行中" || currentStep != "pm" || completedAt != nil {
 		t.Fatalf("SOP run = status %s step %s completed_at %v, want 进行中/pm/nil", status, currentStep, completedAt)
 	}
-	var failedEvents int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM squad_sop_step_event
-		WHERE run_id = $1 AND task_id = $2 AND event_type = '步骤失败'
-	`, fixture.runID, fixture.taskID).Scan(&failedEvents); err != nil {
-		t.Fatalf("count failed events: %v", err)
-	}
+	failedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "", "步骤失败")
 	if failedEvents != 0 {
 		t.Fatalf("failed event count = %d, want 0 while continuation task is active", failedEvents)
 	}
@@ -542,53 +454,21 @@ func TestFailTaskWithDeliveryCommentAdvancesSquadSOPForReview(t *testing.T) {
 		t.Fatalf("create delivery comment: %v", err)
 	}
 
-	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
-		"error":          "provider ended after the delivery comment was already posted",
-		"failure_reason": "agent_error.unknown",
-	}, testWorkspaceID, fixture.daemonName)
-	failReq = withURLParam(failReq, "taskId", fixture.taskID)
-	testHandler.FailTask(failW, failReq)
-	if failW.Code != http.StatusOK {
-		t.Fatalf("FailTask: expected 200, got %d: %s", failW.Code, failW.Body.String())
-	}
+	failStartedSOPTask(t, fixture, "provider ended after the delivery comment was already posted", "agent_error.unknown")
 
-	var issueStatus string
-	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, fixture.issueID).Scan(&issueStatus); err != nil {
-		t.Fatalf("load issue status: %v", err)
-	}
+	issueStatus := loadSOPTestIssueStatus(t, fixture.issueID)
 	if issueStatus == "blocked" {
 		t.Fatalf("issue status = blocked, want delivery comment to preserve PM review path")
 	}
 
-	var runStatus, currentStep string
-	var completedAt *time.Time
-	if err := testPool.QueryRow(ctx, `
-		SELECT status, current_step_key, completed_at
-		FROM squad_sop_run
-		WHERE id = $1
-	`, fixture.runID).Scan(&runStatus, &currentStep, &completedAt); err != nil {
-		t.Fatalf("load SOP run: %v", err)
-	}
+	runStatus, currentStep, completedAt := loadSOPRunState(t, fixture.runID)
 	if runStatus != "进行中" || currentStep != "05-verify" || completedAt != nil {
 		t.Fatalf("SOP run = status %s step %s completed_at %v, want 进行中/05-verify/nil", runStatus, currentStep, completedAt)
 	}
 
-	var completedEvents, failedEvents, failureComments int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM squad_sop_step_event
-		WHERE run_id = $1 AND task_id = $2 AND step_key = 'pm' AND event_type = '步骤完成'
-	`, fixture.runID, fixture.taskID).Scan(&completedEvents); err != nil {
-		t.Fatalf("count completed events: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM squad_sop_step_event
-		WHERE run_id = $1 AND task_id = $2 AND event_type = '步骤失败'
-	`, fixture.runID, fixture.taskID).Scan(&failedEvents); err != nil {
-		t.Fatalf("count failed events: %v", err)
-	}
+	completedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "pm", "步骤完成")
+	failedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "", "步骤失败")
+	var failureComments int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM comment
@@ -617,21 +497,47 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 	}
 
 	rawProviderTrace := "I'll start by understanding the issue context. Tool TaskCreate not found in agent cli. " + strings.Repeat("模型输出碎片", 60)
-	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
-		"error":          rawProviderTrace,
-		"failure_reason": "agent_error.model_not_found_or_unavailable",
-	}, testWorkspaceID, fixture.daemonName)
-	failReq = withURLParam(failReq, "taskId", fixture.taskID)
-	testHandler.FailTask(failW, failReq)
-	if failW.Code != http.StatusOK {
-		t.Fatalf("FailTask: expected 200, got %d: %s", failW.Code, failW.Body.String())
+	removeFailure := installCompletionFallbackCommentFailure(t, fixture.taskID)
+	if _, err := testHandler.TaskService.FailTask(
+		ctx,
+		parseUUID(fixture.taskID),
+		rawProviderTrace,
+		"",
+		"",
+		"agent_error.model_not_found_or_unavailable",
+	); err == nil {
+		t.Fatal("task failure succeeded despite forced structured failure comment error")
 	}
+	var rolledBackStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.taskID).Scan(&rolledBackStatus); err != nil {
+		t.Fatalf("load task after structured failure comment rollback: %v", err)
+	}
+	if rolledBackStatus != "running" {
+		t.Fatalf("task status after structured failure comment rollback = %q, want running", rolledBackStatus)
+	}
+	removeFailure()
+	removeStatusFailure := installTaskIssueStatusUpdateFailure(t, fixture.issueID)
+	if _, err := testHandler.TaskService.FailTask(
+		ctx,
+		parseUUID(fixture.taskID),
+		rawProviderTrace,
+		"",
+		"",
+		"agent_error.model_not_found_or_unavailable",
+	); err == nil {
+		t.Fatal("task failure succeeded despite forced issue status update error")
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.taskID).Scan(&rolledBackStatus); err != nil {
+		t.Fatalf("reload task after issue status rollback: %v", err)
+	}
+	if rolledBackStatus != "running" {
+		t.Fatalf("task status after issue status rollback = %q, want running", rolledBackStatus)
+	}
+	removeStatusFailure()
 
-	var issueStatus string
-	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, fixture.issueID).Scan(&issueStatus); err != nil {
-		t.Fatalf("load issue status: %v", err)
-	}
+	failStartedSOPTask(t, fixture, rawProviderTrace, "agent_error.model_not_found_or_unavailable")
+
+	issueStatus := loadSOPTestIssueStatus(t, fixture.issueID)
 	if issueStatus != "blocked" {
 		t.Fatalf("issue status = %q, want blocked", issueStatus)
 	}
@@ -676,24 +582,13 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 }
 
 func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
+	requireHandlerDatabase(t)
 	ctx := context.Background()
-
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, '{"profile_key":"project-filter-test","steps":[{"key":"clarify","name":"需求澄清","role_key":"captain"}]}'::jsonb)
-		RETURNING id
-	`, testWorkspaceID, "Project Filter Squad", leaderID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	defer testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+	leaderID := oldestHandlerTestAgentID(t)
+	squadID := createSOPTestSquad(t, "Project Filter Squad", leaderID, map[string]any{
+		"profile_key": "project-filter-test",
+		"steps":       []map[string]string{{"key": "clarify", "name": "需求澄清", "role_key": "captain"}},
+	})
 
 	var projectA string
 	if err := testPool.QueryRow(ctx, `
@@ -701,7 +596,7 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	`, testWorkspaceID, "观测项目 A").Scan(&projectA); err != nil {
 		t.Fatalf("create project A: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectA)
+	defer mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectA)
 
 	var projectB string
 	if err := testPool.QueryRow(ctx, `
@@ -709,31 +604,15 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	`, testWorkspaceID, "观测项目 B").Scan(&projectB); err != nil {
 		t.Fatalf("create project B: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectB)
+	defer mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectB)
 
 	createProjectIssue := func(title, projectID string) string {
-		t.Helper()
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		return createSOPTestIssue(t, map[string]any{
 			"title":         title,
 			"project_id":    projectID,
 			"assignee_type": "squad",
 			"assignee_id":   squadID,
-		})
-		testHandler.CreateIssue(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("CreateIssue(%s): expected 201, got %d: %s", title, w.Code, w.Body.String())
-		}
-		var created IssueResponse
-		if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-			t.Fatalf("decode issue: %v", err)
-		}
-		t.Cleanup(func() {
-			cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-			cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-			testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
-		})
-		return created.ID
+		}).ID
 	}
 
 	issueA := createProjectIssue("项目 A 小队观测", projectA)
@@ -749,18 +628,7 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 		t.Fatalf("project A run count = %d, want 1", runCount)
 	}
 
-	summaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary?project_id="+projectA, nil)
-	summaryReq = withURLParam(summaryReq, "id", testWorkspaceID)
-	summaryW := httptest.NewRecorder()
-	testHandler.GetWorkspaceObservabilitySummary(summaryW, summaryReq)
-	if summaryW.Code != http.StatusOK {
-		t.Fatalf("GetWorkspaceObservabilitySummary: expected 200, got %d: %s", summaryW.Code, summaryW.Body.String())
-	}
-
-	var summary map[string]any
-	if err := json.NewDecoder(summaryW.Body).Decode(&summary); err != nil {
-		t.Fatalf("decode summary: %v", err)
-	}
+	summary := workspaceObservabilitySummary(t, "?project_id="+projectA)
 	metrics, ok := summary["指标"].(map[string]any)
 	if !ok {
 		t.Fatalf("summary missing 指标: %#v", summary)
@@ -792,7 +660,7 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 			OutputTokens: 5,
 		},
 	}
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, 0)
+	summary := buildObservabilitySummary(nil, nil, traces, nil)
 	metricsMap := summary["指标"].(map[string]any)
 	if cost, ok := metricsMap["预估成本"].(float64); !ok || cost <= 0 {
 		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
@@ -841,7 +709,7 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 			CreatedAt:        pgtype.Timestamptz{Time: base.Add(time.Minute), Valid: true},
 		},
 	}
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, 0)
+	summary := buildObservabilitySummary(nil, nil, traces, nil)
 	metricsMap := summary["指标"].(map[string]any)
 	if got := metricsMap["输入 token"]; got != int64(30) {
 		t.Fatalf("输入 token = %v, want latest usage report 30", got)
@@ -858,24 +726,5 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 	modelRows := summary["model_breakdown"].([]map[string]any)
 	if len(modelRows) != 1 || modelRows[0]["输入 token"] != int64(30) || modelRows[0]["任务数"] != 1 {
 		t.Fatalf("model_breakdown = %#v, want deduped latest usage only", modelRows)
-	}
-}
-
-func TestBuildObservabilitySummaryMarksFullCompleteness(t *testing.T) {
-	traces := make([]db.TaskTraceEvent, observabilitySummaryPageSize)
-	summary := buildObservabilitySummary(nil, nil, traces, nil, int64(len(traces)), 0)
-	metricsMap := summary["指标"].(map[string]any)
-	if got := summary["task_trace_maybe_truncated"]; got != false {
-		t.Fatalf("task_trace_maybe_truncated = %v, want false", got)
-	}
-	if got := summary["task_trace_sample_total"]; got != observabilitySummaryPageSize {
-		t.Fatalf("task_trace_sample_total = %v, want %d", got, observabilitySummaryPageSize)
-	}
-	if got := metricsMap["汇总完整性"]; got != "完整" {
-		t.Fatalf("汇总完整性 = %v, want 完整", got)
-	}
-	completeness := summary["summary_completeness"].(map[string]any)
-	if got := completeness["说明"]; !strings.Contains(got.(string), "全量汇总") {
-		t.Fatalf("summary_completeness 说明 = %v, want 全量汇总", got)
 	}
 }

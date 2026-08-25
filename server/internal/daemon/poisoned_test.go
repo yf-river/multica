@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 func TestClassifyPoisonedOutput(t *testing.T) {
@@ -18,19 +19,19 @@ func TestClassifyPoisonedOutput(t *testing.T) {
 			name:       "iteration limit canonical",
 			output:     "I reached the iteration limit and couldn't generate a summary.",
 			wantOK:     true,
-			wantReason: FailureReasonIterationLimit,
+			wantReason: string(taskfailure.ReasonIterationLimit),
 		},
 		{
 			name:       "iteration limit case insensitive",
 			output:     "I REACHED THE ITERATION LIMIT and stopped",
 			wantOK:     true,
-			wantReason: FailureReasonIterationLimit,
+			wantReason: string(taskfailure.ReasonIterationLimit),
 		},
 		{
 			name:       "fallback meta message",
 			output:     "Put your final update inside the content string. Keep it concise.",
 			wantOK:     true,
-			wantReason: FailureReasonAgentFallbackMsg,
+			wantReason: string(taskfailure.ReasonAgentFallbackMessage),
 		},
 		{
 			name:   "real conclusion is not poisoned",
@@ -48,10 +49,6 @@ func TestClassifyPoisonedOutput(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			// Regression guard for the GPT-Boy review on MUL-1630:
-			// a real review/analysis that quotes both markers must not
-			// be misclassified. Without the length cap, this entire
-			// PR's review thread would tank as a poisoned failure.
 			name: "long review quoting both markers is not poisoned",
 			output: `Review for the rerun fix.
 
@@ -95,32 +92,24 @@ func TestClassifyPoisonedError(t *testing.T) {
 		wantReason string
 	}{
 		{
-			// MUL-1921 reproducer: a markdown image in the issue
-			// description was downloaded as a 146-byte CDN auth-error
-			// XML, then surfaced to the LLM as a base64 PNG. The API
-			// rejected it and every follow-up task replayed the same
-			// poisoned conversation.
 			name:       "claude could not process image",
 			errMsg:     `API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Could not process image"},"request_id":"req_011CarVEtBLj95zD7i8xardY"}`,
 			wantOK:     true,
-			wantReason: FailureReasonAPIInvalidRequest,
+			wantReason: string(taskfailure.ReasonAPIInvalidRequest),
 		},
 		{
 			name:       "prompt too long is also poisoning",
 			errMsg:     `API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 213000 tokens > 200000 maximum"}}`,
 			wantOK:     true,
-			wantReason: FailureReasonAPIInvalidRequest,
+			wantReason: string(taskfailure.ReasonAPIInvalidRequest),
 		},
 		{
 			name:       "case insensitive",
 			errMsg:     `api error: 400 {"type":"INVALID_REQUEST_ERROR"}`,
 			wantOK:     true,
-			wantReason: FailureReasonAPIInvalidRequest,
+			wantReason: string(taskfailure.ReasonAPIInvalidRequest),
 		},
 		{
-			// Rate-limit must NOT be classified as poisoning — those
-			// recover on retry and we want session resume to keep the
-			// in-flight conversation memory.
 			name:   "429 rate limit is transient",
 			errMsg: `API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}`,
 			wantOK: false,
@@ -131,18 +120,11 @@ func TestClassifyPoisonedError(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			// 401/403 mean the daemon's credentials are bad; resuming
-			// the session won't fix it but the failure is environmental,
-			// not a poisoned conversation. Out of scope for this
-			// classifier.
 			name:   "401 auth error",
 			errMsg: `API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}`,
 			wantOK: false,
 		},
 		{
-			// A tool surfacing a 400 from somewhere unrelated must not
-			// trigger the classifier — only the combination of 400 +
-			// invalid_request_error indicates a corrupted body.
 			name:   "tool 400 without invalid_request_error",
 			errMsg: `agent tool returned status 400: not found`,
 			wantOK: false,
@@ -185,14 +167,14 @@ func TestClassifyResumeUnsafeTimeout(t *testing.T) {
 			provider:   "codex",
 			errMsg:     agent.CodexSemanticInactivityMarker + " after 10m0s without agent progress (last activity: tool-result:exec_command)",
 			wantOK:     true,
-			wantReason: FailureReasonCodexSemanticInactivity,
+			wantReason: string(taskfailure.ReasonCodexSemanticInactivity),
 		},
 		{
 			name:       "codex first turn no progress",
 			provider:   "codex",
 			errMsg:     agent.CodexFirstTurnNoProgressMarker + ` after 30s: received turn start but no item, turn/completed, or error event`,
 			wantOK:     true,
-			wantReason: FailureReasonCodexSemanticInactivity,
+			wantReason: string(taskfailure.ReasonCodexSemanticInactivity),
 		},
 		{
 			name:     "codex ordinary timeout remains resumable",

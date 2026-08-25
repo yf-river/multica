@@ -7,6 +7,7 @@ import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/zh-Hans/common.json";
 import enAgents from "../../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../../test/agent-fixtures";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
@@ -19,28 +20,7 @@ vi.mock("sonner", () => ({
 
 import { McpConfigTab } from "./mcp-config-tab";
 
-const baseAgent: Agent = {
-  id: "agent-1",
-  workspace_id: "ws-1",
-  runtime_id: "runtime-1",
-  name: "Agent",
-  description: "",
-  instructions: "",
-  avatar_url: null,
-  runtime_mode: "local",
-  runtime_config: {},
-  custom_args: [],
-  scope: "workspace",
-  status: "idle",
-  max_concurrent_tasks: 1,
-  model: "",
-  owner_id: "user-1",
-  skills: [],
-  created_at: "2026-05-28T00:00:00Z",
-  updated_at: "2026-05-28T00:00:00Z",
-  archived_at: null,
-  archived_by: null,
-};
+const baseAgent = makeAgent();
 
 function renderTab(
   overrides: Partial<Agent> = {},

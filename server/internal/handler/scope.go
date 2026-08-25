@@ -10,9 +10,6 @@ import (
 const (
 	scopePersonal  = "personal"
 	scopeWorkspace = "workspace"
-
-	squadScopePersonal  = scopePersonal
-	squadScopeWorkspace = scopeWorkspace
 )
 
 func normalizeScope(value string, fallback string) (string, bool) {

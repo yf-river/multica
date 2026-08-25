@@ -1,5 +1,9 @@
 import { pinyin } from "pinyin-pro";
 
+export function matchesTextQuery(text: string, query: string): boolean {
+  return text.toLowerCase().includes(query.toLowerCase()) || matchesPinyin(text, query);
+}
+
 /**
  * Check if a query matches a name via pinyin.
  * Supports:
@@ -7,7 +11,7 @@ import { pinyin } from "pinyin-pro";
  * - Initial letter abbreviation: "lyl" matches "李云龙"
  * - Partial prefix match: "liyu" matches "李云龙"
  */
-export function matchesPinyin(name: string, query: string): boolean {
+function matchesPinyin(name: string, query: string): boolean {
   if (!query) return true;
 
   // Only attempt pinyin matching if the name contains Chinese characters
@@ -28,16 +32,7 @@ export function matchesPinyin(name: string, query: string): boolean {
 
   // Hybrid match: some chars matched by full pinyin, rest by initials
   // e.g. "liyl" matches "李云龙" (li + y + l)
-  return hybridMatch(full, q);
-}
-
-/**
- * Hybrid matching: the query can be a mix of full pinyin for some characters
- * and initials for others, consumed left-to-right.
- * e.g. for ["li", "yun", "long"], query "liyunl" matches (li + yun + l)
- */
-function hybridMatch(pinyinArr: string[], query: string): boolean {
-  return match(pinyinArr, 0, query, 0);
+  return match(full, 0, q, 0);
 }
 
 function match(arr: string[], ai: number, q: string, qi: number): boolean {

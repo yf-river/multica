@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import type { Agent, RuntimeDevice } from "@multica/core/types";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -35,18 +35,18 @@ export function CustomArgsTab({
   onDirtyChange,
 }: {
   agent: Agent;
-  runtimeDevice?: RuntimeDevice;
+  runtimeDevice?: AgentRuntime;
   onSave: (updates: Partial<Agent>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("agents");
   const [entries, setEntries] = useState<ArgEntry[]>(
-    argsToEntries(agent.custom_args ?? []),
+    argsToEntries(agent.custom_args),
   );
   const [saving, setSaving] = useState(false);
 
   const currentArgs = entriesToArgs(entries);
-  const originalArgs = agent.custom_args ?? [];
+  const originalArgs = agent.custom_args;
   const dirty = JSON.stringify(currentArgs) !== JSON.stringify(originalArgs);
 
   useEffect(() => {

@@ -8,40 +8,23 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestShardedStreamRelayConfigDefaults(t *testing.T) {
-	relay := NewShardedStreamRelay(NewHub(), nil, nil, ShardedStreamRelayConfig{})
-
-	if relay.config.Shards != defaultShardedRelayShards {
-		t.Fatalf("expected default shard count %d, got %d", defaultShardedRelayShards, relay.config.Shards)
-	}
-	if relay.config.StreamMaxLen != defaultShardedRelayStreamMaxLen {
-		t.Fatalf("expected default stream max len %d, got %d", defaultShardedRelayStreamMaxLen, relay.config.StreamMaxLen)
-	}
-	if relay.config.ReadCount != defaultShardedRelayReadCount {
-		t.Fatalf("expected default read count %d, got %d", defaultShardedRelayReadCount, relay.config.ReadCount)
-	}
-	if relay.config.ReadBlock != defaultShardedRelayReadBlock {
-		t.Fatalf("expected default read block %s, got %s", defaultShardedRelayReadBlock, relay.config.ReadBlock)
-	}
-}
-
 func TestShardedStreamRelayShardForScopeIsStableAndBounded(t *testing.T) {
-	relay := NewShardedStreamRelay(NewHub(), nil, nil, ShardedStreamRelayConfig{Shards: 8})
+	relay := NewShardedStreamRelay(NewHub(), nil, nil)
 
 	first := relay.shardFor(ScopeWorkspace, "workspace-1")
 	second := relay.shardFor(ScopeWorkspace, "workspace-1")
 	if first != second {
 		t.Fatalf("expected stable shard selection, got %d then %d", first, second)
 	}
-	if first < 0 || first >= relay.config.Shards {
-		t.Fatalf("shard %d out of range [0,%d)", first, relay.config.Shards)
+	if first < 0 || first >= defaultShardedRelayShards {
+		t.Fatalf("shard %d out of range [0,%d)", first, defaultShardedRelayShards)
 	}
 }
 
 func TestShardedStreamRelayDeliverMessageUsesEnvelopeScope(t *testing.T) {
 	hub := NewHub()
 	client := attachRealtimeTestClient(hub, ScopeTask, "task-1")
-	relay := NewShardedStreamRelay(hub, nil, nil, ShardedStreamRelayConfig{})
+	relay := NewShardedStreamRelay(hub, nil, nil)
 	ev := envelope{
 		EventID:     "event-1",
 		Scope:       ScopeTask,

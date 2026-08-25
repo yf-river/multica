@@ -63,13 +63,6 @@ func TextToPtr(t pgtype.Text) *string {
 	return &t.String
 }
 
-func PtrToText(s *string) pgtype.Text {
-	if s == nil {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: *s, Valid: true}
-}
-
 func StrToText(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -106,10 +99,11 @@ func DateToPtr(d pgtype.Date) *string {
 // ParseCalendarDate parses a calendar day from a "YYYY-MM-DD" string into a
 // pgtype.Date carrying no time-of-day or timezone.
 func ParseCalendarDate(s string) (pgtype.Date, error) {
-	if t, err := time.Parse(time.DateOnly, s); err == nil {
-		return pgtype.Date{Time: t, Valid: true}, nil
+	t, err := time.Parse(time.DateOnly, s)
+	if err != nil {
+		return pgtype.Date{}, fmt.Errorf("invalid date %q: expected YYYY-MM-DD", s)
 	}
-	return pgtype.Date{}, fmt.Errorf("invalid date %q: expected YYYY-MM-DD", s)
+	return pgtype.Date{Time: t, Valid: true}, nil
 }
 
 func UUIDToPtr(u pgtype.UUID) *string {
@@ -118,11 +112,4 @@ func UUIDToPtr(u pgtype.UUID) *string {
 	}
 	s := UUIDToString(u)
 	return &s
-}
-
-func Int8ToPtr(v pgtype.Int8) *int64 {
-	if !v.Valid {
-		return nil
-	}
-	return &v.Int64
 }

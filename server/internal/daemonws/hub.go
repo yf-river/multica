@@ -21,23 +21,46 @@ const (
 
 // ClientIdentity captures the already-authenticated daemon connection scope.
 type ClientIdentity struct {
-	DaemonID      string
 	UserID        string
 	WorkspaceIDs  []string
 	RuntimeIDs    []string
 	ClientVersion string
 }
 
-func (i ClientIdentity) PrimaryWorkspaceID() string {
-	if len(i.WorkspaceIDs) == 0 {
+// AuthorizedWorkspaceIDs returns the connection's workspace scope in stable
+// order with blank and duplicate IDs removed.
+func (i ClientIdentity) AuthorizedWorkspaceIDs() []string {
+	seen := make(map[string]struct{}, len(i.WorkspaceIDs))
+	out := make([]string, 0, len(i.WorkspaceIDs))
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	for _, id := range i.WorkspaceIDs {
+		add(id)
+	}
+	return out
+}
+
+func (i ClientIdentity) primaryWorkspaceID() string {
+	ids := i.AuthorizedWorkspaceIDs()
+	if len(ids) == 0 {
 		return ""
 	}
 	return i.WorkspaceIDs[0]
 }
 
-// AllowsWorkspace reports whether workspaceID is within the connection scope.
+// AllowsWorkspace reports whether workspaceID is within the authenticated
+// connection scope. An empty scope is deliberately fail-closed.
 func (i ClientIdentity) AllowsWorkspace(workspaceID string) bool {
-	for _, id := range i.WorkspaceIDs {
+	for _, id := range i.AuthorizedWorkspaceIDs() {
 		if id == workspaceID {
 			return true
 		}
@@ -176,6 +199,10 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, identity C
 		http.Error(w, `{"error":"runtime_ids required"}`, http.StatusBadRequest)
 		return
 	}
+	if len(identity.AuthorizedWorkspaceIDs()) == 0 {
+		http.Error(w, `{"error":"workspace scope required"}`, http.StatusBadRequest)
+		return
+	}
 
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -190,8 +217,10 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, identity C
 		}
 	}
 	if len(runtimes) == 0 {
-		conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"runtime_ids required"}`))
-		conn.Close()
+		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"runtime_ids required"}`)); err != nil {
+			slog.Debug("daemon websocket identity error write failed", "error", err)
+		}
+		_ = conn.Close()
 		return
 	}
 
@@ -291,19 +320,16 @@ func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
 }
 
 func (h *Hub) notifyFrame(runtimeID string, data []byte, eventID string) (delivered bool, deduped bool) {
-	h.mu.RLock()
-	clients := h.byRuntime[runtimeID]
-	delivered, deduped, slow := notifyClients(clients, data, eventID)
-	h.mu.RUnlock()
-
-	h.evictSlowClients(slow)
-	return delivered, deduped
+	return h.notifyIndexedClients(h.byRuntime, runtimeID, data, eventID)
 }
 
 func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID string) (delivered bool, deduped bool) {
+	return h.notifyIndexedClients(h.byWorkspace, workspaceID, data, eventID)
+}
+
+func (h *Hub) notifyIndexedClients(index map[string]map[*client]bool, key string, data []byte, eventID string) (delivered bool, deduped bool) {
 	h.mu.RLock()
-	clients := h.byWorkspace[workspaceID]
-	delivered, deduped, slow := notifyClients(clients, data, eventID)
+	delivered, deduped, slow := notifyClients(index[key], data, eventID)
 	h.mu.RUnlock()
 
 	h.evictSlowClients(slow)
@@ -330,7 +356,7 @@ func notifyClients(clients map[*client]bool, data []byte, eventID string) (deliv
 func (h *Hub) evictSlowClients(slow []*client) {
 	for _, c := range slow {
 		h.unregister(c)
-		c.conn.Close()
+		_ = c.conn.Close()
 	}
 	if len(slow) > 0 {
 		M.SlowEvictionsTotal.Add(int64(len(slow)))
@@ -338,43 +364,23 @@ func (h *Hub) evictSlowClients(slow []*client) {
 }
 
 func taskAvailableFrame(runtimeID, taskID string) ([]byte, error) {
-	return json.Marshal(protocol.Message{
-		Type: protocol.EventDaemonTaskAvailable,
-		Payload: mustMarshalRaw(protocol.TaskAvailablePayload{
+	return protocol.MarshalMessage(
+		protocol.EventDaemonTaskAvailable,
+		protocol.TaskAvailablePayload{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
-		}),
-	})
+		},
+	)
 }
 
 func runtimeProfilesChangedFrame(workspaceID, profileID string) ([]byte, error) {
-	return json.Marshal(protocol.Message{
-		Type: protocol.EventDaemonRuntimeProfilesChanged,
-		Payload: mustMarshalRaw(protocol.RuntimeProfilesChangedPayload{
+	return protocol.MarshalMessage(
+		protocol.EventDaemonRuntimeProfilesChanged,
+		protocol.RuntimeProfilesChangedPayload{
 			WorkspaceID:      workspaceID,
 			RuntimeProfileID: profileID,
-		}),
-	})
-}
-
-func mustMarshalRaw(v any) json.RawMessage {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	return data
-}
-
-func (h *Hub) RuntimeConnectionCount(runtimeID string) int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.byRuntime[runtimeID])
-}
-
-func (h *Hub) WorkspaceConnectionCount(workspaceID string) int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.byWorkspace[workspaceID])
+		},
+	)
 }
 
 func (h *Hub) register(c *client) {
@@ -403,9 +409,8 @@ func (h *Hub) register(c *client) {
 	M.ConnectsTotal.Add(1)
 	M.ActiveConnections.Add(1)
 	slog.Info("daemon websocket connected",
-		"daemon_id", c.identity.DaemonID,
 		"user_id", c.identity.UserID,
-		"workspace_id", c.identity.PrimaryWorkspaceID(),
+		"workspace_id", c.identity.primaryWorkspaceID(),
 		"workspace_ids", workspaceIDs,
 		"runtimes", len(c.runtimes),
 		"client_version", c.identity.ClientVersion,
@@ -444,9 +449,8 @@ func (h *Hub) unregister(c *client) {
 	M.DisconnectsTotal.Add(1)
 	M.ActiveConnections.Add(-1)
 	slog.Info("daemon websocket disconnected",
-		"daemon_id", c.identity.DaemonID,
 		"user_id", c.identity.UserID,
-		"workspace_id", c.identity.PrimaryWorkspaceID(),
+		"workspace_id", c.identity.primaryWorkspaceID(),
 		"workspace_ids", workspaceIDs,
 		"runtimes", len(c.runtimes),
 		"total_clients", total,
@@ -456,21 +460,23 @@ func (h *Hub) unregister(c *client) {
 func (c *client) readPump() {
 	defer func() {
 		c.hub.unregister(c)
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
 	c.conn.SetReadLimit(4096)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		slog.Debug("daemon websocket read deadline failed", "error", err, "user_id", c.identity.UserID)
+		return
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
 		_, raw, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-				slog.Debug("daemon websocket read error", "error", err, "daemon_id", c.identity.DaemonID)
+				slog.Debug("daemon websocket read error", "error", err, "user_id", c.identity.UserID)
 			}
 			return
 		}
@@ -481,7 +487,7 @@ func (c *client) readPump() {
 func (c *client) handleFrame(raw []byte) {
 	var msg protocol.Message
 	if err := json.Unmarshal(raw, &msg); err != nil {
-		slog.Debug("daemon websocket invalid frame", "error", err, "daemon_id", c.identity.DaemonID)
+		slog.Debug("daemon websocket invalid frame", "error", err, "user_id", c.identity.UserID)
 		if rec := c.hub.messageKindRecorder(); rec != nil {
 			rec.RecordDaemonWSMessageReceived("invalid")
 		}
@@ -515,18 +521,18 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 
 	var payload protocol.DaemonHeartbeatRequestPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		slog.Debug("daemon websocket heartbeat invalid payload", "error", err, "daemon_id", c.identity.DaemonID)
+		slog.Debug("daemon websocket heartbeat invalid payload", "error", err, "user_id", c.identity.UserID)
 		return
 	}
 	if payload.RuntimeID == "" {
-		slog.Debug("daemon websocket heartbeat missing runtime_id", "daemon_id", c.identity.DaemonID)
+		slog.Debug("daemon websocket heartbeat missing runtime_id", "user_id", c.identity.UserID)
 		return
 	}
 	if _, ok := c.runtimes[payload.RuntimeID]; !ok {
 		// The connection authenticated for a fixed runtime set; reject any
 		// heartbeat for a runtime the client did not register for.
 		slog.Warn("daemon websocket heartbeat for unauthorized runtime",
-			"daemon_id", c.identity.DaemonID,
+			"user_id", c.identity.UserID,
 			"runtime_id", payload.RuntimeID)
 		return
 	}
@@ -542,17 +548,14 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 	if err != nil {
 		slog.Warn("daemon websocket heartbeat handler failed",
 			"error", err,
-			"daemon_id", c.identity.DaemonID,
+			"user_id", c.identity.UserID,
 			"runtime_id", payload.RuntimeID)
 		return
 	}
 	if ack == nil {
 		return
 	}
-	frame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeatAck,
-		Payload: mustMarshalRaw(ack),
-	})
+	frame, err := protocol.MarshalMessage(protocol.EventDaemonHeartbeatAck, ack)
 	if err != nil {
 		slog.Debug("daemon websocket heartbeat ack marshal failed", "error", err)
 		return
@@ -563,7 +566,7 @@ func (c *client) handleHeartbeatFrame(raw json.RawMessage) {
 		// Send buffer is full — slow client. Don't block the read pump; the
 		// next writePump tick or notifyFrame eviction will clean up.
 		slog.Debug("daemon websocket heartbeat ack dropped: send buffer full",
-			"daemon_id", c.identity.DaemonID,
+			"user_id", c.identity.UserID,
 			"runtime_id", payload.RuntimeID)
 	}
 }
@@ -572,23 +575,29 @@ func (c *client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				slog.Debug("daemon websocket write deadline failed", "error", err, "user_id", c.identity.UserID)
+				return
+			}
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				slog.Debug("daemon websocket write error", "error", err, "daemon_id", c.identity.DaemonID)
+				slog.Debug("daemon websocket write error", "error", err, "user_id", c.identity.UserID)
 				return
 			}
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				slog.Debug("daemon websocket ping deadline failed", "error", err, "user_id", c.identity.UserID)
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

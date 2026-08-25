@@ -59,7 +59,7 @@ vi.mock("@tanstack/react-query", () => ({
   queryOptions: <T,>(opts: T) => opts,
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "workspace-1",
 }));
 
@@ -76,13 +76,10 @@ const agentNameByIdRef = vi.hoisted(() => ({
 }));
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({
-    getAgentName: (agentId: string) =>
-      agentNameByIdRef.current.get(agentId) ?? "Unknown Agent",
-    getMemberName: () => "Unknown",
-    getSquadName: () => "Unknown Squad",
-    getActorName: () => "Unknown",
-    getActorInitials: () => "??",
-    getActorAvatarUrl: () => null,
+    getActorName: (type: string, id: string) =>
+      type === "agent"
+        ? agentNameByIdRef.current.get(id) ?? "未知智能体"
+        : "系统",
   }),
 }));
 
@@ -188,29 +185,22 @@ function larkInstallation({
   id = "inst-1",
   agentId = "agent-1",
   appId = "cli_existing_app",
-  botOpenId = "ou_existing_bot",
   status = "active",
   region,
 }: {
   id?: string;
   agentId?: string;
   appId?: string;
-  botOpenId?: string;
   status?: string;
   region?: string;
 } = {}) {
   return {
     id,
-    workspace_id: "ws-1",
     agent_id: agentId,
     app_id: appId,
-    bot_open_id: botOpenId,
-    installer_user_id: "user-1",
     status,
     ...(region ? { region } : {}),
     installed_at: "2026-06-03T00:00:00Z",
-    created_at: "2026-06-03T00:00:00Z",
-    updated_at: "2026-06-03T00:00:00Z",
   };
 }
 
@@ -225,8 +215,7 @@ function renderAgentBindButton() {
 }
 
 function expectNoBindCtas() {
-  expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
-  expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
+  expect(screen.queryByTestId("lark-agent-bind-feishu")).toBeNull();
 }
 
 function expectFeishuConnectedBadge(appId = "cli_existing_app") {
@@ -242,27 +231,22 @@ function expectFeishuConnectedBadge(appId = "cli_existing_app") {
 describe("LarkAgentBindButton (CTA gate)", () => {
   beforeEach(resetFixtures);
 
-  it("shows the 飞书 bind CTA but hides the Lark CTA for an owner (MUL-3083)", () => {
-    // Mainland 飞书 binding stays available; the Lark (international)
-    // entry is temporarily hidden via LARK_INTL_CONNECT_ENABLED while its
-    // install→inbound pipeline is stabilized (MUL-3083).
+  it("shows the current 飞书 bind CTA for an owner", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
     expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
-  it("shows the 飞书 bind CTA but hides the Lark CTA for an admin (MUL-3083)", () => {
+  it("shows the current 飞书 bind CTA for an admin", () => {
     membersRef.current = [{ user_id: "user-1", role: "admin" }];
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
     expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
-  it("hides both bind CTAs for a non-admin agent owner (matches backend admin gate)", () => {
+  it("hides the bind CTA for a non-admin agent owner (matches backend admin gate)", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     const { container } = render(
       <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
@@ -271,7 +255,7 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     expect(container.querySelector("button")).toBeNull();
   });
 
-  it("hides both bind CTAs when the device-flow install path is not wired on the server", () => {
+  it("hides the bind CTA when the device-flow install path is not wired on the server", () => {
     installationsRef.current.install_supported = false;
     const { container } = render(
       <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
@@ -281,8 +265,8 @@ describe("LarkAgentBindButton (CTA gate)", () => {
   });
 
   it("clicking 绑定飞书 begins an install with region='feishu'", async () => {
-    // Pin the routing wire-up: each split CTA must pass its own region
-    // string to the API client (which threads it onto the
+    // Pin the current CTA's explicit region through the API client (which
+    // threads it onto the
     // /lark/install/begin?region=… query param), so the device-flow
     // begins on the matching accounts host. A regression here would
     // silently send Lark users to a 飞书 QR — the exact bug this
@@ -309,13 +293,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     );
   });
 
-  // NOTE (MUL-3083): the "clicking 绑定 Lark begins an install with
-  // region='lark'" test was removed alongside the temporarily-hidden Lark
-  // (international) CTA — there is no Lark button to click while
-  // LARK_INTL_CONNECT_ENABLED is false. The 飞书 region routing is still
-  // pinned by the "clicking 绑定飞书 …" test above; restore the Lark
-  // case when the entry is re-enabled.
-
   it("swaps the bind CTAs for a 'Connected + 在 Lark 中管理' badge when this agent already has an active installation", () => {
     // Anti-zombie guard: re-scanning the same agent upserts the row
     // and orphans the previously-created Lark PersonalAgent. The badge
@@ -324,7 +301,7 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     // permissions are actually managed.
     setInstallations(larkInstallation());
     renderAgentBindButton();
-    // Both Bind CTAs must be gone — re-scanning would orphan the
+    // The Bind CTA must be gone — re-scanning would orphan the
     // PersonalAgent (see badge comment in lark-tab.tsx).
     expectNoBindCtas();
     // The fixture omits `region`, which the listings DTO defaults to
@@ -348,7 +325,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
       larkInstallation({
         id: "inst-lark",
         appId: "cli_lark_app",
-        botOpenId: "ou_lark_bot",
         region: "lark",
       }),
     );
@@ -364,7 +340,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
         id: "inst-other",
         agentId: "agent-other",
         appId: "cli_other",
-        botOpenId: "ou_other",
       }),
     );
     renderAgentBindButton();
@@ -395,7 +370,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
       larkInstallation({
         id: "inst-revoked",
         appId: "cli_revoked",
-        botOpenId: "ou_revoked",
         status: "revoked",
       }),
     );
@@ -644,28 +618,19 @@ describe("LarkInstallDialog (polling terminal errors)", () => {
   });
 });
 
-// The Connected bots list used to surface Lark's raw cli_… app_id and
-// ou_… bot_open_id, which are meaningless to product users. The row now
-// renders the Multica agent's avatar + name (joined via inst.agent_id),
-// since the binding is 1:1 with an Agent. These tests pin that identity
-// rendering so the row never regresses to leaking the cli_ prefix.
+// The connected-bot row uses the bound Multica agent as its product identity.
 describe("LarkTab connected bots list (agent identity rendering)", () => {
   beforeEach(resetFixtures);
 
-  it("renders the Multica agent's name and avatar instead of the raw Lark app_id / bot_open_id", () => {
+  it("renders the bound Multica agent's name and avatar", () => {
     agentNameByIdRef.current = new Map([["agent-1", "Bohan's Helper"]]);
     installationsRef.current.installations = [
       {
         id: "inst-1",
-        workspace_id: "ws-1",
         agent_id: "agent-1",
         app_id: "cli_aa941499d4f95cd9",
-        bot_open_id: "ou_abc123",
-        installer_user_id: "user-1",
         status: "active",
         installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
       },
     ];
 
@@ -674,40 +639,29 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
     // The agent's display name is the primary identifier.
     expect(screen.getByText("Bohan's Helper")).toBeTruthy();
 
-    // The ActorAvatar stub records the actor it was asked to render —
-    // confirms we joined on agent_id (and didn't accidentally pass the
-    // bot_open_id or installation id).
+    // The ActorAvatar stub confirms the row joined on agent_id.
     const avatar = screen.getByTestId("actor-avatar");
     expect(avatar.getAttribute("data-actor-type")).toBe("agent");
     expect(avatar.getAttribute("data-actor-id")).toBe("agent-1");
 
-    // The raw Lark IDs are explicitly absent — the row must not leak
-    // the cli_ / ou_ prefixes anymore.
-    expect(screen.queryByText(/cli_aa941499d4f95cd9/)).toBeNull();
-    expect(screen.queryByText(/ou_abc123/)).toBeNull();
   });
 
   it("falls back to a stable placeholder when the agent has been deleted (so the row is still actionable for cleanup)", () => {
-    // Empty map → useActorName.getAgentName returns "Unknown Agent".
+    // Empty map → useActorName returns "未知智能体" for a missing Agent.
     // The row must still render so admins can hit 断开连接.
     installationsRef.current.installations = [
       {
         id: "inst-orphan",
-        workspace_id: "ws-1",
         agent_id: "agent-deleted",
         app_id: "cli_orphan",
-        bot_open_id: "ou_orphan",
-        installer_user_id: "user-1",
         status: "active",
         installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
       },
     ];
 
     render(<LarkTab />, { wrapper: I18nWrapper });
 
-    expect(screen.getByText(/Unknown Agent/)).toBeTruthy();
+    expect(screen.getByText(/未知智能体/)).toBeTruthy();
     // 断开连接 stays reachable so the orphan row can be cleaned up.
     expect(screen.getByRole("button", { name: /断开连接/i })).toBeTruthy();
   });

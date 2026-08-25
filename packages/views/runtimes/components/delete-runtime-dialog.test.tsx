@@ -114,7 +114,6 @@ const mockedUseQuery = vi.mocked(useQuery);
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     id: "rt-1",
-    workspace_id: "ws-1",
     daemon_id: null,
     name: "Local Runtime",
     runtime_mode: "local",
@@ -125,9 +124,8 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     metadata: {},
     owner_id: "user-me",
     scope: "personal",
+    profile_id: null,
     last_seen_at: null,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }
@@ -135,7 +133,6 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 function makeAgent(id: string, overrides: Partial<Agent> = {}): Agent {
   return {
     id,
-    workspace_id: "ws-1",
     runtime_id: "rt-1",
     name: `Agent ${id}`,
     description: "",
@@ -144,16 +141,18 @@ function makeAgent(id: string, overrides: Partial<Agent> = {}): Agent {
     runtime_mode: "cloud",
     runtime_config: {},
     custom_args: [],
+    custom_env_key_count: 0,
+    mcp_config: null,
+    mcp_config_redacted: false,
     scope: "personal",
-    status: "idle",
     max_concurrent_tasks: 1,
     model: "claude-sonnet-4-5",
+    thinking_level: "",
     owner_id: "user-me",
     skills: [],
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }

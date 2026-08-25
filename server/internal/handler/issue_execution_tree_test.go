@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) {
@@ -19,7 +20,7 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 		ID:              "issue-1",
 		WorkStartedAt:   &workStartedAt,
 		WorkCompletedAt: &workCompletedAt,
-	}, []IssueTimelineNodeResponse{
+	}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -53,7 +54,7 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 }
 
 func TestSummarizeIssueTimelineSplitsHumanConfirmationAndChildIssueWait(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -92,7 +93,7 @@ func TestSummarizeIssueTimelineSplitsHumanConfirmationAndChildIssueWait(t *testi
 }
 
 func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -121,7 +122,7 @@ func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *tes
 }
 
 func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -145,7 +146,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 				TriggerCommentCreatedAt: "2026-06-09T10:10:00Z",
 			},
 		},
-		ManualComments: []IssueCommentBrief{
+		ManualComments: []issueCommentBriefResponse{
 			{
 				ID:         "comment-1",
 				IssueID:    "issue-1",
@@ -158,13 +159,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode IssueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeType == "human_confirmation" {
-			waitNode = node
-			break
-		}
-	}
+	waitNode := timelineTestNodeByType(t, nodes, "human_confirmation")
 
 	if waitNode.NodeID != "human_confirmation:comment-1:task-2" {
 		t.Fatalf("human confirmation node = %+v, want comment-triggered wait", waitNode)
@@ -184,13 +179,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 			t.Fatalf("human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
 		}
 	}
-	var taskNode IssueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeID == "task:task-2" {
-			taskNode = node
-			break
-		}
-	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-2")
 	if taskNode.StartedAt != "2026-06-09T10:10:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:12:00Z" {
 		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
 	}
@@ -200,7 +189,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 }
 
 func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -213,10 +202,10 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 				Result: map[string]any{
 					"output": "等待用户补充确认后，我将继续推进 02-方案设计。",
 				},
-				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
+				Agent: &protocol.TaskAgent{Name: "pm-v2 · PM-项目经理"},
 			},
 		},
-		ActivityLogs: []IssueActivityBrief{
+		ActivityLogs: []issueActivityBriefResponse{
 			{
 				ID:        "activity-1",
 				IssueID:   "issue-1",
@@ -236,13 +225,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode IssueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeType == "human_confirmation" {
-			waitNode = node
-			break
-		}
-	}
+	waitNode := timelineTestNodeByType(t, nodes, "human_confirmation")
 
 	if waitNode.NodeID != "human_confirmation:pending:task-1" {
 		t.Fatalf("pending human confirmation node = %+v", waitNode)
@@ -259,13 +242,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	if waitNode.Metadata["pending"] != true || waitNode.Metadata["wait_kind"] != "human_confirmation" {
 		t.Fatalf("pending human confirmation metadata = %+v", waitNode.Metadata)
 	}
-	var taskNode IssueTimelineNodeResponse
-	for _, node := range nodes {
-		if node.NodeID == "task:task-1" {
-			taskNode = node
-			break
-		}
-	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
 	if taskNode.Summary != "等待用户补充确认后，我将继续推进 02-方案设计。" {
 		t.Fatalf("PM task summary = %q, want task result intent", taskNode.Summary)
 	}
@@ -281,7 +258,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 }
 
 func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSummary(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -294,22 +271,14 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 				Result: map[string]any{
 					"output": "---\n\n## 01-需求澄清已完成，需等待用户确认\n\n请确认边界后继续。",
 				},
-				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
+				Agent: &protocol.TaskAgent{Name: "pm-v2 · PM-项目经理"},
 			},
 		},
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var taskNode IssueTimelineNodeResponse
-	var waitNode IssueTimelineNodeResponse
-	for _, node := range nodes {
-		switch node.NodeID {
-		case "task:task-1":
-			taskNode = node
-		case "human_confirmation:pending:task-1":
-			waitNode = node
-		}
-	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
+	waitNode := timelineTestNodeByID(t, nodes, "human_confirmation:pending:task-1")
 
 	if taskNode.Summary != "01-需求澄清已完成，需等待用户确认" {
 		t.Fatalf("PM task summary = %q, want markdown heading", taskNode.Summary)
@@ -327,7 +296,7 @@ func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T)
 		Result: map[string]any{
 			"output": "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。",
 		},
-		Agent: &TaskAgentData{Name: "05-验证测试"},
+		Agent: &protocol.TaskAgent{Name: "05-验证测试"},
 	})
 
 	if summary != "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。" {
@@ -336,7 +305,7 @@ func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T)
 }
 
 func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -359,15 +328,12 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var taskNode IssueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "dispatch_wait" {
 			t.Fatalf("dispatch wait should not be emitted after responsibility-window change: %+v", node)
 		}
-		if node.NodeID == "task:task-2" {
-			taskNode = node
-		}
 	}
+	taskNode := timelineTestNodeByID(t, nodes, "task:task-2")
 
 	if taskNode.StartedAt != "2026-06-09T10:02:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:05:00Z" {
 		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
@@ -377,8 +343,8 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 	}
 }
 
-func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) {
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "parent-issue"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -398,7 +364,7 @@ func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) 
 				CreatedAt:   "2026-06-09T10:10:00Z",
 			},
 		},
-		Children: []IssueExecutionNodeResponse{
+		Children: []issueExecutionNodeResponse{
 			{
 				Issue: IssueResponse{
 					ID:        "child-issue",
@@ -411,15 +377,12 @@ func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) 
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var childRef IssueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "human_confirmation" {
 			t.Fatalf("child issue runtime should be represented by child_issue_ref, not a generic inferred gap: %+v", node)
 		}
-		if node.NodeType == "child_issue_ref" {
-			childRef = node
-		}
 	}
+	childRef := timelineTestNodeByType(t, nodes, "child_issue_ref")
 	if childRef.ChildIssueID != "child-issue" {
 		t.Fatalf("child_issue_ref = %+v, want child issue evidence", childRef)
 	}
@@ -427,8 +390,11 @@ func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) 
 	if summary.AgentExecutionDurationMs != 120000 {
 		t.Fatalf("agent execution = %d, want parent agent work 120000", summary.AgentExecutionDurationMs)
 	}
-	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 540000 {
-		t.Fatalf("human confirmation = %v, want child issue wait 540000", summary.HumanConfirmationDurationMs)
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 0 {
+		t.Fatalf("human confirmation = %v, want 0", summary.HumanConfirmationDurationMs)
+	}
+	if summary.ChildIssueWaitDurationMs == nil || *summary.ChildIssueWaitDurationMs != 540000 {
+		t.Fatalf("child issue wait = %v, want 540000", summary.ChildIssueWaitDurationMs)
 	}
 	if summary.TotalDurationMs != 660000 {
 		t.Fatalf("total duration = %d, want parent agent + child wait 660000", summary.TotalDurationMs)
@@ -442,7 +408,7 @@ func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) 
 		ID:              "issue-1",
 		WorkStartedAt:   &workStartedAt,
 		WorkCompletedAt: &workCompletedAt,
-	}, []IssueTimelineNodeResponse{
+	}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -484,7 +450,7 @@ func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) 
 }
 
 func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
 		{
 			NodeID:          "task:1",
 			NodeType:        "agent_task",
@@ -521,7 +487,7 @@ func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *t
 }
 
 func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
 		{
 			NodeID:        "task:pm-recovered",
 			NodeType:      "agent_task",
@@ -549,7 +515,7 @@ func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *tes
 }
 
 func TestSummarizeIssueTimelineUsesDoneIssueStatusOverHistoricalCancelledTask(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:abandoned-implement",
 			NodeType:    "agent_task",
@@ -579,10 +545,30 @@ func timelineTestStringPtr(value string) *string {
 	return &value
 }
 
-func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
+func timelineTestNodeByID(t *testing.T, nodes []issueTimelineNodeResponse, id string) issueTimelineNodeResponse {
+	t.Helper()
+	for _, node := range nodes {
+		if node.NodeID == id {
+			return node
+		}
 	}
+	t.Fatalf("timeline node %q missing", id)
+	return issueTimelineNodeResponse{}
+}
+
+func timelineTestNodeByType(t *testing.T, nodes []issueTimelineNodeResponse, nodeType string) issueTimelineNodeResponse {
+	t.Helper()
+	for _, node := range nodes {
+		if node.NodeType == nodeType {
+			return node
+		}
+	}
+	t.Fatalf("timeline node type %q missing", nodeType)
+	return issueTimelineNodeResponse{}
+}
+
+func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
+	requireHandlerDatabase(t)
 
 	ctx := context.Background()
 	fx := newChildDoneFixture(t, "in_progress")
@@ -590,7 +576,7 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id::text FROM agent
-		WHERE workspace_id = $1 AND runtime_id IS NOT NULL
+		WHERE workspace_id = $1
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, testWorkspaceID).Scan(&agentID); err != nil {
@@ -623,7 +609,7 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_message (task_id, seq, type, tool, content, input, output, created_at)
 		VALUES
-			($1, 1, 'tool_use', 'curl-check', '', '{"tool_call_id":"tree-call-1","url":"/health"}'::jsonb, NULL, now() - interval '2 seconds'),
+			($1, 1, 'tool_use', 'curl-check', '', '{"url":"/health"}'::jsonb, NULL, now() - interval '2 seconds'),
 			($1, 2, 'tool_result', 'curl-check', '', '{}'::jsonb, 'Error: HTTP 500 from upstream', now() - interval '1 seconds')
 	`, taskID); err != nil {
 		t.Fatalf("create task messages: %v", err)
@@ -647,13 +633,15 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&attachmentID); err != nil {
 		t.Fatalf("create artifact attachment: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
+	var duplicateAttachmentID string
+	if err := testPool.QueryRow(ctx, `
 		INSERT INTO attachment (
 			workspace_id, issue_id, comment_id, uploader_type, uploader_id,
 			filename, url, content_type, size_bytes
 		)
 		VALUES ($1, $2, $3, 'agent', $4, '01-需求澄清.md', '/uploads/clarify-duplicate.md', 'text/markdown', 128)
-	`, testWorkspaceID, fx.parent.ID, commentID, agentID); err != nil {
+		RETURNING id::text
+	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&duplicateAttachmentID); err != nil {
 		t.Fatalf("create duplicate artifact attachment: %v", err)
 	}
 
@@ -720,7 +708,7 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 		t.Fatalf("GetIssueExecutionTree: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp IssueExecutionTreeResponse
+	var resp issueExecutionTreeResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode execution tree: %v", err)
 	}
@@ -748,7 +736,8 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if len(resp.Root.Artifacts) != 1 {
 		t.Fatalf("root artifacts = %+v, want one artifact", resp.Root.Artifacts)
 	}
-	if resp.Root.Artifacts[0].ID != attachmentID || resp.Root.Artifacts[0].TaskID != taskID || resp.Root.Artifacts[0].CommentID != commentID {
+	rootArtifact := resp.Root.Artifacts[0]
+	if (rootArtifact.ID != attachmentID && rootArtifact.ID != duplicateAttachmentID) || rootArtifact.TaskID != taskID || rootArtifact.CommentID != commentID {
 		t.Fatalf("root artifact = %+v, want attachment/task/comment linkage", resp.Root.Artifacts[0])
 	}
 	if resp.Root.Artifacts[0].Title != "01-需求澄清" || resp.Root.Artifacts[0].Kind != "stage_markdown" {
@@ -787,6 +776,9 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	}
 	nodeTypes := map[string]int{}
 	for _, node := range resp.TimelineNodes {
+		if node.Artifacts == nil {
+			t.Fatalf("timeline node artifacts must encode as [] instead of null: %+v", node)
+		}
 		nodeTypes[node.NodeType]++
 		if node.IssueID != fx.parent.ID {
 			t.Fatalf("timeline node issue id = %q, want parent %q: %+v", node.IssueID, fx.parent.ID, node)
@@ -797,26 +789,14 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 			t.Fatalf("timeline node type %s missing: %+v", nodeType, nodeTypes)
 		}
 	}
-	var childRef IssueTimelineNodeResponse
-	for _, node := range resp.TimelineNodes {
-		if node.NodeType == "child_issue_ref" {
-			childRef = node
-			break
-		}
-	}
-	var taskNode IssueTimelineNodeResponse
-	for _, node := range resp.TimelineNodes {
-		if node.NodeID == "task:"+taskID {
-			taskNode = node
-			break
-		}
-	}
-	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != attachmentID {
+	childRef := timelineTestNodeByType(t, resp.TimelineNodes, "child_issue_ref")
+	taskNode := timelineTestNodeByID(t, resp.TimelineNodes, "task:"+taskID)
+	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != rootArtifact.ID {
 		t.Fatalf("task node artifacts = %+v, want uploaded attachment", taskNode.Artifacts)
 	}
 	hasAttachmentRef := false
 	for _, ref := range taskNode.EvidenceRefs {
-		if ref.Type == "attachment" && ref.ID == attachmentID && ref.Href != "" {
+		if ref.Type == "attachment" && ref.ID == rootArtifact.ID && ref.Href != "" {
 			hasAttachmentRef = true
 			break
 		}

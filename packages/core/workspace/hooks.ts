@@ -2,12 +2,13 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { memberListOptions, agentListOptions, squadListOptions } from "./queries";
 import { resolvePublicFileUrl } from "./avatar-url";
+import { nameInitials } from "./actor-display";
 import type { Agent, MemberWithUser, Squad } from "../types";
 
-export type ActorNameQueryScope = {
+type ActorNameQueryScope = {
   members?: boolean;
   agents?: boolean;
   squads?: boolean;
@@ -40,37 +41,22 @@ export function useActorName(scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUE
     enabled: !!wsId && loadSquads,
   });
 
-  const getMemberName = useCallback((userId: string) => {
-    const m = members.find((m) => m.user_id === userId);
-    return m?.name ?? "未知成员";
-  }, [members]);
-
-  const getAgentName = useCallback((agentId: string) => {
-    const a = agents.find((a) => a.id === agentId);
-    return a?.name ?? "未知智能体";
-  }, [agents]);
-
-  const getSquadName = useCallback((squadId: string) => {
-    const s = squads.find((s) => s.id === squadId);
-    return s?.name ?? "未知小队";
-  }, [squads]);
-
   const getActorName = useCallback((type: string, id: string) => {
-    if (type === "member") return getMemberName(id);
-    if (type === "agent") return getAgentName(id);
-    if (type === "squad") return getSquadName(id);
+    if (type === "member") {
+      return members.find((member) => member.user_id === id)?.name ?? "未知成员";
+    }
+    if (type === "agent") {
+      return agents.find((agent) => agent.id === id)?.name ?? "未知智能体";
+    }
+    if (type === "squad") {
+      return squads.find((squad) => squad.id === id)?.name ?? "未知小队";
+    }
     if (type === "system") return "Multica";
     return "系统";
-  }, [getAgentName, getMemberName, getSquadName]);
+  }, [agents, members, squads]);
 
   const getActorInitials = useCallback((type: string, id: string) => {
-    const name = getActorName(type, id);
-    return name
-      .split(" ")
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+    return nameInitials(getActorName(type, id));
   }, [getActorName]);
 
   const getActorAvatarUrl = useCallback((type: string, id: string): string | null => {
@@ -82,9 +68,6 @@ export function useActorName(scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUE
 
   return useMemo(
     () => ({
-      getMemberName,
-      getAgentName,
-      getSquadName,
       getActorName,
       getActorInitials,
       getActorAvatarUrl,
@@ -93,9 +76,6 @@ export function useActorName(scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUE
       getActorAvatarUrl,
       getActorInitials,
       getActorName,
-      getAgentName,
-      getMemberName,
-      getSquadName,
     ],
   );
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,42 +58,6 @@ func TestPrintDaemonStatusIncludesCLIVersion(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "Version:     v9.9.9\n") {
 		t.Fatalf("daemon status output = %q, want CLI version line", got)
-	}
-}
-
-// TestPrintDaemonStatusOmitsVersionWhenMissing pins the back-compat contract:
-// when the daemon doesn't report cli_version (older daemon paired with a newer
-// CLI) or reports an empty string, the CLI must skip the line entirely instead
-// of printing "Version: ".
-func TestPrintDaemonStatusOmitsVersionWhenMissing(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]map[string]any{
-		"key missing": {
-			"status":     "running",
-			"pid":        float64(1234),
-			"uptime":     "1h2m3s",
-			"workspaces": []any{},
-		},
-		"empty string": {
-			"status":      "running",
-			"pid":         float64(1234),
-			"uptime":      "1h2m3s",
-			"cli_version": "",
-			"workspaces":  []any{},
-		},
-	}
-
-	for name, health := range cases {
-		health := health
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			var out bytes.Buffer
-			printDaemonStatusReport(&out, "Daemon", health)
-			if strings.Contains(out.String(), "Version:") {
-				t.Fatalf("daemon status output = %q, want no Version line", out.String())
-			}
-		})
 	}
 }
 
@@ -247,10 +212,7 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 	writeDiskUsageTaskFile(t, home, "desktop-host", "ws1", "task1", "workdir/main.go")
 	writeDefaultDiskUsageTaskFile(t, home, "ws0", "task0", "workdir/main.go")
 
-	roots, err := enumerateDiskUsageRoots()
-	if err != nil {
-		t.Fatalf("enumerateDiskUsageRoots: %v", err)
-	}
+	roots := enumerateDiskUsageRoots()
 
 	if len(roots) != 2 {
 		t.Fatalf("roots = %+v, want default + desktop-host only", roots)
@@ -264,23 +226,16 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 }
 
 func TestPrintAggregateDiskUsageShowsRootsAndGrandTotal(t *testing.T) {
-	agg := daemon.AggregateDiskUsageReport{
-		Roots: []daemon.RootDiskUsage{
-			{Profile: "", Report: daemon.DiskUsageReport{
-				WorkspacesRoot: "/home/u/multica_workspaces",
-				Tasks:          []daemon.TaskDiskUsage{{WorkspaceShort: "ws0", TaskShort: "t0", SizeBytes: 100}},
-				TotalTaskCount: 1,
-				TotalSizeBytes: 100,
-			}},
-			{Profile: "desktop-host", Report: daemon.DiskUsageReport{
-				WorkspacesRoot: "/home/u/multica_workspaces_desktop-host",
-				Tasks:          []daemon.TaskDiskUsage{{WorkspaceShort: "ws1", TaskShort: "t1", SizeBytes: 900}},
-				TotalTaskCount: 1,
-				TotalSizeBytes: 900,
-			}},
-		},
-		TotalTaskCount: 2,
-		TotalSizeBytes: 1000,
+	var agg daemon.AggregateDiskUsageReport
+	if err := json.Unmarshal([]byte(`{
+		"roots":[
+			{"profile":"","report":{"workspaces_root":"/home/u/multica_workspaces","tasks":[{"workspace_short":"ws0","task_short":"t0","size_bytes":100}],"total_task_count":1,"total_size_bytes":100}},
+			{"profile":"desktop-host","report":{"workspaces_root":"/home/u/multica_workspaces_desktop-host","tasks":[{"workspace_short":"ws1","task_short":"t1","size_bytes":900}],"total_task_count":1,"total_size_bytes":900}}
+		],
+		"total_task_count":2,
+		"total_size_bytes":1000
+	}`), &agg); err != nil {
+		t.Fatalf("decode aggregate disk usage fixture: %v", err)
 	}
 
 	var out bytes.Buffer

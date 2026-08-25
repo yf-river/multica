@@ -1,21 +1,21 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@multica/core/types";
-import type { ChatTimelineItem } from "@multica/core/chat";
+import type { TimelineItem } from "../../common/task-transcript";
 import { splitTimeline, extractCopyText } from "./copy-text";
 
-const text = (seq: number, content: string): ChatTimelineItem => ({
+const text = (seq: number, content: string): TimelineItem => ({
   seq,
   type: "text",
   content,
 });
 
-const thinking = (seq: number, content = "..."): ChatTimelineItem => ({
+const thinking = (seq: number, content = "..."): TimelineItem => ({
   seq,
   type: "thinking",
   content,
 });
 
-const tool = (seq: number, name = "Read"): ChatTimelineItem => ({
+const tool = (seq: number, name = "Read"): TimelineItem => ({
   seq,
   type: "tool_use",
   tool: name,
@@ -24,11 +24,9 @@ const tool = (seq: number, name = "Read"): ChatTimelineItem => ({
 
 const message = (content: string): ChatMessage => ({
   id: "m1",
-  chat_session_id: "s1",
   role: "assistant",
   content,
   task_id: "t1",
-  created_at: "2026-05-06T00:00:00Z",
 });
 
 describe("splitTimeline", () => {
@@ -82,8 +80,8 @@ describe("splitTimeline", () => {
 });
 
 describe("extractCopyText", () => {
-  it("falls back to message.content when timeline is empty (legacy)", () => {
-    expect(extractCopyText(message("legacy body"), [])).toBe("legacy body");
+  it("uses message.content when timeline is empty", () => {
+    expect(extractCopyText(message("message body"), [])).toBe("message body");
   });
 
   it("returns concatenated text segments for an all-text timeline", () => {

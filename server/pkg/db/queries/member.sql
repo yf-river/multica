@@ -16,6 +16,11 @@ INSERT INTO member (workspace_id, user_id, role)
 VALUES ($1, $2, $3)
 RETURNING *;
 
+-- name: CreateMemberWithID :one
+INSERT INTO member (id, workspace_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
 -- name: UpdateMemberRole :one
 UPDATE member SET role = $2
 WHERE id = $1

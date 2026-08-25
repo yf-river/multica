@@ -12,7 +12,7 @@ const agentErrorPrefix = "agent_error."
 // agent_task_queue.failure_reason and surfaced as Prometheus labels —
 // renaming any of them is a breaking change. If this test fails because
 // you intended to rename a value, also update the SQL classifier in
-// MUL-1949 and ship a backfill migration before changing the constant.
+// MUL-1949 and ship a data migration before changing the constant.
 func TestReasonStringWireValues(t *testing.T) {
 	t.Parallel()
 
@@ -26,6 +26,8 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonRuntimeRecovery, "runtime_recovery"},
 		{ReasonTimeout, "timeout"},
 		{ReasonIterationLimit, "iteration_limit"},
+		{ReasonAgentFallbackMessage, "agent_fallback_message"},
+		{ReasonCodexSemanticInactivity, "codex_semantic_inactivity"},
 		{ReasonAgentBlocked, "agent_blocked"},
 		{ReasonAPIInvalidRequest, "api_invalid_request"},
 		// Agent-side.
@@ -45,7 +47,7 @@ func TestReasonStringWireValues(t *testing.T) {
 		{ReasonAgentUnknown, "agent_error.unknown"},
 	}
 
-	if got, want := len(cases), 21; got != want {
+	if got, want := len(cases), 23; got != want {
 		t.Fatalf("constant count = %d, want %d (canonical taxonomy size)", got, want)
 	}
 
@@ -65,8 +67,8 @@ func TestAllReasonsContents(t *testing.T) {
 	t.Parallel()
 
 	got := AllReasons()
-	if len(got) != 21 {
-		t.Fatalf("AllReasons() returned %d entries, want 21", len(got))
+	if len(got) != 23 {
+		t.Fatalf("AllReasons() returned %d entries, want 23", len(got))
 	}
 
 	seen := make(map[Reason]bool, len(got))
@@ -83,8 +85,8 @@ func TestAllReasonsContents(t *testing.T) {
 		}
 	}
 
-	if platformCount != 7 {
-		t.Errorf("AllReasons(): platform-side count = %d, want 7", platformCount)
+	if platformCount != 9 {
+		t.Errorf("AllReasons(): platform-side count = %d, want 9", platformCount)
 	}
 	if agentCount != 14 {
 		t.Errorf("AllReasons(): agent-side count = %d, want 14", agentCount)
@@ -96,7 +98,8 @@ func TestAllReasonsContents(t *testing.T) {
 	// allReasons slice.
 	required := []Reason{
 		ReasonQueuedExpired, ReasonRuntimeOffline, ReasonRuntimeRecovery,
-		ReasonTimeout, ReasonIterationLimit, ReasonAgentBlocked,
+		ReasonTimeout, ReasonIterationLimit, ReasonAgentFallbackMessage,
+		ReasonCodexSemanticInactivity, ReasonAgentBlocked,
 		ReasonAPIInvalidRequest,
 		ReasonAgentProviderAuthOrAccess, ReasonAgentProviderQuotaLimit,
 		ReasonAgentProviderCapacityOrRateLimit, ReasonAgentProviderServerError,

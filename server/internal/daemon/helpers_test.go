@@ -41,8 +41,6 @@ func TestParseFlexDuration_Invalid(t *testing.T) {
 		"xyz",
 		"5days",
 		"abc5d",
-		// Overflow: 30 digits is well past int64/float64 safe range; must error
-		// rather than silently produce 0h.
 		"999999999999999999999999999999d",
 	} {
 		if _, err := parseFlexDuration(in); err == nil {

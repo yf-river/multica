@@ -7,7 +7,13 @@ import (
 
 // Event represents a domain event published by handlers or services.
 type Event struct {
-	Type        string // e.g. "issue:created", "inbox:new"
+	// ID is populated for durable events and remains stable across retries.
+	// Ephemeral-only events may leave it empty.
+	ID   string
+	Type string // e.g. "issue:created", "inbox:new"
+	// StreamKey serializes durable events that mutate the same aggregate.
+	// Events with different or empty keys remain independently claimable.
+	StreamKey   string
 	WorkspaceID string // routes to correct Hub room
 	ActorType   string // "member", "agent", or "system"
 	ActorID     string
@@ -64,22 +70,16 @@ func (b *Bus) Publish(e Event) {
 	globals := b.globalHandlers
 	b.mu.RUnlock()
 
+	dispatch(handlers, e, "event")
+	dispatch(globals, e, "global event")
+}
+
+func dispatch(handlers []Handler, e Event, scope string) {
 	for _, h := range handlers {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("panic in event listener", "event_type", e.Type, "recovered", r)
-				}
-			}()
-			h(e)
-		}()
-	}
-
-	for _, h := range globals {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic in global event listener", "event_type", e.Type, "recovered", r)
+					slog.Error("panic in "+scope+" listener", "event_type", e.Type, "recovered", r)
 				}
 			}()
 			h(e)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestParseTrustedProxies(t *testing.T) {
 			for _, p := range got {
 				gotStr = append(gotStr, p.String())
 			}
-			if !sliceEq(gotStr, tc.want) {
+			if !slices.Equal(gotStr, tc.want) {
 				t.Fatalf("parseTrustedProxies(%q) = %v, want %v", tc.in, gotStr, tc.want)
 			}
 		})
@@ -61,16 +62,4 @@ func TestParseTrustedProxies_PrefixesAreUsable(t *testing.T) {
 			t.Errorf("contains(%s) = %v, want %v", tc.addr, hit, tc.want)
 		}
 	}
-}
-
-func sliceEq(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

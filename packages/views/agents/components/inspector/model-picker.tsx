@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -42,22 +42,13 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const {
     canCreate,
-    models,
+    filteredModels,
     modelsQuery,
     search,
     setSearch,
     supported,
     trimmedSearch,
   } = useRuntimeModelPickerState({ runtimeId, runtimeOnline });
-
-  const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    if (!s) return models;
-    return models.filter(
-      (m) =>
-        m.id.toLowerCase().includes(s) || m.label.toLowerCase().includes(s),
-    );
-  }, [models, search]);
 
   const triggerLabel = value || t(($) => $.pickers.model_default);
   const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
@@ -126,7 +117,7 @@ export function ModelPicker({
       )}
 
       {!modelsQuery.isLoading &&
-        filtered.map((m) => (
+        filteredModels.map((m) => (
           <PickerItem
             key={m.id}
             selected={m.id === value}
@@ -154,7 +145,7 @@ export function ModelPicker({
           </PickerItem>
         ))}
 
-      {!modelsQuery.isLoading && filtered.length === 0 && !canCreate && (
+      {!modelsQuery.isLoading && filteredModels.length === 0 && !canCreate && (
         <p className="px-3 py-3 text-center text-xs text-muted-foreground">
           {t(($) => $.pickers.model_empty)}
         </p>

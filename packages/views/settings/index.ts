@@ -1,2 +1,2 @@
-export { SettingsPage } from "./components";
-export type { ExtraSettingsTab } from "./components";
+export { SettingsPage } from "./components/settings-page";
+export type { ExtraSettingsTab } from "./components/settings-page";

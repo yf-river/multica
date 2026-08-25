@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sort"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -37,9 +39,7 @@ type TimelineEntry struct {
 	SourceTaskID   *string              `json:"source_task_id,omitempty"`
 }
 
-// timelineHardCap bounds the per-issue timeline payload. Sized as a defensive
-// safety net, not a UX page window: see commentHardCap in comment.go for the
-// data-shape rationale (#1929).
+// timelineHardCap bounds the per-issue timeline payload without acting as a UI page.
 const timelineHardCap = 2000
 
 // ListTimeline returns the full issue timeline (comments + activities merged).
@@ -72,18 +72,28 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := h.mergeTimeline(r, comments, activities)
+	commentIDs := make([]pgtype.UUID, len(comments))
+	for i, comment := range comments {
+		commentIDs[i] = comment.ID
+	}
+	enrichment, err := h.loadCommentEnrichment(ctx, h.Queries, issue.WorkspaceID, commentIDs)
+	if err != nil {
+		slog.Error("load timeline comment enrichment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to list timeline")
+		return
+	}
+
+	entries := mergeTimeline(comments, activities, enrichment.reactions, enrichment.attachments)
 	if entries == nil {
 		entries = []TimelineEntry{}
 	}
 	writeJSON(w, http.StatusOK, entries)
 }
 
-// mergeTimeline merges comments and activities and returns them sorted by
-// (created_at, id), oldest first.
-func (h *Handler) mergeTimeline(r *http.Request, comments []db.Comment, activities []db.ActivityLog) []TimelineEntry {
+// mergeTimeline merges comments and activities in chronological order.
+func mergeTimeline(comments []db.Comment, activities []db.ActivityLog, reactions map[string][]ReactionResponse, attachments map[string][]AttachmentResponse) []TimelineEntry {
 	out := make([]TimelineEntry, 0, len(comments)+len(activities))
-	out = append(out, h.commentsToEntries(r, comments)...)
+	out = append(out, commentsToEntries(comments, reactions, attachments)...)
 	for _, a := range activities {
 		out = append(out, activityToEntry(a))
 	}
@@ -96,18 +106,12 @@ func (h *Handler) mergeTimeline(r *http.Request, comments []db.Comment, activiti
 	return out
 }
 
-// commentsToEntries fetches reactions + attachments for the given comments in
-// one batch each and returns enriched TimelineEntry slices preserving order.
-func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []TimelineEntry {
+// commentsToEntries projects already-loaded comment enrichment while preserving
+// comment order. Database reads stay at the handler boundary above.
+func commentsToEntries(comments []db.Comment, reactions map[string][]ReactionResponse, attachments map[string][]AttachmentResponse) []TimelineEntry {
 	if len(comments) == 0 {
 		return nil
 	}
-	ids := make([]pgtype.UUID, len(comments))
-	for i, c := range comments {
-		ids[i] = c.ID
-	}
-	reactions := h.groupReactions(r, ids)
-	attachments := h.groupAttachments(r, ids)
 
 	out := make([]TimelineEntry, len(comments))
 	for i, c := range comments {

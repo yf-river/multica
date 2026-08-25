@@ -43,22 +43,10 @@ const (
 	// watchdog), so this only needs to sit generously above any realistic single
 	// run rather than track a per-run wall-clock cap (MUL-3064).
 	runningTimeoutSeconds = 9000.0
-	// queuedTTLSeconds expires tasks that have been sitting in 'queued'
-	// for longer than this without ever being claimed. This is the cleanup
-	// arm of the MUL-1899 backlog fix: even with the dispatch-time
-	// admission gate that blocks new enqueues against offline runtimes,
-	// tasks already on the queue when a runtime drops off (or that lost
-	// the race against a runtime that went offline mid-tick) need a
-	// time-bounded exit. 2 hours is conservatively above any reasonable
-	// "queued behind a long-running task" window for an online runtime, so we
-	// don't expire legitimately-pending work, while still draining the historical
-	// 87k autopilot backlog within ~24h once enabled.
+	// queuedTTLSeconds bounds how long an unclaimed task can remain queued after
+	// its runtime goes offline. Two hours accommodates a long task ahead of it.
 	queuedTTLSeconds = 2 * 3600.0
-	// queuedExpireBatchSize caps how many queued rows a single sweeper tick
-	// transitions to failed. Keeps the sweep transaction short even when
-	// the historical backlog is large (~89k at MUL-1899 baseline). At 30s
-	// ticks and 500 rows/tick we drain 60k rows/hour worst case — plenty
-	// of headroom for the documented backlog without monopolising DB CPU.
+	// queuedExpireBatchSize keeps each cleanup transaction short.
 	queuedExpireBatchSize = 500
 )
 
@@ -83,15 +71,15 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 			return
 		case <-ticker.C:
 			sweepStaleRuntimes(ctx, queries, liveness, taskSvc, bus)
-			sweepStaleTasks(ctx, queries, taskSvc)
-			sweepExpiredQueuedTasks(ctx, queries, taskSvc)
+			sweepOfflineRuntimeTasks(ctx, taskSvc)
+			sweepStaleTasks(ctx, taskSvc)
+			sweepExpiredQueuedTasks(ctx, taskSvc)
 			gcRuntimes(ctx, queries, bus)
 		}
 	}
 }
 
-// sweepStaleRuntimes marks runtimes offline if they haven't heartbeated,
-// then fails any tasks belonging to those offline runtimes.
+// sweepStaleRuntimes marks runtimes offline if they haven't heartbeated.
 func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handler.LivenessStore, taskSvc *service.TaskService, bus *events.Bus) {
 	candidates, err := queries.SelectStaleOnlineRuntimes(ctx, staleThresholdSeconds)
 	if err != nil {
@@ -122,13 +110,7 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 	}
 	if taskSvc != nil && taskSvc.Analytics != nil {
 		for _, row := range staleRows {
-			obsmetrics.RecordEvent(taskSvc.Analytics, taskSvc.Metrics, analytics.RuntimeOffline(
-				util.UUIDToString(row.OwnerID),
-				util.UUIDToString(row.WorkspaceID),
-				util.UUIDToString(row.ID),
-				row.DaemonID.String,
-				row.Provider,
-			))
+			obsmetrics.RecordEvent(taskSvc.Analytics, taskSvc.Metrics, analytics.RuntimeOffline(row.Provider))
 		}
 	}
 
@@ -150,15 +132,6 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 
 	slog.Info("runtime sweeper: marked stale runtimes offline", "count", len(staleRows), "workspaces", len(workspaces))
 
-	// Fail orphaned tasks (dispatched/running) whose runtimes just went offline.
-	failedTasks, err := queries.FailTasksForOfflineRuntimes(ctx)
-	if err != nil {
-		slog.Warn("runtime sweeper: failed to clean up stale tasks", "error", err)
-	} else if len(failedTasks) > 0 {
-		slog.Info("runtime sweeper: failed orphaned tasks", "count", len(failedTasks))
-		taskSvc.HandleFailedTasks(ctx, failedTasks)
-	}
-
 	// Notify frontend clients so they re-fetch runtime list.
 	for wsID := range workspaces {
 		bus.Publish(events.Event{
@@ -172,11 +145,26 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 	}
 }
 
+// sweepOfflineRuntimeTasks runs every tick, independently of whether a runtime
+// changed state during that tick. If the task+event transaction fails after a
+// runtime was already marked offline, the next tick therefore retries it.
+func sweepOfflineRuntimeTasks(ctx context.Context, taskSvc *service.TaskService) {
+	batch, err := taskSvc.FailTasksForOfflineRuntimes(ctx)
+	if err != nil {
+		slog.Warn("runtime sweeper: failed to clean up offline-runtime tasks", "error", err)
+		return
+	}
+	if len(batch.Tasks) == 0 {
+		return
+	}
+	slog.Info("runtime sweeper: failed orphaned tasks", "count", len(batch.Tasks), "retried", batch.Retried)
+	taskSvc.HandleFailedTasks(ctx, batch.Tasks)
+}
+
 // filterStaleRuntimesByLiveness narrows a SELECT-of-stale-candidates down to
 // the set that should actually be flipped offline. When liveness is available
 // and reports a candidate as alive, we skip it (DB is just lagging). When the
-// store is unavailable or errors, we trust the DB stale window — i.e. every
-// candidate flips, matching the legacy MarkStaleRuntimesOffline behavior.
+// store is unavailable or errors, we trust the DB stale window.
 func filterStaleRuntimesByLiveness(ctx context.Context, candidates []db.SelectStaleOnlineRuntimesRow, liveness handler.LivenessStore) []pgtype.UUID {
 	ids := make([]pgtype.UUID, 0, len(candidates))
 	if !liveness.Available() {
@@ -243,8 +231,8 @@ func gcRuntimes(ctx context.Context, queries *db.Queries, bus *events.Bus) {
 // - The agent process hangs and the daemon is still heartbeating
 // - The daemon failed to report task completion/failure
 // - A server restart left tasks in a non-terminal state
-func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) {
-	failedTasks, err := queries.FailStaleTasks(ctx, db.FailStaleTasksParams{
+func sweepStaleTasks(ctx context.Context, taskSvc *service.TaskService) {
+	batch, err := taskSvc.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: dispatchTimeoutSeconds,
 		RunningTimeoutSecs:  runningTimeoutSeconds,
 	})
@@ -252,23 +240,20 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 		slog.Warn("task sweeper: failed to clean up stale tasks", "error", err)
 		return
 	}
-	if len(failedTasks) == 0 {
+	if len(batch.Tasks) == 0 {
 		return
 	}
 
-	slog.Info("task sweeper: failed stale tasks", "count", len(failedTasks))
-	taskSvc.CaptureLeaseExpiredTasks(ctx, failedTasks)
-	taskSvc.HandleFailedTasks(ctx, failedTasks)
+	slog.Info("task sweeper: failed stale tasks", "count", len(batch.Tasks), "retried", batch.Retried)
+	taskSvc.CaptureLeaseExpiredTasks(ctx, batch.Tasks)
+	taskSvc.HandleFailedTasks(ctx, batch.Tasks)
 }
 
 // sweepExpiredQueuedTasks fails tasks that have been sitting in 'queued' for
-// longer than the TTL. Companion to the dispatch-time admission gate added
-// in MUL-1899: that gate prevents new doomed enqueues; this gate drains the
-// historical backlog and catches the race where a runtime goes offline AFTER
-// a task is already queued. Capped to queuedExpireBatchSize per tick so a
-// big backlog can't monopolise the DB.
-func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) {
-	failedTasks, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+// longer than the TTL. Admission prevents enqueueing against an offline
+// runtime; this sweep handles a runtime that goes offline after enqueue.
+func sweepExpiredQueuedTasks(ctx context.Context, taskSvc *service.TaskService) {
+	batch, err := taskSvc.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    queuedTTLSeconds,
 		MaxPerTick: queuedExpireBatchSize,
 	})
@@ -276,11 +261,11 @@ func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *
 		slog.Warn("task sweeper: failed to expire stale queued tasks", "error", err)
 		return
 	}
-	if len(failedTasks) == 0 {
+	if len(batch.Tasks) == 0 {
 		return
 	}
 
-	slog.Info("task sweeper: expired stale queued tasks", "count", len(failedTasks))
-	taskSvc.CaptureQueuedExpiredTasks(ctx, failedTasks)
-	taskSvc.HandleFailedTasks(ctx, failedTasks)
+	slog.Info("task sweeper: expired stale queued tasks", "count", len(batch.Tasks), "retried", batch.Retried)
+	taskSvc.CaptureQueuedExpiredTasks(ctx, batch.Tasks)
+	taskSvc.HandleFailedTasks(ctx, batch.Tasks)
 }

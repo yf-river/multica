@@ -50,7 +50,7 @@ import "./styles/attachment.css";
 // Public API
 // ---------------------------------------------------------------------------
 
-export type AttachmentInput =
+type AttachmentInput =
   // Server response in hand — full record. Used by AttachmentList and any
   // caller iterating a server-returned attachments[] array.
   | { kind: "record"; attachment: AttachmentRecord }
@@ -84,7 +84,7 @@ export type AttachmentInput =
       forceKind?: PreviewKind;
     };
 
-export interface AttachmentProps {
+interface AttachmentProps {
   attachment: AttachmentInput;
   /** Editor hint — when true, the image toolbar exposes Trash. */
   editable?: boolean;
@@ -117,7 +117,12 @@ function normalize(
       filename: input.attachment.filename,
       contentType: input.attachment.content_type,
       url: absolutizeMediaURL(
-        pickInlineMediaURL(input.attachment, input.attachment.url, cdnDomain, cdnSigned),
+        pickInlineMediaURL(
+          input.attachment,
+          input.attachment.markdown_url,
+          cdnDomain,
+          cdnSigned,
+        ),
       ),
       attachmentId: input.attachment.id,
       record: input.attachment,
@@ -130,15 +135,13 @@ function normalize(
     contentType: input.contentType || record?.content_type || "",
     // When the markdown URL resolved to an attachment record, swap to
     // the record's freshly-loadable URL. The persisted markdown URL
-    // (`/api/attachments/<id>/download` for new content; raw stored URL
-    // for legacy) is correct as a stable reference but doesn't
+    // (`/api/attachments/<id>/download`) is correct as a stable reference but doesn't
     // necessarily load as a native <img>/<video> resource for every
     // client — token-mode clients can't attach an Authorization header
     // to bare /api/* fetches, and a CloudFront-signed `download_url`
     // is the only working media src in that mode. `pickInlineMediaURL`
     // picks the URL with embedded credentials when one exists and
-    // falls back to the input URL otherwise so legacy / unresolved
-    // markdown stays on its existing path. See MUL-3130 review.
+    // falls back to the input URL for URL-only content.
     //
     // After picking the credential-bearing URL we run the absolutize
     // pass so a site-relative `/api/attachments/...` or `/uploads/...`
@@ -160,17 +163,9 @@ function normalize(
   };
 }
 
-// absolutizeMediaURL is the legacy-compat fallback for old markdown bodies
-// that persisted a site-relative `/api/attachments/<id>/download` or
-// `/uploads/<key>` URL.
-//
-// The current (post-MUL-3192) write path persists an absolute URL chosen
-// server-side by `buildMarkdownURL` (see server/internal/handler/file.go),
-// so new content already loads natively on every client. This helper only
-// matters for content written BEFORE MUL-3192 — those bodies still carry
-// the old relative shape, and rendering them on a surface whose document
-// origin is NOT the API host (Electron desktop, mobile webview) needs the
-// API base URL pinned in at render time.
+// `buildMarkdownURL` prefers an absolute durable URL, but explicitly falls
+// back to a site-relative stable path when MULTICA_PUBLIC_URL is unset.
+// Desktop and mobile webviews need that path anchored to the API origin.
 //
 // On web, `api.getBaseUrl()` is empty (the Next.js rewrite proxies /api/*
 // to the API host server-side), so this is a no-op there.
@@ -215,11 +210,9 @@ function absolutizeMediaURL(rawUrl: string): string {
 //                             private-bucket modes. Aligned with the
 //                             server-side policy by construction, so it
 //                             beats `record.url` whenever both exist.
-//   - `record.url`          — raw storage URL. May be private (S3 /
-//                             CloudFront-signed, R2, MinIO) and unable
-//                             to load directly. Last-resort fallback
-//                             for legacy responses that omit
-//                             `markdown_url`.
+//   - `record.url`          — raw storage URL. It is used only when the
+//                             configured public CDN proves it is directly
+//                             loadable; otherwise it is not a fallback.
 //
 // Order:
 //
@@ -240,9 +233,7 @@ function absolutizeMediaURL(rawUrl: string): string {
 //  3. `record.markdown_url` — the durable, server-policy-aligned URL.
 //     Beats raw `record.url` because it never points at a private
 //     bucket (must-fix 2 from MUL-3192 review).
-//  4. `record.url` — legacy fallback for responses that omit
-//     `markdown_url` (a backend old enough to predate MUL-3192).
-//  5. The input URL — when there's no record at all.
+//  4. The input URL — for URL-only content when no record URL is usable.
 function pickInlineMediaURL(
   record: AttachmentRecord,
   fallback: string,
@@ -258,7 +249,6 @@ function pickInlineMediaURL(
   }
   if (!cdnSigned && storageURLMatchesCdnDomain(record.url, cdnDomain)) return record.url;
   if (record.markdown_url) return record.markdown_url;
-  if (record.url) return record.url;
   return fallback;
 }
 

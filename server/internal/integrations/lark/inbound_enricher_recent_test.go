@@ -19,8 +19,8 @@ func appMsg(id, text, createTime string) LarkMessage {
 }
 
 // groupCfg enables the recent-context prefetch with the production window.
-func groupCfg() InboundEnricherConfig {
-	return InboundEnricherConfig{RecentContextSize: DefaultRecentContextSize}
+func groupCfg() enricherTestConfig {
+	return enricherTestConfig{RecentContextSize: defaultRecentContextSize}
 }
 
 func seedNameResolutionRecentContext(fake *enricherFakeClient) InboundMessage {
@@ -87,8 +87,8 @@ func TestEnrichRecentContextGroupMention(t *testing.T) {
 	}
 	// The window uses the production default size and is anchored to the
 	// trigger's time (millis -> seconds).
-	if got := fake.listParams[0].PageSize; got != DefaultRecentContextSize {
-		t.Errorf("page size = %d, want %d", got, DefaultRecentContextSize)
+	if got := fake.listParams[0].PageSize; got != defaultRecentContextSize {
+		t.Errorf("page size = %d, want %d", got, defaultRecentContextSize)
 	}
 	if got := fake.listParams[0].EndTime; got != 3 {
 		t.Errorf("end_time = %d, want 3 (3000ms -> 3s)", got)
@@ -247,7 +247,7 @@ func TestEnrichForwardedResolvesNames(t *testing.T) {
 		SenderOpenID:   "ou_bohan",
 	}
 
-	out := enrich(t, fake, in, InboundEnricherConfig{})
+	out := enrich(t, fake, in, enricherTestConfig{})
 
 	want := `<forwarded_messages count="2">
 [Jiayuan]: 你们线上的 Multica 能用吗
@@ -322,7 +322,7 @@ func TestEnrichRecentContextSkippedCases(t *testing.T) {
 	cases := []struct {
 		name string
 		msg  InboundMessage
-		cfg  InboundEnricherConfig
+		cfg  enricherTestConfig
 	}{
 		{
 			name: "p2p chat",
@@ -337,7 +337,7 @@ func TestEnrichRecentContextSkippedCases(t *testing.T) {
 		{
 			name: "prefetch disabled (size 0)",
 			msg:  InboundMessage{MessageType: "text", MessageID: "om1", ChatID: "oc_g", ChatType: ChatTypeGroup, AddressedToBot: true, Body: "在吗"},
-			cfg:  InboundEnricherConfig{},
+			cfg:  enricherTestConfig{},
 		},
 	}
 	for _, tc := range cases {

@@ -91,15 +91,12 @@
     "sync_tooltip": "同步状态",
     "toast_synced": "同步已完成",
     "toast_sync_failed": "同步失败",
-    "local_rename_tooltip": "重命名",
-    "local_rename_label": "本地目录显示名",
     "local_no_daemon_tooltip": "尚未识别到本机守护进程，智能体暂时无法打开此目录。",
     "local_other_machine_tooltip": "此目录仅在最初注册它的电脑上可用。",
-    "local_compat_badge": "兼容保留",
-    "local_compat_tooltip": "历史本地目录资源。标准任务默认使用平台 worktree，不再自动进入这个目录。",
-    "toast_local_renamed": "已重命名",
-    "toast_local_rename_failed": "重命名失败",
-    "legacy_resource_label": "兼容代码资源"
+    "chat_hint_prefix": "智能体将在",
+    "chat_hint_suffix": "，复用服务器已有目录，不隔离 worktree。",
+    "gongfeng_provider": "Gongfeng",
+    "resource_label_fallback": "项目资源"
   },
   "delete_dialog": {
     "title": "删除项目",
@@ -117,17 +114,9 @@
   },
   "toolbar": {
     "result_count_title": "当前结果 / 全部项目",
-    "filter_label": "筛选",
-    "filter_active_count_one": "{{count}} 项筛选",
-    "filter_active_count_other": "{{count}} 项筛选",
-    "clear_filters": "清除筛选",
     "section_status": "状态",
     "section_priority": "优先级",
     "section_lead": "负责人",
-    "display": "显示",
-    "sort_by": "排序",
-    "direction_asc": "升序",
-    "direction_desc": "降序",
     "section_columns": "列",
     "view": "视图"
   }

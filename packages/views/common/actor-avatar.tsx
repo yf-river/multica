@@ -7,6 +7,7 @@ import {
   HoverCardTrigger,
   HoverCardContent,
 } from "@multica/ui/components/ui/hover-card";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useAgentPresenceDetail } from "@multica/core/agents";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
@@ -92,7 +93,7 @@ export function ActorAvatar({
   const resolvedAvatarUrl =
     actorAvatarUrl === undefined ? getActorAvatarUrl(actorType, actorId) : actorAvatarUrl;
   const resolvedInitials =
-    actorName === undefined ? getActorInitials(actorType, actorId) : initialsFromName(resolvedName);
+    actorName === undefined ? getActorInitials(actorType, actorId) : nameInitials(resolvedName);
   const paths = useWorkspacePaths();
   const avatar = (
     <ActorAvatarBase
@@ -155,15 +156,6 @@ export function ActorAvatar({
     return <SquadAvatarHoverCard squadId={actorId}>{content}</SquadAvatarHoverCard>;
   }
   return content;
-}
-
-function initialsFromName(name: string) {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
 }
 
 function ActorAvatarProfileLink({

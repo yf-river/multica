@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Tag, Plus, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   labelListOptions,
   issueLabelsOptions,

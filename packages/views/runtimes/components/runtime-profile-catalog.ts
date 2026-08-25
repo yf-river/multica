@@ -63,17 +63,11 @@ export function buildRuntimeCatalog(
   return { customs, builtins };
 }
 
-// NOTE: `fixed_args` is intentionally NOT exposed in the v1 UI. The server
-// still carries the column, but the daemon does not yet splice these args into
-// the agent launch command, so surfacing an input/display here would promise
-// admins a behavior that does not exist. Re-introduce the parse/format helpers
-// and the form field only once the daemon actually passes them to the backend
-// (proven by a test). See TODO(MUL-3284) in server/internal/daemon/daemon.go.
-
 export interface ProfileFormValues {
   displayName: string;
   commandName: string;
   description: string;
+  fixedArgs: string;
 }
 
 export type ProfileFormErrorField = "displayName" | "commandName";
@@ -88,6 +82,17 @@ export function validateProfileForm(
   if (!values.displayName.trim()) errors.push("displayName");
   if (!values.commandName.trim()) errors.push("commandName");
   return errors;
+}
+
+export function parseFixedArgsInput(value: string): string[] {
+  return value
+    .split("\n")
+    .map((arg) => arg.trim())
+    .filter(Boolean);
+}
+
+export function formatFixedArgsInput(args: string[]): string {
+  return args.join("\n");
 }
 
 // Returns true when the entry should be treated as a built-in (read-only).

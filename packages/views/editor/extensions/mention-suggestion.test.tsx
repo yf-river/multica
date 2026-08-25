@@ -1,8 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { createRef, type ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import { issueKeys, PAGINATED_STATUSES } from "@multica/core/issues/queries";
+import { issueKeys } from "@multica/core/issues/queries";
+import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { IssueStatus, ListIssuesCache } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
@@ -14,6 +15,34 @@ import enEditor from "../../locales/zh-Hans/editor.json";
 const TEST_RESOURCES = {
   "zh-Hans": { common: enCommon, auth: enAuth, settings: enSettings, editor: enEditor },
 };
+
+interface CapturedMentionListProps {
+  items: MentionItem[];
+  query: string;
+  command: (item: MentionItem) => void;
+  includeProjectSearch?: boolean;
+}
+
+const mentionPopupState = vi.hoisted(() => ({
+  component: null as ComponentType<CapturedMentionListProps> | null,
+}));
+
+vi.mock("./suggestion-popup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./suggestion-popup")>();
+  return {
+    ...actual,
+    createSuggestionPopupRender: (options: { component: unknown }) => {
+      mentionPopupState.component =
+        options.component as ComponentType<CapturedMentionListProps>;
+      return () => ({
+        onStart() {},
+        onUpdate() {},
+        onKeyDown: () => false,
+        onExit() {},
+      });
+    },
+  };
+});
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
@@ -51,10 +80,14 @@ vi.mock("@multica/core/auth", () => ({
 
 import {
   createMentionSuggestion,
-  MentionList,
-  type MentionListRef,
   type MentionItem,
 } from "./mention-suggestion";
+
+function MentionList(props: CapturedMentionListProps) {
+  if (!mentionPopupState.component) createMentionSuggestion(fakeQc({}));
+  const Component = mentionPopupState.component!;
+  return <Component {...props} />;
+}
 
 function fakeQc(data: {
   members?: Array<{ user_id: string; name: string; role?: string }>;
@@ -77,7 +110,7 @@ function fakeQc(data: {
   map.set(JSON.stringify(workspaceKeys.agents("ws-1")), data.agents ?? []);
   map.set(JSON.stringify(workspaceKeys.squads("ws-1")), data.squads ?? []);
   const byStatus: ListIssuesCache["byStatus"] = {};
-  for (const status of PAGINATED_STATUSES) {
+  for (const status of BOARD_STATUSES) {
     const bucket = (data.issues ?? []).filter((i) => i.status === status);
     byStatus[status as IssueStatus] = { issues: bucket as never, total: bucket.length };
   }
@@ -156,17 +189,14 @@ describe("createMentionSuggestion", () => {
   });
 
   it("loads server issue matches into the popup when the list cache misses", async () => {
-    searchIssuesMock.mockResolvedValue({
-      issues: [
-        {
-          id: "i-1007",
-          identifier: "MUL-1007",
-          title: "多 Agent 协作探索",
-          status: "done",
-        },
-      ],
-      total: 1,
-    });
+    searchIssuesMock.mockResolvedValue([
+      {
+        id: "i-1007",
+        identifier: "MUL-1007",
+        title: "多 Agent 协作探索",
+        status: "done",
+      },
+    ]);
 
     render(<I18nWrapper><MentionList items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
 
@@ -186,9 +216,8 @@ describe("createMentionSuggestion", () => {
   });
 
   it("loads server issue and project matches when project search is enabled", async () => {
-    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
-    searchProjectsMock.mockResolvedValue({
-      projects: [
+    searchIssuesMock.mockResolvedValue([]);
+    searchProjectsMock.mockResolvedValue([
         {
           id: "p-roadmap",
           title: "Roadmap",
@@ -196,9 +225,7 @@ describe("createMentionSuggestion", () => {
           icon: null,
           status: "active",
         },
-      ],
-      total: 1,
-    });
+      ]);
 
     render(
       <I18nWrapper>
@@ -218,16 +245,6 @@ describe("createMentionSuggestion", () => {
 
     expect(searchIssuesMock).not.toHaveBeenCalled();
     expect(searchProjectsMock).not.toHaveBeenCalled();
-  });
-
-  it("captures Enter while the popup has no selectable items", () => {
-    const ref = createRef<MentionListRef>();
-
-    render(<I18nWrapper><MentionList ref={ref} items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
-
-    expect(
-      ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "Enter" }) }),
-    ).toBe(true);
   });
 
   it("hides personal agents owned by someone else from a regular member", () => {

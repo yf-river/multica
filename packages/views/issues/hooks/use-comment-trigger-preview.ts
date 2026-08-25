@@ -4,21 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
-import type { CommentTriggerPreviewAgent } from "@multica/core/types";
 
 const COMMENT_TRIGGER_PREVIEW_DEBOUNCE_MS = 300;
 const MENTION_RE = /\[@?(.+?)\]\(mention:\/\/(member|agent|squad|issue|all)\/([0-9a-fA-F-]+|all)\)/g;
 const NOTE_COMMAND_RE = /^\/note(?:$|\s)/i;
 
-export interface UseCommentTriggerPreviewResult {
-  agents: CommentTriggerPreviewAgent[];
-}
-
-export function isNoteCommentDraft(content: string): boolean {
+function isNoteCommentDraft(content: string): boolean {
   return NOTE_COMMAND_RE.test(content.replace(/^[ \t\r\n]+/, ""));
 }
 
-export function commentTriggerPreviewSignature(content: string): string {
+function commentTriggerPreviewSignature(content: string): string {
   if (!content.trim() || isNoteCommentDraft(content)) return "empty";
 
   const seen = new Set<string>();
@@ -80,7 +75,7 @@ export function useCommentTriggerPreview({
   parentId?: string;
   editingCommentId?: string;
   content: string;
-}): UseCommentTriggerPreviewResult {
+}) {
   const signature = useMemo(() => commentTriggerPreviewSignature(content), [content]);
   const debouncedSignature = useDebouncedSignature(signature);
   const contentRef = useRef(content);

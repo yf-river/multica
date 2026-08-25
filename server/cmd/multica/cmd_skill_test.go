@@ -59,6 +59,9 @@ func TestRunSkillImportJsonTreatsDuplicateAsConflictResult(t *testing.T) {
 		if r.Header.Get("X-Workspace-ID") != "workspace-123" {
 			t.Fatalf("X-Workspace-ID = %q, want workspace-123", r.Header.Get("X-Workspace-ID"))
 		}
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
@@ -119,6 +122,9 @@ func TestRunSkillImportSendsOnConflictAndPrintsStructuredResult(t *testing.T) {
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
@@ -242,6 +248,11 @@ func newSkillBodyCaptureServer(t *testing.T, wantMethod, wantPath string, body *
 		}
 		if r.URL.Path != wantPath {
 			t.Fatalf("path = %q, want %q", r.URL.Path, wantPath)
+		}
+		if wantMethod == http.MethodPost && wantPath == "/api/skills" {
+			if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+				t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+			}
 		}
 		if err := json.NewDecoder(r.Body).Decode(body); err != nil {
 			t.Fatalf("decode body: %v", err)

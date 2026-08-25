@@ -81,4 +81,4 @@ function ReactionBar({
   );
 }
 
-export { ReactionBar, type ReactionBarProps, type ReactionItem };
+export { ReactionBar };

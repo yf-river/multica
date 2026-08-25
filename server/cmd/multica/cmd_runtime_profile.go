@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -94,17 +95,14 @@ func init() {
 	runtimeProfileCreateCmd.Flags().String("command-name", "", "Executable the daemon resolves on PATH (required)")
 	runtimeProfileCreateCmd.Flags().String("display-name", "", "Human-readable profile name (required)")
 	runtimeProfileCreateCmd.Flags().String("description", "", "Optional description")
+	runtimeProfileCreateCmd.Flags().String("fixed-args", "", "JSON array of arguments inherited by every agent on this runtime")
 	runtimeProfileCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// update
 	runtimeProfileUpdateCmd.Flags().String("display-name", "", "New display name")
 	runtimeProfileUpdateCmd.Flags().String("command-name", "", "New command name")
 	runtimeProfileUpdateCmd.Flags().String("description", "", "New description")
-	// NOTE: a --fixed-arg flag is intentionally NOT exposed in v1. The server
-	// carries the fixed_args column, but the daemon does not yet pass these
-	// args to the agent launch command, so a CLI flag would promise admins a
-	// no-op. Re-add once it's wired end-to-end (TODO(MUL-3284), see
-	// server/internal/daemon/daemon.go).
+	runtimeProfileUpdateCmd.Flags().String("fixed-args", "", "New JSON array of inherited arguments; pass [] to clear")
 	runtimeProfileUpdateCmd.Flags().Bool("enabled", true, "Enable or disable the profile")
 	runtimeProfileUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -128,22 +126,11 @@ func validateProtocolFamily(family string) error {
 	return nil
 }
 
-// NOTE: a --visibility flag is intentionally NOT exposed in v1. The server
-// forces every profile to 'workspace' because the read paths do not yet
-// enforce 'private' (exposing it would leak "private" profiles). Re-add once
-// creator-visibility filtering exists. Follow-up: MUL-3308.
-
 func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var resp struct {
@@ -153,8 +140,7 @@ func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list runtime profiles: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp.RuntimeProfiles)
 	}
 	printRuntimeProfileTable(resp.RuntimeProfiles)
@@ -166,6 +152,7 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 	commandName, _ := cmd.Flags().GetString("command-name")
 	displayName, _ := cmd.Flags().GetString("display-name")
 	description, _ := cmd.Flags().GetString("description")
+	fixedArgsRaw, _ := cmd.Flags().GetString("fixed-args")
 
 	if strings.TrimSpace(family) == "" {
 		return fmt.Errorf("--protocol-family is required")
@@ -180,14 +167,11 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
+	defer cancel()
 
 	body := map[string]any{
 		"display_name":    displayName,
@@ -197,12 +181,18 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 	if description != "" {
 		body["description"] = description
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
+	if cmd.Flags().Changed("fixed-args") {
+		fixedArgs, err := parseRuntimeProfileFixedArgs(fixedArgsRaw)
+		if err != nil {
+			return err
+		}
+		body["fixed_args"] = fixedArgs
+	}
 
 	var profile map[string]any
-	if err := client.PostJSON(ctx, runtimeProfilesPath(workspaceID), body, &profile); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, runtimeProfilesPath(workspaceID), body, uuid.NewString(), &profile,
+	); err != nil {
 		return fmt.Errorf("create runtime profile: %w", err)
 	}
 	return outputRuntimeProfile(cmd, profile)
@@ -212,17 +202,16 @@ func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("display-name") {
-		v, _ := cmd.Flags().GetString("display-name")
-		body["display_name"] = v
-	}
-	if cmd.Flags().Changed("command-name") {
-		v, _ := cmd.Flags().GetString("command-name")
-		body["command_name"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
+	applyChangedStringFlag(cmd, body, "display-name", "display_name")
+	applyChangedStringFlag(cmd, body, "command-name", "command_name")
+	applyChangedStringFlag(cmd, body, "description", "description")
+	if cmd.Flags().Changed("fixed-args") {
+		v, _ := cmd.Flags().GetString("fixed-args")
+		fixedArgs, err := parseRuntimeProfileFixedArgs(v)
+		if err != nil {
+			return err
+		}
+		body["fixed_args"] = fixedArgs
 	}
 	if cmd.Flags().Changed("enabled") {
 		v, _ := cmd.Flags().GetBool("enabled")
@@ -230,19 +219,13 @@ func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update: pass at least one of --display-name, --command-name, --description, --enabled")
+		return fmt.Errorf("no fields to update: pass at least one of --display-name, --command-name, --description, --fixed-args, --enabled")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	path := runtimeProfilesPath(workspaceID) + "/" + profileID
@@ -253,19 +236,29 @@ func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 	return outputRuntimeProfile(cmd, profile)
 }
 
+func parseRuntimeProfileFixedArgs(raw string) ([]string, error) {
+	var args []string
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return nil, fmt.Errorf("--fixed-args must be a valid JSON array of strings")
+	}
+	if args == nil {
+		return nil, fmt.Errorf("--fixed-args must be a valid JSON array of strings")
+	}
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return nil, fmt.Errorf("--fixed-args entries must be non-empty")
+		}
+	}
+	return args, nil
+}
+
 func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	path := runtimeProfilesPath(workspaceID) + "/" + profileID
@@ -342,12 +335,16 @@ func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
 
 // outputRuntimeProfile renders a single profile honoring --output.
 func outputRuntimeProfile(cmd *cobra.Command, profile map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, profile)
-	}
-	printRuntimeProfileTable([]map[string]any{profile})
-	return nil
+	return printRecordResult(cmd, profile,
+		[]string{"ID", "DISPLAY_NAME", "PROTOCOL_FAMILY", "COMMAND_NAME", "ENABLED"},
+		[]string{
+			strVal(profile, "id"),
+			strVal(profile, "display_name"),
+			strVal(profile, "protocol_family"),
+			strVal(profile, "command_name"),
+			strVal(profile, "enabled"),
+		},
+	)
 }
 
 // printRuntimeProfileTable renders profiles as a stable, sorted table.

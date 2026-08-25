@@ -6,18 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 )
-
-// Files to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// The daemon points CODEX_HOME at a runtime profile before tasks are prepared,
-// so this links to the runtime profile, not the user's interactive Codex home.
-// Auth stays shared at the runtime level so token refreshes propagate across
-// task-local homes without pushing session/log/state writes into the user home.
-var codexSymlinkedFiles = []string{
-	"auth.json",
-}
 
 // Files to copy from the shared ~/.codex/ into the per-task CODEX_HOME.
 // Copies are isolated — changes don't affect the shared home.
@@ -27,43 +16,22 @@ var codexCopiedFiles = []string{
 	"instructions.md",
 }
 
-// CodexHomeOptions carries optional inputs for prepareCodexHomeWithOpts that
-// affect the generated per-task config.toml.
-type CodexHomeOptions struct {
-	// CodexVersion is the detected Codex CLI version (e.g. "0.121.0"). Empty
-	// means unknown; on macOS, unknown is treated as "probably broken" so the
-	// daemon falls back to danger-full-access for network access. See
-	// codex_sandbox.go for details.
-	CodexVersion string
-	// WorkDir is the daemon-managed task workdir. It is written as a trusted
-	// project in the per-task config so headless Codex runs do not emit
-	// project-local-config trust errors for each dynamic task directory.
-	WorkDir string
-	// GOOS overrides the target platform when deciding the sandbox policy.
-	// Empty means use runtime.GOOS. Primarily exists so tests can exercise
-	// both macOS and Linux paths deterministically.
-	GOOS string
-}
-
-// prepareCodexHomeWithOpts creates a per-task CODEX_HOME directory and seeds
+// prepareCodexHome creates a per-task CODEX_HOME directory and seeds
 // it from the daemon's shared runtime Codex home. Auth is symlinked to the
 // runtime profile; config files are copied; session/log/state files stay local
-// to the task home. The per-task config.toml gets a daemon-managed sandbox
-// block picked by codexSandboxPolicyFor.
-func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
+// to the task home. Daemon-owned Codex policy is applied through app-server
+// argv overrides when the process starts, leaving the copied config untouched.
+func prepareCodexHome(codexHome string, logger *slog.Logger) error {
 	sharedHome := resolveSharedCodexHome()
 
 	if err := os.MkdirAll(codexHome, 0o755); err != nil {
 		return fmt.Errorf("create codex-home dir: %w", err)
 	}
 
-	// Symlink shared files (auth).
-	for _, name := range codexSymlinkedFiles {
-		src := filepath.Join(sharedHome, name)
-		dst := filepath.Join(codexHome, name)
-		if err := ensureSymlink(src, dst); err != nil {
-			logger.Warn("execenv: codex-home symlink failed", "file", name, "error", err)
-		}
+	// Auth stays shared at the runtime level so token refreshes propagate
+	// without pushing session/log/state writes into the runtime profile.
+	if err := ensureSymlink(filepath.Join(sharedHome, "auth.json"), filepath.Join(codexHome, "auth.json")); err != nil {
+		logger.Warn("execenv: codex-home symlink failed", "file", "auth.json", "error", err)
 	}
 
 	// Surface the resulting auth.json state (file kind only, never contents)
@@ -95,79 +63,7 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		logger.Warn("execenv: codex-home plugin cache exposure failed", "error", err)
 	}
 
-	// Write a daemon-managed sandbox block into config.toml. On macOS we may
-	// need to fall back to danger-full-access because of openai/codex#10390;
-	// see codex_sandbox.go for the full rationale.
-	policy := codexSandboxPolicyFor(opts.GOOS, opts.CodexVersion)
-	if err := ensureCodexSandboxConfig(filepath.Join(codexHome, "config.toml"), policy, opts.CodexVersion, logger); err != nil {
-		logger.Warn("execenv: codex-home ensure sandbox config failed", "error", err)
-	}
-
-	// Disable Codex native multi-agent inside daemon-managed task sessions
-	// so the parent thread's `turn/completed` is not interpreted as task
-	// completion while spawned subagents are still running. See
-	// codex_multi_agent.go for the full rationale and escape hatch.
-	if err := ensureCodexMultiAgentConfig(filepath.Join(codexHome, "config.toml"), logger); err != nil {
-		logger.Warn("execenv: codex-home ensure multi-agent config failed", "error", err)
-	}
-
-	// Disable Codex native auto-memory inside daemon-managed task sessions
-	// so cross-task and cross-workspace context leaks (multica#3130) cannot
-	// happen via `codex-home/memories/` or `~/.codex/memories/`. See
-	// codex_memory.go for the full rationale and escape hatch.
-	if err := ensureCodexMemoryConfig(filepath.Join(codexHome, "config.toml"), logger); err != nil {
-		logger.Warn("execenv: codex-home ensure memory config failed", "error", err)
-	}
-
-	if err := ensureCodexTrustedProject(filepath.Join(codexHome, "config.toml"), opts.WorkDir); err != nil {
-		logger.Warn("execenv: codex-home ensure trusted project failed", "error", err)
-	}
-
 	return nil
-}
-
-func ensureCodexTrustedProject(configPath, workDir string) error {
-	if strings.TrimSpace(workDir) == "" {
-		return nil
-	}
-	absWorkDir, err := filepath.Abs(workDir)
-	if err != nil {
-		absWorkDir = workDir
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read config.toml: %w", err)
-	}
-
-	header := "[projects." + strconv.Quote(absWorkDir) + "]"
-	content := stripTomlTable(string(data), header)
-	content = strings.TrimRight(content, "\n")
-	if content != "" {
-		content += "\n\n"
-	}
-	content += header + "\ntrust_level = \"trusted\"\n"
-	return os.WriteFile(configPath, []byte(content), 0o600)
-}
-
-func stripTomlTable(content, header string) string {
-	lines := strings.Split(content, "\n")
-	out := make([]string, 0, len(lines))
-	skipping := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == header {
-			skipping = true
-			continue
-		}
-		if skipping && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			skipping = false
-		}
-		if !skipping {
-			out = append(out, line)
-		}
-	}
-	return strings.Join(out, "\n")
 }
 
 // resolveSharedCodexHome returns the path to the user's shared Codex home.
@@ -217,7 +113,6 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 	}
 	return nil
 }
-
 
 // ensureSymlink ensures dst tracks src. If src doesn't exist, it's a no-op.
 // If dst is already a symlink pointing at src, it's a no-op. Otherwise — a
@@ -276,11 +171,6 @@ func logCodexAuthState(authPath string, logger *slog.Logger) {
 	)
 }
 
-// (The daemon used to write a minimal inline config here; the authoritative
-// sandbox/network directives now live in a managed block rendered by
-// codex_sandbox.go's ensureCodexSandboxConfig so they can be updated
-// idempotently without touching user-managed keys.)
-
 // syncCopiedFile mirrors a per-task dst onto the current state of the shared
 // src so the per-task copy tracks the shared source across Reuse() runs:
 //
@@ -299,13 +189,7 @@ func logCodexAuthState(authPath string, logger *slog.Logger) {
 // with Codex calling the new URL using the old key (or replaying a provider
 // the user had since deleted from the shared config).
 //
-// For config.toml the subsequent ensureCodex{Sandbox,MultiAgent,Memory}Config
-// passes recreate the file from scratch when the shared source is gone, so
-// the per-task home keeps the daemon-managed defaults but loses every
-// user-managed [model_providers.X] / model_provider line that no longer
-// exists in the shared config. For config.json / instructions.md there is
-// no daemon-managed default, so they simply disappear in lockstep with the
-// shared source.
+// Every copied file disappears in lockstep when its shared source is removed.
 func syncCopiedFile(src, dst string) error {
 	_, srcErr := os.Stat(src)
 	srcMissing := os.IsNotExist(srcErr)
@@ -331,16 +215,19 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
-	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return fmt.Errorf("copy %s → %s: %w", src, dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
 }

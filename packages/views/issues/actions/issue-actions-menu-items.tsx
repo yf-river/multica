@@ -43,13 +43,13 @@ import {
   ContextMenuSeparator,
 } from "@multica/ui/components/ui/context-menu";
 import { copyText } from "@multica/ui/lib/clipboard";
-import type { UseIssueActionsResult } from "./use-issue-actions";
+import type { useIssueActions } from "./use-issue-actions";
 import { useT } from "../../i18n";
 
 // Both Dropdown and Context menu wrappers expose an API-compatible surface
 // (variant, inset, onClick, etc.). We bundle the primitives we need into a
 // single object so `IssueActionsMenuItems` can render the same JSX for both.
-export interface MenuPrimitives {
+interface MenuPrimitives {
   Item: typeof DropdownMenuItem;
   Sub: typeof DropdownMenuSub;
   SubTrigger: typeof DropdownMenuSubTrigger;
@@ -78,7 +78,7 @@ export const contextPrimitives: MenuPrimitives = {
 
 interface IssueActionsMenuItemsProps {
   issue: Issue;
-  actions: UseIssueActionsResult;
+  actions: ReturnType<typeof useIssueActions>;
   primitives: MenuPrimitives;
   /** Called when the user clicks the Assignee menu item. The parent should
    *  close the surrounding menu and open the shared `AssigneePicker` popover.
@@ -122,11 +122,8 @@ export function IssueActionsMenuItems({
     staleTime: 30_000,
   });
 
-  // Synchronous click handler — the awaited fetch in the previous version
-  // dropped the browser's transient user activation, which made
-  // navigator.clipboard.writeText() reject from the menu when the cache
-  // was cold. We now read straight from the cached query result and write
-  // to the clipboard inside the same task as the click.
+  // Keep clipboard access in the click task so browser user activation remains
+  // valid; the menu-open query above supplies the cached workdir.
   const handleCopyWorkdirPath = useCallback(() => {
     const latestWorkDir = pickLatestWorkDir(tasks);
     if (!latestWorkDir) {

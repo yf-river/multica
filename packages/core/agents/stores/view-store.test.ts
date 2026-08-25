@@ -5,6 +5,19 @@ import { setCurrentWorkspace } from "../../platform/workspace-storage";
 
 const flush = () => new Promise((resolve) => queueMicrotask(() => resolve(null)));
 
+function persistScope(slug: string, scope: "all" | "mine") {
+  localStorage.setItem(
+    `multica_agents_view:${slug}`,
+    JSON.stringify({ state: { scope }, version: 1 }),
+  );
+}
+
+async function switchWorkspace(slug: string, id: string) {
+  setCurrentWorkspace(slug, id);
+  await flush();
+  await flush();
+}
+
 // Node 25 ships a partial `localStorage` shim under jsdom that's missing
 // `clear`/`removeItem`; replace it with a real in-memory Storage so persist
 // can round-trip values.
@@ -26,7 +39,13 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
-  useAgentsViewStore.setState({ scope: "mine" });
+  useAgentsViewStore.setState({
+    scope: "mine",
+    sortField: "lastActive",
+    sortDirection: "desc",
+    hiddenColumns: ["model", "created"],
+    filters: { availability: [], runtimes: [], owners: [], models: [] },
+  });
   setCurrentWorkspace(null, null);
 });
 
@@ -42,6 +61,36 @@ describe("useAgentsViewStore", () => {
   it("setScope mutates the store", () => {
     useAgentsViewStore.getState().setScope("all");
     expect(useAgentsViewStore.getState().scope).toBe("all");
+  });
+
+  it("applies the shared sort, column, and filter transitions", () => {
+    const store = useAgentsViewStore.getState();
+
+    store.toggleSort("lastActive");
+    expect(useAgentsViewStore.getState().sortDirection).toBe("asc");
+
+    store.setSortField("name");
+    expect(useAgentsViewStore.getState()).toMatchObject({
+      sortField: "name",
+      sortDirection: "asc",
+    });
+
+    store.toggleColumn("model");
+    expect(useAgentsViewStore.getState().hiddenColumns).not.toContain("model");
+
+    store.toggleFilter("owners", "user-1");
+    expect(useAgentsViewStore.getState()).toMatchObject({
+      scope: "all",
+      filters: { owners: ["user-1"] },
+    });
+
+    useAgentsViewStore.getState().clearFilters();
+    expect(useAgentsViewStore.getState().filters).toEqual({
+      availability: [],
+      runtimes: [],
+      owners: [],
+      models: [],
+    });
   });
 
   it("partialize persists only view prefs (no actions) under the workspace-namespaced key", async () => {
@@ -63,62 +112,25 @@ describe("useAgentsViewStore", () => {
   });
 
   it("rehydrates a different saved scope on workspace switch", async () => {
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "all" }, version: 0 }),
-    );
-    localStorage.setItem(
-      "multica_agents_view:beta",
-      JSON.stringify({ state: { scope: "mine" }, version: 0 }),
-    );
+    persistScope("acme", "all");
+    persistScope("beta", "mine");
 
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
+    await switchWorkspace("acme", "ws_a");
     expect(useAgentsViewStore.getState().scope).toBe("all");
 
-    setCurrentWorkspace("beta", "ws_b");
-    await flush();
-    await flush();
+    await switchWorkspace("beta", "ws_b");
     expect(useAgentsViewStore.getState().scope).toBe("mine");
   });
 
   it("resets to 'mine' when switching to a workspace with no persisted value", async () => {
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "all" }, version: 0 }),
-    );
+    persistScope("acme", "all");
 
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
+    await switchWorkspace("acme", "ws_a");
     expect(useAgentsViewStore.getState().scope).toBe("all");
 
-    setCurrentWorkspace("beta", "ws_b");
-    await flush();
-    await flush();
+    await switchWorkspace("beta", "ws_b");
     expect(useAgentsViewStore.getState().scope).toBe("mine");
     expect(localStorage.getItem("multica_agents_view:acme")).not.toBeNull();
   });
 
-  it("backfills new filter dimensions when rehydrating a pre-owners payload", async () => {
-    // A payload persisted before the `owners` filter existed must not drop
-    // the key to undefined (the agents list filter predicate reads
-    // `filters.owners.length` and would crash).
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({
-        state: { filters: { availability: ["online"], runtimes: [] } },
-        version: 0,
-      }),
-    );
-
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
-
-    const filters = useAgentsViewStore.getState().filters;
-    expect(filters.owners).toEqual([]);
-    expect(filters.availability).toEqual(["online"]);
-  });
 });

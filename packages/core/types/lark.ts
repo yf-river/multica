@@ -1,27 +1,17 @@
 /** A Lark Bot installation bound to a single Multica agent.
  *
  * Wire shape mirrors `LarkInstallationResponse` in
- * `server/internal/handler/lark.go`. New fields the backend adds in the
- * future MUST default to optional so older desktop builds keep parsing
- * the response — see CLAUDE.md → API Response Compatibility. */
+ * `server/internal/handler/lark.go`. Unknown future fields remain harmless,
+ * while fields in the current wire contract stay required. */
 export interface LarkInstallation {
   id: string;
-  workspace_id: string;
   agent_id: string;
   app_id: string;
-  tenant_key?: string | null;
-  bot_open_id: string;
-  installer_user_id: string;
   status: "active" | "revoked" | string;
   /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
-   * (international). Auto-detected at install time. Optional so an older
-   * desktop build parsing a newer server — or a newer build hitting a
-   * server that predates the field — defaults to Feishu in the UI
-   * (see CLAUDE.md → API Response Compatibility). */
-  region?: "feishu" | "lark" | string;
+   * (international). */
+  region: "feishu" | "lark" | string;
   installed_at: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface ListLarkInstallationsResponse {
@@ -34,10 +24,8 @@ export interface ListLarkInstallationsResponse {
    * complete end-to-end — i.e. the device-flow RegistrationService is
    * wired AND the real Lark HTTP APIClient (not the no-op stub) is in
    * place. When false the install entry points are hidden and the
-   * panel surfaces a "coming soon" notice. Optional so older desktop
-   * builds receiving a server that does not yet emit the field
-   * default to `undefined`, treated as not supported. */
-  install_supported?: boolean;
+   * panel surfaces a "coming soon" notice. */
+  install_supported: boolean;
 }
 
 /** First half of the device-flow install: the server has opened a
@@ -55,9 +43,6 @@ export interface BeginLarkInstallResponse {
 /** Status polling result. `status` is the discriminator. */
 export interface LarkInstallStatusResponse {
   status: "pending" | "success" | "error" | string;
-  /** Populated when status === "success". The frontend invalidates the
-   * installations cache so the new row appears in the Settings tab. */
-  installation_id?: string;
   /** Stable code on error — switch on this (NOT error_message) to pick
    * the right copy. Common values: "expired", "access_denied",
    * "lark_protocol_error", "bot_info_failed", "installation_conflict",
@@ -72,5 +57,4 @@ export interface LarkInstallStatusResponse {
 export interface RedeemLarkBindingTokenResponse {
   workspace_id: string;
   installation_id: string;
-  lark_open_id: string;
 }

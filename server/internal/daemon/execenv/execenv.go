@@ -5,30 +5,31 @@ package execenv
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// RepoContextForEnv describes a workspace repo available for checkout.
-type RepoContextForEnv struct {
-	URL         string // remote URL
-	Description string // optional repo description
+// shortID returns the first eight characters of an identifier after removing
+// UUID separators. Task directories use it only as a readable path segment.
+func shortID(id string) string {
+	compact := strings.ReplaceAll(id, "-", "")
+	if len(compact) > 8 {
+		return compact[:8]
+	}
+	return compact
 }
 
-// ProjectResourceForEnv describes a single resource attached to the issue's
-// project. The resource_ref payload is type-specific JSON; the agent reads
-// resources.json on disk for the full structure. This struct only carries
-// fields the meta-skill template needs to render a human-readable summary
-// (URL for github_repo, generic label otherwise).
-type ProjectResourceForEnv struct {
-	ID           string          // server-assigned UUID
-	ResourceType string          // e.g. "github_repo"
-	ResourceRef  json.RawMessage // raw JSONB payload from the API
-	Label        string          // optional user-supplied label
-}
+// ProjectResourceForEnv keeps the claimed-task wire shape while adding the
+// on-disk empty-resource normalization used by context.go.
+type ProjectResourceForEnv protocol.TaskProjectResource
 
 // PrepareParams holds all inputs needed to set up an execution environment.
 type PrepareParams struct {
@@ -37,7 +38,7 @@ type PrepareParams struct {
 	TaskID         string // task UUID — used for directory name
 	AgentName      string // for git branch naming only
 	Provider       string // agent provider (determines runtime config and skill injection paths)
-	CodexVersion   string // detected Codex CLI version (only used when Provider == "codex")
+	OpenclawBin    string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
 	// via a per-task config file. Cursor consumes it here; other
@@ -71,10 +72,10 @@ type TaskContextForEnv struct {
 	AgentName               string
 	AgentInstructions       string // agent identity/persona instructions, injected into CLAUDE.md
 	AgentSkills             []SkillContextForEnv
-	Repos                   []RepoContextForEnv     // workspace repos available for checkout
-	ProjectID               string                  // issue's project, when present
-	ProjectTitle            string                  // human-readable project title
-	ProjectResources        []ProjectResourceForEnv // resources attached to the project
+	Repos                   []protocol.TaskRepository // workspace repos available for checkout
+	ProjectID               string                    // issue's project, when present
+	ProjectTitle            string                    // human-readable project title
+	ProjectResources        []ProjectResourceForEnv   // resources attached to the project
 	ExecutionPolicy         TaskExecutionPolicyForEnv
 	ChatSessionID           string // non-empty for chat tasks
 	AutopilotRunID          string // non-empty for autopilot run_only tasks
@@ -111,26 +112,14 @@ type TaskContextForEnv struct {
 	InitiatorAccount string
 }
 
-type TaskExecutionPolicyForEnv struct {
-	RoleKey          string
-	RoleKind         string
-	CanAccessRepo    bool
-	CanEditRepo      bool
-	ProjectSkillMode string
-}
+type TaskExecutionPolicyForEnv = executionpolicy.Policy
 
 // SkillContextForEnv represents a skill to be written into the execution environment.
 type SkillContextForEnv struct {
 	Name        string
 	Description string
 	Content     string
-	Files       []SkillFileContextForEnv
-}
-
-// SkillFileContextForEnv represents a supporting file within a skill.
-type SkillFileContextForEnv struct {
-	Path    string
-	Content string
+	Files       []protocol.SkillFile
 }
 
 // Environment represents a prepared, isolated execution environment.
@@ -238,7 +227,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// For Codex, set up a per-task CODEX_HOME seeded from ~/.codex/ with skills.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(envRoot, "codex-home")
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, WorkDir: workDir}, logger); err != nil {
+		if err := prepareCodexHome(codexHome, logger); err != nil {
 			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
 		}
 		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
@@ -261,7 +250,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	}
 
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
-		logger.Warn("execenv: write sidecar manifest failed (non-fatal)", "error", err)
+		return nil, fmt.Errorf("execenv: write sidecar manifest: %w", err)
 	}
 
 	logger.Info("execenv: prepared env", "root", envRoot, "repos_available", len(params.Task.Repos))
@@ -269,51 +258,40 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 }
 
 // ReuseParams describes the inputs to Reuse. It mirrors PrepareParams for
-// the per-provider knobs so callers can pass the same values on both first-run
-// and reuse paths.
+// the per-provider knobs (OpenclawBin) so callers can pass
+// the same resolved binary path on both first-run and reuse paths.
 type ReuseParams struct {
-	WorkDir      string
-	Provider     string
-	CodexVersion string // only used when Provider == "codex"
+	WorkDir     string
+	Provider    string
+	OpenclawBin string // only used when Provider == "openclaw"; empty = PATH lookup
 	// McpConfig is the agent's saved `mcp_config` JSON. Reused on reuse so a
 	// freshly-saved managed set re-materialises into the wrapper before the
 	// task starts — without this a stale wrapper from a prior run would keep
 	// the old MCP set in play.
 	McpConfig json.RawMessage
-	// LocalDirectory is true when the reused WorkDir is a user-supplied
-	// directory (the local_directory flow). The flag is propagated into
-	// the returned Environment so downstream callers (notably the GC
-	// loop) keep the "never delete the user's directory" invariant on
-	// reuse paths.
-	LocalDirectory bool
-	Task           TaskContextForEnv // refreshed context files / skills
+	// OpenclawGateway is the per-task Gateway pin re-applied on reuse so the
+	// agent picks up any runtime_config changes saved since the prior run.
+	OpenclawGateway OpenclawGatewayPin
+	Task            TaskContextForEnv // refreshed context files / skills
 }
 
 // Reuse wraps an existing workdir into an Environment and refreshes context files.
-// Returns nil if the workdir does not exist (caller should fall back to Prepare).
-func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
+// Returns (nil, nil) if the workdir does not exist (caller should fall back to
+// Prepare). Once a workdir exists, every refresh step is part of the execution
+// contract: returning a partially refreshed environment could run a task with
+// stale identity, skills, project context, or managed provider configuration.
+func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	if _, err := os.Stat(params.WorkDir); err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("execenv: inspect reuse workdir: %w", err)
 	}
 
-	rootDir := filepath.Dir(params.WorkDir)
-	if params.LocalDirectory {
-		// For local_directory tasks the user's WorkDir is unrelated to
-		// envRoot (envRoot still lives under workspacesRoot/{wsID}/...),
-		// so reading it from filepath.Dir(WorkDir) would point at the
-		// parent of the user's directory. Callers that need a real
-		// RootDir on the reuse path should arrange to pass it in
-		// explicitly; for v1 the daemon only ever reuses local_directory
-		// workdirs after a fresh Prepare in the same task lifetime, so
-		// the empty RootDir on reuse is fine for the current callers
-		// (GC writes meta from Prepare's result, not Reuse's).
-		rootDir = ""
-	}
 	env := &Environment{
-		RootDir:        rootDir,
-		WorkDir:        params.WorkDir,
-		LocalDirectory: params.LocalDirectory,
-		logger:         logger,
+		RootDir: filepath.Dir(params.WorkDir),
+		WorkDir: params.WorkDir,
+		logger:  logger,
 	}
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.
@@ -339,15 +317,12 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	//   2. CleanupSidecars rolls back the remaining sidecar files
 	//      (issue_context.md, project resources) and the manifest itself.
 	//
-	// No-op when RootDir is empty (legacy local_directory reuse, which the
-	// daemon skips anyway) or when no prior manifest exists (older build).
-	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
-			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
-		}
-		if err := CleanupSidecars(env.RootDir); err != nil {
-			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
-		}
+	// Missing manifests remain a no-op for workdirs created without sidecars.
+	if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
+		return nil, fmt.Errorf("execenv: reclaim managed skill dirs on reuse: %w", err)
+	}
+	if err := CleanupSidecars(env.RootDir); err != nil {
+		return nil, fmt.Errorf("execenv: roll back prior sidecars on reuse: %w", err)
 	}
 
 	// Refresh context files (issue_context.md, skills). Reuse tracks a
@@ -355,51 +330,62 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// the up-to-date list of writes (an old manifest from a prior run
 	// would otherwise reference files this Reuse no longer creates). For
 	// local_directory tasks the daemon skips Reuse entirely (see
-	// daemon.runTask), but writing the manifest unconditionally keeps
-	// Prepare/Reuse symmetric so a future caller can rely on the
-	// manifest being current after either path. RootDir is empty on the
-	// legacy local_directory Reuse fallback — skip the persist in that
-	// case to avoid creating a stray manifest at the filesystem root.
+	// daemon.runTask), so every Reuse environment has a managed RootDir.
 	manifest := &sidecarManifest{}
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
-		logger.Warn("execenv: refresh context files failed", "error", err)
+		return nil, fmt.Errorf("execenv: refresh context files: %w", err)
 	}
 
 	// Restore CodexHome for Codex provider — the per-task codex-home directory
-	// lives alongside the workdir. Re-run prepareCodexHomeWithOpts to ensure
-	// config (especially sandbox/network access) is up to date.
+	// lives alongside the workdir. Re-run prepareCodexHome so copied auth and
+	// config files track the current runtime profile.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(env.RootDir, "codex-home")
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, WorkDir: params.WorkDir}, logger); err != nil {
-			logger.Warn("execenv: refresh codex-home failed", "error", err)
-		} else {
-			env.CodexHome = codexHome
-			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
-				logger.Warn("execenv: refresh codex skills failed", "error", err)
-			}
+		if err := prepareCodexHome(codexHome, logger); err != nil {
+			return nil, fmt.Errorf("execenv: refresh codex-home: %w", err)
+		}
+		env.CodexHome = codexHome
+		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
+			return nil, fmt.Errorf("execenv: refresh codex skills: %w", err)
 		}
 	}
 
 	// Refresh Cursor's managed MCP sidecars on reuse. A newly saved agent
 	// mcp_config must replace the prior run's .cursor/mcp.json and isolated
 	// approvals before the next cursor-agent process starts.
-	if params.Provider == "cursor" && env.RootDir != "" {
+	if params.Provider == "cursor" {
 		cursorDataDir, err := prepareCursorMcpConfig(env.RootDir, params.WorkDir, params.McpConfig, manifest)
 		if err != nil {
-			logger.Warn("execenv: refresh cursor mcp config failed", "error", err)
-			return nil
+			return nil, fmt.Errorf("execenv: refresh cursor mcp config: %w", err)
 		}
 		env.CursorDataDir = cursorDataDir
 	}
 
-	if env.RootDir != "" {
-		if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
-			logger.Warn("execenv: refresh sidecar manifest failed", "error", err)
+	if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
+		return nil, fmt.Errorf("execenv: refresh sidecar manifest: %w", err)
+	}
+
+	// Refresh the per-task OpenClaw config on reuse — the user may have
+	// added/removed agents or rotated providers since the prior task ran,
+	// and the workspace override always re-targets the current workDir.
+	// Fail closed: a user config that can no longer be parsed should block
+	// reuse rather than degrade to a minimal config that boots OpenClaw
+	// without the registered agents.
+	if params.Provider == "openclaw" {
+		result, err := prepareOpenclawConfig(env.RootDir, params.WorkDir, OpenclawConfigPrep{
+			OpenclawBin: params.OpenclawBin,
+			McpConfig:   params.McpConfig,
+			Gateway:     params.OpenclawGateway,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("execenv: refresh openclaw config: %w", err)
 		}
+		env.OpenclawConfigPath = result.ConfigPath
+		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
 	logger.Info("execenv: reusing env", "workdir", params.WorkDir)
-	return env
+	return env, nil
 }
 
 // hydrateCodexSkills populates the per-task CODEX_HOME/skills directory with
@@ -440,23 +426,23 @@ func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, 
 	return writeSkillFiles(skillsDir, workspaceSkills, nil)
 }
 
-// GCMetaKind identifies which kind of parent record a task workdir belongs to.
+// gcMetaKind identifies which kind of parent record a task workdir belongs to.
 // The GC loop dispatches its decision tree on this value so chat / autopilot /
 // quick-create tasks are no longer forced through the issue-centric path.
-type GCMetaKind string
+type gcMetaKind string
 
 const (
-	GCKindIssue        GCMetaKind = "issue"
-	GCKindChat         GCMetaKind = "chat"
-	GCKindAutopilotRun GCMetaKind = "autopilot_run"
-	GCKindQuickCreate  GCMetaKind = "quick_create"
+	GCKindIssue        gcMetaKind = "issue"
+	GCKindChat         gcMetaKind = "chat"
+	GCKindAutopilotRun gcMetaKind = "autopilot_run"
+	GCKindQuickCreate  gcMetaKind = "quick_create"
 )
 
 // GCMeta is persisted to .gc_meta.json inside the env root so the GC loop
 // can decide whether the directory is reclaimable. It is a discriminated
 // union keyed on Kind: only the ID field matching Kind is meaningful.
 type GCMeta struct {
-	Kind           GCMetaKind `json:"kind,omitempty"`
+	Kind           gcMetaKind `json:"kind"`
 	IssueID        string     `json:"issue_id,omitempty"`
 	ChatSessionID  string     `json:"chat_session_id,omitempty"`
 	AutopilotRunID string     `json:"autopilot_run_id,omitempty"`
@@ -478,17 +464,7 @@ const gcMetaFile = ".gc_meta.json"
 // WriteGCMeta writes GC metadata into the given directory. The caller is
 // responsible for choosing Kind and populating the matching ID field;
 // CompletedAt is stamped here so callers don't have to think about clocks.
-func WriteGCMeta(envRoot string, meta GCMeta, logger *slog.Logger) error {
-	if envRoot == "" {
-		return nil
-	}
-	if meta.Kind == "" {
-		// Defensive: a task that doesn't fit any known kind would write a
-		// meta file the GC loop can't dispatch on. Skip silently — the
-		// directory falls back to the orphan-by-mtime path.
-		logger.Debug("execenv: skipping .gc_meta.json write: kind is empty", "envRoot", envRoot)
-		return nil
-	}
+func WriteGCMeta(envRoot string, meta GCMeta) error {
 	meta.CompletedAt = time.Now().UTC()
 	data, err := json.Marshal(meta)
 	if err != nil {
@@ -497,7 +473,7 @@ func WriteGCMeta(envRoot string, meta GCMeta, logger *slog.Logger) error {
 	return os.WriteFile(filepath.Join(envRoot, gcMetaFile), data, 0o644)
 }
 
-// ReadGCMeta reads GC metadata from a task directory root.
+// ReadGCMeta reads current GC metadata from a task directory root.
 func ReadGCMeta(envRoot string) (*GCMeta, error) {
 	data, err := os.ReadFile(filepath.Join(envRoot, gcMetaFile))
 	if err != nil {
@@ -506,6 +482,9 @@ func ReadGCMeta(envRoot string) (*GCMeta, error) {
 	var meta GCMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
+	}
+	if meta.Kind == "" {
+		return nil, errors.New("gc metadata kind is required")
 	}
 	return &meta, nil
 }

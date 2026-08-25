@@ -1,50 +1,46 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/util"
-	"github.com/multica-ai/multica/server/internal/util/prompteval"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ── Response types ──────────────────────────────────────────────────────────
 
-type SquadResponse struct {
-	ID            string                       `json:"id"`
-	WorkspaceID   string                       `json:"workspace_id"`
-	Name          string                       `json:"name"`
-	Description   string                       `json:"description"`
-	Instructions  string                       `json:"instructions"`
-	SOPProfile    any                          `json:"sop_profile"`
-	AvatarURL     *string                      `json:"avatar_url"`
-	Scope         string                       `json:"scope"`
-	LeaderID      string                       `json:"leader_id"`
-	CreatorID     string                       `json:"creator_id"`
-	CreatedAt     string                       `json:"created_at"`
-	UpdatedAt     string                       `json:"updated_at"`
-	ArchivedAt    *string                      `json:"archived_at"`
-	ArchivedBy    *string                      `json:"archived_by"`
-	MemberCount   int                          `json:"member_count"`
-	MemberPreview []SquadMemberPreviewResponse `json:"member_preview"`
+type squadResponse struct {
+	ID            string           `json:"id"`
+	WorkspaceID   string           `json:"workspace_id"`
+	Name          string           `json:"name"`
+	Description   string           `json:"description"`
+	Instructions  string           `json:"instructions"`
+	SOPProfile    map[string]any   `json:"sop_profile"`
+	AvatarURL     *string          `json:"avatar_url"`
+	Scope         string           `json:"scope"`
+	LeaderID      string           `json:"leader_id"`
+	CreatorID     string           `json:"creator_id"`
+	CreatedAt     string           `json:"created_at"`
+	UpdatedAt     string           `json:"updated_at"`
+	ArchivedAt    *string          `json:"archived_at"`
+	ArchivedBy    *string          `json:"archived_by"`
+	MemberCount   int              `json:"member_count"`
+	MemberPreview []SquadMemberRef `json:"member_preview"`
 }
 
-type SquadMemberPreviewResponse struct {
+type SquadMemberRef struct {
 	MemberType string `json:"member_type"`
 	MemberID   string `json:"member_id"`
 	Role       string `json:"role"`
@@ -52,7 +48,7 @@ type SquadMemberPreviewResponse struct {
 
 type squadMemberSummary struct {
 	count   int
-	preview []SquadMemberPreviewResponse
+	preview []SquadMemberRef
 }
 
 type SquadMemberResponse struct {
@@ -64,8 +60,24 @@ type SquadMemberResponse struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+type createSquadRequest struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	LeaderID    string           `json:"leader_id"`
+	AvatarURL   *string          `json:"avatar_url"`
+	Scope       string           `json:"scope"`
+	SOPProfile  json.RawMessage  `json:"sop_profile"`
+	Members     []SquadMemberRef `json:"members"`
+}
+
+type preparedSquadMember struct {
+	memberType string
+	memberID   pgtype.UUID
+	role       string
+}
+
 type InternalSquadTemplateResponse struct {
-	Squad  SquadResponse        `json:"squad"`
+	Squad  squadResponse        `json:"squad"`
 	Agents []InternalSquadAgent `json:"agents"`
 }
 
@@ -519,14 +531,18 @@ func userCenterSOPMCPConfig() []byte {
 
 // ── Converters ──────────────────────────────────────────────────────────────
 
-func squadToResponse(s db.Squad) SquadResponse {
-	return SquadResponse{
+func squadToResponse(s db.Squad) (squadResponse, error) {
+	profile, err := decodeSquadSOPProfile(s.SopProfile)
+	if err != nil {
+		return squadResponse{}, err
+	}
+	return squadResponse{
 		ID:            uuidToString(s.ID),
 		WorkspaceID:   uuidToString(s.WorkspaceID),
 		Name:          s.Name,
 		Description:   s.Description,
 		Instructions:  s.Instructions,
-		SOPProfile:    decodeSquadSOPProfile(s.SopProfile),
+		SOPProfile:    profile,
 		AvatarURL:     textToPtr(s.AvatarUrl),
 		Scope:         s.Scope,
 		LeaderID:      uuidToString(s.LeaderID),
@@ -535,19 +551,55 @@ func squadToResponse(s db.Squad) SquadResponse {
 		UpdatedAt:     timestampToString(s.UpdatedAt),
 		ArchivedAt:    timestampToPtr(s.ArchivedAt),
 		ArchivedBy:    uuidToPtr(s.ArchivedBy),
-		MemberPreview: []SquadMemberPreviewResponse{},
-	}
+		MemberPreview: []SquadMemberRef{},
+	}, nil
 }
 
-func decodeSquadSOPProfile(raw []byte) any {
-	var profile any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &profile)
+func decodeSquadSOPProfile(raw []byte) (map[string]any, error) {
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return nil, fmt.Errorf("decode squad SOP profile: %w", err)
 	}
 	if profile == nil {
-		return map[string]any{}
+		return nil, errors.New("decode squad SOP profile: expected JSON object")
 	}
-	return profile
+	return profile, nil
+}
+
+func normalizeSquadSOPProfile(raw json.RawMessage) ([]byte, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	profile, err := decodeSquadSOPProfile(raw)
+	if err != nil {
+		return nil, errors.New("sop_profile must be a JSON object")
+	}
+	rawSteps, exists := profile["steps"]
+	if !exists {
+		return raw, nil
+	}
+	steps, ok := rawSteps.([]any)
+	if !ok {
+		return nil, errors.New("sop_profile.steps must be an array")
+	}
+	for index, rawStep := range steps {
+		step, ok := rawStep.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("sop_profile.steps[%d] must be an object", index)
+		}
+		for field := range step {
+			switch field {
+			case "key", "name", "role_key", "skill":
+			default:
+				return nil, fmt.Errorf("sop_profile.steps[%d].%s is not supported", index, field)
+			}
+		}
+		key, ok := step["key"].(string)
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("sop_profile.steps[%d].key is required", index)
+		}
+	}
+	return raw, nil
 }
 
 func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
@@ -566,14 +618,14 @@ func addSquadMemberPreview(summary *squadMemberSummary, memberType string, membe
 	if len(summary.preview) >= 3 {
 		return
 	}
-	summary.preview = append(summary.preview, SquadMemberPreviewResponse{
+	summary.preview = append(summary.preview, SquadMemberRef{
 		MemberType: memberType,
 		MemberID:   uuidToString(memberID),
 		Role:       role,
 	})
 }
 
-func applySquadMemberSummary(resp *SquadResponse, summary *squadMemberSummary) {
+func applySquadMemberSummary(resp *squadResponse, summary *squadMemberSummary) {
 	if summary == nil {
 		return
 	}
@@ -585,7 +637,7 @@ func applySquadMemberSummary(resp *SquadResponse, summary *squadMemberSummary) {
 
 // loadSquadInWorkspace loads a squad scoped to the current workspace.
 func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (db.Squad, string, bool) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
+	workspaceID := requestctx.WorkspaceID(r.Context())
 	squadID := chi.URLParam(r, "id")
 	squadUUID, ok := parseUUIDOrBadRequest(w, squadID, "squad id")
 	if !ok {
@@ -600,23 +652,19 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "squad not found")
+		writeEntityLoadError(w, err, "squad", "squad_id", squadID)
 		return db.Squad{}, "", false
 	}
 	return squad, workspaceID, true
 }
 
 func (h *Handler) requireSquadVisible(w http.ResponseWriter, r *http.Request, squad db.Squad, workspaceID string) bool {
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if h.canUseSquad(r.Context(), squad, actorType, actorID, workspaceID) {
-		return true
-	}
-	writeError(w, http.StatusNotFound, "squad not found")
-	return false
+	actorType, actorID := resolveActor(r, requestUserID(r))
+	return h.requireSquadAccess(w, r, squad, actorType, actorID, workspaceID, http.StatusNotFound, "squad not found")
 }
 
-func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, squad db.Squad, workspaceID string) (db.Member, bool) {
-	member, ok := h.workspaceMember(w, r, workspaceID)
+func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, squad db.Squad) (db.Member, bool) {
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return db.Member{}, false
 	}
@@ -627,8 +675,17 @@ func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, sq
 	return member, true
 }
 
-func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUID) (*squadMemberSummary, error) {
-	rows, err := h.Queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
+func (h *Handler) loadManagedSquad(w http.ResponseWriter, r *http.Request) (db.Squad, string, db.Member, bool) {
+	squad, workspaceID, ok := h.loadSquadInWorkspace(w, r)
+	if !ok {
+		return db.Squad{}, "", db.Member{}, false
+	}
+	member, ok := h.requireSquadManager(w, r, squad)
+	return squad, workspaceID, member, ok
+}
+
+func loadSquadMemberSummary(ctx context.Context, queries *db.Queries, squadID pgtype.UUID) (*squadMemberSummary, error) {
+	rows, err := queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
 	if err != nil {
 		return nil, err
 	}
@@ -639,11 +696,14 @@ func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUI
 	return summary, nil
 }
 
-func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad) (SquadResponse, error) {
-	resp := squadToResponse(squad)
-	summary, err := h.loadSquadMemberSummary(ctx, squad.ID)
+func squadToResponseWithPreview(ctx context.Context, queries *db.Queries, squad db.Squad) (squadResponse, error) {
+	resp, err := squadToResponse(squad)
 	if err != nil {
-		return resp, err
+		return squadResponse{}, err
+	}
+	summary, err := loadSquadMemberSummary(ctx, queries, squad.ID)
+	if err != nil {
+		return resp, fmt.Errorf("load squad member preview: %w", err)
 	}
 	applySquadMemberSummary(&resp, summary)
 	return resp, nil
@@ -652,8 +712,8 @@ func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := requestctx.WorkspaceID(r.Context())
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -662,57 +722,45 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeArchived := r.URL.Query().Get("include_archived") == "true"
-	var squads []db.Squad
-	var err error
-	if includeArchived {
-		squads, err = h.Queries.ListAllSquads(r.Context(), wsUUID)
-	} else {
-		squads, err = h.Queries.ListSquads(r.Context(), wsUUID)
-	}
+	squads, err := h.Queries.ListSquads(r.Context(), db.ListSquadsParams{
+		WorkspaceID:     wsUUID,
+		IncludeArchived: includeArchived,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list squads")
 		return
 	}
 
 	summaries := make(map[string]*squadMemberSummary, len(squads))
-	if includeArchived {
-		previewRows, err := h.Queries.ListAllSquadMemberPreviewRows(r.Context(), wsUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
-			return
+	previewRows, err := h.Queries.ListSquadMemberPreviewRows(r.Context(), db.ListSquadMemberPreviewRowsParams{
+		WorkspaceID:     wsUUID,
+		IncludeArchived: includeArchived,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
+		return
+	}
+	for _, row := range previewRows {
+		squadID := uuidToString(row.SquadID)
+		summary := summaries[squadID]
+		if summary == nil {
+			summary = &squadMemberSummary{}
+			summaries[squadID] = summary
 		}
-		for _, row := range previewRows {
-			squadID := uuidToString(row.SquadID)
-			summary := summaries[squadID]
-			if summary == nil {
-				summary = &squadMemberSummary{}
-				summaries[squadID] = summary
-			}
-			addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
-		}
-	} else {
-		previewRows, err := h.Queries.ListSquadMemberPreviewRows(r.Context(), wsUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
-			return
-		}
-		for _, row := range previewRows {
-			squadID := uuidToString(row.SquadID)
-			summary := summaries[squadID]
-			if summary == nil {
-				summary = &squadMemberSummary{}
-				summaries[squadID] = summary
-			}
-			addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
-		}
+		addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
 	}
 
-	resp := make([]SquadResponse, 0, len(squads))
+	resp := make([]squadResponse, 0, len(squads))
 	for _, s := range squads {
-		if !memberCanUseSquad(s, member) {
+		if s.Scope == scopePersonal && !memberCanManageSquad(s, member) {
 			continue
 		}
-		item := squadToResponse(s)
+		item, err := squadToResponse(s)
+		if err != nil {
+			slog.Error("decode squad SOP profile failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(s.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to decode squad SOP profile")
+			return
+		}
 		applySquadMemberSummary(&item, summaries[uuidToString(s.ID)])
 		resp = append(resp, item)
 	}
@@ -720,22 +768,14 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := requestctx.WorkspaceID(r.Context())
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
 
-	var req struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		LeaderID    string          `json:"leader_id"`
-		AvatarURL   *string         `json:"avatar_url"`
-		Scope       string          `json:"scope"`
-		SOPProfile  json.RawMessage `json:"sop_profile"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	var req createSquadRequest
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -761,17 +801,11 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate leader is an agent in this workspace.
-	leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          leaderUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+	leader, ok := loadSquadAgent(w, r, h.Queries, wsUUID, leaderUUID, "leader must be a valid agent in this workspace")
+	if !ok {
 		return
 	}
-	if !h.canAccessPersonalAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
-		writeError(w, http.StatusForbidden, "cannot use personal leader agent")
+	if !h.requirePersonalAgentAccess(w, r, leader, "member", uuidToString(member.UserID), workspaceID, "cannot use personal leader agent") {
 		return
 	}
 	if err := validateSquadLeaderScope(scope, member.UserID, leader); err != nil {
@@ -779,20 +813,99 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	preparedMembers := make([]preparedSquadMember, 0, len(req.Members))
+	seenMembers := map[string]struct{}{"agent:" + uuidToString(leaderUUID): {}}
+	for i, input := range req.Members {
+		if input.MemberType != "agent" && input.MemberType != "member" {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d].member_type must be 'agent' or 'member'", i))
+			return
+		}
+		memberUUID, ok := parseUUIDOrBadRequest(w, input.MemberID, fmt.Sprintf("members[%d].member_id", i))
+		if !ok {
+			return
+		}
+		identity := input.MemberType + ":" + uuidToString(memberUUID)
+		if _, duplicate := seenMembers[identity]; duplicate {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] duplicates the leader or another member", i))
+			return
+		}
+		seenMembers[identity] = struct{}{}
+		req.Members[i].MemberID = uuidToString(memberUUID)
+		if input.MemberType == "agent" {
+			agentMember, ok := loadSquadAgent(w, r, h.Queries, wsUUID, memberUUID, fmt.Sprintf("members[%d] agent not found in this workspace", i))
+			if !ok {
+				return
+			}
+			if !h.requirePersonalAgentAccess(w, r, agentMember, "member", uuidToString(member.UserID), workspaceID, fmt.Sprintf("cannot add members[%d] personal agent", i)) {
+				return
+			}
+			if err := validateSquadLeaderScope(scope, member.UserID, agentMember); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d]: %s", i, err))
+				return
+			}
+		} else {
+			if ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, fmt.Sprintf("members[%d] member not found in this workspace", i)); !ok {
+				return
+			}
+		}
+		preparedMembers = append(preparedMembers, preparedSquadMember{
+			memberType: input.MemberType,
+			memberID:   memberUUID,
+			role:       input.Role,
+		})
+	}
+
 	avatarURL := pgtype.Text{}
 	if req.AvatarURL != nil {
 		avatarURL = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
-	var sopProfile []byte
-	if len(req.SOPProfile) > 0 {
-		if !json.Valid(req.SOPProfile) {
-			writeError(w, http.StatusBadRequest, "sop_profile must be valid JSON")
-			return
-		}
-		sopProfile = req.SOPProfile
+	sopProfile, err := normalizeSquadSOPProfile(req.SOPProfile)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.LeaderID = uuidToString(leaderUUID)
+	req.Scope = scope
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create squad")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different request",
+		"failed to load squad request",
+	)
+	loadReplay := func() (squadResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeSquad,
+			idempotencyKey, requestHash,
+			func(response squadResponse) bool { return response.ID != "" },
+		)
+	}
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
+		return
 	}
 
-	squad, err := h.Queries.CreateSquad(r.Context(), db.CreateSquadParams{
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start squad create")
+	if !ok {
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeReplayError,
+		"failed to reserve squad request",
+		http.StatusCreated,
+	) {
+		return
+	}
+
+	squad, err := qtx.CreateSquad(r.Context(), db.CreateSquadParams{
 		WorkspaceID:  wsUUID,
 		Name:         req.Name,
 		Description:  req.Description,
@@ -808,531 +921,58 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-add leader as a member with role "leader".
-	h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+	// Squad identity and its mandatory leader membership are one invariant.
+	if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
 		SquadID:    squad.ID,
 		MemberType: "agent",
 		MemberID:   leaderUUID,
 		Role:       "leader",
-	})
-
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add squad leader")
 		return
 	}
+	for i, squadMember := range preparedMembers {
+		if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+			SquadID:    squad.ID,
+			MemberType: squadMember.memberType,
+			MemberID:   squadMember.memberID,
+			Role:       squadMember.role,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to add initial squad member at index %d", i))
+			return
+		}
+	}
+	resp, err := squadToResponse(squad)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode squad SOP profile")
+		return
+	}
+	summary := &squadMemberSummary{}
+	addSquadMemberPreview(summary, "agent", leaderUUID, "leader")
+	for _, squadMember := range preparedMembers {
+		addSquadMemberPreview(summary, squadMember.memberType, squadMember.memberID, squadMember.role)
+	}
+	applySquadMemberSummary(&resp, summary)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad,
+		idempotencyKey, requestHash, squad.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete squad request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad create")
+		return
+	}
+
 	h.publish(protocol.EventSquadCreated, workspaceID, "member", uuidToString(member.UserID), map[string]any{"squad": resp})
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.SquadCreated(
 		uuidToString(member.UserID),
 		workspaceID,
 		uuidToString(squad.ID),
-		1,
+		resp.MemberCount,
 	))
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-
-	var req struct {
-		TemplateKey     string  `json:"template_key"`
-		RuntimeProvider string  `json:"runtime_provider"`
-		Model           string  `json:"model"`
-		Scope           string  `json:"scope"`
-		Name            *string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	template, ok := internalSquadTemplateByKey(req.TemplateKey)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "template_key must be user-center or multica-coding")
-		return
-	}
-	if model := strings.TrimSpace(req.Model); model != "" {
-		template.Model = model
-	}
-	customName := false
-	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
-			return
-		}
-		template.Name = name
-		customName = true
-	}
-	provider := normalizeProvider(req.RuntimeProvider)
-	if provider == "" {
-		provider = internalSquadDefaultProvider
-	}
-	scope, validScope := normalizeSquadScope(req.Scope)
-	if !validScope {
-		writeError(w, http.StatusBadRequest, "scope must be 'workspace' or 'personal'")
-		return
-	}
-
-	agentScope := internalSquadAgentScope(scope)
-	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member, provider, agentScope)
-	if !ok {
-		return
-	}
-	if err := validateAgentRuntimeScope(agentScope, member.UserID, runtime); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	agents, err := h.ensureInternalSquadAgents(r.Context(), wsUUID, member.UserID, runtime, template, scope)
-	if err != nil {
-		slog.Warn("ensure internal squad agents failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
-		writeError(w, http.StatusInternalServerError, "failed to create internal squad agents")
-		return
-	}
-	squad, err := h.ensureInternalSquad(r.Context(), wsUUID, member.UserID, template, scope, agents, customName)
-	if err != nil {
-		slog.Warn("ensure internal squad failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
-		writeError(w, http.StatusInternalServerError, "failed to create internal squad")
-		return
-	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load internal squad")
-		return
-	}
-	writeJSON(w, http.StatusOK, InternalSquadTemplateResponse{Squad: resp, Agents: agents})
-}
-
-func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member, provider string, agentScope string) (db.AgentRuntime, bool) {
-	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
-		return db.AgentRuntime{}, false
-	}
-	checkedAt := time.Now().UTC()
-	provider = normalizeProvider(provider)
-	if provider == "" {
-		provider = internalSquadDefaultProvider
-	}
-	providerName := provider
-	if len(providerName) > 0 {
-		providerName = strings.ToUpper(providerName[:1]) + providerName[1:]
-	}
-	var best *db.AgentRuntime
-	for i := range runtimes {
-		runtime := runtimes[i]
-		if !strings.EqualFold(runtime.Provider, provider) || !canUseRuntimeForAgent(member, runtime) {
-			continue
-		}
-		if !agentRuntimeScopeCompatible(agentScope, member.UserID, runtime) {
-			continue
-		}
-		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
-			best = &runtime
-		}
-	}
-	if best == nil {
-		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用于"+internalSquadRuntimeScopeLabel(agentScope)+"小队的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon，并确认 /api/runtimes 出现 provider="+provider+" 且范围匹配的在线 runtime。")
-		return db.AgentRuntime{}, false
-	}
-	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
-		writeError(w, http.StatusServiceUnavailable, providerName+" runtime 当前未就绪，无法创建真实可执行的内部小队。请启动 daemon 并等待 runtime 心跳刷新。")
-		return db.AgentRuntime{}, false
-	}
-	return *best, true
-}
-
-func internalSquadRuntimeScopeLabel(agentScope string) string {
-	if agentScope == scopePersonal {
-		return "个人"
-	}
-	return "工作区"
-}
-
-func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadScope string) ([]InternalSquadAgent, error) {
-	existing, err := h.Queries.ListAllAgents(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]InternalSquadAgent, 0, len(template.Roles))
-	agentScope := internalSquadAgentScope(squadScope)
-	for _, role := range template.Roles {
-		name := strings.TrimSpace(role.AgentName)
-		if name == "" {
-			name = template.Name + " · " + role.Name
-		}
-		runtimeConfig := internalSquadAgentRuntimeConfig(runtime, template, role, squadScope, agentScope, ownerID)
-		instructions := "你是" + template.Name + "小队的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。"
-		description := internalSquadRoleDescription(template, role)
-		model := pgtype.Text{String: template.Model, Valid: true}
-		agentRow, ok := findInternalSquadAgent(existing, name, template, role, squadScope, agentScope, ownerID)
-		if !ok {
-			agentRow, err = h.Queries.CreateAgent(ctx, db.CreateAgentParams{
-				WorkspaceID:        workspaceID,
-				Name:               name,
-				Description:        description,
-				Instructions:       instructions,
-				RuntimeMode:        runtime.RuntimeMode,
-				RuntimeConfig:      runtimeConfig,
-				RuntimeID:          runtime.ID,
-				Scope:              agentScope,
-				MaxConcurrentTasks: defaultAgentMaxConcurrentTasks,
-				OwnerID:            ownerID,
-				CustomEnv:          []byte("{}"),
-				CustomArgs:         []byte("[]"),
-				McpConfig:          role.MCPConfig,
-				Model:              model,
-			})
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			if agentRow.ArchivedAt.Valid {
-				agentRow, err = h.Queries.RestoreAgent(ctx, agentRow.ID)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if internalSquadAgentNeedsSync(agentRow, runtime, template, role, runtimeConfig, instructions, description, model, agentScope) {
-				agentRow, err = h.Queries.UpdateAgent(ctx, db.UpdateAgentParams{
-					ID:                 agentRow.ID,
-					Description:        pgtype.Text{String: description, Valid: true},
-					RuntimeConfig:      runtimeConfig,
-					RuntimeMode:        pgtype.Text{String: runtime.RuntimeMode, Valid: true},
-					RuntimeID:          runtime.ID,
-					Scope:              pgtype.Text{String: agentScope, Valid: true},
-					MaxConcurrentTasks: pgtype.Int4{Int32: defaultAgentMaxConcurrentTasks, Valid: true},
-					Instructions:       pgtype.Text{String: instructions, Valid: true},
-					CustomArgs:         []byte("[]"),
-					McpConfig:          role.MCPConfig,
-					Model:              model,
-				})
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		result = append(result, InternalSquadAgent{
-			ID:      uuidToString(agentRow.ID),
-			Name:    agentRow.Name,
-			RoleKey: role.Key,
-			Role:    role.Name,
-		})
-	}
-	return result, nil
-}
-
-func internalSquadAgentScope(squadScope string) string {
-	if squadScope == squadScopePersonal {
-		return scopePersonal
-	}
-	return scopeWorkspace
-}
-
-func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) []byte {
-	scopeOwnerID := ""
-	if squadScope == squadScopePersonal {
-		scopeOwnerID = uuidToString(ownerID)
-	}
-	return prompteval.MustJSONBytes(map[string]any{
-		"provider": runtime.Provider,
-		"用途":       template.Name,
-		"角色":       role.Name,
-		"模板":       template.Key,
-		"internal_squad": map[string]any{
-			"template_key": template.Key,
-			"role_key":     role.Key,
-			"squad_scope":  squadScope,
-			"agent_scope":  agentScope,
-			"owner_id":     scopeOwnerID,
-		},
-	})
-}
-
-func findInternalSquadAgent(agents []db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) (db.Agent, bool) {
-	var archivedMatch db.Agent
-	for _, agent := range agents {
-		if !matchesInternalSquadAgent(agent, name, template, role, squadScope, agentScope, ownerID) {
-			continue
-		}
-		if !agent.ArchivedAt.Valid {
-			return agent, true
-		}
-		if uuidToString(archivedMatch.ID) == "" || agent.UpdatedAt.Time.After(archivedMatch.UpdatedAt.Time) {
-			archivedMatch = agent
-		}
-	}
-	if uuidToString(archivedMatch.ID) != "" {
-		return archivedMatch, true
-	}
-	return db.Agent{}, false
-}
-
-func matchesInternalSquadAgent(agent db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) bool {
-	if agent.Name != name || agent.Scope != agentScope {
-		return false
-	}
-	if squadScope == squadScopePersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
-		return false
-	}
-	var runtimeConfig map[string]any
-	if len(bytes.TrimSpace(agent.RuntimeConfig)) == 0 || json.Unmarshal(agent.RuntimeConfig, &runtimeConfig) != nil {
-		return false
-	}
-	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		if prompteval.StringFromAny(scope["template_key"]) != template.Key ||
-			prompteval.StringFromAny(scope["role_key"]) != role.Key ||
-			prompteval.StringFromAny(scope["squad_scope"]) != squadScope ||
-			prompteval.StringFromAny(scope["agent_scope"]) != agentScope {
-			return false
-		}
-		if squadScope == squadScopePersonal && prompteval.StringFromAny(scope["owner_id"]) != uuidToString(ownerID) {
-			return false
-		}
-		return true
-	}
-	return prompteval.StringFromAny(runtimeConfig["模板"]) == template.Key && prompteval.StringFromAny(runtimeConfig["角色"]) == role.Name
-}
-
-func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
-	if agent.Description != description ||
-		agent.RuntimeMode != runtime.RuntimeMode ||
-		uuidToString(agent.RuntimeID) != uuidToString(runtime.ID) ||
-		agent.Scope != scope ||
-		agent.MaxConcurrentTasks != defaultAgentMaxConcurrentTasks ||
-		agent.Instructions != instructions ||
-		!bytes.Equal(bytes.TrimSpace(agent.RuntimeConfig), bytes.TrimSpace(runtimeConfig)) ||
-		!bytes.Equal(bytes.TrimSpace(agent.CustomArgs), []byte("[]")) ||
-		!bytes.Equal(bytes.TrimSpace(agent.McpConfig), bytes.TrimSpace(role.MCPConfig)) {
-		return true
-	}
-	if model.Valid != agent.Model.Valid {
-		return true
-	}
-	if model.Valid && model.String != agent.Model.String {
-		return true
-	}
-	return false
-}
-
-func internalSquadRoleDescription(template internalSquadTemplate, role internalSquadRole) string {
-	if strings.TrimSpace(role.Description) != "" {
-		return strings.TrimSpace(role.Description)
-	}
-	return template.Description
-}
-
-func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, scope string, agents []InternalSquadAgent, archiveSuperseded bool) (db.Squad, error) {
-	if len(agents) == 0 {
-		return db.Squad{}, pgx.ErrNoRows
-	}
-	squads, err := h.Queries.ListAllSquads(ctx, workspaceID)
-	if err != nil {
-		return db.Squad{}, err
-	}
-	var squad db.Squad
-	var archivedMatch db.Squad
-	for _, item := range squads {
-		if !matchesInternalSquadTarget(item, template, scope, creatorID, archiveSuperseded) {
-			continue
-		}
-		if !item.ArchivedAt.Valid {
-			squad = item
-			break
-		}
-		if uuidToString(archivedMatch.ID) == "" || item.UpdatedAt.Time.After(archivedMatch.UpdatedAt.Time) {
-			archivedMatch = item
-		}
-	}
-	if uuidToString(squad.ID) == "" {
-		if uuidToString(archivedMatch.ID) != "" {
-			squad, err = h.Queries.RestoreSquad(ctx, archivedMatch.ID)
-			if err != nil {
-				return db.Squad{}, err
-			}
-		} else {
-			sopProfile := prompteval.MustJSONBytes(template.Profile)
-			squad, err = h.Queries.CreateSquad(ctx, db.CreateSquadParams{
-				WorkspaceID:  workspaceID,
-				Name:         template.Name,
-				Description:  template.Description,
-				LeaderID:     parseUUID(agents[0].ID),
-				CreatorID:    creatorID,
-				Scope:        pgtype.Text{String: scope, Valid: true},
-				Instructions: pgtype.Text{String: template.Instructions, Valid: true},
-				SopProfile:   sopProfile,
-			})
-			if err != nil {
-				return db.Squad{}, err
-			}
-		}
-	}
-	if uuidToString(squad.ID) != "" {
-		profileBytes := prompteval.MustJSONBytes(template.Profile)
-		leaderID := parseUUID(agents[0].ID)
-		if itemNeedsInternalSquadSync(squad, template, profileBytes, leaderID, scope) {
-			params := db.UpdateSquadParams{
-				ID:           squad.ID,
-				Name:         pgtype.Text{String: template.Name, Valid: squad.Name != template.Name},
-				Description:  pgtype.Text{String: template.Description, Valid: true},
-				LeaderID:     leaderID,
-				Scope:        pgtype.Text{String: scope, Valid: true},
-				Instructions: pgtype.Text{String: template.Instructions, Valid: true},
-				SopProfile:   profileBytes,
-			}
-			squad, err = h.Queries.UpdateSquad(ctx, params)
-			if err != nil {
-				return db.Squad{}, err
-			}
-		}
-	}
-	existingMembers, err := h.Queries.ListSquadMembers(ctx, squad.ID)
-	if err != nil {
-		return db.Squad{}, err
-	}
-	desiredAgentMembers := map[string]struct{}{}
-	for _, agent := range agents {
-		desiredAgentMembers[agent.ID] = struct{}{}
-	}
-	existingMemberRoles := map[string]string{}
-	for _, member := range existingMembers {
-		memberID := uuidToString(member.MemberID)
-		if member.MemberType == "agent" {
-			if _, keep := desiredAgentMembers[memberID]; !keep {
-				if _, err := h.Queries.RemoveSquadMember(ctx, db.RemoveSquadMemberParams{
-					SquadID:    squad.ID,
-					MemberType: member.MemberType,
-					MemberID:   member.MemberID,
-				}); err != nil {
-					return db.Squad{}, err
-				}
-				continue
-			}
-		}
-		existingMemberRoles[member.MemberType+":"+memberID] = member.Role
-	}
-	for _, agent := range agents {
-		role := "member"
-		for _, templateRole := range template.Roles {
-			if templateRole.Key == agent.RoleKey {
-				role = templateRole.MemberRole
-				break
-			}
-		}
-		memberID := parseUUID(agent.ID)
-		memberKey := "agent:" + agent.ID
-		if existingRole, exists := existingMemberRoles[memberKey]; exists {
-			if existingRole != role {
-				if _, err := h.Queries.UpdateSquadMemberRole(ctx, db.UpdateSquadMemberRoleParams{
-					SquadID:    squad.ID,
-					MemberType: "agent",
-					MemberID:   memberID,
-					Role:       role,
-				}); err != nil {
-					return db.Squad{}, err
-				}
-			}
-			continue
-		}
-		if _, err := h.Queries.AddSquadMember(ctx, db.AddSquadMemberParams{
-			SquadID:    squad.ID,
-			MemberType: "agent",
-			MemberID:   memberID,
-			Role:       role,
-		}); err != nil {
-			return db.Squad{}, err
-		}
-		existingMemberRoles[memberKey] = role
-	}
-	if archiveSuperseded {
-		if err := h.archiveSupersededInternalSquads(ctx, squads, squad.ID, template, scope, creatorID); err != nil {
-			return db.Squad{}, err
-		}
-	}
-	return squad, nil
-}
-
-func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
-	sameTemplate := squad.Name == template.Name || matchesInternalSquadProfileKey(squad, template)
-	sameScope := squad.Scope == scope
-	sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
-	return sameTemplate && sameScope && sameCreator
-}
-
-func internalSquadProfileKey(squad db.Squad) string {
-	profile := decodeJSONDefault(squad.SopProfile, map[string]any{})
-	profileMap, _ := profile.(map[string]any)
-	return prompteval.StringFromAny(profileMap["profile_key"])
-}
-
-func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTemplate) bool {
-	key := internalSquadProfileKey(squad)
-	return key != "" && (key == template.Key || key == prompteval.StringFromAny(template.Profile["profile_key"]))
-}
-
-func matchesInternalSquadTarget(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID, requireName bool) bool {
-	if requireName {
-		sameTemplate := matchesInternalSquadProfileKey(squad, template)
-		sameScope := squad.Scope == scope
-		sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
-		return sameTemplate && sameScope && sameCreator && squad.Name == template.Name
-	}
-	if !matchesInternalSquadTemplate(squad, template, scope, creatorID) {
-		return false
-	}
-	return true
-}
-
-func (h *Handler) archiveSupersededInternalSquads(ctx context.Context, squads []db.Squad, currentID pgtype.UUID, template internalSquadTemplate, scope string, creatorID pgtype.UUID) error {
-	current := uuidToString(currentID)
-	for _, item := range squads {
-		if item.ArchivedAt.Valid || uuidToString(item.ID) == current {
-			continue
-		}
-		sameTemplate := matchesInternalSquadProfileKey(item, template)
-		sameScope := item.Scope == scope
-		sameCreator := scope != squadScopePersonal || uuidToString(item.CreatorID) == uuidToString(creatorID)
-		if !sameTemplate || !sameScope || !sameCreator {
-			continue
-		}
-		if _, err := h.DB.Exec(ctx, `
-			UPDATE issue
-			SET assignee_id = $2, updated_at = now()
-			WHERE assignee_type = 'squad' AND assignee_id = $1
-		`, item.ID, currentID); err != nil {
-			return err
-		}
-		if _, err := h.DB.Exec(ctx, `
-			UPDATE autopilot
-			SET assignee_id = $2, updated_at = now()
-			WHERE assignee_type = 'squad' AND assignee_id = $1
-		`, item.ID, currentID); err != nil {
-			return err
-		}
-		if _, err := h.Queries.ArchiveSquad(ctx, db.ArchiveSquadParams{
-			ID:         item.ID,
-			ArchivedBy: creatorID,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func itemNeedsInternalSquadSync(squad db.Squad, template internalSquadTemplate, profileBytes []byte, leaderID pgtype.UUID, scope string) bool {
-	return squad.Name != template.Name ||
-		squad.Description != template.Description ||
-		uuidToString(squad.LeaderID) != uuidToString(leaderID) ||
-		squad.Scope != scope ||
-		!bytes.Equal(bytes.TrimSpace(squad.SopProfile), bytes.TrimSpace(profileBytes)) ||
-		squad.Instructions != template.Instructions
 }
 
 func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
@@ -1343,21 +983,17 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	if !h.requireSquadVisible(w, r, squad, workspaceID) {
 		return
 	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	resp, err := squadToResponseWithPreview(r.Context(), h.Queries, squad)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(squad.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load squad")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	member, ok := h.requireSquadManager(w, r, squad, workspaceID)
+	squad, workspaceID, member, ok := h.loadManagedSquad(w, r)
 	if !ok {
 		return
 	}
@@ -1375,8 +1011,7 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		Scope        *string         `json:"scope"`
 		SOPProfile   json.RawMessage `json:"sop_profile"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -1404,11 +1039,12 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		params.Scope = pgtype.Text{String: scope, Valid: true}
 	}
 	if len(req.SOPProfile) > 0 {
-		if !json.Valid(req.SOPProfile) {
-			writeError(w, http.StatusBadRequest, "sop_profile must be valid JSON")
+		sopProfile, err := normalizeSquadSOPProfile(req.SOPProfile)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		params.SopProfile = req.SOPProfile
+		params.SopProfile = sopProfile
 	}
 	nextLeaderID := squad.LeaderID
 	var nextLeader db.Agent
@@ -1418,39 +1054,22 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// Validate new leader is an agent in workspace.
-		leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-			ID: lid, WorkspaceID: wsUUID,
-		})
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+		leader, ok := loadSquadAgent(w, r, h.Queries, wsUUID, lid, "leader must be a valid agent in this workspace")
+		if !ok {
 			return
 		}
-		if !h.canAccessPersonalAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
-			writeError(w, http.StatusForbidden, "cannot use personal leader agent")
+		if !h.requirePersonalAgentAccess(w, r, leader, "member", uuidToString(member.UserID), workspaceID, "cannot use personal leader agent") {
 			return
 		}
 		nextLeader = leader
 		haveNextLeader = true
-		// Ensure new leader is a squad member; auto-add if not.
-		isMember, _ := h.Queries.IsSquadMember(r.Context(), db.IsSquadMemberParams{
-			SquadID: squad.ID, MemberType: "agent", MemberID: lid,
-		})
-		if !isMember {
-			h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
-				SquadID: squad.ID, MemberType: "agent", MemberID: lid, Role: "leader",
-			})
-		}
 		params.LeaderID = lid
 		nextLeaderID = lid
 	}
 	if req.Scope != nil || req.LeaderID != nil {
 		if !haveNextLeader {
-			leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-				ID: nextLeaderID, WorkspaceID: wsUUID,
-			})
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+			leader, ok := loadSquadAgent(w, r, h.Queries, wsUUID, nextLeaderID, "leader must be a valid agent in this workspace")
+			if !ok {
 				return
 			}
 			nextLeader = leader
@@ -1461,15 +1080,45 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.Queries.UpdateSquad(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin squad update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	if req.LeaderID != nil {
+		isMember, err := qtx.IsSquadMember(r.Context(), db.IsSquadMemberParams{
+			SquadID: squad.ID, MemberType: "agent", MemberID: params.LeaderID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check squad membership")
+			return
+		}
+		if !isMember {
+			if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+				SquadID: squad.ID, MemberType: "agent", MemberID: params.LeaderID, Role: "leader",
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add squad leader membership")
+				return
+			}
+		}
+	}
+
+	updated, err := qtx.UpdateSquad(r.Context(), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update squad")
 		return
 	}
 
-	resp, err := h.squadToResponseWithPreview(r.Context(), updated)
+	resp, err := squadToResponseWithPreview(r.Context(), qtx, updated)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(updated.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load squad")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad update")
 		return
 	}
 	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{"squad": resp})
@@ -1477,12 +1126,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	squad, workspaceID, _, ok := h.loadManagedSquad(w, r)
 	if !ok {
-		return
-	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
 		return
 	}
 
@@ -1491,12 +1136,28 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transfer issues assigned to this squad to the leader agent.
-	if err := h.Queries.TransferSquadAssignees(r.Context(), db.TransferSquadAssigneesParams{
+	userID := requestUserID(r)
+	userUUID, ok := parseUUIDOrBadRequest(w, userID, "user_id")
+	if !ok {
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin squad archive")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+
+	// The assignment transfers and archive state are one invariant: no active
+	// record may continue to target an archived squad.
+	if err := qtx.TransferSquadAssignees(r.Context(), db.TransferSquadAssigneesParams{
 		AssigneeID:   squad.ID,
 		AssigneeID_2: squad.LeaderID,
 	}); err != nil {
-		slog.Warn("transfer squad assignees failed", "squad_id", uuidToString(squad.ID), "error", err)
+		slog.Error("transfer squad assignees failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(squad.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to transfer squad assignments")
+		return
 	}
 
 	// Mirror the issue-assignee transfer for autopilots that target this
@@ -1505,21 +1166,24 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 	// "assignee squad is archived" — visible to ops but useless to the
 	// owner. Rewriting to the leader keeps the autopilot semantics
 	// unchanged (Path A from MUL-2429 is leader-only execution anyway).
-	if err := h.Queries.TransferSquadAutopilotsToLeader(r.Context(), db.TransferSquadAutopilotsToLeaderParams{
+	if err := qtx.TransferSquadAutopilotsToLeader(r.Context(), db.TransferSquadAutopilotsToLeaderParams{
 		AssigneeID:   squad.ID,
 		AssigneeID_2: squad.LeaderID,
 	}); err != nil {
-		slog.Warn("transfer squad autopilots failed", "squad_id", uuidToString(squad.ID), "error", err)
+		slog.Error("transfer squad autopilots failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(squad.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to transfer squad autopilots")
+		return
 	}
 
-	userID := requestUserID(r)
-	userUUID, _ := parseUUIDOrBadRequest(w, userID, "user_id")
-
-	if _, err := h.Queries.ArchiveSquad(r.Context(), db.ArchiveSquadParams{
+	if _, err := qtx.ArchiveSquad(r.Context(), db.ArchiveSquadParams{
 		ID:         squad.ID,
 		ArchivedBy: userUUID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive squad")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad archive")
 		return
 	}
 
@@ -1531,12 +1195,8 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	squad, workspaceID, _, ok := h.loadManagedSquad(w, r)
 	if !ok {
-		return
-	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
 		return
 	}
 	if !squad.ArchivedAt.Valid {
@@ -1550,9 +1210,10 @@ func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to restore squad")
 		return
 	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), restored)
+	resp, err := squadToResponseWithPreview(r.Context(), h.Queries, restored)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(restored.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load squad")
 		return
 	}
 	userID := requestUserID(r)
@@ -1561,614 +1222,3 @@ func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Squad Members ───────────────────────────────────────────────────────────
-
-func (h *Handler) ListSquadMembers(w http.ResponseWriter, r *http.Request) {
-	squad, workspaceID, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	if !h.requireSquadVisible(w, r, squad, workspaceID) {
-		return
-	}
-	members, err := h.Queries.ListSquadMembers(r.Context(), squad.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list squad members")
-		return
-	}
-	resp := make([]SquadMemberResponse, len(members))
-	for i, m := range members {
-		resp[i] = squadMemberToResponse(m)
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// ── Squad Member Status ────────────────────────────────────────────────────
-
-// SquadMemberStatus is the per-member entry in the squad member status
-// response. Agent members carry a derived working/idle/offline/unstable
-// status plus any active issues; human members are returned with member_type
-// only so the front-end can render them in the same list without
-// reordering.
-type SquadMemberStatusResponse struct {
-	MemberType   string                  `json:"member_type"`
-	MemberID     string                  `json:"member_id"`
-	Status       *string                 `json:"status"`
-	ActiveIssues []SquadActiveIssueBrief `json:"active_issues"`
-	LastActiveAt *string                 `json:"last_active_at"`
-}
-
-type SquadActiveIssueBrief struct {
-	IssueID     string `json:"issue_id"`
-	Identifier  string `json:"identifier"`
-	Title       string `json:"title"`
-	IssueStatus string `json:"issue_status"`
-}
-
-type SquadMemberStatusListResponse struct {
-	Members []SquadMemberStatusResponse `json:"members"`
-}
-
-// deriveSquadMemberStatus collapses runtime + task signals into the five
-// status buckets used by the squad UI. Mirrors the workload+availability
-// split in packages/core/agents/derive-presence.ts: working wins over
-// runtime health (an agent that is in the middle of dispatched/running
-// work counts as working even if the runtime briefly drops), then
-// availability buckets decide between idle / unstable / offline.
-//
-// Thresholds match deriveRuntimeHealth: any offline runtime whose
-// last_seen_at is within the last 5 minutes is reported as "unstable" so
-// the squad UI surfaces transient drops the same way the agent dot does.
-//
-// Archived agents always report `archived` regardless of any leftover
-// runtime row or task — they should appear in the list but never look
-// like they're still working or merely offline (a leftover online
-// runtime row would otherwise read as "offline" and hide the fact that
-// the agent has been archived). Per the RFC decision (see MUL-2319), we
-// surface archived agents in this endpoint rather than filtering them
-// out in the SQL.
-func deriveSquadMemberStatus(
-	archived bool,
-	runtimeStatus pgtype.Text,
-	lastSeen pgtype.Timestamptz,
-	hasActiveTask bool,
-	now time.Time,
-) string {
-	if archived {
-		return "archived"
-	}
-	if hasActiveTask {
-		return "working"
-	}
-	if !runtimeStatus.Valid {
-		return "offline"
-	}
-	if runtimeStatus.String == "online" {
-		return "idle"
-	}
-	if !lastSeen.Valid {
-		return "offline"
-	}
-	if now.Sub(lastSeen.Time) < 5*time.Minute {
-		return "unstable"
-	}
-	return "offline"
-}
-
-// ListSquadMemberStatus returns one entry per squad member with derived
-// status, the issues each agent member is currently running, and the last
-// observed runtime activity. The endpoint is read-only and inherits the
-// workspace-membership guard from the route middleware — any member of the
-// workspace can read it.
-func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) {
-	squad, workspaceID, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	if !h.requireSquadVisible(w, r, squad, workspaceID) {
-		return
-	}
-
-	rows, err := h.Queries.ListSquadMemberStatusRows(r.Context(), squad.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list squad member status")
-		return
-	}
-
-	prefix := h.getIssuePrefix(r.Context(), squad.WorkspaceID)
-	now := time.Now()
-
-	// Group rows by member_id while preserving the SQL ORDER BY (squad_member
-	// insertion order). One member may appear in multiple rows when they have
-	// more than one active task.
-	type memberAcc struct {
-		response       SquadMemberStatusResponse
-		archived       bool
-		hasActiveTask  bool
-		runtimeStatus  pgtype.Text
-		runtimeSeenAt  pgtype.Timestamptz
-		latestActiveAt pgtype.Timestamptz
-	}
-	order := make([]string, 0, len(rows))
-	acc := make(map[string]*memberAcc, len(rows))
-
-	for _, row := range rows {
-		memberID := uuidToString(row.MemberID)
-		entry, exists := acc[memberID]
-		if !exists {
-			entry = &memberAcc{
-				response: SquadMemberStatusResponse{
-					MemberType:   row.MemberType,
-					MemberID:     memberID,
-					ActiveIssues: []SquadActiveIssueBrief{},
-				},
-				archived:      row.AgentArchivedAt.Valid,
-				runtimeStatus: row.RuntimeStatus,
-				runtimeSeenAt: row.RuntimeLastSeenAt,
-			}
-			acc[memberID] = entry
-			order = append(order, memberID)
-		}
-
-		if row.MemberType != "agent" {
-			continue
-		}
-
-		// A dispatched/running task occupies an agent slot even when it
-		// has no associated issue (chat / quick-create tasks set
-		// agent_task_queue.issue_id = NULL). The `working` bucket is
-		// defined by task presence, not by whether we can render an
-		// issue link, so flag the agent here regardless of issue_id.
-		if row.TaskID.Valid {
-			entry.hasActiveTask = true
-
-			if row.TaskIssueID.Valid {
-				brief := SquadActiveIssueBrief{
-					IssueID:    uuidToString(row.TaskIssueID),
-					Identifier: prefix + "-" + strconv.Itoa(int(row.IssueNumber.Int32)),
-					Title:      row.IssueTitle.String,
-					IssueStatus: func() string {
-						if row.IssueStatus.Valid {
-							return row.IssueStatus.String
-						}
-						return ""
-					}(),
-				}
-				entry.response.ActiveIssues = append(entry.response.ActiveIssues, brief)
-			}
-
-			if row.TaskDispatchedAt.Valid && (!entry.latestActiveAt.Valid ||
-				row.TaskDispatchedAt.Time.After(entry.latestActiveAt.Time)) {
-				entry.latestActiveAt = row.TaskDispatchedAt
-			}
-		}
-	}
-
-	resp := SquadMemberStatusListResponse{
-		Members: make([]SquadMemberStatusResponse, 0, len(order)),
-	}
-	for _, id := range order {
-		entry := acc[id]
-		if entry.response.MemberType == "agent" {
-			status := deriveSquadMemberStatus(
-				entry.archived,
-				entry.runtimeStatus,
-				entry.runtimeSeenAt,
-				entry.hasActiveTask,
-				now,
-			)
-			entry.response.Status = &status
-			// last_active_at prefers the freshest active-task dispatch
-			// over the runtime heartbeat: a working agent should not
-			// look stale because the runtime heartbeat is a few seconds
-			// behind. Falls back to runtime last_seen_at otherwise.
-			if entry.latestActiveAt.Valid {
-				entry.response.LastActiveAt = timestampToPtr(entry.latestActiveAt)
-			} else if entry.runtimeSeenAt.Valid {
-				entry.response.LastActiveAt = timestampToPtr(entry.runtimeSeenAt)
-			}
-		}
-		resp.Members = append(resp.Members, entry.response)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	member, ok := h.requireSquadManager(w, r, squad, workspaceID)
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-
-	var req struct {
-		MemberType string `json:"member_type"`
-		MemberID   string `json:"member_id"`
-		Role       string `json:"role"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.MemberType != "agent" && req.MemberType != "member" {
-		writeError(w, http.StatusBadRequest, "member_type must be 'agent' or 'member'")
-		return
-	}
-	if req.MemberID == "" {
-		writeError(w, http.StatusBadRequest, "member_id is required")
-		return
-	}
-
-	memberUUID, ok := parseUUIDOrBadRequest(w, req.MemberID, "member_id")
-	if !ok {
-		return
-	}
-
-	// Validate the member belongs to this workspace.
-	if req.MemberType == "agent" {
-		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-			ID: memberUUID, WorkspaceID: wsUUID,
-		})
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "agent not found in this workspace")
-			return
-		}
-		if !h.canAccessPersonalAgent(r.Context(), agent, "member", uuidToString(member.UserID), workspaceID) {
-			writeError(w, http.StatusForbidden, "cannot add personal agent")
-			return
-		}
-		if err := validateSquadLeaderScope(squad.Scope, squad.CreatorID, agent); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	} else {
-		if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
-			UserID: memberUUID, WorkspaceID: wsUUID,
-		}); err != nil {
-			writeError(w, http.StatusBadRequest, "member not found in this workspace")
-			return
-		}
-	}
-
-	sm, err := h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
-		SquadID:    squad.ID,
-		MemberType: req.MemberType,
-		MemberID:   memberUUID,
-		Role:       req.Role,
-	})
-	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "member already in squad")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to add squad member")
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, squadMemberToResponse(sm))
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-		"squad_id": uuidToString(squad.ID),
-	})
-}
-
-func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
-		return
-	}
-
-	var req struct {
-		MemberType string `json:"member_type"`
-		MemberID   string `json:"member_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	memberUUID, ok := parseUUIDOrBadRequest(w, req.MemberID, "member_id")
-	if !ok {
-		return
-	}
-
-	// Prevent removing the leader.
-	if req.MemberType == "agent" && uuidToString(squad.LeaderID) == req.MemberID {
-		writeError(w, http.StatusBadRequest, "cannot remove the squad leader; change leader first")
-		return
-	}
-
-	rows, err := h.Queries.RemoveSquadMember(r.Context(), db.RemoveSquadMemberParams{
-		SquadID:    squad.ID,
-		MemberType: req.MemberType,
-		MemberID:   memberUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to remove squad member")
-		return
-	}
-	if rows == 0 {
-		writeError(w, http.StatusNotFound, "squad member not found")
-		return
-	}
-
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-		"squad_id": uuidToString(squad.ID),
-	})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
-		return
-	}
-
-	var req struct {
-		MemberType string `json:"member_type"`
-		MemberID   string `json:"member_id"`
-		Role       string `json:"role"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	memberUUID, ok := parseUUIDOrBadRequest(w, req.MemberID, "member_id")
-	if !ok {
-		return
-	}
-
-	sm, err := h.Queries.UpdateSquadMemberRole(r.Context(), db.UpdateSquadMemberRoleParams{
-		SquadID:    squad.ID,
-		MemberType: req.MemberType,
-		MemberID:   memberUUID,
-		Role:       req.Role,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "squad member not found")
-		return
-	}
-
-	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{
-		"squad_id": uuidToString(squad.ID),
-	})
-	writeJSON(w, http.StatusOK, squadMemberToResponse(sm))
-}
-
-// ── Squad Leader Evaluation ──────────────────────────────────────────────────
-
-// RecordSquadLeaderEvaluation records a squad leader's evaluation decision
-// into the unified activity_log. Called by the leader agent via CLI after
-// each trigger to record whether it took action, stayed silent, or failed.
-func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Request) {
-	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
-	if !ok {
-		return
-	}
-
-	var req struct {
-		Outcome     string `json:"outcome"`      // action | no_action | failed
-		Reason      string `json:"reason"`       // short explanation from leader
-		WaitKind    string `json:"wait_kind"`    // optional: human_confirmation
-		WaitSummary string `json:"wait_summary"` // optional user-facing wait summary
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if req.Outcome != "action" && req.Outcome != "no_action" && req.Outcome != "failed" {
-		writeError(w, http.StatusBadRequest, "outcome must be 'action', 'no_action', or 'failed'")
-		return
-	}
-	if req.WaitKind != "" && req.WaitKind != "human_confirmation" {
-		writeError(w, http.StatusBadRequest, "wait_kind must be 'human_confirmation' when provided")
-		return
-	}
-
-	// The issue must be assigned to a squad.
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		writeError(w, http.StatusBadRequest, "issue is not assigned to a squad")
-		return
-	}
-
-	squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "squad not found")
-		return
-	}
-
-	// Security: only the squad leader agent can record evaluations.
-	workspaceID := uuidToString(issue.WorkspaceID)
-	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if actorType != "agent" || actorID != uuidToString(squad.LeaderID) {
-		writeError(w, http.StatusForbidden, "only the squad leader agent can record evaluations")
-		return
-	}
-
-	taskID := r.Header.Get("X-Task-ID")
-	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task id")
-	if !ok {
-		return
-	}
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
-		writeError(w, http.StatusBadRequest, "task does not belong to issue")
-		return
-	}
-
-	detailMap := map[string]string{
-		"squad_id": uuidToString(squad.ID),
-		"task_id":  util.UUIDToString(taskUUID),
-		"outcome":  req.Outcome,
-		"reason":   req.Reason,
-	}
-	if req.WaitKind != "" {
-		detailMap["wait_kind"] = req.WaitKind
-	}
-	if req.WaitSummary != "" {
-		detailMap["wait_summary"] = req.WaitSummary
-	}
-	details, _ := json.Marshal(detailMap)
-
-	activity, err := h.Queries.CreateActivity(r.Context(), db.CreateActivityParams{
-		WorkspaceID: issue.WorkspaceID,
-		IssueID:     issue.ID,
-		ActorType:   pgtype.Text{String: "agent", Valid: true},
-		ActorID:     squad.LeaderID,
-		Action:      "squad_leader_evaluated",
-		Details:     details,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record evaluation")
-		return
-	}
-
-	h.publish(protocol.EventActivityCreated, uuidToString(issue.WorkspaceID), "agent", actorID, map[string]any{
-		"issue_id": uuidToString(issue.ID),
-		"entry": map[string]any{
-			"type":       "activity",
-			"id":         uuidToString(activity.ID),
-			"actor_type": "agent",
-			"actor_id":   actorID,
-			"action":     activity.Action,
-			"details":    json.RawMessage(details),
-			"created_at": timestampToString(activity.CreatedAt),
-		},
-	})
-
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"id":         uuidToString(activity.ID),
-		"action":     activity.Action,
-		"created_at": timestampToString(activity.CreatedAt),
-	})
-}
-
-// ── Squad Trigger Logic ─────────────────────────────────────────────────────
-
-// lastTaskWasLeader returns true when the agent's most recent task on the
-// issue was enqueued in the squad-leader role. Used by the self-trigger
-// guards to tell apart a comment posted while the agent was acting as
-// leader (skip) from one posted while it was acting as a worker (do not
-// skip). When the agent has no prior task on this issue the role is
-// undetermined and we treat it as non-leader so a brand-new external
-// trigger can still reach the leader.
-func (h *Handler) lastTaskWasLeader(ctx context.Context, issueID, agentID pgtype.UUID) bool {
-	flag, err := h.Queries.GetLatestTaskIsLeaderForIssueAndAgent(ctx, db.GetLatestTaskIsLeaderForIssueAndAgentParams{
-		IssueID: issueID,
-		AgentID: agentID,
-	})
-	if err != nil {
-		return false
-	}
-	return flag
-}
-
-// commentMentionsAnyone returns true when the comment body contains at least
-// one routing-style mention — [@Name](mention://agent|member|squad|all/<id>).
-// Issue cross-references (mention://issue/...) are ignored because they are
-// not directed at a participant. Only the current comment is inspected —
-// parent (thread root) mentions are NOT inherited here.
-func commentMentionsAnyone(content string) bool {
-	for _, m := range util.ParseMentions(content) {
-		switch m.Type {
-		case "agent", "member", "squad", "all":
-			return true
-		}
-	}
-	return false
-}
-
-// shouldEnqueueSquadLeaderOnAssign returns true when assigning an issue to a
-// squad (or creating an issue pre-assigned to a squad) should immediately
-// trigger the squad leader. Mirrors shouldEnqueueAgentTask: backlog issues
-// are skipped (parking lot), and the leader agent must have a runtime and
-// not be archived.
-func (h *Handler) shouldEnqueueSquadLeaderOnAssign(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
-		return false
-	}
-	return h.isSquadLeaderReady(ctx, issue)
-}
-
-// isSquadLeaderReady returns true when the issue is assigned to a squad whose
-// leader agent can accept work right now. Readiness criteria (archived,
-// runtime bound, runtime online) are shared with the autopilot admission
-// gate via service.AgentReadiness — both paths must move together or one
-// will start enqueueing tasks the other refuses (MUL-2429 RFC §4.b B4).
-func (h *Handler) isSquadLeaderReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return false
-	}
-	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return false
-	}
-	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
-	if err != nil {
-		return false
-	}
-	ready, _, err := service.AgentReadiness(ctx, h.Queries, agent)
-	if err != nil {
-		// Fail closed when we can't tell — same posture as the rest of
-		// this function (any error path returns false).
-		return false
-	}
-	return ready
-}
-
-// enqueueSquadLeaderTask triggers the squad leader agent for an issue assigned
-// to a squad. Assign and backlog-promotion paths use this directly; comment
-// paths go through computeCommentAgentTriggers so preview and create share the
-// same trigger set.
-func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID string) {
-	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return
-	}
-
-	if !h.canEnqueueSquadLeader(ctx, squad.LeaderID, authorType, authorID, uuidToString(issue.WorkspaceID)) {
-		return
-	}
-
-	hasPending, err := h.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
-		IssueID: issue.ID,
-		AgentID: squad.LeaderID,
-	})
-	if err != nil || hasPending {
-		return
-	}
-
-	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, triggerCommentID); err != nil {
-		slog.Warn("enqueue squad leader task failed",
-			"issue_id", uuidToString(issue.ID),
-			"squad_id", uuidToString(squad.ID),
-			"leader_id", uuidToString(squad.LeaderID),
-			"error", err)
-	}
-}

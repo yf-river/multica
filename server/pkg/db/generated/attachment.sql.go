@@ -249,42 +249,74 @@ func (q *Queries) LinkAttachmentsToChatMessage(ctx context.Context, arg LinkAtta
 	return items, nil
 }
 
-const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :exec
+const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :many
 UPDATE attachment
 SET comment_id = $1
 WHERE issue_id = $2
   AND comment_id IS NULL
   AND id = ANY($3::uuid[])
+RETURNING id
 `
 
 type LinkAttachmentsToCommentParams struct {
-	CommentID pgtype.UUID   `json:"comment_id"`
-	IssueID   pgtype.UUID   `json:"issue_id"`
-	Column3   []pgtype.UUID `json:"column_3"`
+	CommentID     pgtype.UUID   `json:"comment_id"`
+	IssueID       pgtype.UUID   `json:"issue_id"`
+	AttachmentIds []pgtype.UUID `json:"attachment_ids"`
 }
 
-func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachmentsToCommentParams) error {
-	_, err := q.db.Exec(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.Column3)
-	return err
+func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachmentsToCommentParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.AttachmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const linkAttachmentsToIssue = `-- name: LinkAttachmentsToIssue :exec
+const linkAttachmentsToIssue = `-- name: LinkAttachmentsToIssue :many
 UPDATE attachment
 SET issue_id = $1
 WHERE workspace_id = $2
-  AND issue_id IS NULL
+  AND (issue_id IS NULL OR issue_id = $1)
   AND id = ANY($3::uuid[])
+RETURNING id
 `
 
 type LinkAttachmentsToIssueParams struct {
-	IssueID     pgtype.UUID   `json:"issue_id"`
-	WorkspaceID pgtype.UUID   `json:"workspace_id"`
-	Column3     []pgtype.UUID `json:"column_3"`
+	IssueID       pgtype.UUID   `json:"issue_id"`
+	WorkspaceID   pgtype.UUID   `json:"workspace_id"`
+	AttachmentIds []pgtype.UUID `json:"attachment_ids"`
 }
 
-func (q *Queries) LinkAttachmentsToIssue(ctx context.Context, arg LinkAttachmentsToIssueParams) error {
-	_, err := q.db.Exec(ctx, linkAttachmentsToIssue, arg.IssueID, arg.WorkspaceID, arg.Column3)
-	return err
+func (q *Queries) LinkAttachmentsToIssue(ctx context.Context, arg LinkAttachmentsToIssueParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, linkAttachmentsToIssue, arg.IssueID, arg.WorkspaceID, arg.AttachmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAttachmentURLsByCommentID = `-- name: ListAttachmentURLsByCommentID :many
@@ -556,6 +588,60 @@ func (q *Queries) ListAttachmentsByIssue(ctx context.Context, arg ListAttachment
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAttachmentsForChatMessage = `-- name: LockAttachmentsForChatMessage :many
+SELECT id FROM attachment
+WHERE workspace_id = $1
+  AND issue_id IS NULL
+  AND comment_id IS NULL
+  AND chat_message_id IS NULL
+  AND (
+    chat_session_id IS NULL
+    OR chat_session_id = $2
+  )
+  AND uploader_type = $3
+  AND uploader_id = $4
+  AND id = ANY($5::uuid[])
+ORDER BY id
+FOR UPDATE
+`
+
+type LockAttachmentsForChatMessageParams struct {
+	WorkspaceID   pgtype.UUID   `json:"workspace_id"`
+	ChatSessionID pgtype.UUID   `json:"chat_session_id"`
+	UploaderType  string        `json:"uploader_type"`
+	UploaderID    pgtype.UUID   `json:"uploader_id"`
+	AttachmentIds []pgtype.UUID `json:"attachment_ids"`
+}
+
+// Lock eligible rows in a stable order before the message/task transaction
+// binds them. Overlapping sends then converge without lock-order deadlocks;
+// missing/ineligible ids retain the current partial-bind response semantics.
+func (q *Queries) LockAttachmentsForChatMessage(ctx context.Context, arg LockAttachmentsForChatMessageParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockAttachmentsForChatMessage,
+		arg.WorkspaceID,
+		arg.ChatSessionID,
+		arg.UploaderType,
+		arg.UploaderID,
+		arg.AttachmentIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

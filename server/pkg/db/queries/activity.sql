@@ -12,6 +12,21 @@ INSERT INTO activity_log (
 ) VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
+-- name: CreateSquadLeaderEvaluation :one
+INSERT INTO activity_log (
+    workspace_id, issue_id, actor_type, actor_id, action, details
+) VALUES ($1, $2, 'agent', $3, 'squad_leader_evaluated', $4)
+ON CONFLICT DO NOTHING
+RETURNING *;
+
+-- name: GetSquadLeaderEvaluationForTask :one
+SELECT * FROM activity_log
+WHERE issue_id = @issue_id
+  AND actor_type = 'agent'
+  AND actor_id = @agent_id
+  AND action = 'squad_leader_evaluated'
+  AND details->>'task_id' = @task_id::text;
+
 -- name: HasSquadLeaderNoActionEvaluationForTask :one
 SELECT EXISTS (
   SELECT 1

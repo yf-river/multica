@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiClient } from "../api/client";
 import { installFreezeWatchdog } from "../diagnostics/freeze-watchdog";
 import { setApiInstance, setSchemaLogger } from "../api";
-import { createAuthStore, registerAuthStore } from "../auth";
-import { createChatStore, registerChatStore } from "../chat";
-import {
-  I18nProvider,
-} from "../i18n/react";
+import { createAuthStore, registerAuthStore } from "../auth/store";
+import { createChatStore, registerChatStore } from "../chat/store";
+import { I18nProvider } from "../i18n/react";
 import { WSProvider } from "../realtime";
-import { QueryProvider } from "../provider";
 import { createLogger } from "../logger";
 import { defaultStorage } from "./storage";
 import { AuthInitializer } from "./auth-initializer";
@@ -22,11 +20,27 @@ import type { StorageAdapter } from "../types/storage";
 let initialized = false;
 let authStore: ReturnType<typeof createAuthStore>;
 let chatStore: ReturnType<typeof createChatStore>;
+
+function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: Infinity,
+        gcTime: 10 * 60 * 1000,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: true,
+        retry: 1,
+      },
+      mutations: { retry: false },
+    },
+  });
+}
+
 function initCore(
   apiBaseUrl: string,
   storage: StorageAdapter,
   onLogin?: () => void,
-  onLogout?: () => void,
+  onLogout?: () => void | Promise<void>,
   cookieAuth?: boolean,
   identity?: ClientIdentity,
 ) {
@@ -73,6 +87,8 @@ export function CoreProvider({
   locale,
   resources,
 }: CoreProviderProps) {
+  const [queryClient] = useState(createQueryClient);
+
   // Initialize singletons on first render only. Dependencies are read-once:
   // apiBaseUrl, storage, and callbacks are set at app boot and never change at runtime.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,7 +103,7 @@ export function CoreProvider({
   // I18nProvider wraps everything else: server and client must use the same
   // (locale, resources) to avoid hydration mismatch.
   const tree = (
-    <QueryProvider>
+    <QueryClientProvider client={queryClient}>
       <AuthInitializer
         onLogin={onLogin}
         onLogout={onLogout}
@@ -105,7 +121,7 @@ export function CoreProvider({
           {children}
         </WSProvider>
       </AuthInitializer>
-    </QueryProvider>
+    </QueryClientProvider>
   );
 
   return (

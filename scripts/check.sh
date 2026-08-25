@@ -117,6 +117,29 @@ wait_for_port() {
   echo "    $name ready (${elapsed}s)"
 }
 
+require_fresh_check_service() {
+  local name=$1 port=$2 path=$3
+  if ! curl -sf "http://localhost:${port}${path}" > /dev/null 2>&1; then
+    return
+  fi
+
+  if [ "${CHECK_ALLOW_EXISTING_SERVICES:-0}" = "1" ]; then
+    echo "==> Reusing existing $name on :$port (explicit CHECK_ALLOW_EXISTING_SERVICES=1)"
+    return
+  fi
+
+  echo "ERROR: $name port :$port already serves HTTP." >&2
+  echo "Stop that service before running the verification gate, or explicitly set CHECK_ALLOW_EXISTING_SERVICES=1 for a non-isolated developer run." >&2
+  EXIT_CODE=1
+  exit 1
+}
+
+# A verification run must exercise binaries built from the current checkout.
+# Silently accepting any healthy process on these ports can validate an old
+# build or a development server while reporting production acceptance.
+require_fresh_check_service "Backend" "$PORT" "/health"
+require_fresh_check_service "Frontend" "$FRONTEND_PORT" "/"
+
 # --------------------------------------------------------------------------
 # Step 0: Ensure DB
 # --------------------------------------------------------------------------
@@ -143,9 +166,11 @@ pnpm test || { EXIT_CODE=1; exit 1; }
 # --------------------------------------------------------------------------
 echo ""
 echo "==> [3/5] Go tests..."
-echo "==> Initializing database schema..."
-(cd server && go run ./cmd/server --init-schema-only) || { EXIT_CODE=1; exit 1; }
-(cd server && go test ./...) || { EXIT_CODE=1; exit 1; }
+echo "==> Running database migrations..."
+(cd server && go run ./cmd/migrate up) || { EXIT_CODE=1; exit 1; }
+echo "==> Checking dedicated Redis test service..."
+bash scripts/ensure-test-redis.sh "$ENV_FILE" || { EXIT_CODE=1; exit 1; }
+(cd server && go test -p 1 ./...) || { EXIT_CODE=1; exit 1; }
 
 # --------------------------------------------------------------------------
 # Step 4: Start services for E2E (only if not already running)
@@ -165,11 +190,30 @@ fi
 if curl -sf "http://localhost:${FRONTEND_PORT}" > /dev/null 2>&1; then
   echo "    Frontend already running on :$FRONTEND_PORT"
 else
-  echo "    Starting frontend..."
-  FRONTEND_PID="$(start_service "frontend" "/tmp/multica-check-frontend.log" "pnpm dev:web" | tail -n 1)"
+  echo "    Building and starting production frontend..."
+  FRONTEND_PID="$(start_service "frontend" "/tmp/multica-check-frontend.log" "pnpm --filter @multica/web build && exec pnpm --filter @multica/web exec next start --port '${FRONTEND_PORT}'" | tail -n 1)"
   STARTED_FRONTEND=true
-  wait_for_port "$FRONTEND_PORT" "Frontend" 120 "/"
+  # This budget includes a clean production build. On the supported CI-sized
+  # host webpack + TypeScript + static-page generation can exceed two minutes;
+  # keeping that work outside Playwright preserves strict user-flow timeouts.
+  wait_for_port "$FRONTEND_PORT" "Frontend" 240 "/"
 fi
+
+# Check the first authenticated dynamic route as part of service readiness;
+# the cookie passes the proxy guard, while the fixture slug only selects the
+# route shape. E2E runs against the production build so route compilation,
+# external font lookups and dev-server startup work cannot consume user-flow
+# timeouts or make navigation order-dependent.
+E2E_WARM_WORKSPACE="${E2E_FIXTURE_WORKSPACE:-e2e-workspace}"
+echo "    Warming workspace route /${E2E_WARM_WORKSPACE}/issues..."
+if ! curl --max-time 120 -sf \
+  -H "Cookie: multica_logged_in=1; last_workspace_slug=${E2E_WARM_WORKSPACE}" \
+  "http://localhost:${FRONTEND_PORT}/${E2E_WARM_WORKSPACE}/issues" > /dev/null; then
+  echo "    ERROR: workspace route did not compile within 120s"
+  EXIT_CODE=1
+  exit 1
+fi
+echo "    Workspace route ready"
 
 # --------------------------------------------------------------------------
 # Step 5: E2E tests (Playwright)

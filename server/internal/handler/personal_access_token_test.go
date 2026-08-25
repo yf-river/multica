@@ -5,25 +5,145 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// insertTestPAT creates a PAT row for the shared test user with the given
-// expiry and returns (rawToken, patID). Each call generates a fresh raw token
-// so a test can hold many independent rows without colliding on token_hash.
-// The row is auto-cleaned at test end.
+func newPATCreateRequest(key string, body map[string]any) *http.Request {
+	req := newRequest(http.MethodPost, "/api/tokens", body)
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	} else {
+		req.Header.Del("Idempotency-Key")
+	}
+	return req
+}
+
+func decodeCreatePATResponse(t *testing.T, recorder *httptest.ResponseRecorder) createPATResponse {
+	t.Helper()
+	var response createPATResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode PAT create response: %v (body: %s)", err, recorder.Body.String())
+	}
+	return response
+}
+
+func TestCreatePersonalAccessTokenRequiresIdempotencyKey(t *testing.T) {
+	w := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(w, newPATCreateRequest("", map[string]any{"name": "CLI test"}))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "idempotency_key_required") {
+		t.Fatalf("missing key response = %d %s, want idempotency_key_required", w.Code, w.Body.String())
+	}
+}
+
+func TestCreatePersonalAccessTokenReplaysExactSecret(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key)
+	})
+	body := map[string]any{"name": "CLI replay", "expires_in_days": 90}
+
+	firstRecorder := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(firstRecorder, newPATCreateRequest(key, body))
+	if firstRecorder.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+	first := decodeCreatePATResponse(t, firstRecorder)
+
+	replayRecorder := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(replayRecorder, newPATCreateRequest(key, body))
+	if replayRecorder.Code != http.StatusCreated || replayRecorder.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay = %d headers=%v body=%s", replayRecorder.Code, replayRecorder.Header(), replayRecorder.Body.String())
+	}
+	replay := decodeCreatePATResponse(t, replayRecorder)
+	if replay.ID != first.ID || replay.Token != first.Token || replay.ExpiresAt == nil || first.ExpiresAt == nil || *replay.ExpiresAt != *first.ExpiresAt {
+		t.Fatalf("replay = %#v, want exact id/token/expiry from %#v", replay, first)
+	}
+	if first.Token != auth.DerivePATToken(testUserID, key) {
+		t.Fatal("response token does not match the operation-scoped derivation")
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key).Scan(&count); err != nil {
+		t.Fatalf("count PAT rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("PAT rows = %d, want 1", count)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE personal_access_token SET token_hash = 'different-derivation-secret' WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("simulate derivation secret rotation: %v", err)
+	}
+	unavailable := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(unavailable, newPATCreateRequest(key, body))
+	if unavailable.Code != http.StatusConflict || !strings.Contains(unavailable.Body.String(), "idempotency_replay_unavailable") {
+		t.Fatalf("secret-rotation replay = %d %s, want explicit replay unavailable", unavailable.Code, unavailable.Body.String())
+	}
+}
+
+func TestCreatePersonalAccessTokenRejectsChangedReplay(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key)
+	})
+
+	first := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(first, newPATCreateRequest(key, map[string]any{"name": "CLI first", "expires_in_days": 90}))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	conflict := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(conflict, newPATCreateRequest(key, map[string]any{"name": "CLI changed", "expires_in_days": 30}))
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "idempotency_conflict") {
+		t.Fatalf("changed replay = %d %s, want idempotency_conflict", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestCreatePersonalAccessTokenConcurrentReplayConverges(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key)
+	})
+
+	const concurrency = 8
+	responses := make([]createPATResponse, concurrency)
+	statuses := make([]int, concurrency)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := range concurrency {
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			recorder := httptest.NewRecorder()
+			testHandler.CreatePersonalAccessToken(recorder, newPATCreateRequest(key, map[string]any{
+				"name": "CLI concurrent", "expires_in_days": 90,
+			}))
+			statuses[index] = recorder.Code
+			_ = json.NewDecoder(recorder.Body).Decode(&responses[index])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i := range concurrency {
+		if statuses[i] != http.StatusCreated || responses[i].ID != responses[0].ID || responses[i].Token != responses[0].Token {
+			t.Fatalf("response[%d] = status %d %#v, want exact convergence with %#v", i, statuses[i], responses[i], responses[0])
+		}
+	}
+}
+
 func insertTestPAT(t *testing.T, expiresAt time.Time) (string, string) {
 	t.Helper()
-	raw, err := auth.GeneratePATToken()
-	if err != nil {
-		t.Fatalf("generate pat: %v", err)
-	}
+	raw := auth.DerivePATToken(testUserID, "renew-test:"+uuid.NewString())
 	prefix := raw
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
@@ -40,14 +160,11 @@ func insertTestPAT(t *testing.T, expiresAt time.Time) (string, string) {
 	}
 	patID := uuidToString(pat.ID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM personal_access_token WHERE id = $1`, parseUUID(patID))
+		mustExec(t, context.Background(), `DELETE FROM personal_access_token WHERE id = $1`, parseUUID(patID))
 	})
 	return raw, patID
 }
 
-// newRenewRequest builds a POST /api/tokens/current/renew request with both
-// the X-User-ID and Authorization headers set, so the handler can resolve
-// the PAT row in addition to the caller's user.
 func newRenewRequest(rawToken string) *http.Request {
 	req := newRequest("POST", "/api/tokens/current/renew", nil)
 	if rawToken != "" {
@@ -56,9 +173,9 @@ func newRenewRequest(rawToken string) *http.Request {
 	return req
 }
 
-func decodeRenewResponse(t *testing.T, body *httptest.ResponseRecorder) RenewPATResponse {
+func decodeRenewResponse(t *testing.T, body *httptest.ResponseRecorder) protocol.PersonalAccessTokenRenewalResponse {
 	t.Helper()
-	var resp RenewPATResponse
+	var resp protocol.PersonalAccessTokenRenewalResponse
 	if err := json.NewDecoder(body.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode renew response: %v (body: %s)", err, body.Body.String())
 	}
@@ -86,13 +203,13 @@ func TestRenewPAT_ExtendsWhenInsideRenewalWindow(t *testing.T) {
 	).Scan(&actual); err != nil {
 		t.Fatalf("readback: %v", err)
 	}
-	// Renewed expiry should be roughly now + PATRenewExtension (90 days),
+	// Renewed expiry should be roughly now + patRenewExtension (90 days),
 	// well past the old expiry. Use a wide window — the test only needs to
 	// know the row was bumped, not the exact instant.
 	if !actual.After(oldExpiry.Add(24 * time.Hour)) {
 		t.Fatalf("expected new expiry to be far past old %v, got %v", oldExpiry, actual)
 	}
-	wantAround := time.Now().Add(PATRenewExtension)
+	wantAround := time.Now().Add(patRenewExtension)
 	if actual.Before(wantAround.Add(-time.Hour)) || actual.After(wantAround.Add(time.Hour)) {
 		t.Fatalf("expected new expiry near %v, got %v", wantAround, actual)
 	}
@@ -234,25 +351,12 @@ func TestRenewPAT_ConcurrentRenewIsIdempotent(t *testing.T) {
 	).Scan(&actual); err != nil {
 		t.Fatalf("readback: %v", err)
 	}
-	wantAround := time.Now().Add(PATRenewExtension)
+	wantAround := time.Now().Add(patRenewExtension)
 	if actual.Before(wantAround.Add(-time.Hour)) || actual.After(wantAround.Add(time.Hour)) {
 		t.Fatalf("expected expiry near %v, got %v", wantAround, actual)
 	}
 }
 
-// TestRenewPAT_ParallelRenewExtendsExactlyOnce locks in the SQL-level
-// idempotency that the MUL-2744 review flagged: when N callers race to
-// renew the same in-window PAT, the WHERE clause must ensure only one
-// UPDATE actually bumps the row. The previous condition (`expires_at < $2`)
-// silently let every caller win — each computed a slightly larger
-// `$2 = now + 90d`, so the second writer's $2 always exceeded the first
-// writer's row value and the UPDATE re-matched. Pinning the CAS to the
-// renewal threshold instead (`expires_at <= $3`) means after the first
-// writer pushes expires_at to now + 90d, all subsequent writers see a
-// row already past the threshold and the UPDATE matches zero rows.
-//
-// We verify the database side by counting how many times the row's
-// expires_at column was actually moved across N parallel calls.
 func TestRenewPAT_ParallelRenewExtendsExactlyOnce(t *testing.T) {
 	const concurrency = 8
 
@@ -278,7 +382,7 @@ func TestRenewPAT_ParallelRenewExtendsExactlyOnce(t *testing.T) {
 			<-start
 			w := httptest.NewRecorder()
 			testHandler.RenewCurrentPersonalAccessToken(w, newRenewRequest(raw))
-			var resp RenewPATResponse
+			var resp protocol.PersonalAccessTokenRenewalResponse
 			_ = json.NewDecoder(w.Body).Decode(&resp)
 			results[i] = result{code: w.Code, expiresAt: resp.ExpiresAt, renewed: resp.Renewed}
 		}(i)
@@ -333,13 +437,10 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 		t.Fatalf("create other user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, parseUUID(otherUserID))
+		mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, parseUUID(otherUserID))
 	})
 
-	raw, err := auth.GeneratePATToken()
-	if err != nil {
-		t.Fatalf("generate pat: %v", err)
-	}
+	raw := auth.DerivePATToken(otherUserID, "other-renew:"+uuid.NewString())
 	prefix := raw
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
@@ -355,7 +456,7 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 		t.Fatalf("create other pat: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE id = $1`, pat.ID)
+		mustExec(t, ctx, `DELETE FROM personal_access_token WHERE id = $1`, pat.ID)
 	})
 
 	w := httptest.NewRecorder()

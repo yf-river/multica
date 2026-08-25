@@ -76,6 +76,30 @@ export function truncateTranscriptText(value: string, maxLength: number): string
   return `${value.slice(0, maxLength)}...`;
 }
 
+export function summarizeToolInput(
+  input: Record<string, unknown> | undefined,
+  maxLength: number,
+): string {
+  if (!input) return "";
+  if (input.query) return String(input.query);
+  if (input.file_path) return shortenPath(String(input.file_path));
+  if (input.path) return shortenPath(String(input.path));
+  if (input.pattern) return String(input.pattern);
+  if (input.description) return String(input.description);
+  if (input.command) return truncateTranscriptText(String(input.command), maxLength);
+  if (input.prompt) return truncateTranscriptText(String(input.prompt), maxLength);
+  if (input.skill) return String(input.skill);
+  for (const value of Object.values(input)) {
+    if (typeof value === "string" && value.length > 0 && value.length < 120) return value;
+  }
+  return "";
+}
+
+function shortenPath(path: string): string {
+  const parts = path.split("/");
+  return parts.length <= 3 ? path : `.../${parts.slice(-2).join("/")}`;
+}
+
 export function transcriptTruncatedSuffix(): string {
   return "\n...（已截断）";
 }

@@ -66,4 +66,4 @@ function ActorAvatar({
   );
 }
 
-export { ActorAvatar, type ActorAvatarProps };
+export { ActorAvatar };

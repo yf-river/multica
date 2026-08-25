@@ -39,7 +39,7 @@ const {
   authStateRef: {
     state: {
       login: vi.fn(),
-      user: null as null | { id: string; account: string; onboarded_at?: string | null },
+      user: null as null | { id: string; account: string },
       isLoading: false,
     },
   },
@@ -98,7 +98,7 @@ describe("LoginPage", () => {
   });
 
   it("logs in through account/password and routes after success", async () => {
-    mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice", onboarded_at: null });
+    mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice" });
     const user = userEvent.setup();
     render(<LoginPage />, { wrapper: createWrapper() });
 
@@ -109,6 +109,27 @@ describe("LoginPage", () => {
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith("alice", "correct-password");
       expect(mockRouterPush).toHaveBeenCalled();
+    });
+  });
+
+  it("mints a token and deep-links to Desktop when already logged in with platform=desktop", async () => {
+    searchParamsState.params = new URLSearchParams({ platform: "desktop" });
+    authStateRef.state.user = {
+      id: "u1",
+      account: "alice",
+    };
+    mockIssueCliToken.mockResolvedValue({ token: "handoff-jwt" });
+
+    Object.defineProperty(window, "location", {
+      writable: true,
+      value: { href: "http://localhost:3000/login?platform=desktop" },
+    });
+
+    render(<LoginPage />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(mockIssueCliToken).toHaveBeenCalled();
+      expect(window.location.href).toBe("multica://auth/callback?token=handoff-jwt");
     });
   });
 });

@@ -15,6 +15,30 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func (m *Metrics) Reset() {
+	m.ConnectsTotal.Store(0)
+	m.DisconnectsTotal.Store(0)
+	m.ActiveConnections.Store(0)
+	m.SlowEvictionsTotal.Store(0)
+	m.WakeupPublishedTotal.Store(0)
+	m.WakeupPublishErrors.Store(0)
+	m.WakeupReceivedTotal.Store(0)
+	m.WakeupDeliveredHit.Store(0)
+	m.WakeupDeliveredMiss.Store(0)
+}
+
+func runtimeConnectionCount(hub *Hub, runtimeID string) int {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return len(hub.byRuntime[runtimeID])
+}
+
+func workspaceConnectionCount(hub *Hub, workspaceID string) int {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return len(hub.byWorkspace[workspaceID])
+}
+
 func newTestHubConnection(t *testing.T, hub *Hub, identity ClientIdentity) *websocket.Conn {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,20 +85,60 @@ func decodeHubMessagePayloadForTest[T any](t *testing.T, msg protocol.Message) T
 	return payload
 }
 
+func waitForHubConnection(t *testing.T, count func() int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for count() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("connection was not registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func writeHeartbeatForTest(t *testing.T, conn *websocket.Conn, runtimeID string) {
+	t.Helper()
+	frame, err := protocol.MarshalMessage(protocol.EventDaemonHeartbeat, protocol.DaemonHeartbeatRequestPayload{RuntimeID: runtimeID})
+	if err != nil {
+		t.Fatalf("marshal heartbeat: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+		t.Fatalf("write heartbeat: %v", err)
+	}
+}
+
+func TestHandleWebSocketRejectsMissingWorkspaceScope(t *testing.T) {
+	hub := NewHub()
+	req := httptest.NewRequest(http.MethodGet, "/ws/daemon", nil)
+	w := httptest.NewRecorder()
+
+	hub.HandleWebSocket(w, req, ClientIdentity{
+		WorkspaceIDs: []string{"", "  "},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(w.Body.String(), "workspace scope required") {
+		t.Fatalf("body = %q, want workspace scope error", w.Body.String())
+	}
+	if (ClientIdentity{}).AllowsWorkspace("ws-1") {
+		t.Fatal("empty identity scope must not authorize a workspace")
+	}
+}
+
 func TestNotifyTaskAvailable(t *testing.T) {
 	M.Reset()
 	defer M.Reset()
 
 	hub := NewHub()
-	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
 
-	deadline := time.Now().Add(time.Second)
-	for hub.RuntimeConnectionCount("runtime-1") == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("runtime connection was not registered")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForHubConnection(t, func() int { return runtimeConnectionCount(hub, "runtime-1") })
 
 	hub.NotifyTaskAvailable("runtime-1", "task-1")
 
@@ -99,13 +163,7 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 		RuntimeIDs:   []string{"runtime-1"},
 	})
 
-	deadline := time.Now().Add(time.Second)
-	for hub.WorkspaceConnectionCount("ws-1") == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("workspace connection was not registered")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForHubConnection(t, func() int { return workspaceConnectionCount(hub, "ws-1") })
 
 	hub.NotifyRuntimeProfilesChanged("ws-1", "profile-1")
 
@@ -131,15 +189,15 @@ func TestNotifyRuntimeProfilesChangedIndexesAllAuthorizedWorkspaces(t *testing.T
 	})
 
 	deadline := time.Now().Add(time.Second)
-	for hub.WorkspaceConnectionCount("ws-1") == 0 || hub.WorkspaceConnectionCount("ws-2") == 0 {
+	for workspaceConnectionCount(hub, "ws-1") == 0 || workspaceConnectionCount(hub, "ws-2") == 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("workspace connections not registered: ws-1=%d ws-2=%d",
-				hub.WorkspaceConnectionCount("ws-1"),
-				hub.WorkspaceConnectionCount("ws-2"))
+				workspaceConnectionCount(hub, "ws-1"),
+				workspaceConnectionCount(hub, "ws-2"))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := hub.WorkspaceConnectionCount("ws-3"); got != 0 {
+	if got := workspaceConnectionCount(hub, "ws-3"); got != 0 {
 		t.Fatalf("workspace ws-3 connection count = %d, want 0", got)
 	}
 
@@ -308,9 +366,6 @@ func TestRelayNotifierDedupsRuntimeProfilesChangedLoopback(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRoundTrip pins the WS heartbeat contract: a daemon:heartbeat
-// frame invokes the registered HeartbeatHandler with the runtime ID, and the
-// hub serializes the returned ack as a daemon:heartbeat_ack on the wire.
 func TestHeartbeatRoundTrip(t *testing.T) {
 	M.Reset()
 	defer M.Reset()
@@ -319,8 +374,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	var calls atomic.Int32
 	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		calls.Add(1)
-		if identity.PrimaryWorkspaceID() != "ws-1" {
-			t.Errorf("identity workspace = %q, want ws-1", identity.PrimaryWorkspaceID())
+		if identity.primaryWorkspaceID() != "ws-1" {
+			t.Errorf("identity workspace = %q, want ws-1", identity.primaryWorkspaceID())
 		}
 		return &protocol.DaemonHeartbeatAckPayload{
 			RuntimeID: runtimeID,
@@ -333,16 +388,7 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 		RuntimeIDs:   []string{"runtime-1"},
 	})
 
-	hbFrame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeat,
-		Payload: mustMarshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-1"}),
-	})
-	if err != nil {
-		t.Fatalf("marshal heartbeat: %v", err)
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, hbFrame); err != nil {
-		t.Fatalf("WriteMessage: %v", err)
-	}
+	writeHeartbeatForTest(t, conn, "runtime-1")
 
 	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonHeartbeatAck {
@@ -357,11 +403,6 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	}
 }
 
-// TestHeartbeatHandlerCtxNotTimeBounded pins the PopPending invariant: the
-// hub must not wrap the handler ctx with a short WithTimeout, otherwise the
-// Redis Lua claim script can be cancelled mid-flight after its side effects
-// have already landed. We assert by stalling the handler past any timeout
-// the hub might be tempted to add and verifying the ack still arrives.
 func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 	M.Reset()
 	defer M.Reset()
@@ -381,18 +422,12 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{RuntimeID: runtimeID, Status: "ok"}, nil
 	})
 
-	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
-
-	hbFrame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeat,
-		Payload: mustMarshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-1"}),
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
 	})
-	if err != nil {
-		t.Fatalf("marshal heartbeat: %v", err)
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, hbFrame); err != nil {
-		t.Fatalf("WriteMessage: %v", err)
-	}
+
+	writeHeartbeatForTest(t, conn, "runtime-1")
 
 	msg := readHubMessageForTest(t, conn, stall+2*time.Second)
 	if msg.Type != protocol.EventDaemonHeartbeatAck {
@@ -400,9 +435,6 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 	}
 }
 
-// TestHeartbeatRejectsUnauthorizedRuntime verifies that a heartbeat for a
-// runtime outside the connection's authenticated set is dropped silently —
-// no handler call, no ack frame.
 func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 	M.Reset()
 	defer M.Reset()
@@ -414,18 +446,12 @@ func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{Status: "ok"}, nil
 	})
 
-	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
-
-	hbFrame, err := json.Marshal(protocol.Message{
-		Type:    protocol.EventDaemonHeartbeat,
-		Payload: mustMarshalRaw(protocol.DaemonHeartbeatRequestPayload{RuntimeID: "runtime-other"}),
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
 	})
-	if err != nil {
-		t.Fatalf("marshal heartbeat: %v", err)
-	}
-	if err := conn.WriteMessage(websocket.TextMessage, hbFrame); err != nil {
-		t.Fatalf("WriteMessage: %v", err)
-	}
+
+	writeHeartbeatForTest(t, conn, "runtime-other")
 
 	if err := conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)

@@ -3,7 +3,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "../ui/button";
 
-export interface ErrorBoundaryProps {
+interface ErrorBoundaryProps {
   children: ReactNode;
   /** Element rendered when the boundary catches. Receives `reset` so the
    *  fallback can offer a "try again" button. Defaults to a small inline

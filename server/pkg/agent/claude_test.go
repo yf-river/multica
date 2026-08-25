@@ -2,35 +2,36 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
+func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
+	return buildClaudeStreamArgs(opts, claudeBlockedArgs, logger)
+}
+
 func TestClaudeHandleAssistantText(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "assistant",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "assistant",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{Type: "text", Text: "Hello world"},
 			},
 		}),
 	}
 
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "Hello world" {
 		t.Fatalf("expected output 'Hello world', got %q", output.String())
@@ -48,15 +49,14 @@ func TestClaudeHandleAssistantText(t *testing.T) {
 func TestClaudeHandleAssistantToolUse(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "assistant",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "assistant",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:  "tool_use",
 					ID:    "call-1",
@@ -67,7 +67,7 @@ func TestClaudeHandleAssistantToolUse(t *testing.T) {
 		}),
 	}
 
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "" {
 		t.Fatalf("tool_use should not add to output, got %q", output.String())
@@ -88,14 +88,13 @@ func TestClaudeHandleAssistantToolUse(t *testing.T) {
 func TestClaudeHandleUserToolResult(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-1",
@@ -105,7 +104,7 @@ func TestClaudeHandleUserToolResult(t *testing.T) {
 		}),
 	}
 
-	if b.handleUser(msg, ch) {
+	if handleClaudeStreamUser(msg, ch, true) {
 		t.Fatal("did not expect async launch in ordinary tool result")
 	}
 
@@ -126,17 +125,17 @@ func TestClaudeHandleControlRequestAutoApproves(t *testing.T) {
 
 	var written bytes.Buffer
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type:      "control_request",
 		RequestID: "req-42",
-		Request: mustMarshal(t, claudeControlRequestPayload{
+		Request: mustMarshal(t, claudeStreamControlRequest{
 			Subtype:  "tool_use",
 			ToolName: "Bash",
 			Input:    mustMarshal(t, map[string]any{"command": "ls"}),
 		}),
 	}
 
-	b.handleControlRequest(msg, &written)
+	handleClaudeStreamControlRequest(b.cfg.Logger, "claude", true, msg, &written)
 
 	var resp map[string]any
 	if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &resp); err != nil {
@@ -171,10 +170,10 @@ func TestClaudeHandleControlRequestForcesBackgroundToolsForeground(t *testing.T)
 
 			var written bytes.Buffer
 
-			msg := claudeSDKMessage{
+			msg := claudeStreamMessage{
 				Type:      "control_request",
 				RequestID: "req-42",
-				Request: mustMarshal(t, claudeControlRequestPayload{
+				Request: mustMarshal(t, claudeStreamControlRequest{
 					Subtype:  "tool_use",
 					ToolName: toolName,
 					Input: mustMarshal(t, map[string]any{
@@ -184,7 +183,7 @@ func TestClaudeHandleControlRequestForcesBackgroundToolsForeground(t *testing.T)
 				}),
 			}
 
-			b.handleControlRequest(msg, &written)
+			handleClaudeStreamControlRequest(b.cfg.Logger, "claude", true, msg, &written)
 
 			var resp map[string]any
 			if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &resp); err != nil {
@@ -210,14 +209,13 @@ func TestClaudeHandleControlRequestForcesBackgroundToolsForeground(t *testing.T)
 func TestClaudeHandleUserDetectsAsyncLaunchedToolResult(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-1",
@@ -230,7 +228,7 @@ func TestClaudeHandleUserDetectsAsyncLaunchedToolResult(t *testing.T) {
 		}),
 	}
 
-	if !b.handleUser(msg, ch) {
+	if !handleClaudeStreamUser(msg, ch, true) {
 		t.Fatal("expected async launch to be detected")
 	}
 }
@@ -238,14 +236,13 @@ func TestClaudeHandleUserDetectsAsyncLaunchedToolResult(t *testing.T) {
 func TestClaudeHandleUserIgnoresAsyncLaunchedTextOutput(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-1",
@@ -257,7 +254,7 @@ func TestClaudeHandleUserIgnoresAsyncLaunchedTextOutput(t *testing.T) {
 		}),
 	}
 
-	if b.handleUser(msg, ch) {
+	if handleClaudeStreamUser(msg, ch, true) {
 		t.Fatal("did not expect async launch to be detected in ordinary text output")
 	}
 }
@@ -265,17 +262,16 @@ func TestClaudeHandleUserIgnoresAsyncLaunchedTextOutput(t *testing.T) {
 func TestClaudeHandleAssistantInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type:    "assistant",
 		Message: json.RawMessage(`invalid json`),
 	}
 
 	// Should not panic
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "" {
 		t.Fatalf("expected empty output for invalid JSON, got %q", output.String())
@@ -341,16 +337,16 @@ func TestBuildClaudeArgs_AppliesToolEnvelope(t *testing.T) {
 		CustomArgs:          []string{"--tools", "default", "--allowed-tools", "Read,Edit"},
 	}, slog.Default())
 
-	if got := valueAfterArg(args, "--tools"); got != "Bash" {
+	if got := argValue(args, "--tools"); got != "Bash" {
 		t.Fatalf("expected --tools Bash, got %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--permission-mode"); got != "bypassPermissions" {
+	if got := argValue(args, "--permission-mode"); got != "bypassPermissions" {
 		t.Fatalf("expected default --permission-mode bypassPermissions, got %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--disallowedTools"); got != "AskUserQuestion,Task,Read,Grep" {
+	if got := argValue(args, "--disallowedTools"); got != "AskUserQuestion,Task,Read,Grep" {
 		t.Fatalf("unexpected --disallowedTools %q in %v", got, args)
 	}
-	if got := valueAfterArg(args, "--allowedTools"); got != "Bash(multica:*)" {
+	if got := argValue(args, "--allowedTools"); got != "Bash(multica:*)" {
 		t.Fatalf("unexpected --allowedTools %q in %v", got, args)
 	}
 	joined := strings.Join(args, " ")
@@ -364,7 +360,7 @@ func TestBuildClaudeArgs_AppliesPermissionMode(t *testing.T) {
 
 	args := buildClaudeArgs(ExecOptions{PermissionMode: "default"}, slog.Default())
 
-	if got := valueAfterArg(args, "--permission-mode"); got != "default" {
+	if got := argValue(args, "--permission-mode"); got != "default" {
 		t.Fatalf("expected --permission-mode default, got %q in %v", got, args)
 	}
 }
@@ -493,13 +489,6 @@ func TestBuildClaudeArgsFiltersBlockedCustomArgs(t *testing.T) {
 		CustomArgs: []string{"--output-format", "text", "--model", "o3"},
 	}, slog.Default())
 
-	// --output-format text should be stripped
-	for _, a := range args[len(args)-2:] {
-		if a == "text" {
-			// "text" should not be in the last args since --output-format was blocked
-			// The actual --output-format stream-json is earlier in the list
-		}
-	}
 	// --model o3 should pass through
 	foundModel := false
 	for i, a := range args {
@@ -513,46 +502,6 @@ func TestBuildClaudeArgsFiltersBlockedCustomArgs(t *testing.T) {
 	}
 	if !foundModel {
 		t.Fatalf("expected --model o3 in args but it was missing: %v", args)
-	}
-}
-
-func TestBuildClaudeInputEncodesUserMessage(t *testing.T) {
-	t.Parallel()
-
-	data, err := buildClaudeInput("say pong")
-	if err != nil {
-		t.Fatalf("buildClaudeInput: %v", err)
-	}
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		t.Fatalf("expected newline-terminated payload, got %q", data)
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(data), &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if payload["type"] != "user" {
-		t.Fatalf("expected type user, got %v", payload["type"])
-	}
-
-	message, ok := payload["message"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected message object, got %T", payload["message"])
-	}
-	if message["role"] != "user" {
-		t.Fatalf("expected role user, got %v", message["role"])
-	}
-
-	content, ok := message["content"].([]any)
-	if !ok || len(content) != 1 {
-		t.Fatalf("expected one content block, got %v", message["content"])
-	}
-	block, ok := content[0].(map[string]any)
-	if !ok {
-		t.Fatalf("expected content block object, got %T", content[0])
-	}
-	if block["type"] != "text" || block["text"] != "say pong" {
-		t.Fatalf("unexpected content block: %v", block)
 	}
 }
 
@@ -600,8 +549,7 @@ func TestMergeEnvFiltersClaudeCodeVars(t *testing.T) {
 	if !found["CLAUDECODEX=keep-me"] {
 		t.Fatalf("expected unrelated env vars to be preserved, got %v", env)
 	}
-	// User-facing CLAUDE_CODE_* config must reach the child — stripping
-	// CLAUDE_CODE_GIT_BASH_PATH is what broke Claude Code on Windows (#3671).
+	// User-configurable CLAUDE_CODE_* values must reach the child.
 	if !found["CLAUDE_CODE_GIT_BASH_PATH=C:\\Program Files\\Git\\bin\\bash.exe"] {
 		t.Fatalf("expected CLAUDE_CODE_GIT_BASH_PATH to be preserved, got %v", env)
 	}
@@ -771,55 +719,23 @@ func TestClaudeExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	// Fake claude binary: reads the initial stdin frame so writeClaudeInput
-	// succeeds, writes a canonical V8-abort line to stderr, then exits
-	// non-zero before emitting any stream-json to stdout. This is the exact
-	// failure mode that motivated PR #1674 — without sampling stderrBuf.Tail()
-	// after cmd.Wait() returns, Result.Error would be a useless
-	// "exit status 3".
-	fakePath := filepath.Join(t.TempDir(), "claude")
+	// Exit before stream output and require the stderr tail in diagnostics.
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _\n" +
 		"echo \"FATAL ERROR: V8 abort: assertion failed\" >&2\n" +
 		"exit 3\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("claude", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new claude backend: %v", err)
+	result := executeBackendScript(t, "claude", "claude", script, ExecOptions{Timeout: 5 * time.Second})
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	if !strings.Contains(result.Error, "claude exited with error") {
+		t.Fatalf("expected error to mention exit, got %q", result.Error)
 	}
-	// Drain message stream so the lifecycle goroutine can progress.
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, "claude exited with error") {
-			t.Fatalf("expected error to mention exit, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "V8 abort: assertion failed") {
-			t.Fatalf("expected error to include stderr hint, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "claude stderr:") {
-			t.Fatalf("expected stderr label in error, got %q", result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if !strings.Contains(result.Error, "V8 abort: assertion failed") {
+		t.Fatalf("expected error to include stderr hint, got %q", result.Error)
+	}
+	if !strings.Contains(result.Error, "claude stderr:") {
+		t.Fatalf("expected stderr label in error, got %q", result.Error)
 	}
 }
 
@@ -829,43 +745,17 @@ func TestClaudeExecuteRecordsResultModelUsage(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _\n" +
 		"printf '%s\\n' '{\"type\":\"system\",\"session_id\":\"sess-result-usage\"}'\n" +
 		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"sess-result-usage\",\"result\":\"done\",\"modelUsage\":{\"zhipu/coding-plan\":{\"inputTokens\":123,\"outputTokens\":45,\"cacheReadInputTokens\":7,\"cacheCreationInputTokens\":11,\"costUSD\":0.01}}}'\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("claude", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new claude backend: %v", err)
+	result := executeBackendScript(t, "claude", "claude", script, ExecOptions{Timeout: 5 * time.Second})
+	usage, ok := result.Usage["zhipu/coding-plan"]
+	if !ok {
+		t.Fatalf("expected usage for zhipu/coding-plan, got %#v", result.Usage)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		usage, ok := result.Usage["zhipu/coding-plan"]
-		if !ok {
-			t.Fatalf("expected usage for zhipu/coding-plan, got %#v", result.Usage)
-		}
-		if usage.InputTokens != 123 || usage.OutputTokens != 45 || usage.CacheReadTokens != 7 || usage.CacheWriteTokens != 11 {
-			t.Fatalf("unexpected usage: %+v", usage)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if usage.InputTokens != 123 || usage.OutputTokens != 45 || usage.CacheReadTokens != 7 || usage.CacheWriteTokens != 11 {
+		t.Fatalf("unexpected usage: %+v", usage)
 	}
 }
 
@@ -883,20 +773,5 @@ func TestBuildClaudeArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 		ExtraArgs:  []string{"--output-format", "text", "--max-budget-usd", "1.00"},
 		CustomArgs: []string{"--max-budget-usd", "2.00", "--permission-mode", "plan"},
 	}, slog.Default())
-	joined := strings.Join(args, " ")
-	if strings.Contains(joined, "--output-format text") || strings.Contains(joined, "--permission-mode plan") {
-		t.Fatalf("blocked args should be filtered from both layers: %v", args)
-	}
-	extraIdx, customIdx := -1, -1
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--max-budget-usd" && args[i+1] == "1.00" {
-			extraIdx = i
-		}
-		if args[i] == "--max-budget-usd" && args[i+1] == "2.00" {
-			customIdx = i
-		}
-	}
-	if extraIdx == -1 || customIdx == -1 || extraIdx > customIdx {
-		t.Fatalf("expected extra args before custom args, got %v", args)
-	}
+	assertFilteredArgsPreserveLayerOrder(t, args)
 }

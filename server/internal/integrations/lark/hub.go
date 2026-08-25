@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -40,13 +41,10 @@ type HubQueries interface {
 //     under backoff) and surface the error to ops, NOT swallow it.
 //   - A nil error with OutcomeNeedsBinding tells the connector to
 //     send the binding-prompt card to the sender's open_id.
-//   - OutcomeAgentOffline / OutcomeAgentArchived tell the connector
-//     to send the respective copy as a Lark card; the chat_message
-//     row is already persisted, so the agent will pick the message
-//     up on resume.
-//   - OutcomeIngested means the message landed and (optionally) a
-//     task was enqueued; the connector emits a "thinking…" card and
-//     lets the outbound Patcher take over from there.
+//   - OutcomeAgentArchived tells the connector to send the archived copy as a
+//     Lark card; the chat_message row is already persisted.
+//   - OutcomeIngested means the message landed and (optionally) a task was
+//     enqueued; the durable outbound consumer delivers the eventual reply.
 //   - OutcomeDropped is informational only (the message was filtered
 //     for a legitimate reason); typical connectors do nothing.
 //
@@ -54,7 +52,7 @@ type HubQueries interface {
 // the connector's concern — the connector only sees the verdict.
 type EventEmitter func(ctx context.Context, msg InboundMessage) (DispatchResult, error)
 
-// EventConnector is the per-installation transport. The Hub owns the
+// EventConnector runs the per-installation transport. The Hub owns the
 // lifecycle (when to start, when to stop, when to back off), and the
 // connector owns the actual wire protocol — opening the Lark long
 // connection, decoding events, normalizing them into InboundMessage.
@@ -77,9 +75,7 @@ type EventEmitter func(ctx context.Context, msg InboundMessage) (DispatchResult,
 // offline card, etc.) and / or decide to disconnect on a hard failure.
 // The connector MUST NOT bypass the Dispatcher by writing to the DB
 // directly; emit is the only ingress path.
-type EventConnector interface {
-	Run(ctx context.Context, inst db.LarkInstallation, emit EventEmitter) error
-}
+type EventConnector func(ctx context.Context, inst db.LarkInstallation, emit EventEmitter) error
 
 // ConnectorFactory builds an EventConnector for a specific installation
 // row. The factory exists so the Hub doesn't need to know about Lark
@@ -87,10 +83,9 @@ type EventConnector interface {
 // inject a factory configured with their APIClient + secretbox box.
 type ConnectorFactory func(inst db.LarkInstallation) (EventConnector, error)
 
-// HubConfig tunes the Hub's lifecycle loops. All fields have sensible
-// production defaults via withDefaults; tests typically set Now and
-// Logger to inject determinism.
-type HubConfig struct {
+// hubConfig tunes the Hub's lifecycle loops. Production uses the defaults;
+// tests override individual values for deterministic timing.
+type hubConfig struct {
 	// LeaseTTL is how long a successful AcquireLarkWSLease grant is
 	// valid before another server replica may steal it. Renewals
 	// happen on a tighter interval (LeaseRenewInterval); the gap
@@ -133,7 +128,7 @@ type HubConfig struct {
 	// and tests share the same default.
 	ShutdownTimeout time.Duration
 
-	// ReplyTimeout caps an OutcomeReplier.Reply call. The replier
+	// ReplyTimeout caps the outbound reply callback. The callback
 	// runs in a detached goroutine off the ACK critical path —
 	// dispatch returns the verdict to the connector immediately so
 	// the ACK can be written, then the reply (a NeedsBinding card,
@@ -153,7 +148,7 @@ type HubConfig struct {
 	Logger *slog.Logger
 }
 
-func (c HubConfig) withDefaults() HubConfig {
+func (c hubConfig) withDefaults() hubConfig {
 	if c.LeaseTTL == 0 {
 		c.LeaseTTL = 90 * time.Second
 	}
@@ -198,17 +193,17 @@ func (c HubConfig) withDefaults() HubConfig {
 //
 // Lifecycle:
 //
-//	hub := NewHub(queries, factory, dispatcher, HubConfig{})
+//	hub := NewHub(queries, factory, dispatcher, replier, addTyping)
 //	go hub.Run(ctx)             // returns when ctx is cancelled
 //	... ctx cancellation triggers ...
 //	hub.Wait()                  // joins on every per-installation goroutine
 type Hub struct {
-	queries         HubQueries
-	factory         ConnectorFactory
-	dispatcher      *Dispatcher
-	replier         OutcomeReplier
-	typingIndicator *TypingIndicatorManager
-	cfg             HubConfig
+	queries    HubQueries
+	factory    ConnectorFactory
+	dispatcher *Dispatcher
+	reply      ReplyFunc
+	addTyping  func(context.Context, db.LarkInstallation, pgtype.UUID, string, string)
+	cfg        hubConfig
 
 	// nodeID is the per-process lease ownership token. The CAS
 	// predicate on AcquireLarkWSLease treats matching tokens as
@@ -231,8 +226,9 @@ type Hub struct {
 	// minted (initial start OR rotation restart).
 	supervisorGen uint64
 	wg            sync.WaitGroup
+	running       bool
 	stopped       bool
-	stopChan      chan struct{}
+	runDone       chan struct{}
 
 	// replyWg tracks in-flight outbound reply goroutines (NeedsBinding
 	// card, offline notice, etc.). The replier is detached from the
@@ -261,44 +257,28 @@ type supervisorEntry struct {
 	gen         uint64
 }
 
-// NewHub constructs a Hub bound to the supplied queries, connector
-// factory and dispatcher. The Hub does not start any goroutines until
-// Run is called. The replier (OutcomeReplier) handles the outbound
-// side of the EventEmitter contract — NeedsBinding / AgentOffline /
-// AgentArchived cards — and is best-effort: failures are logged and
-// do not interrupt inbound processing. A nil replier falls back to
-// the noop replier so callers that have not wired outbound replies
-// yet still get the inbound pipeline running.
-func NewHub(queries HubQueries, factory ConnectorFactory, dispatcher *Dispatcher, cfg HubConfig) *Hub {
-	cfg = cfg.withDefaults()
+// NewHub constructs a Hub bound to the supplied queries, connector factory,
+// dispatcher, and outbound replier. The Hub does not start any goroutines
+// until Run is called. Reply failures are best-effort and do not interrupt
+// inbound processing.
+func NewHub(
+	queries HubQueries,
+	factory ConnectorFactory,
+	dispatcher *Dispatcher,
+	reply ReplyFunc,
+	addTyping func(context.Context, db.LarkInstallation, pgtype.UUID, string, string),
+) *Hub {
 	return &Hub{
 		queries:     queries,
 		factory:     factory,
 		dispatcher:  dispatcher,
-		replier:     NewNoopOutcomeReplier(cfg.Logger),
-		cfg:         cfg,
+		reply:       reply,
+		addTyping:   addTyping,
+		cfg:         hubConfig{}.withDefaults(),
 		nodeID:      newNodeID(),
 		supervisors: make(map[string]supervisorEntry),
-		stopChan:    make(chan struct{}),
+		runDone:     make(chan struct{}),
 	}
-}
-
-// SetOutcomeReplier installs the production replier on the Hub. Must
-// be called BEFORE Run; setting it afterwards is a data race against
-// the supervisor's emit goroutines. Nil resets back to the noop
-// replier (useful for tests).
-func (h *Hub) SetOutcomeReplier(r OutcomeReplier) {
-	if r == nil {
-		r = NewNoopOutcomeReplier(h.cfg.Logger)
-	}
-	h.replier = r
-}
-
-// SetTypingIndicatorManager installs the typing-indicator manager on
-// the Hub. Must be called BEFORE Run. Nil is safe and disables the
-// typing reaction lifecycle.
-func (h *Hub) SetTypingIndicatorManager(m *TypingIndicatorManager) {
-	h.typingIndicator = m
 }
 
 // Run is the Hub's main loop. It scans installations every
@@ -308,7 +288,14 @@ func (h *Hub) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 // cancelled; the caller MUST then call Wait to join all supervisor
 // goroutines before exiting.
 func (h *Hub) Run(ctx context.Context) {
-	defer close(h.stopChan)
+	h.mu.Lock()
+	if h.running || h.stopped {
+		h.mu.Unlock()
+		return
+	}
+	h.running = true
+	h.mu.Unlock()
+	defer h.finishRun()
 
 	// First sweep immediately so a freshly-restarted server doesn't
 	// wait a full PollInterval before picking up its installations.
@@ -329,8 +316,8 @@ func (h *Hub) Run(ctx context.Context) {
 
 // Wait blocks until every supervisor goroutine AND every detached
 // reply goroutine the Hub started has exited. Call this AFTER
-// cancelling Run's context; calling it before returns immediately if
-// no goroutines are active.
+// cancelling Run's context. Calling Wait before Run permanently closes this
+// single-use Hub to prevent a later Run from adding goroutines after Wait.
 //
 // Prefer WaitWithTimeout in shutdown paths so a stuck supervisor
 // (typically a hung lease release on a frozen DB pool) cannot block
@@ -338,14 +325,24 @@ func (h *Hub) Run(ctx context.Context) {
 // bounded by ReplyTimeout, so even Wait() (unbounded) eventually
 // returns once those deadlines elapse.
 func (h *Hub) Wait() {
+	// WaitGroup forbids Add racing with Wait. Run is the sole owner of
+	// supervisor creation, so join the run loop before waiting on supervisors.
+	h.mu.Lock()
+	runDone := h.runDone
+	if !h.running {
+		h.stopped = true
+		runDone = nil
+	}
+	h.mu.Unlock()
+	if runDone != nil {
+		<-runDone
+	}
 	h.wg.Wait()
 	// Supervisors (and thus inbound delivery) have stopped, so no new
 	// run triggers can be scheduled. Drain the debounced pending triggers
 	// before joining replies: the flush may itself emit an offline/archived
 	// notice, and FlushPendingRuns blocks until those finish.
-	if h.dispatcher != nil {
-		h.dispatcher.FlushPendingRuns()
-	}
+	h.dispatcher.FlushPendingRuns()
 	h.replyWg.Wait()
 }
 
@@ -393,7 +390,7 @@ func (h *Hub) sweep(ctx context.Context) {
 	}
 	active := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		id := uuidString(row.ID)
+		id := util.UUIDToString(row.ID)
 		active[id] = struct{}{}
 		h.maybeRestartOnRotation(id, row)
 		h.startSupervisor(ctx, row)
@@ -437,7 +434,7 @@ func (h *Hub) maybeRestartOnRotation(id string, row db.LarkInstallation) {
 }
 
 func (h *Hub) startSupervisor(parent context.Context, inst db.LarkInstallation) {
-	id := uuidString(inst.ID)
+	id := util.UUIDToString(inst.ID)
 	h.mu.Lock()
 	if h.stopped {
 		h.mu.Unlock()
@@ -586,7 +583,7 @@ func (h *Hub) supervise(ctx context.Context, inst db.LarkInstallation, id string
 		}()
 
 		startedAt := h.cfg.Now()
-		runErr := conn.Run(runCtx, inst, func(emitCtx context.Context, msg InboundMessage) (DispatchResult, error) {
+		runErr := conn(runCtx, inst, func(emitCtx context.Context, msg InboundMessage) (DispatchResult, error) {
 			return h.handleEvent(emitCtx, inst, log, msg)
 		})
 		runCancel()
@@ -638,7 +635,7 @@ func (h *Hub) acquireLease(ctx context.Context, instID pgtype.UUID, token string
 	if err == nil {
 		return true, nil
 	}
-	if isNoRowsErr(err) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// CAS predicate didn't match — someone else (another replica
 		// OR a sibling supervisor mid-rotation) holds the lease. We
 		// back off and let the renewer / supervise loop re-poll on its
@@ -676,14 +673,14 @@ func (h *Hub) renewLeaseUntil(ctx context.Context, cancelRun context.CancelFunc,
 			leased, err := h.acquireLease(ctx, instID, token)
 			if err != nil {
 				h.cfg.Logger.Warn("lark hub: lease renewal error",
-					"installation_id", uuidString(instID),
+					"installation_id", util.UUIDToString(instID),
 					"error", err,
 				)
 				continue
 			}
 			if !leased {
 				h.cfg.Logger.Warn("lark hub: lease lost; tearing down connector",
-					"installation_id", uuidString(instID),
+					"installation_id", util.UUIDToString(instID),
 				)
 				cancelRun()
 				return
@@ -720,7 +717,7 @@ func (h *Hub) releaseLease(instID pgtype.UUID, token string) {
 		CurrentToken: pgtype.Text{String: token, Valid: true},
 	}); err != nil {
 		h.cfg.Logger.Warn("lark hub: release lease failed",
-			"installation_id", uuidString(instID),
+			"installation_id", util.UUIDToString(instID),
 			"error", err,
 		)
 	}
@@ -750,12 +747,6 @@ func (h *Hub) releaseLease(instID pgtype.UUID, token string) {
 // fresh context bounded by ReplyTimeout (strictly under 3s). Hub.Wait
 // joins on replyWg so shutdown still drains in-flight replies.
 func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *slog.Logger, msg InboundMessage) (DispatchResult, error) {
-	if h.dispatcher == nil {
-		log.Warn("lark hub: dispatcher not configured; dropping event",
-			"event_id", msg.EventID,
-		)
-		return DispatchResult{}, ErrDispatcherNotConfigured
-	}
 	res, err := h.dispatcher.Handle(ctx, msg)
 	if err != nil {
 		log.Error("lark hub: dispatcher error",
@@ -769,14 +760,14 @@ func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *sl
 		"outcome", string(res.Outcome),
 		"drop_reason", string(res.DropReason),
 	)
-	if res.Outcome == OutcomeIngested && h.typingIndicator != nil {
+	if res.Outcome == OutcomeIngested {
 		// Detached: the typing reaction HTTP call must not block the
 		// connector's ACK path. A short timeout keeps the goroutine
 		// from hanging if Lark is slow.
 		go func() {
 			addCtx, cancel := context.WithTimeout(context.Background(), h.cfg.ReplyTimeout)
 			defer cancel()
-			h.typingIndicator.Add(addCtx, inst, res.ChatSessionID, msg.MessageID, msg.CreateTime)
+			h.addTyping(addCtx, inst, res.ChatSessionID, msg.MessageID, msg.CreateTime)
 		}()
 	}
 	h.scheduleReply(inst, msg, res, log)
@@ -786,8 +777,7 @@ func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *sl
 // scheduleReply detaches the OutcomeReplier from the ACK critical path.
 // The reply goroutine uses a fresh context.Background() with a
 // ReplyTimeout deadline so it is independent of the inbound emit ctx
-// (which the connector cancels as soon as Run exits). A nil or noop
-// replier short-circuits — no goroutine, no wg tracking.
+// (which the connector cancels as soon as Run exits).
 //
 // Why a fresh background ctx instead of inheriting from the emit ctx:
 // the emit ctx is cancelled when the connector's runCtx fires, which
@@ -795,24 +785,12 @@ func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *sl
 // kill the outbound reply for no reason — the binding card / offline
 // notice is still wanted. ReplyTimeout is the only guard we need.
 func (h *Hub) scheduleReply(inst db.LarkInstallation, msg InboundMessage, res DispatchResult, log *slog.Logger) {
-	r := h.replier
-	if r == nil {
-		return
-	}
-	// Fast path: noop replier doesn't do any IO, run it inline so we
-	// don't pay goroutine + waitgroup cost for a no-op. The exposed
-	// type is unexported but the test seam uses NewNoopOutcomeReplier
-	// which returns *noopReplier, so the type-assert is safe.
-	if _, isNoop := r.(*noopReplier); isNoop {
-		r.Reply(context.Background(), inst, msg, res)
-		return
-	}
 	h.replyWg.Add(1)
 	go func() {
 		defer h.replyWg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.ReplyTimeout)
 		defer cancel()
-		r.Reply(ctx, inst, msg, res)
+		h.reply(ctx, inst, msg, res)
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Warn("lark hub: outbound reply timed out",
 				"event_id", msg.EventID,
@@ -823,12 +801,6 @@ func (h *Hub) scheduleReply(inst db.LarkInstallation, msg InboundMessage, res Di
 	}()
 }
 
-// ErrDispatcherNotConfigured is surfaced to the connector when emit is
-// called on a Hub that was constructed without a Dispatcher. Returning
-// it (instead of silently dropping) lets the connector log and / or
-// disconnect so the misconfiguration is visible in production.
-var ErrDispatcherNotConfigured = errors.New("lark hub: dispatcher not configured")
-
 func (h *Hub) cancelAll() {
 	h.mu.Lock()
 	h.stopped = true
@@ -836,6 +808,14 @@ func (h *Hub) cancelAll() {
 		entry.cancel()
 		delete(h.supervisors, id)
 	}
+	h.mu.Unlock()
+}
+
+func (h *Hub) finishRun() {
+	h.mu.Lock()
+	h.running = false
+	h.stopped = true
+	close(h.runDone)
 	h.mu.Unlock()
 }
 
@@ -889,23 +869,3 @@ func sleep(ctx context.Context, d time.Duration) bool {
 		return false
 	}
 }
-
-// isNoRowsErr is the local equivalent of errors.Is(err, pgx.ErrNoRows)
-// without importing pgx into this file. The CAS predicate on
-// AcquireLarkWSLease surfaces "lease held by someone else" as a
-// no-rows return, not a structured error type.
-func isNoRowsErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	// pgx.ErrNoRows is the sentinel; matching by message is
-	// sufficient and avoids importing pgx purely for this comparison.
-	return errors.Is(err, errPgxNoRows) || err.Error() == "no rows in result set"
-}
-
-// errPgxNoRows is initialized in hub_pgx.go to pgx.ErrNoRows so the
-// no-rows check above works under both the real pgx import path and
-// the string-matched fallback (test fakes return that string directly).
-var errPgxNoRows error
-
-func uuidString(u pgtype.UUID) string { return util.UUIDToString(u) }

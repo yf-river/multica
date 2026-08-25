@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ChevronDown, Filter, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -24,12 +25,59 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { FILTER_ITEM_CLASS, HoverCheck } from "./hover-check";
+import { useT } from "../i18n";
 
 type SortDirection = "asc" | "desc";
 
-export function ToolbarCountBadge({ count }: { count: number }) {
+export function countActiveFilters<T>(
+  filters: { [K in keyof T]: readonly unknown[] },
+): number {
+  const dimensions = Object.values(filters) as (readonly unknown[])[];
+  return dimensions.filter((values) => values.length > 0).length;
+}
+
+export function incrementCount<K>(counts: Map<K, number>, key: K): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+export function incrementCountedOption<K, T extends { count: number }>(
+  options: Map<K, T>,
+  key: K,
+  value: Omit<NoInfer<T>, "count">,
+): void {
+  const option = options.get(key);
+  if (option) option.count += 1;
+  else options.set(key, { ...value, count: 1 } as T);
+}
+
+function ToolbarCountBadge({ count }: { count: number }) {
   return (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{count}</span>
+  );
+}
+
+export function ToolbarFilterOption({
+  checked,
+  onToggle,
+  count,
+  children,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenuCheckboxItem
+      checked={checked}
+      onCheckedChange={onToggle}
+      className={FILTER_ITEM_CLASS}
+    >
+      <HoverCheck checked={checked} />
+      {children}
+      <ToolbarCountBadge count={count} />
+    </DropdownMenuCheckboxItem>
   );
 }
 
@@ -67,6 +115,35 @@ export function ToolbarFrame({
     <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-5">
       <div className="flex min-w-0 items-center gap-2">{left}</div>
       <div className="flex shrink-0 items-center gap-1">{children}</div>
+    </div>
+  );
+}
+
+export function ListBatchToolbar({
+  selectedLabel,
+  clearLabel,
+  onClear,
+  children,
+}: {
+  selectedLabel: ReactNode;
+  clearLabel: string;
+  onClear: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
+      <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
+        <span className="text-sm font-medium">{selectedLabel}</span>
+        <button
+          type="button"
+          aria-label={clearLabel}
+          onClick={onClear}
+          className="rounded p-0.5 transition-colors hover:bg-accent"
+        >
+          <X className="size-3.5 text-muted-foreground" />
+        </button>
+      </div>
+      {children}
     </div>
   );
 }
@@ -128,20 +205,16 @@ function ToolbarFilterButton({
 export function ToolbarFilterDropdown({
   hasActiveFilters,
   activeCount,
-  activeLabel,
-  filterLabel,
-  clearLabel,
   onClearFilters,
   children,
 }: {
   hasActiveFilters: boolean;
   activeCount: number;
-  activeLabel: ReactNode;
-  filterLabel: ReactNode;
-  clearLabel: string;
   onClearFilters: () => void;
   children: ReactNode;
 }) {
+  const { t } = useT("common");
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -149,9 +222,11 @@ export function ToolbarFilterDropdown({
           <ToolbarFilterButton
             hasActiveFilters={hasActiveFilters}
             activeCount={activeCount}
-            activeLabel={activeLabel}
-            filterLabel={filterLabel}
-            clearLabel={clearLabel}
+            activeLabel={t(($) => $.list_toolbar.filter_active_count, {
+              count: activeCount,
+            })}
+            filterLabel={t(($) => $.list_toolbar.filter_label)}
+            clearLabel={t(($) => $.list_toolbar.clear_filters)}
             onClearFilters={onClearFilters}
           />
         }
@@ -191,18 +266,26 @@ export function ToolbarFilterSubmenu({
   );
 }
 
-export function ToolbarScopeSelector<TScope extends string>({
+export function ToolbarScopeAndResult<TScope extends string>({
   scopes,
   scope,
   scopeCounts,
   scopeLabels,
   onScopeChange,
+  resultActive,
+  resultTitle,
+  visibleCount,
+  totalCount,
 }: {
   scopes: readonly TScope[];
   scope: TScope;
   scopeCounts: Record<TScope, number>;
   scopeLabels: Record<TScope, string>;
   onScopeChange: (scope: TScope) => void;
+  resultActive: boolean;
+  resultTitle: string;
+  visibleCount: number;
+  totalCount: number;
 }) {
   return (
     <>
@@ -256,6 +339,12 @@ export function ToolbarScopeSelector<TScope extends string>({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+      <ToolbarResultCount
+        active={resultActive}
+        title={resultTitle}
+        visibleCount={visibleCount}
+        totalCount={totalCount}
+      />
     </>
   );
 }
@@ -274,10 +363,6 @@ export function ToolbarDisplaySettings<
   columnLabels,
   hiddenColumns,
   onToggleColumn,
-  displayLabel,
-  sortByLabel,
-  directionAscLabel,
-  directionDescLabel,
   columnsLabel,
 }: {
   sortField: TSortField;
@@ -290,12 +375,9 @@ export function ToolbarDisplaySettings<
   columnLabels: Record<TColumnKey, string>;
   hiddenColumns: readonly TColumnKey[];
   onToggleColumn: (key: TColumnKey) => void;
-  displayLabel: string;
-  sortByLabel: string;
-  directionAscLabel: string;
-  directionDescLabel: string;
   columnsLabel: string;
 }) {
+  const { t } = useT("common");
   const sortLabel = sortLabels[sortField];
 
   return (
@@ -321,12 +403,14 @@ export function ToolbarDisplaySettings<
             />
           }
         />
-        <TooltipContent side="bottom">{displayLabel}</TooltipContent>
+        <TooltipContent side="bottom">
+          {t(($) => $.list_toolbar.display)}
+        </TooltipContent>
       </Tooltip>
       <PopoverContent align="end" className="w-64 p-0">
         <div className="border-b px-3 py-2.5">
           <span className="text-xs font-medium text-muted-foreground">
-            {sortByLabel}
+            {t(($) => $.list_toolbar.sort_by)}
           </span>
           <div className="mt-2 flex items-center gap-1.5">
             <DropdownMenu>
@@ -364,7 +448,9 @@ export function ToolbarDisplaySettings<
                 onSortDirectionChange(sortDirection === "asc" ? "desc" : "asc")
               }
               title={
-                sortDirection === "asc" ? directionAscLabel : directionDescLabel
+                sortDirection === "asc"
+                  ? t(($) => $.list_toolbar.direction_asc)
+                  : t(($) => $.list_toolbar.direction_desc)
               }
             >
               {sortDirection === "asc" ? (

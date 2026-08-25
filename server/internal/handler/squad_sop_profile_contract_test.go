@@ -1,0 +1,18 @@
+package handler
+
+import "testing"
+
+func TestSquadSOPProfileAcceptsOnlyCanonicalStepFields(t *testing.T) {
+	canonical := []byte(`{"profile_key":"current","steps":[{"key":"build","name":"Build","role_key":"developer","skill":"project/implement"}]}`)
+	if _, err := normalizeSquadSOPProfile(canonical); err != nil {
+		t.Fatalf("canonical profile rejected: %v", err)
+	}
+	steps := sopProfileStepsForHandler(canonical)
+	if len(steps) != 1 || steps[0].Key != "build" || steps[0].Name != "Build" || steps[0].RoleKey != "developer" {
+		t.Fatalf("canonical steps = %#v", steps)
+	}
+
+	if _, err := normalizeSquadSOPProfile([]byte(`{"steps":[{"key":"build","unexpected":"value"}]}`)); err == nil {
+		t.Fatal("profile with an unsupported step field was accepted")
+	}
+}

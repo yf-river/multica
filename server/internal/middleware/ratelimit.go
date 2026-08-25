@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -23,6 +25,71 @@ if count == 1 then
 end
 return count
 `)
+
+const maxLocalRateLimitEntries = 100_000
+
+type localRateLimitEntry struct {
+	count     int
+	expiresAt time.Time
+}
+
+type localRateLimiter struct {
+	mu      sync.Mutex
+	limit   int
+	window  time.Duration
+	entries map[string]localRateLimitEntry
+}
+
+func newLocalRateLimiter(limit int, window time.Duration) *localRateLimiter {
+	return &localRateLimiter{
+		limit:   limit,
+		window:  window,
+		entries: make(map[string]localRateLimitEntry),
+	}
+}
+
+func (l *localRateLimiter) allow(key string, now time.Time) bool {
+	if l.limit <= 0 || l.window <= 0 {
+		return true
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	entry, exists := l.entries[key]
+	if exists && now.Before(entry.expiresAt) {
+		entry.count++
+		l.entries[key] = entry
+		return entry.count <= l.limit
+	}
+
+	if !exists && len(l.entries) >= maxLocalRateLimitEntries {
+		l.evictExpiredOrOldest(now)
+	}
+	l.entries[key] = localRateLimitEntry{count: 1, expiresAt: now.Add(l.window)}
+	return true
+}
+
+func (l *localRateLimiter) evictExpiredOrOldest(now time.Time) {
+	for key, entry := range l.entries {
+		if !now.Before(entry.expiresAt) {
+			delete(l.entries, key)
+		}
+	}
+	if len(l.entries) < maxLocalRateLimitEntries {
+		return
+	}
+
+	var oldestKey string
+	var oldestExpiry time.Time
+	for key, entry := range l.entries {
+		if oldestKey == "" || entry.expiresAt.Before(oldestExpiry) {
+			oldestKey = key
+			oldestExpiry = entry.expiresAt
+		}
+	}
+	delete(l.entries, oldestKey)
+}
 
 // ParseTrustedProxies parses a comma-separated list of CIDRs into a
 // slice of *net.IPNet. Invalid entries are warned and skipped.
@@ -48,8 +115,10 @@ func ParseTrustedProxies(raw string) []*net.IPNet {
 	return nets
 }
 
-// RateLimit returns a per-IP fixed-window rate limiter backed by Redis.
-// If rdb is nil the middleware is a no-op (fail-open).
+// RateLimit returns a per-IP fixed-window rate limiter. Every process keeps a
+// bounded local budget; Redis additionally shares the budget across nodes.
+// Redis absence or outages therefore reduce coordination but never disable
+// login protection on a healthy node.
 //
 // trustedProxies controls X-Forwarded-For handling: when the direct
 // connection (RemoteAddr) originates from a CIDR in the list, the
@@ -58,32 +127,48 @@ func ParseTrustedProxies(raw string) []*net.IPNet {
 // RemoteAddr is used. This matches the project's conservative trust
 // model (see health_realtime.go).
 func RateLimit(rdb *redis.Client, limit int, window time.Duration, trustedProxies []*net.IPNet) func(http.Handler) http.Handler {
+	local := newLocalRateLimiter(limit, window)
+	var redisUnavailable atomic.Bool
+
 	return func(next http.Handler) http.Handler {
-		if rdb == nil {
-			return next
-		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := extractIP(r, trustedProxies)
 			key := rateLimitKey(r.URL.Path, ip)
-			ctx := r.Context()
-
-			count, err := rateLimitScript.Run(ctx, rdb, []string{key}, int(window.Seconds())).Int64()
-			if err != nil {
-				slog.Warn("ratelimit: redis error; allowing request", "error", err, "ip", ip)
+			if !local.allow(key, time.Now()) {
+				writeRateLimitExceeded(w, window)
+				return
+			}
+			if rdb == nil {
 				next.ServeHTTP(w, r)
 				return
 			}
+
+			count, err := rateLimitScript.Run(r.Context(), rdb, []string{key}, int(window.Seconds())).Int64()
+			if err != nil {
+				if redisUnavailable.CompareAndSwap(false, true) {
+					slog.Warn("ratelimit: Redis unavailable; using local budget", "error", err)
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			if redisUnavailable.Swap(false) {
+				slog.Info("ratelimit: Redis recovered; shared budget restored")
+			}
 			if count > int64(limit) {
-				w.Header().Set("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
+				writeRateLimitExceeded(w, window)
 				return
 			}
 
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func writeRateLimitExceeded(w http.ResponseWriter, window time.Duration) {
+	w.Header().Set("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many requests"})
 }
 
 // extractIP determines the client IP for rate limiting purposes.

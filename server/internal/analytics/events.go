@@ -4,25 +4,22 @@ import "strings"
 
 // Event names. Keep in sync with docs/analytics.md.
 const (
-	EventSignup                        = "signup"
-	EventWorkspaceCreated              = "workspace_created"
-	EventRuntimeRegistered             = "runtime_registered"
-	EventRuntimeReady                  = "runtime_ready"
-	EventRuntimeFailed                 = "runtime_failed"
-	EventRuntimeOffline                = "runtime_offline"
-	EventIssueExecuted                 = "issue_executed"
-	EventIssueCreated                  = "issue_created"
-	EventChatMessageSent               = "chat_message_sent"
-	EventAutopilotRunStarted           = "autopilot_run_started"
-	EventAutopilotRunCompleted         = "autopilot_run_completed"
-	EventAutopilotRunFailed            = "autopilot_run_failed"
-	EventOnboardingStarted             = "onboarding_started"
-	EventOnboardingQuestionnaireSubmit = "onboarding_questionnaire_submitted"
-	EventAgentCreated                  = "agent_created"
-	EventOnboardingCompleted           = "onboarding_completed"
-	EventFeedbackSubmitted             = "feedback_submitted"
-	EventSquadCreated                  = "squad_created"
-	EventAutopilotCreated              = "autopilot_created"
+	EventSignup                = "signup"
+	EventWorkspaceCreated      = "workspace_created"
+	EventRuntimeRegistered     = "runtime_registered"
+	EventRuntimeReady          = "runtime_ready"
+	EventRuntimeFailed         = "runtime_failed"
+	EventRuntimeOffline        = "runtime_offline"
+	EventIssueExecuted         = "issue_executed"
+	EventIssueCreated          = "issue_created"
+	EventChatMessageSent       = "chat_message_sent"
+	EventAutopilotRunStarted   = "autopilot_run_started"
+	EventAutopilotRunCompleted = "autopilot_run_completed"
+	EventAutopilotRunFailed    = "autopilot_run_failed"
+	EventAgentCreated          = "agent_created"
+	EventFeedbackSubmitted     = "feedback_submitted"
+	EventSquadCreated          = "squad_created"
+	EventAutopilotCreated      = "autopilot_created"
 )
 
 const EventSchemaVersion = 2
@@ -57,11 +54,10 @@ func IsMetricsOnly(name string) bool {
 }
 
 const (
-	SourceOnboarding = "onboarding"
-	SourceManual     = "manual"
-	SourceChat       = "chat"
-	SourceAutopilot  = "autopilot"
-	SourceAPI        = "api"
+	SourceManual    = "manual"
+	SourceChat      = "chat"
+	SourceAutopilot = "autopilot"
+	SourceAPI       = "api"
 )
 
 // CoreProperties are the shared join and segmentation fields used by the
@@ -81,16 +77,6 @@ type CoreProperties struct {
 	Provider       string
 	IsDemo         bool
 }
-
-type TaskContext = CoreProperties
-
-// Onboarding completion paths. Keep in sync with docs/analytics.md.
-const (
-	OnboardingPathFull           = "full"            // reached first_issue end of flow
-	OnboardingPathRuntimeSkipped = "runtime_skipped" // completed without connecting a runtime
-	OnboardingPathSkipExisting   = "skip_existing"   // "I've done this before" from welcome
-	OnboardingPathUnknown        = "unknown"         // fallback when the server can't derive the path
-)
 
 // Platform is used as the "platform" event property so funnels can split by
 // web / cli / server. Request-path events use PlatformServer as a fallback
@@ -135,109 +121,38 @@ func WorkspaceCreated(userID, workspaceID string) Event {
 // triple is upserted. The handler uses a `xmax = 0` flag returned from the
 // upsert query to distinguish inserts from updates — heartbeats and repeat
 // registrations never emit this event.
-//
-// ownerID may be empty when the daemon authenticates via a daemon token
-// (no user context); downstream funnels that need per-user attribution
-// fall back to `workspace_id` as the grouping key.
-func RuntimeRegistered(ownerID, workspaceID, runtimeID, daemonID, provider, runtimeVersion, cliVersion string) Event {
-	distinct := ownerID
-	if distinct == "" {
-		// A per-workspace synthetic id keeps PostHog from merging unrelated
-		// daemon registrations across workspaces under a single "anonymous"
-		// person. It's stable within a workspace so repeat heartbeats (which
-		// don't emit anyway) would at least group correctly.
-		distinct = "workspace:" + workspaceID
-	}
-	return Event{
-		Name:        EventRuntimeRegistered,
-		DistinctID:  distinct,
-		WorkspaceID: workspaceID,
-		Properties: withCoreProperties(map[string]any{
-			"runtime_id":      runtimeID,
-			"daemon_id":       daemonID,
-			"provider":        provider,
-			"runtime_mode":    "local",
-			"runtime_version": runtimeVersion,
-			"cli_version":     cliVersion,
-		}, CoreProperties{
-			UserID:      ownerID,
-			WorkspaceID: workspaceID,
-			Source:      SourceManual,
-			RuntimeMode: "local",
-			Provider:    provider,
-		}),
-	}
+func RuntimeRegistered(provider string) Event {
+	return runtimeEvent(EventRuntimeRegistered, provider, nil)
 }
 
-func RuntimeReady(ownerID, workspaceID, runtimeID, daemonID, provider string, readyDurationMS int64) Event {
-	distinct := ownerID
-	if distinct == "" {
-		distinct = "workspace:" + workspaceID
-	}
-	props := map[string]any{
-		"runtime_id": runtimeID,
-		"daemon_id":  daemonID,
-	}
+func RuntimeReady(provider string, readyDurationMS int64) Event {
+	var props map[string]any
 	if readyDurationMS > 0 {
-		props["ready_duration_ms"] = readyDurationMS
+		props = map[string]any{"ready_duration_ms": readyDurationMS}
 	}
-	return Event{
-		Name:        EventRuntimeReady,
-		DistinctID:  distinct,
-		WorkspaceID: workspaceID,
-		Properties: withCoreProperties(props, CoreProperties{
-			UserID:      ownerID,
-			WorkspaceID: workspaceID,
-			Source:      SourceManual,
-			RuntimeMode: "local",
-			Provider:    provider,
-		}),
-	}
+	return runtimeEvent(EventRuntimeReady, provider, props)
 }
 
-func RuntimeFailed(ownerID, workspaceID, daemonID, provider, failureReason, errorType string, recoverable bool) Event {
-	distinct := ownerID
-	if distinct == "" && workspaceID != "" {
-		distinct = "workspace:" + workspaceID
-	}
-	return Event{
-		Name:        EventRuntimeFailed,
-		DistinctID:  distinct,
-		WorkspaceID: workspaceID,
-		Properties: withCoreProperties(map[string]any{
-			"daemon_id":      daemonID,
-			"failure_reason": failureReason,
-			"error_type":     errorType,
-			"recoverable":    recoverable,
-		}, CoreProperties{
-			UserID:      ownerID,
-			WorkspaceID: workspaceID,
-			Source:      SourceManual,
-			RuntimeMode: "local",
-			Provider:    provider,
-		}),
-	}
+func RuntimeFailed(provider, failureReason string, recoverable bool) Event {
+	return runtimeEvent(EventRuntimeFailed, provider, map[string]any{
+		"failure_reason": failureReason,
+		"recoverable":    recoverable,
+	})
 }
 
-func RuntimeOffline(ownerID, workspaceID, runtimeID, daemonID, provider string) Event {
-	distinct := ownerID
-	if distinct == "" {
-		distinct = "workspace:" + workspaceID
+func RuntimeOffline(provider string) Event {
+	return runtimeEvent(EventRuntimeOffline, provider, nil)
+}
+
+func runtimeEvent(name, provider string, properties map[string]any) Event {
+	if properties == nil {
+		properties = make(map[string]any, 2)
 	}
+	properties["runtime_mode"] = "local"
+	properties["provider"] = provider
 	return Event{
-		Name:        EventRuntimeOffline,
-		DistinctID:  distinct,
-		WorkspaceID: workspaceID,
-		Properties: withCoreProperties(map[string]any{
-			"runtime_id": runtimeID,
-			"daemon_id":  daemonID,
-		}, CoreProperties{
-			UserID:      ownerID,
-			WorkspaceID: workspaceID,
-			Source:      SourceManual,
-			RuntimeMode: "local",
-			Provider:    provider,
-		}),
+		Name:       name,
+		Properties: properties,
 	}
 }
 
@@ -256,11 +171,7 @@ func IssueExecuted(actorID, workspaceID, issueID, taskID, agentID, source, runti
 		DistinctID:  actorID,
 		WorkspaceID: workspaceID,
 		Properties: withCoreProperties(map[string]any{
-			"issue_id":         issueID,
-			"task_id":          taskID,
-			"agent_id":         agentID,
 			"task_duration_ms": taskDurationMS,
-			"duration_ms":      taskDurationMS,
 		}, CoreProperties{
 			UserID:      nonAgentUserID(actorID),
 			WorkspaceID: workspaceID,
@@ -317,121 +228,20 @@ func ChatMessageSent(userID, workspaceID, chatSessionID, taskID, agentID, runtim
 	}
 }
 
-// AutopilotAssignee describes the autopilot's configured target. agent_id is
-// always the agent that will actually execute the work (the squad leader for
-// squad autopilots) so funnels grouping by agent stay consistent. assignee_*
-// fields record the original configuration so reports can tell a solo-agent
-// autopilot apart from a squad one without joining back to the autopilot row.
-type AutopilotAssignee struct {
-	AgentID      string // executing agent — leader for squad autopilots
-	AssigneeType string // "agent" or "squad"
-	SquadID      string // empty when AssigneeType != "squad"
+func AutopilotRunStarted(source string) Event {
+	return autopilotRunEvent(EventAutopilotRunStarted, source)
 }
 
-func AutopilotRunStarted(actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource string) Event {
-	return autopilotRunEvent(EventAutopilotRunStarted, actorID, workspaceID, autopilotID, runID, cadence, assignee, triggerSource, nil)
+func AutopilotRunCompleted(source string) Event {
+	return autopilotRunEvent(EventAutopilotRunCompleted, source)
 }
 
-func AutopilotRunCompleted(actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource string, durationMS int64) Event {
-	return autopilotRunEvent(EventAutopilotRunCompleted, actorID, workspaceID, autopilotID, runID, cadence, assignee, triggerSource, map[string]any{
-		"duration_ms": durationMS,
-	})
+func AutopilotRunFailed(source string) Event {
+	return autopilotRunEvent(EventAutopilotRunFailed, source)
 }
 
-func AutopilotRunFailed(actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource, failureReason, errorType string, willRetry bool, durationMS int64) Event {
-	return autopilotRunEvent(EventAutopilotRunFailed, actorID, workspaceID, autopilotID, runID, cadence, assignee, triggerSource, map[string]any{
-		"duration_ms":    durationMS,
-		"failure_reason": failureReason,
-		"error_type":     errorType,
-		"will_retry":     willRetry,
-	})
-}
-
-// OnboardingQuestionnaireSubmitted fires the first time a user's
-// `user.onboarding_questionnaire` transitions from "at least one slot
-// unresolved" to "every slot has either an answer or a skip marker".
-// The handler drives this transition — we emit from PatchOnboarding so
-// the single emission site stays honest even if the frontend retries.
-//
-// `useCase` is multi-select (users can pick several); `source` is
-// single-select (primary acquisition channel) but kept as a slice
-// for back-compat with v2 multi-select rows — single-element in
-// current data. `role` stays single-select. Empty slice = no answer
-// (skip is captured separately via the *Skipped booleans).
-//
-// The three answers are also mirrored into person properties via $set
-// so cohorting by source / role / use_case works across every event
-// on the same user without re-joining back to the DB. PostHog accepts
-// array property values; breakdowns on a multi-value property treat
-// each element as a separate group.
-//
-// `*Skipped` booleans capture per-question skip intent. `*HasOther`
-// are presence booleans for the free-text "other" override; the
-// free-text content is kept in the DB for product research but not
-// broadcast via analytics (PII risk + low cardinality ask).
-// OnboardingStarted fires from the server side the first time a user's
-// onboarding state transitions from untouched (no questionnaire payload
-// recorded) to any non-empty patch. Frontends emit their own
-// onboarding_started on first page open; the server emission is what
-// lights up the Prometheus counter so Grafana can be cross-checked
-// against the PostHog funnel without depending on the SDK roundtrip.
-//
-// platform is the X-Client-Platform header value at the time of the
-// first onboarding interaction, fed into the
-// `multica_onboarding_started_total{platform=...}` label via the fixed
-// allow-list in metrics.NormalizePlatform.
-func OnboardingStarted(userID, platform string) Event {
-	props := map[string]any{}
-	if platform != "" {
-		props["platform"] = platform
-	}
-	return Event{
-		Name:       EventOnboardingStarted,
-		DistinctID: userID,
-		Properties: withCoreProperties(props, CoreProperties{
-			UserID: userID,
-			Source: SourceOnboarding,
-		}),
-	}
-}
-
-func OnboardingQuestionnaireSubmitted(userID string, source []string, role string, useCase []string, sourceSkipped, roleSkipped, useCaseSkipped, sourceHasOther, roleHasOther, useCaseHasOther bool) Event {
-	// Normalize nil slices to [] so PostHog property values are stable
-	// (avoids null vs [] mixing in property type inference).
-	if source == nil {
-		source = []string{}
-	}
-	if useCase == nil {
-		useCase = []string{}
-	}
-	return Event{
-		Name:       EventOnboardingQuestionnaireSubmit,
-		DistinctID: userID,
-		Properties: withCoreProperties(map[string]any{
-			"source":             source,
-			"role":               role,
-			"use_case":           useCase,
-			"source_skipped":     sourceSkipped,
-			"role_skipped":       roleSkipped,
-			"use_case_skipped":   useCaseSkipped,
-			"source_has_other":   sourceHasOther,
-			"role_has_other":     roleHasOther,
-			"use_case_has_other": useCaseHasOther,
-		}, CoreProperties{
-			UserID: userID,
-			Source: SourceOnboarding,
-		}),
-		Set: map[string]any{
-			"source":   source,
-			"role":     role,
-			"use_case": useCase,
-		},
-	}
-}
-
-// AgentCreated fires whenever a new agent is added to a workspace — not
-// just inside onboarding. `isFirstAgentInWorkspace` lets the funnel
-// isolate the Step 4 signal from later agent additions.
+// AgentCreated fires whenever a new agent is added to a workspace.
+// `isFirstAgentInWorkspace` distinguishes initial setup from later additions.
 //
 // template is the template slug the frontend used to seed the agent
 // (e.g. "coding", "planning", "writing", "assistant") — empty when the
@@ -442,9 +252,6 @@ func AgentCreated(actorID, workspaceID, agentID, provider, runtimeMode, template
 		DistinctID:  actorID,
 		WorkspaceID: workspaceID,
 		Properties: withCoreProperties(map[string]any{
-			"agent_id":                    agentID,
-			"provider":                    provider,
-			"runtime_mode":                runtimeMode,
 			"template":                    template,
 			"is_first_agent_in_workspace": isFirstAgentInWorkspace,
 		}, CoreProperties{
@@ -455,30 +262,6 @@ func AgentCreated(actorID, workspaceID, agentID, provider, runtimeMode, template
 			RuntimeMode: runtimeMode,
 			Provider:    provider,
 		}),
-	}
-}
-
-// OnboardingCompleted fires from CompleteOnboarding. `completionPath`
-// is derived server-side from the state the user arrived in (see the
-// OnboardingPath* constants above). onboardedAt is an RFC3339 timestamp
-// set $set_once on the person so
-// "onboarded before date X" cohorts are queryable directly from
-// person_properties without re-emitting per-event.
-func OnboardingCompleted(userID, workspaceID, completionPath, onboardedAt string) Event {
-	return Event{
-		Name:        EventOnboardingCompleted,
-		DistinctID:  userID,
-		WorkspaceID: workspaceID,
-		Properties: withCoreProperties(map[string]any{
-			"completion_path": completionPath,
-		}, CoreProperties{
-			UserID:      userID,
-			WorkspaceID: workspaceID,
-			Source:      SourceOnboarding,
-		}),
-		SetOnce: map[string]any{
-			"onboarded_at": onboardedAt,
-		},
 	}
 }
 
@@ -554,34 +337,13 @@ func AutopilotCreated(actorID, workspaceID, autopilotID, cadence, triggerKind st
 	}
 }
 
-func autopilotRunEvent(name, actorID, workspaceID, autopilotID, runID, cadence string, assignee AutopilotAssignee, triggerSource string, extra map[string]any) Event {
-	if extra == nil {
-		extra = map[string]any{}
-	}
-	extra["trigger_source"] = triggerSource
-	extra["trigger_kind"] = triggerSource
-	if cadence != "" {
-		extra["cadence"] = cadence
-	}
-	props := withCoreProperties(extra, CoreProperties{
-		UserID:         nonAgentUserID(actorID),
-		WorkspaceID:    workspaceID,
-		AgentID:        assignee.AgentID,
-		AutopilotRunID: runID,
-		Source:         SourceAutopilot,
-	})
-	props["autopilot_id"] = autopilotID
-	if assignee.AssigneeType != "" {
-		props["assignee_type"] = assignee.AssigneeType
-	}
-	if assignee.SquadID != "" {
-		props["squad_id"] = assignee.SquadID
-	}
+func autopilotRunEvent(name, source string) Event {
 	return Event{
-		Name:        name,
-		DistinctID:  actorID,
-		WorkspaceID: workspaceID,
-		Properties:  props,
+		Name: name,
+		Properties: map[string]any{
+			"cadence":      source,
+			"trigger_kind": source,
+		},
 	}
 }
 

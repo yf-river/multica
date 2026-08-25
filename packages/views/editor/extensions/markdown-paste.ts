@@ -78,10 +78,6 @@ function escapeRawHtmlTagsInSegment(segment: string): string {
   );
 }
 
-function collectRawHtmlTagsInSegment(segment: string): string[] {
-  return segment.match(RAW_HTML_TAG_RE) ?? [];
-}
-
 function escapeTagsOutsideCodeSpans(line: string): string {
   const parts: string[] = [];
   let i = 0;
@@ -161,14 +157,14 @@ function collectTagsOutsideCodeSpans(line: string): string[] {
 
     const nextBacktick = line.indexOf("`", i);
     const end = nextBacktick === -1 ? line.length : nextBacktick;
-    tags.push(...collectRawHtmlTagsInSegment(line.slice(i, end)));
+    tags.push(...(line.slice(i, end).match(RAW_HTML_TAG_RE) ?? []));
     i = end;
   }
 
   return tags;
 }
 
-export function escapeRawHtmlTagsOutsideCode(text: string): string {
+function escapeRawHtmlTagsOutsideCode(text: string): string {
   const lines = text.split("\n");
   let inFencedBlock = false;
   let fenceChar = "";
@@ -262,10 +258,6 @@ function isJsonDocumentText(text: string): boolean {
   }
 }
 
-function isStructuredPlainText(text: string): boolean {
-  return isJsonDocumentText(text);
-}
-
 function hasRichStyle(style: string): boolean {
   const normalized = style.toLowerCase();
   return (
@@ -343,7 +335,7 @@ function classifyPaste({
   if (html && html.includes("data-pm-slice")) return "native";
   if (html && hasSemanticRichHtml(html, text)) return "native";
   if (text.length > LARGE_PASTE_TEXT_THRESHOLD) return "literal";
-  if (isStructuredPlainText(text)) return "literal";
+  if (isJsonDocumentText(text)) return "literal";
   return "markdown";
 }
 

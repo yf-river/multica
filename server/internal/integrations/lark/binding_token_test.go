@@ -1,17 +1,15 @@
 package lark
 
 import (
-	"errors"
 	"strings"
 	"testing"
 )
 
 // These tests cover the pure-Go halves of BindingTokenService — token
 // generation entropy/encoding, deterministic hashing — without
-// touching the database. DB-backed mint/redeem invariants (single use,
-// expiry) are covered by the DB CHECK on lark_binding_token plus the
-// ConsumeLarkBindingToken query, which require an integration test
-// against a real Postgres and are added in a follow-up.
+// touching the database. The handler package's real-Postgres redemption
+// regression covers first consume and same-user committed-response replay;
+// expiry remains enforced by the DB CHECK and conditional consume query.
 
 func TestRandomTokenIsUnique(t *testing.T) {
 	seen := map[string]struct{}{}
@@ -41,28 +39,6 @@ func TestRandomTokenURLSafe(t *testing.T) {
 	}
 	if strings.Contains(tok, "=") {
 		t.Fatalf("RawURLEncoding should drop padding, got %q", tok)
-	}
-}
-
-// TestBindingErrorSentinelsAreDistinct guards against accidentally
-// collapsing the three rejection sentinels (e.g. someone making
-// ErrBindingNotWorkspaceMember an alias of ErrBindingTokenInvalid to
-// "hide" the workspace-membership signal). The HTTP handler maps
-// each to a distinct status code (410/409/403); if errors.Is started
-// matching the wrong sentinel, the response code would silently
-// regress without any other test catching it.
-func TestBindingErrorSentinelsAreDistinct(t *testing.T) {
-	if errors.Is(ErrBindingAlreadyAssigned, ErrBindingTokenInvalid) ||
-		errors.Is(ErrBindingTokenInvalid, ErrBindingAlreadyAssigned) {
-		t.Fatal("ErrBindingAlreadyAssigned and ErrBindingTokenInvalid must not alias")
-	}
-	if errors.Is(ErrBindingNotWorkspaceMember, ErrBindingTokenInvalid) ||
-		errors.Is(ErrBindingTokenInvalid, ErrBindingNotWorkspaceMember) {
-		t.Fatal("ErrBindingNotWorkspaceMember and ErrBindingTokenInvalid must not alias")
-	}
-	if errors.Is(ErrBindingAlreadyAssigned, ErrBindingNotWorkspaceMember) ||
-		errors.Is(ErrBindingNotWorkspaceMember, ErrBindingAlreadyAssigned) {
-		t.Fatal("ErrBindingAlreadyAssigned and ErrBindingNotWorkspaceMember must not alias")
 	}
 }
 

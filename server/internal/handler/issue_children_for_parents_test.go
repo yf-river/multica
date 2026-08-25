@@ -12,9 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// childrenBatchFixture creates two parents with a couple of children each,
-// returning their ids so tests can assert the batched endpoint groups them
-// correctly. Cleanup is registered so rows are removed on test failure.
 type childrenBatchFixture struct {
 	parentA   IssueResponse
 	parentB   IssueResponse
@@ -55,7 +52,7 @@ func newChildrenBatchFixture(t *testing.T) childrenBatchFixture {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		for _, id := range []string{a1.ID, a2.ID, b1.ID, parentA.ID, parentB.ID} {
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
+			mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id)
 		}
 	})
 
@@ -122,9 +119,6 @@ func TestListChildrenByParents_EmptyParentIdsReturnsEmptyList(t *testing.T) {
 }
 
 func TestListChildrenByParents_UnknownParentYieldsNoChildren(t *testing.T) {
-	// A well-formed UUID that doesn't exist in the workspace must produce
-	// an empty response, not an error — the client uses this endpoint
-	// optimistically and tolerates stale parent ids.
 	w := httptest.NewRecorder()
 	req := newRequest("GET", "/api/issues/children?workspace_id="+testWorkspaceID+
 		"&parent_ids=00000000-0000-0000-0000-000000000000", nil)
@@ -148,9 +142,6 @@ func TestListChildrenByParents_RejectsMalformedID(t *testing.T) {
 }
 
 func TestListChildrenByParents_RejectsTooManyParents(t *testing.T) {
-	// A caller passing more than the documented cap is rejected; the cap
-	// prevents a single request from materializing the workspace's entire
-	// issue tree.
 	ids := make([]string, listChildrenByParentsLimit+1)
 	for i := range ids {
 		ids[i] = "00000000-0000-0000-0000-000000000000"
@@ -164,11 +155,6 @@ func TestListChildrenByParents_RejectsTooManyParents(t *testing.T) {
 	}
 }
 
-// TestListChildrenByParents_IgnoresForeignWorkspaceParents pins the
-// workspace_id filter in the SQL query: a parent that exists but lives in a
-// different workspace must yield zero children from the caller's workspace,
-// not the foreign workspace's tree. If a future refactor drops the
-// workspace_id predicate from the query, this test fails.
 func TestListChildrenByParents_IgnoresForeignWorkspaceParents(t *testing.T) {
 	ctx := context.Background()
 
@@ -182,9 +168,9 @@ func TestListChildrenByParents_IgnoresForeignWorkspaceParents(t *testing.T) {
 		t.Fatalf("setup: create foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM issue WHERE workspace_id = $1`, foreignWorkspaceID)
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
 	})
 
@@ -203,7 +189,6 @@ func TestListChildrenByParents_IgnoresForeignWorkspaceParents(t *testing.T) {
 		t.Fatalf("setup: insert foreign child: %v", err)
 	}
 
-	// Call the endpoint from testWorkspaceID with the foreign parent's id.
 	w := httptest.NewRecorder()
 	req := newRequest("GET", "/api/issues/children?workspace_id="+testWorkspaceID+
 		"&parent_ids="+foreignParentID, nil)

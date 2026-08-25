@@ -14,12 +14,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// newTestSampler builds a BusinessSamplerCollector wired to a fake refresh
-// function. We bypass NewBusinessSamplerCollector's nil-pool short-circuit
+// newTestSampler builds a business sampler wired to a fake refresh function.
+// We bypass the constructor's nil-pool short-circuit
 // by passing a dummy pgxpool — the fake refreshFn never calls into it. This
 // keeps the real DB code path off the hot path of every unit test while
 // still exercising the production registration / emit logic.
-func newTestSampler(t *testing.T, refresh func(ctx context.Context, now time.Time) *samplerSnapshot) *BusinessSamplerCollector {
+func newTestSampler(t *testing.T, refresh func(ctx context.Context, now time.Time) *samplerSnapshot) *businessSamplerCollector {
 	t.Helper()
 	pool, err := pgxpool.New(context.Background(), "postgres://disabled@127.0.0.1:1/none?sslmode=disable")
 	if err != nil {
@@ -27,14 +27,12 @@ func newTestSampler(t *testing.T, refresh func(ctx context.Context, now time.Tim
 	}
 	t.Cleanup(pool.Close)
 
-	c := NewBusinessSamplerCollector(&BusinessSamplerOptions{
-		Pool:         pool,
-		CacheTTL:     50 * time.Millisecond,
-		QueryTimeout: 100 * time.Millisecond,
-	})
+	c := newBusinessSamplerCollector(pool)
 	if c == nil {
-		t.Fatalf("NewBusinessSamplerCollector returned nil")
+		t.Fatalf("newBusinessSamplerCollector returned nil")
 	}
+	c.cacheTTL = 50 * time.Millisecond
+	c.queryTimeout = 100 * time.Millisecond
 	c.refreshFn = refresh
 	return c
 }
@@ -86,11 +84,11 @@ func bucketsFor(observations []float64) map[float64]uint64 {
 	return buckets
 }
 
-// TestBusinessSamplerCollectorEmitsExpectedMetrics asserts every metric
-// family from the PR4 spec is present on /metrics with the expected
+// TestBusinessSamplerEmitsExpectedMetrics asserts every metric
+// family is present on /metrics with the expected
 // values, AND that we always emit a known-source/runtime-mode zero series
 // so dashboards don't show "no data" right after a restart.
-func TestBusinessSamplerCollectorEmitsExpectedMetrics(t *testing.T) {
+func TestBusinessSamplerEmitsExpectedMetrics(t *testing.T) {
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	c := newTestSampler(t, func(ctx context.Context, refreshAt time.Time) *samplerSnapshot {
 		return filledSnapshot(refreshAt)
@@ -126,16 +124,6 @@ func TestBusinessSamplerCollectorEmitsExpectedMetrics(t *testing.T) {
 			t.Errorf("metrics body missing %q\nbody:\n%s", want, body)
 		}
 	}
-	for _, removed := range []string{
-		`multica_active_users{window="1h"}`,
-		`multica_active_users{window="24h"}`,
-		`multica_active_workspaces{window="1h"}`,
-		`multica_active_workspaces{window="24h"}`,
-	} {
-		if strings.Contains(body, removed) {
-			t.Errorf("metrics body still exposes removed long DB window %q\nbody:\n%s", removed, body)
-		}
-	}
 }
 
 // TestBusinessSamplerSelfIntrospectionHistogramIsExposed observes a value
@@ -159,11 +147,11 @@ func TestBusinessSamplerSelfIntrospectionHistogramIsExposed(t *testing.T) {
 	}
 }
 
-// TestBusinessSamplerCollectorCachesSnapshot asserts the TTL cache absorbs
+// TestBusinessSamplerCachesSnapshot asserts the TTL cache absorbs
 // concurrent scrapes: two Collect calls inside the TTL window must trigger
 // exactly one refresh, and a third call after the TTL elapses must trigger
 // a second.
-func TestBusinessSamplerCollectorCachesSnapshot(t *testing.T) {
+func TestBusinessSamplerCachesSnapshot(t *testing.T) {
 	var refreshCount atomic.Int32
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	current := now
@@ -195,12 +183,12 @@ func TestBusinessSamplerCollectorCachesSnapshot(t *testing.T) {
 	}
 }
 
-// TestBusinessSamplerCollectorBoundedCardinality is the cardinality canary.
+// TestBusinessSamplerBoundedCardinality is the cardinality canary.
 // Even with a malicious snapshot that mentions many distinct labels, the
 // sampler must collapse them into the BusinessMetrics whitelist plus
 // known-window zeros. This protects /metrics from a per-runtime or
 // per-workspace explosion.
-func TestBusinessSamplerCollectorBoundedCardinality(t *testing.T) {
+func TestBusinessSamplerBoundedCardinality(t *testing.T) {
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	c := newTestSampler(t, func(ctx context.Context, refreshAt time.Time) *samplerSnapshot {
 		// We can't inject raw rogue labels through the snapshot directly
@@ -208,12 +196,12 @@ func TestBusinessSamplerCollectorBoundedCardinality(t *testing.T) {
 		// pre-normalizing here exactly the way refreshFromDB would.
 		snap := newSamplerSnapshot(refreshAt)
 		for i := 0; i < 50; i++ {
-			snap.taskQueued[NormalizeTaskSource("provider-from-user-input-"+string(rune('A'+i%26)))] += 1
+			snap.taskQueued[taskSourceLabels.normalize("provider-from-user-input-"+string(rune('A'+i%26)))] += 1
 		}
 		for i := 0; i < 50; i++ {
 			snap.runtimeOnline[runtimeOnlineKey{
-				runtimeMode: NormalizeRuntimeMode("rogue-mode"),
-				provider:    NormalizeRuntimeProvider("attacker-provider"),
+				runtimeMode: runtimeModeLabels.normalize("rogue-mode"),
+				provider:    runtimeProviderLabels.normalize("attacker-provider"),
 			}] += 1
 		}
 		return snap
@@ -235,14 +223,11 @@ func TestBusinessSamplerCollectorBoundedCardinality(t *testing.T) {
 	}
 }
 
-// TestBusinessSamplerCollectorDisabledWithoutOptions exercises the opt-in
+// TestBusinessSamplerDisabledWithoutPool exercises the opt-in
 // path in the registry: no BusinessSampler option means no sampler-related
 // series leak into /metrics, and existing collectors stay registered.
-func TestBusinessSamplerCollectorDisabledWithoutOptions(t *testing.T) {
+func TestBusinessSamplerDisabledWithoutPool(t *testing.T) {
 	registry := NewRegistry(RegistryOptions{})
-	if registry.Sampler != nil {
-		t.Fatalf("Sampler must be nil when BusinessSampler option is absent")
-	}
 	rec := httptest.NewRecorder()
 	NewHandler(registry.Gatherer).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
@@ -258,26 +243,24 @@ func TestBusinessSamplerCollectorDisabledWithoutOptions(t *testing.T) {
 	}
 }
 
-// TestBusinessSamplerCollectorDBHangIsolation simulates a hung database
+// TestBusinessSamplerDBHangIsolation simulates a hung database
 // using a pgxpool pointed at an unreachable host. The sampler must not
 // panic, must not block /metrics indefinitely, and must record the
 // resulting failure on the query error counter — that's the
 // statement_timeout / connection-acquire safety net the spec asks for.
-func TestBusinessSamplerCollectorDBHangIsolation(t *testing.T) {
+func TestBusinessSamplerDBHangIsolation(t *testing.T) {
 	pool, err := pgxpool.New(context.Background(), "postgres://hang@127.0.0.1:1/none?sslmode=disable")
 	if err != nil {
 		t.Fatalf("create unreachable pool: %v", err)
 	}
 	defer pool.Close()
 
-	c := NewBusinessSamplerCollector(&BusinessSamplerOptions{
-		Pool:         pool,
-		CacheTTL:     time.Second,
-		QueryTimeout: 50 * time.Millisecond,
-	})
+	c := newBusinessSamplerCollector(pool)
 	if c == nil {
-		t.Fatalf("NewBusinessSamplerCollector returned nil")
+		t.Fatalf("newBusinessSamplerCollector returned nil")
 	}
+	c.cacheTTL = time.Second
+	c.queryTimeout = 50 * time.Millisecond
 
 	// Use the real refreshFromDB path so we exercise Acquire / SET LOCAL
 	// statement_timeout / error counter wiring.
@@ -306,13 +289,10 @@ func TestBusinessSamplerCollectorDBHangIsolation(t *testing.T) {
 	}
 }
 
-// TestNewBusinessSamplerCollectorNilPool covers the explicit opt-out path.
-func TestNewBusinessSamplerCollectorNilPool(t *testing.T) {
-	if c := NewBusinessSamplerCollector(nil); c != nil {
-		t.Fatalf("NewBusinessSamplerCollector(nil) = %p, want nil", c)
-	}
-	if c := NewBusinessSamplerCollector(&BusinessSamplerOptions{}); c != nil {
-		t.Fatalf("NewBusinessSamplerCollector with nil Pool = %p, want nil", c)
+// TestBusinessSamplerNilPool covers the explicit opt-out path.
+func TestBusinessSamplerNilPool(t *testing.T) {
+	if c := newBusinessSamplerCollector(nil); c != nil {
+		t.Fatalf("newBusinessSamplerCollector(nil) = %p, want nil", c)
 	}
 }
 

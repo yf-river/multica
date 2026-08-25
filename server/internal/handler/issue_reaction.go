@@ -1,11 +1,11 @@
 package handler
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -35,9 +35,7 @@ type issueReactionRequest struct {
 	issueID     string
 	workspaceID string
 	issue       db.Issue
-	emoji       string
-	actorType   string
-	actorID     string
+	reactionActor
 }
 
 func (h *Handler) loadIssueReactionRequest(w http.ResponseWriter, r *http.Request) (issueReactionRequest, bool) {
@@ -52,27 +50,17 @@ func (h *Handler) loadIssueReactionRequest(w http.ResponseWriter, r *http.Reques
 		return issueReactionRequest{}, false
 	}
 
-	var req struct {
-		Emoji string `json:"emoji"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return issueReactionRequest{}, false
-	}
-	if req.Emoji == "" {
-		writeError(w, http.StatusBadRequest, "emoji is required")
+	actor, ok := loadReactionActor(w, r, userID)
+	if !ok {
 		return issueReactionRequest{}, false
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	return issueReactionRequest{
-		issueID:     issueID,
-		workspaceID: workspaceID,
-		issue:       issue,
-		emoji:       req.Emoji,
-		actorType:   actorType,
-		actorID:     actorID,
+		issueID:       issueID,
+		workspaceID:   workspaceID,
+		issue:         issue,
+		reactionActor: actor,
 	}, true
 }
 
@@ -82,7 +70,15 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reaction, err := h.Queries.AddIssueReaction(r.Context(), db.AddIssueReactionParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin issue reaction transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", reactionReq.issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	reaction, err := queries.AddIssueReaction(r.Context(), db.AddIssueReactionParams{
 		IssueID:     reactionReq.issue.ID,
 		WorkspaceID: reactionReq.issue.WorkspaceID,
 		ActorType:   reactionReq.actorType,
@@ -96,7 +92,7 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := issueReactionToResponse(reaction)
-	h.publish(protocol.EventIssueReactionAdded, reactionReq.workspaceID, reactionReq.actorType, reactionReq.actorID, map[string]any{
+	event := domainEvent(protocol.EventIssueReactionAdded, reactionReq.workspaceID, reactionReq.actorType, reactionReq.actorID, map[string]any{
 		"reaction":     resp,
 		"issue_id":     uuidToString(reactionReq.issue.ID),
 		"issue_title":  reactionReq.issue.Title,
@@ -104,6 +100,19 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 		"creator_type": reactionReq.issue.CreatorType,
 		"creator_id":   uuidToString(reactionReq.issue.CreatorID),
 	})
+	event.StreamKey = "issue:" + uuidToString(reactionReq.issue.ID)
+	event, err = eventoutbox.Enqueue(r.Context(), queries, event)
+	if err != nil {
+		slog.Warn("enqueue issue reaction event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", reactionReq.issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit issue reaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", reactionReq.issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusCreated, resp)
 }
 

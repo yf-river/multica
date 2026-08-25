@@ -1,14 +1,13 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  cleanup,
-  fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type {
   RuntimeModel,
   RuntimeModelListRequest,
@@ -47,7 +46,6 @@ const CLAUDE_MODEL: RuntimeModel = {
       { value: "medium", label: "Medium" },
       { value: "high", label: "高" },
     ],
-    default_level: "medium",
   },
 };
 
@@ -67,8 +65,6 @@ function listResult(models: RuntimeModel[]): RuntimeModelListRequest {
     status: "completed",
     models,
     supported: true,
-    created_at: "2026-05-20T00:00:00Z",
-    updated_at: "2026-05-20T00:00:00Z",
   };
 }
 
@@ -108,10 +104,6 @@ describe("ThinkingPropRow", () => {
     vi.clearAllMocks();
     mockInitiateListModels.mockResolvedValue(listResult([CLAUDE_MODEL]));
     mockGetListModelsResult.mockResolvedValue(listResult([CLAUDE_MODEL]));
-  });
-
-  afterEach(() => {
-    cleanup();
   });
 
   it("hides the row when the active model has no thinking levels and nothing is persisted", async () => {
@@ -157,6 +149,7 @@ describe("ThinkingPropRow", () => {
   });
 
   it("clears the orphan value via the picker footer, emitting onChange(\"\")", async () => {
+    const user = userEvent.setup();
     mockInitiateListModels.mockResolvedValue(listResult([NO_THINKING_MODEL]));
     const { onChange } = renderRow({
       model: "gemini-2.5-pro",
@@ -167,9 +160,9 @@ describe("ThinkingPropRow", () => {
     // popover and fire the clear footer. The footer is the only target
     // matching the i18n `thinking_clear_title` copy.
     await screen.findByText("xhigh");
-    fireEvent.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
     const clearButton = await screen.findByTitle(/清除覆盖/i);
-    fireEvent.click(clearButton);
+    await user.click(clearButton);
 
     expect(onChange).toHaveBeenCalledWith("");
   });

@@ -96,7 +96,7 @@ curl -X POST "$MULTICA_WEBHOOK_URL" \
 名退化为 `webhook.received`。
 
 配置 GitHub 之类的来源时，请把 content type 设为 `application/json`——
-表单编码的 webhook payload 在 v1 里不接受。
+Webhook 只接受 JSON 请求体，不接受表单编码 payload。
 
 ### 事件过滤
 
@@ -216,10 +216,8 @@ curl -X POST "$MULTICA_WEBHOOK_URL" \
 - **泄漏后立即重新生成**——在触发器上点"重新生成 URL"，或运行
   `multica autopilot trigger-rotate-url <autopilot-id> <trigger-id>`。
   旧 URL 立即失效。
-- 对需要强来源认证的源，等 per-trigger HMAC 签名校验上线；v1 URL 仅
-  bearer。
-- 当前能查看 Autopilot 的工作区成员都能看到它的 webhook URL——更细的
-  权限可见性是后续工作。
+- 当前 webhook 不校验来源签名；需要强来源认证时，应在受控网关验证签名后再转发到该 bearer URL。
+- 当前能查看 Autopilot 的工作区成员都能看到它的 webhook URL，因此不要把含敏感触发能力的 Autopilot 暴露给不受信任成员。
 
 ### 状态码语义
 
@@ -269,13 +267,6 @@ curl -X POST "$MULTICA_WEBHOOK_URL" \
 </Callout>
 
 不自动重试的理由：Autopilot 本身是周期性的，系统层再加自动重试容易和下一次调度叠加，产生重复执行。调度权完全交给 cron 最干净。
-
-## 暂不可用的能力
-
-**API 类型触发器尚未接入。** 触发器 schema 里保留了 `api` 类型但没有
-入站路由会触发它；UI 会给已有的此类记录打 Deprecated 标签，也不显示
-copy / rotate 操作。Per-trigger HMAC 签名校验、IP allowlist、按提供方
-的事件预设是后续工作；v1 URL 仅 bearer。
 
 ## 下一步
 

@@ -6,6 +6,7 @@ import { useWorkspaceId } from "@multica/core";
 import { agentRunCounts30dOptions } from "@multica/core/agents";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -55,12 +56,7 @@ export function MemberProfileCard({ userId }: MemberProfileCardProps) {
     );
   }
 
-  const initials = member.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(member.name);
 
   // Sort owned agents by 30-day run count (most-used first); break ties on
   // name for a stable order. Run counts come from the same workspace-wide

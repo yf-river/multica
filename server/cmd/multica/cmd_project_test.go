@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -249,23 +248,6 @@ func TestRunProjectListJSONIncludesResourceSummaries(t *testing.T) {
 	}
 }
 
-func TestFetchProjectCandidatesIncludesResourceDetail(t *testing.T) {
-	srv := newProjectResourceListServer(t)
-	defer srv.Close()
-	client := cli.NewAPIClient(srv.URL, "workspace-123", "test-token")
-
-	candidates, err := fetchProjectCandidates(t.Context(), client)
-	if err != nil {
-		t.Fatalf("fetchProjectCandidates: %v", err)
-	}
-	if len(candidates) != 1 {
-		t.Fatalf("candidates len = %d, want 1", len(candidates))
-	}
-	if got := candidates[0].Detail; got != "active | ChainWeaver/ida/ida-deployment" {
-		t.Fatalf("detail = %q, want active | ChainWeaver/ida/ida-deployment", got)
-	}
-}
-
 func newProjectResourceListServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,8 +257,8 @@ func newProjectResourceListServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/projects":
-			if got := r.URL.Query().Get("workspace_id"); got != "workspace-123" {
-				t.Fatalf("workspace_id = %q, want workspace-123", got)
+			if got := r.URL.Query().Get("workspace_id"); got != "" {
+				t.Fatalf("workspace_id query = %q, want omitted", got)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"projects": []map[string]any{

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -21,14 +25,14 @@ const (
 	externalCredentialProviderGongfeng = "gongfeng"
 )
 
-type ExternalCredentialProfileResponse struct {
+type externalCredentialProfileResponse struct {
 	ID             string         `json:"id"`
 	UserID         string         `json:"user_id"`
 	Scope          string         `json:"scope"`
 	Provider       string         `json:"provider"`
 	Name           string         `json:"name"`
 	SecretBinding  map[string]any `json:"secret_binding"`
-	Capabilities   any            `json:"capabilities"`
+	Capabilities   map[string]any `json:"capabilities"`
 	Status         string         `json:"status"`
 	LastVerifiedAt *string        `json:"last_verified_at"`
 	LastError      string         `json:"last_error,omitempty"`
@@ -69,7 +73,14 @@ type TestExternalCredentialProfileResponse struct {
 	LastError      string         `json:"last_error,omitempty"`
 }
 
-func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) ExternalCredentialProfileResponse {
+func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) (externalCredentialProfileResponse, error) {
+	var capabilities map[string]any
+	if err := json.Unmarshal(profile.Capabilities, &capabilities); err != nil {
+		return externalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: %w", err)
+	}
+	if capabilities == nil {
+		return externalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: expected JSON object")
+	}
 	binding := map[string]any{
 		"configured": profile.SecretRef != "" || len(profile.EncryptedSecret) > 0,
 		"redacted":   true,
@@ -84,20 +95,25 @@ func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) E
 	default:
 		binding["mode"] = "missing"
 	}
-	return ExternalCredentialProfileResponse{
+	return externalCredentialProfileResponse{
 		ID:             uuidToString(profile.ID),
 		UserID:         uuidToString(profile.UserID),
 		Scope:          "account",
 		Provider:       profile.Provider,
 		Name:           profile.Name,
 		SecretBinding:  binding,
-		Capabilities:   decodeJSONDefault(profile.Capabilities, map[string]any{}),
+		Capabilities:   capabilities,
 		Status:         profile.Status,
 		LastVerifiedAt: timestampToPtr(profile.LastVerifiedAt),
 		LastError:      profile.LastError,
 		CreatedAt:      timestampToString(profile.CreatedAt),
 		UpdatedAt:      timestampToString(profile.UpdatedAt),
-	}
+	}, nil
+}
+
+func writeCredentialCapabilitiesDecodeError(w http.ResponseWriter, r *http.Request, profileID string, err error) {
+	slog.Error("decode credential capabilities failed", append(logger.RequestAttrs(r), "profile_id", profileID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode credential capabilities")
 }
 
 func (h *Handler) ListExternalCredentialProfiles(w http.ResponseWriter, r *http.Request) {
@@ -122,9 +138,13 @@ func (h *Handler) ListExternalCredentialProfiles(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to list credential profiles")
 		return
 	}
-	resp := make([]ExternalCredentialProfileResponse, len(rows))
+	resp := make([]externalCredentialProfileResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = externalCredentialProfileToResponse(row)
+		resp[i], err = externalCredentialProfileToResponse(row)
+		if err != nil {
+			writeCredentialCapabilitiesDecodeError(w, r, uuidToString(row.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"profiles": resp})
 }
@@ -135,8 +155,7 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		return
 	}
 	var req CreateExternalCredentialProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	provider, name, capabilities, statusCode, msg := h.normalizeExternalCredentialInput(req.Provider, req.Name, req.Capabilities)
@@ -144,7 +163,41 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		writeError(w, statusCode, msg)
 		return
 	}
-	secretRef, encrypted, hint, statusCode, msg := h.prepareExternalCredentialSecret(req.SecretRef, req.Token)
+	secretRef, token, statusCode, msg := normalizeExternalCredentialSecretInput(req.SecretRef, req.Token)
+	if statusCode != 0 {
+		writeError(w, statusCode, msg)
+		return
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		Provider     string          `json:"provider"`
+		Name         string          `json:"name"`
+		SecretRef    string          `json:"secret_ref"`
+		Token        string          `json:"token"`
+		Capabilities json.RawMessage `json:"capabilities"`
+		VerifyNow    bool            `json:"verify_now"`
+	}{
+		Provider: provider, Name: name, SecretRef: secretRef, Token: token,
+		Capabilities: json.RawMessage(capabilities), VerifyNow: req.VerifyNow,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint credential profile request")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(userID)
+	if existing, err := h.Queries.GetExternalCredentialProfileByCreateRequest(r.Context(), db.GetExternalCredentialProfileByCreateRequestParams{
+		UserID: actorID, IdempotencyKey: idempotencyKey,
+	}); err == nil {
+		h.writeExternalCredentialProfileReplay(w, r, existing, requestHash)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to recover credential profile request")
+		return
+	}
+	secretRef, encrypted, hint, statusCode, msg := h.prepareNormalizedExternalCredentialSecret(secretRef, token)
 	if statusCode != 0 {
 		writeError(w, statusCode, msg)
 		return
@@ -156,7 +209,8 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		status, lastVerified, lastError = verifyExternalCredentialProfile(provider, secretRef, encrypted)
 	}
 	profile, err := h.Queries.CreateExternalCredentialProfile(r.Context(), db.CreateExternalCredentialProfileParams{
-		UserID:          parseUUID(userID),
+		ID:              idempotencyKey,
+		UserID:          actorID,
 		Provider:        provider,
 		Name:            name,
 		SecretRef:       secretRef,
@@ -166,8 +220,16 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		Status:          pgtype.Text{String: status, Valid: true},
 		LastVerifiedAt:  lastVerified,
 		LastError:       lastError,
+		IdempotencyKey:  idempotencyKey,
+		RequestHash:     pgtype.Text{String: requestHash, Valid: true},
 	})
 	if isUniqueViolation(err) {
+		if existing, replayErr := h.Queries.GetExternalCredentialProfileByCreateRequest(r.Context(), db.GetExternalCredentialProfileByCreateRequestParams{
+			UserID: actorID, IdempotencyKey: idempotencyKey,
+		}); replayErr == nil {
+			h.writeExternalCredentialProfileReplay(w, r, existing, requestHash)
+			return
+		}
 		writeError(w, http.StatusConflict, "credential profile already exists")
 		return
 	}
@@ -175,7 +237,30 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to create credential profile")
 		return
 	}
-	writeJSON(w, http.StatusCreated, externalCredentialProfileToResponse(profile))
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) writeExternalCredentialProfileReplay(
+	w http.ResponseWriter,
+	r *http.Request,
+	profile db.ExternalCredentialProfile,
+	requestHash string,
+) {
+	if !profile.RequestHash.Valid || profile.RequestHash.String != requestHash {
+		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different credential profile request")
+		return
+	}
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeIdempotencyReplayJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) GetExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +268,12 @@ func (h *Handler) GetExternalCredentialProfile(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, externalCredentialProfileToResponse(profile))
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
@@ -208,8 +298,7 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		return
 	}
 	var req UpdateExternalCredentialProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	params := db.UpdateExternalCredentialProfileParams{ID: id, UserID: parseUUID(userID)}
@@ -240,7 +329,7 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		params.LastError = pgtype.Text{String: strings.TrimSpace(*req.LastError), Valid: true}
 	}
 	if req.SecretRef != nil || req.Token != nil {
-		secretRef, encrypted, hint, statusCode, msg := h.prepareExternalCredentialSecret(valueOrEmpty(req.SecretRef), valueOrEmpty(req.Token))
+		secretRef, encrypted, hint, statusCode, msg := h.prepareExternalCredentialSecret(util.ValueOrEmpty(req.SecretRef), util.ValueOrEmpty(req.Token))
 		if statusCode != 0 {
 			writeError(w, statusCode, msg)
 			return
@@ -275,7 +364,12 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to update credential profile")
 		return
 	}
-	writeJSON(w, http.StatusOK, externalCredentialProfileToResponse(profile))
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
@@ -283,8 +377,7 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 		return
 	}
 	var req TestExternalCredentialProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	provider := strings.TrimSpace(strings.ToLower(req.Provider))
@@ -330,13 +423,31 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 	})
 }
 
+func newNoRedirectHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func setGongfengCredentialHeaders(req *http.Request, token string) {
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+}
+
 func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	token := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
+	token, err := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
 		Provider:        externalCredentialProviderGongfeng,
 		SecretRef:       secretRef,
 		EncryptedSecret: encrypted,
 	})
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "工蜂 token 无法解密；请重新保存凭据。", Valid: true}
+	}
 	if strings.TrimSpace(token) == "" {
 		return "failed", now, pgtype.Text{String: "工蜂 token 不可用；请检查输入或服务端环境变量。", Valid: true}
 	}
@@ -345,20 +456,13 @@ func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secret
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "工蜂连接测试地址无效。", Valid: true}
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(8 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "无法连接工蜂 API；请检查网络或 GONGFENG_API_BASE。", Valid: true}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return "verified", now, pgtype.Text{}
 	}
@@ -373,11 +477,14 @@ func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secret
 
 func (h *Handler) verifyTAPDCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	token := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
+	token, err := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
 		Provider:        externalCredentialProviderTAPD,
 		SecretRef:       secretRef,
 		EncryptedSecret: encrypted,
 	})
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "TAPD token 无法解密；请重新保存凭据。", Valid: true}
+	}
 	if strings.TrimSpace(token) == "" {
 		return "failed", now, pgtype.Text{String: "TAPD token 不可用；请检查输入或服务端环境变量。", Valid: true}
 	}
@@ -390,17 +497,12 @@ func (h *Handler) verifyTAPDCredentialConnection(ctx context.Context, secretRef 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Via", "mcp")
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newNoRedirectHTTPClient(8 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "无法连接 TAPD API；请检查网络或 TAPD_API_BASE_URL。", Valid: true}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return "verified", now, pgtype.Text{}
 	}
@@ -483,6 +585,12 @@ func normalizeCredentialCapabilities(w http.ResponseWriter, raw json.RawMessage)
 		}
 		return nil, false
 	}
+	if obj == nil {
+		if w != nil {
+			writeError(w, http.StatusBadRequest, "capabilities must be a JSON object")
+		}
+		return nil, false
+	}
 	out, err := json.Marshal(obj)
 	if err != nil {
 		if w != nil {
@@ -494,18 +602,32 @@ func normalizeCredentialCapabilities(w http.ResponseWriter, raw json.RawMessage)
 }
 
 func (h *Handler) prepareExternalCredentialSecret(secretRef, token string) (string, []byte, string, int, string) {
+	secretRef, token, statusCode, msg := normalizeExternalCredentialSecretInput(secretRef, token)
+	if statusCode != 0 {
+		return "", nil, "", statusCode, msg
+	}
+	return h.prepareNormalizedExternalCredentialSecret(secretRef, token)
+}
+
+func normalizeExternalCredentialSecretInput(secretRef, token string) (string, string, int, string) {
 	secretRef = strings.TrimSpace(secretRef)
 	token = strings.TrimSpace(token)
 	if secretRef != "" && token != "" {
-		return "", nil, "", http.StatusBadRequest, "provide either secret_ref or token, not both"
+		return "", "", http.StatusBadRequest, "provide either secret_ref or token, not both"
 	}
 	if secretRef == "" && token == "" {
-		return "", nil, "", http.StatusBadRequest, "secret_ref or token is required"
+		return "", "", http.StatusBadRequest, "secret_ref or token is required"
 	}
 	if secretRef != "" {
 		if utf8.RuneCountInString(secretRef) > 240 {
-			return "", nil, "", http.StatusBadRequest, "secret_ref is too long"
+			return "", "", http.StatusBadRequest, "secret_ref is too long"
 		}
+	}
+	return secretRef, token, 0, ""
+}
+
+func (h *Handler) prepareNormalizedExternalCredentialSecret(secretRef, token string) (string, []byte, string, int, string) {
+	if secretRef != "" {
 		return secretRef, nil, "", 0, ""
 	}
 	if h.ExternalCredentialBox == nil {
@@ -537,7 +659,7 @@ func externalCredentialSecretRefError(secretRef string) string {
 	if strings.HasPrefix(secretRef, "env:") {
 		key := strings.TrimSpace(strings.TrimPrefix(secretRef, "env:"))
 		if key == "" {
-			return "服务端环境变量名称为空；请填写 env:GONGFENG_ACCESS_TOKEN 这类引用。"
+			return "服务端环境变量名称为空；请填写 env:GONGFENG_PRIVATE_TOKEN 这类引用。"
 		}
 		if strings.TrimSpace(os.Getenv(key)) == "" {
 			return "服务器环境变量 " + key + " 未设置；请改用访问令牌，或让管理员配置该变量并重启服务。"
@@ -549,28 +671,26 @@ func externalCredentialSecretRefError(secretRef string) string {
 		if len(parts) < 2 {
 			return "server-managed 凭据引用格式无效。"
 		}
-		keys := externalCredentialProviderEnvKeys(parts[1])
-		if len(keys) == 0 {
+		key := externalCredentialProviderEnvKey(parts[1])
+		if key == "" {
 			return "server-managed 凭据 provider 不支持：" + parts[1]
 		}
-		for _, key := range keys {
-			if strings.TrimSpace(os.Getenv(key)) != "" {
-				return ""
-			}
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return ""
 		}
-		return "服务器环境变量 " + strings.Join(keys, " / ") + " 未设置；请改用访问令牌，或让管理员配置变量并重启服务。"
+		return "服务器环境变量 " + key + " 未设置；请改用访问令牌，或让管理员配置变量并重启服务。"
 	}
 	return ""
 }
 
-func externalCredentialProviderEnvKeys(provider string) []string {
+func externalCredentialProviderEnvKey(provider string) string {
 	switch strings.TrimSpace(strings.ToLower(provider)) {
 	case externalCredentialProviderTAPD:
-		return []string{"TAPD_ACCESS_TOKEN"}
+		return "TAPD_ACCESS_TOKEN"
 	case externalCredentialProviderGongfeng:
-		return []string{"GONGFENG_ACCESS_TOKEN", "GONGFENG_PRIVATE_TOKEN"}
+		return "GONGFENG_PRIVATE_TOKEN"
 	default:
-		return nil
+		return ""
 	}
 }
 
@@ -610,11 +730,4 @@ func secretRefHint(ref string) string {
 		last = string(runes[:32])
 	}
 	return last
-}
-
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

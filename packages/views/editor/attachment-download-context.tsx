@@ -7,9 +7,6 @@ import { openExternal } from "../platform";
 import { useDownloadAttachment } from "./use-download-attachment";
 
 interface ResolvedDownload {
-  // Returns the attachment id for a URL referenced in the markdown, or
-  // `undefined` if it's an external link we don't manage.
-  resolveAttachmentId: (url: string) => string | undefined;
   // Returns the full Attachment record (content_type, filename, download_url,
   // ...) for a URL referenced in the markdown. NodeView preview triggers use
   // this to decide whether the type is previewable and to feed the modal.
@@ -33,13 +30,9 @@ interface ProviderProps {
  * `ContentEditor`. Without a provider the consumer falls back to opening the
  * raw URL via `openExternal` — same behaviour as before this hook existed.
  *
- * URL → attachment matching has two fallbacks (in order). New comments
- * (post-MUL-3130) persist the stable `/api/attachments/<id>/download`
- * shape; legacy comments persist whatever was in `att.url` at upload
- * time, including the short-lived `/uploads/<key>?exp&sig` pattern that
- * triggered MUL-3130. The id-from-URL extractor handles new content;
- * exact-url equality covers legacy and S3/CloudFront markdown that
- * never got the new shape.
+ * Persisted attachment references use the stable
+ * `/api/attachments/<id>/download` shape. Matching by id survives host
+ * changes between Web, Desktop and SSR without retaining storage-URL paths.
  */
 export function AttachmentDownloadProvider({ attachments, children }: ProviderProps) {
   const download = useDownloadAttachment();
@@ -47,23 +40,11 @@ export function AttachmentDownloadProvider({ attachments, children }: ProviderPr
     () => {
       const lookup = (url: string): Attachment | undefined => {
         if (!url || !attachments?.length) return undefined;
-        // Preferred path: stable `/api/attachments/<id>/download` URL.
-        // Match by id so the lookup survives a host swap (Electron vs
-        // web vs SSR) and any incidental query/fragment.
         const idFromUrl = attachmentIdFromDownloadURL(url);
-        if (idFromUrl) {
-          const byId = attachments.find((a) => a.id === idFromUrl);
-          if (byId) return byId;
-        }
-        // Legacy path: full URL equality. Covers comments persisted
-        // before MUL-3130, S3/CloudFront markdown that points
-        // straight at the CDN, and anything else where
-        // `attachments[i].url` was the literal value embedded in
-        // markdown.
-        return attachments.find((a) => a.url === url);
+        if (!idFromUrl) return undefined;
+        return attachments.find((a) => a.id === idFromUrl);
       };
       return {
-        resolveAttachmentId: (url) => lookup(url)?.id,
         resolveAttachment: lookup,
         openByUrl: (url) => {
           const att = lookup(url);
@@ -85,22 +66,11 @@ export function AttachmentDownloadProvider({ attachments, children }: ProviderPr
 }
 
 /**
- * Returns the click-time download handler installed by a surrounding
- * `AttachmentDownloadProvider`, or a fallback that just opens the raw URL
- * externally. Used by file-card and image NodeViews so they can stay
- * usable in editor surfaces that haven't been wired up yet.
+ * Returns the attachment resolver installed by the editor or read-only
+ * renderer. Every current Attachment entry mounts this provider.
  */
 export function useAttachmentDownloadResolver(): ResolvedDownload {
   const ctx = use(AttachmentDownloadContext);
-  // Hooks-must-be-unconditional: always create the fallback object, but
-  // memoization is unnecessary here because each NodeView render also
-  // re-runs the click handler closure.
-  if (ctx) return ctx;
-  return {
-    resolveAttachmentId: () => undefined,
-    resolveAttachment: () => undefined,
-    openByUrl: (url) => {
-      if (url) openExternal(url);
-    },
-  };
+  if (!ctx) throw new Error("Attachment must be rendered inside AttachmentDownloadProvider");
+  return ctx;
 }

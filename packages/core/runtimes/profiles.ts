@@ -1,9 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
-import { ApiError } from "../api";
+import { api, ApiError } from "../api";
 import type {
   CreateRuntimeProfileRequest,
-  RuntimeProfile,
   UpdateRuntimeProfileRequest,
 } from "../types/agent";
 import { runtimeKeys } from "./queries";
@@ -13,11 +11,9 @@ import { runtimeKeys } from "./queries";
 // because the two resources invalidate on different events — but a profile
 // delete can archive bound agents and therefore must also invalidate the
 // instance list, so the mutations below touch both.
-export const runtimeProfileKeys = {
+const runtimeProfileKeys = {
   all: (wsId: string) => ["runtime-profiles", wsId] as const,
   list: (wsId: string) => [...runtimeProfileKeys.all(wsId), "list"] as const,
-  detail: (wsId: string, profileId: string) =>
-    [...runtimeProfileKeys.all(wsId), "detail", profileId] as const,
 };
 
 export function runtimeProfileListOptions(wsId: string) {
@@ -76,13 +72,9 @@ export function useDeleteRuntimeProfile(wsId: string) {
 // the server's human-readable message verbatim so the confirm dialog can
 // explain the refusal without re-deriving it. Non-409s and unrelated codes
 // collapse to `null` so callers fall through to the generic error path.
-export interface RuntimeProfileBoundConflict {
-  message: string;
-}
-
 export function parseRuntimeProfileBoundConflict(
   err: unknown,
-): RuntimeProfileBoundConflict | null {
+): { message: string } | null {
   if (!(err instanceof ApiError)) return null;
   if (err.status !== 409) return null;
   const body = err.body;
@@ -99,5 +91,3 @@ export function parseRuntimeProfileBoundConflict(
   }
   return { message: fallback };
 }
-
-export type { RuntimeProfile };

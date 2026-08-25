@@ -21,7 +21,7 @@ const envDir = path.join(runDir, "env");
 const deploymentDir = path.join(runDir, "deployments");
 const logArchiveDir = path.join(runDir, "log-archive");
 const workspacesDir = path.join(runDir, "workspaces");
-const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
+const publicHost = "9.134.129.162";
 const demoAvatarPath = "/images/huyunfei-landscape-avatar.png";
 const profiles = {
   prod: {
@@ -108,8 +108,6 @@ function ensureEnvironment(item) {
   ensureCodexRunnerProfile(codexRunner);
   const lines = [
     `GOAL_TEST_ENV=${item.name}`,
-    `GOAL_TEST_ENV_LABEL=${item.label}`,
-    `GOAL_TEST_STABLE_COMMIT=${gitText(["rev-parse", "--short=12", "HEAD"])}`,
     `POSTGRES_DB=${item.databaseName}`,
     `POSTGRES_USER=${base.POSTGRES_USER || "multica"}`,
     `POSTGRES_PASSWORD=${base.POSTGRES_PASSWORD || "multica"}`,
@@ -136,7 +134,8 @@ function ensureEnvironment(item) {
 }
 
 function ensureStableSecretKey(item, name) {
-  const keyPath = path.join(envDir, `${item.name}-${name}.key`);
+  const keyPath = path.join(sharedEnvironmentSecretDir(), `${item.name}-${name}.key`);
+  mkdirSync(path.dirname(keyPath), { recursive: true });
   if (existsSync(keyPath)) {
     const existing = readFileSync(keyPath, "utf8").trim();
     if (existing) return existing;
@@ -144,6 +143,12 @@ function ensureStableSecretKey(item, name) {
   const value = randomBytes(32).toString("base64");
   writeFileSync(keyPath, `${value}\n`, { mode: 0o600 });
   return value;
+}
+
+function sharedEnvironmentSecretDir() {
+  const commonGitDir = gitText(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!commonGitDir) return envDir;
+  return path.join(path.dirname(commonGitDir), ".run", "env");
 }
 
 async function deployEnvironment(item, build) {
@@ -175,7 +180,7 @@ async function deployEnvironment(item, build) {
   refreshDaemonProfileToken(item);
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
-    : ["--dir", "apps/web", "exec", "next", "dev", "--webpack", "-p", item.frontendPort, "-H", "0.0.0.0"];
+    : ["--dir", "apps/web", "exec", "next", "dev", "-p", item.frontendPort, "-H", "0.0.0.0"];
   let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
@@ -201,7 +206,7 @@ async function deployEnvironment(item, build) {
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
     daemon_max_concurrent_tasks: daemonConcurrencyMetadata(env),
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
     frontend_mode: item.frontendMode,
     binary_versions: {
       multica: binaryVersion("./server/bin/multica", ["version"], env),
@@ -227,7 +232,7 @@ async function deployEnvironment(item, build) {
 }
 
 async function startDevWeb(item, action) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   const existingPID = listeningPID(item.frontendPort);
   const existing = inspectPID(existingPID);
@@ -263,7 +268,7 @@ async function startDevWeb(item, action) {
 }
 
 async function restartDevServer(item) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   ensureDatabase(env.DATABASE_URL, item.databaseName);
   buildServerBinary(env);
@@ -286,7 +291,7 @@ async function restartDevServer(item) {
 }
 
 async function prewarmDevWebOnly(item) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   const webPrewarm = await prewarmDevWebRoutes(item);
   updateFastDeploymentMetadata(item, env, {}, "dev-ui-prewarm", { web_prewarm: webPrewarm });
   console.log(JSON.stringify({
@@ -297,11 +302,10 @@ async function prewarmDevWebOnly(item) {
     frontend_url: `http://${publicHost}:${item.frontendPort}`,
     web_prewarm: webPrewarm,
   }, null, 2));
-  if (!webPrewarm.ok && process.env.GOAL_TEST_WEB_PREWARM_STRICT === "1") process.exit(2);
 }
 
 function restartDevDaemon(item) {
-  const { env } = buildEnvironmentRuntime(item);
+  const { env } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   buildMulticaBinary(env);
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 10_000);
@@ -309,14 +313,14 @@ function restartDevDaemon(item) {
   stopPid(pidPath(item, "daemon"));
   const daemonPID = startDaemonProcess(item, env);
   updateFastDeploymentMetadata(item, env, { daemon: daemonPID }, "dev-daemon", {
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
   });
   console.log(JSON.stringify({
     environment: item.name,
     action: "dev-daemon",
     status: "restarted",
     daemon_profile: item.daemonProfile,
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
     pid: daemonPID,
   }, null, 2));
 }
@@ -359,22 +363,33 @@ function runDevCheck(item) {
 
 function buildEnvironmentRuntime(item) {
   const envFile = ensureEnvironment(item);
+  return runtimeFromEnvironmentFile(item, envFile);
+}
+
+function buildDeployedEnvironmentRuntime(item) {
+  const envFile = envPath(item);
+  if (!existsSync(envFile) || !existsSync(deploymentPath(item))) {
+    fail(`goal-test ${item.name} is not deployed; run the deploy command before a fast action`);
+  }
+  return runtimeFromEnvironmentFile(item, envFile);
+}
+
+function runtimeFromEnvironmentFile(item, envFile) {
   const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
   const env = {
     ...process.env,
     ...readEnvFile(envFile),
     HOSTNAME: "0.0.0.0",
     NEXT_PUBLIC_APP_VERSION: deploymentCommit,
-    GOAL_TEST_REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
+    REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
   };
-  applyCodexRunnerRuntimeEnv(env);
   return { envFile, env };
 }
 
 function startWebProcess(item, env) {
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
-    : ["--dir", "apps/web", "exec", "next", "dev", "--webpack", "-p", item.frontendPort, "-H", "0.0.0.0"];
+    : ["--dir", "apps/web", "exec", "next", "dev", "-p", item.frontendPort, "-H", "0.0.0.0"];
   let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
@@ -419,8 +434,8 @@ async function prewarmDevWebRoutes(item) {
   const base = `http://127.0.0.1:${item.frontendPort}`;
   const slug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
   const scope = prewarmScope();
-  const concurrency = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_CONCURRENCY, 2, 1, 8);
-  const timeoutSec = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_TIMEOUT_SEC, 90, 5, 240);
+  const concurrency = 2;
+  const timeoutSec = 90;
   const coreRoutes = [
     "/login",
     `/${slug}/issues`,
@@ -435,7 +450,6 @@ async function prewarmDevWebRoutes(item) {
   ];
   const fullRoutes = [
     "/",
-    "/onboarding",
     "/workspaces/new",
     `/${slug}/my-issues`,
     `/${slug}/inbox`,
@@ -536,12 +550,6 @@ async function runConcurrent(items, concurrency, worker) {
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker()));
   return results;
-}
-
-function boundedInt(value, fallback, min, max) {
-  const parsed = Number.parseInt(String(value || ""), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
 }
 
 function startDaemonProcess(item, env) {
@@ -647,8 +655,6 @@ function isExpectedWebProcess(processInfo, item) {
 }
 
 function verifyAll() {
-  ensureEnvironment(profiles.prod);
-  ensureEnvironment(profiles.int);
   const prod = verifyEnvironment(profiles.prod, true);
   const intEnv = verifyEnvironment(withFrontendMode(profiles.int, deployedFrontendMode(profiles.int)), true);
   const isolation = {
@@ -674,7 +680,6 @@ function verifyAll() {
 }
 
 function verifyTarget(item) {
-  ensureEnvironment(item);
   const result = verifyEnvironment(withFrontendMode(item, deployedFrontendMode(item)), true);
   return {
     schema: "multica.goal_test.environment_evidence.v1",
@@ -698,8 +703,6 @@ function deployedFrontendMode(item) {
 }
 
 function verifyAllLogs() {
-  ensureEnvironment(profiles.prod);
-  ensureEnvironment(profiles.int);
   const prod = verifyLogsForEnvironment(profiles.prod);
   const intEnv = verifyLogsForEnvironment(profiles.int);
   return {
@@ -713,7 +716,6 @@ function verifyAllLogs() {
 }
 
 function verifyLogsTarget(item) {
-  ensureEnvironment(item);
   const result = verifyLogsForEnvironment(item);
   return {
     schema: "multica.goal_test.log_evidence.v1",
@@ -774,7 +776,6 @@ function verifyEnvironment(item, requireRunning) {
 }
 
 function describeEnvironment(item) {
-  ensureEnvironment(item);
   const env = readEnvFile(envPath(item));
   return {
     environment: item.name,
@@ -788,16 +789,10 @@ function describeEnvironment(item) {
     daemon_profile: item.daemonProfile,
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT || "",
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
+    codex_runner: summarizeCodexRunnerEnv(item, env),
     env_file: envPath(item),
     frontend_mode: item.frontendMode,
   };
-}
-
-function applyEnvPreview(env) {
-  const preview = { ...env };
-  applyCodexRunnerRuntimeEnv(preview);
-  return preview;
 }
 
 function envPath(item) {
@@ -900,54 +895,32 @@ function isAllowedLogNoise(service, line) {
 
 function resolveCodexRunnerProfile(item, base) {
   const sourceHome = firstNonEmpty(
-    process.env.GOAL_TEST_CODEX_SOURCE_HOME,
-    base.GOAL_TEST_CODEX_SOURCE_HOME,
-    process.env.MULTICA_CODEX_SOURCE_HOME,
-    base.MULTICA_CODEX_SOURCE_HOME,
     process.env.CODEX_HOME,
     base.CODEX_HOME,
     defaultGoalTestCodexHome(),
   );
   return {
-    runnerID: firstNonEmpty(process.env.GOAL_TEST_CODEX_RUNNER_ID, base.GOAL_TEST_CODEX_RUNNER_ID, item.daemonID),
-    codexHome: firstNonEmpty(process.env.GOAL_TEST_CODEX_HOME, base.GOAL_TEST_CODEX_HOME, process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, sourceHome),
+    codexHome: firstNonEmpty(process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, sourceHome),
     sourceHome,
-    codexPath: firstNonEmpty(process.env.GOAL_TEST_CODEX_PATH, base.GOAL_TEST_CODEX_PATH, process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
-    codexModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_MODEL, base.GOAL_TEST_CODEX_MODEL, process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
+    codexPath: firstNonEmpty(process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
+    codexModel: firstNonEmpty(process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
     imageGeneration: firstNonEmpty(process.env.MULTICA_CODEX_IMAGE_GENERATION, base.MULTICA_CODEX_IMAGE_GENERATION, "disabled"),
   };
 }
 
 function codexRunnerEnvLines(runner) {
   const lines = [
-    `GOAL_TEST_CODEX_RUNNER_ID=${runner.runnerID}`,
-    `GOAL_TEST_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_IMAGE_GENERATION=${runner.imageGeneration}`,
   ];
   if (runner.codexHome) {
-    lines.push(`GOAL_TEST_CODEX_HOME=${runner.codexHome}`);
     lines.push(`MULTICA_CODEX_HOME=${runner.codexHome}`);
     lines.push(`CODEX_HOME=${runner.codexHome}`);
   }
-  if (runner.sourceHome) {
-    lines.push(`GOAL_TEST_CODEX_SOURCE_HOME=${runner.sourceHome}`);
-    lines.push(`MULTICA_CODEX_SOURCE_HOME=${runner.sourceHome}`);
-  }
   if (runner.codexModel) {
-    lines.push(`GOAL_TEST_CODEX_MODEL=${runner.codexModel}`);
     lines.push(`MULTICA_CODEX_MODEL=${runner.codexModel}`);
   }
   return lines;
-}
-
-function applyCodexRunnerRuntimeEnv(env) {
-  if (env.GOAL_TEST_CODEX_HOME) env.CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
-  if (env.GOAL_TEST_CODEX_HOME) env.MULTICA_CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
-  if (env.GOAL_TEST_CODEX_SOURCE_HOME) env.MULTICA_CODEX_SOURCE_HOME = env.GOAL_TEST_CODEX_SOURCE_HOME;
-  if (env.GOAL_TEST_CODEX_PATH) env.MULTICA_CODEX_PATH = env.GOAL_TEST_CODEX_PATH;
-  if (env.GOAL_TEST_CODEX_MODEL) env.MULTICA_CODEX_MODEL = env.GOAL_TEST_CODEX_MODEL;
-  if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "disabled";
 }
 
 function defaultGoalTestCodexHome() {
@@ -1011,9 +984,9 @@ function nextBackupPath(file) {
 
 function summarizeCodexRunnerEnv(item, env) {
   return {
-    runner_id: env.GOAL_TEST_CODEX_RUNNER_ID || item.daemonID,
+    runner_id: item.daemonID,
     daemon_id: item.daemonID,
-    codex_path: env.MULTICA_CODEX_PATH || env.GOAL_TEST_CODEX_PATH || "codex",
+    codex_path: env.MULTICA_CODEX_PATH || "codex",
     codex_home: env.CODEX_HOME || "",
     model: env.MULTICA_CODEX_MODEL || "",
     image_generation: env.MULTICA_CODEX_IMAGE_GENERATION || "auto",
@@ -1079,8 +1052,6 @@ const targetUrl = ${JSON.stringify(targetDatabaseURL)};
 const avatarUrl = ${JSON.stringify(avatarURL)};
 const account = 'develop';
 const workspaceSlug = 'ai-studio';
-const resetWorkspaceRepos = process.env.GOAL_TEST_RESET_WORKSPACE_REPOS === '1';
-
 async function copyTableRow(source, target, table, whereSql, params) {
   const src = await source.query('SELECT * FROM ' + table + ' WHERE ' + whereSql + ' LIMIT 1', params);
   if (src.rowCount === 0) throw new Error('missing seed row in ' + table);
@@ -1111,12 +1082,12 @@ function passwordHash(password) {
 
 async function seedFromScratch(target) {
   const user = await target.query(
-    'INSERT INTO "user" (name, account, avatar_url, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, $3, now(), $4, $5, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
-    ['胡云飞', account, avatarUrl, 'imported', passwordHash('develop123')],
+    'INSERT INTO "user" (name, account, avatar_url, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, password_hash = EXCLUDED.password_hash, updated_at = now() RETURNING id',
+    ['胡云飞', account, avatarUrl, passwordHash('develop123')],
   );
   const workspace = await target.query(
-    'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = CASE WHEN $7::boolean THEN EXCLUDED.repos ELSE workspace.repos END, updated_at = now() RETURNING id',
-    ['AI Studio 工作区', workspaceSlug, 'AI Studio 开发工作区', '用于 AI Studio 开发联调、验收和性能调试。', 'AIS', '[]', resetWorkspaceRepos],
+    'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, updated_at = now() RETURNING id',
+    ['AI Studio 工作区', workspaceSlug, 'AI Studio 开发工作区', '用于 AI Studio 开发联调、验收和性能调试。', 'AIS', '[]'],
   );
   await target.query(
     'INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role',

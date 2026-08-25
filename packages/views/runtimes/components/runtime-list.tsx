@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Loader2,
-  MoreHorizontal,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -15,13 +14,16 @@ import type {
   AgentTask,
   MemberWithUser,
 } from "@multica/core/types";
-import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   agentListOptions,
   memberListOptions,
 } from "@multica/core/workspace/queries";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
+import {
+  agentTaskSnapshotOptions,
+  agentTaskWorkloadKind,
+} from "@multica/core/agents";
 import {
   deriveRuntimeHealth,
   runtimeUsageOptions,
@@ -42,6 +44,7 @@ import {
 } from "@multica/ui/components/ui/list-grid";
 import { useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy } from "../../common/collections";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { ProviderLogo } from "./provider-logo";
 import { HealthIcon, RuntimeVisibilityBadge, useHealthLabel } from "./shared";
@@ -49,6 +52,7 @@ import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import {
   computeCostInWindow,
   formatLastSeen,
+  formatUsageCost,
   pctChange,
 } from "../utils";
 import { splitRuntimeName } from "./runtime-machines";
@@ -58,6 +62,7 @@ import {
   pendingRuntimeCommandName,
 } from "./pending-runtime";
 import { useT } from "../../i18n";
+import { ListGridRowMenuButton } from "../../common/list-grid-selection";
 
 // The machine detail's runtimes table on the shared ListGrid. Paradigm
 // pieces are taken À LA CARTE here: subgrid template + var-width tracks +
@@ -125,7 +130,7 @@ const EMPTY_WORKLOAD: RuntimeWorkload = {
   queuedCount: 0,
 };
 
-export interface RuntimeRow {
+interface RuntimeRow {
   runtime: AgentRuntime;
   ownerMember: MemberWithUser | null;
   workload: RuntimeWorkload;
@@ -160,9 +165,9 @@ export function buildWorkloadIndex(
     if (!rid) continue;
     const entry = result.get(rid);
     if (!entry) continue;
-    if (t.status === "running") entry.runningCount += 1;
-    else if (t.status === "queued" || t.status === "dispatched")
-      entry.queuedCount += 1;
+    const kind = agentTaskWorkloadKind(t.status);
+    if (kind === "running") entry.runningCount += 1;
+    else if (kind === "queued") entry.queuedCount += 1;
   }
   return result;
 }
@@ -193,7 +198,6 @@ function RuntimeNameCell({ runtime }: { runtime: AgentRuntime }) {
 // Distinguishes a built-in protocol-family runtime from one launched off a
 // custom runtime profile. `profile_id` is the discriminator: a non-null /
 // non-empty value means the runtime was started from a custom profile.
-// Older backends omit the field — treated as built-in.
 function RuntimeKindBadge({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const isCustom = !!runtime.profile_id;
@@ -313,7 +317,7 @@ function CostCell({ runtimeId }: { runtimeId: string }) {
       </div>
     );
   }
-  const fmt = cost7d >= 100 ? `$${cost7d.toFixed(0)}` : `$${cost7d.toFixed(2)}`;
+  const fmt = formatUsageCost(cost7d);
   const deltaTone =
     delta == null
       ? "text-muted-foreground"
@@ -340,7 +344,7 @@ function CostCell({ runtimeId }: { runtimeId: string }) {
   );
 }
 
-export function CliCell({ runtime }: { runtime: AgentRuntime }) {
+function CliCell({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   if (isPendingCustomRuntime(runtime)) {
     const command = pendingRuntimeCommandName(runtime);
@@ -422,7 +426,7 @@ function AgentStack({ agentIds }: { agentIds: string[] }) {
   );
 }
 
-export function RuntimeRowMenu({
+function RuntimeRowMenu({
   runtime,
   wsId,
   canDelete,
@@ -433,13 +437,8 @@ export function RuntimeRowMenu({
 }) {
   const { t } = useT("runtimes");
   const [deleteOpen, setDeleteOpen] = useState(false);
-  // Delete is currently the only row action; if the row can't run it, drop
-  // the kebab entirely so the column doesn't render an empty popover. We
-  // used to also hide it for self-healing runtimes (live local daemon
-  // re-registers within seconds), but MUL-3352 surfaced that owners read
-  // a missing kebab as "I lost my permission" rather than "the daemon
-  // would undo this". The dialog now carries the self-heal warning and
-  // the user gets to decide.
+  // Delete is the only row action, so callers without permission get no
+  // empty menu. Self-healing consequences are explained by the dialog.
 
   if (!canDelete) {
     return <span aria-hidden />;
@@ -449,15 +448,7 @@ export function RuntimeRowMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.list.row_actions_aria)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.list.row_actions_aria)} />}
         />
         <DropdownMenuContent align="end" className="w-40">
           <DropdownMenuItem
@@ -499,29 +490,21 @@ export function RuntimeList({
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
-  const user = useAuthStore((s) => s.user);
-
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-
-  const currentMember = user
-    ? members.find((m) => m.user_id === user.id)
-    : null;
-  const isAdmin = currentMember
-    ? currentMember.role === "owner" || currentMember.role === "admin"
-    : false;
+  const { userId, role } = useCurrentMember(wsId);
+  const isAdmin = canManageWorkspace(role);
 
   const workloadIndex = useMemo(
     () => buildWorkloadIndex(agents, snapshot),
     [agents, snapshot],
   );
 
-  const memberById = useMemo(() => {
-    const map = new Map<string, MemberWithUser>();
-    for (const m of members) map.set(m.user_id, m);
-    return map;
-  }, [members]);
+  const memberById = useMemo(
+    () => indexBy(members, (member) => member.user_id),
+    [members],
+  );
 
   // Owner column only earns its space when the page actually has multiple
   // distinct owners — otherwise it would just be a column of identical
@@ -543,9 +526,9 @@ export function RuntimeList({
       workload: workloadIndex.get(runtime.id) ?? EMPTY_WORKLOAD,
       canDelete:
         !isPendingCustomRuntime(runtime) &&
-        (isAdmin || (!!user && runtime.owner_id === user.id)),
+        (isAdmin || (!!userId && runtime.owner_id === userId)),
     }));
-  }, [runtimes, memberById, workloadIndex, isAdmin, user]);
+  }, [runtimes, memberById, workloadIndex, isAdmin, userId]);
 
   // Mirrors RuntimeRowMenu's render guard: the kebab track only earns its
   // width when at least one row will actually show the menu.

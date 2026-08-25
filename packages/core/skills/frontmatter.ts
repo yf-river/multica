@@ -7,7 +7,7 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)---\r?\n?/;
 
 export type SkillFrontmatter = Record<string, string>;
 
-export interface ParsedFrontmatter {
+interface ParsedFrontmatter {
   frontmatter: SkillFrontmatter | null;
   body: string;
 }

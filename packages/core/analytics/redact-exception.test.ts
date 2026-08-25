@@ -1,38 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { redactText, redactExceptionProperties } from "./redact-exception";
-
-describe("redactText", () => {
-  it("does not apply email-specific business redaction", () => {
-    expect(redactText("Invalid email: alice@example.com")).toBe(
-      "Invalid email: alice@example.com",
-    );
-  });
-
-  it("strips URL query strings that may carry tokens, keeping host + path", () => {
-    expect(
-      redactText("fetch failed https://api.multica.ai/issues?token=abc123secret"),
-    ).toBe("fetch failed https://api.multica.ai/issues?[redacted]");
-  });
-
-  it("redacts long opaque tokens (JWT / API key / uuid)", () => {
-    expect(redactText("auth header eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")).toBe(
-      "auth header [redacted]",
-    );
-  });
-
-  it("keeps the non-sensitive part of a message intact", () => {
-    expect(redactText("Cannot read property 'x' of undefined")).toBe(
-      "Cannot read property 'x' of undefined",
-    );
-  });
-
-  it("passes through non-strings unchanged", () => {
-    expect(redactText(undefined)).toBeUndefined();
-    expect(redactText(42)).toBe(42);
-  });
-});
+import { redactExceptionProperties } from "./redact-exception";
 
 describe("redactExceptionProperties", () => {
+  it("redacts only token-bearing message content", () => {
+    const cases = [
+      ["Invalid email: alice@example.com", "Invalid email: alice@example.com"],
+      [
+        "fetch failed https://api.multica.ai/issues?token=abc123secret",
+        "fetch failed https://api.multica.ai/issues?[redacted]",
+      ],
+      ["auth header eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", "auth header [redacted]"],
+      ["Cannot read property 'x' of undefined", "Cannot read property 'x' of undefined"],
+      [undefined, undefined],
+      [42, 42],
+    ] as const;
+
+    for (const [input, expected] of cases) {
+      const props = { $exception_message: input };
+      redactExceptionProperties(props);
+      expect(props.$exception_message).toBe(expected);
+    }
+  });
+
   it("scrubs the message and each $exception_list value, leaving frames untouched", () => {
     const props = {
       $exception_message: "Bad input bob@corp.com",

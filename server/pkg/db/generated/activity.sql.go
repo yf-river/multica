@@ -97,6 +97,73 @@ func (q *Queries) CreateActivity(ctx context.Context, arg CreateActivityParams) 
 	return i, err
 }
 
+const createSquadLeaderEvaluation = `-- name: CreateSquadLeaderEvaluation :one
+INSERT INTO activity_log (
+    workspace_id, issue_id, actor_type, actor_id, action, details
+) VALUES ($1, $2, 'agent', $3, 'squad_leader_evaluated', $4)
+ON CONFLICT DO NOTHING
+RETURNING id, workspace_id, issue_id, actor_type, actor_id, action, details, created_at
+`
+
+type CreateSquadLeaderEvaluationParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	ActorID     pgtype.UUID `json:"actor_id"`
+	Details     []byte      `json:"details"`
+}
+
+func (q *Queries) CreateSquadLeaderEvaluation(ctx context.Context, arg CreateSquadLeaderEvaluationParams) (ActivityLog, error) {
+	row := q.db.QueryRow(ctx, createSquadLeaderEvaluation,
+		arg.WorkspaceID,
+		arg.IssueID,
+		arg.ActorID,
+		arg.Details,
+	)
+	var i ActivityLog
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.Action,
+		&i.Details,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSquadLeaderEvaluationForTask = `-- name: GetSquadLeaderEvaluationForTask :one
+SELECT id, workspace_id, issue_id, actor_type, actor_id, action, details, created_at FROM activity_log
+WHERE issue_id = $1
+  AND actor_type = 'agent'
+  AND actor_id = $2
+  AND action = 'squad_leader_evaluated'
+  AND details->>'task_id' = $3::text
+`
+
+type GetSquadLeaderEvaluationForTaskParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+	TaskID  string      `json:"task_id"`
+}
+
+func (q *Queries) GetSquadLeaderEvaluationForTask(ctx context.Context, arg GetSquadLeaderEvaluationForTaskParams) (ActivityLog, error) {
+	row := q.db.QueryRow(ctx, getSquadLeaderEvaluationForTask, arg.IssueID, arg.AgentID, arg.TaskID)
+	var i ActivityLog
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.Action,
+		&i.Details,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const hasSquadLeaderNoActionEvaluationForTask = `-- name: HasSquadLeaderNoActionEvaluationForTask :one
 SELECT EXISTS (
   SELECT 1

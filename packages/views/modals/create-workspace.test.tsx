@@ -1,14 +1,8 @@
 import type { ReactNode } from "react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/zh-Hans/common.json";
-import enWorkspace from "../locales/zh-Hans/workspace.json";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { common: enCommon, workspace: enWorkspace },
-};
+import { renderWithI18n } from "../test/i18n";
 
 const mockPush = vi.hoisted(() => vi.fn());
 const mockCreateWorkspaceMutate = vi.hoisted(() => vi.fn());
@@ -42,16 +36,8 @@ vi.mock("sonner", () => ({
 
 import { CreateWorkspaceModal } from "./create-workspace";
 
-function I18nWrapper({ children }: { children: ReactNode }) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      {children}
-    </I18nProvider>
-  );
-}
-
 function renderModal(props: { onClose: () => void }) {
-  return render(<CreateWorkspaceModal {...props} />, { wrapper: I18nWrapper });
+  return renderWithI18n(<CreateWorkspaceModal {...props} />);
 }
 
 describe("CreateWorkspaceModal", () => {

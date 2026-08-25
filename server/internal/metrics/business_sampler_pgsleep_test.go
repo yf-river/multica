@@ -49,14 +49,12 @@ func TestBusinessSamplerStatementTimeoutCutsHungQuery(t *testing.T) {
 		t.Skipf("database not reachable at %s: %v", dbURL, err)
 	}
 
-	c := NewBusinessSamplerCollector(&BusinessSamplerOptions{
-		Pool:         pool,
-		CacheTTL:     time.Second,
-		QueryTimeout: 500 * time.Millisecond,
-	})
+	c := newBusinessSamplerCollector(pool)
 	if c == nil {
-		t.Fatal("NewBusinessSamplerCollector returned nil for live pool")
+		t.Fatal("newBusinessSamplerCollector returned nil for live pool")
 	}
+	c.cacheTTL = time.Second
+	c.queryTimeout = 500 * time.Millisecond
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

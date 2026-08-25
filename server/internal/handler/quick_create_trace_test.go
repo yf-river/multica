@@ -4,20 +4,19 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent
-		WHERE workspace_id = $1 AND runtime_id IS NOT NULL
+		WHERE workspace_id = $1
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, testWorkspaceID).Scan(&agentID); err != nil {
@@ -33,7 +32,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var projectID string
@@ -45,10 +44,12 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
 	task, err := testHandler.TaskService.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
+		RequestID:   parseUUID(uuid.NewString()),
+		RequestHash: "trace-test",
 		WorkspaceID: parseUUID(testWorkspaceID),
 		RequesterID: parseUUID(testUserID),
 		AgentID:     parseUUID(agentID),
@@ -60,7 +61,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		t.Fatalf("enqueue quick-create task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
 	})
 
 	var inputKind, inputSummary, inputSnapshot, contentSHA string
@@ -95,9 +96,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 }
 
 func TestIssueTaskUserInputTraceCapturesOriginalIssue(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
+	requireHandlerDatabase(t)
 	ctx := context.Background()
 
 	runtimeID := createClaimReclaimRuntime(t, ctx, "User input trace runtime")
@@ -120,8 +119,8 @@ func TestIssueTaskUserInputTraceCapturesOriginalIssue(t *testing.T) {
 		t.Fatalf("create issue task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, uuidToString(task.ID))
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
+		mustExec(t, context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, uuidToString(task.ID))
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
 	})
 
 	testHandler.TaskService.NotifyTaskEnqueued(ctx, task)

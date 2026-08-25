@@ -1,16 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, UserPlus, X } from "lucide-react";
-import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { useCreateSquad } from "@multica/core/squads";
 import {
   agentListOptions,
   memberListOptions,
-  workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { AGENT_DESCRIPTION_MAX_LENGTH } from "@multica/core/agents";
 import { isImeComposing } from "@multica/core/utils";
@@ -42,7 +41,7 @@ import {
   PickerItem,
   PickerSection,
 } from "../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
 type SelectedMember = {
@@ -59,7 +58,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const router = useNavigation();
   const wsPaths = useWorkspacePaths();
   const wsId = useWorkspaceId();
-  const queryClient = useQueryClient();
+  const createSquad = useCreateSquad();
   const currentUser = useAuthStore((s) => s.user);
   const currentUserId = currentUser?.id ?? null;
 
@@ -77,7 +76,6 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const [scope, setScope] = useState<SquadScope>("workspace");
   const [leaderId, setLeaderId] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>([]);
-  const [creating, setCreating] = useState(false);
 
   // Promoting an agent to leader must actually drop it from selectedMembers,
   // not merely hide it. Otherwise switching leader away later resurrects the
@@ -91,45 +89,22 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const canSubmit = !!name.trim() && !!leaderId && !creating;
+  const canSubmit = !!name.trim() && !!leaderId && !createSquad.isPending;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
-    setCreating(true);
     try {
-      const squad = await api.createSquad({
+      const squad = await createSquad.mutateAsync({
         name: name.trim(),
         description: description.trim() || undefined,
         leader_id: leaderId,
         avatar_url: avatarUrl ?? undefined,
         scope,
+        members: selectedMembers.map((member) => ({
+          member_type: member.type,
+          member_id: member.id,
+        })),
       });
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-
-      if (selectedMembers.length > 0) {
-        await Promise.allSettled(
-          selectedMembers.map(async (m) => {
-            try {
-              await api.addSquadMember(squad.id, {
-                member_type: m.type,
-                member_id: m.id,
-              });
-            } catch (err) {
-              toast.warning(
-                t(($) => $.create_squad.toast_member_add_failed, {
-                  name: m.name,
-                  error:
-                    err instanceof Error ? err.message : "unknown error",
-                }),
-              );
-            }
-          }),
-        );
-        queryClient.invalidateQueries({
-          queryKey: [...workspaceKeys.squads(wsId), squad.id, "members"],
-        });
-      }
-
       onClose();
       toast.success(t(($) => $.create_squad.toast_created));
       router.push(wsPaths.squadDetail(squad.id));
@@ -139,7 +114,6 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
           ? err.message
           : t(($) => $.create_squad.toast_failed),
       );
-      setCreating(false);
     }
   };
 
@@ -230,7 +204,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
             {t(($) => $.create_squad.cancel)}
           </Button>
           <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {creating
+            {createSquad.isPending
               ? t(($) => $.create_squad.submitting)
               : t(($) => $.create_squad.submit)}
           </Button>
@@ -351,10 +325,8 @@ function LeaderPicker({
   );
 
   const q = filter.trim().toLowerCase();
-  const matches = (a: Agent) =>
-    !q || a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q);
-  const filteredMine = myAgents.filter(matches);
-  const filteredOthers = otherAgents.filter(matches);
+  const filteredMine = myAgents.filter((agent) => matchesTextQuery(agent.name, q));
+  const filteredOthers = otherAgents.filter((agent) => matchesTextQuery(agent.name, q));
 
   const selected = agents.find((a) => a.id === value) ?? null;
   const noAgents = agents.length === 0;
@@ -503,14 +475,9 @@ function AdditionalMembersPicker({
   );
 
   const q = filter.trim().toLowerCase();
-  const agentMatches = (a: Agent) =>
-    !q || a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q);
-  const memberMatches = (m: MemberWithUser) =>
-    !q || m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q);
-
-  const filteredMine = myAgents.filter(agentMatches);
-  const filteredOthers = otherAgents.filter(agentMatches);
-  const filteredMembers = members.filter(memberMatches);
+  const filteredMine = myAgents.filter((agent) => matchesTextQuery(agent.name, q));
+  const filteredOthers = otherAgents.filter((agent) => matchesTextQuery(agent.name, q));
+  const filteredMembers = members.filter((member) => matchesTextQuery(member.name, q));
   const anyResults =
     filteredMine.length + filteredOthers.length + filteredMembers.length > 0;
 

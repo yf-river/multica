@@ -26,6 +26,20 @@ func writeFile(t *testing.T, path string, size int) {
 	}
 }
 
+func assertSingleCountedTask(t *testing.T, root string) {
+	t.Helper()
+	report, err := ScanDiskUsage(root, []string{"node_modules"})
+	if err != nil {
+		t.Fatalf("ScanDiskUsage: %v", err)
+	}
+	if len(report.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(report.Tasks))
+	}
+	if got := report.Tasks[0]; got.SizeBytes != 100 || got.ArtifactSizeBytes != 0 {
+		t.Errorf("counted task = %+v, want size_bytes=100 and artifact_size_bytes=0", got)
+	}
+}
+
 // TestScanDiskUsage_AggregatesAndCategorizes verifies the happy-path: each
 // task directory is sized, categorized by GC meta kind, and aggregated into
 // per-workspace totals matching the per-task totals.
@@ -74,7 +88,7 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 		t.Fatalf("expected 3 tasks, got %d", len(report.Tasks))
 	}
 
-	byShort := map[string]TaskDiskUsage{}
+	byShort := map[string]taskDiskUsage{}
 	for _, task := range report.Tasks {
 		byShort[task.TaskShort] = task
 	}
@@ -111,8 +125,8 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 	}
 
 	b1 := byShort["cccccccc"]
-	if b1.Kind != DiskUsageKindUnknown {
-		t.Errorf("task b1 kind = %q, want %q", b1.Kind, DiskUsageKindUnknown)
+	if b1.Kind != diskUsageKindUnknown {
+		t.Errorf("task b1 kind = %q, want %q", b1.Kind, diskUsageKindUnknown)
 	}
 	if b1.SizeBytes != 2000 {
 		t.Errorf("task b1 size = %d, want 2000 (no meta file)", b1.SizeBytes)
@@ -129,7 +143,7 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 		t.Errorf("total artifact size = %d, want 4000", report.TotalArtifactSizeBytes)
 	}
 
-	wsByID := map[string]WorkspaceDiskUsage{}
+	wsByID := map[string]workspaceDiskUsage{}
 	for _, ws := range report.Workspaces {
 		wsByID[ws.WorkspaceID] = ws
 	}
@@ -186,7 +200,6 @@ func TestScanDiskUsage_AggregatesAndCategorizes(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"kind"`,
-		`"parent_status"`,
 		`"age_seconds"`,
 		`"size_bytes"`,
 		`"artifact_size_bytes"`,
@@ -247,21 +260,7 @@ func TestScanDiskUsage_DoesNotEnterGit(t *testing.T) {
 	writeFile(t, filepath.Join(taskDir, "workdir/.git/node_modules/x"), 5555)
 	writeFile(t, filepath.Join(taskDir, "workdir/main.go"), 100)
 
-	report, err := ScanDiskUsage(root, []string{"node_modules"})
-	if err != nil {
-		t.Fatalf("ScanDiskUsage: %v", err)
-	}
-
-	if len(report.Tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(report.Tasks))
-	}
-	got := report.Tasks[0]
-	if got.SizeBytes != 100 {
-		t.Errorf("size_bytes = %d, want 100 (only main.go; .git tree skipped)", got.SizeBytes)
-	}
-	if got.ArtifactSizeBytes != 0 {
-		t.Errorf("artifact_size_bytes = %d, want 0 (node_modules under .git is invisible)", got.ArtifactSizeBytes)
-	}
+	assertSingleCountedTask(t, root)
 }
 
 // TestScanDiskUsage_DoesNotFollowSymlinks guards the second safety
@@ -290,21 +289,7 @@ func TestScanDiskUsage_DoesNotFollowSymlinks(t *testing.T) {
 		t.Skipf("symlink not supported: %v", err)
 	}
 
-	report, err := ScanDiskUsage(root, []string{"node_modules"})
-	if err != nil {
-		t.Fatalf("ScanDiskUsage: %v", err)
-	}
-
-	if len(report.Tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(report.Tasks))
-	}
-	got := report.Tasks[0]
-	if got.SizeBytes != 100 {
-		t.Errorf("size_bytes = %d, want 100 (only main.go; symlinks ignored)", got.SizeBytes)
-	}
-	if got.ArtifactSizeBytes != 0 {
-		t.Errorf("artifact_size_bytes = %d, want 0 (symlinked node_modules ignored)", got.ArtifactSizeBytes)
-	}
+	assertSingleCountedTask(t, root)
 }
 
 // TestScanDiskUsage_MissingRoot ensures a daemon that has never run yet

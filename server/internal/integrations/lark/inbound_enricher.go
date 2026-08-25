@@ -22,7 +22,7 @@ const larkMsgTypeMergeForward = "merge_forward"
 // visible "... (N more truncated)" marker.
 const defaultMaxForwardChildren = 100
 
-// DefaultRecentContextSize is the window the production wiring uses for
+// defaultRecentContextSize is the current group-context prefetch window.
 // the group-context prefetch: the page_size of the single list call made
 // when a user @-mentions the Bot in a group. It is a FETCH budget, not a
 // guaranteed rendered count — the trigger message itself and any quoted
@@ -30,39 +30,7 @@ const defaultMaxForwardChildren = 100
 // usually renders one or two fewer lines. 10 keeps the agent's prompt
 // meaningfully contextual without bloating it or straining the inbound
 // ACK budget (one list call, page_size 10).
-const DefaultRecentContextSize = 10
-
-// Enricher expands an inbound message's body with context the user
-// EXPLICITLY attached — a quoted reply or a merged-and-forwarded bundle
-// — by calling back into Lark's IM API. It runs after the (fast,
-// HTTP-free) decoder and before the dispatcher, turning a bare
-// "@bot 总结一下" into a body that already carries the referenced
-// conversation inline.
-//
-// It is best-effort by contract: every fetch failure degrades to a
-// visible placeholder block and Enrich NEVER returns an error or blocks
-// ingestion. A message with nothing to expand (no parent_id, not a
-// merge_forward) is returned untouched without any network call.
-type Enricher interface {
-	Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage
-}
-
-// InboundEnricherConfig tunes the enricher. All fields default.
-type InboundEnricherConfig struct {
-	// MaxForwardChildren caps inlined forward children. <=0 uses
-	// defaultMaxForwardChildren.
-	MaxForwardChildren int
-	// RecentContextSize caps how many surrounding group messages the
-	// enricher prefetches and inlines as a <recent_context> block when a
-	// user @-mentions the Bot in a group. <=0 DISABLES the prefetch
-	// entirely (only explicitly-attached quote/forward context is used);
-	// the production wiring sets DefaultRecentContextSize. Values above
-	// Lark's 50-per-page cap are clamped by the client.
-	RecentContextSize int
-	// Logger receives best-effort warnings about fetch failures. Nil
-	// uses slog.Default().
-	Logger *slog.Logger
-}
+const defaultRecentContextSize = 10
 
 type inboundEnricher struct {
 	client             APIClient
@@ -71,25 +39,20 @@ type inboundEnricher struct {
 	logger             *slog.Logger
 }
 
-// NewInboundEnricher builds an Enricher backed by the given Lark API
-// client. The client supplies GetMessage; everything else (flattening,
-// block assembly, speaker labelling) is local.
-func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) Enricher {
-	if cfg.MaxForwardChildren <= 0 {
-		cfg.MaxForwardChildren = defaultMaxForwardChildren
-	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-	return &inboundEnricher{
+// NewInboundEnricher returns the connector callback that expands quoted,
+// forwarded, and recent group context through the Lark API. Fetch failures
+// degrade to visible placeholders and never block ingestion.
+func NewInboundEnricher(client APIClient) func(context.Context, InboundMessage, InstallationCredentials) InboundMessage {
+	e := &inboundEnricher{
 		client:             client,
-		maxForwardChildren: cfg.MaxForwardChildren,
-		recentContextSize:  cfg.RecentContextSize,
-		logger:             cfg.Logger,
+		maxForwardChildren: defaultMaxForwardChildren,
+		recentContextSize:  defaultRecentContextSize,
+		logger:             slog.Default(),
 	}
+	return e.enrich
 }
 
-// Enrich rewrites msg.Body to inline surrounding group context and/or
+// enrich rewrites msg.Body to inline surrounding group context and/or
 // any quoted-reply parent and/or forwarded bundle. Composition order
 // goes broadest-to-narrowest: the surrounding group history first, then
 // the explicitly-quoted parent (a specific reference), then the message's
@@ -125,20 +88,13 @@ func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) Enricher {
 // never creates its own session row, and is only ever surfaced as read-
 // context attached to a turn a workspace member explicitly directed at
 // the Bot.
-func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage {
+func (e *inboundEnricher) enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage {
 	isForward := msg.MessageType == larkMsgTypeMergeForward
 	wantRecent := e.recentContextSize > 0 && msg.ChatType == ChatTypeGroup && msg.AddressedToBot
 	if msg.ParentID == "" && !isForward && !wantRecent {
 		// Nothing to expand and no group prefetch wanted — no network call.
 		return msg
 	}
-	// If the transport isn't wired (stub client on a deployment without
-	// a Lark app), skip rather than stamp every reply with a fetch
-	// error. Body stays whatever the decoder produced.
-	if e.client == nil || !e.client.IsConfigured() {
-		return msg
-	}
-
 	// Phase 1 — fetch every set of messages we may render. Each is
 	// best-effort; its error is handled where the block is rendered. We
 	// fetch up front (rather than fetch-and-render per block) so Phase 2
@@ -181,7 +137,7 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	var b strings.Builder
 	if wantRecent {
 		if recentErr != nil {
-			b.WriteString(recentContextErrorBlock())
+			b.WriteString(recentContextErrorBlock)
 		} else if len(recentItems) > 0 {
 			b.WriteString(e.renderRecentContextBlock(recentItems, names))
 		}
@@ -197,7 +153,7 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	if isForward {
 		if forwardErr != nil {
 			e.logger.Warn("lark enricher: forward fetch failed", "message_id", msg.MessageID, "err", forwardErr)
-			core = forwardedErrorBlock()
+			core = forwardedErrorBlock
 		} else {
 			core = e.renderForwardedItems(forwardItems, msg.MessageID, names)
 		}
@@ -313,8 +269,8 @@ func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map
 	for _, m := range kept {
 		label := labeler.label(m)
 		var text string
-		switch {
-		case m.MessageType == larkMsgTypeMergeForward:
+		switch m.MessageType {
+		case larkMsgTypeMergeForward:
 			text = "[merge_forward, expand manually]"
 		default:
 			text = e.flattenMessage(m)
@@ -328,9 +284,7 @@ func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map
 		len(kept), strings.Join(lines, "\n"))
 }
 
-func recentContextErrorBlock() string {
-	return "<recent_context type=\"error\">[unable to fetch recent context]</recent_context>"
-}
+const recentContextErrorBlock = "<recent_context type=\"error\">[unable to fetch recent context]</recent_context>"
 
 // renderQuotedBlock renders a <quoted_message> block from the already-
 // fetched GetMessage(parentID) result. A parent that is itself a
@@ -405,8 +359,8 @@ func (e *inboundEnricher) renderForwardedItems(items []LarkMessage, forwardID st
 	for _, c := range children {
 		label := labeler.label(c)
 		var text string
-		switch {
-		case c.MessageType == larkMsgTypeMergeForward:
+		switch c.MessageType {
+		case larkMsgTypeMergeForward:
 			text = "[nested merge_forward, expand manually]"
 		default:
 			text = e.flattenMessage(c)
@@ -465,9 +419,7 @@ func quotedErrorBlock(messageID string) string {
 	return fmt.Sprintf("<quoted_message message_id=%q type=\"error\">[unable to fetch]</quoted_message>", messageID)
 }
 
-func forwardedErrorBlock() string {
-	return "<forwarded_messages type=\"error\">[unable to fetch]</forwarded_messages>"
-}
+const forwardedErrorBlock = "<forwarded_messages type=\"error\">[unable to fetch]</forwarded_messages>"
 
 func parseLarkMillis(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)

@@ -203,92 +203,6 @@ func (q *Queries) IsSquadMember(ctx context.Context, arg IsSquadMemberParams) (b
 	return is_member, err
 }
 
-const listAllSquadMemberPreviewRows = `-- name: ListAllSquadMemberPreviewRows :many
-SELECT
-    sm.squad_id,
-    sm.member_type,
-    sm.member_id,
-    sm.role
-FROM squad_member sm
-JOIN squad s ON s.id = sm.squad_id
-WHERE s.workspace_id = $1
-ORDER BY
-    sm.squad_id ASC,
-    (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
-    sm.created_at ASC
-`
-
-type ListAllSquadMemberPreviewRowsRow struct {
-	SquadID    pgtype.UUID `json:"squad_id"`
-	MemberType string      `json:"member_type"`
-	MemberID   pgtype.UUID `json:"member_id"`
-	Role       string      `json:"role"`
-}
-
-func (q *Queries) ListAllSquadMemberPreviewRows(ctx context.Context, workspaceID pgtype.UUID) ([]ListAllSquadMemberPreviewRowsRow, error) {
-	rows, err := q.db.Query(ctx, listAllSquadMemberPreviewRows, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAllSquadMemberPreviewRowsRow{}
-	for rows.Next() {
-		var i ListAllSquadMemberPreviewRowsRow
-		if err := rows.Scan(
-			&i.SquadID,
-			&i.MemberType,
-			&i.MemberID,
-			&i.Role,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listAllSquads = `-- name: ListAllSquads :many
-SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions, sop_profile, scope FROM squad WHERE workspace_id = $1 ORDER BY created_at ASC
-`
-
-func (q *Queries) ListAllSquads(ctx context.Context, workspaceID pgtype.UUID) ([]Squad, error) {
-	rows, err := q.db.Query(ctx, listAllSquads, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Squad{}
-	for rows.Next() {
-		var i Squad
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.LeaderID,
-			&i.CreatorID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ArchivedAt,
-			&i.ArchivedBy,
-			&i.AvatarUrl,
-			&i.Instructions,
-			&i.SopProfile,
-			&i.Scope,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listSquadMemberPreviewRows = `-- name: ListSquadMemberPreviewRows :many
 SELECT
     sm.squad_id,
@@ -297,12 +211,18 @@ SELECT
     sm.role
 FROM squad_member sm
 JOIN squad s ON s.id = sm.squad_id
-WHERE s.workspace_id = $1 AND s.archived_at IS NULL
+WHERE s.workspace_id = $1
+  AND ($2::boolean OR s.archived_at IS NULL)
 ORDER BY
     sm.squad_id ASC,
     (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
     sm.created_at ASC
 `
+
+type ListSquadMemberPreviewRowsParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	IncludeArchived bool        `json:"include_archived"`
+}
 
 type ListSquadMemberPreviewRowsRow struct {
 	SquadID    pgtype.UUID `json:"squad_id"`
@@ -314,8 +234,8 @@ type ListSquadMemberPreviewRowsRow struct {
 // Static squad membership summary for list/hover previews. This deliberately
 // excludes derived runtime/task status; the squad detail members-status
 // endpoint owns live state.
-func (q *Queries) ListSquadMemberPreviewRows(ctx context.Context, workspaceID pgtype.UUID) ([]ListSquadMemberPreviewRowsRow, error) {
-	rows, err := q.db.Query(ctx, listSquadMemberPreviewRows, workspaceID)
+func (q *Queries) ListSquadMemberPreviewRows(ctx context.Context, arg ListSquadMemberPreviewRowsParams) ([]ListSquadMemberPreviewRowsRow, error) {
+	rows, err := q.db.Query(ctx, listSquadMemberPreviewRows, arg.WorkspaceID, arg.IncludeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +328,7 @@ LEFT JOIN agent_runtime ar
 LEFT JOIN agent_task_queue atq
        ON sm.member_type = 'agent'
       AND atq.agent_id = sm.member_id
-      AND atq.status IN ('dispatched', 'running', 'waiting_local_directory')
+      AND atq.status IN ('dispatched', 'running')
 LEFT JOIN issue i
        ON i.id = atq.issue_id
 WHERE sm.squad_id = $1
@@ -502,11 +422,19 @@ func (q *Queries) ListSquadMembers(ctx context.Context, squadID pgtype.UUID) ([]
 }
 
 const listSquads = `-- name: ListSquads :many
-SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions, sop_profile, scope FROM squad WHERE workspace_id = $1 AND archived_at IS NULL ORDER BY created_at ASC
+SELECT id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions, sop_profile, scope FROM squad
+WHERE workspace_id = $1
+  AND ($2::boolean OR archived_at IS NULL)
+ORDER BY created_at ASC
 `
 
-func (q *Queries) ListSquads(ctx context.Context, workspaceID pgtype.UUID) ([]Squad, error) {
-	rows, err := q.db.Query(ctx, listSquads, workspaceID)
+type ListSquadsParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	IncludeArchived bool        `json:"include_archived"`
+}
+
+func (q *Queries) ListSquads(ctx context.Context, arg ListSquadsParams) ([]Squad, error) {
+	rows, err := q.db.Query(ctx, listSquads, arg.WorkspaceID, arg.IncludeArchived)
 	if err != nil {
 		return nil, err
 	}

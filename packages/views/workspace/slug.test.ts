@@ -18,9 +18,6 @@ describe("nameToWorkspaceSlug", () => {
     expect(nameToWorkspaceSlug("a.b.c")).toBe("a-b-c");
   });
 
-  // Regression: previously fell back to literal "workspace" — caused two
-  // separate non-ASCII-named workspaces on the same instance to 409 (slug
-  // taken) and silently surfaced a confusing "/workspace/issues" URL.
   it("returns empty string for non-ASCII-only names", () => {
     expect(nameToWorkspaceSlug("测试")).toBe("");
     expect(nameToWorkspaceSlug("こんにちは")).toBe("");

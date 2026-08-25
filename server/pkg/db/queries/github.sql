@@ -42,8 +42,7 @@ INSERT INTO github_pending_installation (
 ON CONFLICT (installation_id) DO UPDATE SET
     account_login = EXCLUDED.account_login,
     account_type = EXCLUDED.account_type,
-    account_avatar_url = EXCLUDED.account_avatar_url,
-    updated_at = now()
+    account_avatar_url = EXCLUDED.account_avatar_url
 RETURNING *;
 
 -- name: DeletePendingGitHubInstallation :exec
@@ -99,8 +98,7 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     END,
     additions     = EXCLUDED.additions,
     deletions     = EXCLUDED.deletions,
-    changed_files = EXCLUDED.changed_files,
-    updated_at = now()
+    changed_files = EXCLUDED.changed_files
 RETURNING *;
 
 -- name: GetGitHubPullRequest :one
@@ -147,12 +145,7 @@ checks AS (
     GROUP BY pr_id
 )
 SELECT
-    pr.id, pr.workspace_id, pr.installation_id, pr.repo_owner, pr.repo_name,
-    pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.author_login,
-    pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at,
-    pr.pr_updated_at, pr.head_sha, pr.mergeable_state,
-    pr.additions, pr.deletions, pr.changed_files,
-    pr.created_at, pr.updated_at,
+    sqlc.embed(pr),
     COALESCE(c.total, 0)::bigint   AS checks_total,
     COALESCE(c.passed, 0)::bigint  AS checks_passed,
     COALESCE(c.failed, 0)::bigint  AS checks_failed,
@@ -166,10 +159,6 @@ ORDER BY pr.pr_created_at DESC;
 -- name: ListIssueIDsForPullRequest :many
 SELECT issue_id FROM issue_pull_request
 WHERE pull_request_id = $1;
-
--- =====================
--- GitHub PR check suite
--- =====================
 
 -- name: UpsertPullRequestCheckSuite :exec
 -- Upserts a single check_suite row keyed by (pr_id, suite_id). The WHERE

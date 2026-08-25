@@ -2,18 +2,17 @@
 
 import { useCallback, memo } from "react";
 import { AppLink } from "../../navigation";
-import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
-import { formatDateOnly, isPastDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly, isPastDateOnly } from "@multica/core/issues/date";
 import { CalendarClock, CalendarDays } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useTimeAgo } from "../../i18n";
 import { projectListOptions } from "@multica/core/projects/queries";
@@ -23,15 +22,12 @@ import { PriorityPicker, AssigneePicker, StartDatePicker, DueDatePicker } from "
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { ProgressRing } from "./progress-ring";
 import type { ChildProgress } from "./list-row";
-import { IssueActionsContextMenu } from "../actions";
+import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";
 import { TAPDSourceBadge } from "./tapd-source-badge";
-
-function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
-}
+import { issueAnimateLayoutChanges } from "../utils/drag-utils";
 
 function descriptionPreview(markdown: string): string {
   return markdown
@@ -257,7 +253,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                       trigger={
                         <span className="flex items-center gap-1 text-xs text-muted-foreground">
                           <CalendarClock className="size-3" />
-                          {formatDate(issue.start_date!)}
+                          {formatShortDateOnly(issue.start_date, "zh-CN")}
                         </span>
                       }
                     />
@@ -265,7 +261,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                 ) : (
                   <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                     <CalendarClock className="size-3" />
-                    {formatDate(issue.start_date!)}
+                    {formatShortDateOnly(issue.start_date, "zh-CN")}
                   </span>
                 )
               )}
@@ -284,7 +280,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                           }`}
                         >
                           <CalendarDays className="size-3" />
-                          {formatDate(issue.due_date!)}
+                          {formatShortDateOnly(issue.due_date, "zh-CN")}
                         </span>
                       }
                     />
@@ -298,7 +294,7 @@ export const BoardCardContent = memo(function BoardCardContent({
                     }`}
                   >
                     <CalendarDays className="size-3" />
-                    {formatDate(issue.due_date!)}
+                    {formatShortDateOnly(issue.due_date, "zh-CN")}
                   </span>
                 )
               )}
@@ -323,12 +319,6 @@ export const BoardCardContent = memo(function BoardCardContent({
   );
 });
 
-const animateLayoutChanges: AnimateLayoutChanges = (args) => {
-  const { isSorting, wasDragging } = args;
-  if (isSorting || wasDragging) return false;
-  return defaultAnimateLayoutChanges(args);
-};
-
 export const DraggableBoardCard = memo(function DraggableBoardCard({ issue, childProgress, disableSorting }: { issue: Issue; childProgress?: ChildProgress; disableSorting?: boolean }) {
   const p = useWorkspacePaths();
   const {
@@ -341,7 +331,7 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({ issue, chil
   } = useSortable({
     id: issue.id,
     data: { status: issue.status },
-    animateLayoutChanges,
+    animateLayoutChanges: issueAnimateLayoutChanges,
     disabled: disableSorting ? { droppable: true } : undefined,
   });
 

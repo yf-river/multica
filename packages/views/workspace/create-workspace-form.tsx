@@ -11,7 +11,7 @@ import { useConfigStore } from "@multica/core/config";
 import { workspaceUrlHost } from "@multica/core/workspace/workspace-url";
 import { useWorkspaceCreateController } from "./use-workspace-create-controller";
 
-export interface CreateWorkspaceFormProps {
+interface CreateWorkspaceFormProps {
   onSuccess: (workspace: Workspace) => void | Promise<void>;
 }
 

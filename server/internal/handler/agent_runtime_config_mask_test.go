@@ -3,7 +3,64 @@ package handler
 import (
 	"encoding/json"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestAgentToResponseRejectsNonObjectRuntimeConfig(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := agentToResponse(db.Agent{RuntimeConfig: raw, CustomEnv: []byte(`{}`), CustomArgs: []byte(`[]`)}); err == nil {
+			t.Fatalf("agentToResponse runtime_config=%s expected an error", raw)
+		}
+	}
+}
+
+func TestAgentToResponseAcceptsObjectRuntimeConfig(t *testing.T) {
+	response, err := agentToResponse(db.Agent{RuntimeConfig: []byte(`{"provider":"codex"}`), CustomEnv: []byte(`{}`), CustomArgs: []byte(`[]`)})
+	if err != nil {
+		t.Fatalf("agentToResponse: %v", err)
+	}
+	if response.RuntimeConfig["provider"] != "codex" {
+		t.Fatalf("runtime_config = %#v", response.RuntimeConfig)
+	}
+}
+
+func TestAgentToResponseRejectsNonObjectMCPConfig(t *testing.T) {
+	if _, err := agentToResponse(db.Agent{
+		RuntimeConfig: []byte(`{}`),
+		CustomEnv:     []byte(`{}`),
+		CustomArgs:    []byte(`[]`),
+		McpConfig:     []byte(`[]`),
+	}); err == nil {
+		t.Fatal("agentToResponse expected non-object mcp_config error")
+	}
+}
+
+func TestAgentToResponseRejectsInvalidCustomState(t *testing.T) {
+	for _, agent := range []db.Agent{
+		{RuntimeConfig: []byte(`{}`), CustomEnv: []byte(`[]`), CustomArgs: []byte(`[]`)},
+		{RuntimeConfig: []byte(`{}`), CustomEnv: []byte(`{}`), CustomArgs: []byte(`{}`)},
+	} {
+		if _, err := agentToResponse(agent); err == nil {
+			t.Fatalf("agentToResponse custom_env=%s custom_args=%s expected an error", agent.CustomEnv, agent.CustomArgs)
+		}
+	}
+}
+
+func TestUnmarshalCustomEnvRejectsInvalidPersistence(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`{"KEY":1}`)} {
+		if _, err := unmarshalCustomEnv(db.Agent{CustomEnv: raw}); err == nil {
+			t.Fatalf("unmarshalCustomEnv(%s) expected an error", raw)
+		}
+	}
+	env, err := unmarshalCustomEnv(db.Agent{CustomEnv: []byte(`{"KEY":"value"}`)})
+	if err != nil {
+		t.Fatalf("unmarshalCustomEnv valid object: %v", err)
+	}
+	if env["KEY"] != "value" {
+		t.Fatalf("custom env = %#v", env)
+	}
+}
 
 func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 	t.Parallel()
@@ -12,7 +69,7 @@ func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 		"mode": "gateway",
 		"gateway": map[string]any{
 			"host":  "gw.internal",
-			"port":  float64(18789), // json.Unmarshal yields float64 for numbers
+			"port":  float64(18789),
 			"token": "real-secret",
 			"tls":   true,
 		},
@@ -30,8 +87,6 @@ func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 func TestMaskGatewayTokenSkipsEmptyToken(t *testing.T) {
 	t.Parallel()
 
-	// host+port-only configs (token still inherited from the user's local
-	// legacy runtime config) must not surface a misleading "***" placeholder.
 	rc := map[string]any{
 		"gateway": map[string]any{
 			"host": "gw.internal",
@@ -48,8 +103,6 @@ func TestMaskGatewayTokenSkipsEmptyToken(t *testing.T) {
 func TestMaskGatewayTokenNoOpOnNonGatewayShape(t *testing.T) {
 	t.Parallel()
 
-	// rc with no `gateway` key (e.g. other providers' runtime_config) must
-	// pass through untouched.
 	rc := map[string]any{"some_other_key": "value"}
 	maskGatewayToken(rc)
 	if _, present := rc["gateway"]; present {
@@ -79,7 +132,6 @@ func TestPreserveMaskedGatewayTokenRestoresFromPersisted(t *testing.T) {
 func TestPreserveMaskedGatewayTokenPassesThroughRealValue(t *testing.T) {
 	t.Parallel()
 
-	// A genuine new token in the PATCH body must overwrite the persisted one.
 	persisted := []byte(`{"gateway":{"token":"old-secret"}}`)
 	incoming := map[string]any{
 		"gateway": map[string]any{"token": "rotated-secret"},
@@ -94,10 +146,6 @@ func TestPreserveMaskedGatewayTokenPassesThroughRealValue(t *testing.T) {
 func TestPreserveMaskedGatewayTokenDropsMaskWhenNoPersistedToken(t *testing.T) {
 	t.Parallel()
 
-	// A first-time gateway config that only contained host/port has no
-	// stored token. If a later PATCH sends the mask back (e.g. a UI that
-	// always includes the field), we must drop the placeholder rather than
-	// landing the literal "***" string in the database as a fake bearer.
 	persisted := []byte(`{"gateway":{"host":"gw.internal"}}`)
 	incoming := map[string]any{
 		"gateway": map[string]any{"token": runtimeConfigGatewayTokenMask},
@@ -109,13 +157,11 @@ func TestPreserveMaskedGatewayTokenDropsMaskWhenNoPersistedToken(t *testing.T) {
 	}
 }
 
-// Round-trip: marshal a runtime_config, mask it, ensure it stays a valid
-// shape that can survive json.Marshal again (no NaNs, no funny types).
 func TestMaskGatewayTokenRoundTripsAsJSON(t *testing.T) {
 	t.Parallel()
 
 	raw := []byte(`{"gateway":{"token":"plaintext","host":"gw"}}`)
-	var rc any
+	var rc map[string]any
 	if err := json.Unmarshal(raw, &rc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

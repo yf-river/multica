@@ -11,6 +11,32 @@ import (
 	"time"
 )
 
+type invalidOpenCodeMCPConfig struct {
+	name string
+	raw  string
+	want string
+}
+
+func assertOpenCodeMCPConfigRejected(t *testing.T, cases []invalidOpenCodeMCPConfig) {
+	t.Helper()
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			content, err := buildOpenCodeMCPConfigContent(json.RawMessage(tc.raw))
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil (content=%q)", tc.want, content)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %q", tc.want, err.Error())
+			}
+			if content != "" {
+				t.Fatalf("content should be empty on validation failure, got %q", content)
+			}
+		})
+	}
+}
+
 // TestBuildOpenCodeMCPConfigContent_Empty pins the early-return contract: an
 // empty/nil mcp_config returns ("", nil) so the caller can skip the env
 // entry entirely. Without this, an empty entry would unset whatever value
@@ -88,7 +114,7 @@ func TestBuildOpenCodeMCPConfigContent_Local(t *testing.T) {
 		t.Fatalf("environment = %#v, want {TOKEN:x}", local["environment"])
 	}
 	if _, present := local["env"]; present {
-		t.Fatal("legacy `env` key should have been renamed to `environment`")
+		t.Fatal("source `env` key should have been projected to `environment`")
 	}
 }
 
@@ -234,11 +260,7 @@ func TestBuildOpenCodeMCPConfigContent_NativeAcceptsAllSchemaFields(t *testing.T
 // crash at startup.
 func TestBuildOpenCodeMCPConfigContent_RejectsMalformedNative(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name string
-		raw  string
-		want string
-	}{
+	cases := []invalidOpenCodeMCPConfig{
 		// Discriminator + required fields
 		{"missing type", `{"mcp":{"x":{"url":"https://e.example/mcp"}}}`, "missing required field `type`"},
 		{"invalid type", `{"mcp":{"x":{"type":"bogus","url":"https://e.example/mcp"}}}`, "invalid type"},
@@ -286,21 +308,7 @@ func TestBuildOpenCodeMCPConfigContent_RejectsMalformedNative(t *testing.T) {
 		{"remote has local-only field", `{"mcp":{"x":{"type":"remote","url":"https://e/","command":["node"]}}}`, `json: unknown field "command"`},
 		{"remote has unknown field", `{"mcp":{"x":{"type":"remote","url":"https://e/","extra":1}}}`, `json: unknown field "extra"`},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			content, err := buildOpenCodeMCPConfigContent(json.RawMessage(tc.raw))
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil (content=%q)", tc.want, content)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("expected error containing %q, got %q", tc.want, err.Error())
-			}
-			if content != "" {
-				t.Fatalf("content should be empty on validation failure, got %q", content)
-			}
-		})
-	}
+	assertOpenCodeMCPConfigRejected(t, cases)
 }
 
 // TestBuildOpenCodeMCPConfigContent_ClaudeStyleOAuthRoundTrip is a
@@ -356,11 +364,7 @@ func TestBuildOpenCodeMCPConfigContent_ClaudeStyleOAuthRoundTrip(t *testing.T) {
 // bypass cases the reviewer flagged.
 func TestBuildOpenCodeMCPConfigContent_RejectsMalformedClaudeStyle(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name string
-		raw  string
-		want string
-	}{
+	cases := []invalidOpenCodeMCPConfig{
 		// headers: values must be strings (translation kept the bad
 		// value as-is; the unified validator catches it on the way out).
 		{"remote header value is number", `{"mcpServers":{"x":{"url":"https://e/","headers":{"Authorization":123}}}}`, "json: cannot unmarshal number"},
@@ -377,21 +381,7 @@ func TestBuildOpenCodeMCPConfigContent_RejectsMalformedClaudeStyle(t *testing.T)
 		// pointer-typed CallbackPort flows through translation too).
 		{"oauth callbackPort explicit zero (claude-style)", `{"mcpServers":{"x":{"url":"https://e/","oauth":{"callbackPort":0}}}}`, "`callbackPort` must be in 1..65535"},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			content, err := buildOpenCodeMCPConfigContent(json.RawMessage(tc.raw))
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil (content=%q)", tc.want, content)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("expected error containing %q, got %q", tc.want, err.Error())
-			}
-			if content != "" {
-				t.Fatalf("content should be empty on validation failure, got %q", content)
-			}
-		})
-	}
+	assertOpenCodeMCPConfigRejected(t, cases)
 }
 
 // TestOpencodeBackendInjectsMCPConfigViaEnv is the end-to-end happy path:

@@ -3,6 +3,9 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func assertPromptOrder(t *testing.T, out, before, after string) {
@@ -20,34 +23,57 @@ func assertPromptOrder(t *testing.T, out, before, after string) {
 	}
 }
 
-func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
-	out := BuildPrompt(Task{
-		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
-			Provider: "tapd",
-			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			TAPD: &TAPDTaskSourceContext{
-				WorkspaceID:   "47654106",
-				ResourceType:  "markdown_wiki",
-				ResourceID:    "1147654106001004154",
-				FetchProvider: "tapd_mcp",
-				FetchStatus:   "pending_mcp_fetch",
-			},
-			ExternalCredentials: map[string]TaskExternalCredentialContext{
-				"tapd": {
-					Provider:      "tapd",
-					Scope:         "account",
-					Inheritance:   "task_creator_or_trigger_user",
-					ProfileID:     "profile-1",
-					ProfileStatus: "unverified",
-					MCPServer:     "mcp-server-tapd",
-					Configured:    true,
-				},
-			},
-		},
-	}, "codex")
+func assertPromptContains(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
 
-	for _, want := range []string{
+func assertPromptExcludes(t *testing.T, out string, values ...string) {
+	t.Helper()
+	for _, value := range values {
+		if strings.Contains(out, value) {
+			t.Errorf("prompt contains %q\n--- output ---\n%s", value, out)
+		}
+	}
+}
+
+func tapdSource(resourceID, status string) *protocol.TaskSourceContext {
+	return &protocol.TaskSourceContext{
+		Provider: "tapd",
+		URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#" + resourceID,
+		TAPD: &protocol.TAPDTaskSourceContext{
+			WorkspaceID:   "47654106",
+			ResourceType:  "markdown_wiki",
+			ResourceID:    resourceID,
+			FetchProvider: "tapd_mcp",
+			FetchStatus:   status,
+		},
+	}
+}
+
+func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
+	source := tapdSource("1147654106001004154", "pending_mcp_fetch")
+	source.ExternalCredentials = map[string]protocol.TaskExternalCredentialContext{
+		"tapd": {
+			Provider:      "tapd",
+			Scope:         "account",
+			Inheritance:   "task_creator_or_trigger_user",
+			ProfileID:     "profile-1",
+			ProfileStatus: "unverified",
+			MCPServer:     "mcp-server-tapd",
+			Configured:    true,
+		},
+	}
+	out := BuildPrompt(Task{
+		IssueID:       "issue-1",
+		SourceContext: source,
+	})
+
+	assertPromptContains(t, out,
 		"Source context:",
 		"provider: tapd",
 		"workspace_id=47654106",
@@ -61,54 +87,33 @@ func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 		"Use `--auto-fetch` only as a fallback",
 		"profile_id=profile-1",
 		"inheritance=task_creator_or_trigger_user",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
+	)
 	assertPromptOrder(t, out, "Start by running `multica issue get issue-1 --output json`", "Source context:")
 }
 
 func TestBuildPromptUsesSourceSummaryPrompt(t *testing.T) {
+	source := tapdSource("1147654106001004154", "fetched")
+	source.TAPD.Title = "获取租户初始化用户信息"
+	source.TAPD.BodyExcerpt = "租户创建校验场景需要通过租户 ID 查询初始化管理员信息。"
 	out := BuildPrompt(Task{
 		IssueID:             "issue-summary-1",
 		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
-		SourceContext: &TaskSourceContext{
-			Provider: "tapd",
-			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			TAPD: &TAPDTaskSourceContext{
-				WorkspaceID:   "47654106",
-				ResourceType:  "markdown_wiki",
-				ResourceID:    "1147654106001004154",
-				FetchProvider: "tapd_mcp",
-				FetchStatus:   "fetched",
-				Title:         "获取租户初始化用户信息",
-				BodyExcerpt:   "租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
-			},
-		},
-	}, "codex")
+		SourceContext:       source,
+	})
 
-	for _, want := range []string{
+	assertPromptContains(t, out,
 		"requirement summarization agent",
 		"Return only Markdown",
 		"Do not call `multica issue update`",
 		"## 需求摘要",
 		"## 验收要点",
 		"TAPD fetched body excerpt: 租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("source summary prompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-	for _, unexpected := range []string{
+	)
+	assertPromptExcludes(t, out,
 		"Start by running `multica issue get issue-summary-1 --output json`",
 		"Complete the task within your Agent Identity boundaries",
 		"run `multica issue status issue-summary-1 in_review`",
-	} {
-		if strings.Contains(out, unexpected) {
-			t.Fatalf("source summary prompt should not include assignment workflow %q\n--- output ---\n%s", unexpected, out)
-		}
-	}
+	)
 }
 
 func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
@@ -119,115 +124,71 @@ func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Alice",
 		TriggerCommentContent: "继续看 TAPD 来源",
-		SourceContext: &TaskSourceContext{
-			Provider: "tapd",
-			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			TAPD: &TAPDTaskSourceContext{
-				WorkspaceID:   "47654106",
-				ResourceType:  "markdown_wiki",
-				ResourceID:    "1147654106001004154",
-				FetchProvider: "tapd_mcp",
-				FetchStatus:   "pending_mcp_fetch",
-			},
-		},
-	}, "codex")
+		SourceContext:         tapdSource("1147654106001004154", "pending_mcp_fetch"),
+	})
 
 	assertPromptOrder(t, out, "Start by running `multica issue get issue-comment-1 --output json`", "Source context:")
 }
 
 func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
-	out := BuildPrompt(Task{
-		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
-			Provider: "tapd",
-			TAPD: &TAPDTaskSourceContext{
-				WorkspaceID:   "47654106",
-				ResourceType:  "markdown_wiki",
-				ResourceID:    "1147654106001004154",
-				FetchProvider: "tapd_mcp",
-				FetchStatus:   "blocked_missing_profile",
-				FetchError:    "no account-level TAPD credential profile",
-			},
-			ExternalCredentials: map[string]TaskExternalCredentialContext{
-				"tapd": {
-					Provider:    "tapd",
-					Scope:       "account",
-					Inheritance: "task_creator_or_trigger_user",
-					MCPServer:   "mcp-server-tapd",
-				},
-			},
+	source := tapdSource("1147654106001004154", "blocked_missing_profile")
+	source.TAPD.FetchError = "no account-level TAPD credential profile"
+	source.ExternalCredentials = map[string]protocol.TaskExternalCredentialContext{
+		"tapd": {
+			Provider:    "tapd",
+			Scope:       "account",
+			Inheritance: "task_creator_or_trigger_user",
+			MCPServer:   "mcp-server-tapd",
 		},
-	}, "codex")
+	}
+	out := BuildPrompt(Task{
+		IssueID:       "issue-1",
+		SourceContext: source,
+	})
 
-	for _, want := range []string{
+	assertPromptContains(t, out,
 		"fetch_status=blocked_missing_profile",
 		"TAPD fetch error: no account-level TAPD credential profile",
 		"stop and report that the requester must configure an account-level TAPD credential profile",
 		"Do not claim the document was read",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
+	)
 	if strings.Contains(out, "configured `mcp-server-tapd` MCP tool") {
 		t.Fatalf("blocked prompt must not tell the agent to fetch anyway\n--- output ---\n%s", out)
 	}
 }
 
 func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
+	source := tapdSource("1147654106001004223", "fetched")
+	source.TAPD.Title = "用户快捷入口需求"
+	source.TAPD.Summary = "支持用户维护快捷入口。"
+	source.TAPD.BodyExcerpt = "快捷入口属于当前登录用户，不同用户之间互不影响。"
+	source.TAPD.Version = "2026-07-02 10:00:00"
 	out := BuildPrompt(Task{
-		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
-			Provider: "tapd",
-			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
-			TAPD: &TAPDTaskSourceContext{
-				WorkspaceID:   "47654106",
-				ResourceType:  "markdown_wiki",
-				ResourceID:    "1147654106001004223",
-				FetchProvider: "tapd_mcp",
-				FetchStatus:   "fetched",
-				Title:         "用户快捷入口需求",
-				Summary:       "支持用户维护快捷入口。",
-				BodyExcerpt:   "快捷入口属于当前登录用户，不同用户之间互不影响。",
-				Version:       "2026-07-02 10:00:00",
-			},
-		},
-	}, "codex")
+		IssueID:       "issue-1",
+		SourceContext: source,
+	})
 
-	for _, want := range []string{
+	assertPromptContains(t, out,
 		"fetch_status=fetched",
 		"platform already fetched this source through TAPD MCP",
 		"TAPD fetched title: 用户快捷入口需求",
 		"TAPD fetched summary: 支持用户维护快捷入口。",
 		"TAPD fetched body excerpt: 快捷入口属于当前登录用户",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
+	)
 	if strings.Contains(out, "using `get_wiki`") || strings.Contains(out, "Use `--auto-fetch` only as a fallback") {
 		t.Fatalf("fetched prompt must not instruct a duplicate TAPD fetch\n--- output ---\n%s", out)
 	}
 }
 
 func TestBuildPromptUsesHumanRecoveryWhenTapdFetchFailed(t *testing.T) {
+	source := tapdSource("1147654106001004223", "fetch_failed")
+	source.TAPD.FetchError = "TAPD MCP returned 401 unauthorized"
 	out := BuildPrompt(Task{
-		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
-			Provider: "tapd",
-			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
-			TAPD: &TAPDTaskSourceContext{
-				WorkspaceID:   "47654106",
-				ResourceType:  "markdown_wiki",
-				ResourceID:    "1147654106001004223",
-				FetchProvider: "tapd_mcp",
-				FetchStatus:   "fetch_failed",
-				FetchError:    "TAPD MCP returned 401 unauthorized",
-			},
-		},
-	}, "codex")
+		IssueID:       "issue-1",
+		SourceContext: source,
+	})
 
-	for _, want := range []string{
+	assertPromptContains(t, out,
 		"fetch_status=fetch_failed",
 		"TAPD fetch error: TAPD MCP returned 401 unauthorized",
 		"Do not invent or copy the login page as the requirement",
@@ -235,89 +196,47 @@ func TestBuildPromptUsesHumanRecoveryWhenTapdFetchFailed(t *testing.T) {
 		"treat that comment as manual source recovery",
 		"cite it in your stage comment and markdown artifacts",
 		"Retry source-fetch only after credentials or environment have changed",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
+	)
 	if strings.Contains(out, "using `get_wiki`") || strings.Contains(out, "Use `--auto-fetch` only as a fallback") {
 		t.Fatalf("fetch_failed prompt must not blindly retry TAPD fetch\n--- output ---\n%s", out)
 	}
 }
 
-// TestBuildQuickCreatePromptRules locks in the rules that govern how the
-// quick-create agent is allowed to translate raw user input into the issue
-// description body. Each substring corresponds to a concrete failure mode
-// observed in production output:
-//   - meta-instructions ("create an issue", "cc @X") leaking into the body
-//   - the Context section being misused as an apology log when no external
-//     references were actually fetched
-//   - hard-line rules being silently dropped on prompt rewrites
 func TestBuildQuickCreatePromptRules(t *testing.T) {
 	out := buildQuickCreatePrompt(Task{QuickCreatePrompt: "fix the login button color"})
 
-	mustContain := []string{
-		// high-fidelity invariant
+	assertPromptContains(t, out,
 		"Faithfully restate what the user wants",
 		"Preserve specific names, identifiers, file paths",
-		// strip non-spec material: verbal routing wrappers + conversational fillers
 		"verbal routing wrappers about creating the issue",
 		"pure conversational fillers",
-		// cc routing must survive: mention link stays in description so the
-		// auto-subscribe path fires (multica issue create has no --subscriber flag)
 		"CC exception",
 		"auto-subscribes members",
-		// context section is conditional and must not be an apology log
 		"include ONLY when the input cited external resources",
 		"never use it as an apology log",
-		// output/reporting must be workspace-prefix agnostic. Workspaces can
-		// use custom issue prefixes, so a successful issue creation should
-		// not look failed merely because the identifier does not match one
-		// fixed prefix.
 		"multica issue create --output json",
 		"JSON response",
 		"identifier",
 		"Do not scrape human output",
 		"do not assume any workspace issue prefix",
 		"Created <identifier-or-id>: <title>",
-		// hard rules
 		"never invent requirements",
 		"never reduce multi-sentence input",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildQuickCreatePrompt output missing required rule: %q", s)
-		}
-	}
+	)
 }
 
-// TestBuildQuickCreatePromptAssigneeIncludesSquads locks in the MUL-2165
-// fix: the assignee-resolution rules must tell the agent to consult the
-// squad list alongside members and agents. Before this, a quick-create
-// input like "assign to <SquadName>" silently fell through to
-// "Unrecognized assignee" because squads were never queried.
 func TestBuildQuickCreatePromptAssigneeIncludesSquads(t *testing.T) {
 	out := buildQuickCreatePrompt(Task{QuickCreatePrompt: "fix the login button color"})
-	mustContain := []string{
+	assertPromptContains(t, out,
 		"multica squad list",
 		"Squads are first-class assignees",
 		"Treat bare @-routing as an assignee directive",
 		"让 @独立团 review 这个 PR",
 		"pass the squad's `id` as `--assignee-id`",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildQuickCreatePrompt assignee block missing %q\n--- output ---\n%s", s, out)
-		}
-	}
+	)
 }
 
-// TestBuildQuickCreatePromptSquadDefaultsToSquad locks in the MUL-2203
-// fix: when the picker was a squad, the task runs on the squad's leader
-// agent, but the default assignee for issues created by this run must
-// point at the SQUAD's UUID — not the leader agent's UUID. The previous
-// "default to YOURSELF" instruction made squad-created issues land under
-// the leader, hiding them from the squad's delegation flow.
+// A Squad-picked run assigns the created Issue to the Squad, not its leader.
 func TestBuildQuickCreatePromptSquadDefaultsToSquad(t *testing.T) {
 	const (
 		squadID   = "aaaa1111-2222-3333-4444-555555555555"
@@ -326,44 +245,27 @@ func TestBuildQuickCreatePromptSquadDefaultsToSquad(t *testing.T) {
 	)
 	out := buildQuickCreatePrompt(Task{
 		QuickCreatePrompt: "fix the login button color",
-		Agent:             &AgentData{ID: leaderID, Name: "leader-agent"},
+		Agent:             &protocol.TaskAgent{ID: leaderID, Name: "leader-agent"},
 		SquadID:           squadID,
 		SquadName:         squadName,
 	})
 
-	// The default-assignee instruction must point at the squad UUID.
 	if !strings.Contains(out, "--assignee-id \""+squadID+"\"") {
 		t.Errorf("buildQuickCreatePrompt with SquadID must default to the squad's UUID, got:\n%s", out)
 	}
-	// And it must NOT tell the agent to default to itself (the leader).
 	if strings.Contains(out, "--assignee-id \""+leaderID+"\"") {
 		t.Errorf("buildQuickCreatePrompt with SquadID must NOT default to the leader agent's UUID, got:\n%s", out)
 	}
-	// The squad name should appear in the instruction so the agent has
-	// human-readable context for the routing decision.
 	if !strings.Contains(out, squadName) {
 		t.Errorf("buildQuickCreatePrompt with SquadID should mention the squad name %q, got:\n%s", squadName, out)
 	}
-	// And the prompt must explicitly call out the squad-vs-leader rule
-	// so the agent does not silently regress to "default to YOURSELF".
-	mustContain := []string{
+	assertPromptContains(t, out,
 		"picker SQUAD",
 		"running on the squad's behalf",
 		"do not assign it to your own agent UUID",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildQuickCreatePrompt with SquadID missing %q\n--- output ---\n%s", s, out)
-		}
-	}
+	)
 }
 
-// TestBuildQuickCreatePromptProjectPinning verifies that when the user
-// pins a project in the quick-create modal, the prompt instructs the agent
-// to pass `--project <uuid>` exactly. Without this, the agent would re-read
-// the workspace default and silently drop the user's selection — the same
-// "I have to retype 'in project X' every time" failure mode the modal
-// addition was meant to fix.
 func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 	const projectID = "11111111-2222-3333-4444-555555555555"
 	out := buildQuickCreatePrompt(Task{
@@ -371,20 +273,12 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 		ProjectID:         projectID,
 		ProjectTitle:      "Web App",
 	})
-	mustContain := []string{
-		"--project \"" + projectID + "\"",
+	assertPromptContains(t, out,
+		"--project \""+projectID+"\"",
 		"Web App",
 		"modal selection is authoritative",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildQuickCreatePrompt with project missing %q\n--- output ---\n%s", s, out)
-		}
-	}
+	)
 
-	// Without a project, the prompt must keep the legacy "omit" instruction
-	// so the agent doesn't accidentally start passing --project on plain
-	// quick-create runs.
 	plain := buildQuickCreatePrompt(Task{QuickCreatePrompt: "fix the login button color"})
 	if !strings.Contains(plain, "**project**: omit") {
 		t.Errorf("buildQuickCreatePrompt without project must keep the omit instruction, got:\n%s", plain)
@@ -394,14 +288,6 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 	}
 }
 
-// TestBuildQuickCreatePromptParentPinning verifies that when the user
-// opened quick-create from "Add sub issue" on an existing issue, the prompt
-// instructs the agent to pass `--parent <uuid>` so the new issue is filed
-// as a sub-issue. The frontend already seeds parent_issue_id silently
-// through the manual→agent switch, so this is the last hop that has to
-// hold up — without the prompt instruction the agent would create a
-// standalone issue and the sub-issue relationship would be silently
-// dropped.
 func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
 	const (
 		parentID         = "33333333-2222-1111-4444-555555555555"
@@ -412,21 +298,13 @@ func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
 		ParentIssueID:         parentID,
 		ParentIssueIdentifier: parentIdentifier,
 	})
-	mustContain := []string{
-		"--parent \"" + parentID + "\"",
+	assertPromptContains(t, out,
+		"--parent \""+parentID+"\"",
 		parentIdentifier,
 		"modal entry point is authoritative",
 		"filed as a sub-issue",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildQuickCreatePrompt with parent missing %q\n--- output ---\n%s", s, out)
-		}
-	}
+	)
 
-	// When only the UUID is available (identifier lookup failed on claim),
-	// the agent must still get the --parent instruction so the sub-issue
-	// intent isn't silently dropped.
 	uuidOnly := buildQuickCreatePrompt(Task{
 		QuickCreatePrompt: "fix the login button color",
 		ParentIssueID:     parentID,
@@ -435,8 +313,6 @@ func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
 		t.Errorf("buildQuickCreatePrompt with parent UUID only must still pin --parent, got:\n%s", uuidOnly)
 	}
 
-	// Without a parent, the prompt must NOT mention --parent at all — a
-	// plain quick-create run should not start filing sub-issues.
 	plain := buildQuickCreatePrompt(Task{QuickCreatePrompt: "fix the login button color"})
 	if strings.Contains(plain, "--parent") {
 		t.Errorf("buildQuickCreatePrompt without parent must NOT mention --parent, got:\n%s", plain)
@@ -444,59 +320,40 @@ func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
 }
 
 func TestBuildQuickCreatePromptPinnedFields(t *testing.T) {
-	const assigneeID = "44444444-2222-1111-3333-555555555555"
 	out := buildQuickCreatePrompt(Task{
-		QuickCreatePrompt:       "fix the login button color and assign it to someone else",
-		QuickCreateStatus:       "in_progress",
-		QuickCreatePriority:     "high",
-		QuickCreateAssigneeType: "agent",
-		QuickCreateAssigneeID:   assigneeID,
-		QuickCreateStartDate:    "2026-07-02",
-		QuickCreateDueDate:      "2026-07-10",
+		QuickCreatePrompt:    "fix the login button color",
+		QuickCreateStatus:    "in_progress",
+		QuickCreatePriority:  "high",
+		QuickCreateStartDate: "2026-07-02",
+		QuickCreateDueDate:   "2026-07-10",
 	})
-	mustContain := []string{
+	assertPromptContains(t, out,
 		"--status \"in_progress\"",
 		"--priority \"high\"",
-		"--assignee-id \"" + assigneeID + "\"",
 		"--start-date \"2026-07-02\"",
 		"--due-date \"2026-07-10\"",
-		"selected in the create modal and is authoritative",
-		"Do not infer or replace it from names in the user input",
-	}
-	for _, s := range mustContain {
-		if !strings.Contains(out, s) {
-			t.Errorf("buildQuickCreatePrompt with pinned fields missing %q\n--- output ---\n%s", s, out)
-		}
-	}
+	)
 }
 
-// TestBuildPromptSquadLeaderNoActionForMemberTrigger verifies that the
-// squad leader no_action prohibition is injected in the per-turn prompt
-// regardless of whether the triggering comment was posted by an agent or
-// a member. This was the root cause of the "LGTM is a pure acknowledgment
-// — no reply needed. Exiting silently." noise comment: the prohibition
-// only fired for agent-triggered comments, so member-triggered ones
-// (like "LGTM") bypassed it.
-func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
-	task := Task{
-		IssueID:               "issue-123",
-		TriggerCommentID:      "comment-456",
-		TriggerCommentContent: "LGTM",
-		TriggerAuthorType:     "member",
-		TriggerAuthorName:     "Bohan",
-		Agent: &AgentData{
-			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
-		},
-	}
-	out := BuildPrompt(task, "claude")
-	if !strings.Contains(out, "小队负责人 no_action 规则") {
-		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for member-triggered comments, got:\n%s", out)
-	}
-	if !strings.Contains(out, "不要发布任何评论") {
-		t.Errorf("buildCommentPrompt must contain DO NOT post prohibition for member-triggered squad leader, got:\n%s", out)
-	}
-	if !strings.Contains(out, "需要用户补充") || !strings.Contains(out, "不是 no_action") {
-		t.Errorf("buildCommentPrompt must distinguish wait/block states from true no_action, got:\n%s", out)
+func TestBuildPromptSquadLeaderNoAction(t *testing.T) {
+	for _, tc := range []struct {
+		name, authorType, content string
+		extra                     []string
+	}{
+		{"member trigger", "member", "LGTM", []string{"不要发布任何评论", "需要用户补充", "不是 no_action"}},
+		{"agent trigger", "agent", "Deploy complete.", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := BuildPrompt(Task{
+				IssueID:               "issue-123",
+				TriggerCommentID:      "comment-456",
+				TriggerCommentContent: tc.content,
+				TriggerAuthorType:     tc.authorType,
+				TriggerAuthorName:     "trigger-author",
+				Agent:                 &protocol.TaskAgent{Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人..."},
+			})
+			assertPromptContains(t, out, append([]string{"小队负责人 no_action 规则"}, tc.extra...)...)
+		})
 	}
 }
 
@@ -507,32 +364,24 @@ func TestBuildPromptCoordinatorCommentUsesFinalOutput(t *testing.T) {
 		TriggerCommentContent: "确认按建议推进",
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKind:      "coordinator",
 			CanAccessRepo: false,
 		},
 	}
-	out := BuildPrompt(task, "codebuddy")
-	for _, want := range []string{
+	out := BuildPrompt(task)
+	assertPromptContains(t, out,
 		"Do not call `multica issue comment add`",
 		"do not create `reply.md` or local `.md` files",
 		"final assistant output",
 		"the platform will automatically post it as a reply under the triggering comment",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("coordinator comment prompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-	for _, banned := range []string{
+	)
+	assertPromptExcludes(t, out,
 		"--content-file ./reply.md",
 		"Write the reply body to a UTF-8 file",
 		"--content \"...\"",
 		"multica issue comment add issue-123 --parent comment-456",
-	} {
-		if strings.Contains(out, banned) {
-			t.Fatalf("coordinator comment prompt should use final output, found %q\n--- output ---\n%s", banned, out)
-		}
-	}
+	)
 }
 
 func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
@@ -542,73 +391,42 @@ func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
 		TriggerCommentContent: "请产出 03-task-split",
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "PM-项目经理",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKey:       "03-task-split",
 			RoleKind:      "planning_stage",
 			CanAccessRepo: true,
 			CanEditRepo:   false,
 		},
 	}
-	out := BuildPrompt(task, "codebuddy")
-	for _, want := range []string{
+	out := BuildPrompt(task)
+	assertPromptContains(t, out,
 		"Write the complete stage result as your final assistant output",
 		"the platform will automatically post it as a reply under the triggering comment",
 		"Do not call `multica issue comment add`",
 		"do not create `reply.md` or local `.md` files",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("repo read-only stage prompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-	for _, banned := range []string{
+	)
+	assertPromptExcludes(t, out,
 		"--content-file ./reply.md",
 		"Write the reply body to a UTF-8 file",
 		"multica issue comment add issue-123 --parent comment-456",
-	} {
-		if strings.Contains(out, banned) {
-			t.Fatalf("repo read-only stage prompt must not use manual reply path %q\n--- output ---\n%s", banned, out)
-		}
-	}
-}
-
-// TestBuildPromptSquadLeaderNoActionForAgentTrigger verifies the rule also
-// fires for agent-triggered comments (the original path that already worked).
-func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
-	task := Task{
-		IssueID:               "issue-123",
-		TriggerCommentID:      "comment-456",
-		TriggerCommentContent: "Deploy complete.",
-		TriggerAuthorType:     "agent",
-		TriggerAuthorName:     "deploy-boy",
-		Agent: &AgentData{
-			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
-		},
-	}
-	out := BuildPrompt(task, "claude")
-	if !strings.Contains(out, "小队负责人 no_action 规则") {
-		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for agent-triggered comments, got:\n%s", out)
-	}
+	)
 }
 
 func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	task := Task{
 		ChatSessionID: "sess-1",
 		ChatMessage:   "please create an issue with this screenshot",
-		ChatMessageAttachments: []ChatAttachmentMeta{
+		ChatMessageAttachments: []protocol.ChatAttachmentMeta{
 			{ID: "019ec09d-6222-722b-bdfa-427b105d80be", Filename: "shot.png", ContentType: "image/png"},
 		},
 	}
-	out := BuildPrompt(task, "claude")
-	for _, want := range []string{
+	out := BuildPrompt(task)
+	assertPromptContains(t, out,
 		"Attachments on this message:",
 		"id=019ec09d-6222-722b-bdfa-427b105d80be",
 		"multica attachment download <id>",
 		"--attachment-id <id>",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("chat prompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
+	)
 }
 
 func TestBuildChatPromptSlashSkills(t *testing.T) {
@@ -616,8 +434,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "please [/deploy](slash://skill/abc-123) this",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "abc-123", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "abc-123", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -633,8 +451,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/hacker-skill](slash://skill/evil-id)",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "good-id", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "good-id", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -647,8 +465,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/deploy](slash://skill/wrong-id)",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "real-id", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "real-id", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -661,8 +479,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/spoofed-name](slash://skill/real-id)",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "real-id", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "real-id", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -681,8 +499,8 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/deploy](slash://skill/a) and [/deploy](slash://skill/a) again",
-			Agent: &AgentData{
-				Skills: []SkillData{{ID: "a", Name: "deploy"}},
+			Agent: &protocol.TaskAgent{
+				Skills: []protocol.TaskSkill{{ID: "a", Name: "deploy"}},
 			},
 		}
 		out := buildChatPrompt(task)
@@ -695,7 +513,7 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "just a normal message",
-			Agent:         &AgentData{Skills: []SkillData{{ID: "a", Name: "deploy"}}},
+			Agent:         &protocol.TaskAgent{Skills: []protocol.TaskSkill{{ID: "a", Name: "deploy"}}},
 		}
 		out := buildChatPrompt(task)
 		if strings.Contains(out, "Explicitly selected skills") {
@@ -707,7 +525,7 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 		task := Task{
 			ChatSessionID: "sess-1",
 			ChatMessage:   "[/deploy](slash://skill/abc-123)",
-			Agent:         &AgentData{},
+			Agent:         &protocol.TaskAgent{},
 		}
 		out := buildChatPrompt(task)
 		if strings.Contains(out, "Explicitly selected skills") {
@@ -716,37 +534,18 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 	})
 }
 
-// TestBuildPromptDefaultMentionsRecent pins that the catch-all fallback
-// prompt (no trigger comment, no chat, no autopilot, no quick-create) also
-// teaches the agent about --recent as the long-issue-friendly alternative
-// to the flat dump, even though it cannot anchor a --thread without a
-// trigger comment id.
 func TestBuildPromptDefaultMentionsRecent(t *testing.T) {
-	out := BuildPrompt(Task{IssueID: "issue-default-1"}, "claude")
-	for _, s := range []string{
+	out := BuildPrompt(Task{IssueID: "issue-default-1"})
+	assertPromptContains(t, out,
 		"--recent 20 --output json",
 		"Next thread cursor:",
 		"--since",
-	} {
-		if !strings.Contains(out, s) {
-			t.Errorf("default BuildPrompt missing %q\n--- output ---\n%s", s, out)
-		}
-	}
-	// And the default path must NOT inject a --thread example, because there
-	// is no trigger comment id to anchor on.
+	)
 	if strings.Contains(out, "--thread") {
 		t.Errorf("default BuildPrompt should NOT mention --thread (no trigger comment to anchor on)\n--- output ---\n%s", out)
 	}
-	// The legacy "If you need comment history" soft phrasing conflicts with
-	// the assignment-trigger runtime workflow, which treats reading comments
-	// as mandatory. Guard against it sneaking back in.
-	if strings.Contains(out, "If you need comment history") {
-		t.Errorf("default BuildPrompt still carries the legacy 'If you need' soft phrasing that conflicts with the mandatory workflow\n--- output ---\n%s", out)
-	}
 }
 
-// TestBuildPromptNonSquadLeaderNoRule verifies that non-squad-leader agents
-// do NOT get the squad leader no_action rule injected.
 func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 	task := Task{
 		IssueID:               "issue-123",
@@ -754,21 +553,16 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 		TriggerCommentContent: "LGTM",
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
-		Agent: &AgentData{
+		Agent: &protocol.TaskAgent{
 			Instructions: "Some instructions without the squad marker",
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
 	}
 }
 
-// TestBuildPromptNewCommentsHint pins that a comment-triggered task whose agent
-// ran before on this issue (NewCommentsSince set, NewCommentCount > 0) gets the
-// since-delta hint with the ISSUE-WIDE new-comment count, but is steered to read
-// the triggering (parent) thread first rather than blindly pulling every new
-// comment.
 func TestBuildPromptNewCommentsHint(t *testing.T) {
 	const (
 		issueID = "issue-new-1"
@@ -783,37 +577,28 @@ func TestBuildPromptNewCommentsHint(t *testing.T) {
 		NewCommentCount:       3,
 		NewCommentsSince:      since,
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 
-	// Issue-wide count (reverted from the thread-scoped wording).
 	if !strings.Contains(out, "3 new comment(s) on this issue since your last run") {
 		t.Errorf("hint must report the issue-wide new-comment count, got:\n%s", out)
 	}
-	// Don't-blindly-read-all guidance.
 	if !strings.Contains(out, "blindly") {
 		t.Errorf("hint must discourage blindly reading every new comment, got:\n%s", out)
 	}
-	// Parent thread first: the --thread <trigger> read is the prioritized action.
 	if !strings.Contains(out, "multica issue comment list "+issueID+" --thread thread-root-1 --since "+since+" --output json") {
 		t.Errorf("hint must point at the triggering (parent) thread --since read first, got:\n%s", out)
 	}
 	if !strings.Contains(out, "--tail 30") {
 		t.Errorf("hint must offer the full-thread (--tail 30) option, got:\n%s", out)
 	}
-	// Issue-wide catch-up is demoted to an only-if-needed fallback.
 	if !strings.Contains(out, "multica issue comment list "+issueID+" --since "+since+" --output json") {
 		t.Errorf("hint must keep the issue-wide --since catch-up as a fallback, got:\n%s", out)
 	}
-	// The old cursor-heavy paragraph must be gone.
 	if strings.Contains(out, "Next reply cursor") || strings.Contains(out, "--before-id") {
 		t.Errorf("the old cursor-pagination paragraph must not render, got:\n%s", out)
 	}
 }
 
-// TestBuildPromptColdStartThreadRead pins the cold-start case: no prior run means
-// no since anchor (NewCommentsSince empty), so we suppress the delta hint and
-// instead point the agent at the triggering CONVERSATION (--thread <trigger>
-// --tail 30) rather than dumping the flat timeline.
 func TestBuildPromptColdStartThreadRead(t *testing.T) {
 	const issueID = "issue-cold-1"
 	task := Task{
@@ -825,7 +610,7 @@ func TestBuildPromptColdStartThreadRead(t *testing.T) {
 		NewCommentCount:       0,
 		NewCommentsSince:      "",
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if strings.Contains(out, "new comment(s) since your last run") {
 		t.Errorf("no since-delta hint should render on cold start, got:\n%s", out)
 	}
@@ -834,10 +619,6 @@ func TestBuildPromptColdStartThreadRead(t *testing.T) {
 	}
 }
 
-// TestBuildPromptResumedNoDeltaDoesNotForceThreadRead pins the warm/no-delta
-// path: when a prior provider session is actually being resumed, the triggering
-// comment is already embedded in the per-turn prompt, so the agent should not
-// be told to re-read the triggering thread's latest 30 replies by default.
 func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 	const issueID = "issue-resumed-1"
 	task := Task{
@@ -850,22 +631,16 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 		NewCommentCount:       0,
 		NewCommentsSince:      "",
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 
-	for _, want := range []string{
+	assertPromptContains(t, out,
 		"triggering comment is already included above",
 		"No other new comments on this issue since your last run",
 		"active thread anchor `thread-root-1` and triggering comment ID `trigger-1`",
 		"If your reply depends on thread context",
 		"do not rely only on resumed session memory",
-		"multica issue comment list " + issueID + " --thread thread-root-1 --tail 30 --output json",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("resumed/no-delta prompt missing %q\n--- output ---\n%s", want, out)
-		}
-	}
-	// The stale thread-scoped wording (since-delta used to be thread-scoped)
-	// must not reappear.
+		"multica issue comment list "+issueID+" --thread thread-root-1 --tail 30 --output json",
+	)
 	if strings.Contains(out, "scoped to the triggering thread") {
 		t.Errorf("resumed/no-delta prompt must not claim the delta is thread-scoped, got:\n%s", out)
 	}

@@ -6,43 +6,20 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
-	sopStatusPending   = "待开始"
-	sopStatusRunning   = "进行中"
-	sopStatusCompleted = "已完成"
-	sopStatusFailed    = "已失败"
-	sopStatusBlocked   = "已阻塞"
+	sopStatusFailed = "已失败"
 
 	observabilitySummaryPageSize = 500
 )
-
-var validSOPStatuses = map[string]bool{
-	sopStatusPending:   true,
-	sopStatusRunning:   true,
-	sopStatusCompleted: true,
-	sopStatusFailed:    true,
-	sopStatusBlocked:   true,
-}
-
-var validSOPEventTypes = map[string]bool{
-	"步骤开始": true,
-	"步骤完成": true,
-	"步骤失败": true,
-	"追加证据": true,
-	"人工确认": true,
-	"测试结果": true,
-	"优化运行": true,
-}
 
 type SquadSOPRunResponse struct {
 	ID              string                  `json:"id"`
@@ -84,7 +61,7 @@ type SquadSOPEventResponse struct {
 	Metrics       map[string]any `json:"metrics"`
 }
 
-type SOPStageMetricResponse struct {
+type sopStageMetricResponse struct {
 	StepKey          string `json:"step_key"`
 	StepName         string `json:"step_name"`
 	RoleKey          string `json:"role_key"`
@@ -99,32 +76,6 @@ type SOPStageMetricResponse struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
-}
-
-type CreateSOPRunRequest struct {
-	Status         string          `json:"status"`
-	CurrentStepKey string          `json:"current_step_key"`
-	Profile        json.RawMessage `json:"profile"`
-}
-
-type CreateSOPStepEventRequest struct {
-	EventType     string          `json:"event_type"`
-	Status        string          `json:"status"`
-	StepName      string          `json:"step_name"`
-	RoleKey       string          `json:"role_key"`
-	Evidence      json.RawMessage `json:"evidence"`
-	Reason        string          `json:"reason"`
-	DurationMs    *int64          `json:"duration_ms"`
-	CreatedByType string          `json:"created_by_type"`
-	CreatedByID   string          `json:"created_by_id"`
-	TaskID        string          `json:"task_id"`
-	UpdateRun     *bool           `json:"update_run"`
-}
-
-type sopProfileStep struct {
-	Key     string
-	Name    string
-	RoleKey string
 }
 
 func squadSOPRunToResponse(run db.SquadSopRun, events []SquadSOPEventResponse) SquadSOPRunResponse {
@@ -143,7 +94,7 @@ func squadSOPRunToResponse(run db.SquadSopRun, events []SquadSOPEventResponse) S
 		SquadID:         uuidToString(run.SquadID),
 		LeaderTaskID:    uuidToPtr(run.LeaderTaskID),
 		ProfileKey:      run.ProfileKey,
-		Profile:         decodeJSONDefault(run.Profile, map[string]any{}),
+		Profile:         mustDecodePersistedJSONObject(run.Profile, "squad SOP run profile"),
 		Status:          run.Status,
 		CurrentStepKey:  run.CurrentStepKey,
 		StartedAt:       timestampToString(run.StartedAt),
@@ -169,7 +120,7 @@ func squadSOPEventToResponse(event db.SquadSopStepEvent) SquadSOPEventResponse {
 		RoleKey:       event.RoleKey,
 		EventType:     event.EventType,
 		Status:        event.Status,
-		Evidence:      decodeJSONDefault(event.Evidence, map[string]any{}),
+		Evidence:      mustDecodePersistedJSONObject(event.Evidence, "squad SOP step event evidence"),
 		Reason:        event.Reason,
 		DurationMs:    duration,
 		CreatedByType: event.CreatedByType,
@@ -184,6 +135,14 @@ func squadSOPEventToResponse(event db.SquadSopStepEvent) SquadSOPEventResponse {
 	}
 }
 
+func squadSOPEventsToResponses(events []db.SquadSopStepEvent) []SquadSOPEventResponse {
+	responses := make([]SquadSOPEventResponse, len(events))
+	for i, event := range events {
+		responses[i] = squadSOPEventToResponse(event)
+	}
+	return responses
+}
+
 func (h *Handler) squadSOPRunToResponseWithStageMetrics(ctx context.Context, run db.SquadSopRun, events []SquadSOPEventResponse) (SquadSOPRunResponse, error) {
 	resp := squadSOPRunToResponse(run, events)
 	stageMetrics, err := h.buildSOPStageMetrics(ctx, run.Profile, events)
@@ -194,9 +153,9 @@ func (h *Handler) squadSOPRunToResponseWithStageMetrics(ctx context.Context, run
 	return resp, nil
 }
 
-func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, events []SquadSOPEventResponse) ([]SOPStageMetricResponse, error) {
+func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, events []SquadSOPEventResponse) ([]sopStageMetricResponse, error) {
 	type stageAccumulator struct {
-		metric SOPStageMetricResponse
+		metric sopStageMetricResponse
 		tasks  map[string]struct{}
 	}
 	steps := sopProfileStepsForHandler(profile)
@@ -213,7 +172,7 @@ func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, even
 			return acc
 		}
 		acc := &stageAccumulator{
-			metric: SOPStageMetricResponse{
+			metric: sopStageMetricResponse{
 				StepKey:  stepKey,
 				StepName: stepName,
 				RoleKey:  roleKey,
@@ -273,7 +232,7 @@ func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, even
 			}
 		}
 	}
-	out := make([]SOPStageMetricResponse, 0, len(accs))
+	out := make([]sopStageMetricResponse, 0, len(accs))
 	for _, acc := range accs {
 		out = append(out, acc.metric)
 	}
@@ -318,10 +277,7 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to list SOP events")
 			return
 		}
-		eventResp := make([]SquadSOPEventResponse, 0, len(events))
-		for _, event := range events {
-			eventResp = append(eventResp, squadSOPEventToResponse(event))
-		}
+		eventResp := squadSOPEventsToResponses(events)
 		runResp, err := h.squadSOPRunToResponseWithStageMetrics(r.Context(), run, eventResp)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to build SOP run metrics")
@@ -332,277 +288,24 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
 
-func (h *Handler) CreateIssueSOPRun(w http.ResponseWriter, r *http.Request) {
-	issue, ok := h.loadSOPIssue(w, r)
-	if !ok {
-		return
+func sopProfileStepsForHandler(profile []byte) []protocol.SquadSOPProfileStep {
+	var parsed struct {
+		Steps []protocol.SquadSOPProfileStep `json:"steps"`
 	}
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		writeError(w, http.StatusBadRequest, "issue must be assigned to a squad")
-		return
-	}
-	squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "assignee squad does not belong to this workspace")
-		return
-	}
-	var req CreateSOPRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	status := req.Status
-	if status == "" {
-		status = sopStatusRunning
-	}
-	if !validSOPStatuses[status] {
-		writeError(w, http.StatusBadRequest, "status must be 待开始, 进行中, 已完成, 已失败 or 已阻塞")
-		return
-	}
-	profile := normalizeSOPProfileForHandler(squad.SopProfile, req.Profile)
-	profileKey, currentStepKey, _, _ := sopProfileSummaryForHandler(profile)
-	if req.CurrentStepKey != "" {
-		currentStepKey = strings.TrimSpace(req.CurrentStepKey)
-	}
-	run, err := h.Queries.CreateSquadSOPRun(r.Context(), db.CreateSquadSOPRunParams{
-		WorkspaceID:    issue.WorkspaceID,
-		IssueID:        issue.ID,
-		SquadID:        squad.ID,
-		ProfileKey:     profileKey,
-		Profile:        profile,
-		Status:         status,
-		CurrentStepKey: currentStepKey,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create SOP run")
-		return
-	}
-	writeJSON(w, http.StatusCreated, squadSOPRunToResponse(run, nil))
-}
-
-func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "runId"), "run_id")
-	if !ok {
-		return
-	}
-	stepKey := strings.TrimSpace(chi.URLParam(r, "stepId"))
-	if stepKey == "" {
-		writeError(w, http.StatusBadRequest, "step_id is required")
-		return
-	}
-	workspaceID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
-	if !ok {
-		return
-	}
-	run, err := h.Queries.GetSquadSOPRunInWorkspace(r.Context(), db.GetSquadSOPRunInWorkspaceParams{
-		ID:          runID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "SOP run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load SOP run")
-		return
-	}
-	var req CreateSOPStepEventRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.EventType == "" {
-		req.EventType = "追加证据"
-	}
-	if !validSOPEventTypes[req.EventType] {
-		writeError(w, http.StatusBadRequest, "event_type must be 步骤开始, 步骤完成, 步骤失败, 追加证据, 人工确认, 测试结果 or 优化运行")
-		return
-	}
-	if req.Status != "" && !validSOPStatuses[req.Status] {
-		writeError(w, http.StatusBadRequest, "status must be 待开始, 进行中, 已完成, 已失败 or 已阻塞")
-		return
-	}
-	profileSteps := sopProfileStepsForHandler(run.Profile)
-	step, stepIndex, stepKnown := findSOPProfileStep(profileSteps, stepKey)
-	if len(profileSteps) > 0 && !stepKnown {
-		writeError(w, http.StatusBadRequest, "step_id 必须存在于 SOP profile 的 steps 中")
-		return
-	}
-	if stepKnown {
-		if strings.TrimSpace(req.RoleKey) != "" && step.RoleKey != "" && strings.TrimSpace(req.RoleKey) != step.RoleKey {
-			writeError(w, http.StatusBadRequest, "role_key 必须匹配 SOP profile 中该阶段的角色")
-			return
-		}
-		if strings.TrimSpace(req.StepName) == "" {
-			req.StepName = step.Name
-		}
-		if strings.TrimSpace(req.RoleKey) == "" {
-			req.RoleKey = step.RoleKey
-		}
-	}
-	if strings.TrimSpace(req.Status) == "" {
-		req.Status = defaultSOPEventStatus(req.EventType, stepIndex, len(profileSteps))
-	}
-	updateRun := shouldUpdateSOPRun(req.EventType, req.UpdateRun)
-	if updateRun && stepKnown && strings.TrimSpace(run.CurrentStepKey) != "" {
-		_, currentIndex, currentKnown := findSOPProfileStep(profileSteps, run.CurrentStepKey)
-		if currentKnown && stepIndex > currentIndex {
-			writeError(w, http.StatusBadRequest, "不能跳过当前 SOP 阶段")
-			return
-		}
-		if currentKnown && stepIndex < currentIndex {
-			writeError(w, http.StatusBadRequest, "不能回退到已完成的 SOP 阶段")
-			return
-		}
-	}
-	nextStatus, nextStepKey, shouldUpdate := "", "", false
-	if updateRun {
-		nextStatus, nextStepKey, shouldUpdate = nextSOPRunState(run, profileSteps, stepIndex, stepKey, req)
-		if shouldUpdate && isTerminalSOPStatus(run.Status) && !isTerminalSOPStatus(nextStatus) {
-			writeError(w, http.StatusBadRequest, "已结束的 SOP run 不能回退为非终态")
-			return
-		}
-	}
-	evidence, ok := jsonObjectField(w, req.Evidence, "evidence")
-	if !ok {
-		return
-	}
-	var duration pgtype.Int8
-	if req.DurationMs != nil {
-		duration = pgtype.Int8{Int64: *req.DurationMs, Valid: true}
-	}
-	createdByType, createdByID := h.sopEventActor(r)
-	taskID, ok := optionalUUIDParam(w, req.TaskID, "task_id")
-	if !ok {
-		return
-	}
-	event, err := h.Queries.CreateSquadSOPStepEvent(r.Context(), db.CreateSquadSOPStepEventParams{
-		RunID:         run.ID,
-		WorkspaceID:   run.WorkspaceID,
-		IssueID:       run.IssueID,
-		SquadID:       run.SquadID,
-		StepKey:       stepKey,
-		StepName:      req.StepName,
-		RoleKey:       req.RoleKey,
-		EventType:     req.EventType,
-		Status:        req.Status,
-		Evidence:      evidence,
-		Reason:        req.Reason,
-		DurationMs:    duration,
-		CreatedByType: createdByType,
-		CreatedByID:   createdByID,
-		TaskID:        taskID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record SOP event")
-		return
-	}
-	if shouldUpdate {
-		if _, err := h.Queries.UpdateSquadSOPRunStatus(r.Context(), db.UpdateSquadSOPRunStatusParams{
-			ID:             run.ID,
-			WorkspaceID:    run.WorkspaceID,
-			Status:         nextStatus,
-			CurrentStepKey: pgtype.Text{String: nextStepKey, Valid: true},
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update SOP run state")
-			return
-		}
-	}
-	writeJSON(w, http.StatusCreated, squadSOPEventToResponse(event))
-}
-
-func sopProfileStepsForHandler(profile []byte) []sopProfileStep {
-	var obj map[string]any
-	if json.Unmarshal(profile, &obj) != nil || obj == nil {
+	if json.Unmarshal(profile, &parsed) != nil {
 		return nil
 	}
-	rawSteps, _ := obj["steps"].([]any)
-	steps := make([]sopProfileStep, 0, len(rawSteps))
-	for _, raw := range rawSteps {
-		step, _ := raw.(map[string]any)
-		if step == nil {
+	steps := make([]protocol.SquadSOPProfileStep, 0, len(parsed.Steps))
+	for _, step := range parsed.Steps {
+		step.Key = strings.TrimSpace(step.Key)
+		if step.Key == "" {
 			continue
 		}
-		key := firstStringField(step, "key", "step_key", "id")
-		if key == "" {
-			continue
-		}
-		steps = append(steps, sopProfileStep{
-			Key:     key,
-			Name:    firstStringField(step, "name", "title", "label"),
-			RoleKey: firstStringField(step, "role_key", "role"),
-		})
+		step.Name = strings.TrimSpace(step.Name)
+		step.RoleKey = strings.TrimSpace(step.RoleKey)
+		steps = append(steps, step)
 	}
 	return steps
-}
-
-func findSOPProfileStep(steps []sopProfileStep, key string) (sopProfileStep, int, bool) {
-	for index, step := range steps {
-		if step.Key == key {
-			return step, index, true
-		}
-	}
-	return sopProfileStep{}, -1, false
-}
-
-func defaultSOPEventStatus(eventType string, stepIndex int, stepCount int) string {
-	switch eventType {
-	case "步骤失败":
-		return sopStatusFailed
-	case "步骤完成":
-		if stepCount > 0 && stepIndex == stepCount-1 {
-			return sopStatusCompleted
-		}
-		return sopStatusCompleted
-	case "步骤开始":
-		return sopStatusRunning
-	default:
-		return sopStatusRunning
-	}
-}
-
-func shouldUpdateSOPRun(eventType string, updateRun *bool) bool {
-	if updateRun != nil {
-		return *updateRun
-	}
-	return eventType == "步骤开始" || eventType == "步骤完成" || eventType == "步骤失败"
-}
-
-func isTerminalSOPStatus(status string) bool {
-	return status == sopStatusCompleted || status == sopStatusFailed
-}
-
-func nextSOPRunState(run db.SquadSopRun, steps []sopProfileStep, stepIndex int, stepKey string, req CreateSOPStepEventRequest) (status, currentStepKey string, ok bool) {
-	switch req.EventType {
-	case "步骤完成":
-		if len(steps) > 0 && stepIndex >= 0 && stepIndex < len(steps)-1 {
-			return sopStatusRunning, steps[stepIndex+1].Key, true
-		}
-		return sopStatusCompleted, stepKey, true
-	case "步骤失败":
-		return sopStatusFailed, stepKey, true
-	case "步骤开始":
-		return sopStatusRunning, stepKey, true
-	default:
-		if req.Status == "" {
-			return "", "", false
-		}
-		nextStep := stepKey
-		if req.Status == sopStatusCompleted && len(steps) > 0 && stepIndex >= 0 && stepIndex < len(steps)-1 {
-			nextStep = steps[stepIndex+1].Key
-			return sopStatusRunning, nextStep, true
-		}
-		if req.Status == sopStatusCompleted && len(steps) > 0 && stepIndex >= 0 && stepIndex == len(steps)-1 {
-			return sopStatusCompleted, stepKey, true
-		}
-		if nextStep == "" {
-			nextStep = run.CurrentStepKey
-		}
-		return req.Status, nextStep, true
-	}
 }
 
 func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *http.Request) {
@@ -610,14 +313,9 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	var since pgtype.Timestamptz
-	if raw := r.URL.Query().Get("since"); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be RFC3339")
-			return
-		}
-		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"))
+	if !ok {
+		return
 	}
 	squadID, ok := optionalUUIDParam(w, r.URL.Query().Get("squad_id"), "squad_id")
 	if !ok {
@@ -631,17 +329,47 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	runs, err := h.listAllWorkspaceSquadSOPRuns(r.Context(), workspaceID, since, squadID, projectID, agentID)
+	runs, err := collectObservabilityPages(func(offset int32) ([]db.SquadSopRun, error) {
+		return h.Queries.ListWorkspaceSquadSOPRuns(r.Context(), db.ListWorkspaceSquadSOPRunsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP runs")
 		return
 	}
-	traces, err := h.listAllWorkspaceTaskTraceEvents(r.Context(), workspaceID, since, squadID, projectID, agentID)
+	traces, err := collectObservabilityPages(func(offset int32) ([]db.TaskTraceEvent, error) {
+		return h.Queries.ListWorkspaceTaskTraceEvents(r.Context(), db.ListWorkspaceTaskTraceEventsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list task trace events")
 		return
 	}
-	events, err := h.listAllWorkspaceSquadSOPStepEvents(r.Context(), workspaceID, since, squadID, projectID, agentID)
+	events, err := collectObservabilityPages(func(offset int32) ([]db.SquadSopStepEvent, error) {
+		return h.Queries.ListWorkspaceSquadSOPStepEvents(r.Context(), db.ListWorkspaceSquadSOPStepEventsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP step events")
 		return
@@ -651,66 +379,14 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "failed to list task messages")
 		return
 	}
-	summary := buildObservabilitySummary(runs, events, traces, taskMessages, int64(len(events)), 0)
+	summary := buildObservabilitySummary(runs, events, traces, taskMessages)
 	writeJSON(w, http.StatusOK, summary)
 }
 
-func (h *Handler) listAllWorkspaceSquadSOPRuns(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.SquadSopRun, error) {
-	var out []db.SquadSopRun
+func collectObservabilityPages[T any](fetch func(offset int32) ([]T, error)) ([]T, error) {
+	var out []T
 	for offset := int32(0); ; offset += observabilitySummaryPageSize {
-		items, err := h.Queries.ListWorkspaceSquadSOPRuns(ctx, db.ListWorkspaceSquadSOPRunsParams{
-			WorkspaceID: workspaceID,
-			Limit:       observabilitySummaryPageSize,
-			Offset:      offset,
-			Since:       since,
-			SquadID:     squadID,
-			ProjectID:   projectID,
-			AgentID:     agentID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
-		if len(items) < observabilitySummaryPageSize {
-			return out, nil
-		}
-	}
-}
-
-func (h *Handler) listAllWorkspaceTaskTraceEvents(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.TaskTraceEvent, error) {
-	var out []db.TaskTraceEvent
-	for offset := int32(0); ; offset += observabilitySummaryPageSize {
-		items, err := h.Queries.ListWorkspaceTaskTraceEvents(ctx, db.ListWorkspaceTaskTraceEventsParams{
-			WorkspaceID: workspaceID,
-			Limit:       observabilitySummaryPageSize,
-			Offset:      offset,
-			Since:       since,
-			SquadID:     squadID,
-			ProjectID:   projectID,
-			AgentID:     agentID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
-		if len(items) < observabilitySummaryPageSize {
-			return out, nil
-		}
-	}
-}
-
-func (h *Handler) listAllWorkspaceSquadSOPStepEvents(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.SquadSopStepEvent, error) {
-	var out []db.SquadSopStepEvent
-	for offset := int32(0); ; offset += observabilitySummaryPageSize {
-		items, err := h.Queries.ListWorkspaceSquadSOPStepEvents(ctx, db.ListWorkspaceSquadSOPStepEventsParams{
-			WorkspaceID: workspaceID,
-			Limit:       observabilitySummaryPageSize,
-			Offset:      offset,
-			Since:       since,
-			SquadID:     squadID,
-			ProjectID:   projectID,
-			AgentID:     agentID,
-		})
+		items, err := fetch(offset)
 		if err != nil {
 			return nil, err
 		}
@@ -764,63 +440,6 @@ func (h *Handler) loadSOPIssue(w http.ResponseWriter, r *http.Request) (db.Issue
 	return issue, true
 }
 
-func (h *Handler) sopEventActor(r *http.Request) (string, pgtype.UUID) {
-	actorType, actorID := h.resolveActor(r, requestUserID(r), h.resolveWorkspaceID(r))
-	return actorType, pgUUIDFromString(actorID)
-}
-
-func normalizeSOPProfileForHandler(fallback []byte, override json.RawMessage) []byte {
-	if len(override) > 0 && strings.TrimSpace(string(override)) != "" && strings.TrimSpace(string(override)) != "null" {
-		var obj map[string]any
-		if json.Unmarshal(override, &obj) == nil && obj != nil {
-			normalized, err := json.Marshal(obj)
-			if err == nil {
-				return normalized
-			}
-		}
-	}
-	var obj map[string]any
-	if json.Unmarshal(fallback, &obj) == nil && obj != nil {
-		normalized, err := json.Marshal(obj)
-		if err == nil {
-			return normalized
-		}
-	}
-	return []byte(`{}`)
-}
-
-func sopProfileSummaryForHandler(profile []byte) (profileKey, currentStepKey, currentStepName, roleKey string) {
-	profileKey = "custom"
-	var obj map[string]any
-	if json.Unmarshal(profile, &obj) != nil || obj == nil {
-		return profileKey, "", "", ""
-	}
-	if v, ok := obj["profile_key"].(string); ok && strings.TrimSpace(v) != "" {
-		profileKey = strings.TrimSpace(v)
-	}
-	steps, _ := obj["steps"].([]any)
-	if len(steps) == 0 {
-		return profileKey, "", "", ""
-	}
-	step, _ := steps[0].(map[string]any)
-	if step == nil {
-		return profileKey, "", "", ""
-	}
-	currentStepKey = firstStringField(step, "key", "step_key", "id")
-	currentStepName = firstStringField(step, "name", "title", "label")
-	roleKey = firstStringField(step, "role_key", "role")
-	return profileKey, currentStepKey, currentStepName, roleKey
-}
-
-func firstStringField(obj map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if v, ok := obj[key].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
 func optionalUUIDParam(w http.ResponseWriter, raw string, field string) (pgtype.UUID, bool) {
 	if strings.TrimSpace(raw) == "" {
 		return pgtype.UUID{}, true
@@ -830,17 +449,6 @@ func optionalUUIDParam(w http.ResponseWriter, raw string, field string) (pgtype.
 		return pgtype.UUID{}, false
 	}
 	return parsed, true
-}
-
-func pgUUIDFromString(raw string) pgtype.UUID {
-	if strings.TrimSpace(raw) == "" {
-		return pgtype.UUID{}
-	}
-	id, err := util.ParseUUID(raw)
-	if err != nil {
-		return pgtype.UUID{}
-	}
-	return id
 }
 
 func int64Value(value pgtype.Int8) any {
@@ -888,18 +496,11 @@ func firstFailureReason(events []SquadSOPEventResponse) string {
 }
 
 func evidenceCount(raw []byte) int {
-	value := decodeJSONDefault(raw, map[string]any{})
-	switch typed := value.(type) {
-	case []any:
-		return len(typed)
-	case map[string]any:
-		if len(typed) == 0 {
-			return 0
-		}
-		return 1
-	default:
+	value := mustDecodePersistedJSONObject(raw, "squad SOP step event evidence")
+	if len(value) == 0 {
 		return 0
 	}
+	return 1
 }
 
 type observabilityUsageBreakdown struct {
@@ -916,35 +517,12 @@ type observabilityUsageBreakdown struct {
 	HasPrice         bool
 }
 
-type observabilitySOPStageMetric struct {
-	StepKey          string `json:"step_key"`
-	StepName         string `json:"step_name"`
-	RoleKey          string `json:"role_key"`
-	Status           string `json:"status"`
-	DurationMs       int64  `json:"duration_ms"`
-	EventCount       int    `json:"event_count"`
-	EvidenceCount    int    `json:"evidence_count"`
-	TaskCount        int    `json:"task_count"`
-	MessageCount     int    `json:"message_count"`
-	AgentTurnCount   int    `json:"agent_turn_count"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-}
-
 func buildObservabilitySummary(
 	runs []db.SquadSopRun,
 	events []db.SquadSopStepEvent,
 	traces []db.TaskTraceEvent,
 	taskMessages map[string][]db.TaskMessage,
-	sopEventCount int64,
-	sampleLimit int32,
 ) map[string]any {
-	runMaybeTruncated := false
-	traceMaybeTruncated := false
-	completenessStatus := "完整"
-	completenessReason := "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。"
 	statusCounts := map[string]int{}
 	squadCounts := map[string]int{}
 	issueCounts := map[string]int{}
@@ -1050,8 +628,8 @@ func buildObservabilitySummary(
 	stageBreakdown := buildObservabilitySOPStageBreakdown(runs, events, usageTracesByTask, taskMessages)
 	return map[string]any{
 		"指标": map[string]any{
-			"SOP 执行数":   durationCountOrTotal(durationCount, len(runs)),
-			"SOP 事件数":   sopEventCount,
+			"SOP 执行数":   len(runs),
+			"SOP 事件数":   len(events),
 			"阶段耗时":      avgInt64(totalDuration, durationCount),
 			"队列等待":      queueWait,
 			"执行耗时":      runMs,
@@ -1063,32 +641,14 @@ func buildObservabilitySummary(
 			"预估成本":      metrics.RoundCostUSD(estimatedCost),
 			"失败原因":      sortedReasonCounts(failureReasons),
 			"重试次数":      retryCount,
-			"证据数":       sopEventCount,
+			"证据数":       len(events),
 			"缺少模型价格":    sortedReasonCounts(unpricedModels),
-			"采样上限":      sampleLimit,
-			"SOP 执行样本数": len(runs),
-			"任务观测样本数":   len(traces),
-			"汇总完整性":     completenessStatus,
 		},
-		"sop_status_counts":          statusCounts,
-		"squad_counts":               squadCounts,
-		"project_counts":             projectCounts,
-		"issue_counts":               issueCounts,
-		"task_trace_total":           len(traces),
-		"sop_run_sample_total":       len(runs),
-		"task_trace_sample_total":    len(traces),
-		"sample_limit":               sampleLimit,
-		"sop_run_maybe_truncated":    runMaybeTruncated,
-		"task_trace_maybe_truncated": traceMaybeTruncated,
-		"summary_completeness": map[string]any{
-			"状态":         completenessStatus,
-			"说明":         completenessReason,
-			"采样上限":       sampleLimit,
-			"SOP 执行样本数":  len(runs),
-			"任务观测样本数":    len(traces),
-			"SOP 执行可能截断": runMaybeTruncated,
-			"任务观测可能截断":   traceMaybeTruncated,
-		},
+		"sop_status_counts":   statusCounts,
+		"squad_counts":        squadCounts,
+		"project_counts":      projectCounts,
+		"issue_counts":        issueCounts,
+		"task_trace_total":    len(traces),
 		"model_breakdown":     observabilityBreakdownRows(modelBreakdown),
 		"runtime_breakdown":   observabilityBreakdownRows(runtimeBreakdown),
 		"sop_stage_breakdown": stageBreakdown,
@@ -1100,9 +660,9 @@ func buildObservabilitySOPStageBreakdown(
 	events []db.SquadSopStepEvent,
 	usageTracesByTask map[string][]db.TaskTraceEvent,
 	taskMessages map[string][]db.TaskMessage,
-) []observabilitySOPStageMetric {
+) []sopStageMetricResponse {
 	type stageAccumulator struct {
-		metric observabilitySOPStageMetric
+		metric sopStageMetricResponse
 		tasks  map[string]struct{}
 	}
 	accs := make([]*stageAccumulator, 0)
@@ -1122,7 +682,7 @@ func buildObservabilitySOPStageBreakdown(
 			return existing
 		}
 		acc := &stageAccumulator{
-			metric: observabilitySOPStageMetric{
+			metric: sopStageMetricResponse{
 				StepKey:  stepKey,
 				StepName: strings.TrimSpace(stepName),
 				RoleKey:  strings.TrimSpace(roleKey),
@@ -1171,7 +731,7 @@ func buildObservabilitySOPStageBreakdown(
 			}
 		}
 	}
-	result := make([]observabilitySOPStageMetric, 0, len(accs))
+	result := make([]sopStageMetricResponse, 0, len(accs))
 	for _, acc := range accs {
 		result = append(result, acc.metric)
 	}
@@ -1290,10 +850,6 @@ func observabilityModelLabel(provider, model string) string {
 		return provider
 	}
 	return provider + "/" + model
-}
-
-func durationCountOrTotal(_ int64, total int) int {
-	return total
 }
 
 func avgInt64(total int64, count int64) any {

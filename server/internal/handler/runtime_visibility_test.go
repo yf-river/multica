@@ -11,13 +11,11 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestCanUseRuntimeForAgent_Pure exercises the pure predicate behind the
-// CreateAgent / UpdateAgent runtime gate. The truth table mirrors the issue
-// (MUL-2062) acceptance criteria: workspace owner / admin can use any
-// runtime, runtime owners can use their own runtime regardless of scope, and
-// any member can use a workspace runtime; everyone else gets denied for a
-// personal runtime owned by someone else.
-func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
+// TestCanUseRuntimeForAgent_Pure exercises the membership and visibility gate
+// shared by CreateAgent and UpdateAgent. Scope compatibility is a separate
+// invariant: a personal agent and its personal runtime must have the same
+// owner even when a workspace owner or admin can administer that runtime.
+func TestCanAccessRuntime_Pure(t *testing.T) {
 	ownerUserID := "11111111-1111-1111-1111-111111111111"
 	otherUserID := "22222222-2222-2222-2222-222222222222"
 
@@ -55,12 +53,108 @@ func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
 				UserID: util.MustParseUUID(tc.userID),
 				Role:   tc.role,
 			}
-			got := canUseRuntimeForAgent(member, tc.rt)
+			got := canAccessRuntime(member, tc.rt)
 			if got != tc.want {
-				t.Fatalf("canUseRuntimeForAgent(role=%s, scope=%s, owner=%s, caller=%s) = %v; want %v",
+				t.Fatalf("canAccessRuntime(role=%s, scope=%s, owner=%s, caller=%s) = %v; want %v",
 					tc.role, tc.rt.Scope, ownerUserID, tc.userID, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRuntimeReadEndpoints_RejectOtherMembersPersonalRuntime proves that
+// personal-runtime visibility is an API boundary, not merely a frontend
+// filter. Cost reports expose task and agent activity, while model discovery
+// can trigger work on the owner's daemon; neither is available to an unrelated
+// plain member of the same workspace.
+func TestRuntimeReadEndpoints_RejectOtherMembersPersonalRuntime(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, _, plainMemberID := runtimeVisibilityFixture(t)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		handle func(http.ResponseWriter, *http.Request)
+	}{
+		{"usage", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage", testHandler.GetRuntimeUsage},
+		{"task activity", http.MethodGet, "/api/runtimes/" + runtimeID + "/activity", testHandler.GetRuntimeTaskActivity},
+		{"usage by agent", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage/by-agent", testHandler.GetRuntimeUsageByAgent},
+		{"usage by task", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage/by-task", testHandler.GetRuntimeUsageByTask},
+		{"usage by hour", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage/by-hour", testHandler.GetRuntimeUsageByHour},
+		{"model discovery", http.MethodPost, "/api/runtimes/" + runtimeID + "/models", testHandler.InitiateListModels},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequestAs(plainMemberID, tt.method, tt.path, nil)
+			req = withURLParam(req, "runtimeId", runtimeID)
+			tt.handle(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestListAgentRuntimes_HidesOtherMembersPersonalRuntime(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, runtimeOwnerID, plainMemberID := runtimeVisibilityFixture(t)
+	list := func(actorID string) []AgentRuntimeResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.ListAgentRuntimes(w, newRequestAs(actorID, http.MethodGet, "/api/runtimes?workspace_id="+testWorkspaceID, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("list runtimes as %s: got %d: %s", actorID, w.Code, w.Body.String())
+		}
+		var runtimes []AgentRuntimeResponse
+		if err := json.NewDecoder(w.Body).Decode(&runtimes); err != nil {
+			t.Fatalf("decode runtime list: %v", err)
+		}
+		return runtimes
+	}
+	contains := func(runtimes []AgentRuntimeResponse) bool {
+		for _, runtime := range runtimes {
+			if runtime.ID == runtimeID {
+				return true
+			}
+		}
+		return false
+	}
+
+	if contains(list(plainMemberID)) {
+		t.Fatal("plain member can enumerate another member's personal runtime")
+	}
+	if !contains(list(runtimeOwnerID)) {
+		t.Fatal("runtime owner cannot see their own personal runtime")
+	}
+	if !contains(list(testUserID)) {
+		t.Fatal("workspace owner cannot administer a member's personal runtime")
+	}
+}
+
+func TestRuntimeAccessClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, _, _ := runtimeVisibilityFixture(t)
+	req := newRequest(http.MethodGet, "/api/runtimes/"+runtimeID+"/usage", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "runtimeId", runtimeID)
+
+	w := httptest.NewRecorder()
+	testHandler.GetRuntimeUsage(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled runtime read, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -82,7 +176,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 		t.Fatalf("create runtime owner user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM "user" WHERE account = 'runtime-owner@multica.test'`)
 	})
 
@@ -101,7 +195,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 		t.Fatalf("create plain member user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM "user" WHERE account = 'plain-runtime-member@multica.test'`)
 	})
 
@@ -123,18 +217,19 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 		t.Fatalf("create runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 
 	return runtimeID, runtimeOwnerID, plainMemberID
 }
 
-// TestCreateAgent_RejectsPersonalRuntimeForNonOwner walks the gate end-to-end:
-// the runtime is personal and owned by a non-admin member, so a workspace
-// owner and the runtime owner can both create agents on it, but a plain
-// workspace member cannot.
-func TestCreateAgent_RejectsPersonalRuntimeForNonOwner(t *testing.T) {
+// TestCreateAgent_RequiresPersonalRuntimeOwnerMatch walks both gates
+// end-to-end. A workspace owner can administer another member's personal
+// runtime, but cannot create a personal agent owned by themselves on it. The
+// runtime owner can create the matching personal agent; a plain third party
+// is rejected before the scope compatibility check.
+func TestCreateAgent_RequiresPersonalRuntimeOwnerMatch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -142,7 +237,7 @@ func TestCreateAgent_RejectsPersonalRuntimeForNonOwner(t *testing.T) {
 	runtimeID, runtimeOwnerID, plainMemberID := runtimeVisibilityFixture(t)
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-scope-test-%'`,
 			testWorkspaceID)
 	})
@@ -157,12 +252,12 @@ func TestCreateAgent_RejectsPersonalRuntimeForNonOwner(t *testing.T) {
 		}
 	}
 
-	// Workspace owner (testUserID): allowed via admin override even though
-	// the runtime is personal and owned by someone else.
+	// Workspace owner: runtime access is allowed, but the requested personal
+	// agent would have a different owner from the personal runtime.
 	w := httptest.NewRecorder()
 	testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body("runtime-scope-test-admin")))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAgent as workspace owner: expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateAgent as workspace owner: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Runtime owner: allowed because they own the runtime.
@@ -197,7 +292,7 @@ func TestCreateAgent_AllowsWorkspaceRuntimeForPlainMember(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = 'runtime-scope-test-workspace-runtime'`,
 			testWorkspaceID)
 	})
@@ -242,7 +337,7 @@ func TestUpdateAgent_RejectsRebindToPersonalRuntime(t *testing.T) {
 		t.Fatalf("create workspace runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, workspaceRuntimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, workspaceRuntimeID)
 	})
 
 	var agentID string
@@ -259,7 +354,7 @@ func TestUpdateAgent_RejectsRebindToPersonalRuntime(t *testing.T) {
 		t.Fatalf("create agent on workspace runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
 	body := map[string]any{
@@ -274,9 +369,7 @@ func TestUpdateAgent_RejectsRebindToPersonalRuntime(t *testing.T) {
 	}
 }
 
-// TestUpdateAgentRuntime_ScopePatchApplies pins the invariant that
-// a PATCH carrying `scope` correctly updates the runtime.
-func TestUpdateAgentRuntime_ScopePatchApplies(t *testing.T) {
+func TestUpdateAgentRuntime_RejectsUnknownFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -285,81 +378,12 @@ func TestUpdateAgentRuntime_ScopePatchApplies(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
-		"scope": "workspace",
-	})
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.UpdateAgentRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("PATCH scope: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp AgentRuntimeResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Scope != "workspace" {
-		t.Fatalf("scope patch: got %q, want workspace", resp.Scope)
-	}
-}
-
-// TestUpdateAgentRuntime_IgnoresTimezoneField guards the RFC migration that
-// dropped `timezone` from UpdateAgentRuntimeRequest: a PATCH body still
-// carrying `timezone` must not error, must not echo a `timezone` key back,
-// and must still apply the recognised `scope` field. Timezone is now a
-// user-level preference, not a per-runtime one.
-func TestUpdateAgentRuntime_IgnoresTimezoneField(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	runtimeID, runtimeOwnerID, _ := runtimeVisibilityFixture(t)
-
-	w := httptest.NewRecorder()
-	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
-		"timezone": "Asia/Tokyo",
-		"scope":    "workspace",
-	})
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.UpdateAgentRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("PATCH with stray timezone: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// The response must carry no `timezone` key — runtimes have no such field.
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if _, present := raw["timezone"]; present {
-		t.Errorf("response unexpectedly contains a timezone key: %s", w.Body.String())
-	}
-
-	// `scope` was still applied.
-	var resp AgentRuntimeResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Scope != "workspace" {
-		t.Errorf("scope patch: got %q, want workspace", resp.Scope)
-	}
-}
-
-// TestUpdateAgentRuntime_InvalidScopeReturns400 verifies that an invalid
-// scope value is rejected with 400 before any mutation runs.
-func TestUpdateAgentRuntime_InvalidScopeReturns400(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	runtimeID, runtimeOwnerID, _ := runtimeVisibilityFixture(t)
-
-	w := httptest.NewRecorder()
-	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
-		"scope": "everyone",
+		"unexpected": true,
 	})
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.UpdateAgentRuntime(w, req)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("PATCH with invalid scope: expected 400, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("PATCH with unknown field: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

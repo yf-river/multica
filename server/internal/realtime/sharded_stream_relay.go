@@ -18,55 +18,10 @@ const (
 	defaultShardedRelayStreamMaxLen = 100000
 	defaultShardedRelayReadCount    = 128
 	defaultShardedRelayReadBlock    = 5 * time.Second
-	heartbeatTTL                    = 90 * time.Second
-	heartbeatPeriod                 = 30 * time.Second
+	shardedStreamKeyFormat          = "ws:relay:shard:%d"
+	heartbeatKeyPrefix              = "ws:node:"
+	heartbeatKeySuffix              = ":heartbeat"
 )
-
-func heartbeatKey(nodeID string) string {
-	return fmt.Sprintf("ws:node:%s:heartbeat", nodeID)
-}
-
-// ShardedStreamKey returns the Redis Stream key used by a fixed relay shard.
-func ShardedStreamKey(shard int) string {
-	return fmt.Sprintf("ws:relay:shard:%d", shard)
-}
-
-// ShardedStreamRelayConfig controls the fixed-reader Redis Stream relay.
-type ShardedStreamRelayConfig struct {
-	Shards       int
-	StreamMaxLen int64
-	ReadCount    int64
-	ReadBlock    time.Duration
-}
-
-// DefaultShardedStreamRelayConfig returns production-safe defaults: a small
-// fixed number of blocking readers per pod, bounded stream retention, and
-// batched reads.
-func DefaultShardedStreamRelayConfig() ShardedStreamRelayConfig {
-	return ShardedStreamRelayConfig{
-		Shards:       defaultShardedRelayShards,
-		StreamMaxLen: defaultShardedRelayStreamMaxLen,
-		ReadCount:    defaultShardedRelayReadCount,
-		ReadBlock:    defaultShardedRelayReadBlock,
-	}
-}
-
-func (c ShardedStreamRelayConfig) withDefaults() ShardedStreamRelayConfig {
-	def := DefaultShardedStreamRelayConfig()
-	if c.Shards <= 0 {
-		c.Shards = def.Shards
-	}
-	if c.StreamMaxLen <= 0 {
-		c.StreamMaxLen = def.StreamMaxLen
-	}
-	if c.ReadCount <= 0 {
-		c.ReadCount = def.ReadCount
-	}
-	if c.ReadBlock <= 0 {
-		c.ReadBlock = def.ReadBlock
-	}
-	return c
-}
 
 // ShardedStreamRelay publishes all realtime events into a fixed set of Redis
 // Streams. Every API node runs one XREAD BLOCK loop per shard and locally
@@ -77,8 +32,6 @@ type ShardedStreamRelay struct {
 	writeRDB *redis.Client
 	readRDB  *redis.Client
 	nodeID   string
-	config   ShardedStreamRelayConfig
-
 	mu       sync.Mutex
 	stopping bool
 	wg       sync.WaitGroup
@@ -86,7 +39,7 @@ type ShardedStreamRelay struct {
 	daemonRuntime DaemonRuntimeDeliverer
 }
 
-func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config ShardedStreamRelayConfig) *ShardedStreamRelay {
+func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client) *ShardedStreamRelay {
 	if readRDB == nil {
 		readRDB = writeRDB
 	}
@@ -95,7 +48,6 @@ func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config Sha
 		writeRDB: writeRDB,
 		readRDB:  readRDB,
 		nodeID:   ulid.Make().String(),
-		config:   config.withDefaults(),
 	}
 }
 
@@ -110,12 +62,12 @@ func (r *ShardedStreamRelay) Start(ctx context.Context) {
 	if err := r.writeRDB.Ping(ctx).Err(); err != nil {
 		slog.Error("realtime/sharded-redis: initial ping failed", "error", err)
 		M.RedisConnected.Store(false)
-		M.SetRedisLastError(err.Error())
+		M.setRedisLastError(err.Error())
 	} else if r.readRDB != r.writeRDB {
 		if err := r.readRDB.Ping(ctx).Err(); err != nil {
 			slog.Error("realtime/sharded-redis: initial read-client ping failed", "error", err)
 			M.RedisConnected.Store(false)
-			M.SetRedisLastError(err.Error())
+			M.setRedisLastError(err.Error())
 		} else {
 			M.RedisConnected.Store(true)
 		}
@@ -123,12 +75,12 @@ func (r *ShardedStreamRelay) Start(ctx context.Context) {
 		M.RedisConnected.Store(true)
 	}
 
-	r.wg.Add(1 + r.config.Shards)
+	r.wg.Add(1 + defaultShardedRelayShards)
 	go func() {
 		defer r.wg.Done()
 		r.heartbeatLoop(ctx)
 	}()
-	for shard := 0; shard < r.config.Shards; shard++ {
+	for shard := 0; shard < defaultShardedRelayShards; shard++ {
 		shard := shard
 		go func() {
 			defer r.wg.Done()
@@ -147,32 +99,12 @@ func (r *ShardedStreamRelay) Wait() {
 	r.wg.Wait()
 }
 
-func (r *ShardedStreamRelay) BroadcastToScope(scopeType, scopeID string, message []byte) {
-	_ = r.PublishWithID(scopeType, scopeID, "", message, ulid.Make().String())
-}
-
-func (r *ShardedStreamRelay) BroadcastToWorkspace(workspaceID string, message []byte) {
-	r.BroadcastToScope(ScopeWorkspace, workspaceID, message)
-}
-
-func (r *ShardedStreamRelay) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
-	exclude := ""
-	if len(excludeWorkspace) > 0 {
-		exclude = excludeWorkspace[0]
-	}
-	_ = r.PublishWithID(ScopeUser, userID, exclude, message, ulid.Make().String())
-}
-
-func (r *ShardedStreamRelay) Broadcast(message []byte) {
-	_ = r.PublishWithID("global", "all", "", message, ulid.Make().String())
-}
-
 func (r *ShardedStreamRelay) PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error {
 	ev := newEnvelope(r.nodeID, scopeType, scopeID, exclude, frame, id)
-	stream := ShardedStreamKey(r.shardFor(scopeType, scopeID))
+	stream := fmt.Sprintf(shardedStreamKeyFormat, r.shardFor(scopeType, scopeID))
 	args := &redis.XAddArgs{
 		Stream: stream,
-		MaxLen: r.config.StreamMaxLen,
+		MaxLen: defaultShardedRelayStreamMaxLen,
 		Approx: true,
 		Values: envelopeRedisValues(ev),
 	}
@@ -182,7 +114,7 @@ func (r *ShardedStreamRelay) PublishWithID(scopeType, scopeID, exclude string, f
 	defer cancel()
 	if err := r.writeRDB.XAdd(ctx, args).Err(); err != nil {
 		M.RedisXAddErrors.Add(1)
-		M.SetRedisLastError(err.Error())
+		M.setRedisLastError(err.Error())
 		slog.Warn("realtime/sharded-redis: XADD failed", "error", err, "scope", scopeType, "scope_id", scopeID, "stream", stream)
 		return err
 	}
@@ -196,22 +128,22 @@ func (r *ShardedStreamRelay) shardFor(scopeType, scopeID string) int {
 	_, _ = h.Write([]byte(scopeType))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write([]byte(scopeID))
-	return int(h.Sum32() % uint32(r.config.Shards))
+	return int(h.Sum32() % uint32(defaultShardedRelayShards))
 }
 
 func (r *ShardedStreamRelay) readShard(ctx context.Context, shard int) {
-	stream := ShardedStreamKey(shard)
+	stream := fmt.Sprintf(shardedStreamKeyFormat, shard)
 	lastID := "$"
 	for {
 		if ctx.Err() != nil || r.isStopping() {
 			return
 		}
 
-		readCtx, cancel := context.WithTimeout(ctx, r.config.ReadBlock+time.Second)
+		readCtx, cancel := context.WithTimeout(ctx, defaultShardedRelayReadBlock+time.Second)
 		res, err := r.readRDB.XRead(readCtx, &redis.XReadArgs{
 			Streams: []string{stream, lastID},
-			Count:   r.config.ReadCount,
-			Block:   r.config.ReadBlock,
+			Count:   defaultShardedRelayReadCount,
+			Block:   defaultShardedRelayReadBlock,
 		}).Result()
 		cancel()
 
@@ -220,7 +152,7 @@ func (r *ShardedStreamRelay) readShard(ctx context.Context, shard int) {
 		}
 		if err != nil {
 			M.RedisXReadErrors.Add(1)
-			M.SetRedisLastError(err.Error())
+			M.setRedisLastError(err.Error())
 			slog.Warn("realtime/sharded-redis: XREAD failed", "error", err, "shard", shard, "stream", stream)
 			select {
 			case <-ctx.Done():
@@ -264,9 +196,10 @@ func (r *ShardedStreamRelay) heartbeatLoop(ctx context.Context) {
 func (r *ShardedStreamRelay) heartbeatOnce(ctx context.Context) {
 	hbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := r.writeRDB.Set(hbCtx, heartbeatKey(r.nodeID), time.Now().UTC().Format(time.RFC3339Nano), heartbeatTTL).Err(); err != nil {
+	heartbeatKey := heartbeatKeyPrefix + r.nodeID + heartbeatKeySuffix
+	if err := r.writeRDB.Set(hbCtx, heartbeatKey, time.Now().UTC().Format(time.RFC3339Nano), heartbeatTTL).Err(); err != nil {
 		M.RedisConnected.Store(false)
-		M.SetRedisLastError(err.Error())
+		M.setRedisLastError(err.Error())
 		return
 	}
 	M.RedisConnected.Store(true)
@@ -278,5 +211,4 @@ func (r *ShardedStreamRelay) isStopping() bool {
 	return r.stopping
 }
 
-var _ Broadcaster = (*ShardedStreamRelay)(nil)
 var _ RelayPublisher = (*ShardedStreamRelay)(nil)

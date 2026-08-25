@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enSkills from "../../locales/zh-Hans/skills.json";
@@ -23,7 +23,7 @@ vi.mock("@multica/core/api", () => ({
   },
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
@@ -101,7 +101,6 @@ const MOCK_SKILL_B = {
 
 const MOCK_IMPORTED_SKILL_A = {
   id: "skill-1",
-  workspace_id: "ws-1",
   name: "Review Helper",
   description: "Review pull requests",
   content: "# Review Helper",
@@ -114,7 +113,6 @@ const MOCK_IMPORTED_SKILL_A = {
 
 const MOCK_IMPORTED_SKILL_B = {
   id: "skill-2",
-  workspace_id: "ws-1",
   name: "Code Gen",
   description: "Generate code from specs",
   content: "# Code Gen",
@@ -177,7 +175,9 @@ async function waitForReviewHelper() {
 async function clickEnabledButton(name: RegExp) {
   const button = screen.getByRole("button", { name });
   await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 5000 });
-  fireEvent.click(button);
+  await act(async () => {
+    fireEvent.click(button);
+  });
 }
 
 async function selectReviewHelperAndImport() {
@@ -213,7 +213,6 @@ function expectReviewHelperOverwriteRequest() {
       skill_key: "review-helper",
       name: "Review Helper",
       description: "Review pull requests",
-      supports_conflict: true,
       action: "overwrite",
       target_skill_id: "existing-skill-1",
     },
@@ -259,7 +258,6 @@ describe("RuntimeLocalSkillImportPanel", () => {
             skill_key: "review-helper",
             name: "Review Helper",
             description: "Review pull requests",
-            supports_conflict: true,
           },
         );
       },

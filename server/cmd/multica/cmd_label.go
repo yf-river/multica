@@ -1,11 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"net/url"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -76,30 +75,19 @@ func init() {
 }
 
 func runLabelList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	params := url.Values{}
-	if client.WorkspaceID != "" {
-		params.Set("workspace_id", client.WorkspaceID)
-	}
-	path := "/api/labels"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
-
 	var result map[string]any
-	if err := client.GetJSON(ctx, path, &result); err != nil {
+	if err := client.GetJSON(ctx, "/api/labels", &result); err != nil {
 		return fmt.Errorf("list labels: %w", err)
 	}
 	labelsRaw, _ := result["labels"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, labelsRaw)
 	}
 
@@ -127,40 +115,25 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, labelRef, err := newResolvedAPIClientContext(cmd, args[0], "label", resolveLabelID)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	labelRef, err := resolveLabelID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve label: %w", err)
-	}
 
 	var label map[string]any
 	if err := client.GetJSON(ctx, "/api/labels/"+labelRef.ID, &label); err != nil {
 		return fmt.Errorf("get label: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "NAME", "COLOR", "CREATED"}
-		created := strVal(label, "created_at")
-		if len(created) >= 10 {
-			created = created[:10]
-		}
-		rows := [][]string{{
-			strVal(label, "id"),
-			strVal(label, "name"),
-			strVal(label, "color"),
-			created,
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
+	created := strVal(label, "created_at")
+	if len(created) >= 10 {
+		created = created[:10]
 	}
-	return cli.PrintJSON(os.Stdout, label)
+	return printRecordResult(cmd, label,
+		[]string{"ID", "NAME", "COLOR", "CREATED"},
+		[]string{strVal(label, "id"), strVal(label, "name"), strVal(label, "color"), created},
+	)
 }
 
 func runLabelCreate(cmd *cobra.Command, _ []string) error {
@@ -173,16 +146,15 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--color is required (e.g. #3b82f6)")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{"name": name, "color": color}
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/labels", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/labels", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create label: %w", err)
 	}
 
@@ -190,25 +162,15 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, labelRef, err := newResolvedAPIClientContext(cmd, args[0], "label", resolveLabelID)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	labelRef, err := resolveLabelID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve label: %w", err)
-	}
-
 	body := map[string]any{}
-	if v, _ := cmd.Flags().GetString("name"); v != "" {
-		body["name"] = v
-	}
-	if v, _ := cmd.Flags().GetString("color"); v != "" {
-		body["color"] = v
-	}
+	applyNonEmptyStringFlag(cmd, body, "name", "name")
+	applyNonEmptyStringFlag(cmd, body, "color", "color")
 	if len(body) == 0 {
 		return fmt.Errorf("nothing to update — provide --name and/or --color")
 	}
@@ -222,40 +184,26 @@ func runLabelUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func printLabelMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "NAME", "COLOR"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "name"),
-			strVal(result, "color"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-	return cli.PrintJSON(os.Stdout, result)
+	return printRecordResult(cmd, result,
+		[]string{"ID", "NAME", "COLOR"},
+		[]string{strVal(result, "id"), strVal(result, "name"), strVal(result, "color")},
+	)
 }
 
 func runLabelDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, labelRef, err := newResolvedAPIClientContext(cmd, args[0], "label", resolveLabelID)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	labelRef, err := resolveLabelID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve label: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/labels/"+labelRef.ID); err != nil {
 		return fmt.Errorf("delete label: %w", err)
 	}
 	// JSON consumers get machine-readable output; humans get natural language.
-	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{"id": labelRef.ID, "deleted": true})
 	}
-	fmt.Fprintf(os.Stdout, "Label %s deleted.\n", labelRef.Display)
-	return nil
+	_, err = fmt.Fprintf(os.Stdout, "Label %s deleted.\n", labelRef.Display)
+	return err
 }

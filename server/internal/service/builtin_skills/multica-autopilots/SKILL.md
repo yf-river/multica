@@ -25,6 +25,18 @@ An autopilot is not an agent. It is a rule that dispatches work to an agent, or 
 
 The chain is: trigger fires (`schedule`, `webhook`, or `manual`) -> `autopilot_run` row -> `execution_mode` decides output -> assignee readiness check -> issue/task execution -> run status sync.
 
+Issue/task terminal events update the run through the durable domain-event
+outbox. A transient projection failure is retried; do not infer that a run is
+stuck merely because the task reached a terminal state moments earlier.
+
+For `run_only`, task creation, the run's `task_id`, and `last_run_at` commit
+together. A dispatch persistence failure leaves no executable orphan task and
+records the audit run as failed when the database remains writable.
+
+For `create_issue`, the Issue, initial task, run link, subscriber/inbox state,
+durable Issue event, and squad SOP state commit as one unit. A failed initial
+task insert leaves only the failed audit run, not a half-created Issue.
+
 Execution modes:
 
 - `create_issue` creates a Multica issue, making the run visible as issue state.

@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// Round-trip: set primitives of each type, list, get them back, delete, confirm gone.
 func TestIssueMetadataSetGetDelete(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata round-trip")
 
@@ -80,7 +79,9 @@ func TestIssueMetadataSetGetDelete(t *testing.T) {
 	var afterDelete struct {
 		Metadata map[string]any `json:"metadata"`
 	}
-	json.NewDecoder(w.Body).Decode(&afterDelete)
+	if err := json.NewDecoder(w.Body).Decode(&afterDelete); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
 	if _, present := afterDelete.Metadata["pipeline_status"]; present {
 		t.Errorf("after delete, pipeline_status should be gone; got %+v", afterDelete.Metadata)
 	}
@@ -89,8 +90,6 @@ func TestIssueMetadataSetGetDelete(t *testing.T) {
 	}
 }
 
-// Invalid keys / values / shapes are rejected with 400 — the regex, primitive,
-// and "no null" rules must all hold.
 func TestIssueMetadataValidation(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata validation")
 
@@ -109,9 +108,6 @@ func TestIssueMetadataValidation(t *testing.T) {
 	for _, c := range bad {
 		t.Run(c.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			// chi pulls the key from URL params (injected via withURLParams);
-			// the raw URL needs to be a valid request line, so PathEscape any
-			// chars (spaces, etc.) that would otherwise break httptest.NewRequest.
 			req := newRequest("PUT", "/api/issues/"+issueID+"/metadata/"+url.PathEscape(c.key), json.RawMessage(c.rawBody))
 			req = withURLParams(req, "id", issueID, "key", c.key)
 			testHandler.SetIssueMetadataKey(w, req)
@@ -122,9 +118,6 @@ func TestIssueMetadataValidation(t *testing.T) {
 	}
 }
 
-// The 8KB DB CHECK kicks in past a few hundred KV pairs of large strings; we
-// blow it deliberately with one giant value to confirm the handler surfaces
-// a 400 (not a generic 500).
 func TestIssueMetadataSizeLimit(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata size limit")
 
@@ -139,7 +132,6 @@ func TestIssueMetadataSizeLimit(t *testing.T) {
 	}
 }
 
-// The 50-key cap is enforced in the handler with a clear 400.
 func TestIssueMetadataKeyCountCap(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Metadata key count cap")
 
@@ -161,8 +153,6 @@ func TestIssueMetadataKeyCountCap(t *testing.T) {
 		t.Fatalf("overflow key: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Updating an existing key past the cap is still allowed — only new keys
-	// are blocked.
 	w = httptest.NewRecorder()
 	req = newRequest("PUT", "/api/issues/"+issueID+"/metadata/k_0", json.RawMessage(`{"value":"v2"}`))
 	req = withURLParams(req, "id", issueID, "key", "k_0")
@@ -172,8 +162,6 @@ func TestIssueMetadataKeyCountCap(t *testing.T) {
 	}
 }
 
-// ListIssues with `metadata` query param does JSONB containment filtering and
-// returns only matching issues — the killer use case for autopilot.
 func TestListIssuesMetadataFilter(t *testing.T) {
 	waitingID := createMetadataTestIssue(t, "Waiting issue")
 	doneID := createMetadataTestIssue(t, "Done issue")
@@ -198,7 +186,9 @@ func TestListIssuesMetadataFilter(t *testing.T) {
 	var listResp struct {
 		Issues []IssueResponse `json:"issues"`
 	}
-	json.NewDecoder(w.Body).Decode(&listResp)
+	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode metadata list response: %v", err)
+	}
 
 	foundWaiting := false
 	for _, iss := range listResp.Issues {
@@ -225,8 +215,6 @@ func TestListIssuesMetadataFilter(t *testing.T) {
 	}
 }
 
-// New issues default to an empty metadata object — never null — so frontend
-// reads like `issue.metadata[key]` never NPE.
 func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 	issueID := createMetadataTestIssue(t, "Default empty metadata")
 
@@ -238,7 +226,9 @@ func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 		t.Fatalf("GetIssue: %d %s", w.Code, w.Body.String())
 	}
 	var got IssueResponse
-	json.NewDecoder(w.Body).Decode(&got)
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode metadata response: %v", err)
+	}
 	if got.Metadata == nil {
 		t.Fatalf("Metadata is nil on a fresh issue; expected empty object")
 	}
@@ -254,12 +244,13 @@ func TestCreateIssueWithMetadata(t *testing.T) {
 		"status":   "todo",
 		"priority": "medium",
 		"metadata": map[string]any{
-			"source_provider": "tapd",
-			"tapd_workspace":  "47654106",
-			"tapd_wiki_id":    "1147654106001004154",
-			"source_title":    "User quick entry requirement",
-			"source_synced":   true,
-			"source_version":  1,
+			"source_provider":    "tapd",
+			"tapd_workspace_id":  "47654106",
+			"tapd_resource_type": "markdown_wiki",
+			"tapd_resource_id":   "1147654106001004154",
+			"source_fetch_title": "User quick entry requirement",
+			"source_synced":      true,
+			"source_version":     1,
 		},
 	})
 	testHandler.CreateIssue(w, req)
@@ -291,12 +282,12 @@ func TestCreateIssueWithMetadata(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&fetched); err != nil {
 		t.Fatalf("decode get response: %v", err)
 	}
-	if fetched.Metadata["tapd_wiki_id"] != "1147654106001004154" {
+	if fetched.Metadata["tapd_resource_id"] != "1147654106001004154" {
 		t.Fatalf("metadata not persisted: %+v", fetched.Metadata)
 	}
 
 	w = httptest.NewRecorder()
-	req = newRequest("GET", `/api/issues?metadata={"source_provider":"tapd","tapd_wiki_id":"1147654106001004154"}`, nil)
+	req = newRequest("GET", `/api/issues?metadata={"source_provider":"tapd","tapd_resource_id":"1147654106001004154"}`, nil)
 	testHandler.ListIssues(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListIssues metadata filter: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -358,7 +349,6 @@ func TestCreateIssueAutoDetectsTapdWikiSourceURL(t *testing.T) {
 		"tapd_workspace_id":                "47654106",
 		"tapd_resource_type":               "markdown_wiki",
 		"tapd_resource_id":                 "1147654106001004223",
-		"tapd_wiki_id":                     "1147654106001004223",
 		"source_fetch_provider":            "tapd_mcp",
 		"source_credential_scope":          "account",
 		"source_credential_inheritance":    "task_creator_or_trigger_user",

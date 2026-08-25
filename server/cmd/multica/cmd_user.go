@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -64,12 +63,10 @@ func init() {
 }
 
 func runUserProfileGet(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var me map[string]any
@@ -77,13 +74,11 @@ func runUserProfileGet(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("get user profile: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, me)
 	}
 
-	printUserProfileTable(os.Stdout, me)
-	return nil
+	return printUserProfileTable(os.Stdout, me)
 }
 
 func runUserProfileUpdate(cmd *cobra.Command, _ []string) error {
@@ -110,12 +105,10 @@ func runUserProfileUpdate(cmd *cobra.Command, _ []string) error {
 
 	body := map[string]any{"profile_description": desc}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var me map[string]any
@@ -123,25 +116,23 @@ func runUserProfileUpdate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("update user profile: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, me)
 	}
 
-	printUserProfileTable(os.Stdout, me)
-	return nil
+	return printUserProfileTable(os.Stdout, me)
 }
 
-func printUserProfileTable(out *os.File, me map[string]any) {
+func printUserProfileTable(out *os.File, me map[string]any) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	defer w.Flush()
 
-	fmt.Fprintf(w, "ID\t%s\n", strVal(me, "id"))
-	fmt.Fprintf(w, "NAME\t%s\n", strVal(me, "name"))
-	fmt.Fprintf(w, "ACCOUNT\t%s\n", strVal(me, "account"))
+	_, _ = fmt.Fprintf(w, "ID\t%s\n", strVal(me, "id"))
+	_, _ = fmt.Fprintf(w, "NAME\t%s\n", strVal(me, "name"))
+	_, _ = fmt.Fprintf(w, "ACCOUNT\t%s\n", strVal(me, "account"))
 	desc := strVal(me, "profile_description")
 	if desc == "" {
 		desc = "(not set)"
 	}
-	fmt.Fprintf(w, "PROFILE DESCRIPTION\t%s\n", desc)
+	_, _ = fmt.Fprintf(w, "PROFILE DESCRIPTION\t%s\n", desc)
+	return w.Flush()
 }

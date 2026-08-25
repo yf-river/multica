@@ -1,0 +1,150 @@
+package handler
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+func createAgentWithKey(t *testing.T, key string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/agents?workspace_id="+testWorkspaceID, body)
+	req.Header.Set("Idempotency-Key", key)
+	testHandler.CreateAgent(w, req)
+	return w
+}
+
+func cleanupResourceCreateRequest(t *testing.T, resourceType, key, query string, args ...any) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = testPool.Exec(ctx, query, args...)
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = $2 AND idempotency_key = $3`, testWorkspaceID, resourceType, key)
+	})
+}
+
+func assertConcurrentReplay(
+	t *testing.T,
+	wantStatus int,
+	create func() *httptest.ResponseRecorder,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	return assertConcurrentReplayBy(t, wantStatus, create, func(first, next *httptest.ResponseRecorder) bool {
+		return next.Body.String() == first.Body.String()
+	})
+}
+
+func assertConcurrentReplayBy(
+	t *testing.T,
+	wantStatus int,
+	create func() *httptest.ResponseRecorder,
+	sameResponse func(first, next *httptest.ResponseRecorder) bool,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	const callers = 8
+	responses := make(chan *httptest.ResponseRecorder, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses <- create()
+		}()
+	}
+	wg.Wait()
+	close(responses)
+
+	var first *httptest.ResponseRecorder
+	for response := range responses {
+		if response.Code != wantStatus {
+			t.Fatalf("create = %d %s", response.Code, response.Body.String())
+		}
+		if first == nil {
+			first = response
+		} else if !sameResponse(first, response) {
+			t.Fatalf("replay body differs\nfirst: %s\nnext: %s", first.Body.String(), response.Body.String())
+		}
+	}
+	return first
+}
+
+func installResourceCreateCompletionFailure(t *testing.T, resourceType, key string) func() {
+	t.Helper()
+	suffix := uuid.NewString()
+	functionName := quoteIdentifier("fail_" + resourceType + "_create_completion_" + suffix)
+	triggerName := quoteIdentifier("fail_" + resourceType + "_create_completion_trigger_" + suffix)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type = %s AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
+				RAISE EXCEPTION 'forced resource request completion failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, quoteSQLLiteral(resourceType), quoteSQLLiteral(key), triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}
+	t.Cleanup(cleanup)
+	return cleanup
+}
+
+func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
+	key := uuid.NewString()
+	name := "idempotent agent " + uuid.NewString()
+	cleanupResourceCreateRequest(t, "agent", key, `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+	body := map[string]any{
+		"name": name, "runtime_id": testRuntimeID, "scope": "personal",
+		"instructions": "Use the current contract",
+	}
+
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
+		return createAgentWithKey(t, key, body)
+	})
+
+	conflict := createAgentWithKey(t, key, map[string]any{
+		"name": name + " changed", "runtime_id": testRuntimeID, "scope": "personal",
+	})
+	if conflict.Code != http.StatusConflict || conflict.Body.String() != "{\"code\":\"idempotency_conflict\",\"error\":\"Idempotency-Key was already used with a different request\"}\n" {
+		t.Fatalf("conflict = %d %s", conflict.Code, conflict.Body.String())
+	}
+	var agents, requests int
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&agents)
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'agent' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	if agents != 1 || requests != 1 {
+		t.Fatalf("agents=%d requests=%d, want 1/1", agents, requests)
+	}
+}
+
+func TestCreateAgent_ResponseCompletionFailureRollsBackAgent(t *testing.T) {
+	key := uuid.NewString()
+	name := "failed agent " + uuid.NewString()
+	cleanupResourceCreateRequest(t, "agent", key, `DELETE FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+	installResourceCreateCompletionFailure(t, "agent", key)
+	ctx := context.Background()
+
+	response := createAgentWithKey(t, key, map[string]any{
+		"name": name, "runtime_id": testRuntimeID, "scope": "personal",
+	})
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("response = %d %s, want 500", response.Code, response.Body.String())
+	}
+	var agents, requests int
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM agent WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&agents)
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'agent' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	if agents != 0 || requests != 0 {
+		t.Fatalf("failed create left agents=%d requests=%d", agents, requests)
+	}
+}

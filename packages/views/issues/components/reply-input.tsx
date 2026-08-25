@@ -5,7 +5,7 @@ import { ContentEditor, FileDropOverlay } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
-import type { CommentDraftKey } from "@multica/core/issues/stores";
+import type { CommentDraftKey } from "@multica/core/issues/stores/comment-draft-store";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 import { CommentTriggerChips } from "./comment-trigger-chips";

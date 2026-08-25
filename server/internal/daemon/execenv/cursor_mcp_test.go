@@ -8,6 +8,16 @@ import (
 	"testing"
 )
 
+func newCursorMCPTestDirs(t *testing.T) (envRoot, workDir string) {
+	t.Helper()
+	envRoot = t.TempDir()
+	workDir = filepath.Join(envRoot, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir workDir: %v", err)
+	}
+	return envRoot, workDir
+}
+
 func TestCursorMcpApprovalKeyMatchesCursorAgent(t *testing.T) {
 	t.Parallel()
 
@@ -26,11 +36,7 @@ func TestCursorMcpApprovalKeyMatchesCursorAgent(t *testing.T) {
 func TestPrepareCursorMcpConfigWritesProjectConfigAndApprovals(t *testing.T) {
 	t.Parallel()
 
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workDir: %v", err)
-	}
+	envRoot, workDir := newCursorMCPTestDirs(t)
 	manifest := &sidecarManifest{}
 	mcpConfig := json.RawMessage(`{
 		"mcpServers": {
@@ -93,11 +99,7 @@ func TestPrepareCursorMcpConfigWritesProjectConfigAndApprovals(t *testing.T) {
 func TestPrepareCursorMcpConfigManagedEmptySet(t *testing.T) {
 	t.Parallel()
 
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workDir: %v", err)
-	}
+	envRoot, workDir := newCursorMCPTestDirs(t)
 	cursorDataDir, err := prepareCursorMcpConfig(envRoot, workDir, json.RawMessage(`{"mcpServers":{}}`), &sidecarManifest{})
 	if err != nil {
 		t.Fatalf("prepareCursorMcpConfig: %v", err)
@@ -122,11 +124,7 @@ func TestPrepareCursorMcpConfigManagedEmptySet(t *testing.T) {
 func TestPrepareCursorMcpConfigNilDoesNotTakeOwnership(t *testing.T) {
 	t.Parallel()
 
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workDir: %v", err)
-	}
+	envRoot, workDir := newCursorMCPTestDirs(t)
 	cursorDataDir, err := prepareCursorMcpConfig(envRoot, workDir, nil, &sidecarManifest{})
 	if err != nil {
 		t.Fatalf("prepareCursorMcpConfig: %v", err)
@@ -142,11 +140,7 @@ func TestPrepareCursorMcpConfigNilDoesNotTakeOwnership(t *testing.T) {
 func TestPrepareCursorMcpConfigRejectsMalformedConfig(t *testing.T) {
 	t.Parallel()
 
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workDir: %v", err)
-	}
+	envRoot, workDir := newCursorMCPTestDirs(t)
 	_, err := prepareCursorMcpConfig(envRoot, workDir, json.RawMessage(`{"mcpServers":{"bad":42}}`), &sidecarManifest{})
 	if err == nil {
 		t.Fatal("expected malformed server config to fail")

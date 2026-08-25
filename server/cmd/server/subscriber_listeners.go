@@ -2,176 +2,191 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// registerSubscriberListeners wires up event bus listeners that auto-subscribe
-// relevant users to issues. This ensures creators, assignees, and commenters
-// are automatically tracked as issue subscribers.
-func registerSubscriberListeners(bus *events.Bus, queries *db.Queries) {
-	// issue:created — subscribe creator + assignee (if different)
-	bus.Subscribe(protocol.EventIssueCreated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-		// Issues created via handler use IssueResponse; autopilot-created issues
-		// use map[string]any (see service/autopilot.go → issueToMap).
-		issue, ok := extractIssueFields(payload["issue"])
-		if !ok {
-			return
-		}
-
-		// Subscribe the creator
-		addSubscriber(bus, queries, e.WorkspaceID, issue.ID, issue.CreatorType, issue.CreatorID, "creator")
-
-		// Subscribe the assignee if exists and different from creator
-		if issue.AssigneeType != nil && issue.AssigneeID != nil &&
-			!(*issue.AssigneeType == issue.CreatorType && *issue.AssigneeID == issue.CreatorID) {
-			addSubscriber(bus, queries, e.WorkspaceID, issue.ID, *issue.AssigneeType, *issue.AssigneeID, "assignee")
-		}
-
-		// Subscribe @mentioned users in description
-		if issue.Description != nil && *issue.Description != "" {
-			for _, m := range parseMentions(*issue.Description) {
-				addSubscriber(bus, queries, e.WorkspaceID, issue.ID, m.Type, m.ID, "mentioned")
-			}
-		}
-	})
-
-	// issue:updated — subscribe new assignee or @mentioned users
-	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-		issue, ok := extractIssueFields(payload["issue"])
-		if !ok {
-			return
-		}
-
-		// Subscribe new assignee if assignee changed
-		if assigneeChanged, _ := payload["assignee_changed"].(bool); assigneeChanged {
-			if issue.AssigneeType != nil && issue.AssigneeID != nil {
-				addSubscriber(bus, queries, e.WorkspaceID, issue.ID, *issue.AssigneeType, *issue.AssigneeID, "assignee")
-			}
-		}
-
-		// Subscribe newly @mentioned users in description
-		if descriptionChanged, _ := payload["description_changed"].(bool); descriptionChanged && issue.Description != nil {
-			newMentions := parseMentions(*issue.Description)
-			if len(newMentions) > 0 {
-				prevMentioned := map[string]bool{}
-				if prevDescription, _ := payload["prev_description"].(*string); prevDescription != nil {
-					for _, m := range parseMentions(*prevDescription) {
-						prevMentioned[m.Type+":"+m.ID] = true
-					}
-				}
-				for _, m := range newMentions {
-					if !prevMentioned[m.Type+":"+m.ID] {
-						addSubscriber(bus, queries, e.WorkspaceID, issue.ID, m.Type, m.ID, "mentioned")
-					}
-				}
-			}
-		}
-	})
-
-	// comment:created — subscribe the commenter
-	bus.Subscribe(protocol.EventCommentCreated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-
-		// Comments created via handler use CommentResponse; agent comments from task.go use map[string]any
-		var issueID, authorType, authorID string
-		if comment, ok := payload["comment"].(handler.CommentResponse); ok {
-			issueID = comment.IssueID
-			authorType = comment.AuthorType
-			authorID = comment.AuthorID
-		} else if commentMap, ok := payload["comment"].(map[string]any); ok {
-			issueID, _ = commentMap["issue_id"].(string)
-			authorType, _ = commentMap["author_type"].(string)
-			authorID, _ = commentMap["author_id"].(string)
-		} else {
-			return
-		}
-		if issueID == "" || authorID == "" {
-			return
-		}
-
-		// Platform-authored system comments (MUL-2538 child-done parent notify)
-		// have author_type='system' and a zero UUID author. They must NOT
-		// add a subscriber row: issue_subscriber.user_type is constrained to
-		// ('member','agent'), and a "system" subscriber has no inbox to read
-		// anyway. Skip them at the side-effect boundary so the system event
-		// stays a pure WS broadcast for the timeline.
-		if authorType == "system" {
-			return
-		}
-
-		addSubscriber(bus, queries, e.WorkspaceID, issueID, authorType, authorID, "commenter")
-	})
+func registerDurableAudienceConsumers(dispatcher *eventoutbox.Dispatcher) error {
+	if err := dispatcher.Register(protocol.EventIssueCreated, "issue_audience", consumeIssueCreatedAudience); err != nil {
+		return err
+	}
+	if err := dispatcher.Register(protocol.EventIssueUpdated, "issue_audience", consumeIssueUpdatedAudience); err != nil {
+		return err
+	}
+	return dispatcher.Register(protocol.EventCommentCreated, "comment_audience", consumeCommentCreatedAudience)
 }
 
-func supportsIssueSubscriberUserType(userType string) bool {
-	return userType == "member" || userType == "agent"
+func consumeIssueCreatedAudience(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	payload, exists, err := loadIssueProjection(ctx, queries, event, "issue-created")
+	if err != nil || !exists {
+		return nil, err
+	}
+	subscriberEvents, err := projectIssueCreatedSubscribers(ctx, queries, payload)
+	if err != nil {
+		return nil, err
+	}
+	notificationEvents, err := projectIssueCreatedNotifications(ctx, queries, event, payload)
+	if err != nil {
+		return nil, err
+	}
+	return append(subscriberEvents, notificationEvents...), nil
 }
 
-// extractIssueFields normalizes an issue payload that may be either a
-// handler.IssueResponse struct (HTTP handler path) or a map[string]any
-// (autopilot service path) into a common shape.
-func extractIssueFields(v any) (handler.IssueResponse, bool) {
-	if issue, ok := v.(handler.IssueResponse); ok {
-		return issue, true
+func consumeIssueUpdatedAudience(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	payload, exists, err := loadIssueProjection(ctx, queries, event, "issue-updated")
+	if err != nil || !exists {
+		return nil, err
 	}
-	m, ok := v.(map[string]any)
-	if !ok {
-		return handler.IssueResponse{}, false
+	subscriberEvents, err := projectIssueUpdatedSubscribers(ctx, queries, payload)
+	if err != nil {
+		return nil, err
 	}
-	issue := handler.IssueResponse{}
-	issue.ID, _ = m["id"].(string)
-	issue.WorkspaceID, _ = m["workspace_id"].(string)
-	issue.CreatorType, _ = m["creator_type"].(string)
-	issue.CreatorID, _ = m["creator_id"].(string)
-	issue.AssigneeType, _ = m["assignee_type"].(*string)
-	issue.AssigneeID, _ = m["assignee_id"].(*string)
-	issue.Description, _ = m["description"].(*string)
-	if issue.ID == "" || issue.CreatorID == "" {
-		return handler.IssueResponse{}, false
+	notificationEvents, err := projectIssueUpdatedNotifications(ctx, queries, event, payload)
+	if err != nil {
+		return nil, err
 	}
-	return issue, true
+	return append(subscriberEvents, notificationEvents...), nil
 }
 
-// addSubscriber adds a user as an issue subscriber and publishes a
-// subscriber:added event for real-time frontend sync.
-func addSubscriber(bus *events.Bus, queries *db.Queries, workspaceID, issueID, userType, userID, reason string) {
-	if !supportsIssueSubscriberUserType(userType) {
-		return
+func consumeCommentCreatedAudience(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	payload, exists, err := loadCommentProjection(ctx, queries, event)
+	if err != nil || !exists {
+		return nil, err
 	}
-	err := queries.AddIssueSubscriber(context.Background(), db.AddIssueSubscriberParams{
-		IssueID:  parseUUID(issueID),
+	if payload.Comment.AuthorType == "system" {
+		return nil, nil
+	}
+	subscriberEvents, err := projectCommentCreatedSubscriber(ctx, queries, event, payload)
+	if err != nil {
+		return nil, err
+	}
+	notificationEvents, err := projectCommentCreatedNotifications(ctx, queries, event, payload)
+	if err != nil {
+		return nil, err
+	}
+	return append(subscriberEvents, notificationEvents...), nil
+}
+
+func subscriberEventAppender(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID string,
+	issueID string,
+	emitted *[]events.Event,
+) func(userType, userID, reason string) error {
+	return func(userType, userID, reason string) error {
+		created, ok, err := addSubscriber(ctx, queries, workspaceID, issueID, userType, userID, reason)
+		if err != nil {
+			return err
+		}
+		if ok {
+			*emitted = append(*emitted, created)
+		}
+		return nil
+	}
+}
+
+func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, payload issueEventPayload) ([]events.Event, error) {
+	issue := payload.Issue
+	emitted := make([]events.Event, 0, 4)
+	appendSubscriber := subscriberEventAppender(ctx, queries, issue.WorkspaceID, issue.ID, &emitted)
+	if err := appendSubscriber(issue.CreatorType, issue.CreatorID, "creator"); err != nil {
+		return nil, err
+	}
+	if issue.AssigneeType != nil && issue.AssigneeID != nil &&
+		(*issue.AssigneeType != issue.CreatorType || *issue.AssigneeID != issue.CreatorID) {
+		if err := appendSubscriber(*issue.AssigneeType, *issue.AssigneeID, "assignee"); err != nil {
+			return nil, err
+		}
+	}
+	if issue.Description != nil {
+		for _, mentioned := range util.ParseMentions(*issue.Description) {
+			if err := appendSubscriber(mentioned.Type, mentioned.ID, "mentioned"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return emitted, nil
+}
+
+func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, payload issueEventPayload) ([]events.Event, error) {
+	issue := payload.Issue
+	emitted := make([]events.Event, 0, 4)
+	appendSubscriber := subscriberEventAppender(ctx, queries, issue.WorkspaceID, issue.ID, &emitted)
+	if payload.AssigneeChanged && issue.AssigneeType != nil && issue.AssigneeID != nil {
+		if err := appendSubscriber(*issue.AssigneeType, *issue.AssigneeID, "assignee"); err != nil {
+			return nil, err
+		}
+	}
+	if payload.DescriptionChanged && issue.Description != nil {
+		previous := make(map[string]bool)
+		if payload.PrevDescription != nil {
+			for _, mentioned := range util.ParseMentions(*payload.PrevDescription) {
+				previous[mentioned.Type+":"+mentioned.ID] = true
+			}
+		}
+		for _, mentioned := range util.ParseMentions(*issue.Description) {
+			if previous[mentioned.Type+":"+mentioned.ID] {
+				continue
+			}
+			if err := appendSubscriber(mentioned.Type, mentioned.ID, "mentioned"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return emitted, nil
+}
+
+func projectCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {
+	comment := payload.Comment
+	if comment.AuthorID == "" {
+		return nil, nil
+	}
+	created, ok, err := addSubscriber(ctx, queries, event.WorkspaceID, comment.IssueID, comment.AuthorType, comment.AuthorID, "commenter")
+	if err != nil || !ok {
+		return nil, err
+	}
+	return []events.Event{created}, nil
+}
+
+func addSubscriber(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID string,
+	issueID string,
+	userType string,
+	userID string,
+	reason string,
+) (events.Event, bool, error) {
+	if !isMemberOrAgentActorType(userType) {
+		return events.Event{}, false, nil
+	}
+	parsedIssueID, err := util.ParseUUID(issueID)
+	if err != nil {
+		return events.Event{}, false, fmt.Errorf("subscriber projection has invalid issue ID: %w", err)
+	}
+	parsedUserID, err := util.ParseUUID(userID)
+	if err != nil {
+		return events.Event{}, false, fmt.Errorf("subscriber projection has invalid %s ID: %w", userType, err)
+	}
+	inserted, err := queries.AddIssueSubscriberIfIssueExists(ctx, db.AddIssueSubscriberIfIssueExistsParams{
+		IssueID:  parsedIssueID,
 		UserType: userType,
-		UserID:   parseUUID(userID),
+		UserID:   parsedUserID,
 		Reason:   reason,
 	})
 	if err != nil {
-		slog.Error("failed to add issue subscriber",
-			"issue_id", issueID,
-			"user_type", userType,
-			"user_id", userID,
-			"reason", reason,
-			"error", err,
-		)
-		return
+		return events.Event{}, false, fmt.Errorf("add %s issue subscriber %s: %w", reason, userID, err)
 	}
-
-	bus.Publish(events.Event{
+	if inserted == 0 {
+		return events.Event{}, false, nil
+	}
+	return events.Event{
 		Type:        protocol.EventSubscriberAdded,
 		WorkspaceID: workspaceID,
 		Payload: map[string]any{
@@ -180,5 +195,5 @@ func addSubscriber(bus *events.Bus, queries *db.Queries, workspaceID, issueID, u
 			"user_id":   userID,
 			"reason":    reason,
 		},
-	})
+	}, true, nil
 }

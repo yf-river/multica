@@ -91,9 +91,8 @@ multica issue show <issue-id>             # 看 task 历史
 
 **可能原因**：
 
-1. **`rollup_task_usage_hourly()` 没被认领** —— Usage / Runtime 看板读的是派生表 `task_usage_hourly`，这张表必须靠 `rollup_task_usage_hourly()` 周期性填充。后端通过 DB 调度器（`sys_cron_executions`）在进程内跑 rollup；所有副本长时间下线会让这张表里没有最近的 SUCCESS 行。
-2. **`pg_cron` 作为兼容路径配着、但指向了错的库** —— `pg_cron.database_name` 默认是 `postgres`；如果你的 Multica 数据库名不是 `postgres`，调度任务根本看不到 `rollup_task_usage_hourly()`。进程内调度器不依赖这一项，但如果你刻意拿掉了进程内调度而靠 `pg_cron`，DB 名就必须对得上。
-3. **handler 被认领了、但静默报错** —— 比如 DB role / search_path 配错了。看 `sys_cron_executions` 里的 FAILED 审计行。
+1. **`rollup_task_usage_hourly()` 没被认领** —— Usage / Runtime 看板读的是派生表 `task_usage_hourly`，由后端进程内调度器通过 `sys_cron_executions` 周期性认领；所有副本长时间下线会让表里没有最近的 SUCCESS 行。
+2. **执行失败** —— 数据库 schema 不完整、DB role 或 `search_path` 配置错误时，调度器会在 `sys_cron_executions` 写入 FAILED 审计行。
 
 **怎么查**：
 
@@ -113,19 +112,13 @@ SELECT plan_time, status, attempt, runner_id,
 -- watermark —— 如果还是 1970-01-01，说明 rollup 从来没跑过
 SELECT watermark_at FROM task_usage_hourly_rollup_state;
 
--- 兼容路径：以前注册过 pg_cron，确认装没装、指对了库没
-SELECT * FROM pg_available_extensions WHERE name = 'pg_cron';
-SHOW shared_preload_libraries;
-SELECT jobname, schedule, database, active FROM cron.job;
 ```
 
 **怎么修**：
 
 - 确认至少一个后端副本里调度器真的在跑 —— 每 30 秒应该往 `sys_cron_executions` 的 `rollup_task_usage_hourly` 加一条 SUCCESS 行。
 - 手动跑一次 SQL 验证函数本身没问题：`SELECT rollup_task_usage_hourly();` —— 刷新看板；如果数字出来了，SQL 这层 OK，问题在调度器认领路径上。
-- 如果 `sys_cron_executions` 表不存在，说明数据库不是当前完整 schema；备份所需数据后重建数据库。
-
-`--sleep-between-slices=2s` 在有多年历史的生产库上是个比较克制的默认值。如果你只想保留最近 N 个月、可以接受永久丢掉更老的桶，用 `--months-back N --force-partial`。
+- 如果 `sys_cron_executions` 表不存在，重启后端让当前 migration 跑完，或手动执行 `migrate up`。
 
 ## 端口冲突
 

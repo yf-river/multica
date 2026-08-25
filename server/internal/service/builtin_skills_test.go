@@ -5,18 +5,11 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"gopkg.in/yaml.v3"
 )
 
-// Built-in skills are the platform's standard "template" skills. These evals
-// pin the template every skill must follow and — crucially — couple each
-// skill's documented contract to the real backend behavior it describes, so a
-// drift in the source-of-truth (e.g. the mention regex) breaks CI instead of
-// silently turning the skill into a lie agents act on.
-//
-// The evals live in a _test.go file on purpose: anything *inside* a skill
-// directory is walked into AgentSkillData.Files and shipped to agent machines
-// (see loadBuiltinSkill). Tests must stay out of that payload.
+// Tests stay outside embedded skill directories so they are not shipped to agents.
 
 const (
 	// maxSkillBodyLines is Anthropic's L2 budget for a SKILL.md body
@@ -28,19 +21,14 @@ const (
 	maxDescriptionChars = 1024
 )
 
-// TestBuiltinSkillsConformToTemplate enforces the standard-template invariants
-// on every built-in skill, current and future. A new skill that violates the
-// shape fails here without anyone having to remember the rules.
 func TestBuiltinSkillsConformToTemplate(t *testing.T) {
-	skills := loadBuiltinSkills()
+	skills := (&TaskService{}).BuiltinSkills()
 	if len(skills) == 0 {
 		t.Fatal("no built-in skills loaded; embed or layout is broken")
 	}
 
 	for _, skill := range skills {
 		t.Run(skill.Name, func(t *testing.T) {
-			// The multica- prefix keeps the on-disk slug from colliding with a
-			// user-authored workspace skill.
 			if !strings.HasPrefix(skill.Name, "multica-") {
 				t.Errorf("skill name %q must carry the multica- prefix", skill.Name)
 			}
@@ -74,19 +62,9 @@ func TestBuiltinSkillsConformToTemplate(t *testing.T) {
 	}
 }
 
-// TestBuiltinSkillsFrontmatterIsStrictYAML is the regression guard for MUL-3100
-// / GitHub #3851: a built-in SKILL.md whose frontmatter is not valid YAML 1.2
-// (the canonical break is an unquoted `: ` inside the description) is silently
-// dropped by strict runtimes like Codex, so the agent runs without that
-// platform-contract skill.
-//
-// This check is deliberately separate from TestBuiltinSkillsConformToTemplate:
-// that test reads the frontmatter through splitFrontmatter, a naive line parser
-// that splits on the first ':' and never runs a YAML parse — so it passes even
-// on the broken files. Only a real yaml.Unmarshal reproduces what Codex does,
-// which is exactly what is needed to catch this class of bug before it ships.
+// Strict runtimes reject malformed YAML that the lightweight scalar reader accepts.
 func TestBuiltinSkillsFrontmatterIsStrictYAML(t *testing.T) {
-	skills := loadBuiltinSkills()
+	skills := (&TaskService{}).BuiltinSkills()
 	if len(skills) == 0 {
 		t.Fatal("no built-in skills loaded; embed or layout is broken")
 	}
@@ -119,10 +97,6 @@ func TestBuiltinSkillsFrontmatterIsStrictYAML(t *testing.T) {
 	}
 }
 
-// TestMentioningSkillFollowsContractFrontmatter locks the reference template:
-// the mentioning skill is a context-triggered platform-contract skill, so it
-// must declare user-invocable:false and fence itself to the multica CLI. New
-// contract skills should copy this shape.
 func TestMentioningSkillFollowsContractFrontmatter(t *testing.T) {
 	skill, ok := findSkill(t, "multica-mentioning")
 	if !ok {
@@ -138,12 +112,6 @@ func TestMentioningSkillFollowsContractFrontmatter(t *testing.T) {
 	}
 }
 
-// TestMentioningSkillTeachesTheParserContract is the eval that gives the skill
-// its value: it proves the skill teaches exactly what util.ParseMentions
-// enforces. The skill's "Incorrect" examples must parse to nothing (the
-// @gpt-boy class of bug: a name where a UUID belongs fails silently), and its
-// "Correct" example must parse. If mention.go:16 drifts, this breaks and the
-// skill's claims must be re-checked.
 func TestMentioningSkillTeachesTheParserContract(t *testing.T) {
 	const uuid = "7f3a1b2c-0000-4000-8000-000000000abc"
 
@@ -153,34 +121,26 @@ func TestMentioningSkillTeachesTheParserContract(t *testing.T) {
 		want    []util.Mention
 	}{
 		{
-			// Skill: "Writing [@Alice](mention://member/Alice) does NOTHING."
-			// 'l'/'i' are not hex, so the id fails to parse — link is dead.
 			name:    "name where a uuid belongs is silently dead",
 			content: "[@Alice](mention://member/Alice) please review",
 			want:    nil,
 		},
 		{
-			// Skill: a bare @name is plain text, nobody is notified.
 			name:    "bare @name is plain text",
 			content: "@alice please review",
 			want:    nil,
 		},
 		{
-			// Skill Step 2: type and id source matched → fires.
 			name:    "real uuid with matching type fires",
 			content: "[@Alice](mention://member/" + uuid + ") please review",
 			want:    []util.Mention{{Type: "member", ID: uuid}},
 		},
 		{
-			// Skill: @all uses the literal `all`, never a UUID.
 			name:    "all uses the literal all",
 			content: "[@all](mention://all/all) heads up",
 			want:    []util.Mention{{Type: "all", ID: "all"}},
 		},
 		{
-			// Skill: "Using the wrong type for an id points at the wrong
-			// entity." The link still parses — it just resolves wrong — which
-			// is exactly why the skill stresses matching type to id source.
 			name:    "wrong type still parses (points at wrong entity)",
 			content: "[@Bot](mention://member/" + uuid + ")",
 			want:    []util.Mention{{Type: "member", ID: uuid}},
@@ -216,9 +176,6 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 		t.Errorf("allowed-tools = %q, want access to the Multica CLI", got)
 	}
 
-	// Contract anchors only — exact file:line citations live in the skill's
-	// references/source-map.md, not here, so a downstream main merge that
-	// shifts a line cannot rot this test into pinning a stale lie.
 	mustContain := []string{
 		"multica issue mr create <issue-id>",
 		"multica issue mr list <issue-id> --output json",
@@ -286,6 +243,8 @@ func TestSkillImportingSkillCoversWorkspaceImportContracts(t *testing.T) {
 		"skipped",
 		"409",
 		"existing_skill",
+		"Idempotency-Key",
+		"idempotency_conflict",
 		"id",
 		"name",
 		"npx skills add",
@@ -352,13 +311,7 @@ func TestCreatingAgentsSkillCoversAgentCreationContracts(t *testing.T) {
 	}
 
 	mustNotContain := []string{
-		"--from-template",
-		"/api/agent-templates",
-		"template_slug",
-		"curated template",
 		"copy this parameter list",
-		// De-coaching: this skill states source-backed contracts, it does not
-		// teach a generic how-to methodology.
 		"Define the job first",
 		"Run a low-risk task",
 		"Decision flow",
@@ -513,18 +466,18 @@ func TestProjectsAndResourcesSkillCoversDurableContext(t *testing.T) {
 	}
 }
 
-func findSkill(t *testing.T, name string) (AgentSkillData, bool) {
+func findSkill(t *testing.T, name string) (protocol.TaskSkill, bool) {
 	t.Helper()
-	for _, s := range loadBuiltinSkills() {
+	for _, s := range (&TaskService{}).BuiltinSkills() {
 		if s.Name == name {
 			return s, true
 		}
 	}
 	t.Errorf("built-in skill %q not found", name)
-	return AgentSkillData{}, false
+	return protocol.TaskSkill{}, false
 }
 
-func skillHasFile(skill AgentSkillData, path string) bool {
+func skillHasFile(skill protocol.TaskSkill, path string) bool {
 	for _, f := range skill.Files {
 		if f.Path == path {
 			return true

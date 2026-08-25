@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, AgentRuntime } from "@multica/core/types";
+import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enAgents from "../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../test/agent-fixtures";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
@@ -17,7 +18,11 @@ vi.mock("./tabs/activity-tab", () => ({
   ActivityTab: () => <div>activity-tab</div>,
 }));
 vi.mock("./tabs/instructions-tab", () => ({
-  InstructionsTab: () => <div>instructions-tab</div>,
+  InstructionsTab: ({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) => (
+    <button type="button" onClick={() => onDirtyChange?.(true)}>
+      mark-instructions-dirty
+    </button>
+  ),
 }));
 vi.mock("./tabs/skills-tab", () => ({
   SkillsTab: () => <div>skills-tab</div>,
@@ -45,7 +50,7 @@ vi.mock("../../common/actor-issues-panel", () => ({
 const larkListingRef = vi.hoisted(() => ({
   current: { installations: [] as unknown[], configured: false },
 }));
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 vi.mock("@multica/core/lark", () => ({
@@ -55,35 +60,13 @@ vi.mock("@multica/core/lark", () => ({
   }),
 }));
 
-import { AgentOverviewPane } from "./agent-overview-pane";
+import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
 
-const baseAgent: Agent = {
-  id: "agent-1",
-  workspace_id: "ws-1",
-  runtime_id: "runtime-1",
-  name: "Agent",
-  description: "",
-  instructions: "",
-  avatar_url: null,
-  runtime_mode: "local",
-  runtime_config: {},
-  custom_args: [],
-  scope: "workspace",
-  status: "idle",
-  max_concurrent_tasks: 1,
-  model: "",
-  owner_id: "user-1",
-  skills: [],
-  created_at: "2026-05-28T00:00:00Z",
-  updated_at: "2026-05-28T00:00:00Z",
-  archived_at: null,
-  archived_by: null,
-};
+const baseAgent = makeAgent();
 
 function makeRuntime(provider: string): AgentRuntime {
   return {
     id: "runtime-1",
-    workspace_id: "ws-1",
     daemon_id: null,
     name: "Runtime",
     runtime_mode: "local",
@@ -94,27 +77,37 @@ function makeRuntime(provider: string): AgentRuntime {
     metadata: {},
     owner_id: null,
     scope: "personal",
+    profile_id: null,
     last_seen_at: null,
-    created_at: "2026-05-28T00:00:00Z",
-    updated_at: "2026-05-28T00:00:00Z",
   };
 }
 
-function renderPane(runtimes: AgentRuntime[]) {
+interface NavigationProps {
+  navIntent?: DetailTab | null;
+  onNavIntentHandled?: () => void;
+}
+
+function renderPane(runtimes: AgentRuntime[], navigationProps: NavigationProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const renderTree = (props: NavigationProps) => (
     <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <AgentOverviewPane
           agent={baseAgent}
           runtimes={runtimes}
           onUpdate={vi.fn().mockResolvedValue(undefined)}
+          {...props}
         />
       </QueryClientProvider>
-    </I18nProvider>,
+    </I18nProvider>
   );
+  const result = render(renderTree(navigationProps));
+  return {
+    ...result,
+    rerenderPane: (props: NavigationProps) => result.rerender(renderTree(props)),
+  };
 }
 
 beforeEach(() => {
@@ -169,5 +162,26 @@ describe("AgentOverviewPane 集成 tab visibility", () => {
     expect(
       screen.queryByRole("button", { name: /^集成$/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentOverviewPane unsaved navigation guard", () => {
+  it("routes a sibling navigation intent through the dirty-tab confirmation", () => {
+    const onNavIntentHandled = vi.fn();
+    const { rerenderPane } = renderPane([makeRuntime("claude")], {
+      navIntent: null,
+      onNavIntentHandled,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "指令" }));
+    fireEvent.click(screen.getByRole("button", { name: "mark-instructions-dirty" }));
+    rerenderPane({ navIntent: "skills", onNavIntentHandled });
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByText("放弃未保存的修改？")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.getByRole("button", { name: "mark-instructions-dirty" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onNavIntentHandled).toHaveBeenCalledTimes(1);
   });
 });

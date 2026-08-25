@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BookOpenText,
@@ -14,7 +14,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { providerSupportsMcpConfig } from "@multica/core/agents";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import {
   AlertDialog,
@@ -164,14 +164,14 @@ export function AgentOverviewPane({
     ? activeTab
     : "activity";
 
-  const requestTabChange = (next: DetailTab) => {
+  const requestTabChange = useCallback((next: DetailTab) => {
     if (next === activeTab) return;
     if (activeDirty) {
       setPendingTab(next);
       return;
     }
     setActiveTab(next);
-  };
+  }, [activeDirty, activeTab]);
 
   const commitTabChange = () => {
     if (pendingTab) {

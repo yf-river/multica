@@ -9,12 +9,12 @@ import { InstructionsEditor } from "./instructions-editor";
 import { SkillMultiSelect } from "./skill-multi-select";
 import { AvatarPicker } from "./avatar-picker";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
-  AgentScope,
-  RuntimeDevice,
+  ResourceScope,
+  AgentRuntime,
   MemberWithUser,
   CreateAgentRequest,
 } from "@multica/core/types";
@@ -36,8 +36,6 @@ import {
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
 
-const DEFAULT_CODEBUDDY_AGENT_MODEL = "deepseek-v4-pro-ioa";
-
 export function CreateAgentDialog({
   runtimes,
   runtimesLoading,
@@ -48,7 +46,7 @@ export function CreateAgentDialog({
   onClose,
   onCreate,
 }: {
-  runtimes: RuntimeDevice[];
+  runtimes: AgentRuntime[];
   runtimesLoading?: boolean;
   members: MemberWithUser[];
   currentUserId: string | null;
@@ -67,11 +65,9 @@ export function CreateAgentDialog({
   // Members tab.
   squadId?: string;
   onClose: () => void;
-  // Returns the created Agent so the dialog can run a follow-up
-  // setAgentSkills with the IDs the user picked in the form. Pre-skill-
-  // section callers can keep returning `void`; the dialog tolerates a
-  // falsy return (no follow-up runs).
-  onCreate: (data: CreateAgentRequest) => Promise<Agent | void>;
+  // Returns the created Agent so follow-up skill and squad mutations use the
+  // authoritative server identity.
+  onCreate: (data: CreateAgentRequest) => Promise<Agent>;
 }) {
   const { t } = useT("agents");
   const isDuplicate = !!template;
@@ -83,7 +79,7 @@ export function CreateAgentDialog({
     template ? `${template.name}${t(($) => $.create_dialog.duplicate_copy_suffix)}` : "",
   );
   const [description, setDescription] = useState(template?.description ?? "");
-  const [scope, setScope] = useState<AgentScope>(
+  const [scope, setScope] = useState<ResourceScope>(
     template?.scope ?? "personal",
   );
   const [model, setModel] = useState(template?.model ?? "");
@@ -162,30 +158,18 @@ export function CreateAgentDialog({
     try {
       const trimmedInstructions = instructions.trim();
       const trimmedModel = model.trim();
-      const effectiveModel =
-        trimmedModel ||
-        (selectedRuntime.provider.toLowerCase() === "codebuddy"
-          ? DEFAULT_CODEBUDDY_AGENT_MODEL
-          : "");
       const data: CreateAgentRequest = {
         name: name.trim(),
         description: description.trim(),
         runtime_id: selectedRuntime.id,
         scope,
-        model: effectiveModel || undefined,
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
       };
+      if (trimmedModel) data.model = trimmedModel;
       if (template) {
-        // Duplicate path: forward the hidden config fields the source
-        // agent had so the clone is functional out of the box (args /
-        // concurrency). Skills flow through the dialog form. As of
-        // MUL-2600 the agent resource shape no longer carries
-        // custom_env values, so duplication cannot copy env at all —
-        // the user has to re-set env on the clone via the env tab
-        // (which now goes through the audited `/env` endpoint). The
-        // dialog's create call still accepts custom_env at create
-        // time, but the source values aren't available here.
+        // Environment secrets are never present on Agent resources and
+        // therefore cannot be copied from a template.
         if (template.custom_args.length) data.custom_args = template.custom_args;
         if (template.max_concurrent_tasks) {
           data.max_concurrent_tasks = template.max_concurrent_tasks;
@@ -193,10 +177,8 @@ export function CreateAgentDialog({
       }
       const createdAgent = await onCreate(data);
       // Follow-up: attach selected skills to the newly created agent.
-      // onCreate returns the created Agent for this path; if the caller
-      // doesn't return it we fall back to skipping (preserves
-      // backward compatibility with non-skill-aware callers).
-      if (createdAgent && selectedSkillIds.size > 0) {
+      // onCreate returns the authoritative created Agent for follow-up writes.
+      if (selectedSkillIds.size > 0) {
         try {
           await api.setAgentSkills(createdAgent.id, {
             skill_ids: [...selectedSkillIds],
@@ -215,12 +197,9 @@ export function CreateAgentDialog({
           );
         }
       }
-      // Squad context: attach the agent after skills land so the
-      // squad's Members tab shows the agent with its skills already
-      // in place. Atomicity is best-effort by design (see plan in
-      // MUL-2178) — a partial failure surfaces a warning toast and
-      // the user can retry from the Add Member dialog.
-      if (createdAgent && squadId) {
+      // Squad attachment is a separate write; its helper reports a partial
+      // failure without discarding the Agent that was already created.
+      if (squadId) {
         await attachToSquad(createdAgent.id, createdAgent.name);
       }
       onClose();

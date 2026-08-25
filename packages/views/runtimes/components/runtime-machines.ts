@@ -2,7 +2,7 @@ import { deriveRuntimeHealth, type RuntimeHealth } from "@multica/core/runtimes"
 import type { AgentRuntime } from "@multica/core/types";
 import { formatDeviceInfo } from "../utils";
 
-export type RuntimeMachineSection = "local" | "remote" | "cloud";
+type RuntimeMachineSection = "local" | "remote" | "cloud";
 export type RuntimeMachineFilter = "all" | "online" | "issues";
 
 interface RuntimeWorkloadSummary {
@@ -17,7 +17,6 @@ export interface RuntimeMachine {
   subtitle: string | null;
   deviceInfo: string | null;
   cliVersion: string | null;
-  mode: AgentRuntime["runtime_mode"];
   section: RuntimeMachineSection;
   /** Always false on web — the "this machine" marker was desktop-only. */
   isCurrent: boolean;
@@ -28,7 +27,6 @@ export interface RuntimeMachine {
   runningCount: number;
   queuedCount: number;
   providerNames: string[];
-  lastSeenAt: string | null;
 }
 
 interface RuntimeMachineOptions {
@@ -84,6 +82,29 @@ export function buildRuntimeMachines(
   );
 
   return machines.sort(compareRuntimeMachines);
+}
+
+function placeholderLocalMachine(
+  options: RuntimeMachineOptions,
+): RuntimeMachine {
+  const daemonId = options.localDaemonId ?? null;
+  return {
+    id: daemonId ? `local:${daemonId}` : "local:placeholder",
+    daemonId,
+    title: options.localMachineName ?? "This machine",
+    subtitle: null,
+    deviceInfo: null,
+    cliVersion: null,
+    section: "local",
+    isCurrent: true,
+    health: "offline",
+    runtimes: [],
+    onlineCount: 0,
+    issueCount: 0,
+    runningCount: 0,
+    queuedCount: 0,
+    providerNames: [],
+  };
 }
 
 export function filterRuntimeMachines(
@@ -173,9 +194,8 @@ function finalizeRuntimeMachine(
     subtitle,
     deviceInfo,
     cliVersion: commonCliVersion(runtimes),
-    mode: draft.mode,
-    section: draft.mode === "cloud" ? "cloud" : "remote",
-    isCurrent: false,
+    section: isCurrent ? "local" : draft.mode === "cloud" ? "cloud" : "remote",
+    isCurrent,
     health,
     runtimes,
     onlineCount,
@@ -183,7 +203,6 @@ function finalizeRuntimeMachine(
     runningCount: workload.runningCount,
     queuedCount: workload.queuedCount,
     providerNames,
-    lastSeenAt: latestLastSeenAt(runtimes),
   };
 }
 
@@ -248,9 +267,8 @@ function compactDeviceInfo(
   if (!primary) return null;
 
   // Reshape OS+arch produced by formatDeviceInfo (e.g. "macOS (x86_64)")
-  // into the more scannable "x86_64 macOS". Version strings — the only
-  // other shape that historically carried parens — are filtered out
-  // above so they can't pollute the per-machine subtitle.
+  // into the more scannable "x86_64 macOS". Version strings are filtered
+  // out above so they cannot become machine subtitles.
   const osArch = primary.match(/^(.+?)\s+\(([^)]+)\)$/);
   if (osArch?.[1] && osArch[2]) {
     return `${osArch[2]} ${osArch[1]}`;
@@ -265,17 +283,6 @@ function compactDeviceInfo(
 // "Claude Code …", drowning out actual per-machine differences).
 function isAgentVersionLike(part: string): boolean {
   return /(?:^|\s)v?\d+\.\d+\.\d+/.test(part);
-}
-
-function latestLastSeenAt(runtimes: AgentRuntime[]): string | null {
-  let latest: string | null = null;
-  for (const runtime of runtimes) {
-    if (!runtime.last_seen_at) continue;
-    if (!latest || new Date(runtime.last_seen_at) > new Date(latest)) {
-      latest = runtime.last_seen_at;
-    }
-  }
-  return latest;
 }
 
 function commonCliVersion(runtimes: AgentRuntime[]): string | null {

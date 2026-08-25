@@ -26,6 +26,7 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy } from "../../common/collections";
 import { ResourceScopeBadge } from "../../common/resource-scope";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { useT } from "../../i18n";
@@ -34,8 +35,8 @@ import { isSelfHealingRuntime } from "../utils";
 // DeleteRuntimeDialog is the single confirmation surface for runtime
 // deletion across the list-page kebab and the detail-page Diagnostics
 // card. It runs in two modes that share the same shell — light when no
-// agents are bound (matches the legacy "are you sure" prompt) and
-// cascade when active agents would be archived as part of the delete.
+// agents are bound and cascade when active agents would be archived as
+// part of the delete.
 //
 // Mode is decided dynamically:
 //   1. Initial: peek at the cached agent list and pick light vs cascade
@@ -54,7 +55,7 @@ import { isSelfHealingRuntime } from "../utils";
 // owner click through, and this dialog raises a self_heal warning banner
 // so the user knows the daemon will re-register a fresh runtime row
 // unless they stop the daemon process first. Confirm proceeds.
-export interface DeleteRuntimeDialogProps {
+interface DeleteRuntimeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   runtime: AgentRuntime;
@@ -186,8 +187,8 @@ export function DeleteRuntimeDialog({
     onOpenChange(next);
   };
 
-  // Light mode keeps the legacy short copy. Cascade mode mirrors the plan
-  // 赵刚 wrote: destructive title with the count, a destructive warning
+  // Light mode keeps the short confirmation copy. Cascade mode uses a
+  // destructive title with the count, a destructive warning
   // banner, the agent table, then a checkbox confirm whose label restates
   // the consequences in the same words as the warning.
   return (
@@ -228,12 +229,8 @@ export function DeleteRuntimeDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Self-heal notice — informational banner shown when the runtime is a live
-// local daemon that re-registers itself within seconds of a server-side
-// delete. Replaces the old "block the affordance and toast on attempt"
-// dance (MUL-3352): the owner now sees the warning *before* confirming
-// rather than discovering it only after they've been told they cannot
-// proceed.
+// Live local daemons re-register shortly after deletion, so confirmation
+// must explain that consequence without weakening the owner's permission.
 // ---------------------------------------------------------------------------
 
 function SelfHealNotice({ runtime }: { runtime: AgentRuntime }) {
@@ -251,9 +248,7 @@ function SelfHealNotice({ runtime }: { runtime: AgentRuntime }) {
 }
 
 // ---------------------------------------------------------------------------
-// Light mode — no active agents, classic "are you sure" prompt. Title and
-// description match the legacy AlertDialog so existing screenshots / muscle
-// memory still apply.
+// Light mode — no active agents, short "are you sure" prompt.
 // ---------------------------------------------------------------------------
 
 function LightBody({
@@ -439,11 +434,10 @@ function AgentPlanTable({
   currentUserId: string | null;
 }) {
   const { t } = useT("runtimes");
-  const memberById = useMemo(() => {
-    const map = new Map<string, MemberWithUser>();
-    for (const m of members) map.set(m.user_id, m);
-    return map;
-  }, [members]);
+  const memberById = useMemo(
+    () => indexBy(members, (member) => member.user_id),
+    [members],
+  );
 
   return (
     <div className="mt-3 overflow-hidden rounded-md border">

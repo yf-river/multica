@@ -15,11 +15,9 @@ export type IssueAssigneeType = "member" | "agent" | "squad";
 
 export interface IssueReaction {
   id: string;
-  issue_id: string;
   actor_type: string;
   actor_id: string;
   emoji: string;
-  created_at: string;
 }
 
 /**
@@ -29,13 +27,10 @@ export interface IssueReaction {
  * present in responses (empty object when unset) so reads don't need a
  * nil guard on the parent field.
  */
-export type IssueMetadataValue = string | number | boolean;
-export type IssueMetadata = Record<string, IssueMetadataValue>;
+export type IssueMetadata = Record<string, string | number | boolean>;
 
 export interface Issue {
   id: string;
-  workspace_id: string;
-  number: number;
   identifier: string;
   title: string;
   description: string | null;
@@ -78,6 +73,4 @@ export interface Issue {
   labels?: Label[];
   created_at: string;
   updated_at: string;
-  work_started_at?: string | null;
-  work_completed_at?: string | null;
 }

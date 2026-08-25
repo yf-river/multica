@@ -11,12 +11,8 @@ const { detail, deletePin, navigation, pins } = vi.hoisted(() => ({
     current: [
       {
         id: "pin-1",
-        workspace_id: "ws-1",
-        user_id: "user-1",
         item_type: "issue" as const,
         item_id: "issue-1",
-        position: 0,
-        created_at: "2026-05-06T00:00:00Z",
       },
     ],
   },
@@ -165,10 +161,7 @@ vi.mock("@multica/core/api", async (importOriginal) => {
 });
 vi.mock("@multica/core/inbox/queries", () => ({ deduplicateInboxItems: (items: unknown[]) => items, inboxKeys: { list: () => ["inbox"] } }));
 vi.mock("@multica/core/issues/queries", () => ({ issueDetailOptions: () => ({ queryKey: ["issue"] }) }));
-vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
-  useCreateModeStore: { getState: () => ({ lastMode: "agent" }) },
-  openCreateIssueWithPreference: vi.fn(),
-}));
+vi.mock("@multica/core/issues", () => ({ openCreateIssue: vi.fn() }));
 vi.mock("@multica/core/issues/stores/draft-store", () => ({ useIssueDraftStore: () => false }));
 vi.mock("@multica/core/modals", () => ({ useModalStore: { getState: () => ({ modal: null, open: vi.fn() }) } }));
 vi.mock("@multica/core/pins/mutations", () => ({ useDeletePin: () => ({ mutate: deletePin }), useReorderPins: () => ({ mutate: vi.fn() }) }));

@@ -15,8 +15,8 @@ const cancelAgentTasksByRuntimeOrAgent = `-- name: CancelAgentTasksByRuntimeOrAg
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
 WHERE (runtime_id = ANY($1::uuid[]) OR agent_id = ANY($2::uuid[]))
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id
+  AND status IN ('queued', 'dispatched', 'running')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, initiator_user_id
 `
 
 type CancelAgentTasksByRuntimeOrAgentParams struct {
@@ -73,7 +73,6 @@ func (q *Queries) CancelAgentTasksByRuntimeOrAgent(ctx context.Context, arg Canc
 			&i.TriggerSummary,
 			&i.ForceFreshSession,
 			&i.IsLeaderTask,
-			&i.WaitReason,
 			&i.InitiatorUserID,
 		); err != nil {
 			return nil, err
@@ -191,16 +190,15 @@ func (q *Queries) DeleteStaleOfflineRuntimes(ctx context.Context, staleSeconds f
 const failTasksForOfflineRuntimes = `-- name: FailTasksForOfflineRuntimes :many
 UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(), error = 'runtime went offline',
-    failure_reason = 'runtime_offline',
-    wait_reason = NULL
-WHERE status IN ('dispatched', 'running', 'waiting_local_directory')
+    failure_reason = 'runtime_offline'
+WHERE status IN ('dispatched', 'running')
   AND runtime_id IN (
     SELECT id FROM agent_runtime WHERE status = 'offline'
   )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, initiator_user_id
 `
 
-// Marks dispatched/running/waiting_local_directory tasks as failed when
+// Marks dispatched/running tasks as failed when
 // their runtime is offline. This cleans up orphaned tasks after a daemon
 // crash or network partition.
 func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context) ([]AgentTaskQueue, error) {
@@ -238,7 +236,6 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context) ([]AgentTaskQ
 			&i.TriggerSummary,
 			&i.ForceFreshSession,
 			&i.IsLeaderTask,
-			&i.WaitReason,
 			&i.InitiatorUserID,
 		); err != nil {
 			return nil, err
@@ -579,7 +576,9 @@ type MarkRuntimesOfflineByIDsRow struct {
 //
 // Re-checks the stale predicate inside the UPDATE so a concurrent heartbeat
 // between the SELECT (candidate gather), the LivenessStore filter, and this
-// UPDATE cannot demote a runtime that just refreshed last_seen_at.
+// UPDATE cannot demote a runtime that just refreshed last_seen_at. The
+// Keep the stale predicate in the write so the SELECT/filter/UPDATE pipeline
+// cannot overwrite a concurrent heartbeat.
 func (q *Queries) MarkRuntimesOfflineByIDs(ctx context.Context, arg MarkRuntimesOfflineByIDsParams) ([]MarkRuntimesOfflineByIDsRow, error) {
 	rows, err := q.db.Query(ctx, markRuntimesOfflineByIDs, arg.Ids, arg.StaleSeconds)
 	if err != nil {
@@ -693,8 +692,8 @@ WHERE status = 'active'
 
 // Pauses every active autopilot whose agent assignee is in the supplied list.
 // Called before hard-deleting archived agents on runtime teardown so the rows
-// do not become dangling because autopilot.assignee_id has no agent FK.
-// Status='paused' makes the breakage visible in the UI
+// do not become dangling (autopilot.assignee_id no longer has an agent FK
+// in the current schema). Status='paused' makes the breakage visible in the UI
 // — operators can re-point the autopilot at a live agent or delete it —
 // rather than silently piling skipped runs.
 func (q *Queries) PauseAutopilotsByAgentAssignees(ctx context.Context, assigneeIds []pgtype.UUID) error {
@@ -757,45 +756,18 @@ func (q *Queries) SetAgentRuntimeOffline(ctx context.Context, id pgtype.UUID) er
 	return err
 }
 
-const touchAgentRuntimeLastSeen = `-- name: TouchAgentRuntimeLastSeen :execrows
-UPDATE agent_runtime
-SET last_seen_at = now()
-WHERE id = $1 AND status = 'online'
-`
-
-// Bumps last_seen_at on an already-online runtime. Deliberately does NOT
-// touch status or updated_at: status is unchanged on the hot heartbeat path,
-// and avoiding updated_at keeps the row HOT-eligible (no index columns
-// change) and avoids invalidating any downstream consumer that watches
-// updated_at.
-//
-// The status='online' predicate is load-bearing: callers read rt.Status from
-// a prior SELECT and may race with the sweeper, which can flip the row to
-// offline between that SELECT and this UPDATE. Without the predicate this
-// query would silently leave a freshly-heartbeated runtime stuck in offline.
-// Returning affected rows lets callers detect that race and fall back to
-// MarkAgentRuntimeOnline to flip the row back online.
-func (q *Queries) TouchAgentRuntimeLastSeen(ctx context.Context, id pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, touchAgentRuntimeLastSeen, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const touchAgentRuntimesLastSeenBatch = `-- name: TouchAgentRuntimesLastSeenBatch :execrows
 UPDATE agent_runtime
 SET last_seen_at = now()
 WHERE id = ANY($1::uuid[]) AND status = 'online'
 `
 
-// Bulk variant of TouchAgentRuntimeLastSeen used by the BatchedHeartbeatScheduler:
-// coalesces N per-runtime "bump last_seen_at" requests into a single UPDATE so a
-// fleet beating every 15s costs ~1 DB transaction per batch tick instead of N.
+// Coalesces N per-runtime "bump last_seen_at" requests into a single UPDATE so
+// a fleet beating every 15s costs ~1 DB transaction per batch tick instead of N.
 //
-// Same load-bearing predicate as the single-id form: status='online' avoids
-// silently un-deleting a sweeper-flipped offline row, and we deliberately do
-// NOT touch updated_at so the rows stay HOT-eligible. Affected-rows < len(ids)
+// The status='online' predicate avoids silently un-deleting a
+// sweeper-flipped offline row, and we deliberately do NOT touch updated_at so
+// the rows stay HOT-eligible. Affected-rows < len(ids)
 // means some IDs raced to offline between Schedule and flush; their next beat
 // will fall through the recordHeartbeat sync path and call MarkAgentRuntimeOnline.
 func (q *Queries) TouchAgentRuntimesLastSeenBatch(ctx context.Context, ids []pgtype.UUID) (int64, error) {
@@ -903,8 +875,10 @@ type UpsertAgentRuntimeRow struct {
 // (xmax = 0) AS inserted distinguishes a fresh insert (true) from an upsert
 // that updated an existing row (false). Analytics reads this to fire
 // runtime_registered/runtime_ready only on first-time registration.
-// Built-in runtimes carry no profile_id. The conflict predicate selects the
-// built-in-runtime partial unique index rather than the custom-profile index.
+// Built-in runtimes carry no profile_id. The arbiter is the partial unique
+// current partial index (WHERE profile_id IS NULL); the predicate must be
+// spelled out so Postgres selects that partial index, not the custom-runtime
+// one on (workspace_id, daemon_id, profile_id).
 func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntimeParams) (UpsertAgentRuntimeRow, error) {
 	row := q.db.QueryRow(ctx, upsertAgentRuntime,
 		arg.WorkspaceID,
@@ -1000,9 +974,9 @@ type UpsertAgentRuntimeWithProfileRow struct {
 }
 
 // Custom-runtime registration: a daemon resolved a workspace runtime_profile's
-// command_name on PATH and is registering an instance of it. The conflict
-// predicate selects the custom-profile partial unique index, so a single
-// daemon can host the built-in provider AND any number of custom
+// command_name on PATH and is registering an instance of it. The arbiter is the
+// current partial unique index (WHERE profile_id IS NOT NULL), so a
+// single daemon can host the built-in provider AND any number of custom
 // profiles of the same protocol family. provider stays the protocol family so
 // task routing (agent.New(provider)) is unchanged; profile_id is the stable
 // identity. (xmax = 0) AS inserted mirrors UpsertAgentRuntime.

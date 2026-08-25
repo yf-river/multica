@@ -1,1 +1,2 @@
-export { SkillsPage, SkillDetailPage } from "./components";
+export { default as SkillsPage } from "./components/skills-page";
+export { SkillDetailPage } from "./components/skill-detail-page";

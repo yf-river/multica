@@ -40,6 +40,9 @@ func newIssueSourceFetchTestServer(t *testing.T, posted *map[string]any) *httpte
 				"title":      "test issue",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/"+testIssueUUID+"/source-fetch":
+			if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+				t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+			}
 			if err := json.NewDecoder(r.Body).Decode(posted); err != nil {
 				t.Fatalf("decode posted body: %v", err)
 			}

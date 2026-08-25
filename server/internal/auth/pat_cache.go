@@ -10,10 +10,8 @@ import (
 )
 
 // AuthCacheTTL bounds how long a token-hash lookup stays cached before
-// the auth middleware goes back to Postgres. Shared by PATCache and
-// DaemonTokenCache so both kinds of token follow the same revocation
-// latency contract. Short enough that revocation lag from a missed
-// invalidation is bounded; long enough that a high-frequency client
+// the auth middleware goes back to Postgres. Short enough that revocation lag
+// from a missed invalidation is bounded; long enough that a high-frequency client
 // (CLI, daemon) collapses from one DB round-trip per request to one
 // per TTL window.
 const AuthCacheTTL = 10 * time.Minute

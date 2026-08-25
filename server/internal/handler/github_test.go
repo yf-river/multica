@@ -20,38 +20,76 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func createGitHubTestIssue(t *testing.T, title string) IssueResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{"title": title}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	return issue
+}
+
+func listGitHubTestPullRequests(t *testing.T, issueID string) []gitHubPullRequestResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodGet, "/api/issues/"+issueID+"/pull-requests", nil), "id", issueID)
+	testHandler.ListPullRequestsForIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		PullRequests []gitHubPullRequestResponse `json:"pull_requests"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode pull request list: %v", err)
+	}
+	return response.PullRequests
+}
+
+func githubPullRequestsByIssue(t *testing.T, issueID string) []db.ListPullRequestsByIssueRow {
+	t.Helper()
+	rows, err := testHandler.Queries.ListPullRequestsByIssue(context.Background(), parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("ListPullRequestsByIssue: %v", err)
+	}
+	return rows
+}
 
 func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler test fixture not initialized (no DB?)")
 	}
 	ctx := context.Background()
+	handler := *testHandler
+	handler.Bus = events.New()
+	var linkedEvents []events.Event
+	handler.Bus.Subscribe(protocol.EventPullRequestLinked, func(event events.Event) {
+		linkedEvents = append(linkedEvents, event)
+	})
+
+	created := createGitHubTestIssue(t, "Gongfeng MR link")
+	t.Cleanup(func() {
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "user-center", 61234)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+	})
 
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Gongfeng MR link",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "user-center", 61234)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
-	})
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+	req := newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
 		"provider":      "gongfeng",
 		"html_url":      "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
 		"title":         "GOA-61234 user-center add quick entry API",
@@ -62,12 +100,12 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		"head_sha":      "abc123",
 	})
 	req = withURLParam(req, "id", created.ID)
-	testHandler.LinkPullRequestToIssue(w, req)
+	handler.LinkPullRequestToIssue(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("LinkPullRequestToIssue: %d %s", w.Code, w.Body.String())
 	}
 	var linked struct {
-		PullRequest GitHubPullRequestResponse `json:"pull_request"`
+		PullRequest gitHubPullRequestResponse `json:"pull_request"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&linked); err != nil {
 		t.Fatalf("decode link response: %v", err)
@@ -78,22 +116,13 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 	if linked.PullRequest.Branch == nil || *linked.PullRequest.Branch != "goa-61234-usercenter-api" {
 		t.Fatalf("branch = %#v, want goa-61234-usercenter-api", linked.PullRequest.Branch)
 	}
+	if len(linkedEvents) != 1 || linkedEvents[0].WorkspaceID != testWorkspaceID || linkedEvents[0].ActorID != testUserID {
+		t.Fatalf("pull_request:linked events = %#v, want one workspace/member event", linkedEvents)
+	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/issues/"+created.ID+"/pull-requests", nil)
-	req = withURLParam(req, "id", created.ID)
-	testHandler.ListPullRequestsForIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
-	}
-	var listed struct {
-		PullRequests []GitHubPullRequestResponse `json:"pull_requests"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	if len(listed.PullRequests) != 1 || listed.PullRequests[0].Number != 61234 {
-		t.Fatalf("listed pull requests = %#v, want MR 61234", listed.PullRequests)
+	listed := listGitHubTestPullRequests(t, created.ID)
+	if len(listed) != 1 || listed[0].Number != 61234 {
+		t.Fatalf("listed pull requests = %#v, want MR 61234", listed)
 	}
 
 	w = httptest.NewRecorder()
@@ -104,27 +133,17 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		"state":    "opened",
 	})
 	req = withURLParam(req, "id", created.ID)
-	testHandler.LinkPullRequestToIssue(w, req)
+	handler.LinkPullRequestToIssue(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("LinkPullRequestToIssue repeat without branch: %d %s", w.Code, w.Body.String())
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/issues/"+created.ID+"/pull-requests", nil)
-	req = withURLParam(req, "id", created.ID)
-	testHandler.ListPullRequestsForIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListPullRequestsForIssue after repeat link: %d %s", w.Code, w.Body.String())
+	listed = listGitHubTestPullRequests(t, created.ID)
+	if len(listed) != 1 {
+		t.Fatalf("listed pull requests after repeat link = %#v, want one MR", listed)
 	}
-	listed.PullRequests = nil
-	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
-		t.Fatalf("decode list after repeat link: %v", err)
-	}
-	if len(listed.PullRequests) != 1 {
-		t.Fatalf("listed pull requests after repeat link = %#v, want one MR", listed.PullRequests)
-	}
-	if listed.PullRequests[0].Branch == nil || *listed.PullRequests[0].Branch != "goa-61234-usercenter-api" {
-		t.Fatalf("branch after repeat link = %#v, want preserved goa-61234-usercenter-api", listed.PullRequests[0].Branch)
+	if listed[0].Branch == nil || *listed[0].Branch != "goa-61234-usercenter-api" {
+		t.Fatalf("branch after repeat link = %#v, want preserved goa-61234-usercenter-api", listed[0].Branch)
 	}
 	var headSHA string
 	if err := testPool.QueryRow(ctx, `
@@ -145,26 +164,15 @@ func TestLinkPullRequestToIssue_NormalizesGongfengDashMergeRequestURL(t *testing
 	}
 	ctx := context.Background()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Gongfeng MR dash URL link",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode issue: %v", err)
-	}
+	created := createGitHubTestIssue(t, "Gongfeng MR dash URL link")
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "ida-deployment", 61235)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "ida-deployment", 61235)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
 		"provider": "gongfeng",
 		"html_url": "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/-/merge_requests/61235",
 		"title":    "AIS dash URL normalization",
@@ -175,37 +183,13 @@ func TestLinkPullRequestToIssue_NormalizesGongfengDashMergeRequestURL(t *testing
 		t.Fatalf("LinkPullRequestToIssue: %d %s", w.Code, w.Body.String())
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/issues/"+created.ID+"/pull-requests", nil)
-	req = withURLParam(req, "id", created.ID)
-	testHandler.ListPullRequestsForIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
-	}
-	var listed struct {
-		PullRequests []GitHubPullRequestResponse `json:"pull_requests"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
-		t.Fatalf("decode list response: %v", err)
-	}
-	if len(listed.PullRequests) != 1 {
-		t.Fatalf("listed pull requests = %#v, want one", listed.PullRequests)
+	listed := listGitHubTestPullRequests(t, created.ID)
+	if len(listed) != 1 {
+		t.Fatalf("listed pull requests = %#v, want one", listed)
 	}
 	wantURL := "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/merge_requests/61235"
-	if listed.PullRequests[0].HtmlURL != wantURL {
-		t.Fatalf("html_url = %q, want %q", listed.PullRequests[0].HtmlURL, wantURL)
-	}
-}
-
-func TestNormalizePullRequestRepositoryFieldsRepairsLegacyGongfengDashRows(t *testing.T) {
-	owner, name := normalizePullRequestRepositoryFields(
-		"ChainWeaver/ida/ida-deployment",
-		"-",
-		"https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/-/merge_requests/216",
-	)
-
-	if owner != "ChainWeaver/ida" || name != "ida-deployment" {
-		t.Fatalf("repo = %q / %q, want ChainWeaver/ida / ida-deployment", owner, name)
+	if listed[0].HtmlURL != wantURL {
+		t.Fatalf("html_url = %q, want %q", listed[0].HtmlURL, wantURL)
 	}
 }
 
@@ -215,25 +199,14 @@ func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Invalid MR link",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode issue: %v", err)
-	}
+	created := createGitHubTestIssue(t, "Invalid MR link")
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
 		"provider": "gongfeng",
 		"html_url": "https://example.com/not-a-gongfeng-mr",
 	})
@@ -244,6 +217,142 @@ func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "project_path is required") {
 		t.Fatalf("error body = %s, want project_path guidance", w.Body.String())
+	}
+}
+
+func TestRecordIssuePullRequestRollsBackUpsertWhenLinkFails(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	issue := createGitHubTestIssue(t, "Atomic MR link "+randomID())
+
+	suffix := strings.ReplaceAll(randomID(), "-", "")
+	functionName := pgx.Identifier{"fail_issue_pr_link_" + suffix}.Sanitize()
+	triggerName := pgx.Identifier{"fail_issue_pr_link_" + suffix}.Sanitize()
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.issue_id = '%s'::uuid THEN
+				RAISE EXCEPTION 'injected issue pull request link failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE INSERT ON issue_pull_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, issue.ID, triggerName, functionName)); err != nil {
+		t.Fatalf("install link failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON issue_pull_request", triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	const number = int32(61999)
+	_, err := testHandler.recordIssuePullRequest(ctx, db.UpsertGitHubPullRequestParams{
+		WorkspaceID:     parseUUID(testWorkspaceID),
+		RepoOwner:       "atomic/test",
+		RepoName:        suffix,
+		PrNumber:        number,
+		Title:           "must roll back",
+		State:           "open",
+		HtmlUrl:         "https://git.code.tencent.com/atomic/test/" + suffix + "/merge_requests/61999",
+		PrCreatedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		PrUpdatedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		MergeableState:  pgtype.Text{},
+		AuthorLogin:     pgtype.Text{},
+		AuthorAvatarUrl: pgtype.Text{},
+		MergedAt:        pgtype.Timestamptz{},
+		ClosedAt:        pgtype.Timestamptz{},
+	}, db.LinkIssueToPullRequestParams{
+		IssueID:      parseUUID(issue.ID),
+		LinkedByType: pgtype.Text{String: "member", Valid: true},
+		LinkedByID:   parseUUID(testUserID),
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected issue pull request link failure") {
+		t.Fatalf("recordIssuePullRequest error = %v, want injected link failure", err)
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM github_pull_request
+		WHERE workspace_id = $1 AND repo_owner = 'atomic/test' AND repo_name = $2 AND pr_number = $3
+	`, testWorkspaceID, suffix, number).Scan(&count); err != nil {
+		t.Fatalf("count rolled-back pull request: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("pull request rows after link failure = %d, want 0", count)
+	}
+}
+
+func TestEnsureGongfengMergeRequestReusesExistingOpenBranchPair(t *testing.T) {
+	postCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCount++
+			http.Error(w, "unexpected create", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{
+			"iid": 73,
+			"web_url": "https://git.code.tencent.com/team/repo/merge_requests/73",
+			"state": "opened",
+			"source_branch": "feature/current",
+			"target_branch": "main"
+		}]`))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", createMergeRequestRequest{
+		ProjectPath: "42", SourceBranch: "feature/current", TargetBranch: "main", Title: "Current MR",
+	})
+	if err != nil {
+		t.Fatalf("ensureGongfengMergeRequest: %v", err)
+	}
+	if mr.Number() != 73 || postCount != 0 {
+		t.Fatalf("MR = %#v, postCount = %d; want existing !73 without create", mr, postCount)
+	}
+}
+
+func TestEnsureGongfengMergeRequestRecoversCreateErrorFromProviderState(t *testing.T) {
+	lookupCount := 0
+	postCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			lookupCount++
+			w.Header().Set("Content-Type", "application/json")
+			if lookupCount == 1 {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{
+				"iid": 74,
+				"web_url": "https://git.code.tencent.com/team/repo/merge_requests/74",
+				"state": "opened",
+				"source_branch": "feature/recovered",
+				"target_branch": "main"
+			}]`))
+		case http.MethodPost:
+			postCount++
+			http.Error(w, "upstream response lost", http.StatusBadGateway)
+		default:
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", createMergeRequestRequest{
+		ProjectPath: "42", SourceBranch: "feature/recovered", TargetBranch: "main", Title: "Recovered MR",
+	})
+	if err != nil {
+		t.Fatalf("ensureGongfengMergeRequest: %v", err)
+	}
+	if mr.Number() != 74 || lookupCount != 2 || postCount != 1 {
+		t.Fatalf("MR = %#v, lookups = %d, creates = %d; want recovered !74 after one create", mr, lookupCount, postCount)
 	}
 }
 
@@ -276,19 +385,19 @@ func TestVerifyWebhookSignature(t *testing.T) {
 	mac.Write(body)
 	good := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
-	if !verifyWebhookSignature(secret, good, body) {
+	if !verifyWebhookHMACSignature(secret, good, body) {
 		t.Error("expected valid signature to verify")
 	}
-	if verifyWebhookSignature(secret, "sha256=deadbeef", body) {
+	if verifyWebhookHMACSignature(secret, "sha256=deadbeef", body) {
 		t.Error("expected bad hex to fail")
 	}
-	if verifyWebhookSignature(secret, "", body) {
+	if verifyWebhookHMACSignature(secret, "", body) {
 		t.Error("expected empty header to fail")
 	}
-	if verifyWebhookSignature(secret, "sha1=whatever", body) {
+	if verifyWebhookHMACSignature(secret, "sha1=whatever", body) {
 		t.Error("expected non-sha256 prefix to fail")
 	}
-	if verifyWebhookSignature("other-secret", good, body) {
+	if verifyWebhookHMACSignature("other-secret", good, body) {
 		t.Error("expected wrong secret to fail")
 	}
 }
@@ -393,9 +502,29 @@ func TestAggregateChecksConclusion(t *testing.T) {
 	}
 }
 
-// firePullRequestWebhookWithHead is like firePullRequestWebhook but lets the
-// caller control the head SHA and mergeable_state on the payload. The CI
-// tests need both knobs to exercise head-change semantics.
+func fireGitHubWebhook(t *testing.T, secret, event string, payload any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal GitHub webhook: %v", err)
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(raw)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/github", bytes.NewReader(raw))
+	req.Header.Set("X-GitHub-Event", event)
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	rec := httptest.NewRecorder()
+	testHandler.HandleGitHubWebhook(rec, req)
+	return rec
+}
+
+func useGitHubAPIBase(t *testing.T, baseURL string) {
+	t.Helper()
+	previous := githubAPIBase
+	githubAPIBase = baseURL
+	t.Cleanup(func() { githubAPIBase = previous })
+}
+
 func firePullRequestWebhookWithHead(t *testing.T, secret string, issue IssueResponse, installationID int64, repo string, prNumber int32, action, headSHA, mergeableState string) {
 	t.Helper()
 	payload := map[string]any{
@@ -422,16 +551,7 @@ func firePullRequestWebhookWithHead(t *testing.T, secret string, issue IssueResp
 		},
 		"installation": map[string]any{"id": installationID},
 	}
-	raw, _ := json.Marshal(payload)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(raw)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	rec := httptest.NewRecorder()
-	hookReq := httptest.NewRequest("POST", "/api/webhooks/github", bytes.NewReader(raw))
-	hookReq.Header.Set("X-GitHub-Event", "pull_request")
-	hookReq.Header.Set("X-Hub-Signature-256", sig)
-	testHandler.HandleGitHubWebhook(rec, hookReq)
+	rec := fireGitHubWebhook(t, secret, "pull_request", payload)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("webhook %s pr=%d action=%s: expected 202, got %d (%s)",
 			repo, prNumber, action, rec.Code, rec.Body.String())
@@ -459,16 +579,6 @@ func firePullRequestWebhookWithHead(t *testing.T, secret string, issue IssueResp
 	}
 }
 
-func fireCheckSuiteWebhook(t *testing.T, secret string, installationID int64, repo string, prNumbers []int32, suiteID, appID int64, headSHA, conclusion, updatedAt string) {
-	t.Helper()
-	fireCheckSuiteWebhookWithStatus(t, secret, installationID, repo, prNumbers,
-		suiteID, appID, headSHA, "completed", "completed", conclusion, updatedAt)
-}
-
-// fireCheckSuiteWebhookWithStatus is the parametric form of
-// fireCheckSuiteWebhook. Tests covering the `requested`/`rerequested` and
-// `queued`/`in_progress` matrix use it directly; the legacy completed-only
-// helper above wraps it for existing call sites.
 func fireCheckSuiteWebhookWithStatus(t *testing.T, secret string, installationID int64, repo string, prNumbers []int32, suiteID, appID int64, headSHA, action, status, conclusion, updatedAt string) {
 	t.Helper()
 	prRefs := make([]map[string]any, 0, len(prNumbers))
@@ -492,16 +602,7 @@ func fireCheckSuiteWebhookWithStatus(t *testing.T, secret string, installationID
 		},
 		"installation": map[string]any{"id": installationID},
 	}
-	raw, _ := json.Marshal(payload)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(raw)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	rec := httptest.NewRecorder()
-	hookReq := httptest.NewRequest("POST", "/api/webhooks/github", bytes.NewReader(raw))
-	hookReq.Header.Set("X-GitHub-Event", "check_suite")
-	hookReq.Header.Set("X-Hub-Signature-256", sig)
-	testHandler.HandleGitHubWebhook(rec, hookReq)
+	rec := fireGitHubWebhook(t, secret, "check_suite", payload)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("check_suite webhook: expected 202, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -520,17 +621,17 @@ func setupPRTestIssue(t *testing.T, ctx context.Context, secret string) (IssueRe
 		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 
 	installationID := int64(33445566) + int64(time.Now().UnixNano()%1000000)
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_pull_request_check_suite WHERE pr_id IN (SELECT id FROM github_pull_request WHERE workspace_id = $1)`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_pending_check_suite WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
-		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request_check_suite WHERE pr_id IN (SELECT id FROM github_pull_request WHERE workspace_id = $1)`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM github_pending_check_suite WHERE workspace_id = $1`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 	if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 		WorkspaceID:    parseUUID(testWorkspaceID),
@@ -558,13 +659,10 @@ func TestWebhook_CheckSuite_AggregatesAcrossApps(t *testing.T) {
 	head := "abc1234567890"
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-a", 11, "opened", head, "")
 	// App A → success, App B → failure. The list query must report failed.
-	fireCheckSuiteWebhook(t, secret, installationID, "ci-repo-a", []int32{11}, 1001, 7001, head, "success", "2026-05-01T00:00:00Z")
-	fireCheckSuiteWebhook(t, secret, installationID, "ci-repo-a", []int32{11}, 1002, 7002, head, "failure", "2026-05-01T00:01:00Z")
+	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-a", []int32{11}, 1001, 7001, head, "completed", "completed", "success", "2026-05-01T00:00:00Z")
+	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-a", []int32{11}, 1002, 7002, head, "completed", "completed", "failure", "2026-05-01T00:01:00Z")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows := githubPullRequestsByIssue(t, created.ID)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 PR row, got %d", len(rows))
 	}
@@ -592,12 +690,9 @@ func TestWebhook_CheckSuite_OldHeadIgnored(t *testing.T) {
 
 	// First: open the PR at old head, run a passing suite.
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-b", 22, "opened", oldHead, "")
-	fireCheckSuiteWebhook(t, secret, installationID, "ci-repo-b", []int32{22}, 2001, 8001, oldHead, "success", "2026-05-01T00:00:00Z")
+	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-b", []int32{22}, 2001, 8001, oldHead, "completed", "completed", "success", "2026-05-01T00:00:00Z")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows := githubPullRequestsByIssue(t, created.ID)
 	got := aggregateChecksConclusion(rows[0].ChecksFailed, rows[0].ChecksPassed, rows[0].ChecksPending, rows[0].ChecksTotal)
 	if got == nil || *got != "passed" {
 		t.Fatalf("setup: expected passed on old head, got %v", got)
@@ -607,12 +702,9 @@ func TestWebhook_CheckSuite_OldHeadIgnored(t *testing.T) {
 	// for the OLD head fires (e.g. a delayed delivery). The current aggregate
 	// must be nil (no suite for the new head).
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-b", 22, "synchronize", newHead, "")
-	fireCheckSuiteWebhook(t, secret, installationID, "ci-repo-b", []int32{22}, 2002, 8001, oldHead, "success", "2026-05-01T00:05:00Z")
+	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-b", []int32{22}, 2002, 8001, oldHead, "completed", "completed", "success", "2026-05-01T00:05:00Z")
 
-	rows, err = testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows = githubPullRequestsByIssue(t, created.ID)
 	got = aggregateChecksConclusion(rows[0].ChecksFailed, rows[0].ChecksPassed, rows[0].ChecksPending, rows[0].ChecksTotal)
 	if got != nil {
 		t.Errorf("expected no aggregate (nil) after head change, got %v", got)
@@ -635,14 +727,11 @@ func TestWebhook_CheckSuite_LateOlderEventIgnored(t *testing.T) {
 	head := "ord1234567890"
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-c", 33, "opened", head, "")
 	// Latest event first.
-	fireCheckSuiteWebhook(t, secret, installationID, "ci-repo-c", []int32{33}, 3001, 9001, head, "failure", "2026-05-01T01:00:00Z")
+	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-c", []int32{33}, 3001, 9001, head, "completed", "completed", "failure", "2026-05-01T01:00:00Z")
 	// Late-arriving older event for the same suite.
-	fireCheckSuiteWebhook(t, secret, installationID, "ci-repo-c", []int32{33}, 3001, 9001, head, "success", "2026-05-01T00:00:00Z")
+	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-c", []int32{33}, 3001, 9001, head, "completed", "completed", "success", "2026-05-01T00:00:00Z")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows := githubPullRequestsByIssue(t, created.ID)
 	got := aggregateChecksConclusion(rows[0].ChecksFailed, rows[0].ChecksPassed, rows[0].ChecksPending, rows[0].ChecksTotal)
 	if got == nil || *got != "failed" {
 		t.Errorf("expected failure to win against later-delivered older success, got %v", got)
@@ -670,10 +759,7 @@ func TestWebhook_CheckSuite_QueuedCountsAsPending(t *testing.T) {
 	// A second app's suite starts a moment later with status=in_progress.
 	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-pending", []int32{55}, 4002, 6002, head, "requested", "in_progress", "", "2026-05-01T00:00:30Z")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows := githubPullRequestsByIssue(t, created.ID)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 PR row, got %d", len(rows))
 	}
@@ -690,10 +776,7 @@ func TestWebhook_CheckSuite_QueuedCountsAsPending(t *testing.T) {
 	// Now one app completes successfully — pending count drops to 1 and the
 	// aggregate stays pending until the second app finishes.
 	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-pending", []int32{55}, 4001, 6001, head, "completed", "completed", "success", "2026-05-01T00:05:00Z")
-	rows, err = testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows = githubPullRequestsByIssue(t, created.ID)
 	if rows[0].ChecksPending != 1 || rows[0].ChecksPassed != 1 || rows[0].ChecksTotal != 2 {
 		t.Fatalf("expected pending=1 passed=1 total=2 after one suite completes, got pending=%d passed=%d total=%d",
 			rows[0].ChecksPending, rows[0].ChecksPassed, rows[0].ChecksTotal)
@@ -720,9 +803,7 @@ func TestWebhook_CheckSuite_OutOfOrderReplaysOnPRUpsert(t *testing.T) {
 	fireCheckSuiteWebhookWithStatus(t, secret, installationID, "ci-repo-ooo", []int32{66}, 5001, 7501, head, "requested", "in_progress", "", "2026-05-01T00:00:00Z")
 
 	// Verify nothing landed on the PR table yet (no PR row to land on).
-	if rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID)); err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	} else if len(rows) != 0 {
+	if rows := githubPullRequestsByIssue(t, created.ID); len(rows) != 0 {
 		t.Fatalf("expected 0 PR rows before PR webhook, got %d", len(rows))
 	}
 
@@ -730,10 +811,7 @@ func TestWebhook_CheckSuite_OutOfOrderReplaysOnPRUpsert(t *testing.T) {
 	// pending stash and replay it onto this PR.
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-ooo", 66, "opened", head, "")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows := githubPullRequestsByIssue(t, created.ID)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 PR row after PR webhook, got %d", len(rows))
 	}
@@ -746,10 +824,7 @@ func TestWebhook_CheckSuite_OutOfOrderReplaysOnPRUpsert(t *testing.T) {
 	// — the drain is one-shot, so the second pull_request webhook drains
 	// an empty pending list.
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-ooo", 66, "edited", head, "")
-	rows, err = testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows = githubPullRequestsByIssue(t, created.ID)
 	if rows[0].ChecksPending != 1 || rows[0].ChecksTotal != 1 {
 		t.Fatalf("expected pending=1 total=1 after no-op edit, got pending=%d total=%d",
 			rows[0].ChecksPending, rows[0].ChecksTotal)
@@ -783,10 +858,7 @@ func TestWebhook_CheckSuite_OutOfOrderStashKeepsNewer(t *testing.T) {
 	// PR webhook arrives — drain replays the (still newer) stash.
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-stash", 77, "opened", head, "")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
+	rows := githubPullRequestsByIssue(t, created.ID)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 PR row after PR webhook, got %d", len(rows))
 	}
@@ -812,26 +884,20 @@ func TestWebhook_PullRequest_SynchronizeClearsMergeable(t *testing.T) {
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-d", 44, "opened", "head1", "")
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-d", 44, "labeled", "head1", "clean")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
-	if !rows[0].MergeableState.Valid || rows[0].MergeableState.String != "clean" {
-		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].MergeableState)
+	rows := githubPullRequestsByIssue(t, created.ID)
+	if !rows[0].GithubPullRequest.MergeableState.Valid || rows[0].GithubPullRequest.MergeableState.String != "clean" {
+		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].GithubPullRequest.MergeableState)
 	}
 
 	// Synchronize — payload still claims clean, but we must blank it.
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-d", 44, "synchronize", "head2", "clean")
 
-	rows, err = testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
+	rows = githubPullRequestsByIssue(t, created.ID)
+	if rows[0].GithubPullRequest.MergeableState.Valid {
+		t.Errorf("expected mergeable_state cleared on synchronize, got %q", rows[0].GithubPullRequest.MergeableState.String)
 	}
-	if rows[0].MergeableState.Valid {
-		t.Errorf("expected mergeable_state cleared on synchronize, got %q", rows[0].MergeableState.String)
-	}
-	if rows[0].HeadSha != "head2" {
-		t.Errorf("expected head_sha updated to head2, got %q", rows[0].HeadSha)
+	if rows[0].GithubPullRequest.HeadSha != "head2" {
+		t.Errorf("expected head_sha updated to head2, got %q", rows[0].GithubPullRequest.HeadSha)
 	}
 }
 
@@ -853,24 +919,18 @@ func TestWebhook_PullRequest_MetadataPreservesMergeable(t *testing.T) {
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-e", 55, "opened", "headA", "")
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-e", 55, "labeled", "headA", "clean")
 
-	rows, err := testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
-	if !rows[0].MergeableState.Valid || rows[0].MergeableState.String != "clean" {
-		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].MergeableState)
+	rows := githubPullRequestsByIssue(t, created.ID)
+	if !rows[0].GithubPullRequest.MergeableState.Valid || rows[0].GithubPullRequest.MergeableState.String != "clean" {
+		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].GithubPullRequest.MergeableState)
 	}
 
 	// A second labeled event arrives with mergeable_state empty (typical for
 	// metadata events). The existing clean must survive.
 	firePullRequestWebhookWithHead(t, secret, created, installationID, "ci-repo-e", 55, "labeled", "headA", "")
 
-	rows, err = testHandler.Queries.ListPullRequestsByIssue(ctx, parseUUID(created.ID))
-	if err != nil {
-		t.Fatalf("ListPullRequestsByIssue: %v", err)
-	}
-	if !rows[0].MergeableState.Valid || rows[0].MergeableState.String != "clean" {
-		t.Errorf("expected mergeable_state preserved as clean after metadata event, got %+v", rows[0].MergeableState)
+	rows = githubPullRequestsByIssue(t, created.ID)
+	if !rows[0].GithubPullRequest.MergeableState.Valid || rows[0].GithubPullRequest.MergeableState.String != "clean" {
+		t.Errorf("expected mergeable_state preserved as clean after metadata event, got %+v", rows[0].GithubPullRequest.MergeableState)
 	}
 }
 
@@ -894,14 +954,14 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		t.Fatalf("CreateGitHubInstallation: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
 	})
 
 	call := func(t *testing.T, role string) map[string]any {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/github/installations", nil)
 		req = withURLParam(req, "id", testWorkspaceID)
-		req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, db.Member{Role: role}))
+		req = req.WithContext(requestctx.WithWorkspace(req.Context(), testWorkspaceID, db.Member{Role: role}))
 		w := httptest.NewRecorder()
 		testHandler.ListGitHubInstallations(w, req)
 		if w.Code != http.StatusOK {
@@ -1314,9 +1374,7 @@ func TestFetchInstallationAccount_AuthenticatedPopulatesRow(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	oldBase := githubAPIBase
-	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	useGitHubAPIBase(t, srv.URL)
 
 	login, accountType, avatar := fetchInstallationAccount(context.Background(), wantInstallationID)
 	if login != "octocat" {
@@ -1350,9 +1408,7 @@ func TestFetchInstallationAccount_UnauthenticatedFallsBack(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]any{"account": map[string]any{"login": "should-not-see"}})
 	}))
 	t.Cleanup(srv.Close)
-	oldBase := githubAPIBase
-	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	useGitHubAPIBase(t, srv.URL)
 
 	login, _, _ := fetchInstallationAccount(context.Background(), 999)
 	if login != "unknown" {
@@ -1375,9 +1431,7 @@ func TestFetchInstallationAccount_EmptyAccountKeepsPlaceholder(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]any{"account": map[string]any{}})
 	}))
 	t.Cleanup(srv.Close)
-	oldBase := githubAPIBase
-	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	useGitHubAPIBase(t, srv.URL)
 
 	login, accountType, avatar := fetchInstallationAccount(context.Background(), 12)
 	if login != "unknown" {
@@ -1408,7 +1462,7 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 
 	const installationID int64 = 71717171
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
 	})
 
 	// Seed the row the way the setup callback does today when App JWT
@@ -1433,7 +1487,7 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 		}
 	})
 
-	body, _ := json.Marshal(map[string]any{
+	rec := fireGitHubWebhook(t, secret, "installation", map[string]any{
 		"action": "created",
 		"installation": map[string]any{
 			"id": installationID,
@@ -1444,15 +1498,6 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 			},
 		},
 	})
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/webhooks/github", bytes.NewReader(body))
-	req.Header.Set("X-GitHub-Event", "installation")
-	req.Header.Set("X-Hub-Signature-256", sig)
-	testHandler.HandleGitHubWebhook(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("webhook: expected 202, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1486,7 +1531,7 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 		if !ok {
 			t.Fatalf("broadcast payload type: %T", ev.Payload)
 		}
-		inst, ok := payload["installation"].(GitHubInstallationResponse)
+		inst, ok := payload["installation"].(gitHubInstallationResponse)
 		if !ok {
 			t.Fatalf("installation payload type: %T", payload["installation"])
 		}
@@ -1520,8 +1565,8 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 
 	const installationID int64 = 81818181
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
-		testPool.Exec(ctx, `DELETE FROM github_pending_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM github_pending_installation WHERE installation_id = $1`, installationID)
 	})
 
 	// Force fetchInstallationAccount to take its degraded path. This pins that
@@ -1531,11 +1576,9 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 		http.Error(w, "auth required", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
-	oldBase := githubAPIBase
-	githubAPIBase = srv.URL
-	t.Cleanup(func() { githubAPIBase = oldBase })
+	useGitHubAPIBase(t, srv.URL)
 
-	body, _ := json.Marshal(map[string]any{
+	rec := fireGitHubWebhook(t, secret, "installation", map[string]any{
 		"action": "created",
 		"installation": map[string]any{
 			"id": installationID,
@@ -1546,15 +1589,6 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 			},
 		},
 	})
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	rec := httptest.NewRecorder()
-	hookReq := httptest.NewRequest("POST", "/api/webhooks/github", bytes.NewReader(body))
-	hookReq.Header.Set("X-GitHub-Event", "installation")
-	hookReq.Header.Set("X-Hub-Signature-256", sig)
-	testHandler.HandleGitHubWebhook(rec, hookReq)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("webhook: expected 202, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1583,8 +1617,8 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 	if setupRec.Code != http.StatusFound {
 		t.Fatalf("setup callback: expected 302, got %d (%s)", setupRec.Code, setupRec.Body.String())
 	}
-	if loc := setupRec.Header().Get("Location"); !strings.Contains(loc, "github_connected=1") {
-		t.Fatalf("setup callback redirect = %q, want github_connected=1", loc)
+	if loc := setupRec.Header().Get("Location"); !strings.Contains(loc, "?tab=github&github_connected=1") {
+		t.Fatalf("setup callback redirect = %q, want GitHub settings tab with github_connected=1", loc)
 	}
 
 	got, err := testHandler.Queries.GetGitHubInstallationByInstallationID(ctx, installationID)

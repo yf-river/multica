@@ -3,27 +3,14 @@
 import { useEffect, useRef, useCallback, useMemo } from "react";
 import {
   useQuery,
-  useQueryClient,
   useMutationState,
 } from "@tanstack/react-query";
 import type {
-  Comment,
   TimelineEntry,
   Reaction,
 } from "@multica/core/types";
-import type {
-  CommentCreatedPayload,
-  CommentUpdatedPayload,
-  CommentDeletedPayload,
-  CommentResolvedPayload,
-  CommentUnresolvedPayload,
-  ActivityCreatedPayload,
-  ReactionAddedPayload,
-  ReactionRemovedPayload,
-} from "@multica/core/types";
 import {
   issueTimelineOptions,
-  issueKeys,
 } from "@multica/core/issues/queries";
 import {
   useCreateComment,
@@ -33,37 +20,11 @@ import {
   useToggleCommentReaction,
   type ToggleCommentReactionVars,
 } from "@multica/core/issues/mutations";
-import { sortTimelineEntriesAsc } from "@multica/core/issues/timeline-sort";
-import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import { toast } from "sonner";
 import { useT } from "../../i18n";
 
-type TLCache = TimelineEntry[];
-
-function commentToTimelineEntry(c: Comment): TimelineEntry {
-  return {
-    type: "comment",
-    id: c.id,
-    actor_type: c.author_type,
-    actor_id: c.author_id,
-    content: c.content,
-    parent_id: c.parent_id,
-    created_at: c.created_at,
-    updated_at: c.updated_at,
-    comment_type: c.type,
-    reactions: c.reactions ?? [],
-    attachments: c.attachments ?? [],
-    resolved_at: c.resolved_at,
-    resolved_by_type: c.resolved_by_type,
-    resolved_by_id: c.resolved_by_id,
-    source_task_id: c.source_task_id,
-  };
-}
-
 export function useIssueTimeline(issueId: string, userId?: string) {
   const { t } = useT("issues");
-  const qc = useQueryClient();
-
   const query = useQuery(issueTimelineOptions(issueId));
   const { data, isLoading: loading } = query;
 
@@ -79,183 +40,6 @@ export function useIssueTimeline(issueId: string, userId?: string) {
   const { mutateAsync: deleteCommentAsync } = useDeleteComment(issueId);
   const { mutateAsync: resolveCommentAsync } = useResolveComment(issueId);
   const { mutate: toggleCommentReaction } = useToggleCommentReaction(issueId);
-
-  // Reconnect recovery: invalidate so the next render refetches the full
-  // timeline. Cheaper than diffing across a possibly-long disconnect.
-  useWSReconnect(
-    useCallback(() => {
-      qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
-    }, [qc, issueId]),
-  );
-
-  // --- WS event handlers ---
-
-  useWSEvent(
-    "comment:created",
-    useCallback(
-      (payload: unknown) => {
-        const { comment } = payload as CommentCreatedPayload;
-        if (comment.issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
-          const entry = commentToTimelineEntry(comment);
-          if (!old) return [entry];
-          if (old.some((e) => e.id === comment.id)) return old;
-          return sortTimelineEntriesAsc([...old, entry]);
-        });
-      },
-      [qc, issueId],
-    ),
-  );
-
-  useWSEvent(
-    "comment:updated",
-    useCallback(
-      (payload: unknown) => {
-        const { comment } = payload as CommentUpdatedPayload;
-        if (comment.issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) =>
-          old?.map((e) =>
-            e.id === comment.id ? commentToTimelineEntry(comment) : e,
-          ),
-        );
-      },
-      [qc, issueId],
-    ),
-  );
-
-  // Granular handlers for comment:resolved / comment:unresolved. The payload
-  // carries the full Comment with the new resolved_at/resolved_by_* fields,
-  // which `commentToTimelineEntry` already preserves, so the existing
-  // entry can simply be replaced in place. Without these handlers the only
-  // path that updated the cache was `useRealtimeSync`'s global invalidate,
-  // which forces a full timeline refetch and busts every CommentCard memo.
-  useWSEvent(
-    "comment:resolved",
-    useCallback(
-      (payload: unknown) => {
-        const { comment } = payload as CommentResolvedPayload;
-        if (comment.issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) =>
-          old?.map((e) =>
-            e.id === comment.id ? commentToTimelineEntry(comment) : e,
-          ),
-        );
-      },
-      [qc, issueId],
-    ),
-  );
-
-  useWSEvent(
-    "comment:unresolved",
-    useCallback(
-      (payload: unknown) => {
-        const { comment } = payload as CommentUnresolvedPayload;
-        if (comment.issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) =>
-          old?.map((e) =>
-            e.id === comment.id ? commentToTimelineEntry(comment) : e,
-          ),
-        );
-      },
-      [qc, issueId],
-    ),
-  );
-
-  useWSEvent(
-    "comment:deleted",
-    useCallback(
-      (payload: unknown) => {
-        const { comment_id, issue_id } = payload as CommentDeletedPayload;
-        if (issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
-          if (!old) return old;
-          // Cascade through replies (full timeline now lives in this single
-          // cache, so a flat sweep is sufficient).
-          const idsToRemove = new Set<string>([comment_id]);
-          let changed = true;
-          while (changed) {
-            changed = false;
-            for (const e of old) {
-              if (
-                e.parent_id &&
-                idsToRemove.has(e.parent_id) &&
-                !idsToRemove.has(e.id)
-              ) {
-                idsToRemove.add(e.id);
-                changed = true;
-              }
-            }
-          }
-          return old.filter((e) => !idsToRemove.has(e.id));
-        });
-      },
-      [qc, issueId],
-    ),
-  );
-
-  useWSEvent(
-    "activity:created",
-    useCallback(
-      (payload: unknown) => {
-        const p = payload as ActivityCreatedPayload;
-        if (p.issue_id !== issueId) return;
-        const entry = p.entry;
-        if (!entry || !entry.id) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) => {
-          if (!old) return [entry];
-          if (old.some((e) => e.id === entry.id)) return old;
-          return sortTimelineEntriesAsc([...old, entry]);
-        });
-      },
-      [qc, issueId],
-    ),
-  );
-
-  useWSEvent(
-    "reaction:added",
-    useCallback(
-      (payload: unknown) => {
-        const { reaction, issue_id } = payload as ReactionAddedPayload;
-        if (issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) =>
-          old?.map((e) => {
-            if (e.id !== reaction.comment_id) return e;
-            const existing = e.reactions ?? [];
-            if (existing.some((r) => r.id === reaction.id)) return e;
-            return { ...e, reactions: [...existing, reaction] };
-          }),
-        );
-      },
-      [qc, issueId],
-    ),
-  );
-
-  useWSEvent(
-    "reaction:removed",
-    useCallback(
-      (payload: unknown) => {
-        const p = payload as ReactionRemovedPayload;
-        if (p.issue_id !== issueId) return;
-        qc.setQueryData<TLCache>(issueKeys.timeline(issueId), (old) =>
-          old?.map((e) => {
-            if (e.id !== p.comment_id) return e;
-            return {
-              ...e,
-              reactions: (e.reactions ?? []).filter(
-                (r) =>
-                  !(
-                    r.emoji === p.emoji &&
-                    r.actor_type === p.actor_type &&
-                    r.actor_id === p.actor_id
-                  ),
-              ),
-            };
-          }),
-        );
-      },
-      [qc, issueId],
-    ),
-  );
 
   // --- Mutation functions ---
 
@@ -395,7 +179,6 @@ export function useIssueTimeline(issueId: string, userId?: string) {
                 actor_type: "member",
                 actor_id: userId ?? "",
                 emoji: vars.emoji,
-                created_at: "",
               },
             ];
           }

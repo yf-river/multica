@@ -1,6 +1,7 @@
 import { test, expect, type ConsoleMessage } from "@playwright/test";
 import { authenticateBrowserSession } from "./helpers";
 import { TestApiClient } from "./fixtures";
+import { DEFAULT_E2E_PASSWORD } from "./test-identity";
 
 const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
 const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
@@ -13,6 +14,7 @@ const EXISTING_ISSUE_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? "develop";
 const EXISTING_ISSUE_E2E_NAME = process.env.E2E_NAME ?? "AI Studio Developer";
 const EXISTING_ISSUE_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? "ai-studio";
 const EXISTING_ISSUE_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? "AI Studio 工作区";
+const EXISTING_ISSUE_E2E_PASSWORD = process.env.E2E_PASSWORD ?? "develop123";
 
 test.describe("run review eval draft flow", () => {
   test.describe.configure({ timeout: 120_000 });
@@ -22,9 +24,8 @@ test.describe("run review eval draft flow", () => {
 
   test.beforeEach(async ({ page }) => {
     api = new TestApiClient();
-    await api.login(E2E_ACCOUNT, E2E_NAME);
+    await api.login(E2E_ACCOUNT, E2E_NAME, DEFAULT_E2E_PASSWORD);
     const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
-    await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
     const token = api.getToken();
     if (!token) throw new Error("E2E login did not return an auth token");
@@ -42,7 +43,7 @@ test.describe("run review eval draft flow", () => {
     await api.cleanup();
   });
 
-  test("creates an eval draft from run review, then approves and activates it", async ({ page }) => {
+  test("creates an eval draft from run review and opens it in the current case library", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
     const failedRequests: string[] = [];
@@ -67,7 +68,7 @@ test.describe("run review eval draft flow", () => {
     await expect(page.getByText("缺失诊断")).toHaveCount(0);
     await expect(page.getByText("未关联的跨项目子任务")).toHaveCount(0);
     await expect(page.getByText("节点表")).toBeVisible();
-    await expect(page.getByText("暂无真实 SOP 节点。").first()).toBeVisible();
+    await expect(page.getByText("暂无真实 Agent 节点。").first()).toBeVisible();
 
     const createDraftButton = page.getByTestId("run-review-create-eval-draft");
     await expect(createDraftButton).toBeEnabled({ timeout: 30_000 });
@@ -92,27 +93,12 @@ test.describe("run review eval draft flow", () => {
     if (!createdCase) throw new Error("run review draft case was not created");
 
     await page.goto(`/${workspaceSlug}/evaluation/datasets?issue=${issue.id}&case=${createdCase.id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText(ISSUE_REVIEW_DRAFT_DATASET_NAME)).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText(createdCase.case_name);
-    await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText("待确认");
-    const createdCaseRow = page.getByTestId(`prompt-evaluation-case-${createdCase.id}`);
+    await expect(page.getByRole("heading", { name: ISSUE_REVIEW_DRAFT_DATASET_NAME })).toBeVisible({ timeout: 30_000 });
+    expect(createdCase.status).toBe("draft");
+    const createdCaseRow = page.getByTestId(`case-library-case-${createdCase.id}`);
     await expect(createdCaseRow).toBeVisible({ timeout: 30_000 });
-    await expect(createdCaseRow.getByTestId(`prompt-evaluation-case-source-${createdCase.id}`)).toContainText("来源 issue");
-    await expect(createdCaseRow.getByRole("link", { name: "查看运行复盘" })).toHaveAttribute("href", new RegExp(`/run-reviews\\?issue=${issue.id}$`));
-
-    await page.getByTestId(`approve-eval-case-${createdCase.id}`).click();
-    await expect.poll(async () => {
-      const cases = await api.listPromptEvaluationCases({ asset_id: createdCase.asset_id, tag: `issue:${issue.id}`, limit: 10 });
-      return cases.find((item) => item.id === createdCase.id)?.status;
-    }, { timeout: 30_000 }).toBe("approved");
-    await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText("已批准", { timeout: 30_000 });
-
-    await page.getByTestId(`activate-eval-case-${createdCase.id}`).click();
-    await expect.poll(async () => {
-      const cases = await api.listPromptEvaluationCases({ asset_id: createdCase.asset_id, tag: `issue:${issue.id}`, limit: 10 });
-      return cases.find((item) => item.id === createdCase.id)?.status;
-    }, { timeout: 30_000 }).toBe("active");
-    await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText("已激活", { timeout: 30_000 });
+    await expect(createdCaseRow).toContainText(createdCase.case_name);
+    await expect(createdCaseRow).toContainText(`issue:${issue.id}`);
 
     const actionableConsoleErrors = consoleErrors.filter((message) =>
       !message.includes("Failed to load resource: the server responded with a status of 403"),
@@ -133,9 +119,12 @@ test.describe("run review eval draft flow for existing completed issues", () => 
 
   test.beforeEach(async ({ page }) => {
     api = new TestApiClient();
-    await api.login(EXISTING_ISSUE_E2E_ACCOUNT, EXISTING_ISSUE_E2E_NAME);
+    await api.login(
+      EXISTING_ISSUE_E2E_ACCOUNT,
+      EXISTING_ISSUE_E2E_NAME,
+      EXISTING_ISSUE_E2E_PASSWORD,
+    );
     const workspace = await api.ensureWorkspace(EXISTING_ISSUE_E2E_WORKSPACE_NAME, EXISTING_ISSUE_E2E_WORKSPACE);
-    await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
     const token = api.getToken();
     if (!token) throw new Error("E2E login did not return an auth token");
@@ -286,12 +275,13 @@ async function findExistingCompletedIssueWithRunReview(api: TestApiClient) {
 function hasUsableRunReviewTree(tree: Awaited<ReturnType<TestApiClient["getIssueExecutionTree"]>>) {
   const timelineNodes = tree.timeline_nodes ?? [];
   if (timelineNodes.length === 0) return false;
-  const summary = tree.issue_summary ?? {};
-  const summaryHasEvidence =
-    Number(summary.node_count ?? 0) > 0 ||
-    Number(summary.message_count ?? 0) > 0 ||
-    Number(summary.agent_turn_count ?? 0) > 0 ||
-    Number(summary.total_input_tokens ?? 0) + Number(summary.total_output_tokens ?? 0) > 0;
+  const summary = tree.issue_summary;
+  const summaryHasEvidence = summary
+    ? Number(summary.node_count ?? 0) > 0 ||
+      Number(summary.message_count ?? 0) > 0 ||
+      Number(summary.agent_turn_count ?? 0) > 0 ||
+      Number(summary.total_input_tokens ?? 0) + Number(summary.total_output_tokens ?? 0) > 0
+    : false;
   const timelineHasEvidence = timelineNodes.some((node) =>
     Number(node.message_count ?? 0) > 0 ||
     Number(node.agent_turn_count ?? 0) > 0 ||

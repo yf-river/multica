@@ -1,0 +1,113 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+func createSquadWithKey(t *testing.T, key string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodPost, "/api/squads", body), "workspaceId", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", key)
+	testHandler.CreateSquad(w, req)
+	return w
+}
+
+func TestCreateSquad_IdempotentReplayConflictAndDurableRecord(t *testing.T) {
+	key := uuid.NewString()
+	leaderID := createHandlerTestAgent(t, "squad idempotent leader "+uuid.NewString(), nil)
+	memberID := createHandlerTestAgent(t, "squad idempotent member "+uuid.NewString(), nil)
+	name := "idempotent squad " + uuid.NewString()
+	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+	body := map[string]any{
+		"name": name, "leader_id": leaderID, "scope": "personal",
+		"members": []map[string]any{{"member_type": "agent", "member_id": memberID}},
+	}
+
+	first := createSquadWithKey(t, key, body)
+	replay := createSquadWithKey(t, key, body)
+	if first.Code != http.StatusCreated || replay.Code != http.StatusCreated {
+		t.Fatalf("first/replay = %d/%d: %s / %s", first.Code, replay.Code, first.Body.String(), replay.Body.String())
+	}
+	if first.Body.String() != replay.Body.String() {
+		t.Fatalf("replay body differs\nfirst:  %s\nreplay: %s", first.Body, replay.Body)
+	}
+	var squad squadResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &squad); err != nil {
+		t.Fatalf("decode squad: %v", err)
+	}
+	if squad.MemberCount != 2 {
+		t.Fatalf("member_count = %d, want 2", squad.MemberCount)
+	}
+
+	conflict := createSquadWithKey(t, key, map[string]any{
+		"name": name + " changed", "leader_id": leaderID, "scope": "personal",
+	})
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+	if conflict.Body.String() != "{\"code\":\"idempotency_conflict\",\"error\":\"Idempotency-Key was already used with a different request\"}\n" {
+		t.Fatalf("conflict body = %s", conflict.Body.String())
+	}
+
+	var squads, members, requests int
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE id = $1`, squad.ID).Scan(&squads)
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad_member WHERE squad_id = $1`, squad.ID).Scan(&members)
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	if squads != 1 || members != 2 || requests != 1 {
+		t.Fatalf("squads=%d members=%d requests=%d, want 1/2/1", squads, members, requests)
+	}
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squad.ID); err != nil {
+		t.Fatalf("delete squad: %v", err)
+	}
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	if requests != 1 {
+		t.Fatalf("durable request rows after squad delete = %d, want 1", requests)
+	}
+}
+
+func TestCreateSquad_ConcurrentReplayCreatesOneSquad(t *testing.T) {
+	key := uuid.NewString()
+	leaderID := createHandlerTestAgent(t, "squad concurrent leader "+uuid.NewString(), nil)
+	name := "concurrent squad " + uuid.NewString()
+	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+	body := map[string]any{"name": name, "leader_id": leaderID, "scope": "personal"}
+
+	assertConcurrentReplay(t, http.StatusCreated, func() *httptest.ResponseRecorder {
+		return createSquadWithKey(t, key, body)
+	})
+	var squads int
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&squads)
+	if squads != 1 {
+		t.Fatalf("squad rows = %d, want 1", squads)
+	}
+}
+
+func TestCreateSquad_FailedResponseCompletionRollsBackEverything(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	leaderID := createHandlerTestAgent(t, "squad completion leader "+uuid.NewString(), nil)
+	name := "forced squad completion " + uuid.NewString()
+	cleanupResourceCreateRequest(t, "squad", key, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+	installResourceCreateCompletionFailure(t, resourceTypeSquad, key)
+
+	response := createSquadWithKey(t, key, map[string]any{
+		"name": name, "leader_id": leaderID, "scope": "personal",
+	})
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("forced failure = %d %s, want 500", response.Code, response.Body.String())
+	}
+	var squads, members, requests int
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&squads)
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM squad_member sm JOIN squad s ON s.id = sm.squad_id WHERE s.workspace_id = $1 AND s.name = $2`, testWorkspaceID, name).Scan(&members)
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	if squads != 0 || members != 0 || requests != 0 {
+		t.Fatalf("failed create left squads=%d members=%d requests=%d", squads, members, requests)
+	}
+}

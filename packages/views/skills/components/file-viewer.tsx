@@ -16,10 +16,6 @@ function isMarkdown(path: string) {
   return path.endsWith(".md") || path.endsWith(".mdx");
 }
 
-// ---------------------------------------------------------------------------
-// Frontmatter display
-// ---------------------------------------------------------------------------
-
 function FrontmatterCard({ data }: { data: SkillFrontmatter }) {
   return (
     <div className="mb-4 rounded-lg border bg-muted/30 px-4 py-3">
@@ -38,10 +34,6 @@ function FrontmatterCard({ data }: { data: SkillFrontmatter }) {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// File viewer
-// ---------------------------------------------------------------------------
 
 export function FileViewer({
   path,
@@ -63,7 +55,6 @@ export function FileViewer({
 
   return (
     <div className="flex h-full flex-col">
-      {/* File header */}
       <div className="flex h-10 items-center justify-between gap-3 border-b px-4">
         <span className="text-xs font-mono text-muted-foreground truncate">
           {path}
@@ -97,7 +88,6 @@ export function FileViewer({
         </div>
       </div>
 
-      {/* File content */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {isMd && !editing ? (
           <div className="p-4 sm:p-6">

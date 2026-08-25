@@ -1,25 +1,40 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import {
+  executePendingCreateMutation,
+  executePendingMutation,
+} from "../api/transport";
+import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import type {
   CreateAutopilotRequest,
   UpdateAutopilotRequest,
-  ListAutopilotsResponse,
+  Autopilot,
   GetAutopilotResponse,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
 } from "../types";
+import {
+  useAutopilotCreateOperationStore,
+  useAutopilotManualTriggerStore,
+} from "./pending-operation-store";
 
 export function useCreateAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (data: CreateAutopilotRequest) => api.createAutopilot(data),
+    mutationFn: async (data: CreateAutopilotRequest) => {
+      return executePendingCreateMutation(
+        useAutopilotCreateOperationStore,
+        data,
+        (operation) => api.createAutopilot(operation.request, operation.requestKey),
+      );
+    },
     onSuccess: (newAutopilot) => {
-      qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
-        old && !old.autopilots.some((a) => a.id === newAutopilot.id)
-          ? { ...old, autopilots: [...old.autopilots, newAutopilot], total: old.total + 1 }
+      qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
+        old && !old.some((autopilot) => autopilot.id === newAutopilot.id)
+          ? [...old, newAutopilot]
           : old,
       );
     },
@@ -37,21 +52,15 @@ export function useUpdateAutopilot() {
       api.updateAutopilot(id, data),
     onMutate: ({ id, ...data }) => {
       qc.cancelQueries({ queryKey: autopilotKeys.list(wsId) });
-      const prevList = qc.getQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId));
+      const prevList = qc.getQueryData<Autopilot[]>(autopilotKeys.list(wsId));
       const prevDetail = qc.getQueryData<GetAutopilotResponse>(autopilotKeys.detail(wsId, id));
-      // Request shape (AutopilotSubscriberInput) lacks `created_at`, so it's
-      // not assignable to the response shape. onSettled invalidates the
-      // detail query and refetches the authoritative server payload.
+      // Subscriber membership is refetched authoritatively on settle; keep
+      // the optimistic list/detail patch limited to scalar fields.
       const { subscribers: _omitSubs, ...optimistic } = data;
-      qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
-        old
-          ? {
-              ...old,
-              autopilots: old.autopilots.map((a) =>
-                a.id === id ? { ...a, ...optimistic } : a,
-              ),
-            }
-          : old,
+      qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
+        old?.map((autopilot) =>
+          autopilot.id === id ? { ...autopilot, ...optimistic } : autopilot,
+        ),
       );
       qc.setQueryData<GetAutopilotResponse>(autopilotKeys.detail(wsId, id), (old) =>
         old ? { ...old, autopilot: { ...old.autopilot, ...optimistic } } : old,
@@ -76,9 +85,9 @@ export function useDeleteAutopilot() {
     mutationFn: (id: string) => api.deleteAutopilot(id),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: autopilotKeys.list(wsId) });
-      const prevList = qc.getQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId));
-      qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
-        old ? { ...old, autopilots: old.autopilots.filter((a) => a.id !== id), total: old.total - 1 } : old,
+      const prevList = qc.getQueryData<Autopilot[]>(autopilotKeys.list(wsId));
+      qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
+        old?.filter((autopilot) => autopilot.id !== id),
       );
       qc.removeQueries({ queryKey: autopilotKeys.detail(wsId, id) });
       return { prevList };
@@ -96,7 +105,17 @@ export function useTriggerAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (id: string) => api.triggerAutopilot(id),
+    mutationFn: async (id: string) => {
+      const operations = useAutopilotManualTriggerStore.getState();
+      return executePendingMutation(
+        operations.manualTriggerKeys[id],
+        generateUUID,
+        (requestKey) => requestKey
+          ? operations.setManualTriggerKey(id, requestKey)
+          : operations.clearManualTriggerKey(id),
+        (requestKey) => api.triggerAutopilot(id, requestKey),
+      );
+    },
     onSettled: (_data, _err, id) => {
       qc.invalidateQueries({ queryKey: autopilotKeys.runs(wsId, id) });
       qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, id) });
@@ -104,52 +123,48 @@ export function useTriggerAutopilot() {
   });
 }
 
-export function useCreateAutopilotTrigger() {
+function useAutopilotDetailMutation<
+  Variables extends { autopilotId: string },
+  Result,
+>(mutationFn: (variables: Variables) => Promise<Result>) {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: ({ autopilotId, ...data }: { autopilotId: string } & CreateAutopilotTriggerRequest) =>
-      api.createAutopilotTrigger(autopilotId, data),
-    onSettled: (_data, _err, vars) => {
-      qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, vars.autopilotId) });
+    mutationFn,
+    onSettled: (_data, _err, variables) => {
+      qc.invalidateQueries({
+        queryKey: autopilotKeys.detail(wsId, variables.autopilotId),
+      });
     },
   });
+}
+
+export function useCreateAutopilotTrigger() {
+  return useAutopilotDetailMutation(
+    ({ autopilotId, ...data }: { autopilotId: string } & CreateAutopilotTriggerRequest) =>
+      api.createAutopilotTrigger(autopilotId, data),
+  );
 }
 
 export function useUpdateAutopilotTrigger() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn: ({ autopilotId, triggerId, ...data }: { autopilotId: string; triggerId: string } & UpdateAutopilotTriggerRequest) =>
+  return useAutopilotDetailMutation(
+    ({ autopilotId, triggerId, ...data }: { autopilotId: string; triggerId: string } & UpdateAutopilotTriggerRequest) =>
       api.updateAutopilotTrigger(autopilotId, triggerId, data),
-    onSettled: (_data, _err, vars) => {
-      qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, vars.autopilotId) });
-    },
-  });
+  );
 }
 
 export function useDeleteAutopilotTrigger() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn: ({ autopilotId, triggerId }: { autopilotId: string; triggerId: string }) =>
+  return useAutopilotDetailMutation(
+    ({ autopilotId, triggerId }: { autopilotId: string; triggerId: string }) =>
       api.deleteAutopilotTrigger(autopilotId, triggerId),
-    onSettled: (_data, _err, vars) => {
-      qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, vars.autopilotId) });
-    },
-  });
+  );
 }
 
 export function useRotateAutopilotTriggerWebhookToken() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn: ({ autopilotId, triggerId }: { autopilotId: string; triggerId: string }) =>
+  return useAutopilotDetailMutation(
+    ({ autopilotId, triggerId }: { autopilotId: string; triggerId: string }) =>
       api.rotateAutopilotTriggerWebhookToken(autopilotId, triggerId),
-    onSettled: (_data, _err, vars) => {
-      qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, vars.autopilotId) });
-    },
-  });
+  );
 }
 
 // Replay re-dispatches a previously-recorded delivery. The server creates

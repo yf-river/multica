@@ -45,7 +45,7 @@ func newGCTestDaemonWithIssueGCStatus(t *testing.T, issueID, status string, upda
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":     status,
 			"updated_at": updatedAt,
 		})
@@ -69,178 +69,57 @@ func createTaskDir(t *testing.T, root, wsID, dirName string, meta *execenv.GCMet
 	return taskDir
 }
 
-func TestShouldCleanTaskDir_DoneIssueOverTTL(t *testing.T) {
+// A recent 404 remains protected because not-found can also mean cross-workspace denial.
+func TestShouldCleanTaskDirIssueLifecycle(t *testing.T) {
 	t.Parallel()
-	issueID := "11111111-1111-1111-1111-111111111111"
 
-	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-10*24*time.Hour))
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task1", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now().Add(-10 * 24 * time.Hour),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionClean {
-		t.Fatalf("expected gcActionClean, got %d", action)
+	tests := []struct {
+		name          string
+		issueStatus   string
+		updatedAgo    time.Duration
+		httpStatus    int
+		withMeta      bool
+		expireOrphans bool
+		want          gcAction
+	}{
+		{name: "done over TTL", issueStatus: "done", updatedAgo: 10 * 24 * time.Hour, withMeta: true, want: gcActionClean},
+		{name: "cancelled over TTL", issueStatus: "cancelled", updatedAgo: 6 * 24 * time.Hour, withMeta: true, want: gcActionClean},
+		{name: "open issue", issueStatus: "in_progress", updatedAgo: 30 * 24 * time.Hour, withMeta: true, want: gcActionSkip},
+		{name: "done but recent", issueStatus: "done", updatedAgo: 24 * time.Hour, withMeta: true, want: gcActionSkip},
+		{name: "no metadata recent", want: gcActionSkip},
+		{name: "no metadata expired", expireOrphans: true, want: gcActionOrphan},
+		{name: "API error", httpStatus: http.StatusInternalServerError, withMeta: true, want: gcActionSkip},
+		{name: "404 expired", httpStatus: http.StatusNotFound, withMeta: true, expireOrphans: true, want: gcActionOrphan},
+		{name: "404 recent", httpStatus: http.StatusNotFound, withMeta: true, want: gcActionSkip},
 	}
-}
 
-func TestShouldCleanTaskDir_CancelledIssueOverTTL(t *testing.T) {
-	t.Parallel()
-	issueID := "22222222-2222-2222-2222-222222222222"
-
-	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "cancelled", time.Now().Add(-6*24*time.Hour))
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task2", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now(),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionClean {
-		t.Fatalf("expected gcActionClean, got %d", action)
-	}
-}
-
-func TestShouldCleanTaskDir_OpenIssueSkipped(t *testing.T) {
-	t.Parallel()
-	issueID := "33333333-3333-3333-3333-333333333333"
-
-	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "in_progress", time.Now().Add(-30*24*time.Hour))
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task3", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now(),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionSkip {
-		t.Fatalf("expected gcActionSkip for open issue, got %d", action)
-	}
-}
-
-func TestShouldCleanTaskDir_DoneButRecentSkipped(t *testing.T) {
-	t.Parallel()
-	issueID := "44444444-4444-4444-4444-444444444444"
-
-	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-1*24*time.Hour))
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task4", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now(),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionSkip {
-		t.Fatalf("expected gcActionSkip for recently-done issue, got %d", action)
-	}
-}
-
-func TestShouldCleanTaskDir_NoMetaRecentSkipped(t *testing.T) {
-	t.Parallel()
-
-	d := newGCTestDaemon(t, http.NewServeMux())
-	// No meta, fresh directory — should skip.
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task5", nil)
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionSkip {
-		t.Fatalf("expected gcActionSkip for recent orphan, got %d", action)
-	}
-}
-
-func TestShouldCleanTaskDir_NoMetaOldOrphan(t *testing.T) {
-	t.Parallel()
-
-	d := newGCTestDaemon(t, http.NewServeMux())
-	d.cfg.GCOrphanTTL = 0 // treat all orphans as expired
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task6", nil)
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionOrphan {
-		t.Fatalf("expected gcActionOrphan, got %d", action)
-	}
-}
-
-func TestShouldCleanTaskDir_APIErrorSkipped(t *testing.T) {
-	t.Parallel()
-	issueID := "55555555-5555-5555-5555-555555555555"
-
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-
-	d := newGCTestDaemon(t, mux)
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task7", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now(),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionSkip {
-		t.Fatalf("expected gcActionSkip on API error, got %d", action)
-	}
-}
-
-func TestShouldCleanTaskDir_Issue404OldOrphan(t *testing.T) {
-	t.Parallel()
-	issueID := "66666666-6666-6666-6666-666666666666"
-
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"issue not found"}`))
-	})
-
-	d := newGCTestDaemon(t, mux)
-	d.cfg.GCOrphanTTL = 0 // treat orphans as immediately eligible
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task8", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now(),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionOrphan {
-		t.Fatalf("expected gcActionOrphan for unreachable issue past TTL, got %d", action)
-	}
-}
-
-// TestShouldCleanTaskDir_Issue404RecentSkipped locks in the cross-workspace
-// safety: the server returns 404 both for deleted issues and for workspaces
-// the daemon token can't see, so a recent 404 must NOT trigger immediate
-// cleanup — otherwise a token re-scope could wipe dirs whose issues are live.
-func TestShouldCleanTaskDir_Issue404RecentSkipped(t *testing.T) {
-	t.Parallel()
-	issueID := "66666666-6666-6666-6666-666666666667"
-
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
-	})
-
-	d := newGCTestDaemon(t, mux)
-	// Default production OrphanTTL; taskDir mtime is now, so it's fresh.
-	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "fresh-404", &execenv.GCMeta{
-		Kind:        execenv.GCKindIssue,
-		IssueID:     issueID,
-		WorkspaceID: "ws1",
-		CompletedAt: time.Now(),
-	})
-
-	action := d.shouldCleanTaskDir(context.Background(), taskDir)
-	if action != gcActionSkip {
-		t.Fatalf("expected gcActionSkip for recent 404 (cross-workspace safety), got %d", action)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			const issueID = "11111111-1111-1111-1111-111111111111"
+			d := newGCTestDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.httpStatus != 0 {
+					http.Error(w, http.StatusText(tt.httpStatus), tt.httpStatus)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status":     tt.issueStatus,
+					"updated_at": time.Now().Add(-tt.updatedAgo),
+				})
+			}))
+			if tt.expireOrphans {
+				d.cfg.GCOrphanTTL = 0
+			}
+			var meta *execenv.GCMeta
+			if tt.withMeta {
+				meta = &execenv.GCMeta{Kind: execenv.GCKindIssue, IssueID: issueID, WorkspaceID: "ws1", CompletedAt: time.Now()}
+			}
+			taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task", meta)
+			if got := d.shouldCleanTaskDir(context.Background(), taskDir); got != tt.want {
+				t.Fatalf("action = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -346,7 +225,7 @@ func TestShouldCleanTaskDir_ActiveEnvRootSkipsFullCleanup(t *testing.T) {
 		// gcActionClean. But the env root is in use (e.g. follow-up comment
 		// dispatched a task that reuses the prior workdir), and CreateComment
 		// does not bump issue.updated_at. Active-root guard must override.
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":     "done",
 			"updated_at": time.Now().Add(-30 * 24 * time.Hour),
 		})
@@ -375,7 +254,7 @@ func TestShouldCleanTaskDir_ActiveEnvRootSkipsOrphan404(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
 	})
 
 	d := newGCTestDaemon(t, mux)
@@ -417,7 +296,7 @@ func TestShouldCleanTaskDir_ArtifactTTLDisabled(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":     "in_progress",
 			"updated_at": time.Now(),
 		})
@@ -589,8 +468,12 @@ func TestIsBareRepo(t *testing.T) {
 
 	t.Run("valid bare repo", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644)
-		os.MkdirAll(filepath.Join(dir, "objects"), 0o755)
+		if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "objects"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if !isBareRepo(dir) {
 			t.Fatal("expected isBareRepo=true for dir with HEAD + objects/")
 		}
@@ -598,7 +481,9 @@ func TestIsBareRepo(t *testing.T) {
 
 	t.Run("HEAD only", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644)
+		if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		if isBareRepo(dir) {
 			t.Fatal("expected isBareRepo=false for dir with only HEAD")
 		}
@@ -763,11 +648,15 @@ func TestPruneWorktree_SerializesWithCreateWorktree(t *testing.T) {
 	}
 
 	createDone := make(chan error, 1)
+	workDir := filepath.Join(d.cfg.WorkspacesRoot, "ws1", "task-lock-test")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		_, err := blockingCache.CreateWorktree(repocache.WorktreeParams{
 			WorkspaceID: "ws1",
 			RepoURL:     sourceRepo,
-			WorkDir:     t.TempDir(),
+			WorkDir:     workDir,
 			AgentName:   "tester",
 			TaskID:      "11111111-1111-1111-1111-111111111111",
 		})
@@ -899,7 +788,7 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
-				body: map[string]any{"status": "completed", "completed_at": overTTL},
+				body: map[string]any{"status": "completed"},
 			}},
 			want: gcActionClean,
 		},
@@ -908,7 +797,7 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
-				body: map[string]any{"status": "issue_created", "completed_at": overTTL},
+				body: map[string]any{"status": "issue_created"},
 			}},
 			want: gcActionClean,
 		},
@@ -931,20 +820,17 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			want: gcActionSkip,
 		},
 		{
-			// The directory is never reused, so a terminal run is reclaimed on
-			// sight — the recent completed_at no longer buys it a 24h reprieve.
-			name: "autopilot completed within TTL — clean immediately (no 24h gate)",
+			// The directory is never reused, so terminal status is sufficient.
+			name: "autopilot completed — clean immediately",
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
-				body: map[string]any{"status": "completed", "completed_at": withinTTL},
+				body: map[string]any{"status": "completed"},
 			}},
 			want: gcActionClean,
 		},
 		{
-			// Terminal status with no completed_at stamp at all still cleans —
-			// GC keys purely on the terminal status, not on any timestamp.
-			name: "autopilot skipped with no completed_at — clean",
+			name: "autopilot skipped — clean",
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
@@ -968,7 +854,7 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			meta: &execenv.GCMeta{Kind: execenv.GCKindQuickCreate, TaskID: quickTask, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/tasks/" + quickTask + "/gc-check",
-				body: map[string]any{"status": "completed", "completed_at": withinTTL},
+				body: map[string]any{"status": "completed"},
 			}},
 			want: gcActionClean,
 		},
@@ -1028,6 +914,10 @@ func TestShouldCleanTaskDir_EmptyParentIDFallsBackToOrphanMTime(t *testing.T) {
 		name string
 		meta *execenv.GCMeta
 	}{
+		{
+			name: "missing kind meta",
+			meta: &execenv.GCMeta{WorkspaceID: "ws"},
+		},
 		{
 			name: "issue meta",
 			meta: &execenv.GCMeta{Kind: execenv.GCKindIssue, WorkspaceID: "ws"},
@@ -1196,43 +1086,43 @@ func TestShouldCleanTaskDir_ChatActiveResistsOldMtime(t *testing.T) {
 }
 
 // TestGCMetaForTask covers the discriminator priority used by the daemon
-// when selecting which GCMetaKind to write at task completion.
+// when selecting which metadata kind to write at task completion.
 func TestGCMetaForTask(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		task Task
-		want execenv.GCMetaKind
+		want string
 		idOK func(m execenv.GCMeta) bool
 	}{
 		{
 			name: "chat task",
 			task: Task{ID: "t1", WorkspaceID: "ws", ChatSessionID: "c1"},
-			want: execenv.GCKindChat,
+			want: string(execenv.GCKindChat),
 			idOK: func(m execenv.GCMeta) bool { return m.ChatSessionID == "c1" },
 		},
 		{
 			name: "autopilot run task",
 			task: Task{ID: "t2", WorkspaceID: "ws", AutopilotRunID: "r1"},
-			want: execenv.GCKindAutopilotRun,
+			want: string(execenv.GCKindAutopilotRun),
 			idOK: func(m execenv.GCMeta) bool { return m.AutopilotRunID == "r1" },
 		},
 		{
 			name: "issue task",
 			task: Task{ID: "t3", WorkspaceID: "ws", IssueID: "i1"},
-			want: execenv.GCKindIssue,
+			want: string(execenv.GCKindIssue),
 			idOK: func(m execenv.GCMeta) bool { return m.IssueID == "i1" },
 		},
 		{
 			name: "quick-create task — issue_id always empty at WriteGCMeta time",
 			task: Task{ID: "t4", WorkspaceID: "ws", QuickCreatePrompt: "do the thing"},
-			want: execenv.GCKindQuickCreate,
+			want: string(execenv.GCKindQuickCreate),
 			idOK: func(m execenv.GCMeta) bool { return m.TaskID == "t4" },
 		},
 		{
 			name: "chat wins over issue when both set (defensive ordering)",
 			task: Task{ID: "t5", WorkspaceID: "ws", IssueID: "i1", ChatSessionID: "c1"},
-			want: execenv.GCKindChat,
+			want: string(execenv.GCKindChat),
 			idOK: func(m execenv.GCMeta) bool { return m.ChatSessionID == "c1" && m.IssueID == "" },
 		},
 	}
@@ -1244,7 +1134,7 @@ func TestGCMetaForTask(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected gcMetaForTask to recognize task, got ok=false")
 			}
-			if meta.Kind != tc.want {
+			if string(meta.Kind) != tc.want {
 				t.Fatalf("kind: want %q, got %q", tc.want, meta.Kind)
 			}
 			if !tc.idOK(meta) {

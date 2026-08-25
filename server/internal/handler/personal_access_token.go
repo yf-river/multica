@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // PATRenewThreshold is the remaining-lifetime window at which a PAT becomes
@@ -21,11 +24,11 @@ import (
 // failure before the user actually has to re-run `multica login`.
 const PATRenewThreshold = 7 * 24 * time.Hour
 
-// PATRenewExtension is how far into the future a renewed PAT's expires_at is
+// patRenewExtension is how far into the future a renewed PAT's expires_at is
 // pushed. Matches the initial issuance window in CreatePersonalAccessToken
 // (90 days) so renewed tokens converge on the same lifetime as freshly minted
 // ones — no second-class renewed tokens.
-const PATRenewExtension = 90 * 24 * time.Hour
+const patRenewExtension = 90 * 24 * time.Hour
 
 type PersonalAccessTokenResponse struct {
 	ID         string  `json:"id"`
@@ -36,7 +39,7 @@ type PersonalAccessTokenResponse struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
-type CreatePATResponse struct {
+type createPATResponse struct {
 	PersonalAccessTokenResponse
 	Token string `json:"token"`
 }
@@ -62,22 +65,32 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	var req CreatePATRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-
-	rawToken, err := auth.GeneratePATToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+	requestHash := personalAccessTokenRequestHash(req)
+	if existing, err := h.Queries.GetPersonalAccessTokenByCreateRequest(r.Context(), db.GetPersonalAccessTokenByCreateRequestParams{
+		UserID:         parseUUID(userID),
+		IdempotencyKey: idempotencyKey,
+	}); err == nil {
+		h.writePersonalAccessTokenReplay(w, existing, userID, idempotencyKey, requestHash)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load token request")
 		return
 	}
+
+	rawToken := auth.DerivePATToken(userID, uuidToString(idempotencyKey))
 
 	var expiresAt pgtype.Timestamptz
 	if req.ExpiresInDays != nil && *req.ExpiresInDays > 0 {
@@ -93,18 +106,61 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	}
 
 	pat, err := h.Queries.CreatePersonalAccessToken(r.Context(), db.CreatePersonalAccessTokenParams{
-		UserID:      parseUUID(userID),
-		Name:        req.Name,
-		TokenHash:   auth.HashToken(rawToken),
-		TokenPrefix: prefix,
-		ExpiresAt:   expiresAt,
+		UserID:         parseUUID(userID),
+		Name:           req.Name,
+		TokenHash:      auth.HashToken(rawToken),
+		TokenPrefix:    prefix,
+		ExpiresAt:      expiresAt,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    pgtype.Text{String: requestHash, Valid: true},
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			existing, replayErr := h.Queries.GetPersonalAccessTokenByCreateRequest(r.Context(), db.GetPersonalAccessTokenByCreateRequestParams{
+				UserID:         parseUUID(userID),
+				IdempotencyKey: idempotencyKey,
+			})
+			if replayErr == nil {
+				h.writePersonalAccessTokenReplay(w, existing, userID, idempotencyKey, requestHash)
+				return
+			}
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create token")
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, CreatePATResponse{
+	writeJSON(w, http.StatusCreated, createPATResponse{
+		PersonalAccessTokenResponse: patToResponse(pat),
+		Token:                       rawToken,
+	})
+}
+
+func personalAccessTokenRequestHash(req CreatePATRequest) string {
+	payload, _ := json.Marshal(req)
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", digest[:])
+}
+
+func (h *Handler) writePersonalAccessTokenReplay(
+	w http.ResponseWriter,
+	pat db.PersonalAccessToken,
+	userID string,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) {
+	if !pat.RequestHash.Valid || pat.RequestHash.String != requestHash {
+		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
+		return
+	}
+	rawToken := auth.DerivePATToken(userID, uuidToString(idempotencyKey))
+	if auth.HashToken(rawToken) != pat.TokenHash {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "the token derivation secret changed; retry with a new Idempotency-Key",
+			"code":  "idempotency_replay_unavailable",
+		})
+		return
+	}
+	writeIdempotencyReplayJSON(w, http.StatusCreated, createPATResponse{
 		PersonalAccessTokenResponse: patToResponse(pat),
 		Token:                       rawToken,
 	})
@@ -127,17 +183,6 @@ func (h *Handler) ListPersonalAccessTokens(w http.ResponseWriter, r *http.Reques
 		resp[i] = patToResponse(pat)
 	}
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// RenewPATResponse is the body returned by RenewCurrentPersonalAccessToken.
-//
-// Renewed=false is a no-op, not an error — it just means the caller polled
-// before the token entered the renewal window. Callers should always read
-// ExpiresAt for the authoritative expiry rather than assuming the old value
-// is still current.
-type RenewPATResponse struct {
-	ExpiresAt string `json:"expires_at"`
-	Renewed   bool   `json:"renewed"`
 }
 
 // RenewCurrentPersonalAccessToken extends the expires_at of the PAT used to
@@ -201,21 +246,21 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	// "never expires" case). There is nothing to extend — return the current
 	// (absent) expiry and let the caller treat this as a permanent token.
 	if !pat.ExpiresAt.Valid {
-		writeJSON(w, http.StatusOK, RenewPATResponse{ExpiresAt: "", Renewed: false})
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{ExpiresAt: "", Renewed: false})
 		return
 	}
 
 	now := time.Now()
 	remaining := pat.ExpiresAt.Time.Sub(now)
 	if remaining > PATRenewThreshold {
-		writeJSON(w, http.StatusOK, RenewPATResponse{
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{
 			ExpiresAt: timestampToString(pat.ExpiresAt),
 			Renewed:   false,
 		})
 		return
 	}
 
-	newExpiresAt := pgtype.Timestamptz{Time: now.Add(PATRenewExtension), Valid: true}
+	newExpiresAt := pgtype.Timestamptz{Time: now.Add(patRenewExtension), Valid: true}
 	// Pass the renewal threshold as the CAS predicate: only update if the
 	// row's existing expires_at is still inside this window. After the
 	// first writer succeeds the row sits at now+90d, which is well past
@@ -228,7 +273,7 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 	})
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, RenewPATResponse{
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{
 			ExpiresAt: timestampToString(updated),
 			Renewed:   true,
 		})
@@ -243,7 +288,7 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 			writeError(w, http.StatusUnauthorized, "token is no longer valid")
 			return
 		}
-		writeJSON(w, http.StatusOK, RenewPATResponse{
+		writeJSON(w, http.StatusOK, protocol.PersonalAccessTokenRenewalResponse{
 			ExpiresAt: timestampToString(current.ExpiresAt),
 			Renewed:   false,
 		})

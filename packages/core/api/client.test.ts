@@ -1,11 +1,1422 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
 
+const CHAT_IDEMPOTENCY_KEY = "11111111-1111-4111-8111-111111111111";
+const AUTOPILOT_IDEMPOTENCY_KEY = "22222222-2222-4222-8222-222222222222";
+const PROJECT_IDEMPOTENCY_KEY = "33333333-3333-4333-8333-333333333333";
+const SQUAD_IDEMPOTENCY_KEY = "44444444-4444-4444-8444-444444444444";
+const SKILL_IDEMPOTENCY_KEY = "55555555-5555-4555-8555-555555555555";
+const AGENT_IDEMPOTENCY_KEY = "66666666-6666-4666-8666-666666666666";
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("ApiClient", () => {
+  it("classifies malformed JSON by whether the request may have committed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
+      Promise.resolve(new Response(
+        init?.method === "POST" ? "<html>proxy error</html>" : "",
+        { status: 200, headers: { "Content-Type": "text/html" } },
+      )),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listAgents()).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: false,
+    });
+    await expect(client.probeWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: false,
+      });
+    await expect(client.createAgent({
+      name: "Agent",
+      runtime_id: "runtime-1",
+    })).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("classifies transport failures by whether the request may have committed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("connection reset")));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listAgents()).rejects.toMatchObject({
+      name: "ApiTransportError",
+      mayHaveCommitted: false,
+    });
+    await expect(client.createChatSession(
+      { agent_id: "agent-1", title: "hello" },
+      CHAT_IDEMPOTENCY_KEY,
+    )).rejects.toMatchObject({
+      name: "ApiTransportError",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("sends the required idempotency key when creating a chat session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "session-1",
+      agent_id: "agent-1",
+    }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await client.createChatSession(
+      { agent_id: "agent-1", title: "hello" },
+      CHAT_IDEMPOTENCY_KEY,
+    );
+
+    expect((fetchMock.mock.calls[0]![1]?.headers as Record<string, string>)["Idempotency-Key"])
+      .toBe(CHAT_IDEMPOTENCY_KEY);
+  });
+
+  it("retries an unknown project create with the same idempotency key", async () => {
+    const project = {
+      id: "project-1",
+      title: "Roadmap",
+      description: null,
+      icon: null,
+      status: "planned",
+      priority: "none",
+      lead_type: null,
+      lead_id: null,
+      created_at: "2026-07-11T00:00:00Z",
+      issue_count: 0,
+      done_count: 0,
+      resource_count: 0,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(project), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createProject(
+      { title: "Roadmap" },
+      PROJECT_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "project-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(PROJECT_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown squad create with the same idempotency key", async () => {
+    const squad = {
+      id: "squad-1",
+      workspace_id: "workspace-1",
+      name: "Platform",
+      description: "",
+      instructions: "",
+      sop_profile: {},
+      avatar_url: null,
+      scope: "workspace",
+      leader_id: "agent-1",
+      creator_id: "user-1",
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      archived_at: null,
+      archived_by: null,
+      member_count: 1,
+      member_preview: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(squad), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createSquad(
+      { name: "Platform", leader_id: "agent-1" },
+      SQUAD_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "squad-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(SQUAD_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown skill create with the same idempotency key", async () => {
+    const skill = {
+      id: "skill-1",
+      workspace_id: "workspace-1",
+      name: "Review",
+      description: "Review current code",
+      content: "",
+      config: {},
+      created_by: "user-1",
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T00:00:00Z",
+      source: "manual",
+      source_url: null,
+      files: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(skill), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createSkill(
+      { name: "Review" },
+      SKILL_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "skill-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(SKILL_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown agent create with the same idempotency key", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "agent-1",
+        runtime_id: "runtime-1",
+        name: "Reviewer",
+        description: "",
+        instructions: "",
+        avatar_url: null,
+        runtime_mode: "local",
+        runtime_config: {},
+        custom_args: [],
+        custom_env_key_count: 0,
+        mcp_config: null,
+        mcp_config_redacted: false,
+        scope: "workspace",
+        max_concurrent_tasks: 1,
+        model: "",
+        thinking_level: "",
+        owner_id: null,
+        skills: [],
+        created_at: "2026-07-13T00:00:00Z",
+        updated_at: "2026-07-13T00:00:00Z",
+        archived_at: null,
+      }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createAgent(
+      { name: "Reviewer", runtime_id: "runtime-1" },
+      AGENT_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "agent-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(AGENT_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("keeps void 204 mutations successful", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.deleteChatSession("session-1")).resolves.toBeUndefined();
+  });
+
+  it("validates inbox and notification preference responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listInbox()).resolves.toEqual([]);
+    await expect(client.markInboxRead("inbox-1")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.getNotificationPreferences()).resolves.toEqual({});
+  });
+
+  it("validates agent and secret env responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ cancelled: "invalid" }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listAgents()).resolves.toEqual([]);
+    await expect(client.getAgent("agent-1")).resolves.toMatchObject({ id: "", skills: [] });
+    await expect(client.getAgentEnv("agent-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: false,
+    });
+    await expect(client.updateAgentEnv("agent-1", { custom_env: { TOKEN: "new" } }))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+    await expect(client.cancelAgentTasks("agent-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("validates task reads and never manufactures successful task mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42, status: "running" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getAgentTaskSnapshot()).resolves.toEqual([]);
+    await expect(client.getIssueExecutionTree("issue-1"))
+      .resolves.toMatchObject({ root: { tasks: [], children: [] }, summary: {} });
+    await expect(client.cancelTask("issue-1", "task-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+    await expect(client.rerunIssue("issue-1", "task-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("rejects an agent environment response for a different agent", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({
+        agent_id: "agent-2",
+        custom_env: { TOKEN: "secret" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getAgentEnv("agent-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: false,
+    });
+    await expect(client.updateAgentEnv("agent-1", { custom_env: { TOKEN: "new" } }))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+  });
+
+  it("rejects empty identifiers in a successful chat send response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        message_id: "",
+        task_id: "",
+        created_at: "",
+      }), { status: 201, headers: { "Content-Type": "application/json" } }),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.sendChatMessage("session-1", "hello", CHAT_IDEMPOTENCY_KEY)).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("validates project resource read and mutation responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listProjectResources("project-1"))
+      .resolves.toEqual([]);
+    await expect(client.createProjectResource("project-1", {
+      resource_type: "github_repo",
+      resource_ref: { url: "https://example.test/repo" },
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.updateProjectResource("project-1", "resource-1", {
+      label: "Repository",
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.syncProjectResource("project-1", "resource-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
+  });
+
+  it("validates Autopilot reads and never manufactures successful mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42, status: "running" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getAutopilot("autopilot-1"))
+      .resolves.toMatchObject({ autopilot: { id: "" }, triggers: [] });
+    await expect(client.listAutopilotRuns("autopilot-1"))
+      .resolves.toEqual([]);
+    await expect(client.createAutopilot({
+      title: "Daily review",
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      execution_mode: "run_only",
+      trigger: { kind: "webhook" },
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.triggerAutopilot("autopilot-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.rotateAutopilotTriggerWebhookToken("autopilot-1", "trigger-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
+  it("validates Project and Skill reads and mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listProjects()).resolves.toEqual([]);
+    await expect(client.getProject("project-1")).resolves.toMatchObject({ id: "" });
+    await expect(client.listSkills()).resolves.toEqual([]);
+    await expect(client.getSkill("skill-1")).resolves.toMatchObject({ id: "", files: [] });
+    await expect(client.createProject({ title: "Project" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.createSkill({ name: "Skill" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
+  it("validates Label, Pin and Squad member reads and mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listLabels()).resolves.toEqual([]);
+    await expect(client.listPins()).resolves.toEqual([]);
+    await expect(client.listSquadMembers("squad-1")).resolves.toEqual([]);
+    await expect(client.createLabel({ name: "bug", color: "#ff0000" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.createPin({ item_type: "issue", item_id: "issue-1" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.addSquadMember("squad-1", {
+      member_type: "agent",
+      member_id: "agent-1",
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
+  it("validates Issue utility reads and rejects empty mutation success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.searchIssues({ q: "bug" }))
+      .resolves.toEqual([]);
+    await expect(client.getChildIssueProgress()).resolves.toEqual({ progress: [] });
+    await expect(client.getAssigneeFrequency()).resolves.toEqual([]);
+    await expect(client.listAttachments("issue-1")).resolves.toEqual([]);
+    await expect(client.quickCreateIssue({ prompt: "Create issue", agent_id: "agent-1" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.createFeedback({ message: "Broken", kind: "general" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.batchUpdateIssues(["issue-1"], { status: "done" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
+  it("retries quick-create unknown outcomes with one request identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ task_id: "task-1" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.quickCreateIssue({ prompt: "Create issue", agent_id: "agent-1" }))
+      .resolves.toBeUndefined();
+
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries feedback unknown outcomes with one request identity", async () => {
+    const response = { id: "feedback-1", created_at: "2026-07-13T00:00:00Z" };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createFeedback({ message: "Broken", kind: "bug" }))
+      .resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries Skill import unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "skill-1", name: "review-helper",
+      description: "Imported", content: "# Skill", config: {}, created_by: "user-1",
+      created_at: "now", updated_at: "now", files: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test").importSkill({ url: "https://clawhub.ai/acme/review-helper" }))
+      .resolves.toMatchObject({ id: "skill-1" });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries webhook token rotation unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "trigger-1", kind: "webhook", enabled: true,
+      cron_expression: null, timezone: null, next_run_at: null, webhook_token: "secret-token",
+      webhook_path: "/api/webhooks/autopilots/secret-token", webhook_url: null,
+      provider: "generic", has_signing_secret: false, signing_secret_hint: null,
+      label: null, event_filters: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test")
+      .rotateAutopilotTriggerWebhookToken("autopilot-1", "trigger-1"))
+      .resolves.toMatchObject({ webhook_token: "secret-token" });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries Autopilot trigger create unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "trigger-1", kind: "webhook", enabled: true,
+      cron_expression: null, timezone: null, next_run_at: null, webhook_token: "secret-token",
+      webhook_path: "/api/webhooks/autopilots/secret-token", webhook_url: null,
+      provider: "generic", has_signing_secret: false, signing_secret_hint: null,
+      label: null, event_filters: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test")
+      .createAutopilotTrigger("autopilot-1", { kind: "webhook" }))
+      .resolves.toMatchObject({ id: "trigger-1", webhook_token: "secret-token" });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries Issue rerun unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "task-1", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
+      status: "queued", dispatched_at: null, started_at: null,
+      completed_at: null, result: null, error: null, created_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 202, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test").rerunIssue("issue-1", "source-task-1"))
+      .resolves.toMatchObject({ id: "task-1", status: "queued" });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries webhook replay unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "delivery-replay-1", provider: "github", event: "push", signature_status: "not_required",
+      status: "dispatched", attempt_count: 1, received_at: "now", last_attempt_at: "now", created_at: "now",
+      dedupe_key: null, dedupe_source: null, content_type: null, response_status: 201,
+      replayed_from_delivery_id: "delivery-1", error: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.replayAutopilotDelivery("autopilot-1", "delivery-1"))
+      .resolves.toMatchObject({ id: "delivery-replay-1" });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries issue-create unknown outcomes with one request identity", async () => {
+    const issue = {
+      id: "issue-1", workspace_id: "workspace-1", number: 1, identifier: "ISS-1",
+      title: "Child", description: null, status: "todo", priority: "none",
+      assignee_type: null, assignee_id: null, creator_type: "member", creator_id: "user-1",
+      parent_issue_id: "parent-1", project_id: null, position: -1,
+      start_date: null, due_date: null, metadata: {}, created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(issue), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createIssue({ title: "Child", parent_issue_id: "parent-1" }))
+      .resolves.toMatchObject({ id: "issue-1", identifier: "ISS-1" });
+
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries comment-create unknown outcomes with one request identity", async () => {
+    const comment = {
+      id: "comment-1", issue_id: "issue-1", author_type: "member", author_id: "user-1",
+      content: "hello", type: "comment", parent_id: null, reactions: [], attachments: [],
+      created_at: "now", resolved_at: null,
+      resolved_by_type: null, resolved_by_id: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(comment), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createComment("issue-1", { content: "hello" }))
+      .resolves.toMatchObject({ id: "comment-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries prompt trial unknown outcomes with one request identity", async () => {
+    const trial = {
+      id: "trial-1", workspace_id: "workspace-1", prompt_id: "prompt-1",
+      version_id: "version-1", agent_id: "agent-1", chat_session_id: "session-1",
+      task_id: "task-1", rendered_message: "hello", variables: {}, status: "queued",
+      output_preview: "", created_by: "user-1", created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(trial), {
+        status: 202, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createPromptLibraryTrial("prompt-1", "version-1", { agent_id: "agent-1", variables: {} }))
+      .resolves.toMatchObject({ id: "trial-1", task_id: "task-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries prompt item and version unknown outcomes with stable request identities", async () => {
+    const item = {
+      id: "prompt-1", workspace_id: "workspace-1", project_id: null, name: "Prompt",
+      description: "", prompt_type: "text", content: "hello", variables: [], tags: [],
+      status: "启用", version: 1, created_by: "user-1", created_at: "now", updated_at: "now",
+    };
+    const version = {
+      id: "version-2", prompt_id: "prompt-1", workspace_id: "workspace-1", version: 2,
+      name: "Prompt", description: "", prompt_type: "text", content: "updated",
+      variables: [], tags: [], source: "手动更新", source_candidate_id: null,
+      change_note: "change", created_by: "user-1", created_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("item response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(item), { status: 201, headers: { "Content-Type": "application/json" } }))
+      .mockRejectedValueOnce(new TypeError("version response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ item: { ...item, content: "updated", version: 2 }, version }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createPromptLibraryItem({ name: "Prompt", content: "hello" })).resolves.toMatchObject({ id: "prompt-1" });
+    await expect(client.createPromptLibraryVersion("prompt-1", { content: "updated", change_note: "change" })).resolves.toMatchObject({ version: { id: "version-2" } });
+
+    for (const [firstIndex, secondIndex] of [[0, 1], [2, 3]] as const) {
+      const first = fetchMock.mock.calls[firstIndex]?.[1]?.headers as Record<string, string>;
+      const second = fetchMock.mock.calls[secondIndex]?.[1]?.headers as Record<string, string>;
+      expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+    }
+  });
+
+  it("whitelists external credential responses without exposing secret fields", async () => {
+    const profile = {
+      id: "profile-1",
+      user_id: "user-1",
+      scope: "account",
+      provider: "gongfeng",
+      name: "Gongfeng",
+      secret_binding: {
+        configured: true,
+        redacted: true,
+        mode: "encrypted_secret",
+        hint: "****abcd",
+      },
+      capabilities: {},
+      status: "verified",
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      token: "must-not-cross-boundary",
+      encrypted_secret: "ciphertext",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const body = url.endsWith("/test")
+        ? {
+            provider: "gongfeng",
+            secret_binding: profile.secret_binding,
+            status: "verified",
+            token: "must-not-cross-boundary",
+          }
+        : init?.method
+          ? profile
+          : { profiles: [profile] };
+      return Promise.resolve(new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }));
+    const client = new ApiClient("https://api.example.test");
+
+    const listed = await client.listExternalCredentialProfiles("gongfeng");
+    const created = await client.createExternalCredentialProfile({
+      provider: "gongfeng",
+      token: "input-secret",
+    });
+    const updated = await client.updateExternalCredentialProfile("profile-1", {
+      name: "Updated",
+    });
+    const tested = await client.testExternalCredentialProfile({
+      provider: "gongfeng",
+      token: "input-secret",
+    });
+
+    for (const value of [listed[0], created, updated, tested]) {
+      expect(value).not.toHaveProperty("token");
+      expect(value).not.toHaveProperty("encrypted_secret");
+    }
+    expect(tested).toEqual({ status: "verified" });
+  });
+
+  it("retries credential-profile unknown outcomes without changing request identity", async () => {
+    const profile = {
+      id: "profile-1", user_id: "user-1", scope: "account", provider: "tapd",
+      name: "Current", secret_binding: { configured: true, redacted: true, mode: "secret_ref" },
+      capabilities: {}, status: "unverified",
+      created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(profile), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createExternalCredentialProfile({
+      provider: "tapd", secret_ref: "env:TAPD_TOKEN",
+    })).resolves.toMatchObject({ id: "profile-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries member-create unknown outcomes without changing request identity", async () => {
+    const member = {
+      id: "member-1", user_id: "user-2", role: "member",
+      name: "Ada", account: "ada", avatar_url: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(member), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createMember("workspace-1", {
+      account: "ada", password: "MemberPassword1!", role: "member",
+    })).resolves.toMatchObject({ id: "member-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it("retries agent-playground create unknown outcomes with one request identity", async () => {
+    const detail = {
+      experiment: {
+        id: "experiment-1", name: "Current", status: "ready",
+        input_count: 1, agent_count: 1,
+      },
+      inputs: [], agents: [], results: [], judgements: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(detail), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createAgentPlaygroundExperiment({
+      name: "Current", dataset_asset_id: "asset-1", dataset_version_id: "version-1",
+      agent_ids: ["agent-1"],
+    })).resolves.toMatchObject({ experiment: { id: "experiment-1" } });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it.each([
+    ["run", (client: ApiClient) => client.runAgentPlaygroundExperiment("experiment-1")],
+    ["judge", (client: ApiClient) => client.judgeAgentPlaygroundExperiment("experiment-1", { judge_agent_id: "agent-2" })],
+  ])("retries an unknown agent-playground %s outcome once", async (_operation, invoke) => {
+    const detail = {
+      experiment: {
+        id: "experiment-1", name: "Current", status: "running",
+        input_count: 1, agent_count: 1,
+      },
+      inputs: [], agents: [], results: [], judgements: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(detail), {
+        status: 202, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(invoke(new ApiClient("https://api.example.test")))
+      .resolves.toMatchObject({ experiment: { id: "experiment-1" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(fetchMock.mock.calls[0]?.[0]);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+  });
+
+  it("retries a skill re-eval unknown outcome with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const requestId = "10000000-0000-4000-8000-000000000013";
+
+    await expect(client.runPromptEvaluationSkillReEval(
+      "candidate-1", { asset_id: "asset-1" }, requestId,
+    )).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries prompt evaluation asset creation with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000015";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationAsset({
+      name: "Current dataset", asset_type: "数据集", payload: {},
+    }, requestId)).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries prompt evaluation case creation with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000017";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationCase({
+      asset_id: "asset-1", case_name: "Current case", input: {}, expected: {},
+    }, requestId)).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries trace dataset import with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000019";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationDatasetFromTraces(
+      "asset-1", { task_ids: ["task-1"] }, requestId,
+    )).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries dataset version creation with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000020";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationDatasetVersion(
+      "asset-1", { version_label: "Current" }, requestId,
+    )).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries evidence snapshot creation with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000021";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationEvidenceSnapshot(
+      "run-1", "验收归档", requestId,
+    )).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries asset evidence snapshot batches with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000022";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationAssetEvidenceSnapshots(
+      "asset-1", "验收归档", 20, requestId,
+    )).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries a skill re-eval asset prepare with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const requestId = "10000000-0000-4000-8000-000000000014";
+
+    await expect(client.preparePromptEvaluationSkillReEvalAsset(
+      "candidate-1", { repo_path: "/repo" }, requestId,
+    )).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries a skill apply with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const requestId = "10000000-0000-4000-8000-000000000024";
+
+    await expect(client.applyPromptEvaluationSkillCandidate(
+      "candidate-1", { repo_path: "/repo" }, requestId,
+    )).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("retries a run review after an unknown response", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").reviewPromptEvaluationRun(
+      "run-1", { decision: "通过", note: "verified" },
+    )).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(fetchMock.mock.calls[1]?.[1]?.body);
+  });
+
+  it("retries a run cancellation after an unknown response", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").cancelPromptEvaluationRun("run-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries optimization candidate creation with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const requestId = "10000000-0000-4000-8000-000000000016";
+
+    await expect(client.createPromptEvaluationOptimizationCandidate("run-1", requestId))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it.each([
+    ["publish", (client: ApiClient, key: string) => client.publishPromptEvaluationOptimizationCandidate("candidate-1", key)],
+    ["reject", (client: ApiClient, key: string) => client.rejectPromptEvaluationOptimizationCandidate(
+      "candidate-1", { reason: "insufficient evidence" }, key,
+    )],
+  ])("retries optimization candidate %s with one identity", async (_operation, invoke) => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000018";
+
+    await expect(invoke(new ApiClient("https://api.example.test"), requestId))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
+  it("validates Lark installation state without exposing installation secrets", async () => {
+    const installation = {
+      id: "installation-1",
+      agent_id: "agent-1",
+      app_id: "app-1",
+      status: "active",
+      region: "feishu",
+      installed_at: "2026-07-11T00:00:00Z",
+      app_secret_encrypted: "must-not-cross-boundary",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        installations: [installation],
+        configured: true,
+        install_supported: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        session_id: "",
+        qr_code_url: "",
+        expires_in_seconds: 0,
+        poll_interval_seconds: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        session_id: "",
+        qr_code_url: "",
+        expires_in_seconds: 0,
+        poll_interval_seconds: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: "success",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        workspace_id: "",
+        installation_id: "",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        workspace_id: "",
+        installation_id: "",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    const listed = await client.listLarkInstallations("workspace-1");
+    expect(listed.installations[0]).not.toHaveProperty("app_secret_encrypted");
+    await expect(client.beginLarkInstall("workspace-1", "agent-1", "feishu"))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+    await expect(client.getLarkInstallStatus("workspace-1", "session-1"))
+      .resolves.toEqual({ status: "success" });
+    await expect(client.redeemLarkBindingToken("binding-token"))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+  });
+
+  it("retries an unknown Lark binding redemption with one request identity", async () => {
+    const response = {
+      workspace_id: "workspace-1",
+      installation_id: "installation-1",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const requestID = "10000000-0000-4000-8000-000000000019";
+    await expect(new ApiClient("https://api.example.test").redeemLarkBindingToken("binding-token", requestID))
+      .resolves.toEqual(response);
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestID);
+    expect(second["Idempotency-Key"]).toBe(requestID);
+  });
+
+  it("recovers an unknown Lark install begin response", async () => {
+    const response = {
+      session_id: "session-1",
+      qr_code_url: "https://accounts.feishu.cn/oauth/v1/qrcode?code=one",
+      expires_in_seconds: 600,
+      poll_interval_seconds: 3,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").beginLarkInstall(
+      "workspace-1", "agent-1", "feishu",
+    )).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(fetchMock.mock.calls[0]?.[0]);
+  });
+
+  it("fails closed on unsafe GitHub navigation and strips installation internals", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        configured: true,
+        url: "javascript:alert(1)",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        installations: [{
+          id: "installation-1",
+          account_login: "multica",
+          private_key: "must-not-cross-boundary",
+        }],
+        configured: true,
+        can_manage: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        pull_requests: [{
+          id: "pr-1",
+          repo_owner: "ChainWeaver/ida",
+          repo_name: "user-center",
+          number: 61234,
+          title: "Current Gongfeng merge request",
+          state: "open",
+          html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+          author_login: null,
+          mergeable_state: null,
+          checks_conclusion: null,
+          checks_passed: 0,
+          checks_failed: 0,
+          checks_pending: 0,
+          additions: 0,
+          deletions: 0,
+          changed_files: 0,
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        pull_requests: [{
+          id: "pr-unsafe",
+          repo_owner: "multica",
+          repo_name: "multica",
+          number: 1,
+          title: "Unsafe",
+          state: "open",
+          html_url: "javascript:alert(1)",
+          author_login: null,
+          mergeable_state: null,
+          checks_conclusion: null,
+          checks_passed: 0,
+          checks_failed: 0,
+          checks_pending: 0,
+          additions: 0,
+          deletions: 0,
+          changed_files: 0,
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getGitHubConnectURL("workspace-1"))
+      .resolves.toEqual({ configured: false });
+    const installations = await client.listGitHubInstallations("workspace-1");
+    expect(installations.installations[0]).not.toHaveProperty("private_key");
+    await expect(client.listIssuePullRequests("issue-1"))
+      .resolves.toMatchObject([{
+          html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+        }]);
+    await expect(client.listIssuePullRequests("issue-1"))
+      .resolves.toEqual([]);
+  });
+
+  it("validates workspace, repository, and member responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listWorkspaces()).resolves.toEqual([]);
+    await expect(client.resolveWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.probeWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.listMembers("workspace-1")).resolves.toEqual([]);
+    await expect(client.createMember("workspace-1", { account: "ada", role: "member" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
+  });
+
+  it("validates auth responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ token: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.login("ada", "secret")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.issueCliToken()).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+  });
+
+  it("validates issue, comment, and reaction write responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getIssue("issue-1")).resolves.toMatchObject({
+      id: "",
+      metadata: {},
+    });
+    await expect(client.createComment("issue-1", { content: "hello" })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.addReaction("comment-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.addIssueReaction("issue-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+  });
+
+  it("validates runtime profile lists instead of trusting typed JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ runtime_profiles: [{ id: 42 }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listRuntimeProfiles("workspace-1")).resolves.toEqual([]);
+  });
+
+  it("fails closed on malformed runtime mutations and async request states", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listRuntimes()).resolves.toEqual([]);
+    await expect(client.archiveAgentsAndDeleteRuntime("runtime-1", []))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.updateRuntime("runtime-1", { scope: "workspace" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.initiateListModels("runtime-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.getListModelsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.initiateListLocalSkills("runtime-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.getListLocalSkillsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.initiateImportLocalSkill("runtime-1", { skill_key: "skill-1" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.getImportLocalSkillResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+  });
+
+  it("binds runtime async responses to both runtime and request identities", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        id: "request-other",
+        runtime_id: "runtime-other",
+        status: "pending",
+        supported: true,
+        created_at: "2026-07-11T00:00:00Z",
+        updated_at: "2026-07-11T00:00:00Z",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getListModelsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.getListLocalSkillsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.getImportLocalSkillResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+  });
+
+  it("retries local skill import unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "request-1", runtime_id: "runtime-1", skill_key: "review-helper",
+      status: "pending", created_at: "2026-07-13T00:00:00Z", updated_at: "2026-07-13T00:00:00Z",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.initiateImportLocalSkill("runtime-1", { skill_key: "review-helper" }))
+      .resolves.toEqual({
+        id: "request-1",
+        runtime_id: "runtime-1",
+        status: "pending",
+      });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
+  it.each([
+    ["model discovery", { id: "model-request", runtime_id: "runtime-1", status: "pending", models: [], supported: true, created_at: "now", updated_at: "now" },
+      (client: ApiClient) => client.initiateListModels("runtime-1")],
+    ["local skill discovery", { id: "skill-request", runtime_id: "runtime-1", status: "pending", skills: [], supported: true, created_at: "now", updated_at: "now" },
+      (client: ApiClient) => client.initiateListLocalSkills("runtime-1")],
+  ])("retries %s unknown outcomes with one request identity", async (_name, response, initiate) => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(initiate(new ApiClient("https://api.example.test"))).resolves.toEqual(response);
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",
@@ -33,13 +1444,88 @@ describe("ApiClient", () => {
     }
   });
 
+  it("retries workspace-create unknown outcomes with one request identity", async () => {
+    const workspace = {
+      id: "workspace-1", name: "Current", slug: "current", description: null,
+      context: null,
+      settings: {
+        github_enabled: true,
+        github_pr_sidebar_enabled: true,
+        co_authored_by_enabled: true,
+      },
+      repos: [], issue_prefix: "CUR", avatar_url: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(workspace), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createWorkspace({ name: "Current", slug: "current" }))
+      .resolves.toMatchObject({ id: "workspace-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
-    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
-      new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {
+    const autopilot = {
+      id: "ap-1",
+      title: "Daily triage",
+      description: null,
+      project_id: null,
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      status: "active",
+      execution_mode: "create_issue",
+      created_by_type: "member",
+      created_by_id: "user-1",
+      last_run_at: null,
+      created_at: "2026-07-11T00:00:00Z",
+      subscribers: [],
+    };
+    const trigger = {
+      id: "tr-1",
+      kind: "schedule",
+      enabled: true,
+      cron_expression: "0 9 * * *",
+      timezone: "UTC",
+      next_run_at: null,
+      webhook_token: null,
+      label: null,
+    };
+    const run = {
+      id: "run-1",
+      autopilot_id: "ap-1",
+      source: "manual",
+      status: "running",
+      issue_id: null,
+      task_id: "task-1",
+      triggered_at: "2026-07-11T00:00:00Z",
+      completed_at: null,
+      failure_reason: null,
+      trigger_payload: null,
+      created_at: "2026-07-11T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      let body: unknown = autopilot;
+      if (url.includes("/runs?")) body = { runs: [], total: 0 };
+      else if (url.endsWith("/trigger")) body = run;
+      else if (url.includes("/triggers")) body = trigger;
+      else if (url.endsWith("/api/autopilots?status=active")) body = { autopilots: [], total: 0 };
+      else if (url.endsWith("/api/autopilots") && init?.method === "POST") {
+        body = { ...autopilot, initial_trigger: trigger };
+      }
+      else if (url.endsWith("/api/autopilots/ap-1") && (init?.method ?? "GET") === "GET") {
+        body = { autopilot, triggers: [] };
+      }
+      return Promise.resolve(new Response(JSON.stringify(body), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
-    ));
+      }));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test");
@@ -52,10 +1538,15 @@ describe("ApiClient", () => {
       assignee_type: "agent",
       assignee_id: "agent-1",
       execution_mode: "create_issue",
+      trigger: {
+        kind: "schedule",
+        cron_expression: "0 9 * * *",
+        timezone: "UTC",
+      },
     });
     await client.updateAutopilot("ap-1", { status: "paused", project_id: null });
     await client.deleteAutopilot("ap-1");
-    await client.triggerAutopilot("ap-1");
+    await client.triggerAutopilot("ap-1", AUTOPILOT_IDEMPOTENCY_KEY);
     await client.listAutopilotRuns("ap-1", { limit: 10, offset: 20 });
     await client.createAutopilotTrigger("ap-1", {
       kind: "schedule",
@@ -70,6 +1561,7 @@ describe("ApiClient", () => {
       url,
       method: init?.method ?? "GET",
       body: init?.body,
+      headers: init?.headers,
     }));
 
     expect(calls).toMatchObject([
@@ -84,6 +1576,14 @@ describe("ApiClient", () => {
           assignee_type: "agent",
           assignee_id: "agent-1",
           execution_mode: "create_issue",
+          trigger: {
+            kind: "schedule",
+            cron_expression: "0 9 * * *",
+            timezone: "UTC",
+          },
+        }),
+        headers: expect.objectContaining({
+          "Idempotency-Key": expect.any(String),
         }),
       },
       {
@@ -92,7 +1592,13 @@ describe("ApiClient", () => {
         body: JSON.stringify({ status: "paused", project_id: null }),
       },
       { url: "https://api.example.test/api/autopilots/ap-1", method: "DELETE" },
-      { url: "https://api.example.test/api/autopilots/ap-1/trigger", method: "POST" },
+      {
+        url: "https://api.example.test/api/autopilots/ap-1/trigger",
+        method: "POST",
+        headers: expect.objectContaining({
+          "Idempotency-Key": AUTOPILOT_IDEMPOTENCY_KEY,
+        }),
+      },
       { url: "https://api.example.test/api/autopilots/ap-1/runs?limit=10&offset=20", method: "GET" },
       {
         url: "https://api.example.test/api/autopilots/ap-1/triggers",
@@ -116,6 +1622,99 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("retries an unknown autopilot trigger outcome with the same key", async () => {
+    const run = {
+      id: "run-1",
+      autopilot_id: "ap-1",
+      source: "manual",
+      status: "running",
+      issue_id: null,
+      task_id: "task-1",
+      triggered_at: "2026-07-11T00:00:00Z",
+      completed_at: null,
+      failure_reason: null,
+      trigger_payload: null,
+      created_at: "2026-07-11T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("response connection reset"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(run), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(
+      client.triggerAutopilot("ap-1", AUTOPILOT_IDEMPOTENCY_KEY),
+    ).resolves.toMatchObject({ id: "run-1", task_id: "task-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(AUTOPILOT_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown autopilot create outcome with the same key", async () => {
+    const response = {
+      id: "ap-1",
+      title: "Daily triage",
+      description: null,
+      project_id: null,
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      status: "active",
+      execution_mode: "run_only",
+      created_by_type: "member",
+      created_by_id: "user-1",
+      last_run_at: null,
+      created_at: "2026-07-11T00:00:00Z",
+      subscribers: [],
+      initial_trigger: {
+        id: "trigger-1",
+        kind: "webhook",
+        enabled: true,
+        cron_expression: null,
+        timezone: null,
+        next_run_at: null,
+        webhook_token: "awt_test",
+        label: null,
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("response connection reset"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(response), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createAutopilot({
+      title: "Daily triage",
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      execution_mode: "run_only",
+      trigger: { kind: "webhook" },
+    }, AUTOPILOT_IDEMPOTENCY_KEY)).resolves.toMatchObject({
+      id: "ap-1",
+      initial_trigger: { id: "trigger-1" },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(AUTOPILOT_IDEMPOTENCY_KEY);
+    }
+  });
+
   it("sends offset when listing prompt evaluation runs", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ items: [], total: 0 }), {
@@ -126,12 +1725,13 @@ describe("ApiClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test");
-    await client.listPromptEvaluationRuns({
+    const runs = await client.listPromptEvaluationRuns({
       since: "2026-07-01T00:00:00.000Z",
       limit: 200,
       offset: 400,
     });
 
+    expect(runs).toEqual([]);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.test/api/prompt-evaluation-runs?since=2026-07-01T00%3A00%3A00.000Z&limit=200&offset=400",
       expect.any(Object),
@@ -226,11 +1826,13 @@ describe("ApiClient", () => {
     await client.previewCommentTriggers("issue-1", "hello", "parent-1", "comment-1");
     await client.createComment(
       "issue-1",
-      "hello",
-      "comment",
-      "parent-1",
-      ["attachment-1"],
-      ["agent-1"],
+      {
+        content: "hello",
+        type: "comment",
+        parent_id: "parent-1",
+        attachment_ids: ["attachment-1"],
+        suppress_agent_ids: ["agent-1"],
+      },
     );
     await client.updateComment("comment-1", "updated", ["attachment-1"], ["agent-1"]);
 
@@ -284,6 +1886,7 @@ describe("ApiClient", () => {
               url: "https://static.example.test/ws/att-1.md",
               download_url:
                 "https://static.example.test/ws/att-1.md?Policy=p&Signature=s&Key-Pair-Id=k",
+              markdown_url: "https://static.example.test/ws/att-1.md",
               content_type: "text/markdown",
               size_bytes: 123,
               created_at: "2026-05-11T00:00:00Z",
@@ -376,7 +1979,7 @@ describe("ApiClient", () => {
     });
   });
 
-  describe("listChatMessagesPage deployment-order fallback", () => {
+  describe("listChatMessagesPage current contract", () => {
     const jsonResponse = (body: unknown, status: number, statusText = "") =>
       new Response(JSON.stringify(body), {
         status,
@@ -384,58 +1987,20 @@ describe("ApiClient", () => {
         headers: { "Content-Type": "application/json" },
       });
 
-    it("falls back to the legacy full-list endpoint when the paged route 404s", async () => {
-      const legacy = [
-        { id: "m1", role: "user", content: "hi", created_at: "2026-06-01T00:00:00Z" },
-        { id: "m2", role: "assistant", content: "yo", created_at: "2026-06-01T00:00:01Z" },
-      ];
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValueOnce(jsonResponse({ error: "not found" }, 404, "Not Found"))
-        .mockResolvedValueOnce(jsonResponse(legacy, 200));
+    it("uses only the paged endpoint and falls back on a malformed body", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ messages: "invalid" }, 200));
       vi.stubGlobal("fetch", fetchMock);
 
       const client = new ApiClient("https://api.example.test");
       const page = await client.listChatMessagesPage("session-1", { limit: 50 });
 
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls[0]![0]).toBe(
         "https://api.example.test/api/chat/sessions/session-1/messages/page?limit=50",
       );
-      expect(fetchMock.mock.calls[1]![0]).toBe(
-        "https://api.example.test/api/chat/sessions/session-1/messages",
-      );
-      expect(page).toEqual({ messages: legacy, limit: 50, has_more: false, next_cursor: null });
+      expect(page).toEqual({ messages: [], has_more: false, next_cursor: null });
     });
 
-    it("does NOT fall back on a cursor request — a 404 there propagates", async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(jsonResponse({ error: "not found" }, 404, "Not Found"));
-      vi.stubGlobal("fetch", fetchMock);
-
-      const client = new ApiClient("https://api.example.test");
-      await expect(
-        client.listChatMessagesPage("session-1", {
-          before: { created_at: "2026-06-01T00:00:00Z", id: "m1" },
-        }),
-      ).rejects.toBeInstanceOf(ApiError);
-      // Only the paged request fires; no legacy full-list call that would duplicate messages.
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("propagates non-404 errors instead of masking them with the legacy list", async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(jsonResponse({ error: "boom" }, 500, "Internal Server Error"));
-      vi.stubGlobal("fetch", fetchMock);
-
-      const client = new ApiClient("https://api.example.test");
-      await expect(client.listChatMessagesPage("session-1")).rejects.toMatchObject({
-        status: 500,
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
   });
 
   describe("cancelTaskById response parsing", () => {
@@ -445,7 +2010,6 @@ describe("ApiClient", () => {
       runtime_id: "runtime-1",
       issue_id: "",
       status: "cancelled",
-      priority: 0,
       dispatched_at: null,
       started_at: null,
       completed_at: "2026-06-12T06:40:00Z",
@@ -522,7 +2086,7 @@ describe("ApiClient", () => {
         },
       ],
       ["a null body", null],
-    ])("falls back for %s", async (_label, body) => {
+    ])("rejects a malformed successful response for %s", async (_label, body) => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(
@@ -534,17 +2098,69 @@ describe("ApiClient", () => {
       );
 
       const client = new ApiClient("https://api.example.test");
-      const result = await client.cancelTaskById("task-1");
-
-      expect(result.id).toBe("");
-      expect(result.cancelled_chat_message).toBeUndefined();
+      await expect(client.cancelTaskById("task-1")).rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
     });
   });
 
   describe("chat attachment wiring", () => {
+		it("uploadFile retries an unknown outcome with the same request identity", async () => {
+			const attachment = {
+				id: "att-1",
+				workspace_id: "ws-1",
+				issue_id: null,
+				comment_id: null,
+				chat_session_id: null,
+				chat_message_id: null,
+				uploader_type: "member",
+				uploader_id: "user-1",
+				url: "https://cdn/x",
+				download_url: "https://cdn/x?download=1",
+				markdown_url: "https://cdn/x",
+				filename: "hi.png",
+				content_type: "image/png",
+				size_bytes: 2,
+				created_at: "2026-07-12T00:00:00Z",
+			};
+			const fetchMock = vi.fn()
+				.mockRejectedValueOnce(new TypeError("response lost"))
+				.mockResolvedValueOnce(new Response(JSON.stringify(attachment), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}));
+			vi.stubGlobal("fetch", fetchMock);
+
+			const client = new ApiClient("https://api.example.test");
+			await expect(client.uploadFile(new File(["hi"], "hi.png"))).resolves.toMatchObject({ id: "att-1" });
+
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			const firstHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+			const secondHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+			expect(firstHeaders["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+			expect(secondHeaders["Idempotency-Key"]).toBe(firstHeaders["Idempotency-Key"]);
+		});
+
     it("uploadFile includes chat_session_id in the FormData body", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ id: "att-1", url: "https://cdn/x" }), {
+        new Response(JSON.stringify({
+          id: "att-1",
+          workspace_id: "ws-1",
+          issue_id: null,
+          comment_id: null,
+          chat_session_id: "session-123",
+          chat_message_id: null,
+          uploader_type: "member",
+          uploader_id: "user-1",
+          url: "https://cdn/x",
+          download_url: "https://cdn/x?download=1",
+          markdown_url: "https://cdn/x",
+          filename: "hi.png",
+          content_type: "image/png",
+          size_bytes: 2,
+          created_at: "2026-07-12T00:00:00Z",
+        }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
@@ -568,7 +2184,12 @@ describe("ApiClient", () => {
 
     it("sendChatMessage serialises attachment_ids onto the JSON body when present", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "" }), {
+        new Response(JSON.stringify({
+          message_id: "m1",
+          task_id: "t1",
+          created_at: "2026-07-11T00:00:00Z",
+          attachment_ids: [],
+        }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
         }),
@@ -576,19 +2197,26 @@ describe("ApiClient", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const client = new ApiClient("https://api.example.test");
-      await client.sendChatMessage("session-1", "hello", ["att-1", "att-2"]);
+      await client.sendChatMessage("session-1", "hello", CHAT_IDEMPOTENCY_KEY, ["att-1", "att-2"]);
 
       const [, init] = fetchMock.mock.calls[0]!;
       expect(JSON.parse(init?.body as string)).toEqual({
         content: "hello",
         attachment_ids: ["att-1", "att-2"],
       });
+      expect((init?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(CHAT_IDEMPOTENCY_KEY);
     });
 
     it("sendChatMessage omits attachment_ids when the list is empty or undefined", async () => {
       const fetchMock = vi.fn().mockImplementation(() =>
         Promise.resolve(
-          new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "" }), {
+          new Response(JSON.stringify({
+            message_id: "m1",
+            task_id: "t1",
+            created_at: "2026-07-11T00:00:00Z",
+            attachment_ids: [],
+          }), {
             status: 201,
             headers: { "Content-Type": "application/json" },
           }),
@@ -597,8 +2225,13 @@ describe("ApiClient", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const client = new ApiClient("https://api.example.test");
-      await client.sendChatMessage("session-1", "hello");
-      await client.sendChatMessage("session-1", "again", []);
+      await client.sendChatMessage("session-1", "hello", CHAT_IDEMPOTENCY_KEY);
+      await client.sendChatMessage(
+        "session-1",
+        "again",
+        "22222222-2222-4222-8222-222222222222",
+        [],
+      );
 
       expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({ content: "hello" });
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });

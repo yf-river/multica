@@ -26,7 +26,7 @@ import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useTimeAgo } from "../../i18n";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
@@ -58,8 +58,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { AppLink, useNavigation } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
-import { useCanEditSkill } from "../hooks/use-can-edit-skill";
-import { useSkillPermissions } from "@multica/core/permissions";
+import { useSkillEditPermission } from "@multica/core/permissions";
 import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
 import { readOrigin, totalFileCount, type OriginInfo } from "../lib/origin";
 import { FileTree } from "./file-tree";
@@ -68,7 +67,7 @@ import { useT } from "../../i18n";
 
 const SKILL_MD = "SKILL.md";
 
-type DraftFile = { id?: string; path: string; content: string };
+type DraftFile = { path: string; content: string };
 
 // ---------------------------------------------------------------------------
 // File path validation + inline add
@@ -270,8 +269,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     [agents],
   );
 
-  const canEdit = useCanEditSkill(skill, wsId);
-  const skillPermissions = useSkillPermissions(skill ?? null, wsId);
+  const canEditDecision = useSkillEditPermission(skill ?? null, wsId);
+  const canEdit = canEditDecision.allowed;
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -324,7 +323,6 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setContent(skill.content);
     setFiles(
       (skill.files ?? []).map((f: SkillFile) => ({
-        id: f.id,
         path: f.path,
         content: f.content,
       })),
@@ -391,7 +389,6 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setContent(s.content);
     setFiles(
       (s.files ?? []).map((f: SkillFile) => ({
-        id: f.id,
         path: f.path,
         content: f.content,
       })),
@@ -593,7 +590,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
       {!canEdit && (
         <div className="px-4 pt-3">
           <CapabilityBanner
-            reason={skillPermissions.canEdit.reason}
+            reason={canEditDecision.reason}
             resource="skill"
             ownerName={creator?.name}
           />

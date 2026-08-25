@@ -5,17 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 )
 
 // cursorBackend implements Backend by spawning the Cursor Agent CLI
 // (cursor-agent) with --output-format stream-json and parsing the JSONL
-// event stream. The protocol is similar to Claude Code's stream-json
-// format: events are newline-delimited JSON objects with a "type" field.
+// event stream.
 type cursorBackend struct {
 	cfg Config
 }
@@ -30,163 +29,100 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		return nil, fmt.Errorf("cursor-agent executable not found at %q: %w", execName, err)
 	}
 
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
 	args := buildCursorArgs(prompt, opts, b.cfg.Logger)
 	argv0, cmdArgs := chooseCursorInvocation(execName, lookedUp, args, b.cfg.Logger)
+	return executeStreamCommand(ctx, opts.Timeout, streamCommandSpec{
+		name:       "cursor-agent",
+		pipeName:   "cursor",
+		stderrName: "cursor",
+		executable: argv0,
+		args:       cmdArgs,
+		env:        buildEnv(b.cfg.Env),
+		cwd:        opts.Cwd,
+		waitDelay:  500 * time.Millisecond,
+		logger:     b.cfg.Logger,
+		model:      opts.Model,
+		parse: func(stdout io.Reader, msgCh chan<- Message, cancel context.CancelFunc) streamCommandResult {
+			configuredModel := strings.TrimSpace(opts.Model)
+			var output strings.Builder
+			var sessionID string
+			finalStatus := "completed"
+			var finalError string
+			resultSeen := false
+			usage := make(map[string]TokenUsage)
 
-	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
-	cmd.WaitDelay = 500 * time.Millisecond
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+			scanner := bufio.NewScanner(stdout)
+			scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("cursor stdout pipe: %w", err)
-	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[cursor:stderr] ")
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("start cursor-agent: %w", err)
-	}
-
-	b.cfg.Logger.Info("cursor-agent started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-
-		// Close stdout when the context is cancelled so scanner.Scan() unblocks.
-		go func() {
-			<-runCtx.Done()
-			_ = stdout.Close()
-		}()
-
-		startTime := time.Now()
-		configuredModel := strings.TrimSpace(opts.Model)
-		var output strings.Builder
-		var sessionID string
-		finalStatus := "completed"
-		var finalError string
-		resultSeen := false
-		resultUsage := make(map[string]TokenUsage)
-
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-
-		for scanner.Scan() {
-			raw := scanner.Text()
-			line := normalizeCursorStreamLine(raw)
-			if line == "" {
-				continue
-			}
-
-			var evt cursorStreamEvent
-			if err := json.Unmarshal([]byte(line), &evt); err != nil {
-				continue
-			}
-
-			if sid := evt.readSessionID(); sid != "" {
-				sessionID = sid
-			}
-
-			switch evt.Type {
-			case "system":
-				if evt.Subtype == "init" {
-					trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" {
+					continue
 				}
-				if evt.Subtype == "error" {
+
+				var evt cursorStreamEvent
+				if err := json.Unmarshal([]byte(line), &evt); err != nil {
+					continue
+				}
+
+				if sid := strings.TrimSpace(evt.SessionID); sid != "" {
+					sessionID = sid
+				}
+
+				switch evt.Type {
+				case "system":
+					if evt.Subtype == "init" {
+						trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+					}
+					if evt.Subtype == "error" {
+						errMsg := cursorErrorText(&evt)
+						if errMsg != "" {
+							trySend(msgCh, Message{Type: MessageError, Content: errMsg})
+						}
+					}
+
+				case "assistant":
+					b.handleCursorAssistant(&evt, msgCh, &output)
+
+				case "tool_call":
+					if msg, ok := cursorToolCallMessage(&evt); ok {
+						trySend(msgCh, msg)
+					}
+
+				case "result":
+					resultSeen = true
+					if evt.IsError || evt.Subtype == "error" {
+						finalStatus = "failed"
+						finalError = cursorErrorText(&evt)
+					}
+					if evt.ResultText != "" && output.Len() == 0 {
+						output.WriteString(evt.ResultText)
+					}
+					b.accumulateResultUsage(usage, &evt, configuredModel)
+					// Current Cursor Agent versions can emit the terminal result
+					// event but keep a worker process alive. Treat result as the
+					// protocol boundary so the daemon can report completion.
+					cancel()
+
+				case "error":
 					errMsg := cursorErrorText(&evt)
 					if errMsg != "" {
-						trySend(msgCh, Message{Type: MessageError, Content: errMsg})
+						finalError = errMsg
 					}
+					trySend(msgCh, Message{Type: MessageError, Content: errMsg})
 				}
-
-			case "assistant":
-				b.handleCursorAssistant(&evt, msgCh, &output)
-
-			case "tool_use":
-				var params map[string]any
-				if evt.Parameters != nil {
-					_ = json.Unmarshal(evt.Parameters, &params)
-				}
-				trySend(msgCh, Message{
-					Type:   MessageToolUse,
-					Tool:   evt.ToolName,
-					CallID: evt.ToolID,
-					Input:  params,
-				})
-
-			case "tool_result":
-				trySend(msgCh, Message{
-					Type:   MessageToolResult,
-					CallID: evt.ToolID,
-					Output: evt.Output,
-				})
-
-			case "result":
-				resultSeen = true
-				if evt.IsError || evt.Subtype == "error" {
-					finalStatus = "failed"
-					finalError = cursorErrorText(&evt)
-				}
-				if evt.ResultText != "" && output.Len() == 0 {
-					output.WriteString(evt.ResultText)
-				}
-				b.accumulateResultUsage(resultUsage, &evt, configuredModel)
-				// Current Cursor Agent versions can emit the terminal result
-				// event but keep a worker process alive. Treat result as the
-				// protocol boundary so the daemon can report completion.
-				cancel()
-
-			case "error":
-				errMsg := cursorErrorText(&evt)
-				if errMsg != "" {
-					finalError = errMsg
-				}
-				trySend(msgCh, Message{Type: MessageError, Content: errMsg})
-
 			}
-		}
 
-		exitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			finalStatus = "timeout"
-			finalError = fmt.Sprintf("cursor-agent timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled && !resultSeen {
-			finalStatus = "aborted"
-			finalError = "execution cancelled"
-		} else if exitErr != nil && finalStatus == "completed" && !resultSeen {
-			finalStatus = "failed"
-			finalError = fmt.Sprintf("cursor-agent exited with error: %v", exitErr)
-		}
-
-		b.cfg.Logger.Info("cursor-agent finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      resultUsage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+			return streamCommandResult{
+				status:             finalStatus,
+				output:             output.String(),
+				errMsg:             finalError,
+				sessionID:          sessionID,
+				usage:              usage,
+				terminalResultSeen: resultSeen,
+			}
+		},
+	})
 }
 
 func (b *cursorBackend) handleCursorAssistant(evt *cursorStreamEvent, ch chan<- Message, output *strings.Builder) {
@@ -204,27 +140,9 @@ func (b *cursorBackend) handleCursorAssistant(evt *cursorStreamEvent, ch chan<- 
 	// to avoid double-counting.
 
 	for _, block := range content.Content {
-		switch block.Type {
-		case "output_text", "text":
-			if block.Text != "" {
-				output.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
-			}
-		case "thinking":
-			if block.Text != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
-			}
-		case "tool_use":
-			var input map[string]any
-			if block.Input != nil {
-				_ = json.Unmarshal(block.Input, &input)
-			}
-			trySend(ch, Message{
-				Type:   MessageToolUse,
-				Tool:   block.Name,
-				CallID: block.ID,
-				Input:  input,
-			})
+		if block.Type == "text" && block.Text != "" {
+			output.WriteString(block.Text)
+			trySend(ch, Message{Type: MessageText, Content: block.Text})
 		}
 	}
 }
@@ -243,21 +161,13 @@ func (b *cursorBackend) accumulateResultUsage(usage map[string]TokenUsage, evt *
 	model := cursorUsageModel(evt.Model, configuredModel)
 	u := usage[model]
 
-	// Prefer top-level result totals when present, otherwise use the current
-	// nested camelCase usage object.
-	if evt.InputTokens != 0 || evt.OutputTokens != 0 || evt.CacheReadTokens != 0 || evt.CacheWriteTokens != 0 {
-		u.InputTokens += evt.InputTokens
-		u.OutputTokens += evt.OutputTokens
-		u.CacheReadTokens += evt.CacheReadTokens
-		u.CacheWriteTokens += evt.CacheWriteTokens
-	} else if evt.Usage != nil {
-		u.InputTokens += evt.Usage.InputTokens
-		u.OutputTokens += evt.Usage.OutputTokens
-		u.CacheReadTokens += evt.Usage.CacheReadInputTokens
-		u.CacheWriteTokens += evt.Usage.CacheWriteInputTokens
-	} else {
+	if evt.Usage == nil {
 		return
 	}
+	u.InputTokens += evt.Usage.InputTokens
+	u.OutputTokens += evt.Usage.OutputTokens
+	u.CacheReadTokens += evt.Usage.CacheReadTokens
+	u.CacheWriteTokens += evt.Usage.CacheWriteTokens
 
 	usage[model] = u
 }
@@ -273,74 +183,59 @@ type cursorStreamEvent struct {
 	// assistant fields
 	Message json.RawMessage `json:"message,omitempty"`
 
-	// tool_use fields
-	ToolName   string          `json:"tool_name,omitempty"`
-	ToolID     string          `json:"tool_id,omitempty"`
-	Parameters json.RawMessage `json:"parameters,omitempty"`
-
-	// tool_result fields
-	Output string `json:"output,omitempty"`
+	// tool_call fields
+	CallID   string          `json:"call_id,omitempty"`
+	ToolCall json.RawMessage `json:"tool_call,omitempty"`
 
 	// result fields
-	ResultText       string       `json:"result,omitempty"`
-	IsError          bool         `json:"is_error,omitempty"`
-	InputTokens      int64        `json:"inputTokens,omitempty"`
-	OutputTokens     int64        `json:"outputTokens,omitempty"`
-	CacheReadTokens  int64        `json:"cacheReadTokens,omitempty"`
-	CacheWriteTokens int64        `json:"cacheWriteTokens,omitempty"`
-	Usage            *cursorUsage `json:"usage,omitempty"`
-	TotalCost        float64      `json:"total_cost_usd,omitempty"`
+	ResultText string       `json:"result,omitempty"`
+	IsError    bool         `json:"is_error,omitempty"`
+	Usage      *cursorUsage `json:"usage,omitempty"`
 
 	// error fields
 	ErrorMsg string `json:"error,omitempty"`
 	Detail   string `json:"detail,omitempty"`
 }
 
-func (evt *cursorStreamEvent) readSessionID() string {
-	if s := strings.TrimSpace(evt.SessionID); s != "" {
-		return s
-	}
-	return ""
-}
-
 type cursorUsage struct {
-	InputTokens           int64 `json:"inputTokens"`
-	OutputTokens          int64 `json:"outputTokens"`
-	CacheReadInputTokens  int64 `json:"cacheReadTokens"`
-	CacheWriteInputTokens int64 `json:"cacheWriteTokens"`
+	InputTokens      int64 `json:"inputTokens"`
+	OutputTokens     int64 `json:"outputTokens"`
+	CacheReadTokens  int64 `json:"cacheReadTokens"`
+	CacheWriteTokens int64 `json:"cacheWriteTokens"`
 }
 
 type cursorAssistantMessage struct {
-	Model   string               `json:"model"`
 	Content []cursorContentBlock `json:"content"`
-	Usage   *cursorUsage         `json:"usage,omitempty"`
 }
 
 type cursorContentBlock struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text,omitempty"`
-	ID    string          `json:"id,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 // ── Helpers ──
 
-// normalizeCursorStreamLine handles the stdout:/stderr: prefix that Cursor
-// CLI may emit in stream-json mode. Returns the trimmed JSON line.
-func normalizeCursorStreamLine(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	// Cursor CLI may prefix lines with "stdout:" or "stderr:" — strip it.
-	if idx := cursorStreamPrefixRe.FindStringIndex(trimmed); idx != nil {
-		return strings.TrimSpace(trimmed[idx[1]:])
-	}
-	return trimmed
+type cursorToolCall struct {
+	Args   map[string]any  `json:"args"`
+	Result json.RawMessage `json:"result"`
 }
 
-var cursorStreamPrefixRe = regexp.MustCompile(`^(?i)(stdout|stderr)\s*[:=]?\s*`)
+func cursorToolCallMessage(evt *cursorStreamEvent) (Message, bool) {
+	var calls map[string]cursorToolCall
+	if len(evt.ToolCall) == 0 || json.Unmarshal(evt.ToolCall, &calls) != nil || len(calls) != 1 {
+		return Message{}, false
+	}
+	for kind, call := range calls {
+		tool := strings.TrimSuffix(kind, "ToolCall")
+		if evt.Subtype == "started" {
+			return Message{Type: MessageToolUse, Tool: tool, CallID: evt.CallID, Input: call.Args}, true
+		}
+		if evt.Subtype == "completed" {
+			return Message{Type: MessageToolResult, Tool: tool, CallID: evt.CallID, Output: string(call.Result)}, true
+		}
+	}
+	return Message{}, false
+}
 
 func cursorErrorText(evt *cursorStreamEvent) string {
 	if evt.ErrorMsg != "" {
@@ -361,22 +256,20 @@ func cursorErrorText(evt *cursorStreamEvent) string {
 var cursorBlockedArgs = map[string]blockedArgMode{
 	"-p":              blockedStandalone, // non-interactive print mode
 	"--output-format": blockedWithValue,  // stream-json protocol
-	"--yolo":          blockedStandalone, // auto-approval for autonomous operation
+	"-f":              blockedStandalone, // auto-approval for autonomous operation
+	"--force":         blockedStandalone, // auto-approval for autonomous operation
 }
 
 // buildCursorArgs assembles the argv for a one-shot cursor-agent invocation.
 //
-// Usage: cursor-agent -p <prompt> --output-format stream-json
+// Usage: cursor-agent -p <prompt> --output-format stream-json --force
 //
-//	--workspace <cwd> --yolo [--model <m>] [--resume <id>]
+//	[--model <m>] [--resume <id>]
 func buildCursorArgs(prompt string, opts ExecOptions, logger *slog.Logger) []string {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
-		"--yolo",
-	}
-	if opts.Cwd != "" {
-		args = append(args, "--workspace", opts.Cwd)
+		"--force",
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)

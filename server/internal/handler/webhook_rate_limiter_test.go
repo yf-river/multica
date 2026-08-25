@@ -8,7 +8,7 @@ import (
 )
 
 func TestMemoryWebhookRateLimiter_AllowsBelowLimit(t *testing.T) {
-	l := NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 3, Window: time.Minute})
+	l := newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 3, Window: time.Minute})
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		if !l.Allow(ctx, "tok") {
@@ -18,7 +18,7 @@ func TestMemoryWebhookRateLimiter_AllowsBelowLimit(t *testing.T) {
 }
 
 func TestMemoryWebhookRateLimiter_RejectsAboveLimit(t *testing.T) {
-	l := NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 2, Window: time.Minute})
+	l := newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: time.Minute})
 	ctx := context.Background()
 	if !l.Allow(ctx, "tok") {
 		t.Fatal("first should pass")
@@ -36,7 +36,7 @@ func TestMemoryWebhookRateLimiter_RejectsAboveLimit(t *testing.T) {
 }
 
 func TestMemoryWebhookRateLimiter_WindowExpiry(t *testing.T) {
-	l := NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 1, Window: 10 * time.Millisecond})
+	l := newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 1, Window: 10 * time.Millisecond})
 	ctx := context.Background()
 	if !l.Allow(ctx, "tok") {
 		t.Fatal("first should pass")
@@ -51,7 +51,7 @@ func TestMemoryWebhookRateLimiter_WindowExpiry(t *testing.T) {
 }
 
 func TestMemoryWebhookRateLimiter_ZeroLimitDisabled(t *testing.T) {
-	l := NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 0, Window: time.Minute})
+	l := newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 0, Window: time.Minute})
 	ctx := context.Background()
 	for i := 0; i < 100; i++ {
 		if !l.Allow(ctx, "tok") {
@@ -88,9 +88,9 @@ func TestWebhookLimiterLuaScript_StructureGuard(t *testing.T) {
 
 func TestRedisWebhookRateLimiter_RejectsAboveLimit(t *testing.T) {
 	rdb := newRedisTestClient(t)
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
-	l := NewRedisWebhookRateLimiter(rdb, WebhookRateLimit{Limit: 3, Window: time.Minute})
+	l := &redisWebhookRateLimiter{rdb: rdb, cfg: webhookRateLimit{Limit: 3, Window: time.Minute}, keyPrefix: webhookLimiterKeyPrefix}
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		if !l.Allow(ctx, "tok") {
@@ -112,10 +112,10 @@ func TestRedisWebhookIPRateLimiter_HasSeparateBudgetFromTokenLimiter(t *testing.
 	// regression-protect by exhausting per-token then proving per-IP is
 	// untouched against the same Redis instance.
 	rdb := newRedisTestClient(t)
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
-	tok := NewRedisWebhookRateLimiter(rdb, WebhookRateLimit{Limit: 1, Window: time.Minute})
-	ip := NewRedisWebhookIPRateLimiter(rdb, WebhookRateLimit{Limit: 2, Window: time.Minute})
+	tok := &redisWebhookRateLimiter{rdb: rdb, cfg: webhookRateLimit{Limit: 1, Window: time.Minute}, keyPrefix: webhookLimiterKeyPrefix}
+	ip := &redisWebhookRateLimiter{rdb: rdb, cfg: webhookRateLimit{Limit: 2, Window: time.Minute}, keyPrefix: webhookIPLimiterKeyPrefix}
 	ctx := context.Background()
 	if !tok.Allow(ctx, "alice") {
 		t.Fatal("token limiter first request should pass")

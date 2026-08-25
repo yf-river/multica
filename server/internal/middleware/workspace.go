@@ -1,43 +1,14 @@
 package middleware
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
-
-// Context keys for workspace-scoped request data.
-type contextKey int
-
-const (
-	ctxKeyWorkspaceID contextKey = iota
-	ctxKeyMember
-)
-
-// MemberFromContext returns the workspace member injected by the workspace middleware.
-func MemberFromContext(ctx context.Context) (db.Member, bool) {
-	m, ok := ctx.Value(ctxKeyMember).(db.Member)
-	return m, ok
-}
-
-// WorkspaceIDFromContext returns the workspace ID injected by the workspace middleware.
-func WorkspaceIDFromContext(ctx context.Context) string {
-	id, _ := ctx.Value(ctxKeyWorkspaceID).(string)
-	return id
-}
-
-// SetMemberContext injects workspace ID and member into the context.
-// This is useful for handlers that resolve the workspace from an entity lookup
-// and want to share the member with downstream code.
-func SetMemberContext(ctx context.Context, workspaceID string, member db.Member) context.Context {
-	ctx = context.WithValue(ctx, ctxKeyWorkspaceID, workspaceID)
-	ctx = context.WithValue(ctx, ctxKeyMember, member)
-	return ctx
-}
 
 // errWorkspaceNotFound is returned when a slug was provided but doesn't match
 // any workspace. This lets the middleware distinguish "no identifier provided"
@@ -55,10 +26,8 @@ var errWorkspaceNotFound = errors.New("workspace not found")
 //  1. task-token binding (X-Actor-Source == "task_token") — authoritative,
 //     server-set, cannot be re-negotiated by the client (MUL-2600)
 //  2. middleware-injected context (fast path for middleware-protected routes)
-//  3. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (post-refactor frontend)
-//  4. ?workspace_slug query → GetWorkspaceBySlug → UUID
-//  5. X-Workspace-ID header (CLI/daemon compat)
-//  6. ?workspace_id query (CLI/daemon compat)
+//  3. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (Web/Desktop)
+//  4. X-Workspace-ID header (CLI/daemon)
 //
 // Returns "" when no identifier was provided OR a slug was provided but
 // doesn't resolve to any workspace. Callers that need to distinguish "no
@@ -66,32 +35,8 @@ var errWorkspaceNotFound = errors.New("workspace not found")
 // internal resolver instead — this helper collapses both cases to "" for
 // simpler handler-level checks.
 func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string {
-	// A mat_ task token is bound to exactly one workspace by the token
-	// row. Auth middleware writes that workspace into X-Workspace-ID
-	// after stripping any client-supplied X-Actor-Source. Any other
-	// workspace identifier on the request (slug header/query, ID
-	// query, URL param) is the agent trying to widen its blast
-	// radius — ignore it.
-	if r.Header.Get("X-Actor-Source") == "task_token" {
-		return r.Header.Get("X-Workspace-ID")
-	}
-	if id := WorkspaceIDFromContext(r.Context()); id != "" {
-		return id
-	}
-	if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
-		if ws, err := queries.GetWorkspaceBySlug(r.Context(), slug); err == nil {
-			return util.UUIDToString(ws.ID)
-		}
-	}
-	if slug := r.URL.Query().Get("workspace_slug"); slug != "" {
-		if ws, err := queries.GetWorkspaceBySlug(r.Context(), slug); err == nil {
-			return util.UUIDToString(ws.ID)
-		}
-	}
-	if id := r.Header.Get("X-Workspace-ID"); id != "" {
-		return id
-	}
-	return r.URL.Query().Get("workspace_id")
+	id, _ := resolveWorkspaceTarget(r, queries, true)
+	return id
 }
 
 // workspaceResolver extracts a workspace UUID from the request.
@@ -106,57 +51,47 @@ type workspaceResolver func(r *http.Request) (string, error)
 //  1. task-token binding (X-Actor-Source == "task_token") — authoritative,
 //     server-set; the agent cannot widen its workspace scope by passing a
 //     different slug/id (MUL-2600)
-//  2. X-Workspace-Slug header / ?workspace_slug query → GetWorkspaceBySlug → UUID
-//  3. X-Workspace-ID header / ?workspace_id query → UUID directly (CLI/daemon compat)
+//  2. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (Web/Desktop)
+//  3. X-Workspace-ID header → UUID directly (CLI/daemon)
 //
 // TODO: cache slug→UUID lookup (slug is immutable, safe to cache with short TTL)
 func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 	return func(r *http.Request) (string, error) {
-		// Task-token-authenticated requests must operate on the
-		// token's bound workspace. The auth middleware wrote that ID
-		// into X-Workspace-ID; nothing the agent can put on the wire
-		// (slug header/query, id query, URL param) can override it.
-		if r.Header.Get("X-Actor-Source") == "task_token" {
-			id := r.Header.Get("X-Workspace-ID")
-			if id == "" {
-				return "", errWorkspaceNotFound
-			}
-			return id, nil
-		}
-		// Slug path (preferred — frontend sends this after the URL refactor)
-		if slug := r.URL.Query().Get("workspace_slug"); slug != "" {
-			ws, err := queries.GetWorkspaceBySlug(r.Context(), slug)
-			if err != nil {
-				return "", errWorkspaceNotFound
-			}
-			return util.UUIDToString(ws.ID), nil
-		}
-		if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
-			ws, err := queries.GetWorkspaceBySlug(r.Context(), slug)
-			if err != nil {
-				return "", errWorkspaceNotFound
-			}
-			return util.UUIDToString(ws.ID), nil
-		}
-		// UUID fallback (CLI, daemon, legacy clients)
-		if id := r.URL.Query().Get("workspace_id"); id != "" {
-			return id, nil
-		}
-		if id := r.Header.Get("X-Workspace-ID"); id != "" {
-			return id, nil
-		}
-		return "", nil
+		return resolveWorkspaceTarget(r, queries, false)
 	}
+}
+
+func resolveWorkspaceTarget(r *http.Request, queries *db.Queries, useContext bool) (string, error) {
+	if r.Header.Get("X-Actor-Source") == "task_token" {
+		id := r.Header.Get("X-Workspace-ID")
+		if id == "" {
+			return "", errWorkspaceNotFound
+		}
+		return id, nil
+	}
+	if useContext {
+		if id := requestctx.WorkspaceID(r.Context()); id != "" {
+			return id, nil
+		}
+	}
+	if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
+		workspace, err := queries.GetWorkspaceBySlug(r.Context(), slug)
+		if err != nil {
+			return "", errWorkspaceNotFound
+		}
+		return util.UUIDToString(workspace.ID), nil
+	}
+	return r.Header.Get("X-Workspace-ID"), nil
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write([]byte(`{"error":"` + msg + `"}`))
+	_, _ = w.Write([]byte(`{"error":"` + msg + `"}`))
 }
 
-// RequireWorkspaceMember resolves the workspace from slug (preferred) or UUID
-// (fallback), validates membership, and injects the member and workspace ID
+// RequireWorkspaceMember resolves the workspace from the current slug or UUID
+// header, validates membership, and injects the member and workspace ID
 // into the request context.
 func RequireWorkspaceMember(queries *db.Queries) func(http.Handler) http.Handler {
 	return buildMiddleware(queries, resolveWorkspaceUUID(queries), nil)
@@ -195,7 +130,7 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				return
 			}
 			if workspaceID == "" {
-				writeError(w, http.StatusBadRequest, "workspace_id or workspace_slug is required")
+				writeError(w, http.StatusBadRequest, "workspace header is required")
 				return
 			}
 
@@ -252,7 +187,7 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				}
 			}
 
-			ctx := SetMemberContext(r.Context(), workspaceID, member)
+			ctx := requestctx.WithWorkspace(r.Context(), workspaceID, member)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

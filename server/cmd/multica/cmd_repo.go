@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/spf13/cobra"
 )
 
@@ -39,12 +40,11 @@ var repoAddCmd = &cobra.Command{
 }
 
 var repoRemoveCmd = &cobra.Command{
-	Use:     "remove [url]...",
-	Aliases: []string{"rm"},
-	Short:   "Remove repositories from the workspace registry",
-	Long:    "Removes one or more repository URLs from the current workspace repository registry.",
-	Args:    cobra.ArbitraryArgs,
-	RunE:    runRepoRemove,
+	Use:   "remove [url]...",
+	Short: "Remove repositories from the workspace registry",
+	Long:  "Removes one or more repository URLs from the current workspace repository registry.",
+	Args:  cobra.ArbitraryArgs,
+	RunE:  runRepoRemove,
 }
 
 var repoCheckoutCmd = &cobra.Command{
@@ -55,19 +55,15 @@ var repoCheckoutCmd = &cobra.Command{
 	RunE:  runRepoCheckout,
 }
 
-var repoCheckoutRef string
-
 func init() {
 	repoListCmd.Flags().String("output", "table", "Output format: table or json")
 
-	repoAddCmd.Flags().StringArray("url", nil, "Repository URL to add (may be repeated)")
 	repoAddCmd.Flags().String("description", "", "Optional description; only valid when adding one URL")
 	repoAddCmd.Flags().String("output", "json", "Output format: table or json")
 
-	repoRemoveCmd.Flags().StringArray("url", nil, "Repository URL to remove (may be repeated)")
 	repoRemoveCmd.Flags().String("output", "json", "Output format: table or json")
 
-	repoCheckoutCmd.Flags().StringVar(&repoCheckoutRef, "ref", "", "branch, tag, or commit to check out instead of the remote default branch")
+	repoCheckoutCmd.Flags().String("ref", "", "branch, tag, or commit to check out instead of the remote default branch")
 
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoAddCmd)
@@ -75,37 +71,27 @@ func init() {
 	repoCmd.AddCommand(repoCheckoutCmd)
 }
 
-type workspaceRepo struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
-}
-
 type repoWorkspaceResponse struct {
-	ID    string          `json:"id"`
-	Name  string          `json:"name"`
-	Slug  string          `json:"slug"`
-	Repos []workspaceRepo `json:"repos"`
+	ID    string                    `json:"id"`
+	Repos []protocol.TaskRepository `json:"repos"`
 }
 
 type repoMutationResult struct {
-	WorkspaceID string          `json:"workspace_id"`
-	Added       []workspaceRepo `json:"added,omitempty"`
-	Updated     []workspaceRepo `json:"updated,omitempty"`
-	Removed     []workspaceRepo `json:"removed,omitempty"`
-	Repos       []workspaceRepo `json:"repos"`
+	WorkspaceID string                    `json:"workspace_id"`
+	Added       []protocol.TaskRepository `json:"added,omitempty"`
+	Updated     []protocol.TaskRepository `json:"updated,omitempty"`
+	Removed     []protocol.TaskRepository `json:"removed,omitempty"`
+	Repos       []protocol.TaskRepository `json:"repos"`
 }
 
-func repoURLsFromArgsAndFlags(cmd *cobra.Command, args []string) ([]string, error) {
-	flagURLs, _ := cmd.Flags().GetStringArray("url")
-	raw := append([]string{}, flagURLs...)
-	raw = append(raw, args...)
-	if len(raw) == 0 {
+func repoURLsFromArgs(args []string) ([]string, error) {
+	if len(args) == 0 {
 		return nil, fmt.Errorf("at least one repository URL is required")
 	}
 
-	urls := make([]string, 0, len(raw))
-	seen := make(map[string]struct{}, len(raw))
-	for _, u := range raw {
+	urls := make([]string, 0, len(args))
+	seen := make(map[string]struct{}, len(args))
+	for _, u := range args {
 		u = strings.TrimSpace(u)
 		if u == "" {
 			return nil, fmt.Errorf("repository URL cannot be empty")
@@ -124,42 +110,34 @@ func fetchRepoWorkspace(ctx context.Context, client *cli.APIClient, workspaceID 
 	if err := client.GetJSON(ctx, "/api/workspaces/"+workspaceID, &ws); err != nil {
 		return repoWorkspaceResponse{}, fmt.Errorf("get workspace: %w", err)
 	}
-	if ws.Repos == nil {
-		ws.Repos = []workspaceRepo{}
-	}
 	return ws, nil
 }
 
-func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID string, repos []workspaceRepo) (repoWorkspaceResponse, error) {
+func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID string, repos []protocol.TaskRepository) (repoWorkspaceResponse, error) {
 	var ws repoWorkspaceResponse
 	if err := client.PatchJSON(ctx, "/api/workspaces/"+workspaceID, map[string]any{"repos": repos}, &ws); err != nil {
 		return repoWorkspaceResponse{}, fmt.Errorf("update workspace repos: %w", err)
 	}
-	if ws.Repos == nil {
-		ws.Repos = []workspaceRepo{}
-	}
 	return ws, nil
 }
 
-func repoCommandClient(cmd *cobra.Command) (*cli.APIClient, string, error) {
+func repoCommandContext(cmd *cobra.Command) (*cli.APIClient, context.Context, context.CancelFunc, string, error) {
 	workspaceID, err := requireWorkspaceID(cmd)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, "", err
 	}
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, "", err
 	}
-	return client, workspaceID, nil
+	return client, ctx, cancel, workspaceID, nil
 }
 
 func runRepoList(cmd *cobra.Command, _ []string) error {
-	client, workspaceID, err := repoCommandClient(cmd)
+	client, ctx, cancel, workspaceID, err := repoCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	ws, err := fetchRepoWorkspace(ctx, client, workspaceID)
@@ -167,8 +145,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, ws.Repos)
 	}
 	if len(ws.Repos) == 0 {
@@ -184,7 +161,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 }
 
 func runRepoAdd(cmd *cobra.Command, args []string) error {
-	urls, err := repoURLsFromArgsAndFlags(cmd, args)
+	urls, err := repoURLsFromArgs(args)
 	if err != nil {
 		return err
 	}
@@ -194,12 +171,10 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--description can only be used when adding one repository URL")
 	}
 
-	client, workspaceID, err := repoCommandClient(cmd)
+	client, ctx, cancel, workspaceID, err := repoCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	ws, err := fetchRepoWorkspace(ctx, client, workspaceID)
@@ -212,9 +187,9 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		indexByURL[repo.URL] = i
 	}
 
-	added := []workspaceRepo{}
-	updated := []workspaceRepo{}
-	repos := append([]workspaceRepo{}, ws.Repos...)
+	added := []protocol.TaskRepository{}
+	updated := []protocol.TaskRepository{}
+	repos := append([]protocol.TaskRepository{}, ws.Repos...)
 	for _, u := range urls {
 		if idx, ok := indexByURL[u]; ok {
 			if descriptionChanged && repos[idx].Description != description {
@@ -223,7 +198,7 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 			}
 			continue
 		}
-		repo := workspaceRepo{URL: u}
+		repo := protocol.TaskRepository{URL: u}
 		if descriptionChanged {
 			repo.Description = description
 		}
@@ -247,12 +222,11 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		Updated:     updated,
 		Repos:       ws.Repos,
 	}
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	if len(added) == 0 && len(updated) == 0 {
-		fmt.Fprintln(os.Stdout, "No repository changes.")
+		_, _ = fmt.Fprintln(os.Stdout, "No repository changes.")
 		return nil
 	}
 	rows := make([][]string, 0, len(added)+len(updated))
@@ -267,17 +241,15 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runRepoRemove(cmd *cobra.Command, args []string) error {
-	urls, err := repoURLsFromArgsAndFlags(cmd, args)
+	urls, err := repoURLsFromArgs(args)
 	if err != nil {
 		return err
 	}
 
-	client, workspaceID, err := repoCommandClient(cmd)
+	client, ctx, cancel, workspaceID, err := repoCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	ws, err := fetchRepoWorkspace(ctx, client, workspaceID)
@@ -290,8 +262,8 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 		removeSet[u] = struct{}{}
 	}
 	removedSet := make(map[string]struct{}, len(urls))
-	removed := []workspaceRepo{}
-	repos := make([]workspaceRepo, 0, len(ws.Repos))
+	removed := []protocol.TaskRepository{}
+	repos := make([]protocol.TaskRepository, 0, len(ws.Repos))
 	for _, repo := range ws.Repos {
 		if _, ok := removeSet[repo.URL]; ok {
 			removed = append(removed, repo)
@@ -320,8 +292,7 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 		Removed:     removed,
 		Repos:       ws.Repos,
 	}
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	rows := make([][]string, 0, len(removed))
@@ -334,7 +305,8 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 
 func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	repoURL := args[0]
-	ref := strings.TrimSpace(repoCheckoutRef)
+	refValue, _ := cmd.Flags().GetString("ref")
+	ref := strings.TrimSpace(refValue)
 	if normalizedURL, normalizedRef := normalizeRepoCheckoutURL(repoURL); normalizedURL != "" {
 		repoURL = normalizedURL
 		if ref == "" {
@@ -380,7 +352,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -396,10 +368,11 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse response: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "%s\n", result.Path)
-	fmt.Fprintf(os.Stderr, "Checked out %s → %s (branch: %s)\n", repoURL, result.Path, result.BranchName)
-
-	return nil
+	if _, err := fmt.Fprintf(os.Stdout, "%s\n", result.Path); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(os.Stderr, "Checked out %s → %s (branch: %s)\n", repoURL, result.Path, result.BranchName)
+	return err
 }
 
 func normalizeRepoCheckoutURL(raw string) (string, string) {

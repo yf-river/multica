@@ -49,11 +49,11 @@ export function useUpdateRuntime(wsId: string) {
   return useMutation({
     mutationFn: ({
       runtimeId,
-      patch,
+      scope,
     }: {
       runtimeId: string;
-      patch: { scope?: "personal" | "workspace" };
-    }) => api.updateRuntime(runtimeId, patch),
+      scope: "personal" | "workspace";
+    }) => api.updateRuntime(runtimeId, { scope }),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -55,118 +56,59 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		}
 	}
 
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
 	logFile, err := os.CreateTemp("", "multica-agy-log-*.log")
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("create agy log file: %w", err)
 	}
 	logPath := logFile.Name()
 	_ = logFile.Close()
 
-	args := buildAntigravityArgs(prompt, logPath, timeout, opts, b.cfg.Logger)
+	args := buildAntigravityArgs(prompt, logPath, opts.Timeout, opts, b.cfg.Logger)
 
-	cmd := exec.CommandContext(runCtx, execPath, args...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
-	cmd.WaitDelay = 10 * time.Second
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	return executeStreamCommand(ctx, opts.Timeout, streamCommandSpec{
+		name:          "agy",
+		executable:    execPath,
+		args:          args,
+		env:           buildEnv(b.cfg.Env),
+		cwd:           opts.Cwd,
+		waitDelay:     10 * time.Second,
+		logger:        b.cfg.Logger,
+		model:         opts.Model,
+		captureStderr: true,
+		cleanup:       func() { _ = os.Remove(logPath) },
+		parse: func(stdout io.Reader, msgCh chan<- Message, _ context.CancelFunc) streamCommandResult {
+			var output strings.Builder
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		_ = os.Remove(logPath)
-		return nil, fmt.Errorf("agy stdout pipe: %w", err)
-	}
-	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[agy:stderr] "), agentStderrTailBytes)
-	cmd.Stderr = stderrBuf
+			scanner := bufio.NewScanner(stdout)
+			scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
-	if err := cmd.Start(); err != nil {
-		cancel()
-		_ = os.Remove(logPath)
-		return nil, fmt.Errorf("start agy: %w", err)
-	}
+			trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 
-	b.cfg.Logger.Info("agy started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	go func() {
-		<-runCtx.Done()
-		_ = stdout.Close()
-	}()
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-		defer os.Remove(logPath)
-
-		startTime := time.Now()
-		var output strings.Builder
-		finalStatus := "completed"
-		var finalError string
-
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-
-		trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			if output.Len() > 0 {
-				output.WriteByte('\n')
+			for scanner.Scan() {
+				line := scanner.Text()
+				if output.Len() > 0 {
+					output.WriteByte('\n')
+				}
+				output.WriteString(line)
+				if strings.TrimSpace(line) != "" {
+					trySend(msgCh, Message{Type: MessageText, Content: line})
+				}
 			}
-			output.WriteString(line)
-			if strings.TrimSpace(line) != "" {
-				trySend(msgCh, Message{Type: MessageText, Content: line})
+			if err := scanner.Err(); err != nil {
+				b.cfg.Logger.Warn("agy stdout scanner error", "err", err)
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			b.cfg.Logger.Warn("agy stdout scanner error", "err", err)
-		}
 
-		waitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		sessionID := readAntigravityConversationID(logPath)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			finalStatus = "timeout"
-			finalError = fmt.Sprintf("agy timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled {
-			finalStatus = "aborted"
-			finalError = "execution cancelled"
-		} else if waitErr != nil && finalStatus == "completed" {
-			finalStatus = "failed"
-			finalError = fmt.Sprintf("agy exited with error: %v", waitErr)
-		}
-		if finalError != "" {
-			finalError = withAgentStderr(finalError, "agy", stderrBuf.Tail())
-		}
-
-		b.cfg.Logger.Info("agy finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			// The Antigravity CLI doesn't surface per-turn token usage today;
-			// leave Usage empty rather than report misleading zeros under a
-			// guessed model name.
-			Usage: map[string]TokenUsage{},
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+			return streamCommandResult{
+				status: "completed",
+				output: output.String(),
+				// The Antigravity CLI doesn't surface per-turn token usage today.
+				usage: map[string]TokenUsage{},
+			}
+		},
+		afterWait: func(result *streamCommandResult) {
+			result.sessionID = readAntigravityConversationID(logPath)
+		},
+	})
 }
 
 // antigravityConversationIDRe matches the glog line printmode.go writes when

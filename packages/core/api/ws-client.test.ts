@@ -204,4 +204,68 @@ describe("WSClient", () => {
       "user",
     );
   });
+
+  it("logs reconnect callback failures and continues remaining callbacks", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const ws = new WSClient("ws://example.test/ws", { logger, cookieAuth: true });
+    const failure = new Error("reconnect refresh failed");
+    const laterCallback = vi.fn();
+    ws.onReconnect(() => {
+      throw failure;
+    });
+    ws.onReconnect(laterCallback);
+
+    ws.connect();
+    FakeWebSocket.lastInstance!.onopen?.();
+    ws.connect();
+    FakeWebSocket.lastInstance!.onopen?.();
+
+    expect(laterCallback).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      "ws: reconnect callback failed",
+      failure,
+    );
+  });
+
+  it("isolates event handler failures and continues dispatching", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const ws = new WSClient("ws://example.test/ws", { logger });
+    const failure = new Error("view handler failed");
+    const laterEventHandler = vi.fn();
+    const anyHandler = vi.fn();
+    ws.on("issue:updated", () => {
+      throw failure;
+    });
+    ws.on("issue:updated", laterEventHandler);
+    ws.onAny(anyHandler);
+    ws.connect();
+
+    expect(() => {
+      FakeWebSocket.lastInstance!.onmessage?.({
+        data: JSON.stringify({ type: "issue:updated", payload: { id: "i-1" } }),
+      });
+    }).not.toThrow();
+
+    expect(laterEventHandler).toHaveBeenCalledWith(
+      { id: "i-1" },
+      undefined,
+      undefined,
+    );
+    expect(anyHandler).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      "ws: event handler failed",
+      "issue:updated",
+      failure,
+    );
+  });
 });

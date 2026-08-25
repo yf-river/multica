@@ -33,16 +33,12 @@ type ProjectResourceResponse struct {
 }
 
 func projectResourceToResponse(r db.ProjectResource) ProjectResourceResponse {
-	ref := json.RawMessage(r.ResourceRef)
-	if len(ref) == 0 {
-		ref = json.RawMessage("{}")
-	}
 	return ProjectResourceResponse{
 		ID:           uuidToString(r.ID),
 		ProjectID:    uuidToString(r.ProjectID),
 		WorkspaceID:  uuidToString(r.WorkspaceID),
 		ResourceType: r.ResourceType,
-		ResourceRef:  ref,
+		ResourceRef:  json.RawMessage(r.ResourceRef),
 		Label:        textToPtr(r.Label),
 		Position:     r.Position,
 		CreatedAt:    timestampToString(r.CreatedAt),
@@ -173,9 +169,9 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	payload.HeadCommit = strings.TrimSpace(payload.HeadCommit)
 	payload.Branch = strings.TrimSpace(payload.Branch)
 	payload.CommitSHA = strings.TrimSpace(payload.CommitSHA)
-	payload.ConnectionStatus = normalizeRemovedProjectResourceDisabledStatus(payload.ConnectionStatus)
-	payload.SyncStatus = normalizeRemovedProjectResourceDisabledStatus(payload.SyncStatus)
-	payload.TestStatus = normalizeRemovedProjectResourceDisabledStatus(payload.TestStatus)
+	payload.ConnectionStatus = strings.TrimSpace(payload.ConnectionStatus)
+	payload.SyncStatus = strings.TrimSpace(payload.SyncStatus)
+	payload.TestStatus = strings.TrimSpace(payload.TestStatus)
 	payload.LastTestedAt = strings.TrimSpace(payload.LastTestedAt)
 	payload.LastSyncedAt = strings.TrimSpace(payload.LastSyncedAt)
 	payload.CredentialStatus = strings.TrimSpace(payload.CredentialStatus)
@@ -193,14 +189,6 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-func normalizeRemovedProjectResourceDisabledStatus(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "disabled" {
-		return ""
-	}
-	return value
 }
 
 func normalizeGongfengProjectPath(value string) string {
@@ -482,30 +470,34 @@ func isValidGitRepoURL(s string) bool {
 	return true
 }
 
-// loadProjectForResource resolves the project, enforces workspace ownership,
-// and returns its DB row. Used by all project_resource handlers.
-func (h *Handler) loadProjectForResource(w http.ResponseWriter, r *http.Request, projectIDParam string) (db.Project, bool) {
-	projectUUID, ok := parseUUIDOrBadRequest(w, projectIDParam, "project id")
+func (h *Handler) loadProjectResourceForMutation(w http.ResponseWriter, r *http.Request, project db.Project) (db.ProjectResource, string, bool) {
+	resourceID := chi.URLParam(r, "resourceId")
+	resourceUUID, ok := parseUUIDOrBadRequest(w, resourceID, "resource id")
 	if !ok {
-		return db.Project{}, false
+		return db.ProjectResource{}, "", false
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace id")
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		return db.Project{}, false
+		return db.ProjectResource{}, "", false
 	}
-	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: projectUUID, WorkspaceID: wsUUID,
+	resource, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
+		ID:          resourceUUID,
+		WorkspaceID: project.WorkspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
-		return db.Project{}, false
+		writeEntityLoadError(w, err, "project resource", "resource_id", resourceID, "project_id", uuidToString(project.ID))
+		return db.ProjectResource{}, "", false
 	}
-	return project, true
+	if uuidToString(resource.ProjectID) != uuidToString(project.ID) {
+		writeError(w, http.StatusNotFound, "project resource not found")
+		return db.ProjectResource{}, "", false
+	}
+	return resource, userID, true
 }
 
 // ListProjectResources returns the resources attached to a project.
 func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
@@ -523,7 +515,7 @@ func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
 
 // CreateProjectResource attaches a new resource to a project.
 func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
@@ -532,8 +524,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req CreateProjectResourceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	req.ResourceType = strings.TrimSpace(req.ResourceType)
@@ -544,6 +535,39 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	normalizedRef, err := validateAndNormalizeResourceRef(req.ResourceType, req.ResourceRef)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var label pgtype.Text
+	if req.Label != nil && strings.TrimSpace(*req.Label) != "" {
+		label = pgtype.Text{String: strings.TrimSpace(*req.Label), Valid: true}
+	}
+	creator, _ := h.parseUserUUIDOrZero(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		ProjectID    string          `json:"project_id"`
+		ResourceType string          `json:"resource_type"`
+		ResourceRef  json.RawMessage `json:"resource_ref"`
+		Label        *string         `json:"label"`
+		Position     *int32          `json:"position"`
+	}{uuidToString(project.ID), req.ResourceType, normalizedRef, textToPtr(label), req.Position})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	writeReplayError := resourceCreateReplayMessageErrorWriter(
+		"Idempotency-Key was already used with a different project resource request",
+		"failed to replay project resource create",
+	)
+	loadReplay := func() (ProjectResourceResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, project.WorkspaceID, creator, resourceTypeProjectResource,
+			idempotencyKey, requestHash, func(response ProjectResourceResponse) bool { return response.ID != "" },
+		)
+	}
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, req.ResourceType, normalizedRef); err != nil {
@@ -559,29 +583,41 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var label pgtype.Text
-	if req.Label != nil && strings.TrimSpace(*req.Label) != "" {
-		label = pgtype.Text{String: strings.TrimSpace(*req.Label), Valid: true}
-	}
-	var position int32
-	if req.Position != nil {
-		position = *req.Position
-	} else {
-		// Append after existing resources.
-		count, _ := h.Queries.CountProjectResources(r.Context(), project.ID)
-		position = int32(count)
-	}
-
-	creator, _ := h.parseUserUUIDOrZero(userID)
-	resource, err := h.Queries.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
+	params := db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
 		WorkspaceID:  project.WorkspaceID,
 		ResourceType: req.ResourceType,
 		ResourceRef:  normalizedRef,
 		Label:        label,
-		Position:     position,
 		CreatedBy:    creator,
-	})
+	}
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to create project resource")
+	if !ok {
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	err = reserveResourceCreateRequest(r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource, idempotencyKey, requestHash)
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeReplayError,
+		"failed to create project resource",
+		http.StatusCreated,
+	) {
+		return
+	}
+
+	var resource db.ProjectResource
+	if req.Position == nil {
+		if _, err = qtx.LockProjectForResourcePosition(r.Context(), params.ProjectID); err == nil {
+			params.Position, err = qtx.NextProjectResourcePosition(r.Context(), params.ProjectID)
+		}
+		if err == nil {
+			resource, err = qtx.CreateProjectResource(r.Context(), params)
+		}
+	} else {
+		params.Position = *req.Position
+		resource, err = qtx.CreateProjectResource(r.Context(), params)
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "this resource is already attached to the project")
@@ -592,6 +628,17 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	}
 
 	resp := projectResourceToResponse(resource)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource,
+		idempotencyKey, requestHash, resource.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
 	h.publish(
 		protocol.EventProjectResourceCreated,
 		uuidToString(project.WorkspaceID),
@@ -609,28 +656,12 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 // `label` JSON null vs. missing distinction (missing = keep, explicit "" =
 // clear).
 func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
-	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	existing, userID, ok := h.loadProjectResourceForMutation(w, r, project)
 	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-
-	existing, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
-		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project resource not found")
-		return
-	}
-	if uuidToString(existing.ProjectID) != uuidToString(project.ID) {
-		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
 
@@ -638,8 +669,7 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	// "field present with zero value" — the label clear case in particular
 	// relies on this distinction.
 	var raw map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &raw) {
 		return
 	}
 
@@ -721,23 +751,12 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 // commit discovery requires a bound Gongfeng profile; until then this action
 // records that the resource was refreshed without inventing a commit SHA.
 func (h *Handler) SyncProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
-	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	existing, userID, ok := h.loadProjectResourceForMutation(w, r, project)
 	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	existing, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
-		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
-	})
-	if err != nil || uuidToString(existing.ProjectID) != uuidToString(project.ID) {
-		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
 	if existing.ResourceType != "gongfeng_repo" {
@@ -868,17 +887,12 @@ func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
 	if err != nil {
 		return gongfengProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed"}
 	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	location := resp.Header.Get("Location")
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
 		(resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.Contains(location, "/users/sign_in")) {
@@ -903,20 +917,13 @@ func probeGongfengWithCredential(ctx context.Context, ref gongfengRepoRef, token
 	if err != nil {
 		return gongfengCredentialProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed", Target: target}
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return gongfengCredentialProbeResult{ConnectionStatus: "credential_probe_unreachable", TestStatus: "failed", Target: target}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	status := fmt.Sprintf("%d", resp.StatusCode)
 	location := resp.Header.Get("Location")
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -970,20 +977,13 @@ func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token s
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("gongfeng default branch lookup failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", errors.New("gongfeng credential cannot access this repository")
 	}
@@ -1019,12 +1019,7 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 	if projectPath == "" {
 		return nil, errors.New("gongfeng project_path is required")
 	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	type gongfengBranchListItem struct {
 		Name   string `json:"name"`
 		Commit struct {
@@ -1043,33 +1038,31 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("PRIVATE-TOKEN", token)
-		req.Header.Set("Private-Token", token)
-		req.Header.Set("Authorization", "Bearer "+token)
+		setGongfengCredentialHeaders(req, token)
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("gongfeng branch list lookup failed: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, errors.New("gongfeng credential cannot access this repository")
 		}
 		if resp.StatusCode == http.StatusNotFound {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, errors.New("gongfeng repository not found or no access")
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			status := resp.StatusCode
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("gongfeng branch list lookup returned HTTP %d", status)
 		}
 		var payload []gongfengBranchListItem
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("invalid gongfeng branch list response: %w", err)
 		}
 		nextPage := strings.TrimSpace(resp.Header.Get("X-Next-Page"))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		for _, item := range payload {
 			name := strings.TrimSpace(item.Name)
 			if name == "" {
@@ -1152,20 +1145,13 @@ func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, bran
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("gongfeng branch head lookup failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", errors.New("gongfeng credential cannot access this branch")
 	}
@@ -1246,27 +1232,12 @@ func (h *Handler) findLocalDirectoryConflict(ctx context.Context, projectID pgty
 
 // DeleteProjectResource removes a resource from a project.
 func (h *Handler) DeleteProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
-	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	resource, userID, ok := h.loadProjectResourceForMutation(w, r, project)
 	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	resource, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
-		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project resource not found")
-		return
-	}
-	if uuidToString(resource.ProjectID) != uuidToString(project.ID) {
-		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
 	if err := h.Queries.DeleteProjectResource(r.Context(), resource.ID); err != nil {
@@ -1308,17 +1279,4 @@ func parseUUIDLoose(s string) (pgtype.UUID, error) {
 		return pgtype.UUID{}, err
 	}
 	return u, nil
-}
-
-// listProjectResourcesForProject is a small helper used by the daemon claim
-// handler to attach project resources to outgoing tasks.
-func (h *Handler) listProjectResourcesForProject(ctx context.Context, projectID pgtype.UUID) []db.ProjectResource {
-	if !projectID.Valid {
-		return nil
-	}
-	rows, err := h.Queries.ListProjectResources(ctx, projectID)
-	if err != nil {
-		return nil
-	}
-	return rows
 }

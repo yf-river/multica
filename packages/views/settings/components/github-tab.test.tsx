@@ -18,7 +18,11 @@ const workspaceRef = vi.hoisted(() => ({
     id: "workspace-1",
     name: "Acme",
     slug: "acme",
-    settings: {} as Record<string, unknown>,
+    settings: {
+      github_enabled: true,
+      github_pr_sidebar_enabled: true,
+      co_authored_by_enabled: true,
+    },
     repos: [{ url: "https://github.com/acme/api" }] as { url: string }[],
   },
 }));
@@ -31,8 +35,6 @@ const installationsRef = vi.hoisted(() => ({
     installations: [] as {
       id: string;
       account_login: string;
-      installation_id?: number;
-      connected_by?: string;
     }[],
     configured: true,
     can_manage: true as boolean,
@@ -53,11 +55,8 @@ vi.mock("@tanstack/react-query", () => ({
   queryOptions: <T,>(opts: T) => opts,
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "workspace-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "workspace-1",
   useCurrentWorkspace: () => workspaceRef.current,
 }));
 
@@ -124,13 +123,22 @@ function I18nWrapper({ children }: { children: ReactNode }) {
   );
 }
 
+function currentSettings(overrides: Record<string, boolean> = {}) {
+  return {
+    github_enabled: true,
+    github_pr_sidebar_enabled: true,
+    co_authored_by_enabled: true,
+    ...overrides,
+  };
+}
+
 function resetFixtures() {
   vi.clearAllMocks();
   workspaceRef.current = {
     id: "workspace-1",
     name: "Acme",
     slug: "acme",
-    settings: {},
+    settings: currentSettings(),
     repos: [{ url: "https://github.com/acme/api" }],
   };
   membersRef.current = [{ user_id: "user-1", role: "owner" }];
@@ -148,13 +156,13 @@ describe("GitHubTab", () => {
   });
 
   it("does not show the hint once the master switch is off", () => {
-    workspaceRef.current.settings = { github_enabled: false };
+    workspaceRef.current.settings = currentSettings({ github_enabled: false });
     render(<GitHubTab />, { wrapper: I18nWrapper });
     expect(screen.queryByText(/团队不使用 GitHub？/)).toBeNull();
   });
 
   it("disables every feature switch when the master switch is off", () => {
-    workspaceRef.current.settings = { github_enabled: false };
+    workspaceRef.current.settings = currentSettings({ github_enabled: false });
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
     const master = screen.getByRole("switch", { name: /启用 GitHub 功能/i });
@@ -173,10 +181,10 @@ describe("GitHubTab", () => {
 
   it("flipping the master switch off persists github_enabled=false and merges existing settings", async () => {
     const user = userEvent.setup();
-    workspaceRef.current.settings = { co_authored_by_enabled: true };
+    workspaceRef.current.settings = currentSettings();
     mockUpdateWorkspace.mockResolvedValue({
       ...workspaceRef.current,
-      settings: { co_authored_by_enabled: true, github_enabled: false },
+      settings: currentSettings({ github_enabled: false }),
     });
 
     render(<GitHubTab />, { wrapper: I18nWrapper });
@@ -185,7 +193,7 @@ describe("GitHubTab", () => {
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        settings: { co_authored_by_enabled: true, github_enabled: false },
+        settings: currentSettings({ github_enabled: false }),
       });
     });
   });
@@ -195,7 +203,7 @@ describe("GitHubTab", () => {
     installationsRef.current = {
       configured: true,
       can_manage: true,
-      installations: [{ id: "inst-42", account_login: "acme", installation_id: 42 }],
+      installations: [{ id: "inst-42", account_login: "acme" }],
     };
     mockDeleteInstallation.mockResolvedValue(undefined);
 
@@ -216,11 +224,11 @@ describe("GitHubTab", () => {
   });
 
   it("断开 button is still visible when the master switch is off", () => {
-    workspaceRef.current.settings = { github_enabled: false };
+    workspaceRef.current.settings = currentSettings({ github_enabled: false });
     installationsRef.current = {
       configured: true,
       can_manage: true,
-      installations: [{ id: "inst-1", account_login: "acme", installation_id: 1 }],
+      installations: [{ id: "inst-1", account_login: "acme" }],
     };
     render(<GitHubTab />, { wrapper: I18nWrapper });
     expect(screen.getByRole("button", { name: /^断开$/ })).toBeTruthy();
@@ -252,23 +260,6 @@ describe("GitHubTab", () => {
 
     expect(screen.getByText(/请让管理员或所有者/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^连接 GitHub$/ })).toBeNull();
-  });
-
-  it("renders the connected_by line when the backend provides it", () => {
-    installationsRef.current = {
-      configured: true,
-      can_manage: true,
-      installations: [
-        {
-          id: "inst-7",
-          account_login: "acme",
-          installation_id: 7,
-          connected_by: "Jiayuan",
-        },
-      ],
-    };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/由 Jiayuan 连接/)).toBeTruthy();
   });
 
   it("repositories shortcut navigates to the repositories tab", async () => {

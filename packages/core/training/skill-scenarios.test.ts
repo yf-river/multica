@@ -1,13 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  SKILL_SCENARIO_EVALUATION_SCHEMA,
-  WRITING_MODEL_BENCHMARK_SCHEMA,
-  buildDefaultSkillScenarioPayload,
   buildSkillScenarioAssetRequest,
   buildWritingModelBenchmarkAssetRequest,
-  buildWritingModelBenchmarkPayload,
   isSkillScenarioPayload,
-  isWritingModelBenchmarkPayload,
   summarizeSkillScenarioTarget,
   summarizeWritingModelBenchmark,
 } from "./skill-scenarios";
@@ -15,9 +10,12 @@ import type { PromptEvaluationAsset } from "../types";
 
 describe("skill scenario evaluation payload", () => {
   it("builds a repo-local skill scenario payload with runnable case variables", () => {
-    const payload = buildDefaultSkillScenarioPayload();
+    const request = buildSkillScenarioAssetRequest();
+    expect(isSkillScenarioPayload(request.payload)).toBe(true);
+    if (!isSkillScenarioPayload(request.payload)) throw new Error("expected skill scenario payload");
+    const payload = request.payload;
 
-    expect(payload.schema).toBe(SKILL_SCENARIO_EVALUATION_SCHEMA);
+    expect(payload.schema).toBe("multica.skill_scenario_eval.v1");
     expect(payload.target).toMatchObject({
       kind: "repo_skill",
       repo_path: "/data/ida/user-center",
@@ -50,7 +48,7 @@ describe("skill scenario evaluation payload", () => {
 
   it("summarizes only skill scenario assets", () => {
     const asset = {
-      payload: buildDefaultSkillScenarioPayload(),
+      payload: buildSkillScenarioAssetRequest().payload,
     } as unknown as PromptEvaluationAsset;
     const normal = { payload: { cases: [] } } as unknown as PromptEvaluationAsset;
 
@@ -61,11 +59,16 @@ describe("skill scenario evaluation payload", () => {
   });
 
   it("builds a multi-model writing benchmark test suite", () => {
-    const payload = buildWritingModelBenchmarkPayload();
     const request = buildWritingModelBenchmarkAssetRequest();
-    const asset = { payload } as unknown as PromptEvaluationAsset;
+    const payload = request.payload as {
+      schema: string;
+      target_models: string[];
+      cases: Array<{ scenario_key: string }>;
+      rubric: Array<{ key: string }>;
+    };
+    const asset = { payload: request.payload } as unknown as PromptEvaluationAsset;
 
-    expect(payload.schema).toBe(WRITING_MODEL_BENCHMARK_SCHEMA);
+    expect(payload.schema).toBe("multica.writing_model_benchmark.v1");
     expect(payload.target_models).toContain("codebuddy/kimi-k2.6-ioa");
     expect(payload.target_models).toContain("codebuddy/deepseek-v4-pro");
     expect(payload.cases.map((item) => item.scenario_key)).toEqual([
@@ -82,7 +85,6 @@ describe("skill scenario evaluation payload", () => {
     ]);
     expect(request.asset_type).toBe("测试套件");
     expect(request.prompt_id).toBeNull();
-    expect(isWritingModelBenchmarkPayload(request.payload)).toBe(true);
     expect(summarizeWritingModelBenchmark(asset)).toBe("3 个模型 · 3 个写作用例 · 5 个评分维度");
   });
 });

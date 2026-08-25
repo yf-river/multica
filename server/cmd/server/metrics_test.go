@@ -11,7 +11,12 @@ import (
 )
 
 func TestMainRouterDoesNotExposePrometheusMetrics(t *testing.T) {
-	router, _ := NewRouterWithOptions(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
+	router, _, err := NewRouterWithOptions(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{
+		HeartbeatScheduler: immediateTestHeartbeatScheduler{},
+	})
+	if err != nil {
+		t.Fatalf("construct router: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)

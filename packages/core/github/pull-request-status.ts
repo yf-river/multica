@@ -34,21 +34,18 @@ export type PullRequestStatusKind =
   | "ready"
   | "unknown";
 
-export interface PullRequestStatusInput {
-  state: GitHubPullRequest["state"];
-  mergeable_state?: string | null;
-  checks_failed?: number;
-  checks_pending?: number;
-  checks_passed?: number;
-}
+type PullRequestStatusInput = Pick<
+  GitHubPullRequest,
+  "state" | "mergeable_state" | "checks_failed" | "checks_pending" | "checks_passed"
+>;
 
 export function derivePullRequestStatusKind(input: PullRequestStatusInput): PullRequestStatusKind {
   if (input.state === "closed") return "closed";
   if (input.state === "merged") return "merged";
   if (input.mergeable_state === "dirty") return "conflicts";
-  if ((input.checks_failed ?? 0) > 0) return "checks_failed";
-  if ((input.checks_pending ?? 0) > 0) return "checks_pending";
-  if ((input.checks_passed ?? 0) > 0) return "checks_passed";
+  if (input.checks_failed > 0) return "checks_failed";
+  if (input.checks_pending > 0) return "checks_pending";
+  if (input.checks_passed > 0) return "checks_passed";
   if (input.mergeable_state === "clean") return "ready";
   return "unknown";
 }
@@ -70,9 +67,9 @@ export function derivePullRequestProgressSegments(
   input: PullRequestStatusInput,
 ): PullRequestProgressSegment[] | null {
   if (input.state === "closed" || input.state === "merged") return null;
-  const failed = input.checks_failed ?? 0;
-  const pending = input.checks_pending ?? 0;
-  const passed = input.checks_passed ?? 0;
+  const failed = input.checks_failed;
+  const pending = input.checks_pending;
+  const passed = input.checks_passed;
   const total = failed + pending + passed;
   if (total === 0) return null;
   const segments: PullRequestProgressSegment[] = [];
@@ -82,20 +79,10 @@ export function derivePullRequestProgressSegments(
   return segments;
 }
 
-export interface PullRequestStatsInput {
-  additions?: number;
-  deletions?: number;
-  changed_files?: number;
-}
-
-// shouldShowPullRequestStats encodes the "old backend → new frontend" guard:
-// when the backend that served this PR row doesn't know about the stats
-// columns yet, every numeric field defaults to 0. Rendering "+0 −0 · 0 files"
-// in that case would be a lie (the PR almost certainly has real changes),
-// so we hide the entire stats row until at least one signal is non-zero.
-export function shouldShowPullRequestStats(input: PullRequestStatsInput): boolean {
-  const a = input.additions ?? 0;
-  const d = input.deletions ?? 0;
-  const f = input.changed_files ?? 0;
-  return a + d + f > 0;
+// A zero triplet means GitHub did not supply diff statistics, so rendering
+// "+0 −0 · 0 files" would falsely describe the pull request as empty.
+export function shouldShowPullRequestStats(
+  input: Pick<GitHubPullRequest, "additions" | "deletions" | "changed_files">,
+): boolean {
+  return input.additions + input.deletions + input.changed_files > 0;
 }

@@ -50,6 +50,17 @@ type ExecOptions struct {
 	// field rather than fail (so MUL-2339 can grow runtime support
 	// incrementally without breaking unrelated agents).
 	ThinkingLevel string
+	// OpenclawMode chooses between local (embedded) and gateway routing for
+	// the openclaw backend. The daemon normalizes absent configuration to local;
+	// the daemon spawns `openclaw agent --local …` and the agent loop runs
+	// in-process on the daemon host. "gateway" instructs the daemon to drop
+	// the --local flag and let openclaw route the turn through a Gateway (the
+	// user's globally-configured one, or an endpoint pinned in the per-task
+	// config wrapper that the daemon writes from execenv.OpenclawGatewayPin —
+	// see server/internal/daemon/execenv/openclaw_config.go). Other backends
+	// ignore this field, mirroring ThinkingLevel's renderer-side fall-through
+	// pattern. See issue #3260.
+	OpenclawMode string
 }
 
 // runContext derives the execution context for an agent subprocess from the
@@ -108,6 +119,10 @@ type TokenUsage struct {
 	CacheWriteTokens int64
 }
 
+func (u TokenUsage) hasTokens() bool {
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
+}
+
 // Result is the final outcome after an agent session completes.
 type Result struct {
 	Status     string // "completed", "failed", "aborted", "timeout", "cancelled"
@@ -130,8 +145,8 @@ type Config struct {
 //
 // SupportedTypes is the canonical whitelist of agent types New can construct.
 // It MUST stay in lockstep with the switch in New below and the
-// runtime_profile.protocol_family CHECK constraint: a custom runtime profile
-// may only be based on a backend Multica officially supports.
+// current runtime_profile.protocol_family CHECK constraint: a custom
+// runtime profile may only be based on a backend Multica officially supports.
 var SupportedTypes = []string{
 	"claude",
 	"codebuddy",
@@ -170,7 +185,7 @@ func New(agentType string, cfg Config) (Backend, error) {
 	case "codebuddy":
 		return &codebuddyBackend{cfg: cfg}, nil
 	case "codex":
-		return &codexBackend{cfg: cfg}, nil
+		return NewCodexBrokerBackend(cfg), nil
 	case "copilot":
 		return &copilotBackend{cfg: cfg}, nil
 	case "opencode":
@@ -192,11 +207,6 @@ func New(agentType string, cfg Config) (Backend, error) {
 	default:
 		return nil, fmt.Errorf("unknown agent type: %q (supported: claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro, antigravity)", agentType)
 	}
-}
-
-// DetectVersion runs the agent CLI with --version and returns the output.
-func DetectVersion(ctx context.Context, executablePath string) (string, error) {
-	return detectCLIVersion(ctx, executablePath)
 }
 
 // launchHeaders maps each supported agent type to the user-visible skeleton

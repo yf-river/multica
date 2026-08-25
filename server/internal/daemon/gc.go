@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -144,9 +145,15 @@ func (d *Daemon) gcWorkspace(ctx context.Context, wsDir string, stats *gcStats) 
 
 	// Remove the workspace directory itself if it's now empty.
 	if cleanedHere > 0 {
-		remaining, _ := os.ReadDir(wsDir)
+		remaining, err := os.ReadDir(wsDir)
+		if err != nil {
+			d.logger.Warn("gc: read workspace directory after cleanup failed", "path", wsDir, "error", err)
+			return
+		}
 		if len(remaining) == 0 {
-			os.Remove(wsDir)
+			if err := os.Remove(wsDir); err != nil {
+				d.logger.Warn("gc: remove empty workspace directory failed", "path", wsDir, "error", err)
+			}
 		}
 	}
 }
@@ -244,7 +251,7 @@ func (d *Daemon) orphanByMTime(taskDir, reason string) gcAction {
 }
 
 // isAccessNotFound detects the 404 returned by gc-check endpoints. The same
-// status covers "row deleted" and "daemon token can't see this workspace"
+// status covers "row deleted" and "daemon user no longer has workspace access"
 // (the requireDaemonWorkspaceAccess anti-enumeration shape), so callers
 // can't tell the two apart from the response alone.
 func isAccessNotFound(err error) bool {
@@ -257,12 +264,12 @@ func (d *Daemon) gcDecisionIssue(ctx context.Context, taskDir string, meta *exec
 		return d.orphanByMTime(taskDir, "empty issue id")
 	}
 
-	status, err := d.client.GetIssueGCCheck(ctx, meta.IssueID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/issues/%s/gc-check", meta.IssueID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			// 404 is ambiguous: server returns it for both "issue deleted"
-			// and "daemon token has no access to the workspace". Fall back
-			// to the mtime-gated orphan cleanup so a scoped-down token
+			// and "daemon user has no access to the workspace". Fall back
+			// to the mtime-gated orphan cleanup so a removed user
 			// can't instantly wipe dirs whose issues are still live.
 			return d.orphanByMTime(taskDir, "issue not accessible")
 		}
@@ -301,7 +308,7 @@ func (d *Daemon) gcDecisionChat(ctx context.Context, taskDir string, meta *exece
 		return d.orphanByMTime(taskDir, "empty chat session id")
 	}
 
-	status, err := d.client.GetChatSessionGCCheck(ctx, meta.ChatSessionID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/chat-sessions/%s/gc-check", meta.ChatSessionID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			// 404 means the chat_session row is gone — DeleteChatSession is
@@ -351,7 +358,7 @@ func (d *Daemon) gcDecisionAutopilotRun(ctx context.Context, taskDir string, met
 		return d.orphanByMTime(taskDir, "empty autopilot run id")
 	}
 
-	status, err := d.client.GetAutopilotRunGCCheck(ctx, meta.AutopilotRunID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/autopilot-runs/%s/gc-check", meta.AutopilotRunID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			return d.orphanByMTime(taskDir, "autopilot run not accessible")
@@ -406,7 +413,7 @@ func (d *Daemon) gcDecisionQuickCreate(ctx context.Context, taskDir string, meta
 		return d.orphanByMTime(taskDir, "empty task id")
 	}
 
-	status, err := d.client.GetTaskGCCheck(ctx, meta.TaskID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/tasks/%s/gc-check", meta.TaskID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			// Task row was hard-deleted, or token can't see it. Either way,
@@ -473,14 +480,7 @@ func (d *Daemon) cleanTaskArtifacts(taskDir string, patterns []string) (removed 
 	if taskDir == "" || len(patterns) == 0 {
 		return
 	}
-	patternSet := make(map[string]struct{}, len(patterns))
-	for _, p := range patterns {
-		p = strings.TrimSpace(p)
-		if p == "" || strings.ContainsAny(p, "/\\") {
-			continue
-		}
-		patternSet[p] = struct{}{}
-	}
+	patternSet := buildPatternSet(patterns)
 	if len(patternSet) == 0 {
 		return
 	}

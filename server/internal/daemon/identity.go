@@ -17,13 +17,9 @@ import (
 // renames no longer mint a new identity.
 const daemonIDFileName = "daemon.id"
 
-// EnsureDaemonID returns a stable UUID for this daemon instance, persisting
-// it to disk on first call. Identity is machine-scoped: every profile on the
-// same machine shares one UUID stored at `~/.multica/daemon.id`. Profile
-// boundaries are about which backend/account a daemon is talking to, not
-// about the physical machine's identity, so a single host running both the
-// CLI-spawned daemon and the desktop-spawned daemon (or toggling profiles)
-// registers as one runtime everywhere rather than N.
+// EnsureDaemonID returns this machine's stable daemon UUID, persisting it to
+// ~/.multica/daemon.id on first use. Profiles choose a backend and account;
+// they do not create separate machine identities.
 //
 // If the file exists but is corrupt (unparseable), it is regenerated so the
 // daemon can continue starting up instead of hard-failing.
@@ -70,20 +66,20 @@ func writeDaemonIDFile(path, id string) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.WriteString(id + "\n"); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write temp daemon id file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close temp daemon id file: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("chmod temp daemon id file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename daemon id file: %w", err)
 	}
 	return nil

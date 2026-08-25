@@ -1,4 +1,5 @@
 import type { Issue, IssueStatus, IssuePriority } from "@multica/core/types";
+import { BOARD_STATUSES } from "@multica/core/issues/config";
 import type { ActorFilterValue } from "@multica/core/issues/stores/view-store";
 
 export interface IssueFilters {
@@ -16,6 +17,14 @@ export interface IssueFilters {
   // free of any data-fetching dependency.
   agentRunningFilter?: boolean;
   runningIssueIds?: ReadonlySet<string>;
+}
+
+interface IssueViewProjection {
+  issues: Issue[];
+  swimlaneIssues: Issue[];
+  activeFilters: Omit<IssueFilters, "statusFilters">;
+  visibleStatuses: IssueStatus[];
+  hiddenStatuses: IssueStatus[];
 }
 
 /**
@@ -91,4 +100,28 @@ export function filterIssues(issues: Issue[], filters: IssueFilters): Issue[] {
 
     return true;
   });
+}
+
+export function projectIssueViews(
+  sourceIssues: Issue[],
+  filters: IssueFilters,
+): IssueViewProjection {
+  const { statusFilters, ...activeFilters } = filters;
+  const visibleStatuses =
+    statusFilters.length > 0
+      ? BOARD_STATUSES.filter((status) => statusFilters.includes(status))
+      : [...BOARD_STATUSES];
+
+  return {
+    issues: filterIssues(sourceIssues, filters),
+    swimlaneIssues: filterIssues(sourceIssues, {
+      ...activeFilters,
+      statusFilters: [],
+    }),
+    activeFilters,
+    visibleStatuses,
+    hiddenStatuses: BOARD_STATUSES.filter(
+      (status) => !visibleStatuses.includes(status),
+    ),
+  };
 }

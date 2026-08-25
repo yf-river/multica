@@ -47,8 +47,9 @@ func (q *Queries) CreateAgentPlaygroundAgent(ctx context.Context, arg CreateAgen
 	return i, err
 }
 
-const createAgentPlaygroundExperiment = `-- name: CreateAgentPlaygroundExperiment :one
+const createAgentPlaygroundExperimentWithID = `-- name: CreateAgentPlaygroundExperimentWithID :one
 INSERT INTO agent_playground_experiment (
+    id,
     workspace_id,
     name,
     description,
@@ -60,17 +61,19 @@ INSERT INTO agent_playground_experiment (
 ) VALUES (
     $1,
     $2,
-    COALESCE($3, ''),
-    $4,
+    $3,
+    COALESCE($4, ''),
     $5,
     $6,
-    COALESCE($7, 'ready'),
-    $8
+    $7,
+    COALESCE($8, 'ready'),
+    $9
 )
 RETURNING id, workspace_id, name, description, dataset_asset_id, dataset_version_id, judge_agent_id, status, created_by, created_at, updated_at
 `
 
-type CreateAgentPlaygroundExperimentParams struct {
+type CreateAgentPlaygroundExperimentWithIDParams struct {
+	ID               pgtype.UUID `json:"id"`
 	WorkspaceID      pgtype.UUID `json:"workspace_id"`
 	Name             string      `json:"name"`
 	Description      interface{} `json:"description"`
@@ -81,8 +84,9 @@ type CreateAgentPlaygroundExperimentParams struct {
 	CreatedBy        pgtype.UUID `json:"created_by"`
 }
 
-func (q *Queries) CreateAgentPlaygroundExperiment(ctx context.Context, arg CreateAgentPlaygroundExperimentParams) (AgentPlaygroundExperiment, error) {
-	row := q.db.QueryRow(ctx, createAgentPlaygroundExperiment,
+func (q *Queries) CreateAgentPlaygroundExperimentWithID(ctx context.Context, arg CreateAgentPlaygroundExperimentWithIDParams) (AgentPlaygroundExperiment, error) {
+	row := q.db.QueryRow(ctx, createAgentPlaygroundExperimentWithID,
+		arg.ID,
 		arg.WorkspaceID,
 		arg.Name,
 		arg.Description,
@@ -180,9 +184,22 @@ INSERT INTO agent_playground_judgement (
 ) VALUES ($1, $2, $3, $4, 'pending')
 ON CONFLICT (input_id) DO UPDATE
 SET judge_agent_id = EXCLUDED.judge_agent_id,
+    chat_session_id = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN NULL
+        ELSE agent_playground_judgement.chat_session_id
+    END,
+    task_id = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN NULL
+        ELSE agent_playground_judgement.task_id
+    END,
     status = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN EXCLUDED.status
         WHEN agent_playground_judgement.status = 'pending' THEN EXCLUDED.status
         ELSE agent_playground_judgement.status
+    END,
+    output = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN ''
+        ELSE agent_playground_judgement.output
     END,
     updated_at = now()
 RETURNING id, experiment_id, input_id, workspace_id, judge_agent_id, chat_session_id, task_id, status, output, created_at, updated_at
@@ -379,19 +396,9 @@ type ListAgentPlaygroundExperimentsParams struct {
 }
 
 type ListAgentPlaygroundExperimentsRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description"`
-	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
-	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
-	JudgeAgentID     pgtype.UUID        `json:"judge_agent_id"`
-	Status           string             `json:"status"`
-	CreatedBy        pgtype.UUID        `json:"created_by"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	InputCount       int32              `json:"input_count"`
-	AgentCount       int32              `json:"agent_count"`
+	AgentPlaygroundExperiment AgentPlaygroundExperiment `json:"agent_playground_experiment"`
+	InputCount                int32                     `json:"input_count"`
+	AgentCount                int32                     `json:"agent_count"`
 }
 
 func (q *Queries) ListAgentPlaygroundExperiments(ctx context.Context, arg ListAgentPlaygroundExperimentsParams) ([]ListAgentPlaygroundExperimentsRow, error) {
@@ -404,17 +411,17 @@ func (q *Queries) ListAgentPlaygroundExperiments(ctx context.Context, arg ListAg
 	for rows.Next() {
 		var i ListAgentPlaygroundExperimentsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.DatasetAssetID,
-			&i.DatasetVersionID,
-			&i.JudgeAgentID,
-			&i.Status,
-			&i.CreatedBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.AgentPlaygroundExperiment.ID,
+			&i.AgentPlaygroundExperiment.WorkspaceID,
+			&i.AgentPlaygroundExperiment.Name,
+			&i.AgentPlaygroundExperiment.Description,
+			&i.AgentPlaygroundExperiment.DatasetAssetID,
+			&i.AgentPlaygroundExperiment.DatasetVersionID,
+			&i.AgentPlaygroundExperiment.JudgeAgentID,
+			&i.AgentPlaygroundExperiment.Status,
+			&i.AgentPlaygroundExperiment.CreatedBy,
+			&i.AgentPlaygroundExperiment.CreatedAt,
+			&i.AgentPlaygroundExperiment.UpdatedAt,
 			&i.InputCount,
 			&i.AgentCount,
 		); err != nil {
@@ -559,6 +566,36 @@ func (q *Queries) ListAgentPlaygroundResults(ctx context.Context, arg ListAgentP
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAgentPlaygroundExperiment = `-- name: LockAgentPlaygroundExperiment :one
+SELECT id, workspace_id, name, description, dataset_asset_id, dataset_version_id, judge_agent_id, status, created_by, created_at, updated_at FROM agent_playground_experiment
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockAgentPlaygroundExperimentParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockAgentPlaygroundExperiment(ctx context.Context, arg LockAgentPlaygroundExperimentParams) (AgentPlaygroundExperiment, error) {
+	row := q.db.QueryRow(ctx, lockAgentPlaygroundExperiment, arg.ID, arg.WorkspaceID)
+	var i AgentPlaygroundExperiment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.DatasetAssetID,
+		&i.DatasetVersionID,
+		&i.JudgeAgentID,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const setAgentPlaygroundJudgeAgent = `-- name: SetAgentPlaygroundJudgeAgent :one

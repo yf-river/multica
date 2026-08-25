@@ -4,8 +4,6 @@ This document is the source of truth for the analytics events Multica ships
 to PostHog. Events feed the acquisition → activation → expansion funnel that
 drives our weekly Active Workspaces (WAW) north-star metric.
 
-See [MUL-1122](https://github.com/multica-ai/multica) for the design context.
-
 > **PostHog is reserved for user/product-behaviour events.** High-volume
 > operational / execution-lifecycle telemetry — runtime lifecycle
 > (`runtime_registered` / `runtime_ready` / `runtime_failed` /
@@ -48,23 +46,20 @@ defaults guarantee this:
 - Operators who want their own analytics can set `POSTHOG_API_KEY` and
   `POSTHOG_HOST` to point at their own PostHog project (Cloud or
   self-hosted PostHog).
-- The frontend receives the key via `/api/config` (planned for PR 2), so
-  self-hosts' blank server config also disables frontend event shipping
-  automatically — no separate frontend opt-out plumbing required.
+- The frontend receives the key via `/api/config`, so self-hosts' blank server
+  config also disables frontend event shipping automatically.
 
 ## Architecture
 
 ```
-handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediately
-                    │
-                    ▼
-           bounded queue (1024 events)
-                    │
-                    ▼
-     background worker: batch + POST /batch/
-                    │
-                    ▼
-                PostHog
+handler/service → metrics.RecordEvent
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+       Prometheus counter     analytics.Client.Capture
+                                     │ product events only
+                                     ▼
+                           bounded queue → POST /batch/
 ```
 
 - `analytics.Capture` is **never allowed to block a request handler**. A
@@ -79,20 +74,15 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
 ## Identity model
 
 - **`distinct_id`** — always the user's UUID for logged-in events. The
-  frontend's `posthog.identify(user.id)` merges any prior anonymous events
-  under the same identity, so acquisition attribution (UTM / referrer) stays
-  intact across signup.
-- **`workspace_id`** — added to every event as a property when present. v1
-  uses event property filtering (free tier) rather than PostHog Groups
-  Analytics (paid) to compute workspace-level metrics.
-  it's available for individual debugging but not broadcast with every
-  event.
-- **Person properties (`$set`)** — use for mutable cohort signals
-  (role, use_case, team_size, platform_preference) that a user can
-  legitimately change during onboarding. `Event.Set` on the backend
-  maps to `$set`; the frontend helper is
-  `setPersonProperties()` in `@multica/core/analytics`. Use
-  initial attribution, first-completion timestamp).
+  frontend's `posthog.identify(user.id)` keeps pre-login pageviews and later
+  authenticated events on one person.
+- **`workspace_id`** — added to every workspace-scoped event. Dashboards use
+  the event property directly for workspace-level metrics.
+- **`user_id`** — added to event properties for authenticated human users.
+  It is available for individual debugging but may be absent from agent or
+  system events.
+- **Initial person properties (`$set_once`)** — use for immutable acquisition
+  attribution so later events cannot overwrite the user's origin.
 
 ## Taxonomy
 
@@ -101,15 +91,13 @@ Every event is assigned to one dashboard category:
 | Category | Events |
 |---|---|
 | `core_loop` | `workspace_created`, `agent_created`, `issue_created`, `chat_message_sent`, `issue_executed`, `autopilot_created`, `squad_created` |
-| `onboarding_support` | `onboarding_started`, `onboarding_questionnaire_submitted`, `onboarding_completed`, `onboarding_runtime_path_selected`, `onboarding_runtime_detected` |
 | `acquisition` | `signup` |
 | `ops_feedback` | `feedback_opened`, `feedback_submitted` |
 | `system/noise` | `$pageview`, `$set`, `$identify`, `$autocapture`, `$rageclick` |
-| `operational (Prometheus-only — NOT in PostHog)` | `runtime_registered`, `runtime_ready`, `runtime_failed`, `runtime_offline`, `agent_task_queued`, `agent_task_dispatched`, `agent_task_started`, `agent_task_completed`, `agent_task_failed`, `agent_task_cancelled`, `autopilot_run_started`, `autopilot_run_completed`, `autopilot_run_failed` |
+| `operational (Prometheus-only — NOT in PostHog)` | Runtime and Autopilot lifecycle events listed below; Agent task lifecycle uses typed `multica_agent_task_*` metrics rather than event names. |
 
-The v0 core dashboard must use only `core_loop` plus the specific
-`onboarding_support` steps used by the activation funnel. Acquisition,
-feedback, and system/noise events stay in separate dashboards. The
+The core product dashboard uses only `core_loop`. Acquisition, feedback, and
+system/noise events stay in separate dashboards. The
 `operational` row is **not shipped to PostHog** — those signals live in
 Grafana via `multica_*` business counters (see `server/internal/metrics`).
 
@@ -126,20 +114,13 @@ Canonical core events should carry these properties whenever the entity exists:
 | `agent_id` | string UUID | Required for agent/task events. |
 | `task_id` | string UUID | Required for `agent_task_*` events. |
 | `issue_id` / `chat_session_id` / `autopilot_run_id` | string UUID | Relevant source entity for the task/entry event. |
-| `source` | string | Canonical values: `onboarding`, `manual`, `chat`, `autopilot`, `api`. UI surface details use `surface` or `trigger_source`. |
+| `source` | string | Canonical values: `manual`, `chat`, `autopilot`, `api`, `ops_feedback`. UI surface details use `surface` or `trigger_source`. |
 | `runtime_mode` | string | `cloud` / `local` when a runtime/agent task is involved. |
 | `provider` | string | `claude`, `codex`, `cursor`, etc. when a runtime/agent task is involved. |
 | `is_demo` | bool | Currently always `false`; reserved for future demo/test workspace filtering. |
 
-Task terminal events additionally carry `duration_ms`; failures carry
-`failure_reason`, `error_type`, and `will_retry`. Runtime failure events carry
-`recoverable`; runtime ready events carry `runtime_id`, `ready_duration_ms`
-only when it is actually measured, and `daemon_id` for local runtimes.
-
-Schema v2 is the first canonical core-metrics schema. It replaces early v1
-drafts that mirrored `failure_reason` into `error_type`, used `recoverable`
-for task/autopilot failures, and emitted `ready_duration_ms: 0` before the
-registration path had a measured duration.
+Prometheus-only runtime and autopilot events carry only the properties read by
+their metric dispatcher. They are not part of the PostHog property contract.
 
 ## Event contract
 
@@ -163,85 +144,19 @@ Fires after a `CreateWorkspace` transaction commits successfully.
 |---|---|---|
 | `workspace_id` | string (UUID) | Added globally; present here for clarity. |
 
-**Note on "first workspace" segmentation** — we deliberately do *not* stamp
-an `is_first_workspace` boolean at emit time. Computing it correctly would
-require an extra column or transaction-scoped logic that still races under
-concurrent creates. Instead, PostHog answers the same question exactly by
-looking at whether the user has a prior `workspace_created` event (use a
-funnel with "first time user does X" or a cohort on
-`person_properties.$initial_event`). No information is lost.
+First-workspace segmentation is derived from event order in PostHog; the event
+does not carry a race-prone `is_first_workspace` property.
 
-### `runtime_registered`
+### Runtime lifecycle (Prometheus-only)
 
-> **Prometheus-only — not shipped to PostHog** (see the note at the top of this
-> doc). The `analytics.Event` is still constructed so `metrics.IncForEvent` can
-> derive the Prometheus counter; the fields below are that **event** shape, not
-> a PostHog contract. Only the low-cardinality fields (`runtime_mode`,
-> `provider`) become Prometheus labels — ids like `runtime_id` / `daemon_id`
-> are not labels.
+These events pass through `metrics.RecordEvent` but are not shipped to PostHog.
 
-Fires the first time a `(workspace_id, daemon_id, provider)` tuple is
-upserted. Heartbeats and repeat registrations never re-emit. First-time
-detection uses Postgres `xmax = 0` on the upsert RETURNING clause — no
-extra query, no race.
-
-| Property | Type | Description |
+| Event | When recorded | Labels / measurement |
 |---|---|---|
-| `runtime_id` | string (UUID) | The newly created agent_runtime row id. |
-| `daemon_id` | string | Local daemon identity when available. |
-| `runtime_mode` | string | Runtime category; first internal release expects local/fixed-machine runtimes. |
-| `provider` | string | e.g. `"codex"`, `"claude"`. |
-| `runtime_version` | string | Version of the agent runtime binary. |
-| `cli_version` | string | Version of the `multica` CLI that registered it. |
-
-`distinct_id` is the authenticated owner's user id when the daemon was
-registered via a member's JWT/PAT; daemon-token registrations fall back to
-`workspace:<workspace_id>` so PostHog doesn't bucket unrelated daemons
-under a single "anonymous" person.
-
-### `runtime_ready`
-
-> **Prometheus-only — not shipped to PostHog.**
-
-Fires when a runtime is first registered in an online/ready state. This is the
-activation-funnel step that should replace treating `runtime_registered` as
-proof of readiness. The backend emits this only on the INSERT path for a new
-`agent_runtime` row; ordinary daemon reconnects update the existing row and do
-not emit another `runtime_ready`. Dashboard funnels should still count
-distinct `runtime_id`.
-
-| Property | Type | Description |
-|---|---|---|
-| `runtime_id` | string (UUID) | The `agent_runtime` row id. |
-| `daemon_id` | string | Local daemon identity when available. |
-| `ready_duration_ms` | int64 | Optional. Time from registration start to ready; omitted until the registration path can measure it. |
-| `runtime_mode` | string | `local` / `cloud`. |
-| `provider` | string | Runtime provider. |
-
-### `runtime_failed`
-
-> **Prometheus-only — not shipped to PostHog.**
-
-Fires when runtime setup/registration fails before a ready runtime can be
-recorded. Today this is scoped to backend registration persistence failures;
-future setup flows should reuse it for provider detection or daemon boot
-failures.
-
-| Property | Type | Description |
-|---|---|---|
-| `daemon_id` | string | Local daemon identity when available. |
-| `provider` | string | Runtime provider attempted. |
-| `failure_reason` | string | Stable coarse reason. |
-| `error_type` | string | Stable error classifier. |
-| `recoverable` | bool | Whether retrying setup may succeed. |
-
-### `runtime_offline`
-
-> **Prometheus-only — not shipped to PostHog.**
-
-Fires when a runtime is explicitly deregistered or the backend sweeper marks it
-offline after missed heartbeats. This is not an activation step; it supports
-local runtime retention and drop-off diagnosis.
+| `runtime_registered` | First insert of a `(workspace_id, daemon_id, provider)` runtime; reconnect updates do not emit. | `runtime_mode`, `provider` |
+| `runtime_ready` | A new runtime is registered online. | `runtime_mode`, `provider`; positive `ready_duration_ms` feeds the readiness histogram |
+| `runtime_failed` | Registration persistence fails before readiness. | `runtime_mode`, `provider`, `failure_reason`, `recoverable` |
+| `runtime_offline` | Explicit deregistration or stale-runtime sweep. | `runtime_mode`, `provider` |
 
 ### `issue_created`
 
@@ -268,17 +183,13 @@ is queued.
 | `agent_id` | string (UUID) | Chat agent. |
 | `source` | string | Always `chat`. |
 
-### agent task lifecycle (Prometheus-only)
+### Agent task lifecycle (Prometheus-only)
 
 > **Not shipped to PostHog and has no `analytics.Event`.** The agent task
 > lifecycle is recorded directly to Prometheus by the typed
-> `BusinessMetrics.RecordTask*` methods in `server/internal/service/task.go`.
-> The old PostHog event names (`agent_task_queued` / `dispatched` / `started` /
-> `completed` / `failed` / `cancelled`) and their properties (`task_id`,
-> `agent_id`, `issue_id`, `chat_session_id`, `autopilot_run_id`, `duration_ms`,
-> `error_type`, `will_retry`) no longer exist anywhere — those high-cardinality
-> ids were never Prometheus labels and must not be used in dashboards or
-> reconciliation.
+> `BusinessMetrics.RecordTask*` methods. The lifecycle is intentionally absent
+> from the PostHog event contract; high-cardinality task and entity IDs are not
+> Prometheus labels and must not be used in Grafana reconciliation.
 
 The actual metrics (defined in `server/internal/metrics/business.go`; label
 sets in `server/internal/metrics/labels.go`):
@@ -308,26 +219,12 @@ sets in `server/internal/metrics/labels.go`):
 ### `autopilot_run_started` / `autopilot_run_completed` / `autopilot_run_failed`
 
 > **Prometheus-only — not shipped to PostHog.** The `analytics.*` constructors
-> are retained only so `metrics.IncForEvent` can derive the Prometheus counter;
-> `analytics.IsMetricsOnly` keeps them out of PostHog. Only `cadence`,
-> `trigger_kind`, and `terminal_status` become Prometheus labels — the
-> `autopilot_id` / `autopilot_run_id` / `agent_id` fields below are event shape,
-> not labels.
+> exist only so `metrics.IncForEvent` can derive the Prometheus counter;
+> `analytics.IsMetricsOnly` keeps them out of PostHog.
 
-Fires from `autopilot_run` lifecycle changes. `source` is always
-`autopilot`; the trigger origin is carried in `trigger_source` (`manual`,
-`schedule`, `webhook`, or `api`).
-
-| Property | Type | Description |
-|---|---|---|
-| `autopilot_id` | string (UUID) | Autopilot definition. |
-| `autopilot_run_id` | string (UUID) | Run row. |
-| `agent_id` | string (UUID) | Assigned agent. |
-| `trigger_source` | string | `manual`, `schedule`, `webhook`, or `api`. |
-| `duration_ms` | int64 | Terminal events only. |
-| `failure_reason` | string | Failed events only. |
-| `error_type` | string | Failed events only; stable coarse classifier such as `configuration`, `issue_terminal`, `dispatch_error`, `task_error`, or `autopilot_error`. |
-| `will_retry` | bool | Failed events only; currently `false` because autopilot retry cadence is owned by triggers/schedules. |
+Fires from `autopilot_run` lifecycle changes. The run source supplies the
+`cadence` and `trigger_kind` labels; terminal events additionally use the fixed
+`completed` or `failed` label selected by the event name.
 
 ### `issue_executed`
 
@@ -353,65 +250,16 @@ flow into the issue-author's person profile (same place `signup` and
 `workspace_created` land). Agent-created issues prefix with `agent:` to
 keep PostHog from merging the agent into a user record.
 
-**Note on workspace-Nth ordinals** — we deliberately do *not* stamp
-`nth_issue_for_workspace` at emit time. Computing it correctly would
-require either a serialised transaction or an advisory lock per workspace;
-two concurrent first-completions could otherwise both read `count=1` and
-emit `n=1`. PostHog answers the same question at query time via
-`row_number() OVER (PARTITION BY properties.workspace_id ORDER BY timestamp)`,
-and funnel steps of the form "workspace has had ≥2 `issue_executed`
-events" are expressible without the property. No information is lost.
-
-`issue_executed` is the canonical **PostHog** core-loop success signal (the
-`agent_task_*` lifecycle that previously served per-task success dashboards is
-now Prometheus-only). Per-task completion counts live in Grafana via
-`BusinessMetrics.RecordTaskTerminal`; use `issue_executed` for the
-PostHog-side activation funnel and filter by `source` as needed.
-
-### `onboarding_started`
-
-Fires once when the onboarding shell mounts and the initial workspace list has
-resolved. Existing-workspace users carry `workspace_id`; brand-new users do
-not have a workspace yet.
-
-| Property | Type | Description |
-|---|---|---|
-| `workspace_id` | string (UUID) | Present only when the user already has a workspace. |
-| `source` | string | Always `onboarding`. |
-
-### `onboarding_questionnaire_submitted`
-
-Fires on the first PatchOnboarding that transitions the user's
-questionnaire JSONB from "at least one slot empty" to "all three
-filled" (team_size, role, use_case). Revisions past that point don't
-re-emit — the funnel counts users, not edits.
-
-| Property | Type | Description |
-|---|---|---|
-| `team_size` | string | `solo` / `team` / `other`. |
-| `role` | string | `developer` / `product_lead` / `writer` / `founder` / `other`. |
-| `use_case` | string | `coding` / `planning` / `writing_research` / `explore` / `other`. |
-| `team_size_has_other` | bool | `true` when the user filled the Q1 free-text escape. |
-| `role_has_other` | bool | Ditto Q2. |
-| `use_case_has_other` | bool | Ditto Q3. |
-
-Person properties set with `$set` (not once — users can go back and
-change answers before submitting again):
-
-| Property | Type | Description |
-|---|---|---|
-| `team_size` | string | Mirrors the event property for cohort queries. |
-| `role` | string | Same. |
-| `use_case` | string | Same. |
-
-`distinct_id` is the user's id. No workspace_id — the questionnaire is
-per-user, not per-workspace.
+Workspace ordinals are derived from event order in PostHog rather than emitted
+with a race-prone counter. Per-task completion counts live in Grafana via
+`BusinessMetrics.RecordTaskTerminal`; `issue_executed` is the PostHog
+activation signal.
 
 ### `agent_created`
 
-Fires on every successful `POST /api/workspaces/:id/agents`. Not
-onboarding-specific — the `is_first_agent_in_workspace` property
-isolates the Step 4 signal from later agent additions.
+Fires on every successful `POST /api/agents`. The
+`is_first_agent_in_workspace` property distinguishes the first agent from
+later additions.
 
 | Property | Type | Description |
 |---|---|---|
@@ -423,39 +271,26 @@ isolates the Step 4 signal from later agent additions.
 
 `distinct_id` is the authenticated owner's user id.
 
-### `onboarding_completed`
+### `squad_created`
 
-Fires from CompleteOnboarding on the first call that actually flips
-`user.onboarded_at` from NULL. Retries are idempotent server-side but
-deliberately do NOT re-emit, so the funnel counts first-completions
-only. The client sends `completion_path` in the POST body to label
-which exit the user took.
+Fires after a Squad is created.
 
 | Property | Type | Description |
 |---|---|---|
-| `workspace_id` | string (UUID) | Present for workspace-linked onboarding completions. |
-| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `unknown`. See below. |
+| `squad_id` | string (UUID) | Created Squad. |
+| `member_count` | int64 | Members seeded at creation time. |
+| `source` | string | Always `manual`. |
 
-Person properties set with `$set_once`:
+### `autopilot_created`
 
-| Property | Type | Description |
-|---|---|---|
-| `onboarded_at` | string (RFC3339) | Timestamp the first completion landed. Enables cohort queries like "users onboarded before X" directly from person_properties. |
-
-`completion_path` values:
-
-- `full` — Reached Step 5 (first_issue) with a runtime connected.
-- `runtime_skipped` — Completed without connecting a runtime (user hit Skip in Step 3).
-- `skip_existing` — "I've done this before" from Welcome. The user already had a workspace.
-- `unknown` — Legacy fallback when the client didn't send a path. Should stay near zero after rollout.
+Fires after an Autopilot is created.
 
 | Property | Type | Description |
 |---|---|---|
-| `inquiry_id` | string | Stable inquiry id; same as `distinct_id`. Useful for joining to operational data. |
-| `company_size` | string | Closed enum from the form dropdown (`1-10`, `11-50`, `51-200`, `201-500`, `501-1000`, `1000+`). |
-| `country_region` | string | Country / region label submitted from the dropdown. |
-| `use_case` | string | Closed enum (`evaluate` / `adopt_team` / `self_host` / `integrate` / `partner` / `other`). |
-| `has_goals` | bool | Presence flag for the free-text goals field. |
+| `autopilot_id` | string (UUID) | Created Autopilot. |
+| `cadence` | string | Persisted cadence. |
+| `trigger_kind` | string | Initial `schedule`, `webhook`, or `manual` trigger; schedule wins when both schedule and webhook are seeded. |
+| `source` | string | Always `manual`. |
 
 ### `feedback_submitted`
 
@@ -468,6 +303,7 @@ in the DB and never broadcast.
 |---|---|---|
 | `message_length_bucket` | string | `0-100` / `100-500` / `500-2000` / `2000+` — coarse bucket of `len(message)` so we can tell "quick note" from "bug report with repro steps" without leaking content. |
 | `has_images` | bool | `true` when the markdown contains at least one `![...](url)` image reference — signals bug reports with visual evidence. |
+| `kind` | string | Current feedback category when the client supplies one. |
 | `platform` | string | Client platform from `X-Client-Platform` header (`web` / `desktop`). Omitted when the header is absent. |
 | `app_version` | string | Client version from `X-Client-Version` header. Omitted when absent. |
 
@@ -477,33 +313,14 @@ sent from a pre-workspace surface.
 
 ### Frontend-only events
 
-- `$pageview` — fired by the web tracker
-  (`apps/web/components/pageview-tracker.tsx`) on Next.js App Router
-  **pathname** changes. Mounts once at the root and drives the
-  acquisition funnel's `/ → signup` step. posthog-js's automatic
-  pageview capture is disabled in `initAnalytics` so we own the event
-  shape. `capturePageview` (`packages/core/analytics`)
-  **section-normalizes** the path before emitting: query string / hash
-  are stripped and resource-id segments are collapsed, so
-  `/acme/issues/8d5c…` and `/acme/issues/MUL-12` both report as
-  `/acme/issues`, and consecutive views of the same section are
-  deduplicated. This keeps PostHog at section granularity rather than
-  billing a `$pageview` per resource or per filter/sort/search change.
-  The tracker is deliberately NOT keyed on the query string.
-
-- `feedback_opened` — fired when the in-app Feedback modal mounts
-  (user clicked "Feedback" in the Help launcher). Paired with the
-  backend's `feedback_submitted` to give a completion rate for the
-  form. Wrapper lives in `packages/core/analytics/feedback.ts`
-  (`captureFeedbackOpened`). Properties:
-  - `source`: `help_menu` (reserved — future entry points like
-    keyboard shortcut or error-toast CTA will pass their own value)
-  - `workspace_id`: string (UUID) when the modal opens inside a
-    workspace. Omitted on pre-workspace surfaces.
-
-- Marketing attribution is not collected in the internal-team build. Anonymous
-  external-source cookies and "how did you hear about us" prompts are
-  intentionally absent from the active product surface.
+- `$pageview` is emitted by the web and Desktop root trackers. Automatic
+  PostHog pageview capture is disabled. `capturePageview` strips query/hash,
+  collapses resource IDs to section paths and deduplicates consecutive views
+  of the same section.
+- `feedback_opened` fires when the Feedback modal mounts. It carries
+  `source=help_menu` and the current `workspace_id` when available.
+- Marketing attribution, anonymous-source cookies and acquisition prompts are
+  not part of the current internal-team product.
 
 ## Reconciliation
 

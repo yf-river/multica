@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -28,19 +29,15 @@ func seedStaleRuntime(t *testing.T, ctx context.Context, name string) string {
 		t.Fatalf("seed runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
 
 // TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat is the regression
-// test for the SELECT/filter/UPDATE race that GPT-Boy flagged in PR #2121:
-// once the sweeper splits the candidate gather and the actual write into two
-// statements, a heartbeat that lands between them must veto the offline
-// flip. The original single-statement MarkStaleRuntimesOffline preserved
-// this implicitly because the predicate and the write lived in one UPDATE;
-// MarkRuntimesOfflineByIDs preserves it explicitly via the stale predicate
-// re-check.
+// test for the SELECT/filter/UPDATE race: a heartbeat that lands between
+// candidate selection and the write must veto the offline transition. The
+// update therefore re-checks the stale predicate.
 func TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -66,7 +63,7 @@ func TestMarkRuntimesOfflineByIDs_RespectsConcurrentHeartbeat(t *testing.T) {
 	// is now fresh, so the stale predicate inside MarkRuntimesOfflineByIDs
 	// vetoes the write.
 	rows, err := queries.MarkRuntimesOfflineByIDs(ctx, db.MarkRuntimesOfflineByIDsParams{
-		Ids:          []pgtype.UUID{parseUUID(runtimeID)},
+		Ids:          []pgtype.UUID{util.MustParseUUID(runtimeID)},
 		StaleSeconds: staleThresholdSeconds,
 	})
 	if err != nil {
@@ -104,7 +101,7 @@ func TestMarkRuntimesOfflineByIDs_OfflinesGenuinelyStale(t *testing.T) {
 	runtimeID := seedStaleRuntime(t, ctx, "race-test-stale-runtime")
 
 	rows, err := queries.MarkRuntimesOfflineByIDs(ctx, db.MarkRuntimesOfflineByIDsParams{
-		Ids:          []pgtype.UUID{parseUUID(runtimeID)},
+		Ids:          []pgtype.UUID{util.MustParseUUID(runtimeID)},
 		StaleSeconds: staleThresholdSeconds,
 	})
 	if err != nil {

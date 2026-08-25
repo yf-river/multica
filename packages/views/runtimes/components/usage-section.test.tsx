@@ -39,7 +39,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ kind: "agents" as const }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
@@ -52,7 +52,6 @@ vi.mock("@tanstack/react-query", async () => {
     );
   const usageRows = [
     {
-      runtime_id: "r-1",
       date: "2026-05-19",
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -63,7 +62,6 @@ vi.mock("@tanstack/react-query", async () => {
       cost_usd: 0.003,
       input_cost_usd: 0.003,
       output_cost_usd: 0,
-      cache_read_cost_usd: 0,
       cache_write_cost_usd: 0,
       cache_savings_usd: 0,
       priced: true,
@@ -78,13 +76,16 @@ vi.mock("@tanstack/react-query", async () => {
   };
 });
 
-// Charts are recharts-heavy; stub them. ActivityHeatmap echoes its `tz`
-// prop so the test can read which tz the heatmap was wired with.
-vi.mock("./charts", () => ({
+// Charts are recharts-heavy; stub their real modules. ActivityHeatmap echoes
+// its `tz` prop so the test can read which tz the heatmap was wired with.
+vi.mock("./charts/usage-bar-charts", () => ({
   DailyCostChart: () => <div data-testid="daily-cost-chart" />,
   DailyTokensChart: () => <div data-testid="daily-tokens-chart" />,
   WeeklyCostChart: () => <div data-testid="weekly-cost-chart" />,
   WeeklyTokensChart: () => <div data-testid="weekly-tokens-chart" />,
+}));
+
+vi.mock("./charts/activity-heatmap", () => ({
   ActivityHeatmap: ({ tz }: { tz: string }) => (
     <div data-testid="heatmap-tz">{tz}</div>
   ),
@@ -94,7 +95,6 @@ import { UsageSection } from "./usage-section";
 
 const RUNTIME: AgentRuntime = {
   id: "r-1",
-  workspace_id: "ws-1",
   daemon_id: null,
   name: "test-runtime",
   runtime_mode: "cloud",
@@ -105,9 +105,8 @@ const RUNTIME: AgentRuntime = {
   metadata: {},
   owner_id: null,
   scope: "personal",
+  profile_id: null,
   last_seen_at: null,
-  created_at: "2026-05-01T00:00:00Z",
-  updated_at: "2026-05-01T00:00:00Z",
 };
 
 function Wrapper({ children }: { children: ReactNode }) {

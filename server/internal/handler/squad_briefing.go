@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/util"
@@ -64,13 +65,17 @@ const squadOperatingProtocol = `## 小队负责人操作协议
 //     empty so we don't leave a dangling heading).
 //
 // Archived agent members are skipped — there's no point asking the leader
-// to delegate to a retired agent. Members whose underlying record can't be
-// loaded (deleted user/agent races, FK weirdness) are also skipped silently.
-func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad) string {
+// to delegate to a retired agent. A roster read failure aborts claim response
+// construction so the leader never receives a fabricated incomplete roster.
+func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad) (string, error) {
 	var sb strings.Builder
 	sb.WriteString(squadOperatingProtocol)
 	sb.WriteString("\n\n")
-	sb.WriteString(buildSquadRoster(ctx, q, squad))
+	roster, err := buildSquadRoster(ctx, q, squad)
+	if err != nil {
+		return "", err
+	}
+	sb.WriteString(roster)
 
 	if trimmed := strings.TrimSpace(squad.Instructions); trimmed != "" {
 		sb.WriteString("\n\n## 小队说明 (")
@@ -78,20 +83,21 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 		sb.WriteString(")\n\n")
 		sb.WriteString(trimmed)
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
 // buildSquadRoster renders the squad roster section: a leader self-row
 // plus one row per non-archived member, with literal mention markdown.
-func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) string {
+func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("## 小队名单\n\n")
 
 	// Leader self-row. Leaders are always agents (FK enforced in schema).
-	leaderName := "负责人"
-	if leader, err := q.GetAgent(ctx, squad.LeaderID); err == nil {
-		leaderName = leader.Name
+	leader, err := q.GetAgent(ctx, squad.LeaderID)
+	if err != nil {
+		return "", fmt.Errorf("load squad leader: %w", err)
 	}
+	leaderName := leader.Name
 	sb.WriteString("负责人（你）：\n")
 	sb.WriteString("- ")
 	sb.WriteString(leaderName)
@@ -101,7 +107,7 @@ func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) string
 
 	members, err := q.ListSquadMembers(ctx, squad.ID)
 	if err != nil {
-		members = nil
+		return "", fmt.Errorf("list squad members: %w", err)
 	}
 
 	rows := make([]string, 0, len(members))
@@ -111,7 +117,10 @@ func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) string
 		if m.MemberType == "agent" && util.UUIDToString(m.MemberID) == util.UUIDToString(squad.LeaderID) {
 			continue
 		}
-		row := renderMemberRow(ctx, q, m)
+		row, err := renderMemberRow(ctx, q, m)
+		if err != nil {
+			return "", err
+		}
 		if row != "" {
 			rows = append(rows, row)
 		}
@@ -119,43 +128,39 @@ func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) string
 
 	if len(rows) == 0 {
 		sb.WriteString("\n成员：（无；你是这个 squad 的唯一成员）\n")
-		return sb.String()
+		return sb.String(), nil
 	}
 
 	sb.WriteString("\n成员：\n")
 	for _, r := range rows {
 		sb.WriteString(r)
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
-// renderMemberRow renders a single roster row, returning "" if the member
-// can't be resolved or should be skipped (e.g. archived agent).
-func renderMemberRow(ctx context.Context, q *db.Queries, m db.SquadMember) string {
+// renderMemberRow renders a single roster row. Archived agents are omitted;
+// invalid persisted relationships fail instead of silently shrinking the roster.
+func renderMemberRow(ctx context.Context, q *db.Queries, m db.SquadMember) (string, error) {
 	id := util.UUIDToString(m.MemberID)
 	role := strings.TrimSpace(m.Role)
-	switch m.MemberType {
-	case "agent":
+	if m.MemberType == "agent" {
 		ag, err := q.GetAgent(ctx, m.MemberID)
 		if err != nil {
-			return ""
+			return "", fmt.Errorf("load squad agent member %s: %w", id, err)
 		}
 		if ag.ArchivedAt.Valid {
-			return ""
+			return "", nil
 		}
-		return formatRosterRow(ag.Name, "agent", role, formatMention(ag.Name, "agent", id))
-	case "member":
-		user, err := q.GetUser(ctx, m.MemberID)
-		if err != nil {
-			return ""
-		}
-		// Mention syntax for humans uses the user_id (matches the rest of
-		// the product — see util.MentionRe and frontend mention payloads).
-		userID := util.UUIDToString(m.MemberID)
-		return formatRosterRow(user.Name, "member（人类）", role, formatMention(user.Name, "member", userID))
-	default:
-		return ""
+		return formatRosterRow(ag.Name, "agent", role, formatMention(ag.Name, "agent", id)), nil
 	}
+	user, err := q.GetUser(ctx, m.MemberID)
+	if err != nil {
+		return "", fmt.Errorf("load squad member %s: %w", id, err)
+	}
+	// Mention syntax for humans uses the user_id (matches the rest of
+	// the product — see util.MentionRe and frontend mention payloads).
+	userID := util.UUIDToString(m.MemberID)
+	return formatRosterRow(user.Name, "member（人类）", role, formatMention(user.Name, "member", userID)), nil
 }
 
 func formatRosterRow(name, kind, role, mention string) string {

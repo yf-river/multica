@@ -38,11 +38,47 @@ func cursorQuery(recent int, before, beforeID string) string {
 	return v.Encode()
 }
 
+func commentQuery(values map[string]string) string {
+	query := url.Values{}
+	for key, value := range values {
+		query.Set(key, value)
+	}
+	return query.Encode()
+}
+
+type invalidCommentListQuery struct {
+	name  string
+	query string
+}
+
+func assertInvalidCommentListQueries(t *testing.T, issueID string, cases []invalidCommentListQuery) {
+	t.Helper()
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			response, _ := listComments(t, issueID, test.query)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("query=%q\n  got=%d want=%d body=%s", test.query, response.Code, http.StatusBadRequest, response.Body.String())
+			}
+		})
+	}
+}
+
 // nextThreadCursor reads the (before, before-id) headers the recent path
 // emits when there is likely an older page to scroll to. Empty pair means
 // the server signalled "no more threads".
 func nextThreadCursor(w *httptest.ResponseRecorder) (string, string) {
 	return w.Header().Get("X-Multica-Next-Before"), w.Header().Get("X-Multica-Next-Before-Id")
+}
+
+func assertCommentCursor(t *testing.T, response *httptest.ResponseRecorder, wantID string) {
+	t.Helper()
+	before, beforeID := nextThreadCursor(response)
+	if beforeID != wantID {
+		t.Fatalf("cursor before_id = %q, want %q", beforeID, wantID)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, before); err != nil {
+		t.Fatalf("cursor before = %q is not RFC3339Nano: %v", before, err)
+	}
 }
 
 type seededCommentIssue struct {
@@ -63,7 +99,7 @@ func newSeededCommentIssue(t *testing.T, title string) seededCommentIssue {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	return seededCommentIssue{
@@ -180,9 +216,7 @@ func eqIDs(t *testing.T, got, want []string, ctx string) {
 // silent regressions in the unparameterized list path — agents and the UI
 // both depend on chronological order.
 func TestListComments_DefaultPreservesChronologicalOrder(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	_, rows := listComments(t, fx.IssueID, "")
@@ -194,31 +228,19 @@ func TestListComments_DefaultPreservesChronologicalOrder(t *testing.T) {
 // issue-level orientation should fetch only root comments, leaving replies for
 // a later thread-scoped read if the caller needs detail.
 func TestListComments_RootsOnlyReturnsTopLevelComments(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
-	for _, tc := range []struct {
-		name  string
-		query string
-	}{
-		{name: "underscore query", query: "roots_only=true"},
-		{name: "hyphenated alias", query: "roots-only=true"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			w, rows := listComments(t, fx.IssueID, tc.query)
-			eqIDs(t, ids(rows), []string{fx.Root1, fx.Root2}, tc.name)
-			for _, row := range rows {
-				if row.ParentID != nil {
-					t.Fatalf("%s: expected root comment %s to have nil parent_id, got %q", tc.name, row.ID, *row.ParentID)
-				}
-			}
-			nb, nbid := nextThreadCursor(w)
-			if nb != "" || nbid != "" {
-				t.Fatalf("%s: roots-only list should not emit cursor headers, got before=%q before_id=%q", tc.name, nb, nbid)
-			}
-		})
+	w, rows := listComments(t, fx.IssueID, "roots_only=true")
+	eqIDs(t, ids(rows), []string{fx.Root1, fx.Root2}, "roots_only")
+	for _, row := range rows {
+		if row.ParentID != nil {
+			t.Fatalf("expected root comment %s to have nil parent_id, got %q", row.ID, *row.ParentID)
+		}
+	}
+	nb, nbid := nextThreadCursor(w)
+	if nb != "" || nbid != "" {
+		t.Fatalf("roots_only list should not emit cursor headers, got before=%q before_id=%q", nb, nbid)
 	}
 }
 
@@ -226,9 +248,7 @@ func TestListComments_RootsOnlyReturnsTopLevelComments(t *testing.T) {
 // one allowed roots-only combination: `since` narrows the root list without
 // pulling newer replies into the response.
 func TestListComments_RootsOnlyWithSinceReturnsNewTopLevelComments(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	v := url.Values{}
@@ -250,9 +270,7 @@ func TestListComments_RootsOnlyWithSinceReturnsNewTopLevelComments(t *testing.T)
 // root1 has a nested reply (r1b1 → r1b → root1), proving the count walks deeper
 // than one level. Stats are roots-only — the default list must not carry them.
 func TestListComments_RootsOnlyReturnsThreadStats(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	_, rows := listComments(t, fx.IssueID, "roots_only=true")
@@ -302,43 +320,14 @@ func assertRootStat(t *testing.T, c CommentResponse, label string, wantReplies i
 // content_truncated=false, and without summary the field is omitted entirely so
 // the default response shape is unchanged.
 func TestListComments_SummaryClipsContent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "summary fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
-	insert := func(body string, offset time.Duration) string {
-		t.Helper()
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, created_at)
-			VALUES ($1, $2, 'member', $3, $4, 'comment', $5)
-			RETURNING id
-		`, issueID, testWorkspaceID, testUserID, body, base.Add(offset)).Scan(&id); err != nil {
-			t.Fatalf("insert comment: %v", err)
-		}
-		return id
-	}
-	longID := insert(strings.Repeat("x", 500), 0)
-	shortID := insert("short", time.Minute)
-	// Multi-byte body: clipping must land on a rune boundary, never mid-rune.
-	cjkID := insert(strings.Repeat("你", 300), 2*time.Minute)
+	requireHandlerDatabase(t)
+	fixture := newSeededCommentIssue(t, "summary fixture")
+	longID := fixture.insertComment(t, nil, 0, strings.Repeat("x", 500))
+	shortID := fixture.insertComment(t, nil, time.Minute, "short")
+	cjkID := fixture.insertComment(t, nil, 2*time.Minute, strings.Repeat("你", 300))
 
 	// Baseline: no summary → full content, content_truncated omitted.
-	_, full := listComments(t, issueID, "")
+	_, full := listComments(t, fixture.IssueID, "")
 	for _, c := range full {
 		if c.ContentTruncated != nil {
 			t.Fatalf("baseline: content_truncated should be nil, got %v on %s", *c.ContentTruncated, c.ID)
@@ -349,7 +338,7 @@ func TestListComments_SummaryClipsContent(t *testing.T) {
 	}
 
 	// summary=true → long clipped + truncated true; short verbatim + false.
-	_, sum := listComments(t, issueID, "summary=true")
+	_, sum := listComments(t, fixture.IssueID, "summary=true")
 	byID := map[string]CommentResponse{}
 	for _, c := range sum {
 		byID[c.ID] = c
@@ -394,40 +383,12 @@ func TestListComments_SummaryClipsContent(t *testing.T) {
 // a future refactor that moved the clip into a per-mode branch would silently
 // break this composition, so both halves are asserted on the same response.
 func TestListComments_RootsOnlySummaryComposes(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
+	requireHandlerDatabase(t)
+	fixture := newSeededCommentIssue(t, "roots+summary fixture")
+	rootID := fixture.insertComment(t, nil, 0, strings.Repeat("x", 500))
+	fixture.insertComment(t, &rootID, 5*time.Minute, "a reply")
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "roots+summary fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
-	insert := func(parent *string, body string, offset time.Duration) string {
-		t.Helper()
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, created_at)
-			VALUES ($1, $2, 'member', $3, $4, 'comment', $5, $6)
-			RETURNING id
-		`, issueID, testWorkspaceID, testUserID, body, parent, base.Add(offset)).Scan(&id); err != nil {
-			t.Fatalf("insert comment: %v", err)
-		}
-		return id
-	}
-	rootID := insert(nil, strings.Repeat("x", 500), 0)
-	insert(&rootID, "a reply", 5*time.Minute) // pushes last_activity past the root's own time
-
-	_, rows := listComments(t, issueID, "roots_only=true&summary=true")
+	_, rows := listComments(t, fixture.IssueID, "roots_only=true&summary=true")
 	eqIDs(t, ids(rows), []string{rootID}, "roots_only+summary returns only the root")
 
 	root := rows[0]
@@ -440,7 +401,7 @@ func TestListComments_RootsOnlySummaryComposes(t *testing.T) {
 	}
 	// Stats half: orientation metadata survives the summary projection. The
 	// reply (1 descendant, +5m) drives both reply_count and last_activity_at.
-	assertRootStat(t, root, "root", 1, base.Add(5*time.Minute))
+	assertRootStat(t, root, "root", 1, fixture.Base.Add(5*time.Minute))
 }
 
 // TestListComments_ThreadResolvesFromAnyAnchor proves Elon's point 2:
@@ -448,9 +409,7 @@ func TestListComments_RootsOnlySummaryComposes(t *testing.T) {
 // reply (parent_id points at another reply), the server walks up to the
 // thread root and returns root + every descendant.
 func TestListComments_ThreadResolvesFromAnyAnchor(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	wantThread1 := []string{fx.Root1, fx.R1a, fx.R1b, fx.R1b1}
@@ -484,9 +443,7 @@ func TestListComments_ThreadResolvesFromAnyAnchor(t *testing.T) {
 // silently returning an empty list (which would otherwise be
 // indistinguishable from a deleted thread).
 func TestListComments_ThreadAnchorErrors(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	t.Run("non-uuid thread returns 400", func(t *testing.T) {
@@ -515,9 +472,7 @@ func TestListComments_ThreadAnchorErrors(t *testing.T) {
 //   - recent=2 → both threads, with the older-active thread first so the
 //     freshest sits at the prompt tail (closest to "now").
 func TestListComments_RecentReturnsMostRecentlyActiveThreads(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	t.Run("recent=1 returns the freshest-active thread fully", func(t *testing.T) {
@@ -542,41 +497,16 @@ func TestListComments_RecentReturnsMostRecentlyActiveThreads(t *testing.T) {
 // this, "recent" decays into "most recent root" and misses the very signal
 // that thread-grouping was meant to surface.
 func TestListComments_RecentRanksStaleThreadAheadIfRecentlyReplied(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3) RETURNING id
-	`, testWorkspaceID, testUserID, "stale-but-fresh fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	base := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
-	insert := func(parent *string, offset time.Duration, body string) string {
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, created_at)
-			VALUES ($1, $2, 'member', $3, $4, 'comment', $5, $6) RETURNING id
-		`, issueID, testWorkspaceID, testUserID, body, parent, base.Add(offset)).Scan(&id); err != nil {
-			t.Fatalf("insert: %v", err)
-		}
-		return id
-	}
+	requireHandlerDatabase(t)
+	fixture := newSeededCommentIssue(t, "stale-but-fresh fixture")
 
 	// Stale-then-fresh: oldRoot was created at t=0 but received a reply at
 	// t=30m. quietRoot was created at t=15m and never replied.
-	oldRoot := insert(nil, 0, "oldRoot")
-	quietRoot := insert(nil, 15*time.Minute, "quietRoot")
-	freshReply := insert(&oldRoot, 30*time.Minute, "freshReply")
+	oldRoot := fixture.insertComment(t, nil, 0, "oldRoot")
+	quietRoot := fixture.insertComment(t, nil, 15*time.Minute, "quietRoot")
+	freshReply := fixture.insertComment(t, &oldRoot, 30*time.Minute, "freshReply")
 
-	_, rows := listComments(t, issueID, "recent=1")
+	_, rows := listComments(t, fixture.IssueID, "recent=1")
 	// Expected: only the oldRoot thread (oldRoot + freshReply). The
 	// quietRoot thread is suppressed because its last_activity_at is older
 	// than oldRoot's, even though its root was created later.
@@ -590,9 +520,7 @@ func TestListComments_RecentRanksStaleThreadAheadIfRecentlyReplied(t *testing.T)
 // the OLDEST thread in the page — that is the upper bound for the next
 // (older) page.
 func TestListComments_RecentEmitsThreadCursorWhenPageFull(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	t.Run("underfilled page emits no cursor", func(t *testing.T) {
@@ -610,16 +538,7 @@ func TestListComments_RecentEmitsThreadCursorWhenPageFull(t *testing.T) {
 		// must point at the (last_activity_at, root_id) of the only thread
 		// in the page so the next request can fetch older threads.
 		w, _ := listComments(t, fx.IssueID, "recent=1")
-		nb, nbid := nextThreadCursor(w)
-		if nbid != fx.Root2 {
-			t.Fatalf("cursor before_id = %q, want %q (root2 — newest thread)", nbid, fx.Root2)
-		}
-		if nb == "" {
-			t.Fatalf("cursor before is empty; expected RFC3339Nano timestamp")
-		}
-		if _, err := time.Parse(time.RFC3339Nano, nb); err != nil {
-			t.Fatalf("cursor before = %q is not RFC3339Nano: %v", nb, err)
-		}
+		assertCommentCursor(t, w, fx.Root2)
 	})
 }
 
@@ -628,9 +547,7 @@ func TestListComments_RecentEmitsThreadCursorWhenPageFull(t *testing.T) {
 // the row-based regression where a "newest N comments" cursor would interleave
 // rows from multiple threads and skip thread membership across pages.
 func TestListComments_RecentWithThreadCursorScrollsOlderThreads(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	// Page 1: newest thread = root2.
@@ -669,36 +586,12 @@ func TestListComments_RecentWithThreadCursorScrollsOlderThreads(t *testing.T) {
 // total order. A timestamp-only cursor would either drop one thread or
 // surface the same thread twice when ties land in the same microsecond.
 func TestListComments_ThreadCursorStableUnderSameLastActivity(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3) RETURNING id
-	`, testWorkspaceID, testUserID, "thread tie-break fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	ts := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Millisecond)
-	insertRoot := func(body string) string {
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, created_at)
-			VALUES ($1, $2, 'member', $3, $4, 'comment', $5) RETURNING id
-		`, issueID, testWorkspaceID, testUserID, body, ts).Scan(&id); err != nil {
-			t.Fatalf("insert: %v", err)
-		}
-		return id
-	}
-	a := insertRoot("a")
-	b := insertRoot("b")
-	c := insertRoot("c")
+	requireHandlerDatabase(t)
+	fixture := newSeededCommentIssue(t, "thread tie-break fixture")
+	fixture.Base = time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Millisecond)
+	a := fixture.insertComment(t, nil, 0, "a")
+	b := fixture.insertComment(t, nil, 0, "b")
+	c := fixture.insertComment(t, nil, 0, "c")
 
 	// All three threads have last_activity_at = ts (each root is also the
 	// thread's only comment). Order is (ts, root_id) — UUID lex tie-break.
@@ -719,7 +612,7 @@ func TestListComments_ThreadCursorStableUnderSameLastActivity(t *testing.T) {
 	wantOrder := []string{sorted[2], sorted[1], sorted[0]}
 
 	var got []string
-	w, page := listComments(t, issueID, "recent=1")
+	w, page := listComments(t, fixture.IssueID, "recent=1")
 	if len(page) != 1 {
 		t.Fatalf("page1: expected 1 thread (1 row), got %d", len(page))
 	}
@@ -730,7 +623,7 @@ func TestListComments_ThreadCursorStableUnderSameLastActivity(t *testing.T) {
 		if nb == "" || nbid == "" {
 			t.Fatalf("page %d: missing cursor headers", i+1)
 		}
-		w, page = listComments(t, issueID, cursorQuery(1, nb, nbid))
+		w, page = listComments(t, fixture.IssueID, cursorQuery(1, nb, nbid))
 		if len(page) != 1 {
 			t.Fatalf("page %d: expected 1 thread (1 row), got %d", i+2, len(page))
 		}
@@ -744,126 +637,44 @@ func TestListComments_ThreadCursorStableUnderSameLastActivity(t *testing.T) {
 // tiny on purpose — the goal is to ensure conflicting flags are rejected
 // loudly at the API surface so the CLI's local validation cannot drift.
 func TestListComments_FlagCombinationRules(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
-	cases := []struct {
-		name   string
-		query  string
-		status int
-	}{
+	cases := []invalidCommentListQuery{
 		{
-			name:   "thread + recent rejected",
-			query:  "thread=" + fx.Root1 + "&recent=5",
-			status: http.StatusBadRequest,
+			name:  "thread + recent rejected",
+			query: "thread=" + fx.Root1 + "&recent=5",
 		},
 		{
-			name: "thread + before rejected",
-			query: (func() string {
-				v := url.Values{}
-				v.Set("thread", fx.Root1)
-				v.Set("before", time.Now().UTC().Format(time.RFC3339))
-				v.Set("before_id", uuid.NewString())
-				return v.Encode()
-			})(),
-			status: http.StatusBadRequest,
+			name:  "thread + before rejected",
+			query: commentQuery(map[string]string{"thread": fx.Root1, "before": time.Now().UTC().Format(time.RFC3339), "before_id": uuid.NewString()}),
 		},
 		{
-			name: "before without before_id rejected",
-			query: (func() string {
-				v := url.Values{}
-				v.Set("recent", "5")
-				v.Set("before", time.Now().UTC().Format(time.RFC3339))
-				return v.Encode()
-			})(),
-			status: http.StatusBadRequest,
+			name:  "before without before_id rejected",
+			query: commentQuery(map[string]string{"recent": "5", "before": time.Now().UTC().Format(time.RFC3339)}),
 		},
 		{
-			name: "before_id without before rejected",
-			query: (func() string {
-				v := url.Values{}
-				v.Set("recent", "5")
-				v.Set("before_id", uuid.NewString())
-				return v.Encode()
-			})(),
-			status: http.StatusBadRequest,
+			name:  "before_id without before rejected",
+			query: commentQuery(map[string]string{"recent": "5", "before_id": uuid.NewString()}),
 		},
 		{
-			name: "before + before_id without recent rejected",
-			// Cursor without --recent used to fall through to the default /
-			// since path and silently return the full timeline (the gap Elon
-			// called out in the PR #2787 second review). The 400 here pins
-			// the documented "cursor scrolls within a recent window" rule.
-			query: (func() string {
-				v := url.Values{}
-				v.Set("before", time.Now().UTC().Format(time.RFC3339))
-				v.Set("before_id", uuid.NewString())
-				return v.Encode()
-			})(),
-			status: http.StatusBadRequest,
+			name:  "before + before_id without recent rejected",
+			query: commentQuery(map[string]string{"before": time.Now().UTC().Format(time.RFC3339), "before_id": uuid.NewString()}),
 		},
+		{name: "zero recent rejected", query: "recent=0"},
+		{name: "negative recent rejected", query: "recent=-3"},
+		{name: "non-numeric recent rejected", query: "recent=lots"},
+		{name: "non-boolean roots_only rejected", query: "roots_only=yes"},
+		{name: "non-boolean summary rejected", query: "summary=yes"},
+		{name: "roots_only + thread rejected", query: "roots_only=true&thread=" + fx.Root1},
+		{name: "roots_only + recent rejected", query: "roots_only=true&recent=1"},
+		{name: "roots_only + tail rejected", query: "roots_only=true&tail=1"},
 		{
-			name:   "zero recent rejected",
-			query:  "recent=0",
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "negative recent rejected",
-			query:  "recent=-3",
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "non-numeric recent rejected",
-			query:  "recent=lots",
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "non-boolean roots_only rejected",
-			query:  "roots_only=yes",
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "non-boolean summary rejected",
-			query:  "summary=yes",
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "roots_only + thread rejected",
-			query:  "roots_only=true&thread=" + fx.Root1,
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "roots_only + recent rejected",
-			query:  "roots_only=true&recent=1",
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "roots_only + tail rejected",
-			query:  "roots_only=true&tail=1",
-			status: http.StatusBadRequest,
-		},
-		{
-			name: "roots_only + cursor rejected",
-			query: (func() string {
-				v := url.Values{}
-				v.Set("roots_only", "true")
-				v.Set("before", time.Now().UTC().Format(time.RFC3339))
-				v.Set("before_id", uuid.NewString())
-				return v.Encode()
-			})(),
-			status: http.StatusBadRequest,
+			name:  "roots_only + cursor rejected",
+			query: commentQuery(map[string]string{"roots_only": "true", "before": time.Now().UTC().Format(time.RFC3339), "before_id": uuid.NewString()}),
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w, _ := listComments(t, fx.IssueID, tc.query)
-			if w.Code != tc.status {
-				t.Fatalf("query=%q\n  got=%d want=%d body=%s", tc.query, w.Code, tc.status, w.Body.String())
-			}
-		})
-	}
+	assertInvalidCommentListQueries(t, fx.IssueID, cases)
 }
 
 // TestListComments_RecentWithSinceFilteredEmptySuppressesCursor pins
@@ -877,14 +688,12 @@ func TestListComments_FlagCombinationRules(t *testing.T) {
 // Emitting a cursor in that case would send the caller into a wasted
 // walk of pages that can never produce a row.
 func TestListComments_RecentWithSinceFilteredEmptySuppressesCursor(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	// `since` = base + 1h (i.e. AFTER every comment in the fixture, where the
 	// freshest row sits at base + 12m). With recent=1 the page is technically
-	// "full" (1 thread out of 1 requested) so the legacy `len(seen) >= N`
+	// "full" (1 thread out of 1 requested) so the stale `len(seen) >= N`
 	// check would emit a cursor — but every row in that page is <= since, so
 	// the body is empty AND no older page can ever yield a >since row.
 	v := url.Values{}
@@ -906,9 +715,7 @@ func TestListComments_RecentWithSinceFilteredEmptySuppressesCursor(t *testing.T)
 // still be emitted (the suppression rule is narrowly scoped to the empty
 // case so it can't accidentally swallow legitimate next-page hints).
 func TestListComments_RecentWithSinceKeepsCursorWhenPageHasRows(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	// since = base + 11m30s drops everything from root1 (last_activity = base+3m)
@@ -928,8 +735,8 @@ func TestListComments_RecentWithSinceKeepsCursorWhenPageHasRows(t *testing.T) {
 
 // TestListComments_RecentWithSinceSuppressesCursorWhenHeadPastSince covers
 // the mixed case from Elon's #2787 second review: the page is full (so the
-// legacy `len(seen) >= N` check would emit a cursor) AND the `since` filter
-// keeps rows from fresher threads (so the legacy `len(comments) == 0`
+// stale `len(seen) >= N` check would emit a cursor) AND the `since` filter
+// keeps rows from fresher threads (so the stale `len(comments) == 0`
 // suppression does NOT trip), but the head (oldest-active) thread already
 // sits at or before `since`. Older pages walk strictly less-recent threads,
 // so none of them can produce a `> since` comment — emitting a cursor here
@@ -940,9 +747,7 @@ func TestListComments_RecentWithSinceKeepsCursorWhenPageHasRows(t *testing.T) {
 // everything in root1, keeps root2 entirely. Expect body = root2 thread,
 // no cursor.
 func TestListComments_RecentWithSinceSuppressesCursorWhenHeadPastSince(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	v := url.Values{}
@@ -961,9 +766,7 @@ func TestListComments_RecentWithSinceSuppressesCursorWhenHeadPastSince(t *testin
 // that thread newer than `since`. The since filter is applied in-memory
 // after the thread CTE so the root membership semantics stay intact.
 func TestListComments_ThreadWithSinceFiltersWithinThread(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	// since = base+1m30s → drop root1, r1a; keep r1b, r1b1.
@@ -974,23 +777,13 @@ func TestListComments_ThreadWithSinceFiltersWithinThread(t *testing.T) {
 	eqIDs(t, ids(rows), []string{fx.R1b, fx.R1b1}, "thread+since")
 }
 
-// nextReplyCursor reads the (before, before-id) headers the thread + tail
-// path emits when there is likely an older page of replies inside the same
-// thread. Same wire shape as the thread-cursor headers — context decides
-// which (the caller knows whether they used --recent or --tail).
-func nextReplyCursor(w *httptest.ResponseRecorder) (string, string) {
-	return w.Header().Get("X-Multica-Next-Before"), w.Header().Get("X-Multica-Next-Before-Id")
-}
-
 // TestListComments_ThreadTailReturnsRootPlusNewestReplies pins the core
 // MUL-2421 contract: `--thread X --tail N` returns the thread root + the N
 // most recent replies in that thread. Body stays chronological, so the
 // root sits at the head and the freshest reply at the tail (closest to
 // "now" in an agent prompt).
 func TestListComments_ThreadTailReturnsRootPlusNewestReplies(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	t.Run("tail=2 keeps newest 2 replies + root", func(t *testing.T) {
@@ -1039,9 +832,7 @@ func TestListComments_ThreadTailReturnsRootPlusNewestReplies(t *testing.T) {
 // tail) emits a reply cursor pointing at the oldest reply in the page; an
 // underfilled page emits nothing so the caller stops paginating.
 func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	t.Run("underfilled page emits no cursor", func(t *testing.T) {
@@ -1051,7 +842,7 @@ func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
 		v.Set("thread", fx.Root1)
 		v.Set("tail", "5")
 		w, _ := listComments(t, fx.IssueID, v.Encode())
-		nb, nbid := nextReplyCursor(w)
+		nb, nbid := nextThreadCursor(w)
 		if nb != "" || nbid != "" {
 			t.Fatalf("expected no cursor, got before=%q before_id=%q", nb, nbid)
 		}
@@ -1065,7 +856,7 @@ func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
 		v.Set("thread", fx.Root1)
 		v.Set("tail", "0")
 		w, _ := listComments(t, fx.IssueID, v.Encode())
-		nb, nbid := nextReplyCursor(w)
+		nb, nbid := nextThreadCursor(w)
 		if nb != "" || nbid != "" {
 			t.Fatalf("tail=0 must not emit cursor, got before=%q before_id=%q", nb, nbid)
 		}
@@ -1077,16 +868,7 @@ func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
 		v.Set("thread", fx.Root1)
 		v.Set("tail", "2")
 		w, _ := listComments(t, fx.IssueID, v.Encode())
-		nb, nbid := nextReplyCursor(w)
-		if nbid != fx.R1b {
-			t.Fatalf("cursor before_id = %q, want %q (r1b — oldest reply on page)", nbid, fx.R1b)
-		}
-		if nb == "" {
-			t.Fatalf("cursor before is empty; expected RFC3339Nano timestamp")
-		}
-		if _, err := time.Parse(time.RFC3339Nano, nb); err != nil {
-			t.Fatalf("cursor before = %q is not RFC3339Nano: %v", nb, err)
-		}
+		assertCommentCursor(t, w, fx.R1b)
 	})
 
 	t.Run("exact-boundary page emits no cursor", func(t *testing.T) {
@@ -1101,7 +883,7 @@ func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
 		v.Set("tail", "3")
 		w, rows := listComments(t, fx.IssueID, v.Encode())
 		eqIDs(t, ids(rows), []string{fx.Root1, fx.R1a, fx.R1b, fx.R1b1}, "tail==replyCount returns full thread")
-		nb, nbid := nextReplyCursor(w)
+		nb, nbid := nextThreadCursor(w)
 		if nb != "" || nbid != "" {
 			t.Fatalf("exact-boundary page must not emit cursor, got before=%q before_id=%q", nb, nbid)
 		}
@@ -1114,9 +896,7 @@ func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
 // one thread: cursor returns are reply cursors, not thread cursors, and
 // the root must keep showing up on every page.
 func TestListComments_ThreadTailCursorScrollsOlderReplies(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	// Page 1: tail=1 on root1 → newest reply = r1b1.
@@ -1125,7 +905,7 @@ func TestListComments_ThreadTailCursorScrollsOlderReplies(t *testing.T) {
 	v.Set("tail", "1")
 	w1, page1 := listComments(t, fx.IssueID, v.Encode())
 	eqIDs(t, ids(page1), []string{fx.Root1, fx.R1b1}, "page1 = root + r1b1")
-	nb, nbid := nextReplyCursor(w1)
+	nb, nbid := nextThreadCursor(w1)
 	if nb == "" || nbid != fx.R1b1 {
 		t.Fatalf("page1 cursor = (%q, %q), want (non-empty, %q)", nb, nbid, fx.R1b1)
 	}
@@ -1137,7 +917,7 @@ func TestListComments_ThreadTailCursorScrollsOlderReplies(t *testing.T) {
 	v.Set("before_id", nbid)
 	w2, page2 := listComments(t, fx.IssueID, v.Encode())
 	eqIDs(t, ids(page2), []string{fx.Root1, fx.R1b}, "page2 = root + r1b")
-	nb2, nbid2 := nextReplyCursor(w2)
+	nb2, nbid2 := nextThreadCursor(w2)
 	if nb2 == "" || nbid2 != fx.R1b {
 		t.Fatalf("page2 cursor = (%q, %q), want (non-empty, %q)", nb2, nbid2, fx.R1b)
 	}
@@ -1151,7 +931,7 @@ func TestListComments_ThreadTailCursorScrollsOlderReplies(t *testing.T) {
 	v.Set("before_id", nbid2)
 	w3, page3 := listComments(t, fx.IssueID, v.Encode())
 	eqIDs(t, ids(page3), []string{fx.Root1, fx.R1a}, "page3 = root + r1a (last reply)")
-	nb3, nbid3 := nextReplyCursor(w3)
+	nb3, nbid3 := nextThreadCursor(w3)
 	if nb3 != "" || nbid3 != "" {
 		t.Fatalf("page3 cursor = (%q, %q), want both empty (end-of-thread, no older replies after r1a)", nb3, nbid3)
 	}
@@ -1163,9 +943,7 @@ func TestListComments_ThreadTailCursorScrollsOlderReplies(t *testing.T) {
 // The root is exempt — it is always returned so the reader keeps the thread
 // context even when the page would otherwise be empty.
 func TestListComments_ThreadTailWithSinceFiltersAfterTail(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	t.Run("since drops older replies, keeps root + fresher", func(t *testing.T) {
@@ -1210,7 +988,7 @@ func TestListComments_ThreadTailWithSinceFiltersAfterTail(t *testing.T) {
 		// assertion ever shifts, the cursor assertion below would be
 		// testing a different shape than the bug Elon described.
 		eqIDs(t, ids(rows), []string{fx.Root1, fx.R1b1}, "body keeps root + fresher reply only")
-		nb, nbid := nextReplyCursor(w)
+		nb, nbid := nextThreadCursor(w)
 		if nb != "" || nbid != "" {
 			t.Fatalf("expected no cursor (older page is guaranteed-empty under since), got before=%q before_id=%q", nb, nbid)
 		}
@@ -1223,60 +1001,28 @@ func TestListComments_ThreadTailWithSinceFiltersAfterTail(t *testing.T) {
 // (thread + tail + before + before_id), and a thread/recent/cursor matrix
 // that does NOT include tail.
 func TestListComments_ThreadTailFlagCombinationRules(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
-	cases := []struct {
-		name   string
-		query  string
-		status int
-	}{
+	cases := []invalidCommentListQuery{
 		{
-			// tail is a thread-scoped limit; outside of --thread there is
-			// no defined behavior so it must be rejected at the API surface.
-			name:   "tail without thread rejected",
-			query:  "tail=5",
-			status: http.StatusBadRequest,
+			name:  "tail without thread rejected",
+			query: "tail=5",
 		},
 		{
-			// Negative tail would round-trip to LIMIT -N which Postgres
-			// flags as a syntax error. Catch it at the boundary.
-			name:   "negative tail rejected",
-			query:  "thread=" + fx.Root1 + "&tail=-1",
-			status: http.StatusBadRequest,
+			name:  "negative tail rejected",
+			query: "thread=" + fx.Root1 + "&tail=-1",
 		},
 		{
-			name:   "non-numeric tail rejected",
-			query:  "thread=" + fx.Root1 + "&tail=lots",
-			status: http.StatusBadRequest,
+			name:  "non-numeric tail rejected",
+			query: "thread=" + fx.Root1 + "&tail=lots",
 		},
 		{
-			// Cursor without --tail in the thread path used to be rejected
-			// outright; now it requires --tail so the cursor's "scroll
-			// older replies" meaning has somewhere to land. Without --tail
-			// the server returns the whole thread anyway, so the cursor is
-			// meaningless.
-			name: "thread + before without tail rejected",
-			query: (func() string {
-				v := url.Values{}
-				v.Set("thread", fx.Root1)
-				v.Set("before", time.Now().UTC().Format(time.RFC3339))
-				v.Set("before_id", uuid.NewString())
-				return v.Encode()
-			})(),
-			status: http.StatusBadRequest,
+			name:  "thread + before without tail rejected",
+			query: commentQuery(map[string]string{"thread": fx.Root1, "before": time.Now().UTC().Format(time.RFC3339), "before_id": uuid.NewString()}),
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w, _ := listComments(t, fx.IssueID, tc.query)
-			if w.Code != tc.status {
-				t.Fatalf("query=%q\n  got=%d want=%d body=%s", tc.query, w.Code, tc.status, w.Body.String())
-			}
-		})
-	}
+	assertInvalidCommentListQueries(t, fx.IssueID, cases)
 }
 
 // TestListComments_ThreadTailZeroReplyCountIsAllowed pins tail=0 as a valid
@@ -1285,9 +1031,7 @@ func TestListComments_ThreadTailFlagCombinationRules(t *testing.T) {
 // them into a single int would silently downgrade tail=0 to the full
 // thread path.
 func TestListComments_ThreadTailZeroReplyCountIsAllowed(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	v := url.Values{}
@@ -1301,14 +1045,12 @@ func TestListComments_ThreadTailZeroReplyCountIsAllowed(t *testing.T) {
 }
 
 // TestListComments_ThreadTailNotFoundReturns404 makes the not-found surface
-// of the paged path match the legacy thread path. A stale anchor is a
+// of the paged path match the direct thread path. A stale anchor is a
 // realistic agent footgun (mention a comment that was later deleted), and
 // returning [] would be indistinguishable from "the thread really does
 // have no comments".
 func TestListComments_ThreadTailNotFoundReturns404(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
 
 	v := url.Values{}
@@ -1328,11 +1070,9 @@ func TestListComments_ThreadTailNotFoundReturns404(t *testing.T) {
 // the agent's own comments so a chatty agent does not inflate its own
 // new-comment count.
 func TestCountNewCommentsSince_IssueWideExcludesAgentOwnAndTrigger(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
+	requireHandlerDatabase(t)
 	fx := newCommentListFixture(t)
-	agentID := createHandlerTestAgent(t, "count-agent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "count-agent", nil)
 
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, created_at)
@@ -1382,22 +1122,8 @@ func TestCountNewCommentsSince_IssueWideExcludesAgentOwnAndTrigger(t *testing.T)
 // the root separately via recursive queries, so storing a reply-to-reply must
 // not destroy the direct-parent signal that trigger logic needs.
 func TestCreateCommentPreservesDirectParent(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("requires DB")
-	}
-	ctx := context.Background()
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "direct parent fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	requireHandlerDatabase(t)
+	fixture := newSeededCommentIssue(t, "direct parent fixture")
 
 	create := func(parentID, body string) CommentResponse {
 		t.Helper()
@@ -1406,8 +1132,8 @@ func TestCreateCommentPreservesDirectParent(t *testing.T) {
 			payload["parent_id"] = parentID
 		}
 		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/issues/"+issueID+"/comments", payload)
-		req = withURLParam(req, "id", issueID)
+		req := newRequest("POST", "/api/issues/"+fixture.IssueID+"/comments", payload)
+		req = withURLParam(req, "id", fixture.IssueID)
 		testHandler.CreateComment(w, req)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateComment(%q): expected 201, got %d: %s", body, w.Code, w.Body.String())

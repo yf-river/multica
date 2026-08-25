@@ -1,5 +1,6 @@
--- name: CreateAgentPlaygroundExperiment :one
+-- name: CreateAgentPlaygroundExperimentWithID :one
 INSERT INTO agent_playground_experiment (
+    id,
     workspace_id,
     name,
     description,
@@ -11,6 +12,7 @@ INSERT INTO agent_playground_experiment (
 ) VALUES (
     $1,
     $2,
+    $3,
     COALESCE(sqlc.narg('description'), ''),
     sqlc.narg('dataset_asset_id'),
     sqlc.narg('dataset_version_id'),
@@ -21,7 +23,7 @@ INSERT INTO agent_playground_experiment (
 RETURNING *;
 
 -- name: ListAgentPlaygroundExperiments :many
-SELECT e.*,
+SELECT sqlc.embed(e),
        COALESCE((SELECT COUNT(*) FROM agent_playground_input i WHERE i.experiment_id = e.id), 0)::int AS input_count,
        COALESCE((SELECT COUNT(*) FROM agent_playground_agent a WHERE a.experiment_id = e.id), 0)::int AS agent_count
 FROM agent_playground_experiment e
@@ -32,6 +34,11 @@ LIMIT $2;
 -- name: GetAgentPlaygroundExperiment :one
 SELECT * FROM agent_playground_experiment
 WHERE id = $1 AND workspace_id = $2;
+
+-- name: LockAgentPlaygroundExperiment :one
+SELECT * FROM agent_playground_experiment
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
 
 -- name: UpdateAgentPlaygroundExperimentStatus :one
 UPDATE agent_playground_experiment
@@ -144,9 +151,22 @@ INSERT INTO agent_playground_judgement (
 ) VALUES ($1, $2, $3, $4, 'pending')
 ON CONFLICT (input_id) DO UPDATE
 SET judge_agent_id = EXCLUDED.judge_agent_id,
+    chat_session_id = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN NULL
+        ELSE agent_playground_judgement.chat_session_id
+    END,
+    task_id = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN NULL
+        ELSE agent_playground_judgement.task_id
+    END,
     status = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN EXCLUDED.status
         WHEN agent_playground_judgement.status = 'pending' THEN EXCLUDED.status
         ELSE agent_playground_judgement.status
+    END,
+    output = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN ''
+        ELSE agent_playground_judgement.output
     END,
     updated_at = now()
 RETURNING *;

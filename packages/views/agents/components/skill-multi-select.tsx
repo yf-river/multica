@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChevronDown, Plus, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { SkillSummary } from "@multica/core/types";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { skillListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../i18n";

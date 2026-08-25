@@ -8,7 +8,7 @@ import {
   HoverCardTrigger,
   HoverCardContent,
 } from "@multica/ui/components/ui/hover-card";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import type { AgentTask, Issue } from "@multica/core/types";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";

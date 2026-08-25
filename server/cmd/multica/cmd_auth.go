@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -26,6 +27,11 @@ import (
 // authenticates both kinds. Keep this list in sync with the prefix branches
 // in server/internal/middleware/auth.go.
 var loginTokenPrefixes = []string{"mul_", auth.CloudPATPrefix}
+
+type authenticatedUser struct {
+	Name    string `json:"name"`
+	Account string `json:"account"`
+}
 
 // validateLoginTokenPrefix returns nil if token starts with one of the
 // CLI-recognised PAT prefixes, or an error describing the accepted set.
@@ -66,32 +72,44 @@ func init() {
 	authCmd.AddCommand(authLogoutCmd)
 }
 
-func resolveToken(cmd *cobra.Command) string {
+func resolveToken(cmd *cobra.Command) (string, error) {
 	if v := envOrTaskContext("MULTICA_TOKEN"); v != "" {
-		return v
+		return v, nil
 	}
 	if inAgentExecutionContext() {
-		return ""
-	}
-	profile := resolveProfile(cmd)
-	cfg, _ := cli.LoadCLIConfigForProfile(profile)
-	return cfg.Token
-}
-
-func resolveAppURL(cmd *cobra.Command) string {
-	for _, key := range []string{"MULTICA_APP_URL", "FRONTEND_ORIGIN"} {
-		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-			return strings.TrimRight(val, "/")
-		}
+		return "", nil
 	}
 	profile := resolveProfile(cmd)
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err == nil && cfg.AppURL != "" {
-		return strings.TrimRight(cfg.AppURL, "/")
+	if err != nil {
+		return "", fmt.Errorf("load CLI config: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "No app URL configured. Run 'multica setup' first.")
-	os.Exit(1)
-	return "" // unreachable
+	return cfg.Token, nil
+}
+
+func resolveAppURL(cmd *cobra.Command) (string, error) {
+	appURL, err := configuredAppURL(cmd)
+	if err != nil {
+		return "", err
+	}
+	if appURL == "" {
+		return "", fmt.Errorf("app URL not set: use MULTICA_APP_URL or run 'multica setup cloud' or 'multica setup self-host'")
+	}
+	return appURL, nil
+}
+
+// configuredAppURL returns the canonical app URL without requiring it. Token
+// login uses the empty result to skip opening the workspace-creation page.
+func configuredAppURL(cmd *cobra.Command) (string, error) {
+	if value := strings.TrimSpace(os.Getenv("MULTICA_APP_URL")); value != "" {
+		return strings.TrimRight(value, "/"), nil
+	}
+	profile := resolveProfile(cmd)
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return "", fmt.Errorf("load CLI config: %w", err)
+	}
+	return strings.TrimRight(cfg.AppURL, "/"), nil
 }
 
 func openBrowser(url string) error {
@@ -119,6 +137,36 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return runAuthLoginToken(cmd, tokenFlag)
 	}
 	return runAuthLoginBrowser(cmd)
+}
+
+func completeAuthentication(
+	ctx context.Context,
+	cmd *cobra.Command,
+	client *cli.APIClient,
+	token, serverURL, appURL, invalidCredentialMessage string,
+) error {
+	var user authenticatedUser
+	if err := client.GetJSON(ctx, "/api/me", &user); err != nil {
+		return cli.WithUserMessage(invalidCredentialMessage, err)
+	}
+
+	profile := resolveProfile(cmd)
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return fmt.Errorf("load CLI config: %w", err)
+	}
+	cfg.WorkspaceID = ""
+	cfg.Token = token
+	cfg.ServerURL = serverURL
+	if appURL != "" {
+		cfg.AppURL = appURL
+	}
+	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", user.Name, user.Account)
+	return nil
 }
 
 // resolveCallbackBinding picks the host that goes into the `cli_callback`
@@ -204,7 +252,7 @@ func detectOutboundIP(serverURL string) net.IP {
 	if err != nil {
 		return nil
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	local, ok := conn.LocalAddr().(*net.UDPAddr)
 	if !ok || local.IP == nil {
 		return nil
@@ -218,8 +266,14 @@ func detectOutboundIP(serverURL string) net.IP {
 }
 
 func runAuthLoginBrowser(cmd *cobra.Command) error {
-	serverURL := resolveServerURL(cmd)
-	appURL := resolveAppURL(cmd)
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return err
+	}
+	appURL, err := resolveAppURL(cmd)
+	if err != nil {
+		return err
+	}
 
 	flagHost, _ := cmd.Flags().GetString(callbackHostFlag)
 	callbackHost, bindAddr := resolveCallbackBinding(flagHost, serverURL, appURL, detectOutboundIP)
@@ -232,7 +286,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("could not start the local login callback server (used to receive the browser sign-in); a firewall or another process may be blocking local ports: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	callbackURL := fmt.Sprintf("http://%s:%d/callback", callbackHost, port)
@@ -263,7 +317,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(callbackSuccessHTML))
+		_, _ = w.Write([]byte(callbackSuccessHTML))
 		jwtCh <- token
 	})
 
@@ -273,7 +327,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 			errCh <- err
 		}
 	}()
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	// Open the browser.
 	fmt.Fprintln(os.Stderr, "Opening browser to authenticate...")
@@ -308,79 +362,65 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	var patResp struct {
 		Token string `json:"token"`
 	}
-	err = client.PostJSON(ctx, "/api/tokens", map[string]any{
+	err = client.PostJSONWithIdempotencyKey(ctx, "/api/tokens", map[string]any{
 		"name":            patName,
 		"expires_in_days": expiresInDays,
-	}, &patResp)
+	}, uuid.NewString(), &patResp)
 	if err != nil {
 		return cli.WithUserMessage("Sign-in did not complete: the server could not issue an access token for the CLI. Run `multica login` again.", err)
 	}
 
 	// Verify the PAT works.
 	patClient := cli.NewAPIClient(serverURL, "", patResp.Token)
-	var me struct {
-		Name    string `json:"name"`
-		Account string `json:"account"`
-	}
-	if err := patClient.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", err)
-	}
-
-	// Save to config. Reset workspace data on every login — the user or
-	// server may have changed, so stale workspaces must not persist.
-	profile := resolveProfile(cmd)
-	cfg, _ := cli.LoadCLIConfigForProfile(profile)
-	cfg.WorkspaceID = ""
-	cfg.Token = patResp.Token
-	cfg.ServerURL = serverURL
-	cfg.AppURL = appURL
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Account)
-	return nil
+	return completeAuthentication(
+		ctx,
+		cmd,
+		patClient,
+		patResp.Token,
+		serverURL,
+		appURL,
+		"Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.",
+	)
 }
 
 func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 	token := strings.TrimSpace(providedToken)
 	if token == "" {
-		return fmt.Errorf("token is required")
+		return fmt.Errorf("--token requires a value")
 	}
 	if err := validateLoginTokenPrefix(token); err != nil {
 		return err
 	}
 
-	serverURL := resolveServerURL(cmd)
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return err
+	}
 	client := cli.NewAPIClient(serverURL, "", token)
 
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var me struct {
-		Name    string `json:"name"`
-		Account string `json:"account"`
-	}
-	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
-		return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
-	}
-
-	profile := resolveProfile(cmd)
-	cfg, _ := cli.LoadCLIConfigForProfile(profile)
-	cfg.WorkspaceID = ""
-	cfg.Token = token
-	cfg.ServerURL = serverURL
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Account)
-	return nil
+	return completeAuthentication(
+		ctx,
+		cmd,
+		client,
+		token,
+		serverURL,
+		"",
+		"Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.",
+	)
 }
 
 func runAuthStatus(cmd *cobra.Command, _ []string) error {
-	token := resolveToken(cmd)
-	serverURL := resolveServerURL(cmd)
+	token, err := resolveToken(cmd)
+	if err != nil {
+		return err
+	}
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return err
+	}
 
 	if token == "" {
 		fmt.Fprintln(os.Stderr, "Not authenticated. Run 'multica login' to authenticate.")
@@ -392,10 +432,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	var me struct {
-		Name    string `json:"name"`
-		Account string `json:"account"`
-	}
+	var me authenticatedUser
 	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
 		fmt.Fprintf(os.Stderr, "Token 无效或已过期：%v\n请运行 'multica login' 重新登录。\n", err)
 		return nil
@@ -451,7 +488,10 @@ const callbackSuccessHTML = `<!DOCTYPE html>
 
 func runAuthLogout(cmd *cobra.Command, _ []string) error {
 	profile := resolveProfile(cmd)
-	cfg, _ := cli.LoadCLIConfigForProfile(profile)
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return fmt.Errorf("load CLI config: %w", err)
+	}
 	if cfg.Token == "" {
 		fmt.Fprintln(os.Stderr, "当前未登录。")
 		return nil

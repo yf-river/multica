@@ -1,28 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime, RuntimeProfile } from "@multica/core/types";
 import {
-  PENDING_RUNTIME_WARNING_MS,
   isPendingCustomRuntime,
   isPendingCustomRuntimeWarning,
   pendingRuntimeCommandName,
-  pendingRuntimeFromProfile,
-  pendingRuntimeId,
   pendingRuntimesForProfiles,
 } from "./pending-runtime";
 
 function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
     id: "profile-1",
-    workspace_id: "ws-1",
     display_name: "Team Codex",
     protocol_family: "codex",
     command_name: "team-codex",
     description: null,
     fixed_args: [],
-    visibility: "workspace",
-    created_by: "user-1",
     enabled: true,
-    created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
     ...overrides,
   };
@@ -31,7 +24,6 @@ function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
 function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     id: "runtime-1",
-    workspace_id: "ws-1",
     daemon_id: "daemon-1",
     name: "Codex (MacBook)",
     runtime_mode: "local",
@@ -44,8 +36,6 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     scope: "personal",
     profile_id: null,
     last_seen_at: "2026-01-01T00:00:00Z",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }
@@ -53,14 +43,15 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 describe("pending custom runtime rows", () => {
   it("builds a pending runtime from the newly created profile", () => {
     const createdAt = Date.parse("2026-01-01T00:00:00Z");
-    const pending = pendingRuntimeFromProfile({
-      profile: profile(),
-      createdAt,
+    const pending = pendingRuntimesForProfiles({
+      pendingProfiles: [{ profile: profile(), createdAt }],
+      runtimes: [],
       ownerId: "user-1",
-      fallbackMachineName: "MacBook",
-    });
+      localDaemonId: "daemon-1",
+      localMachineName: "MacBook",
+    })[0]!;
 
-    expect(pending.id).toBe(pendingRuntimeId("profile-1"));
+    expect(pending.id).toBe("pending-runtime-profile:profile-1");
     expect(pending.name).toBe("Team Codex (MacBook)");
     expect(pending.daemon_id).toBeNull();
     expect(pending.profile_id).toBe("profile-1");
@@ -84,7 +75,7 @@ describe("pending custom runtime rows", () => {
         runtimes: [baseRuntime],
         ownerId: "user-1",
       }).map((item) => item.id),
-    ).toEqual(["runtime-1", pendingRuntimeId(prof.id)]);
+    ).toEqual(["runtime-1", "pending-runtime-profile:profile-1"]);
 
     expect(
       pendingRuntimesForProfiles({
@@ -97,21 +88,21 @@ describe("pending custom runtime rows", () => {
 
   it("marks pending runtimes as waiting after the grace window", () => {
     const createdAt = Date.parse("2026-01-01T00:00:00Z");
-    const pending = pendingRuntimeFromProfile({
-      profile: profile(),
-      createdAt,
-    });
+    const pending = pendingRuntimesForProfiles({
+      pendingProfiles: [{ profile: profile(), createdAt }],
+      runtimes: [],
+    })[0]!;
 
     expect(
       isPendingCustomRuntimeWarning(
         pending,
-        createdAt + PENDING_RUNTIME_WARNING_MS - 1,
+        createdAt + 45_000 - 1,
       ),
     ).toBe(false);
     expect(
       isPendingCustomRuntimeWarning(
         pending,
-        createdAt + PENDING_RUNTIME_WARNING_MS,
+        createdAt + 45_000,
       ),
     ).toBe(true);
   });

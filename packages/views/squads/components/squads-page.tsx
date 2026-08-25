@@ -9,14 +9,13 @@ import {
   ChevronDown,
   Filter,
   Loader2,
-  MoreHorizontal,
   Plus,
   Users,
   X,
 } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
+import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
   memberListOptions,
@@ -24,8 +23,8 @@ import {
   workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes";
-import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
 import {
@@ -40,7 +39,6 @@ import {
 import type {
   Agent,
   EnsureInternalSquadTemplateRequest,
-  MemberWithUser,
   Squad,
   SquadScope,
 } from "@multica/core/types";
@@ -94,31 +92,33 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
-import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  ListGridRowMenuButton,
+  ListGridToggleableHeaderCell,
+} from "../../common/list-grid-selection";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
-  squadResourceScope,
   ResourceScopeBadge,
   resourceSegmentedOptionClass,
 } from "../../common/resource-scope";
 import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
-import { preferredPMModel } from "./pm-model-default";
+import { indexBy } from "../../common/collections";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import {
   bestRuntimeForPMProvider,
+  PM_DEFAULT_PROVIDER,
   pmProviderChoices,
+  preferredPMModel,
 } from "./pm-runtime-selection";
+import { SquadArchiveDialog, useRestoreSquad } from "./squad-lifecycle";
+import { SquadAvatar } from "./squad-avatar";
 
-// Column template — the simplest member of the ListGrid family (squads are
-// the fewest entity, 1-5 rows): subgrid template + var tracks + two-zone
-// responsiveness + single scroll container, but NO virtualization, checkbox,
-// or batch. Identity two-line rows (avatar + name + description, 64px) like
-// the agents list. Name + leader are the core set (<@2xl); members / creator
-// / created are @2xl. The kebab track collapses when the viewer can't manage
-// any squad (workspace admin only).
+// Name and leader stay visible below @2xl; optional columns and row actions
+// collapse without changing the shared ListGrid track order.
 const GRID_COLS =
   "grid-cols-[0.75rem_minmax(120px,1fr)_var(--sqc-leader)_var(--sqc-kebab)_0.75rem] " +
   "@2xl:grid-cols-[0.75rem_minmax(200px,1fr)_var(--sqc-leader)_var(--sqc-members)_var(--sqc-creator)_var(--sqc-created)_var(--sqc-kebab)_0.75rem]";
@@ -129,34 +129,25 @@ const COLUMN_WIDTHS: Record<SquadColumnKey, number> = {
   creator: 144,
   created: 104,
 };
-const DEFAULT_PM_PROVIDER = "codebuddy";
 const DEFAULT_PM_SQUAD_NAME = "pm";
 
-// Fixed tracks (edges 12+12, name min 200, leader 160) plus the 7 gap-x-3
-// gaps between the wide template's 8 tracks (zero-width tracks still carry
-// gaps).
+// Zero-width tracks still retain the seven 12px grid gaps.
 const FIXED_TRACKS_WIDTH = 224 + LEADER_WIDTH + 7 * 12;
+
+const baseColumnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  members: "--sqc-members",
+  creator: "--sqc-creator",
+  created: "--sqc-created",
+}, "--sqc-minw");
 
 function columnTrackVars(
   isVisible: (key: SquadColumnKey) => boolean,
   showActions: boolean,
 ): React.CSSProperties {
-  const width = (key: SquadColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as SquadColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    ) +
-    (showActions ? 28 : 0);
   return {
+    ...baseColumnTrackVars(isVisible, showActions ? 28 : 0),
     "--sqc-leader": `${LEADER_WIDTH}px`,
-    "--sqc-members": width("members"),
-    "--sqc-creator": width("creator"),
-    "--sqc-created": width("created"),
     "--sqc-kebab": showActions ? "1.75rem" : "0px",
-    "--sqc-minw": `${minWidth}px`,
   } as React.CSSProperties;
 }
 
@@ -171,51 +162,18 @@ function providerLabel(provider: string) {
   return labels[provider.toLowerCase()] ?? provider;
 }
 
-// ---------------------------------------------------------------------------
-// Cells
-// ---------------------------------------------------------------------------
-
-function SquadAvatar({ squad }: { squad: Squad }) {
-  const initials = squad.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-  if (squad.avatar_url) {
-    return (
-      <ActorAvatarBase
-        name={squad.name}
-        initials={initials}
-        avatarUrl={resolvePublicFileUrl(squad.avatar_url)}
-        size={32}
-        className="shrink-0 rounded-md"
-      />
-    );
-  }
-  return (
-    <div
-      className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
-      title={squad.name}
-    >
-      <Users className="h-4 w-4" />
-    </div>
-  );
-}
-
-// Two-line identity cell — same form as the agents list.
 function NameCell({ squad }: { squad: Squad }) {
   const { t } = useT("squads");
   return (
     <ListGridCell className="gap-3">
-      <SquadAvatar squad={squad} />
+      <SquadAvatar squad={squad} size={32} className="shrink-0 rounded-md" />
       <div className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate text-sm font-medium">
             {squad.name}
           </span>
           <ResourceScopeBadge
-            scope={squadResourceScope(squad.scope)}
+            scope={squad.scope}
             label={
               squad.scope === "personal"
                 ? t(($) => $.page.scope_personal)
@@ -255,9 +213,7 @@ function LeaderCell({
   );
 }
 
-// Polymorphic member avatar stack (agent + human members), driven by the
-// list payload's member_preview / member_count. NOT AgentAvatarStack, which
-// is agent-only.
+// The preview is polymorphic, so the Agent-only avatar stack cannot own it.
 function MembersCell({ squad }: { squad: Squad }) {
   const preview = squad.member_preview ?? [];
   const count = squad.member_count ?? preview.length;
@@ -296,90 +252,10 @@ function MembersCell({ squad }: { squad: Squad }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Archive dialog. The squad stays in history and can be restored from the
-// archived scope.
-// ---------------------------------------------------------------------------
-
-function ArchiveSquadDialog({
-  squad,
-  open,
-  onOpenChange,
-}: {
-  squad: Squad;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const { t } = useT("squads");
-  const wsId = useCurrentWorkspace()?.id ?? "";
-  const qc = useQueryClient();
-  const archive = useMutation({
-    mutationFn: () => api.deleteSquad(squad.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-      onOpenChange(false);
-      toast.success(t(($) => $.archive_dialog.success));
-    },
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : String(err)),
-  });
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t(($) => $.archive_dialog.title)}</DialogTitle>
-          <DialogDescription>
-            {t(($) => $.archive_dialog.description, { name: squad.name })}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={archive.isPending}
-            onClick={() => onOpenChange(false)}
-          >
-            {t(($) => $.archive_dialog.cancel)}
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            disabled={archive.isPending}
-            onClick={() => archive.mutate()}
-          >
-            {archive.isPending ? (
-              <>
-                <Loader2 className="mr-1 size-3.5 animate-spin" />
-                {t(($) => $.archive_dialog.archiving)}
-              </>
-            ) : (
-              t(($) => $.archive_dialog.confirm)
-            )}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function SquadRowActions({ squad }: { squad: Squad }) {
   const { t } = useT("squads");
-  const wsId = useCurrentWorkspace()?.id ?? "";
-  const qc = useQueryClient();
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const restore = useMutation({
-    mutationFn: () => api.restoreSquad(squad.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-      toast.success(t(($) => $.archive_dialog.restore_success));
-    },
-    onError: (err) =>
-      toast.error(
-        err instanceof Error ? err.message : t(($) => $.archive_dialog.restore_failed),
-      ),
-  });
+  const restore = useRestoreSquad();
   const isArchived = !!squad.archived_at;
   return (
     <span
@@ -388,21 +264,18 @@ function SquadRowActions({ squad }: { squad: Squad }) {
     >
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={
-            <button
-              type="button"
-              aria-label={t(($) => $.page.row_menu)}
-              className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
-            >
-              <MoreHorizontal className="size-4" />
-            </button>
-          }
+          render={<ListGridRowMenuButton label={t(($) => $.page.row_menu)} />}
         />
         <DropdownMenuContent align="end" className="w-40">
           {isArchived ? (
             <DropdownMenuItem
               disabled={restore.isPending}
-              onClick={() => restore.mutate()}
+              onClick={() => restore.mutate(squad.id, {
+                onSuccess: () => toast.success(t(($) => $.archive_dialog.restore_success)),
+                onError: (err) => toast.error(
+                  err instanceof Error ? err.message : t(($) => $.archive_dialog.restore_failed),
+                ),
+              })}
             >
               <ArchiveRestore className="size-3.5" />
               {t(($) => $.page.restore_action)}
@@ -419,7 +292,7 @@ function SquadRowActions({ squad }: { squad: Squad }) {
         </DropdownMenuContent>
       </DropdownMenu>
       {!isArchived && (
-        <ArchiveSquadDialog
+        <SquadArchiveDialog
           squad={squad}
           open={archiveOpen}
           onOpenChange={setArchiveOpen}
@@ -458,10 +331,6 @@ function SquadScopeToggle({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Header + toolbar
-// ---------------------------------------------------------------------------
-
 function SquadListHeader({
   sortField,
   sortDirection,
@@ -482,35 +351,25 @@ function SquadListHeader({
         {t(($) => $.page.table.name)}
       </ListGridHeaderCell>
       <ListGridHeaderCell>{t(($) => $.page.table.leader)}</ListGridHeaderCell>
-      {isColVisible("members") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("members")}
-          onSort={() => onSort("members")}
-        >
-          {t(($) => $.page.table.members)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("creator") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.creator)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.page.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("members")}
+        className="hidden @2xl:flex"
+        sorted={sorted("members")}
+        onSort={() => onSort("members")}
+      >
+        {t(($) => $.page.table.members)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("creator")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.creator)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.page.table.created)}
+      </ListGridToggleableHeaderCell>
       {/* kebab track placeholder (track width collapses when no actions) */}
       <span aria-hidden="true" />
     </ListGridHeader>
@@ -562,6 +421,7 @@ function SquadListToolbar({
   onToggleColumn: (key: SquadColumnKey) => void;
 }) {
   const { t } = useT("squads");
+  const { t: tCommon } = useT("common");
   const activeFilterCount =
     (filters.leaders.length > 0 ? 1 : 0) +
     (filters.creators.length > 0 ? 1 : 0);
@@ -667,18 +527,18 @@ function SquadListToolbar({
               {hasActiveFilters ? (
                 <>
                   <span className="hidden md:inline">
-                    {t(($) => $.toolbar.filter_active_count, { count: activeFilterCount })}
+                    {tCommon(($) => $.list_toolbar.filter_active_count, { count: activeFilterCount })}
                   </span>
                   <span className="tabular-nums md:hidden">{activeFilterCount}</span>
                 </>
               ) : (
-                <span className="hidden md:inline">{t(($) => $.toolbar.filter_label)}</span>
+                <span className="hidden md:inline">{tCommon(($) => $.list_toolbar.filter_label)}</span>
               )}
               {hasActiveFilters && (
                 <span
                   role="button"
                   tabIndex={-1}
-                  aria-label={t(($) => $.toolbar.clear_filters)}
+                  aria-label={tCommon(($) => $.list_toolbar.clear_filters)}
                   className="-mr-1 ml-0.5 hidden rounded-sm p-0.5 hover:bg-white/20 md:inline-flex"
                   onClick={(e) => {
                     e.preventDefault();
@@ -767,13 +627,13 @@ function SquadListToolbar({
             }
           />
           <TooltipContent side="bottom">
-            {t(($) => $.toolbar.display)}
+            {tCommon(($) => $.list_toolbar.display)}
           </TooltipContent>
         </Tooltip>
         <PopoverContent align="end" className="w-64 p-0">
           <div className="border-b px-3 py-2.5">
             <span className="text-xs font-medium text-muted-foreground">
-              {t(($) => $.toolbar.sort_by)}
+              {tCommon(($) => $.list_toolbar.sort_by)}
             </span>
             <div className="mt-2 flex items-center gap-1.5">
               <DropdownMenu>
@@ -814,8 +674,8 @@ function SquadListToolbar({
                 }
                 title={
                   sortDirection === "asc"
-                    ? t(($) => $.toolbar.direction_asc)
-                    : t(($) => $.toolbar.direction_desc)
+                    ? tCommon(($) => $.list_toolbar.direction_asc)
+                    : tCommon(($) => $.list_toolbar.direction_desc)
                 }
               >
                 {sortDirection === "asc" ? (
@@ -853,14 +713,9 @@ function SquadListToolbar({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
 export function SquadsPage() {
   const { t } = useT("squads");
-  const workspace = useCurrentWorkspace();
-  const wsId = workspace?.id ?? "";
+  const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const rowLink = useRowLink();
   const navigation = useNavigation();
@@ -878,26 +733,15 @@ export function SquadsPage() {
     enabled: !!wsId,
   });
 
-  const agentsById = useMemo(() => {
-    const m = new Map<string, Agent>();
-    for (const a of agents) m.set(a.id, a);
-    return m;
-  }, [agents]);
+  const agentsById = useMemo(() => indexBy(agents, (agent) => agent.id), [agents]);
+  const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
-  const membersById = useMemo(() => {
-    const m = new Map<string, MemberWithUser>();
-    for (const mem of members) m.set(mem.user_id, mem);
-    return m;
-  }, [members]);
-
-  const isWorkspaceAdmin = useMemo(() => {
-    if (!currentUser) return false;
-    const me = members.find((mem: MemberWithUser) => mem.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
-  }, [members, currentUser]);
+  const isWorkspaceAdmin = canManageWorkspace(
+    resolveCurrentMember(members, currentUser?.id).role,
+  );
   const [pmDialogOpen, setPmDialogOpen] = useState(false);
   const [pmName, setPmName] = useState(DEFAULT_PM_SQUAD_NAME);
-  const [pmProvider, setPmProvider] = useState(DEFAULT_PM_PROVIDER);
+  const [pmProvider, setPmProvider] = useState(PM_DEFAULT_PROVIDER);
   const [pmModel, setPmModel] = useState("");
   const [pmModelTouched, setPmModelTouched] = useState(false);
   const [pmScope, setPmScope] = useState<SquadScope>("workspace");
@@ -912,8 +756,8 @@ export function SquadsPage() {
     }
     if (providerChoices.includes(pmProvider)) return;
     setPmProvider(
-      providerChoices.includes(DEFAULT_PM_PROVIDER)
-        ? DEFAULT_PM_PROVIDER
+      providerChoices.includes(PM_DEFAULT_PROVIDER)
+        ? PM_DEFAULT_PROVIDER
         : providerChoices[0]!,
     );
     setPmModel("");
@@ -970,11 +814,11 @@ export function SquadsPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err)),
   });
   const openPmDialog = () => {
-    const defaultProvider = providerChoices.includes(DEFAULT_PM_PROVIDER)
-      ? DEFAULT_PM_PROVIDER
+    const defaultProvider = providerChoices.includes(PM_DEFAULT_PROVIDER)
+      ? PM_DEFAULT_PROVIDER
       : providerChoices[0];
     if (!providerChoices.includes(pmProvider)) {
-      setPmProvider(defaultProvider ?? DEFAULT_PM_PROVIDER);
+      setPmProvider(defaultProvider ?? PM_DEFAULT_PROVIDER);
     }
     setPmName(DEFAULT_PM_SQUAD_NAME);
     setPmModel("");
@@ -1031,7 +875,7 @@ export function SquadsPage() {
 
   // Rows within the current scope, unfiltered — filter option lists + the
   // "n / total" denominator derive from this.
-  const scopedRowsWithFixtures = useMemo<Squad[]>(() => {
+  const scopeRows = useMemo<Squad[]>(() => {
     return squads.filter((s) => {
       if (scope === "archived") return !!s.archived_at;
       if (s.archived_at) return false;
@@ -1041,7 +885,6 @@ export function SquadsPage() {
       return true;
     });
   }, [squads, scope, currentUser]);
-  const scopeRows = scopedRowsWithFixtures;
 
   const leaderOptions = useMemo(() => {
     const m = new Map<string, { id: string; name: string; count: number }>();
@@ -1073,7 +916,7 @@ export function SquadsPage() {
     return [...m.values()];
   }, [scopeRows, membersById]);
 
-  const filteredRows = useMemo<Squad[]>(() => {
+  const rows = useMemo<Squad[]>(() => {
     const inScope = scopeRows.filter((s) => {
       if (filters.leaders.length > 0 && !filters.leaders.includes(s.leader_id)) {
         return false;
@@ -1103,8 +946,6 @@ export function SquadsPage() {
     });
     return sorted;
   }, [scopeRows, filters, sortField, sortDirection]);
-
-  const rows = filteredRows;
   const canManageAnyVisibleSquad = rows.some(
     (squad) => isWorkspaceAdmin || squad.creator_id === currentUser?.id,
   );
@@ -1237,8 +1078,6 @@ export function SquadsPage() {
             </span>
           )}
         </div>
-        {/* Quiet chrome button (outline, icon-only below md) — primary is
-            reserved for the empty state. */}
         <div className="flex items-center gap-2">
           <Button
             size="sm"

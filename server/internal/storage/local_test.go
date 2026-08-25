@@ -13,8 +13,7 @@ import (
 func TestLocalStorage_Upload(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
-	os.Unsetenv("LOCAL_UPLOAD_BASE_URL")
-	// No LOCAL_UPLOAD_BASE_URL set - should return relative path
+	_ = os.Unsetenv("LOCAL_UPLOAD_BASE_URL")
 
 	store := NewLocalStorageFromEnv()
 	if store == nil {
@@ -66,7 +65,6 @@ func TestLocalStorage_Upload_WithBaseURL(t *testing.T) {
 		t.Fatalf("Upload failed: %v", err)
 	}
 
-	// When LOCAL_UPLOAD_BASE_URL is set, should return full URL
 	expectedLink := "http://localhost:8080/uploads/test-key.txt"
 	if link != expectedLink {
 		t.Errorf("link = %q, want %q", link, expectedLink)
@@ -104,10 +102,90 @@ func TestLocalStorage_Delete(t *testing.T) {
 		t.Fatalf("file should exist: %v", err)
 	}
 
-	store.Delete(ctx, "delete-me.txt")
+	_ = store.Delete(ctx, "delete-me.txt")
 
 	if _, err := os.ReadFile(filePath); !os.IsNotExist(err) {
 		t.Errorf("file should be deleted")
+	}
+}
+
+func TestLocalStorage_WriteAndDeleteRejectTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
+	store := NewLocalStorageFromEnv()
+	if store == nil {
+		t.Fatal("NewLocalStorageFromEnv returned nil")
+	}
+	outside := filepath.Join(filepath.Dir(tmpDir), "outside-"+filepath.Base(tmpDir)+".txt")
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	if _, err := store.Upload(context.Background(), "../"+filepath.Base(outside), []byte("leak"), "text/plain", "leak.txt"); err == nil {
+		t.Fatal("traversal upload was accepted")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("traversal upload touched %s: %v", outside, err)
+	}
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(context.Background(), "../"+filepath.Base(outside)); err == nil {
+		t.Fatal("traversal delete was accepted")
+	}
+	if body, err := os.ReadFile(outside); err != nil || string(body) != "keep" {
+		t.Fatalf("outside file changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestLocalStorage_UploadRollsBackWhenMetadataWriteFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
+	store := NewLocalStorageFromEnv()
+	if store == nil {
+		t.Fatal("NewLocalStorageFromEnv returned nil")
+	}
+	key := "metadata-failure.txt"
+	if err := os.Mkdir(filepath.Join(tmpDir, key+metaSuffix), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upload(context.Background(), key, []byte("body"), "text/plain", "report.txt"); err == nil {
+		t.Fatal("metadata failure returned upload success")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, key)); !os.IsNotExist(err) {
+		t.Fatalf("object was not rolled back: %v", err)
+	}
+}
+
+func TestLocalStorage_RejectsSymlinkEscape(t *testing.T) {
+	uploadDir := t.TempDir()
+	outsideDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", uploadDir)
+	store := NewLocalStorageFromEnv()
+	if store == nil {
+		t.Fatal("NewLocalStorageFromEnv returned nil")
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(uploadDir, "escape")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := store.Upload(context.Background(), "escape/leak.txt", []byte("leak"), "text/plain", "leak.txt"); err == nil {
+		t.Fatal("symlinked-parent upload was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "leak.txt")); !os.IsNotExist(err) {
+		t.Fatalf("symlink upload touched outside path: %v", err)
+	}
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(uploadDir, "secret-link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetReader(context.Background(), "secret-link"); err == nil {
+		t.Fatal("symlink object read was accepted")
+	}
+	if err := store.Delete(context.Background(), "secret-link"); err == nil {
+		t.Fatal("symlink object delete was accepted")
+	}
+	if body, err := os.ReadFile(outsideFile); err != nil || string(body) != "secret" {
+		t.Fatalf("outside target changed: body=%q err=%v", body, err)
 	}
 }
 
@@ -173,7 +251,7 @@ func TestLocalStorage_KeyFromURL_WithBaseURL(t *testing.T) {
 	}
 }
 
-func TestLocalStorage_DeleteKeys(t *testing.T) {
+func TestDeleteKeys(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 
@@ -193,7 +271,7 @@ func TestLocalStorage_DeleteKeys(t *testing.T) {
 		}
 	}
 
-	store.DeleteKeys(ctx, keys)
+	DeleteKeys(ctx, store, keys)
 
 	for _, key := range keys {
 		filePath := filepath.Join(tmpDir, key)
@@ -217,11 +295,6 @@ func TestLocalStorage_KeyFromURL_Empty(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_ContentDispositionFromSidecar verifies the fix
-// for issue #2442: downloads served from /uploads/* must carry the original
-// uploaded filename in Content-Disposition, mirroring the S3 Upload path's
-// existing ContentDisposition behavior. Without this, browsers fall back to
-// the storage-key basename (UUID + ext) for the download filename.
 func TestLocalStorage_ServeFile_ContentDispositionFromSidecar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -288,11 +361,7 @@ func TestLocalStorage_ServeFile_ContentDispositionFromSidecar(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_NoSidecarFallback documents the graceful
-// degradation path: files uploaded before the sidecar landed (or written
-// out-of-band) have no .meta.json on disk and ServeFile must not set
-// Content-Disposition — leaving the existing pre-fix behavior intact.
-func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
+func TestLocalStorage_ServeFile_RequiresSidecar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 
@@ -301,7 +370,7 @@ func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
 		t.Fatal("NewLocalStorageFromEnv returned nil")
 	}
 
-	key := "legacy-no-sidecar.txt"
+	key := "missing-sidecar.txt"
 	if err := os.WriteFile(filepath.Join(tmpDir, key), []byte("body"), 0644); err != nil {
 		t.Fatalf("seed write failed: %v", err)
 	}
@@ -310,16 +379,11 @@ func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	store.ServeFile(rec, req, key)
 
-	if got := rec.Header().Get("Content-Disposition"); got != "" {
-		t.Errorf("Content-Disposition = %q, want empty (no sidecar fallback)", got)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
 
-// TestLocalStorage_ServeFile_RejectsSidecarSuffix verifies that the sidecar
-// JSON itself is not addressable via /uploads/*. The sidecar is an
-// implementation detail; exposing it would turn the filename + content-type
-// pair into a stable read API and make any future ACL change leakier than
-// the data file it sits next to.
 func TestLocalStorage_ServeFile_RejectsSidecarSuffix(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -347,10 +411,6 @@ func TestLocalStorage_ServeFile_RejectsSidecarSuffix(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_RejectsPathTraversal documents that a key
-// pointing outside uploadDir is rejected before any sidecar read. Without
-// this guard, readLocalMeta would attempt a disk read at <some-path>.meta.json
-// before http.ServeFile's own ".." check fires on r.URL.Path.
 func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -360,16 +420,13 @@ func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 		t.Fatal("NewLocalStorageFromEnv returned nil")
 	}
 
-	// Seed a sidecar OUTSIDE uploadDir so we'd notice if it were read: the
-	// header would carry "leaked.xlsx". Locating the sibling inside the
-	// per-test TempDir keeps the test self-contained — no real /etc reads.
 	parentDir := filepath.Dir(tmpDir)
 	leakedBase := filepath.Join(parentDir, "leaked-target")
 	if err := os.WriteFile(leakedBase+metaSuffix, []byte(`{"filename":"leaked.xlsx","content_type":"text/plain"}`), 0644); err != nil {
 		t.Fatalf("seed leaked sidecar failed: %v", err)
 	}
 	t.Cleanup(func() {
-		os.Remove(leakedBase + metaSuffix)
+		_ = os.Remove(leakedBase + metaSuffix)
 	})
 
 	traversal := "../" + filepath.Base(leakedBase)
@@ -385,11 +442,7 @@ func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_Upload_SkipsSidecarWhenFilenameEmpty verifies the tighter
-// Upload gate: a write with no filename has nothing useful to preserve, so
-// we shouldn't litter the upload directory with content-type-only sidecars
-// that ServeFile would ignore anyway.
-func TestLocalStorage_Upload_SkipsSidecarWhenFilenameEmpty(t *testing.T) {
+func TestLocalStorage_Upload_RejectsEmptyFilename(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 
@@ -398,20 +451,16 @@ func TestLocalStorage_Upload_SkipsSidecarWhenFilenameEmpty(t *testing.T) {
 		t.Fatal("NewLocalStorageFromEnv returned nil")
 	}
 
-	ctx := context.Background()
 	key := "no-filename.bin"
-	if _, err := store.Upload(ctx, key, []byte("body"), "application/octet-stream", ""); err != nil {
-		t.Fatalf("Upload failed: %v", err)
+	if _, err := store.Upload(context.Background(), key, []byte("body"), "application/octet-stream", ""); err == nil {
+		t.Fatal("Upload should reject an empty filename")
 	}
 
-	if _, err := os.Stat(filepath.Join(tmpDir, key+metaSuffix)); !os.IsNotExist(err) {
-		t.Errorf("sidecar should not exist when filename is empty, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(tmpDir, key)); !os.IsNotExist(err) {
+		t.Errorf("object should not exist after rejected upload, got err=%v", err)
 	}
 }
 
-// TestLocalStorage_Delete_RemovesSidecar verifies the cleanup half of the
-// fix: when the upload is deleted, its sidecar metadata file disappears too.
-// Otherwise the upload directory grows orphan .meta.json files forever.
 func TestLocalStorage_Delete_RemovesSidecar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -431,14 +480,13 @@ func TestLocalStorage_Delete_RemovesSidecar(t *testing.T) {
 		t.Fatalf("sidecar should exist after Upload: %v", err)
 	}
 
-	store.Delete(ctx, key)
+	_ = store.Delete(ctx, key)
 
 	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
 		t.Errorf("sidecar should be removed after Delete, got err=%v", err)
 	}
 }
 
-// GetReader returns the uploaded bytes verbatim — used by the preview proxy.
 func TestLocalStorage_GetReader_RoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -459,7 +507,7 @@ func TestLocalStorage_GetReader_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReader: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	got, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("io.ReadAll: %v", err)
@@ -469,7 +517,6 @@ func TestLocalStorage_GetReader_RoundTrip(t *testing.T) {
 	}
 }
 
-// Refuses path traversal at storage layer so callers don't need to defend it.
 func TestLocalStorage_GetReader_RejectsTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -480,14 +527,11 @@ func TestLocalStorage_GetReader_RejectsTraversal(t *testing.T) {
 	}
 
 	if rc, err := store.GetReader(context.Background(), "../../../etc/passwd"); err == nil {
-		rc.Close()
+		_ = rc.Close()
 		t.Fatal("GetReader should refuse traversal keys")
 	}
 }
 
-// The sidecar JSON is an internal detail. Allowing /content to read it via a
-// crafted key would expose the original filename + content-type stored next
-// to every upload.
 func TestLocalStorage_GetReader_RejectsSidecarSuffix(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -498,12 +542,11 @@ func TestLocalStorage_GetReader_RejectsSidecarSuffix(t *testing.T) {
 	}
 
 	if rc, err := store.GetReader(context.Background(), "some-key.txt"+metaSuffix); err == nil {
-		rc.Close()
+		_ = rc.Close()
 		t.Fatal("GetReader should refuse sidecar keys")
 	}
 }
 
-// Missing key surfaces as a plain error — the handler maps it to 404.
 func TestLocalStorage_GetReader_MissingKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
@@ -514,7 +557,7 @@ func TestLocalStorage_GetReader_MissingKey(t *testing.T) {
 	}
 
 	if rc, err := store.GetReader(context.Background(), "nonexistent.txt"); err == nil {
-		rc.Close()
+		_ = rc.Close()
 		t.Fatal("GetReader should error on missing key")
 	}
 }

@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -242,12 +242,17 @@ func resolveProfile(cmd *cobra.Command) string {
 }
 
 func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
-	serverURL := resolveServerURL(cmd)
-	workspaceID := resolveWorkspaceID(cmd)
-	token := resolveToken(cmd)
-
-	if serverURL == "" {
-		return nil, fmt.Errorf("server URL not set: use --server-url flag, MULTICA_SERVER_URL env, or 'multica config set server_url <url>'")
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return nil, err
+	}
+	workspaceID, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return nil, err
+	}
+	token, err := resolveToken(cmd)
+	if err != nil {
+		return nil, err
 	}
 	if inAgentExecutionContext() && !strings.HasPrefix(token, "mat_") {
 		return nil, fmt.Errorf("agent execution context requires MULTICA_TOKEN to be a task-scoped mat_ token")
@@ -264,22 +269,23 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	return client, nil
 }
 
-func resolveServerURL(cmd *cobra.Command) string {
-	val := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+func resolveServerURL(cmd *cobra.Command) (string, error) {
+	val := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL")
 	if val == "" {
 		val = taskContextValue("MULTICA_SERVER_URL")
 	}
 	if val != "" {
-		return normalizeAPIBaseURL(val)
+		return normalizeAPIBaseURL(val), nil
 	}
 	profile := resolveProfile(cmd)
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err == nil && cfg.ServerURL != "" {
-		return normalizeAPIBaseURL(cfg.ServerURL)
+	if err != nil {
+		return "", fmt.Errorf("load CLI config: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "No server configured. Run 'multica setup' first.")
-	os.Exit(1)
-	return "" // unreachable
+	if cfg.ServerURL == "" {
+		return "", fmt.Errorf("server URL not set: use --server-url flag, MULTICA_SERVER_URL env, or 'multica config set server_url <url>'")
+	}
+	return normalizeAPIBaseURL(cfg.ServerURL), nil
 }
 
 func normalizeAPIBaseURL(raw string) string {
@@ -301,29 +307,35 @@ func inAgentExecutionContext() bool {
 	return envOrTaskContext("MULTICA_AGENT_ID") != "" || envOrTaskContext("MULTICA_TASK_ID") != ""
 }
 
-func resolveWorkspaceID(cmd *cobra.Command) string {
-	val := cli.FlagOrEnv(cmd, "workspace-id", "MULTICA_WORKSPACE_ID", "")
+func resolveWorkspaceID(cmd *cobra.Command) (string, error) {
+	val := cli.FlagOrEnv(cmd, "workspace-id", "MULTICA_WORKSPACE_ID")
 	if val == "" {
 		val = taskContextValue("MULTICA_WORKSPACE_ID")
 	}
 	if val != "" {
-		return val
+		return val, nil
 	}
 	// Inside an agent task the daemon is the only authority on workspace
 	// identity. Never read the user-global CLI config here.
 	if inAgentExecutionContext() {
-		return ""
+		return "", nil
 	}
 	profile := resolveProfile(cmd)
-	cfg, _ := cli.LoadCLIConfigForProfile(profile)
-	return cfg.WorkspaceID
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return "", fmt.Errorf("load CLI config: %w", err)
+	}
+	return cfg.WorkspaceID, nil
 }
 
 // requireWorkspaceID resolves the workspace ID and returns an error with
 // actionable instructions if it is empty (e.g. user has multiple workspaces
 // but no default configured).
 func requireWorkspaceID(cmd *cobra.Command) (string, error) {
-	id := resolveWorkspaceID(cmd)
+	id, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return "", err
+	}
 	if id == "" {
 		if inAgentExecutionContext() {
 			return "", fmt.Errorf("workspace_id is required: MULTICA_WORKSPACE_ID must be set by the daemon in agent execution context (no fallback to user config)")
@@ -338,35 +350,22 @@ func requireWorkspaceID(cmd *cobra.Command) (string, error) {
 // ---------------------------------------------------------------------------
 
 func runAgentList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, _, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	if client.WorkspaceID == "" {
-		if _, err := requireWorkspaceID(cmd); err != nil {
-			return err
-		}
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var agents []map[string]any
-	params := url.Values{}
-	params.Set("workspace_id", client.WorkspaceID)
-	if v, _ := cmd.Flags().GetBool("include-archived"); v {
-		params.Set("include_archived", "true")
-	}
 	path := "/api/agents"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
+	if v, _ := cmd.Flags().GetBool("include-archived"); v {
+		path += "?include_archived=true"
 	}
 	if err := client.GetJSON(ctx, path, &agents); err != nil {
 		return fmt.Errorf("list agents: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, agents)
 	}
 
@@ -390,12 +389,10 @@ func runAgentList(cmd *cobra.Command, _ []string) error {
 }
 
 func runAgentGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var agent map[string]any
@@ -403,8 +400,7 @@ func runAgentGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, agent)
 	}
 
@@ -423,10 +419,11 @@ func runAgentGet(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentCreate(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
@@ -445,11 +442,8 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/agents", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/agents", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create agent: %w", err)
 	}
 
@@ -457,10 +451,11 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runAgentUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	body := map[string]any{}
 	if err := applyAgentBodyFlags(cmd, body, agentBodyUpdate); err != nil {
@@ -470,9 +465,6 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --thinking-level, --custom-args, --mcp-config, --scope, --status, or --max-concurrent-tasks (env vars now live behind `multica agent env set <id>`)")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/agents/"+args[0], body, &result); err != nil {
@@ -560,13 +552,17 @@ func applyChangedStringFlag(cmd *cobra.Command, body map[string]any, flag, key s
 	}
 }
 
+func applyNonEmptyStringFlag(cmd *cobra.Command, body map[string]any, flag, key string) {
+	if v, _ := cmd.Flags().GetString(flag); v != "" {
+		body[key] = v
+	}
+}
+
 func runAgentArchive(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var result map[string]any
@@ -574,22 +570,14 @@ func runAgentArchive(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("archive agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Agent archived: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Agent", "archived", "name", result)
 }
 
 func runAgentRestore(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var result map[string]any
@@ -597,31 +585,16 @@ func runAgentRestore(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restore agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Agent restored: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Agent", "restored", "name", result)
 }
 
 func runAgentTasks(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	tasks, err := fetchMapList(cmd, "/api/agents/"+args[0]+"/tasks", "list agent tasks")
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var tasks []map[string]any
-	if err := client.GetJSON(ctx, "/api/agents/"+args[0]+"/tasks", &tasks); err != nil {
-		return fmt.Errorf("list agent tasks: %w", err)
-	}
-
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, tasks)
 	}
 
@@ -700,8 +673,7 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update agent avatar: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{
 			"id":         id,
 			"agent_id":   args[0],
@@ -724,21 +696,12 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runAgentSkillsList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	skills, err := fetchMapList(cmd, "/api/agents/"+args[0]+"/skills", "list agent skills")
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var skills []map[string]any
-	if err := client.GetJSON(ctx, "/api/agents/"+args[0]+"/skills", &skills); err != nil {
-		return fmt.Errorf("list agent skills: %w", err)
-	}
-
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, skills)
 	}
 
@@ -747,10 +710,11 @@ func runAgentSkillsList(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentSkillsSet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	if !cmd.Flags().Changed("skill-ids") {
 		return fmt.Errorf("--skill-ids is required (comma-separated skill IDs; use --skill-ids '' to clear all)")
@@ -759,9 +723,6 @@ func runAgentSkillsSet(cmd *cobra.Command, args []string) error {
 	body := map[string]any{
 		"skill_ids": cleanIDs,
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result json.RawMessage
 	if err := client.PutJSON(ctx, "/api/agents/"+args[0]+"/skills", body, &result); err != nil {
@@ -772,10 +733,11 @@ func runAgentSkillsSet(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentSkillsAdd(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	if !cmd.Flags().Changed("skill-ids") {
 		return fmt.Errorf("--skill-ids is required (comma-separated skill IDs)")
@@ -787,9 +749,6 @@ func runAgentSkillsAdd(cmd *cobra.Command, args []string) error {
 	body := map[string]any{
 		"skill_ids": cleanIDs,
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var result json.RawMessage
 	if err := client.PostJSON(ctx, "/api/agents/"+args[0]+"/skills/add", body, &result); err != nil {
@@ -812,10 +771,11 @@ func cleanSkillIDsFlag(cmd *cobra.Command) []string {
 }
 
 func printAgentSkillsMutationResult(cmd *cobra.Command, agentID string, result json.RawMessage) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		var pretty any
-		json.Unmarshal(result, &pretty)
+		if err := json.Unmarshal(result, &pretty); err != nil {
+			return fmt.Errorf("decode avatar update response: %w", err)
+		}
 		return cli.PrintJSON(os.Stdout, pretty)
 	}
 
@@ -853,12 +813,10 @@ func printAgentSkillsTable(skills []map[string]any) {
 // mode and a key/value table otherwise; we never truncate or mask
 // values here — the security gate is on the server, not the printer.
 func runAgentEnvGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var resp map[string]any
@@ -866,8 +824,7 @@ func runAgentEnvGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get agent env: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -888,10 +845,11 @@ func runAgentEnvGet(cmd *cobra.Command, args []string) error {
 // equal to "****" as "preserve the existing entry" (see the **** guard
 // in the handler).
 func runAgentEnvSet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
+	defer cancel()
 
 	ce, ok, err := resolveCustomEnv(cmd)
 	if err != nil {
@@ -903,16 +861,12 @@ func runAgentEnvSet(cmd *cobra.Command, args []string) error {
 
 	body := map[string]any{"custom_env": ce}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/agents/"+args[0]+"/env", body, &result); err != nil {
 		return fmt.Errorf("update agent env: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -963,20 +917,19 @@ func parseCustomArgs(raw string) ([]string, error) {
 	return ca, nil
 }
 
-// resolveCustomEnv collects the --custom-env, --custom-env-stdin, and
-// --custom-env-file flags and returns the parsed map, a bool indicating
-// whether the caller supplied any of them, and any error. The three input
-// channels are mutually exclusive so callers can't accidentally provide a
-// secret twice. Stdin and file inputs exist to keep secret material out of
-// shell history and 'ps' / /proc/<pid>/cmdline.
-func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
-	inline := cmd.Flags().Changed("custom-env")
-	fromStdin, _ := cmd.Flags().GetBool("custom-env-stdin")
-	filePath, _ := cmd.Flags().GetString("custom-env-file")
-	// Note: an explicit --custom-env-file "" is honored as "the user asked
-	// for this channel with an empty path" and surfaces a real error below,
-	// rather than being silently swallowed.
-	fromFile := cmd.Flags().Changed("custom-env-file")
+// resolveSecretJSONFlag owns the shared inline/stdin/file boundary for
+// secret-bearing JSON flags. Domain parsers remain responsible for the JSON
+// shape and clear sentinel; this function only prevents ambiguous sources,
+// shell-history exposure, and accidental clears caused by empty pipes/files.
+func resolveSecretJSONFlag(cmd *cobra.Command, flagName, clearHint string) (string, bool, error) {
+	stdinFlag := flagName + "-stdin"
+	fileFlag := flagName + "-file"
+	inline := cmd.Flags().Changed(flagName)
+	fromStdin, _ := cmd.Flags().GetBool(stdinFlag)
+	filePath, _ := cmd.Flags().GetString(fileFlag)
+	// Changed intentionally distinguishes an explicit empty file path from an
+	// omitted flag so the former surfaces a real error.
+	fromFile := cmd.Flags().Changed(fileFlag)
 
 	count := 0
 	if inline {
@@ -988,42 +941,54 @@ func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
 	if fromFile {
 		count++
 	}
-	switch {
-	case count == 0:
-		return nil, false, nil
-	case count > 1:
-		return nil, false, fmt.Errorf("--custom-env, --custom-env-stdin, and --custom-env-file are mutually exclusive; pick one")
+	if count == 0 {
+		return "", false, nil
+	}
+	if count > 1 {
+		return "", false, fmt.Errorf("--%s, --%s, and --%s are mutually exclusive; pick one", flagName, stdinFlag, fileFlag)
 	}
 
-	var raw string
-	switch {
-	case inline:
-		raw, _ = cmd.Flags().GetString("custom-env")
-	case fromStdin:
+	if inline {
+		raw, _ := cmd.Flags().GetString(flagName)
+		return raw, true, nil
+	}
+	if fromStdin {
 		buf, err := io.ReadAll(cmd.InOrStdin())
 		if err != nil {
-			return nil, false, fmt.Errorf("read --custom-env-stdin: %w", err)
+			return "", false, fmt.Errorf("read --%s: %w", stdinFlag, err)
 		}
-		raw = string(buf)
+		raw := string(buf)
 		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--custom-env-stdin: empty input; pass '{}' to clear")
+			return "", false, fmt.Errorf("--%s: empty input; %s", stdinFlag, clearHint)
 		}
-	case fromFile:
-		if filePath == "" {
-			return nil, false, fmt.Errorf("--custom-env-file: path must not be empty")
-		}
-		buf, err := os.ReadFile(filePath)
-		if err != nil {
-			// Filesystem errors may include the path but not the contents —
-			// safe to surface via %w.
-			return nil, false, fmt.Errorf("read --custom-env-file: %w", err)
-		}
-		raw = string(buf)
-		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--custom-env-file %q: empty contents; pass '{}' to clear", filePath)
-		}
+		return raw, true, nil
 	}
+	if filePath == "" {
+		return "", false, fmt.Errorf("--%s: path must not be empty", fileFlag)
+	}
+	buf, err := os.ReadFile(filePath)
+	if err != nil {
+		// Filesystem errors may include the path but not the secret contents.
+		return "", false, fmt.Errorf("read --%s: %w", fileFlag, err)
+	}
+	raw := string(buf)
+	if strings.TrimSpace(raw) == "" {
+		return "", false, fmt.Errorf("--%s %q: empty contents; %s", fileFlag, filePath, clearHint)
+	}
+	return raw, true, nil
+}
 
+// resolveCustomEnv collects the --custom-env, --custom-env-stdin, and
+// --custom-env-file flags and returns the parsed map, a bool indicating
+// whether the caller supplied any of them, and any error. The three input
+// channels are mutually exclusive so callers can't accidentally provide a
+// secret twice. Stdin and file inputs exist to keep secret material out of
+// shell history and 'ps' / /proc/<pid>/cmdline.
+func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
+	raw, provided, err := resolveSecretJSONFlag(cmd, "custom-env", "pass '{}' to clear")
+	if err != nil || !provided {
+		return nil, provided, err
+	}
 	ce, err := parseCustomEnv(raw)
 	if err != nil {
 		return nil, false, err
@@ -1073,57 +1038,10 @@ func parseMcpConfig(raw string) (json.RawMessage, error) {
 // (`null` here vs `{}` for custom_env), because mcp_config distinguishes an
 // explicit empty object from an absent config server-side.
 func resolveMcpConfig(cmd *cobra.Command) (json.RawMessage, bool, error) {
-	inline := cmd.Flags().Changed("mcp-config")
-	fromStdin, _ := cmd.Flags().GetBool("mcp-config-stdin")
-	filePath, _ := cmd.Flags().GetString("mcp-config-file")
-	fromFile := cmd.Flags().Changed("mcp-config-file")
-
-	count := 0
-	if inline {
-		count++
+	raw, provided, err := resolveSecretJSONFlag(cmd, "mcp-config", "pass 'null' to clear")
+	if err != nil || !provided {
+		return nil, provided, err
 	}
-	if fromStdin {
-		count++
-	}
-	if fromFile {
-		count++
-	}
-	switch {
-	case count == 0:
-		return nil, false, nil
-	case count > 1:
-		return nil, false, fmt.Errorf("--mcp-config, --mcp-config-stdin, and --mcp-config-file are mutually exclusive; pick one")
-	}
-
-	var raw string
-	switch {
-	case inline:
-		raw, _ = cmd.Flags().GetString("mcp-config")
-	case fromStdin:
-		buf, err := io.ReadAll(cmd.InOrStdin())
-		if err != nil {
-			return nil, false, fmt.Errorf("read --mcp-config-stdin: %w", err)
-		}
-		raw = string(buf)
-		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--mcp-config-stdin: empty input; pass 'null' to clear")
-		}
-	case fromFile:
-		if filePath == "" {
-			return nil, false, fmt.Errorf("--mcp-config-file: path must not be empty")
-		}
-		buf, err := os.ReadFile(filePath)
-		if err != nil {
-			// Filesystem errors may include the path but not the contents —
-			// safe to surface via %w.
-			return nil, false, fmt.Errorf("read --mcp-config-file: %w", err)
-		}
-		raw = string(buf)
-		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--mcp-config-file %q: empty contents; pass 'null' to clear", filePath)
-		}
-	}
-
 	mc, err := parseMcpConfig(raw)
 	if err != nil {
 		return nil, false, err

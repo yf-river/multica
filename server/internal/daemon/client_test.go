@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
@@ -20,14 +22,14 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 		if got := r.Header.Get("X-Client-Version"); got != "9.9.9" {
 			t.Errorf("expected X-Client-Version 9.9.9, got %q", got)
 		}
-		if got := r.Header.Get("X-Client-OS"); got != normalizeGOOS(runtime.GOOS) {
-			t.Errorf("expected X-Client-OS %q, got %q", normalizeGOOS(runtime.GOOS), got)
+		if got := r.Header.Get("X-Client-OS"); got != protocol.NormalizeGOOS(runtime.GOOS) {
+			t.Errorf("expected X-Client-OS %q, got %q", protocol.NormalizeGOOS(runtime.GOOS), got)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
 			t.Errorf("expected Authorization Bearer tok, got %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 	}))
 	defer srv.Close()
 
@@ -52,7 +54,7 @@ func TestClient_IdentityHeaders_GetJSON(t *testing.T) {
 			t.Errorf("expected X-Client-OS to be set")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
 
@@ -103,8 +105,6 @@ func TestIsTaskStartConflictError(t *testing.T) {
 	}
 }
 
-// noSleepRetry replaces retrySleep with an immediate no-op so tests don't
-// actually wait the 4s/8s/16s/... backoffs. Returns a restore func.
 func noSleepRetry(t *testing.T) func() {
 	t.Helper()
 	prev := retrySleep
@@ -158,11 +158,50 @@ func TestPostJSONWithRetry_TransientThenSuccess(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Nanosecond, time.Nanosecond, time.Nanosecond}
-	if err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, nil, schedule); err != nil {
+	if err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, schedule); err != nil {
 		t.Fatalf("postJSONWithRetry: %v", err)
 	}
 	if got := calls.Load(); got != 3 {
 		t.Fatalf("expected 3 attempts (2 transient + 1 success), got %d", got)
+	}
+}
+
+func TestTaskReportsRetryTransientFailure(t *testing.T) {
+	defer noSleepRetry(t)()
+
+	for _, tc := range []struct {
+		name, path string
+		status     int
+		report     func(*Client) error
+	}{
+		{"messages", "/api/daemon/tasks/task-1/messages", http.StatusBadGateway, func(c *Client) error {
+			return c.ReportTaskMessages(context.Background(), "task-1", []protocol.TaskMessage{{Seq: 1, Type: "text", Content: "hello"}})
+		}},
+		{"usage", "/api/daemon/tasks/task-1/usage", http.StatusServiceUnavailable, func(c *Client) error {
+			return c.ReportTaskUsage(context.Background(), "task-1", []protocol.TaskUsage{{Provider: "test", Model: "model-a", InputTokens: 10}})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					t.Errorf("path = %q, want %q", r.URL.Path, tc.path)
+				}
+				if calls.Add(1) == 1 {
+					w.WriteHeader(tc.status)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(srv.Close)
+
+			if err := tc.report(NewClient(srv.URL)); err != nil {
+				t.Fatalf("report: %v", err)
+			}
+			if got := calls.Load(); got != 2 {
+				t.Fatalf("calls = %d, want 2", got)
+			}
+		})
 	}
 }
 
@@ -178,7 +217,7 @@ func TestPostJSONWithRetry_TransientExhausts(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Nanosecond, time.Nanosecond}
-	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, nil, schedule)
+	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, schedule)
 	if err == nil {
 		t.Fatal("expected error after schedule exhausted, got nil")
 	}
@@ -202,7 +241,7 @@ func TestPostJSONWithRetry_PermanentBailsImmediately(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Nanosecond, time.Nanosecond, time.Nanosecond}
-	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, nil, schedule)
+	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, schedule)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -230,7 +269,7 @@ func TestPostJSONWithRetry_CtxCancelStopsRetries(t *testing.T) {
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Second, time.Second, time.Second}
 	start := time.Now()
-	err := c.postJSONWithRetry(ctx, "/x", map[string]any{}, nil, schedule)
+	err := c.postJSONWithRetry(ctx, "/x", map[string]any{}, schedule)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected error after ctx cancel, got nil")
@@ -244,9 +283,6 @@ func TestPostJSONWithRetry_CtxCancelStopsRetries(t *testing.T) {
 }
 
 func TestDefaultTerminalRetrySchedule_MatchesAgreedPlan(t *testing.T) {
-	// MUL-2780 settled on a 5-step exponential backoff (4s, 8s, 16s, 32s, 64s).
-	// Pin it so a future "tidy this up" refactor can't silently flatten or
-	// shorten the recovery window without explicit discussion.
 	want := []time.Duration{4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 64 * time.Second}
 	if len(defaultTerminalRetrySchedule) != len(want) {
 		t.Fatalf("schedule length: got %d, want %d", len(defaultTerminalRetrySchedule), len(want))
@@ -254,20 +290,6 @@ func TestDefaultTerminalRetrySchedule_MatchesAgreedPlan(t *testing.T) {
 	for i, d := range want {
 		if defaultTerminalRetrySchedule[i] != d {
 			t.Errorf("schedule[%d]: got %s, want %s", i, defaultTerminalRetrySchedule[i], d)
-		}
-	}
-}
-
-func TestNormalizeGOOS(t *testing.T) {
-	cases := map[string]string{
-		"darwin":  "macos",
-		"windows": "windows",
-		"linux":   "linux",
-		"freebsd": "freebsd",
-	}
-	for in, want := range cases {
-		if got := normalizeGOOS(in); got != want {
-			t.Errorf("normalizeGOOS(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

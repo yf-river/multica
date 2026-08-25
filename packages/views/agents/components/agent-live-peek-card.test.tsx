@@ -5,18 +5,16 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enAgents from "../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../test/agent-fixtures";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
-// useWorkspaceId is a Context-backed hook in core; stub it to a static id so
-// the card runs outside a WorkspaceIdProvider in tests.
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
+// The card normally derives its workspace from the route; keep this test
+// focused on card presentation with a fixed workspace id.
 // Paths only needs issueDetail for the "Now on" link. A simple stub keeps the
 // test free of WorkspaceSlugProvider wiring.
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-1",
   useWorkspacePaths: () => ({
     issueDetail: (id: string) => `/test/issues/${id}`,
   }),
@@ -102,32 +100,6 @@ vi.mock("@multica/core/agents", async () => {
 
 import { AgentLivePeekCard } from "./agent-live-peek-card";
 
-function makeAgent(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "agent-1",
-    workspace_id: "ws-1",
-    runtime_id: "rt-1",
-    name: "Squirtle",
-    description: "",
-    instructions: "",
-    avatar_url: null,
-    runtime_mode: "local" as const,
-    runtime_config: {},
-    custom_args: [],
-    scope: "personal" as const,
-    status: "idle" as const,
-    max_concurrent_tasks: 1,
-    model: "",
-    owner_id: "user-me",
-    skills: [],
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
-    archived_at: null,
-    archived_by: null,
-    ...overrides,
-  };
-}
-
 function makeTask(overrides: Record<string, unknown>) {
   return {
     id: "task-x",
@@ -135,7 +107,6 @@ function makeTask(overrides: Record<string, unknown>) {
     runtime_id: "rt-1",
     issue_id: "",
     status: "completed" as const,
-    priority: 0,
     dispatched_at: null,
     started_at: null,
     completed_at: null,
@@ -157,7 +128,14 @@ function renderCard() {
 beforeEach(() => {
   vi.clearAllMocks();
   cleanup();
-  mockAgents.current = [makeAgent()];
+  mockAgents.current = [
+    makeAgent({
+      runtime_id: "rt-1",
+      name: "Squirtle",
+      scope: "personal",
+      owner_id: "user-me",
+    }),
+  ];
   mockSnapshot.current = [];
   mockIssue.current = null;
   mockPresence.current = {

@@ -16,7 +16,7 @@ vi.mock("@multica/core/github/queries", async () => {
     ...actual,
     issuePullRequestsOptions: (issueId: string) => ({
       queryKey: ["github", "pull-requests", issueId],
-      queryFn: async () => ({ pull_requests: mockPRs }),
+      queryFn: async () => mockPRs,
       enabled: !!issueId,
     }),
   };
@@ -29,20 +29,13 @@ let mockPRs: GitHubPullRequest[] = [];
 function makePR(overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequest {
   return {
     id: "pr-1",
-    workspace_id: "ws-1",
     repo_owner: "acme",
     repo_name: "widget",
     number: 1,
     title: "Test PR",
     state: "open",
     html_url: "https://example.test/pr/1",
-    branch: "feat/x",
     author_login: "octocat",
-    author_avatar_url: null,
-    merged_at: null,
-    closed_at: null,
-    pr_created_at: "2026-01-01T00:00:00Z",
-    pr_updated_at: "2026-01-01T00:00:00Z",
     mergeable_state: null,
     checks_conclusion: null,
     checks_passed: 0,
@@ -151,7 +144,7 @@ describe("PullRequestList sidebar rows", () => {
     expect(screen.queryByText("Checks passed")).not.toBeInTheDocument();
   });
 
-  it("hides stats row when all stats are 0 (legacy backend)", async () => {
+  it("hides stats row when GitHub supplied no diff statistics", async () => {
     mockPRs = [makePR()];
     renderList();
     await waitForRender();

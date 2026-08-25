@@ -8,12 +8,13 @@ type Message struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// TaskDispatchPayload is sent from server to daemon when a task is assigned.
-type TaskDispatchPayload struct {
-	TaskID      string `json:"task_id"`
-	IssueID     string `json:"issue_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+// MarshalMessage encodes a typed payload inside the shared WebSocket envelope.
+func MarshalMessage(messageType string, payload any) ([]byte, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(Message{Type: messageType, Payload: raw})
 }
 
 // TaskAvailablePayload is sent from server to daemon as a wakeup hint. The
@@ -58,20 +59,6 @@ type TaskMessagePayload struct {
 	Input     map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
 	Output    string         `json:"output,omitempty"`  // tool output (tool_result only)
 	CreatedAt string         `json:"created_at,omitempty"`
-}
-
-// DaemonRegisterPayload is sent from daemon to server on connection.
-type DaemonRegisterPayload struct {
-	DaemonID string        `json:"daemon_id"`
-	AgentID  string        `json:"agent_id"`
-	Runtimes []RuntimeInfo `json:"runtimes"`
-}
-
-// RuntimeInfo describes an available agent runtime on the daemon's machine.
-type RuntimeInfo struct {
-	Type    string `json:"type"`
-	Version string `json:"version"`
-	Status  string `json:"status"`
 }
 
 // ChatMessagePayload is broadcast when a new chat message is created.
@@ -126,7 +113,8 @@ type ChatSessionUpdatedPayload struct {
 // Mirrors the body of POST /api/daemon/heartbeat so both transports share
 // identical semantics.
 type DaemonHeartbeatRequestPayload struct {
-	RuntimeID string `json:"runtime_id"`
+	RuntimeID string          `json:"runtime_id"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
 }
 
 // DaemonHeartbeatAckPayload is the server's reply to DaemonHeartbeatRequestPayload.
@@ -140,13 +128,11 @@ type DaemonHeartbeatRequestPayload struct {
 // and re-registers; without it the dead UUID would keep heartbeating until the
 // daemon process restarts.
 type DaemonHeartbeatAckPayload struct {
-	RuntimeID          string                             `json:"runtime_id"`
-	Status             string                             `json:"status"`
-	RuntimeGone        bool                               `json:"runtime_gone,omitempty"`
-	PendingModelList   *DaemonHeartbeatPendingModelList   `json:"pending_model_list,omitempty"`
-	PendingLocalSkills *DaemonHeartbeatPendingLocalSkills `json:"pending_local_skills,omitempty"`
-	// PendingLocalSkillImports carries multiple import requests in a single
-	// heartbeat so the daemon can process them concurrently.
+	RuntimeID                string                                   `json:"runtime_id"`
+	Status                   string                                   `json:"status"`
+	RuntimeGone              bool                                     `json:"runtime_gone,omitempty"`
+	PendingModelList         *DaemonHeartbeatPendingModelList         `json:"pending_model_list,omitempty"`
+	PendingLocalSkills       *DaemonHeartbeatPendingLocalSkills       `json:"pending_local_skills,omitempty"`
 	PendingLocalSkillImports []DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_imports,omitempty"`
 }
 

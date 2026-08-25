@@ -13,7 +13,56 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 )
+
+func TestCollectTaskMarkdownArtifactsScansArtifactsTree(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "02-design.md"), "# design")
+	writeArtifactTestFile(t, filepath.Join(workDir, ".multica", "artifacts", "01-clarify.md"), "# clarify")
+	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "acceptance", "01-clarify.md"), "# acceptance")
+	writeArtifactTestFile(t, filepath.Join(workDir, "docs", "ignore.md"), "# ignore")
+	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "empty.md"), "")
+	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "note.txt"), "ignore")
+
+	got, err := collectTaskMarkdownArtifactsSince(workDir, time.Time{})
+	if err != nil {
+		t.Fatalf("collectTaskMarkdownArtifacts: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, artifact := range got {
+		names = append(names, artifact.DisplayName)
+	}
+	want := []string{"01-clarify.md", "acceptance/01-clarify.md", "multica/02-design.md"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("artifact names = %#v, want %#v", names, want)
+	}
+}
+
+func TestCollectTaskMarkdownArtifactsFromDirsIncludesIssueArtifactDir(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	artifactDir := t.TempDir()
+	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "02-design.md"), "# design")
+	writeArtifactTestFile(t, filepath.Join(artifactDir, "05-verify.md"), "# verify")
+
+	got, err := collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir, time.Time{})
+	if err != nil {
+		t.Fatalf("collectTaskMarkdownArtifactsFromDirs: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, artifact := range got {
+		names = append(names, artifact.DisplayName)
+	}
+	want := []string{"05-verify.md", "multica/02-design.md"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("artifact names = %#v, want %#v", names, want)
+	}
+}
 
 func TestCollectTaskMarkdownArtifactsFromDirsSkipsStaleIssueArtifacts(t *testing.T) {
 	t.Parallel()
@@ -81,7 +130,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FormFile: %v", err)
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			if header.Filename != "05-verify.md" {
 				t.Errorf("filename = %q", header.Filename)
 			}
@@ -90,7 +139,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 				t.Errorf("file content = %q", data)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(uploadedTaskArtifact{
+			_ = json.NewEncoder(w).Encode(uploadedTaskArtifact{
 				ID:          "att-1",
 				Filename:    "05-verify.md",
 				MarkdownURL: "/api/attachments/att-1/download",
@@ -114,7 +163,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 				t.Errorf("attachment_ids = %#v", body["attachment_ids"])
 			}
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -144,7 +193,7 @@ func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
 	task := Task{
 		ID:      "task-1",
 		IssueID: "issue-1",
-		ExecutionPolicy: &TaskExecutionPolicy{
+		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKey:     "02-design",
 			RoleKind:    "planning_stage",
 			CanEditRepo: false,
@@ -171,31 +220,28 @@ func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
 	}
 }
 
-func TestSummarizeFinalOutputForArtifactCommentKeepsCommentCompact(t *testing.T) {
+func TestSummarizeFinalOutputForArtifactComment(t *testing.T) {
 	t.Parallel()
 
-	output := "I read the context and will now provide the artifact.\n\n---\n## 03-task-split.md\n\n" + strings.Repeat("- detail\n", 20)
-
-	got := summarizeFinalOutputForArtifactComment(output)
-
-	if !strings.Contains(got, "已上传阶段产物：03-task-split.md") {
-		t.Fatalf("summary missing heading: %q", got)
-	}
-	if strings.Contains(got, "评论只保留摘要") || strings.Contains(got, "## 03-task-split.md") {
-		t.Fatalf("summary should be user-facing plain text: %q", got)
-	}
-	if strings.Contains(got, "I read the context") || strings.Contains(got, "- detail") {
-		t.Fatalf("summary should not include preamble or body details: %q", got)
-	}
-	if !strings.Contains(got, "摘要：detail") || !strings.Contains(got, "完整内容见附件") {
-		t.Fatalf("summary missing useful body summary: %q", got)
-	}
-}
-
-func TestSummarizeFinalOutputForArtifactCommentUsesReadableStageSummary(t *testing.T) {
-	t.Parallel()
-
-	output := `Now I have all the context.
+	tests := []struct {
+		name        string
+		output      string
+		contains    []string
+		notContains []string
+	}{
+		{
+			name:   "compact user-facing summary",
+			output: "I read the context and will now provide the artifact.\n\n---\n## 03-task-split.md\n\n" + strings.Repeat("- detail\n", 20),
+			contains: []string{
+				"已上传阶段产物：03-task-split.md",
+				"摘要：detail",
+				"完整内容见附件",
+			},
+			notContains: []string{"评论只保留摘要", "## 03-task-split.md", "I read the context", "- detail"},
+		},
+		{
+			name: "readable stage summary",
+			output: `Now I have all the context.
 
 ---
 
@@ -204,22 +250,15 @@ func TestSummarizeFinalOutputForArtifactCommentUsesReadableStageSummary(t *testi
 ### 一、变更范围确认
 
 基于 02-design.md 产物，本次变更覆盖 user-center 单仓库内的密码强度校验。
-`
-
-	got := summarizeFinalOutputForArtifactComment(output)
-
-	if want := "已上传阶段产物：03-任务拆分：增强密码强度 [IDA-79]"; !strings.Contains(got, want) {
-		t.Fatalf("summary missing stage title %q: %q", want, got)
-	}
-	if want := "摘要：基于 02-design.md 产物，本次变更覆盖 user-center 单仓库内的密码强度校验。"; !strings.Contains(got, want) {
-		t.Fatalf("summary missing first body paragraph %q: %q", want, got)
-	}
-}
-
-func TestSummarizeFinalOutputForArtifactCommentSummarizesTwoColumnTable(t *testing.T) {
-	t.Parallel()
-
-	output := `# 05-验证测试：增强密码强度 [IDA-79]
+`,
+			contains: []string{
+				"已上传阶段产物：03-任务拆分：增强密码强度 [IDA-79]",
+				"摘要：基于 02-design.md 产物，本次变更覆盖 user-center 单仓库内的密码强度校验。",
+			},
+		},
+		{
+			name: "two-column table digest",
+			output: `# 05-验证测试：增强密码强度 [IDA-79]
 
 ## 一、验证摘要
 
@@ -228,19 +267,12 @@ func TestSummarizeFinalOutputForArtifactCommentSummarizesTwoColumnTable(t *testi
 | 目标项目 | user-center |
 | MR | !122 |
 | child issue | 0 |
-`
-
-	got := summarizeFinalOutputForArtifactComment(output)
-
-	if want := "摘要：目标项目：user-center；MR：!122；child issue：0"; !strings.Contains(got, want) {
-		t.Fatalf("summary missing table digest %q: %q", want, got)
-	}
-}
-
-func TestSummarizeFinalOutputForArtifactCommentIncludesClarificationQuestions(t *testing.T) {
-	t.Parallel()
-
-	output := `# 01-clarify.md
+`,
+			contains: []string{"摘要：目标项目：user-center；MR：!122；child issue：0"},
+		},
+		{
+			name: "clarification questions",
+			output: `# 01-clarify.md
 
 ## 摘要
 
@@ -256,32 +288,21 @@ func TestSummarizeFinalOutputForArtifactCommentIncludesClarificationQuestions(t 
 ## 下一步
 
 - 等待用户确认后进入 02-方案设计。
-`
-
-	got := summarizeFinalOutputForArtifactComment(output)
-
-	for _, want := range []string{
-		"已上传阶段产物：01-clarify.md",
-		"摘要：已上传阶段产物：三、验收口径。",
-		"待确认：\n- 作用范围：注册、重置密码、管理员重置是否统一适用？",
-		"- 特殊字符白名单是否包含空格？",
-		"- 是否需要禁止与最近 N 次密码相同？",
-		"下一步：\n- 等待用户确认后进入 02-方案设计。",
-		"完整内容见附件。",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("summary missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "这一条不应进入评论") {
-		t.Fatalf("summary should cap section items:\n%s", got)
-	}
-}
-
-func TestSummarizeFinalOutputForArtifactCommentIncludesVerificationCases(t *testing.T) {
-	t.Parallel()
-
-	output := `# 05-verify.md
+`,
+			contains: []string{
+				"已上传阶段产物：01-clarify.md",
+				"摘要：已上传阶段产物：三、验收口径。",
+				"待确认：\n- 作用范围：注册、重置密码、管理员重置是否统一适用？",
+				"- 特殊字符白名单是否包含空格？",
+				"- 是否需要禁止与最近 N 次密码相同？",
+				"下一步：\n- 等待用户确认后进入 02-方案设计。",
+				"完整内容见附件。",
+			},
+			notContains: []string{"这一条不应进入评论"},
+		},
+		{
+			name: "verification cases",
+			output: `# 05-verify.md
 
 ## 验证摘要
 
@@ -300,22 +321,32 @@ func TestSummarizeFinalOutputForArtifactCommentIncludesVerificationCases(t *test
 ` + "```" + `
 go test ./...
 ` + "```" + `
-`
-
-	got := summarizeFinalOutputForArtifactComment(output)
-
-	for _, want := range []string{
-		"摘要：验证通过。",
-		"验收口径：\n- AC-01 长度校验：通过",
-		"- AC-02 字符类型校验：通过",
-		"- AC-03 特殊字符白名单：通过",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("summary missing %q:\n%s", want, got)
-		}
+`,
+			contains: []string{
+				"摘要：验证通过。",
+				"验收口径：\n- AC-01 长度校验：通过",
+				"- AC-02 字符类型校验：通过",
+				"- AC-03 特殊字符白名单：通过",
+			},
+			notContains: []string{"go test ./..."},
+		},
 	}
-	if strings.Contains(got, "go test ./...") {
-		t.Fatalf("summary should not include code block:\n%s", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := summarizeFinalOutputForArtifactComment(tt.output)
+			for _, want := range tt.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("summary missing %q:\n%s", want, got)
+				}
+			}
+			for _, unwanted := range tt.notContains {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("summary contains %q:\n%s", unwanted, got)
+				}
+			}
+		})
 	}
 }
 

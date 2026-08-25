@@ -4,11 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@multica/core/api";
 import type { CommentTriggerPreviewAgent } from "@multica/core/types";
-import {
-  commentTriggerPreviewSignature,
-  isNoteCommentDraft,
-  useCommentTriggerPreview,
-} from "./use-comment-trigger-preview";
+import { useCommentTriggerPreview } from "./use-comment-trigger-preview";
 
 vi.mock("@multica/core/api", () => ({
   api: {
@@ -43,10 +39,11 @@ function createWrapper() {
 }
 
 async function advancePreviewDebounce() {
-  act(() => {
-    vi.advanceTimersByTime(300);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(300);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
   });
-  await act(async () => {});
 }
 
 describe("useCommentTriggerPreview", () => {
@@ -139,8 +136,10 @@ describe("useCommentTriggerPreview", () => {
     );
 
     await advancePreviewDebounce();
-    await vi.waitFor(() => {
-      expect(result.current.agents).toEqual([waltAgent]);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(result.current.agents).toEqual([waltAgent]);
+      });
     });
 
     rerender({ parentId: "kim-thread" });
@@ -174,8 +173,10 @@ describe("useCommentTriggerPreview", () => {
     );
 
     await advancePreviewDebounce();
-    await vi.waitFor(() => {
-      expect(result.current.agents).toEqual([waltAgent]);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(result.current.agents).toEqual([waltAgent]);
+      });
     });
 
     rerender({ content: `[@Kim](mention://agent/${kimAgent.id})` });
@@ -239,6 +240,28 @@ describe("useCommentTriggerPreview", () => {
     expect(previewCommentTriggers).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores issue references but treats @all as a routing mention", async () => {
+    const issueId = "00000000-0000-0000-0000-000000000003";
+    const { rerender } = renderHook(
+      ({ content }) => useCommentTriggerPreview({ issueId: "issue-1", content }),
+      {
+        wrapper: createWrapper(),
+        initialProps: { content: "plain text" },
+      },
+    );
+
+    await advancePreviewDebounce();
+    expect(previewCommentTriggers).toHaveBeenCalledTimes(1);
+
+    rerender({ content: `See [MUL-1](mention://issue/${issueId})` });
+    await advancePreviewDebounce();
+    expect(previewCommentTriggers).toHaveBeenCalledTimes(1);
+
+    rerender({ content: "[@all](mention://all/all)" });
+    await advancePreviewDebounce();
+    expect(previewCommentTriggers).toHaveBeenCalledTimes(2);
+  });
+
   it("does not preview note drafts", async () => {
     const agentA = "00000000-0000-0000-0000-000000000001";
     const { result } = renderHook(
@@ -253,52 +276,5 @@ describe("useCommentTriggerPreview", () => {
 
     expect(result.current).toEqual({ agents: [] });
     expect(previewCommentTriggers).not.toHaveBeenCalled();
-  });
-});
-
-describe("commentTriggerPreviewSignature", () => {
-  it("ignores ordinary text changes", () => {
-    expect(commentTriggerPreviewSignature("hello")).toBe(
-      commentTriggerPreviewSignature("hello with more ordinary text"),
-    );
-  });
-
-  it("changes when routing mentions change", () => {
-    const agentA = "00000000-0000-0000-0000-000000000001";
-    const agentB = "00000000-0000-0000-0000-000000000002";
-
-    expect(commentTriggerPreviewSignature(`[@A](mention://agent/${agentA})`)).not.toBe(
-      commentTriggerPreviewSignature(`[@A](mention://agent/${agentA}) [@B](mention://agent/${agentB})`),
-    );
-  });
-
-  it("tracks @all but ignores issue cross-references", () => {
-    const issueID = "00000000-0000-0000-0000-000000000003";
-
-    expect(commentTriggerPreviewSignature(`See [MUL-1](mention://issue/${issueID})`)).toBe(
-      commentTriggerPreviewSignature("plain text"),
-    );
-    expect(commentTriggerPreviewSignature("[@all](mention://all/all)")).not.toBe(
-      commentTriggerPreviewSignature("plain text"),
-    );
-  });
-
-  it("treats note commands as empty", () => {
-    const agentA = "00000000-0000-0000-0000-000000000001";
-
-    expect(commentTriggerPreviewSignature(`/note [@A](mention://agent/${agentA})`)).toBe("empty");
-    expect(commentTriggerPreviewSignature(`  /NOTE\n[@A](mention://agent/${agentA})`)).toBe("empty");
-    expect(commentTriggerPreviewSignature(`/notes [@A](mention://agent/${agentA})`)).not.toBe("empty");
-    expect(commentTriggerPreviewSignature(`/ note [@A](mention://agent/${agentA})`)).not.toBe("empty");
-  });
-});
-
-describe("isNoteCommentDraft", () => {
-  it("matches the reserved note prefix only as the first token", () => {
-    expect(isNoteCommentDraft("/note")).toBe(true);
-    expect(isNoteCommentDraft(" \t/Note keep this human-only")).toBe(true);
-    expect(isNoteCommentDraft("/notes keep this routable")).toBe(false);
-    expect(isNoteCommentDraft("/ note keep this routable")).toBe(false);
-    expect(isNoteCommentDraft("please /note later")).toBe(false);
   });
 });

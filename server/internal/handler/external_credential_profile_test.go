@@ -7,35 +7,183 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
-	name := fmt.Sprintf("tapd-profile-%d", time.Now().UnixNano())
+func createExternalCredentialProfileForTest(t *testing.T, body map[string]any, forbidden ...string) externalCredentialProfileResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreateExternalCredentialProfile(w, newRequest(http.MethodPost, "/api/external-credential-profiles", body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, value := range forbidden {
+		if strings.Contains(w.Body.String(), value) {
+			t.Fatalf("credential response leaked %q: %s", value, w.Body.String())
+		}
+	}
+	var profile externalCredentialProfileResponse
+	if err := json.NewDecoder(w.Body).Decode(&profile); err != nil {
+		t.Fatalf("decode credential profile response: %v", err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
+	})
+	return profile
+}
+
+func tapdSourceMetadata(includeURL bool) map[string]any {
+	metadata := map[string]any{
+		"source_provider":    "tapd",
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	}
+	if includeURL {
+		metadata["source_url"] = "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154"
+	}
+	return metadata
+}
+
+func createExternalSourceIssueForTest(t *testing.T, body map[string]any, forbidden ...string) IssueResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, value := range forbidden {
+		if strings.Contains(w.Body.String(), value) {
+			t.Fatalf("issue response leaked %q: %s", value, w.Body.String())
+		}
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
+	return issue
+}
+
+func TestCreateExternalCredentialProfileRecoversExactResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	name := "credential-replay-" + uuid.NewString()
+	key := uuid.NewString()
+	body := map[string]any{
+		"provider": "tapd", "name": name, "secret_ref": "env:CURRENT_TAPD_TOKEN",
+		"capabilities": map[string]any{"repository_read": true},
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE user_id=$1 AND name=$2`, testUserID, name)
+	})
+	create := func(payload map[string]any) *httptest.ResponseRecorder {
+		req := newRequest(http.MethodPost, "/api/external-credential-profiles", payload)
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.CreateExternalCredentialProfile(w, req)
+		return w
+	}
+	first := create(body)
+	replay := create(body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("credential replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- create(body)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusCreated || response.Body.String() != first.Body.String() {
+			t.Fatalf("concurrent replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	changed := create(map[string]any{
+		"provider": "tapd", "name": name + "-changed", "secret_ref": "env:CURRENT_TAPD_TOKEN",
+	})
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", changed.Code, changed.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM external_credential_profile WHERE user_id=$1 AND idempotency_key=$2`, testUserID, key).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("credential rows = %d, want 1", count)
+	}
+}
+
+func TestExternalCredentialProfileToResponseRejectsNonObjectCapabilities(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := externalCredentialProfileToResponse(db.ExternalCredentialProfile{Capabilities: raw}); err == nil {
+			t.Fatalf("capabilities=%s expected an error", raw)
+		}
+	}
+	response, err := externalCredentialProfileToResponse(db.ExternalCredentialProfile{Capabilities: []byte(`{"repository_read":true}`)})
+	if err != nil {
+		t.Fatalf("object capabilities: %v", err)
+	}
+	if response.Capabilities["repository_read"] != true {
+		t.Fatalf("capabilities = %#v", response.Capabilities)
+	}
+}
+
+func TestCreateExternalCredentialProfileRejectsNullCapabilities(t *testing.T) {
+	name := fmt.Sprintf("null-capabilities-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM external_credential_profile WHERE user_id = $1 AND name = $2
+		`, testUserID, name)
+	})
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
 		"provider":     "tapd",
 		"name":         name,
 		"secret_ref":   "env:TAPD_TOKEN",
-		"capabilities": map[string]any{"markdown_wiki": true},
+		"capabilities": nil,
 	})
 	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	if strings.Contains(w.Body.String(), "env:TAPD_TOKEN") {
-		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateExternalCredentialProfile null capabilities: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var created ExternalCredentialProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode create response: %v", err)
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int FROM external_credential_profile
+		WHERE user_id = $1 AND name = $2
+	`, testUserID, name).Scan(&count); err != nil {
+		t.Fatalf("count null-capabilities profiles: %v", err)
 	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
-	})
+	if count != 0 {
+		t.Fatalf("CreateExternalCredentialProfile persisted %d null-capabilities rows", count)
+	}
+}
+
+func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
+	name := fmt.Sprintf("tapd-profile-%d", time.Now().UnixNano())
+	created := createExternalCredentialProfileForTest(t, map[string]any{
+		"provider":     "tapd",
+		"name":         name,
+		"secret_ref":   "env:TAPD_TOKEN",
+		"capabilities": map[string]any{"markdown_wiki": true},
+	}, "env:TAPD_TOKEN")
 	if created.Scope != "account" {
 		t.Fatalf("scope = %q, want account", created.Scope)
 	}
@@ -49,14 +197,14 @@ func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
 		t.Fatalf("secret_binding should be redacted: %+v", created.SecretBinding)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/external-credential-profiles?provider=tapd", nil)
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/external-credential-profiles?provider=tapd", nil)
 	testHandler.ListExternalCredentialProfiles(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListExternalCredentialProfiles: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var listResp struct {
-		Profiles []ExternalCredentialProfileResponse `json:"profiles"`
+		Profiles []externalCredentialProfileResponse `json:"profiles"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
 		t.Fatalf("decode list response: %v", err)
@@ -92,6 +240,48 @@ func TestExternalCredentialProfileRawTokenRequiresEncryption(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "tapd-secret-token") {
 		t.Fatalf("error response leaked raw token: %s", w.Body.String())
+	}
+}
+
+func TestExternalCredentialProfileTokenReplayDoesNotNeedSecretAgain(t *testing.T) {
+	if testHandler == nil || testHandler.ExternalCredentialBox == nil {
+		t.Skip("credential encryption fixture not available")
+	}
+	name := "credential-token-replay-" + uuid.NewString()
+	key := uuid.NewString()
+	token := "credential-plaintext-sentinel"
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE user_id=$1 AND name=$2`, testUserID, name)
+	})
+	request := func() *http.Request {
+		req := newRequest(http.MethodPost, "/api/external-credential-profiles", map[string]any{
+			"provider": "gongfeng", "name": name, "token": token,
+		})
+		req.Header.Set("Idempotency-Key", key)
+		return req
+	}
+	first := httptest.NewRecorder()
+	testHandler.CreateExternalCredentialProfile(first, request())
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first token create = %d %s", first.Code, first.Body.String())
+	}
+	previous := testHandler.ExternalCredentialBox
+	testHandler.ExternalCredentialBox = nil
+	replay := httptest.NewRecorder()
+	testHandler.CreateExternalCredentialProfile(replay, request())
+	testHandler.ExternalCredentialBox = previous
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("token replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	if strings.Contains(first.Body.String(), token) || strings.Contains(replay.Body.String(), token) {
+		t.Fatal("credential response leaked the plaintext token")
+	}
+	var encryptedText, requestHash string
+	if err := testPool.QueryRow(context.Background(), `SELECT encode(encrypted_secret, 'hex'), request_hash FROM external_credential_profile WHERE user_id=$1 AND idempotency_key=$2`, testUserID, key).Scan(&encryptedText, &requestHash); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(encryptedText, token) || requestHash == token || len(requestHash) != 64 {
+		t.Fatalf("unsafe persisted credential metadata: encrypted_contains_token=%t hash_length=%d", strings.Contains(encryptedText, token), len(requestHash))
 	}
 }
 
@@ -162,7 +352,10 @@ func TestExternalCredentialProfileTestReportsTAPDUnauthorized(t *testing.T) {
 }
 
 func TestMergeMCPServerEnvCreatesDefaultServerEntry(t *testing.T) {
-	config := normalizeMCPConfigForInjection(nil)
+	config, err := normalizeMCPConfigForInjection(nil)
+	if err != nil {
+		t.Fatalf("normalize MCP config: %v", err)
+	}
 	changed := mergeMCPServerEnv(config, tapdMCPServerName, map[string]string{"TAPD_ACCESS_TOKEN": "tapd-secret"})
 	if !changed {
 		t.Fatal("mergeMCPServerEnv should report a change")
@@ -182,11 +375,17 @@ func TestMergeMCPServerEnvCreatesDefaultServerEntry(t *testing.T) {
 	}
 }
 
+func TestNormalizeMCPConfigForInjectionRejectsNonObject(t *testing.T) {
+	for _, raw := range []json.RawMessage{json.RawMessage(`[]`), json.RawMessage(`null`), json.RawMessage(`"value"`)} {
+		if _, err := normalizeMCPConfigForInjection(raw); err == nil {
+			t.Fatalf("normalizeMCPConfigForInjection(%s) expected an error", raw)
+		}
+	}
+}
+
 func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 	name := fmt.Sprintf("gongfeng-profile-%d", time.Now().UnixNano())
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+	created := createExternalCredentialProfileForTest(t, map[string]any{
 		"provider":   "gongfeng",
 		"name":       name,
 		"secret_ref": "env:GONGFENG_TOKEN",
@@ -194,22 +393,7 @@ func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 			"repository_read": true,
 			"branch_read":     true,
 		},
-	})
-	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile(gongfeng): expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_TOKEN") {
-		t.Fatalf("response leaked raw gongfeng secret_ref: %s", w.Body.String())
-	}
-
-	var created ExternalCredentialProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
-	})
+	}, "env:GONGFENG_TOKEN")
 	if created.Provider != "gongfeng" || created.Scope != "account" {
 		t.Fatalf("created profile = %+v", created)
 	}
@@ -219,41 +403,24 @@ func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 }
 
 func TestExternalCredentialProfileVerifyMissingEnvSecretRef(t *testing.T) {
-	t.Setenv("GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING", "")
+	t.Setenv("GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING", "")
 	name := fmt.Sprintf("gongfeng-missing-env-%d", time.Now().UnixNano())
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+	created := createExternalCredentialProfileForTest(t, map[string]any{
 		"provider":   "gongfeng",
 		"name":       name,
-		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING",
+		"secret_ref": "env:GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING",
 		"verify_now": true,
-	})
-	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile(gongfeng): expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING") {
-		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
-	}
-
-	var created ExternalCredentialProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
-	})
+	}, "env:GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING")
 	if created.Status != "failed" {
 		t.Fatalf("status = %q, want failed; response=%+v", created.Status, created)
 	}
-	if !strings.Contains(created.LastError, "服务器环境变量 GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING 未设置") {
+	if !strings.Contains(created.LastError, "服务器环境变量 GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING 未设置") {
 		t.Fatalf("last_error = %q", created.LastError)
 	}
 }
 
 func TestExternalCredentialProfileTestMissingEnvDoesNotPersist(t *testing.T) {
-	t.Setenv("GONGFENG_ACCESS_TOKEN_TEST_MISSING", "")
+	t.Setenv("GONGFENG_PRIVATE_TOKEN_TEST_MISSING", "")
 	var before int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM external_credential_profile WHERE user_id = $1 AND provider = 'gongfeng'`, testUserID).Scan(&before); err != nil {
 		t.Fatalf("count profiles before: %v", err)
@@ -262,13 +429,13 @@ func TestExternalCredentialProfileTestMissingEnvDoesNotPersist(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/external-credential-profiles/test", map[string]any{
 		"provider":   "gongfeng",
-		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_TEST_MISSING",
+		"secret_ref": "env:GONGFENG_PRIVATE_TOKEN_TEST_MISSING",
 	})
 	testHandler.TestExternalCredentialProfile(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("TestExternalCredentialProfile: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_TEST_MISSING") {
+	if strings.Contains(w.Body.String(), "env:GONGFENG_PRIVATE_TOKEN_TEST_MISSING") {
 		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
 	}
 	var result TestExternalCredentialProfileResponse
@@ -278,7 +445,7 @@ func TestExternalCredentialProfileTestMissingEnvDoesNotPersist(t *testing.T) {
 	if result.Status != "failed" {
 		t.Fatalf("status = %q, want failed; response=%+v", result.Status, result)
 	}
-	if !strings.Contains(result.LastError, "服务器环境变量 GONGFENG_ACCESS_TOKEN_TEST_MISSING 未设置") {
+	if !strings.Contains(result.LastError, "服务器环境变量 GONGFENG_PRIVATE_TOKEN_TEST_MISSING 未设置") {
 		t.Fatalf("last_error = %q", result.LastError)
 	}
 	var after int
@@ -303,18 +470,18 @@ func TestExternalCredentialProfileTestGongfengEnvTokenHitsAPI(t *testing.T) {
 	}))
 	t.Cleanup(api.Close)
 	t.Setenv("GONGFENG_API_BASE", api.URL)
-	t.Setenv("GONGFENG_ACCESS_TOKEN_TEST_OK", "gongfeng-ok")
+	t.Setenv("GONGFENG_PRIVATE_TOKEN_TEST_OK", "gongfeng-ok")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/external-credential-profiles/test", map[string]any{
 		"provider":   "gongfeng",
-		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_TEST_OK",
+		"secret_ref": "env:GONGFENG_PRIVATE_TOKEN_TEST_OK",
 	})
 	testHandler.TestExternalCredentialProfile(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("TestExternalCredentialProfile: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_TEST_OK") || strings.Contains(w.Body.String(), "gongfeng-ok") {
+	if strings.Contains(w.Body.String(), "env:GONGFENG_PRIVATE_TOKEN_TEST_OK") || strings.Contains(w.Body.String(), "gongfeng-ok") {
 		t.Fatalf("response leaked credential material: %s", w.Body.String())
 	}
 	var result TestExternalCredentialProfileResponse
@@ -331,47 +498,18 @@ func TestExternalCredentialProfileTestGongfengEnvTokenHitsAPI(t *testing.T) {
 
 func TestCreateTapdIssueInheritsAccountCredentialProfile(t *testing.T) {
 	name := fmt.Sprintf("tapd-default-%d", time.Now().UnixNano())
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+	profile := createExternalCredentialProfileForTest(t, map[string]any{
 		"provider":   "tapd",
 		"name":       name,
 		"secret_ref": "env:TAPD_TOKEN",
-	})
-	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var profile ExternalCredentialProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&profile); err != nil {
-		t.Fatalf("decode profile response: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
-	})
+	}, "env:TAPD_TOKEN")
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createExternalSourceIssueForTest(t, map[string]any{
 		"title":    "TAPD profile inherited issue",
 		"status":   "todo",
 		"priority": "medium",
-		"metadata": map[string]any{
-			"source_provider": "tapd",
-			"tapd_workspace":  "47654106",
-			"tapd_wiki_id":    "1147654106001004154",
-		},
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	if strings.Contains(w.Body.String(), "env:TAPD_TOKEN") {
-		t.Fatalf("issue response leaked profile secret_ref: %s", w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
+		"metadata": tapdSourceMetadata(false),
+	}, "env:TAPD_TOKEN")
 	if got := issue.Metadata["source_credential_scope"]; got != "account" {
 		t.Fatalf("source_credential_scope = %T %v", got, got)
 	}
@@ -397,25 +535,12 @@ func TestCreateTapdIssueMarksMissingAccountCredentialProfile(t *testing.T) {
 		t.Fatalf("clear tapd profiles: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createExternalSourceIssueForTest(t, map[string]any{
 		"title":    "TAPD missing profile issue",
 		"status":   "todo",
 		"priority": "medium",
-		"metadata": map[string]any{
-			"source_provider": "tapd",
-			"tapd_workspace":  "47654106",
-			"tapd_wiki_id":    "1147654106001004154",
-		},
+		"metadata": tapdSourceMetadata(false),
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 	if got := issue.Metadata["source_fetch_status"]; got != "blocked_missing_profile" {
 		t.Fatalf("source_fetch_status = %T %v", got, got)
 	}
@@ -447,49 +572,26 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	}`).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
 
 	profileName := fmt.Sprintf("tapd-claim-%d", time.Now().UnixNano())
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+	profile := createExternalCredentialProfileForTest(t, map[string]any{
 		"provider":   "tapd",
 		"name":       profileName,
 		"secret_ref": "env:TAPD_TOKEN",
-	})
-	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var profile ExternalCredentialProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&profile); err != nil {
-		t.Fatalf("decode profile response: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
-	})
+	}, "env:TAPD_TOKEN")
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	createExternalSourceIssueForTest(t, map[string]any{
 		"title":         "TAPD source context claim issue",
 		"status":        "todo",
 		"priority":      "medium",
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
-		"metadata": map[string]any{
-			"source_provider":    "tapd",
-			"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			"tapd_workspace_id":  "47654106",
-			"tapd_resource_type": "markdown_wiki",
-			"tapd_resource_id":   "1147654106001004154",
-		},
+		"metadata":      tapdSourceMetadata(true),
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
 
-	w = httptest.NewRecorder()
-	req = newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
 		testWorkspaceID, "tapd-source-context-claim")
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)
@@ -501,8 +603,8 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	}
 	var claim struct {
 		Task *struct {
-			SourceContext *TaskSourceContext `json:"source_context"`
-			Agent         *TaskAgentData     `json:"agent"`
+			SourceContext *protocol.TaskSourceContext `json:"source_context"`
+			Agent         *protocol.TaskAgent         `json:"agent"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&claim); err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -202,109 +203,57 @@ func (b *copilotBackend) Execute(ctx context.Context, prompt string, opts ExecOp
 		return nil, fmt.Errorf("copilot executable not found at %q: %w", execName, err)
 	}
 
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
 	args := buildCopilotArgs(prompt, opts, b.cfg.Logger)
 	argv0, cmdArgs := chooseCopilotInvocation(execName, lookedUp, args, b.cfg.Logger)
+	return executeStreamCommand(ctx, opts.Timeout, streamCommandSpec{
+		name:          "copilot",
+		executable:    argv0,
+		args:          cmdArgs,
+		env:           buildEnv(b.cfg.Env),
+		cwd:           opts.Cwd,
+		waitDelay:     10 * time.Second,
+		logger:        b.cfg.Logger,
+		model:         opts.Model,
+		captureStderr: true,
+		parse: func(stdout io.Reader, msgCh chan<- Message, _ context.CancelFunc) streamCommandResult {
+			seedModel := opts.Model
+			if seedModel == "" {
+				seedModel = "copilot"
+			}
+			st := newCopilotEventState(seedModel)
 
-	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
-	cmd.WaitDelay = 10 * time.Second
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+			scanner := bufio.NewScanner(stdout)
+			scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("copilot stdout pipe: %w", err)
-	}
-	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[copilot:stderr] "), agentStderrTailBytes)
-	cmd.Stderr = stderrBuf
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" {
+					continue
+				}
 
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("start copilot: %w", err)
-	}
+				var evt copilotEvent
+				if err := json.Unmarshal([]byte(line), &evt); err != nil {
+					slog.Warn("copilot event parse failed", "err", err, "line", line)
+					continue
+				}
 
-	b.cfg.Logger.Info("copilot started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-
-		startTime := time.Now()
-		seedModel := opts.Model
-		if seedModel == "" {
-			seedModel = "copilot"
-		}
-		st := newCopilotEventState(seedModel)
-
-		go func() {
-			<-runCtx.Done()
-			_ = stdout.Close()
-		}()
-
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
+				for _, m := range handleCopilotEvent(evt, st) {
+					trySend(msgCh, m)
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				slog.Warn("copilot stdout scanner error", "err", err)
 			}
 
-			var evt copilotEvent
-			if err := json.Unmarshal([]byte(line), &evt); err != nil {
-				slog.Warn("copilot event parse failed", "err", err, "line", line)
-				continue
+			return streamCommandResult{
+				status:    st.finalStatus,
+				output:    st.output.String(),
+				errMsg:    st.finalError,
+				sessionID: st.sessionID,
+				usage:     st.usage,
 			}
-
-			for _, m := range handleCopilotEvent(evt, st) {
-				trySend(msgCh, m)
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			slog.Warn("copilot stdout scanner error", "err", err)
-		}
-
-		exitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			st.finalStatus = "timeout"
-			st.finalError = fmt.Sprintf("copilot timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled {
-			st.finalStatus = "aborted"
-			st.finalError = "execution cancelled"
-		} else if exitErr != nil && st.finalStatus == "completed" {
-			st.finalStatus = "failed"
-			st.finalError = fmt.Sprintf("copilot exited with error: %v", exitErr)
-		}
-		if st.finalError != "" {
-			st.finalError = withAgentStderr(st.finalError, "copilot", stderrBuf.Tail())
-		}
-
-		b.cfg.Logger.Info("copilot finished", "pid", cmd.Process.Pid, "status", st.finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		resCh <- Result{
-			Status:     st.finalStatus,
-			Output:     st.output.String(),
-			Error:      st.finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  st.sessionID,
-			Usage:      st.usage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+		},
+	})
 }
 
 // ── Copilot CLI JSONL event types ──

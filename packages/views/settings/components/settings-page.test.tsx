@@ -40,11 +40,14 @@ vi.mock("./tokens-tab", () => ({
 vi.mock("./workspace-tab", () => ({
   WorkspaceTab: () => <div>Workspace general content</div>,
 }));
-vi.mock("./repositories-tab", () => ({
-  RepositoriesTab: () => <div>Repositories content</div>,
+vi.mock("./project-gongfeng-repositories", () => ({
+  ProjectGongfengRepositories: () => <div>Repositories content</div>,
 }));
-vi.mock("./integrations-tab", () => ({
-  IntegrationsTab: () => <div>Integrations content</div>,
+vi.mock("./github-tab", () => ({
+  GitHubTab: () => <div>GitHub content</div>,
+}));
+vi.mock("./lark-tab", () => ({
+  LarkTab: () => <div>Integrations content</div>,
 }));
 vi.mock("./members-tab", () => ({
   MembersTab: () => <div>Members content</div>,
@@ -81,17 +84,18 @@ describe("SettingsPage tabs", () => {
     };
   });
 
-  it("does not expose the removed Labs tab", () => {
-    renderSettingsPage();
+  it("opens the GitHub settings surface used by the installation callback", () => {
+    renderSettingsPage("tab=github&github_connected=1");
 
-    expect(screen.queryByRole("tab", { name: "实验室" })).toBeNull();
-    expect(screen.queryByText("暂无实验")).toBeNull();
+    expect(screen.getByRole("tab", { name: "GitHub" })).toBeTruthy();
+    expect(screen.getByText("GitHub content")).toBeTruthy();
+    expect(screen.queryByText("Profile content")).toBeNull();
   });
 
-  it("keeps the legacy lark redirect on integrations", () => {
-    renderSettingsPage("tab=lark");
+  it("owns the repository section heading around the current repository surface", () => {
+    renderSettingsPage("tab=repositories");
 
-    expect(screen.getByText("Integrations content")).toBeTruthy();
-    expect(screen.queryByText("Workspace general content")).toBeNull();
+    expect(screen.getByRole("heading", { name: "代码仓库" })).toBeTruthy();
+    expect(screen.getByText("Repositories content")).toBeTruthy();
   });
 });

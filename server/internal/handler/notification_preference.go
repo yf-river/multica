@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/requestctx"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -32,12 +33,29 @@ var validNotifValues = map[string]bool{
 	"muted": true,
 }
 
+func writeNotificationPreferences(w http.ResponseWriter, r *http.Request, workspaceID string, raw json.RawMessage) {
+	var prefs map[string]string
+	err := json.Unmarshal(raw, &prefs)
+	if err == nil && prefs == nil {
+		err = errors.New("preferences must be a JSON object")
+	}
+	if err != nil {
+		slog.Warn("decode notification preferences failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to decode notification preferences")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"workspace_id": workspaceID,
+		"preferences":  prefs,
+	})
+}
+
 func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 
 	pref, err := h.Queries.GetNotificationPreference(r.Context(), db.GetNotificationPreferenceParams{
 		WorkspaceID: parseUUID(workspaceID),
@@ -56,15 +74,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var prefs map[string]string
-	if err := json.Unmarshal(pref.Preferences, &prefs); err != nil {
-		prefs = map[string]string{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workspace_id": workspaceID,
-		"preferences":  prefs,
-	})
+	writeNotificationPreferences(w, r, workspaceID, pref.Preferences)
 }
 
 type updateNotifPrefRequest struct {
@@ -76,11 +86,10 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceID := requestctx.WorkspaceID(r.Context())
 
 	var req updateNotifPrefRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -117,13 +126,5 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var prefs map[string]string
-	if err := json.Unmarshal(pref.Preferences, &prefs); err != nil {
-		prefs = map[string]string{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workspace_id": workspaceID,
-		"preferences":  prefs,
-	})
+	writeNotificationPreferences(w, r, workspaceID, pref.Preferences)
 }

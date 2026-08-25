@@ -1,0 +1,418 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const generation = spawnSync(process.execPath, ["scripts/generate-current-system-map.mjs"], {
+  cwd: root,
+  encoding: "utf8",
+});
+assert.equal(
+  generation.status,
+  0,
+  `generate current-system map failed:\n${generation.stdout}\n${generation.stderr}`,
+);
+const inventory = JSON.parse(
+  fs.readFileSync(path.join(root, "artifacts/code-health/current-system-map.json"), "utf8"),
+);
+
+function collectEvidencePaths(value, key = "", result = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectEvidencePaths(item, key, result);
+    return result;
+  }
+  if (!value || typeof value !== "object") {
+    if (
+      typeof value === "string" &&
+      (key === "source" || key === "sources" || key === "referenceSources" || key === "registration" || key === "implementation" || key === "generatedSource")
+    ) {
+      result.add(value.split("#", 1)[0]);
+    }
+    return result;
+  }
+  for (const [childKey, child] of Object.entries(value)) {
+    collectEvidencePaths(child, childKey, result);
+  }
+  return result;
+}
+
+test("generated evidence never depends on ignored build output", () => {
+  const paths = [...collectEvidencePaths(inventory)].filter((item) => fs.existsSync(path.join(root, item)));
+  const check = spawnSync("git", ["check-ignore", "--stdin"], {
+    cwd: root,
+    encoding: "utf8",
+    input: `${paths.join("\n")}\n`,
+  });
+  assert.equal(check.stdout.trim(), "", `ignored evidence leaked into inventory:\n${check.stdout}`);
+  assert.doesNotMatch(JSON.stringify(inventory), /apps\/desktop\/out|\/(?:\.next|dist|build|coverage)\//);
+  assert.ok(inventory.frontend.desktopRoutes.length > 0, "private Desktop route table was not inventoried");
+});
+
+test("runtime env helpers and Vite main-process configuration are inventoried", () => {
+  const names = new Set(inventory.environment.variables.map((item) => item.name));
+  const expected = [
+    "MULTICA_AGENT_IDLE_WATCHDOG",
+    "MULTICA_AGENT_TIMEOUT",
+    "MULTICA_AGENT_TOOL_WATCHDOG",
+    "MULTICA_CLAUDE_ARGS",
+    "MULTICA_CODEBUDDY_ARGS",
+    "MULTICA_CODEX_ARGS",
+    "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT",
+    "MULTICA_DAEMON_MAX_CONCURRENT_TASKS",
+    "MULTICA_GC_ARTIFACT_PATTERNS",
+    "MULTICA_GC_ARTIFACT_TTL",
+    "MULTICA_GC_INTERVAL",
+    "MULTICA_GC_ORPHAN_TTL",
+    "MULTICA_GC_TTL",
+    "VITE_API_URL",
+    "VITE_WS_URL",
+    "VITE_APP_URL",
+  ];
+  assert.deepEqual(expected.filter((name) => !names.has(name)), []);
+});
+
+test("implicit database and websocket contracts are visible", () => {
+  assert.equal(inventory.persistence.database.functions.length, 9);
+  assert.equal(inventory.persistence.database.triggers.length, 4);
+  assert.ok(inventory.persistence.database.indexes.length >= 180);
+  assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
+});
+
+test("current idempotency and outbox tables have an upgrade migration", () => {
+  const requiredTables = [
+    "autopilot_trigger_rotation_request",
+    "chat_idempotency_record",
+    "domain_event_delivery",
+    "domain_event_outbox",
+    "resource_create_request",
+    "skill_import_request",
+  ];
+  const upMigrations = inventory.persistence.database.migrations.filter(
+    (migration) => migration.direction === "up",
+  );
+  const baseline = upMigrations.find((migration) => migration.version === 1);
+  const upgrade = upMigrations.find(
+    (migration) => migration.version === 6 && migration.name === "current_idempotency_and_outbox",
+  );
+
+  assert.ok(upgrade, "current database upgrade migration 006 is missing");
+  assert.deepEqual(
+    requiredTables.filter((table) => baseline.tablesCreated.some((created) => created.name === table)),
+    [],
+    "upgrade-required tables must not exist only in the already-applied baseline",
+  );
+  assert.deepEqual(
+    upgrade.tablesCreated.map((table) => table.name).sort(),
+    requiredTables,
+  );
+});
+
+test("current request identity columns have an upgrade migration", () => {
+  const baseline = fs.readFileSync(
+    path.join(root, "server/migrations/001_current_schema.up.sql"),
+    "utf8",
+  );
+  const upgrade = fs.readFileSync(
+    path.join(root, "server/migrations/011_current_request_identity_and_uniqueness.up.sql"),
+    "utf8",
+  );
+  const requiredColumns = {
+    autopilot: ["request_key", "request_hash", "initial_trigger_id"],
+    autopilot_run: ["request_key"],
+    external_credential_profile: ["idempotency_key", "request_hash"],
+    feedback: ["idempotency_key", "request_hash"],
+    personal_access_token: ["idempotency_key", "request_hash"],
+    webhook_delivery: ["replay_actor_id", "replay_request_key", "replay_request_hash"],
+  };
+
+  for (const [table, columns] of Object.entries(requiredColumns)) {
+    const tableDefinition = baseline.match(
+      new RegExp(`CREATE TABLE public\\.${table} \\(([\\s\\S]*?)\\n\\);`),
+    )?.[1];
+    assert.ok(tableDefinition, `baseline table ${table} is missing`);
+    for (const column of columns) {
+      assert.equal(
+        new RegExp(`^\\s*${column}\\s`, "m").test(tableDefinition),
+        false,
+        `${table}.${column} must not exist only in the already-applied baseline`,
+      );
+      assert.match(upgrade, new RegExp(`\\b${column}\\b`));
+    }
+  }
+});
+
+test("Handler methods have one current HTTP registration", () => {
+  const registrations = new Map();
+  for (const route of inventory.backend.chiRoutes) {
+    if (!route.handler.startsWith("h.")) continue;
+    const routes = registrations.get(route.handler) ?? [];
+    routes.push(`${route.method} ${route.path}`);
+    registrations.set(route.handler, routes);
+  }
+  const duplicates = [...registrations]
+    .filter(([, routes]) => routes.length > 1)
+    .map(([handler, routes]) => `${handler}: ${routes.join(", ")}`)
+    .sort();
+  assert.deepEqual(duplicates, [], `multiple current routes share a Handler method:\n${duplicates.join("\n")}`);
+});
+
+test("external and non-page HTTP surfaces are present without Once.Do false positives", () => {
+  const systems = new Set(inventory.externalIo.externalSystems.map((item) => item.id));
+  assert.ok(systems.has("public-skill-registries"));
+  assert.ok(systems.has("user-git-remotes"));
+
+  const outbound = inventory.externalIo.autoDetected.find((item) => item.kind === "outbound-http")?.sources ?? [];
+  assert.ok(outbound.includes("server/internal/handler/skill_import_clawhub.go"));
+  assert.ok(!outbound.includes("server/internal/auth/jwt.go"));
+  assert.ok(!outbound.includes("server/internal/auth/cookie.go"));
+
+  assert.deepEqual(inventory.frontend.webRouteHandlers, [{
+    method: "GET",
+    path: "/favicon.ico",
+    source: "apps/web/app/favicon.ico/route.ts",
+  }]);
+  assert.equal(inventory.frontend.webProxy?.source, "apps/web/proxy.ts");
+  assert.deepEqual(
+    inventory.frontend.webRewrites.map((rewrite) => `${rewrite.lane}:${rewrite.source}->${rewrite.destinationTemplate}`),
+    [
+      "afterFiles:/api/:path*->{remoteApiUrl}/api/:path*",
+      "afterFiles:/auth/:path*->{remoteApiUrl}/auth/:path*",
+      "afterFiles:/uploads/:path*->{remoteApiUrl}/uploads/:path*",
+      "afterFiles:/ws->{remoteApiUrl}/ws",
+      "beforeFiles:/docs->{docsUrl}/docs",
+      "beforeFiles:/docs/:path*->{docsUrl}/docs/:path*",
+    ],
+  );
+  assert.deepEqual(
+    inventory.backend.auxiliaryHttpRoutes.map((route) => `${route.server}:${route.path}`).sort(),
+    [
+      "CLI loopback OAuth callback:/callback",
+      "daemon localhost control listener:/health",
+      "daemon localhost control listener:/repo/checkout",
+      "daemon localhost control listener:/shutdown",
+      "metrics listener:/metrics",
+    ],
+  );
+});
+
+test("the current domain ownership map stays anchored to routes, tables and sources", () => {
+  const routeKeys = new Set(
+    inventory.backend.chiRoutes.map((route) => `${route.method} ${route.path}`),
+  );
+  const tableNames = new Set(
+    inventory.persistence.database.tables.map((table) => table.name),
+  );
+  const flows = [
+    {
+      name: "chat send",
+      routes: [
+        "POST /api/chat/sessions",
+        "POST /api/chat/sessions/{sessionId}/messages",
+      ],
+      tables: ["chat_idempotency_record"],
+      sources: [
+        "packages/core/chat/pending-operation-store.ts",
+        "server/internal/handler/chat.go",
+        "server/internal/service/task_enqueue.go",
+      ],
+    },
+    {
+      name: "project create",
+      routes: ["POST /api/projects"],
+      tables: ["project", "project_resource", "resource_create_request"],
+      sources: [
+        "packages/core/projects/mutations.ts",
+        "packages/views/modals/create-project.tsx",
+        "server/internal/handler/project.go",
+        "server/pkg/db/queries/resource_create_request.sql",
+      ],
+    },
+    {
+      name: "autopilot",
+      routes: [
+        "POST /api/autopilots",
+        "POST /api/autopilots/{id}/trigger",
+        "POST /api/webhooks/autopilots/{token}",
+      ],
+      tables: ["autopilot", "autopilot_run", "autopilot_trigger"],
+      sources: [
+        "packages/core/autopilots/mutations.ts",
+        "packages/core/autopilots/pending-operation-store.ts",
+        "server/internal/handler/autopilot.go",
+        "server/internal/handler/autopilot_triggers.go",
+        "server/internal/service/autopilot.go",
+      ],
+    },
+    {
+      name: "squad create",
+      routes: ["POST /api/squads"],
+      tables: ["resource_create_request", "squad", "squad_member"],
+      sources: [
+        "server/internal/handler/squad.go",
+        "server/pkg/db/queries/resource_create_request.sql",
+        "packages/core/squads/mutations.ts",
+        "packages/core/squads/mutations.test.tsx",
+      ],
+    },
+    {
+      name: "agent create",
+      routes: ["POST /api/agents"],
+      tables: ["agent", "resource_create_request"],
+      sources: [
+        "packages/core/agents/create.ts",
+        "packages/core/api/transport.ts",
+        "packages/core/platform/recoverable-operation-store.ts",
+        "server/internal/handler/agent.go",
+        "server/internal/handler/resource_create_idempotency.go",
+      ],
+    },
+    {
+      name: "attachment upload",
+      routes: ["POST /api/upload-file"],
+      tables: ["attachment", "resource_create_request"],
+      sources: [
+        "packages/core/api/client.ts",
+        "server/internal/handler/file.go",
+        "server/internal/handler/resource_create_idempotency.go",
+        "server/migrations/001_current_schema.up.sql",
+      ],
+    },
+    {
+      name: "quick create",
+      routes: ["POST /api/issues/quick-create"],
+      tables: ["agent_task_queue", "issue", "resource_create_request"],
+      sources: [
+        "packages/core/issues/quick-create.ts",
+        "packages/core/issues/stores/quick-create-store.ts",
+        "server/internal/handler/issue_quick_create.go",
+        "server/internal/handler/quick_create_idempotency.go",
+        "server/internal/service/task_enqueue.go",
+        "server/pkg/db/queries/agent.sql",
+        "server/migrations/001_current_schema.up.sql",
+      ],
+    },
+    {
+      name: "skill create",
+      routes: ["POST /api/skills"],
+      tables: ["resource_create_request", "skill", "skill_file"],
+      sources: [
+        "packages/core/skills/create.ts",
+        "packages/core/api/transport.ts",
+        "packages/core/platform/recoverable-operation-store.ts",
+        "server/internal/handler/skill.go",
+        "server/internal/handler/resource_create_idempotency.go",
+      ],
+    },
+    {
+      name: "Lark",
+      routes: ["POST /api/lark/binding/redeem"],
+      tables: [
+        "domain_event_delivery",
+        "domain_event_outbox",
+        "lark_chat_session_binding",
+        "lark_inbound_message_dedup",
+      ],
+      sources: [
+        "server/internal/integrations/lark/dispatcher.go",
+        "server/internal/integrations/lark/outbound.go",
+        "server/cmd/server/chat_projection.go",
+        "server/internal/eventoutbox/outbox.go",
+      ],
+    },
+    {
+      name: "Issue and Task lifecycle",
+      routes: [
+        "POST /api/issues",
+        "PUT /api/issues/{id}",
+        "POST /api/issues/{id}/comments",
+        "POST /api/daemon/tasks/{taskId}/start",
+        "POST /api/daemon/tasks/{taskId}/complete",
+        "POST /api/daemon/tasks/{taskId}/fail",
+      ],
+      tables: [
+        "agent_task_queue",
+        "comment",
+        "domain_event_delivery",
+        "domain_event_outbox",
+        "issue",
+        "task_token",
+      ],
+      sources: [
+        "server/internal/handler/issue.go",
+        "server/internal/handler/comment.go",
+        "server/internal/service/task_claim.go",
+        "server/internal/service/task_complete.go",
+        "server/internal/service/task_fail.go",
+        "server/cmd/server/task_projection.go",
+      ],
+    },
+    {
+      name: "Prompt Evaluation",
+      routes: [
+        "POST /api/prompt-evaluation-assets/{id}/run",
+        "POST /api/prompt-evaluation-runs/{id}/sync",
+        "POST /api/prompt-evaluation-runs/{id}/review",
+        "POST /api/prompt-evaluation-optimization-candidates/{id}/skill-apply",
+      ],
+      tables: [
+        "prompt_evaluation_asset",
+        "prompt_evaluation_case",
+        "prompt_evaluation_dataset_version",
+        "prompt_evaluation_run",
+        "prompt_evaluation_trial",
+        "prompt_evaluation_evidence_snapshot",
+        "prompt_evaluation_optimization_candidate",
+      ],
+      sources: [
+        "server/internal/handler/prompt_evaluation_asset.go",
+        "server/internal/handler/prompt_evaluation_dataset_versions.go",
+        "server/internal/service/prompt_evaluation_sync.go",
+        "server/cmd/server/prompt_evaluation_projection.go",
+        "packages/views/prompt-library/components/use-prompt-library-mutations.ts",
+        "packages/views/prompt-library/components/use-skill-candidate-workflow-actions.ts",
+      ],
+    },
+    {
+      name: "Gongfeng repository",
+      routes: [
+        "POST /api/workspaces/{id}/repos/probe",
+        "POST /api/workspaces/{id}/repos/resolve",
+        "POST /api/projects/{id}/resources",
+        "POST /api/issues/{id}/merge-requests/create",
+        "POST /api/issues/{id}/pull-requests",
+      ],
+      tables: [
+        "external_credential_profile",
+        "github_pull_request",
+        "issue_pull_request",
+        "project_resource",
+        "workspace",
+      ],
+      sources: [
+        "server/internal/handler/workspace.go",
+        "server/internal/handler/project_resource.go",
+        "server/internal/handler/github.go",
+        "server/internal/service/task_complete.go",
+        "server/internal/handler/issue.go",
+        "packages/views/settings/components/project-gongfeng-repositories.tsx",
+        "server/cmd/multica/cmd_issue_pull_request.go",
+      ],
+    },
+  ];
+
+  const content = fs.readFileSync(
+    path.join(root, "docs/architecture/domain-flows.md"),
+    "utf8",
+  );
+  for (const flow of flows) {
+    for (const route of flow.routes) assert.ok(routeKeys.has(route), `${flow.name}: stale route ${route}`);
+    for (const table of flow.tables) assert.ok(tableNames.has(table), `${flow.name}: stale table ${table}`);
+    for (const source of flow.sources) {
+      assert.ok(fs.existsSync(path.join(root, source)), `${flow.name}: missing source ${source}`);
+      assert.ok(content.includes(`\`${source}\``), `${flow.name}: undocumented source ${source}`);
+    }
+  }
+});

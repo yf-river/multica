@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { notificationPreferenceKeys } from "./queries";
-import type { NotificationPreferences, NotificationPreferenceResponse } from "../types";
+import type { NotificationPreferences } from "../types";
 
 export function useUpdateNotificationPreferences() {
   const qc = useQueryClient();
@@ -13,12 +13,12 @@ export function useUpdateNotificationPreferences() {
       api.updateNotificationPreferences(preferences),
     onMutate: async (preferences) => {
       await qc.cancelQueries({ queryKey: notificationPreferenceKeys.all(wsId) });
-      const prev = qc.getQueryData<NotificationPreferenceResponse>(
+      const prev = qc.getQueryData<NotificationPreferences>(
         notificationPreferenceKeys.all(wsId),
       );
-      qc.setQueryData<NotificationPreferenceResponse>(
+      qc.setQueryData<NotificationPreferences>(
         notificationPreferenceKeys.all(wsId),
-        (old) => old ? { ...old, preferences } : { workspace_id: wsId, preferences },
+        preferences,
       );
       return { prev };
     },

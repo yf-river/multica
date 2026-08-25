@@ -1,7 +1,43 @@
 "use client";
 
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
-import { ListGridCell } from "@multica/ui/components/ui/list-grid";
+import { MoreHorizontal } from "lucide-react";
+import {
+  ListGridCell,
+  ListGridHeaderCell,
+} from "@multica/ui/components/ui/list-grid";
+import type { ComponentProps } from "react";
+
+export function ListGridRowMenuButton({ label }: { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className="flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-accent-foreground group-hover/row:opacity-100 data-popup-open:bg-accent data-popup-open:opacity-100 data-popup-open:text-accent-foreground"
+    >
+      <MoreHorizontal className="size-4" />
+    </button>
+  );
+}
+
+export function toggleSelectedId(selectedIds: ReadonlySet<string>, id: string) {
+  const next = new Set(selectedIds);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
+
+export function getListGridSelectionState(
+  visibleIds: readonly string[],
+  selectedIds: ReadonlySet<string>,
+) {
+  const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length;
+  const allSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length;
+  return {
+    allSelected,
+    someSelected: selectedVisibleCount > 0 && !allSelected,
+  };
+}
 
 export function ListGridCheckboxCell({
   checked,
@@ -19,6 +55,7 @@ export function ListGridCheckboxCell({
           e.stopPropagation();
           onToggle();
         }}
+        onAuxClick={(e) => e.stopPropagation()}
         className={`-m-1.5 flex items-center p-1.5 ${
           checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
         }`}
@@ -30,6 +67,21 @@ export function ListGridCheckboxCell({
         />
       </button>
     </ListGridCell>
+  );
+}
+
+export function ListGridToggleableHeaderCell({
+  visible,
+  className,
+  ...props
+}: ComponentProps<typeof ListGridHeaderCell> & { visible: boolean }) {
+  if (visible) {
+    return <ListGridHeaderCell className={className} {...props} />;
+  }
+  return (
+    <ListGridHeaderCell
+      className={className ? `${className} px-0` : "px-0"}
+    />
   );
 }
 

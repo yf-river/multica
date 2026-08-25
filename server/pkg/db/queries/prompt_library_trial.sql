@@ -6,7 +6,6 @@ INSERT INTO prompt_library_trial (
     agent_id,
     chat_session_id,
     task_id,
-    input,
     rendered_message,
     variables,
     status,
@@ -19,7 +18,6 @@ INSERT INTO prompt_library_trial (
     sqlc.narg('chat_session_id'),
     sqlc.narg('task_id'),
     $5,
-    $6,
     COALESCE(sqlc.narg('variables')::jsonb, '{}'::jsonb),
     COALESCE(sqlc.narg('status'), 'queued'),
     sqlc.narg('created_by')
@@ -28,21 +26,9 @@ RETURNING *;
 
 -- name: ListPromptLibraryTrials :many
 SELECT
-    plt.id,
-    plt.workspace_id,
-    plt.prompt_id,
-    plt.version_id,
-    plt.agent_id,
-    plt.chat_session_id,
-    plt.task_id,
-    plt.input,
-    plt.rendered_message,
-    plt.variables,
-    COALESCE(atq.status, plt.status) AS status,
-    COALESCE(NULLIF(assistant_message.content, ''), plt.output_preview) AS output_preview,
-    plt.created_by,
-    plt.created_at,
-    plt.updated_at
+    sqlc.embed(plt),
+    COALESCE(atq.status, plt.status) AS effective_status,
+    COALESCE(NULLIF(assistant_message.content, ''), plt.output_preview) AS effective_output_preview
 FROM prompt_library_trial plt
 LEFT JOIN agent_task_queue atq ON atq.id = plt.task_id
 LEFT JOIN LATERAL (

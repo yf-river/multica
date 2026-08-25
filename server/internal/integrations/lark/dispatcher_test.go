@@ -241,10 +241,8 @@ func (f *fakeChat) AppendUserMessage(ctx context.Context, p AppendUserMessagePar
 	if f.appendErr != nil {
 		return f.appendResult, f.appendErr
 	}
-	res := f.appendResult
-	// Mirror chatSessionService.AppendUserMessage: when the dispatcher
-	// supplies a claim token, Mark in-tx; zero rows ↔ stale-reclaim
-	// rotated the token under our feet, surface ErrClaimLost.
+	// Mirror chatSessionService.AppendUserMessage when a test supplies the
+	// query fake: Mark in-tx; zero rows means stale-reclaim rotated the token.
 	if f.queries != nil && p.ClaimToken.Valid && p.LarkMessageID != "" {
 		rows, err := f.queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
 			InstallationID: p.InstallationID,
@@ -257,16 +255,19 @@ func (f *fakeChat) AppendUserMessage(ctx context.Context, p AppendUserMessagePar
 		if rows == 0 {
 			return AppendResult{}, ErrClaimLost
 		}
-		res.DedupMarked = true
 	}
-	return res, nil
+	return f.appendResult, nil
 }
 
 type fakeAudit struct {
 	drops []AuditDropParams
+	err   error
 }
 
 func (f *fakeAudit) RecordDrop(ctx context.Context, p AuditDropParams) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.drops = append(f.drops, p)
 	return nil
 }
@@ -314,7 +315,7 @@ func activeInstallation() db.LarkInstallation {
 		WorkspaceID:     validUUID(0x22),
 		AgentID:         validUUID(0x33),
 		InstallerUserID: validUUID(0x99),
-		Status:          string(InstallationActive),
+		Status:          installationStatusActive,
 	}
 }
 
@@ -336,12 +337,50 @@ func boundUser() db.LarkUserBinding {
 	}
 }
 
-func TestDispatcher_UnknownAppDropped(t *testing.T) {
-	queries := &fakeQueries{installationErr: pgx.ErrNoRows}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+type dispatcherFixture struct {
+	dispatcher *Dispatcher
+	queries    *fakeQueries
+	chat       *fakeChat
+	audit      *fakeAudit
+	issues     *fakeIssueCreator
+	enqueuer   *fakeEnqueuer
+}
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+func newDispatcherFixture() *dispatcherFixture {
+	installation := activeInstallation()
+	sessionID := validUUID(0x66)
+	queries := &fakeQueries{
+		installationByApp: installation,
+		userBinding:       boundUser(),
+		chatSession:       db.ChatSession{ID: sessionID, AgentID: installation.AgentID},
+		workspace:         db.Workspace{ID: installation.WorkspaceID, IssuePrefix: "MUL"},
+	}
+	chat := &fakeChat{ensureID: sessionID}
+	audit := &fakeAudit{}
+	issues := &fakeIssueCreator{}
+	enqueuer := &fakeEnqueuer{}
+	return &dispatcherFixture{
+		queries:  queries,
+		chat:     chat,
+		audit:    audit,
+		issues:   issues,
+		enqueuer: enqueuer,
+		dispatcher: &Dispatcher{
+			Queries:         queries,
+			Chat:            chat,
+			RecordDrop:      audit.RecordDrop,
+			CreateIssue:     issues.Create,
+			EnqueueChatTask: enqueuer.EnqueueChatTask,
+			FlushReply:      func(context.Context, db.LarkInstallation, InboundMessage, DispatchResult) {},
+		},
+	}
+}
+
+func TestDispatcher_UnknownAppDropped(t *testing.T) {
+	f := newDispatcherFixture()
+	f.queries.installationErr = pgx.ErrNoRows
+
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:     "missing",
 		EventType: "im.message.receive_v1",
 	})
@@ -351,39 +390,50 @@ func TestDispatcher_UnknownAppDropped(t *testing.T) {
 	if res.Outcome != OutcomeDropped || res.DropReason != DropReasonInvalidEvent {
 		t.Fatalf("unexpected outcome: %+v", res)
 	}
-	if len(audit.drops) != 1 || audit.drops[0].Reason != DropReasonInvalidEvent {
-		t.Fatalf("expected one invalid_event audit row, got %+v", audit.drops)
+	if len(f.audit.drops) != 1 || f.audit.drops[0].Reason != DropReasonInvalidEvent {
+		t.Fatalf("expected one invalid_event audit row, got %+v", f.audit.drops)
 	}
-	if audit.drops[0].InstallationID.Valid {
-		t.Fatalf("audit row should omit installation_id for unknown app: %+v", audit.drops[0])
+	if f.audit.drops[0].InstallationID.Valid {
+		t.Fatalf("audit row should omit installation_id for unknown app: %+v", f.audit.drops[0])
+	}
+}
+
+func TestDispatcher_UnknownAppAuditFailureIsRetryable(t *testing.T) {
+	auditErr := errors.New("audit unavailable")
+	f := newDispatcherFixture()
+	f.queries.installationErr = pgx.ErrNoRows
+	f.audit.err = auditErr
+
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
+		AppID:     "missing",
+		EventType: "im.message.receive_v1",
+		MessageID: "msg-unknown-audit-failure",
+	})
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected retryable audit error, got result=%+v err=%v", res, err)
 	}
 }
 
 func TestDispatcher_RevokedInstallationDropped(t *testing.T) {
-	inst := activeInstallation()
-	inst.Status = string(InstallationRevoked)
-	queries := &fakeQueries{installationByApp: inst}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	f := newDispatcherFixture()
+	f.queries.installationByApp.Status = installationStatusRevoked
 
-	res, err := d.Handle(context.Background(), InboundMessage{AppID: "ok"})
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{AppID: "ok"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if res.DropReason != DropReasonRevokedInstallation {
 		t.Fatalf("got drop reason %q", res.DropReason)
 	}
-	if len(audit.drops) != 1 || audit.drops[0].Reason != DropReasonRevokedInstallation {
-		t.Fatalf("audit drops: %+v", audit.drops)
+	if len(f.audit.drops) != 1 || f.audit.drops[0].Reason != DropReasonRevokedInstallation {
+		t.Fatalf("audit drops: %+v", f.audit.drops)
 	}
 }
 
 func TestDispatcher_GroupWithoutMentionDropped(t *testing.T) {
-	queries := &fakeQueries{installationByApp: activeInstallation()}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	f := newDispatcherFixture()
 
-	res, _ := d.Handle(context.Background(), InboundMessage{
+	res, _ := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
 		ChatType:       ChatTypeGroup,
 		AddressedToBot: false,
@@ -391,20 +441,38 @@ func TestDispatcher_GroupWithoutMentionDropped(t *testing.T) {
 	if res.DropReason != DropReasonNotAddressedInGroup {
 		t.Fatalf("got drop reason %q", res.DropReason)
 	}
-	if queries.calledUserBinding != 0 {
-		t.Fatalf("identity check should be skipped before group filter, got %d calls", queries.calledUserBinding)
+	if f.queries.calledUserBinding != 0 {
+		t.Fatalf("identity check should be skipped before group filter, got %d calls", f.queries.calledUserBinding)
+	}
+}
+
+func TestDispatcher_GroupDropAuditFailureReleasesClaim(t *testing.T) {
+	auditErr := errors.New("audit unavailable")
+	f := newDispatcherFixture()
+	f.audit.err = auditErr
+
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
+		AppID:          "ok",
+		ChatType:       ChatTypeGroup,
+		AddressedToBot: false,
+		MessageID:      "msg-group-audit-failure",
+	})
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected retryable audit error, got result=%+v err=%v", res, err)
+	}
+	if f.queries.calledRelease != 1 {
+		t.Fatalf("audit failure must release claim, release calls=%d", f.queries.calledRelease)
+	}
+	if _, exists := f.queries.dedup[seedDedupKey("msg-group-audit-failure")]; exists {
+		t.Fatalf("audit failure left a dedup blocker: %+v", f.queries.dedup)
 	}
 }
 
 func TestDispatcher_UnboundUserAsksForBinding(t *testing.T) {
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBindingErr:    pgx.ErrNoRows,
-	}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	f := newDispatcherFixture()
+	f.queries.userBindingErr = pgx.ErrNoRows
 
-	res, _ := d.Handle(context.Background(), InboundMessage{
+	res, _ := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -418,31 +486,39 @@ func TestDispatcher_UnboundUserAsksForBinding(t *testing.T) {
 	if res.SenderOpenID != "ou_user_a" {
 		t.Fatalf("sender propagation broken: %q", res.SenderOpenID)
 	}
-	if len(audit.drops) != 1 || audit.drops[0].Reason != DropReasonUnboundUser {
-		t.Fatalf("expected one unbound_user audit row, got %+v", audit.drops)
+	if len(f.audit.drops) != 1 || f.audit.drops[0].Reason != DropReasonUnboundUser {
+		t.Fatalf("expected one unbound_user audit row, got %+v", f.audit.drops)
+	}
+}
+
+func TestDispatcher_UnboundAuditFailureReleasesClaim(t *testing.T) {
+	auditErr := errors.New("audit unavailable")
+	f := newDispatcherFixture()
+	f.queries.userBindingErr = pgx.ErrNoRows
+	f.audit.err = auditErr
+
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
+		AppID:        "ok",
+		ChatType:     ChatTypeP2P,
+		SenderOpenID: "ou_user_a",
+		MessageID:    "msg-unbound-audit-failure",
+	})
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected retryable audit error, got result=%+v err=%v", res, err)
+	}
+	if f.queries.calledRelease != 1 {
+		t.Fatalf("audit failure must release claim, release calls=%d", f.queries.calledRelease)
+	}
+	if _, exists := f.queries.dedup[seedDedupKey("msg-unbound-audit-failure")]; exists {
+		t.Fatalf("audit failure left a dedup blocker: %+v", f.queries.dedup)
 	}
 }
 
 func TestDispatcher_PlainMessageEnqueuesTask(t *testing.T) {
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{
-		ensureID:     sessionID,
-		appendResult: AppendResult{},
-	}
-	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-	}
+	f := newDispatcherFixture()
+	f.enqueuer.task = db.AgentTaskQueue{ID: validUUID(0x77)}
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -455,44 +531,28 @@ func TestDispatcher_PlainMessageEnqueuesTask(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("expected ingested, got %q", res.Outcome)
 	}
-	// The run trigger is debounced (MUL-2968): no TaskID is surfaced
-	// synchronously anymore, and with batching disabled the flush fires
-	// inline so the enqueue is observable right here.
-	if res.TaskID.Valid {
-		t.Fatalf("TaskID must not be set synchronously after debounce; got %+v", res.TaskID)
-	}
-	if enq.called != 1 {
-		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", enq.called)
+	// Drain the pending trigger as graceful shutdown does.
+	f.dispatcher.FlushPendingRuns()
+	if f.enqueuer.called != 1 {
+		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", f.enqueuer.called)
 	}
 	// For p2p the session creator should be the bound user, not the
 	// installer — verifies the chat-type branch in Handle.
-	if chat.lastEnsureParams.Sender != queries.userBinding.MulticaUserID {
-		t.Fatalf("p2p session creator should be sender; got %+v", chat.lastEnsureParams.Sender)
+	if f.chat.lastEnsureParams.Sender != f.queries.userBinding.MulticaUserID {
+		t.Fatalf("p2p session creator should be sender; got %+v", f.chat.lastEnsureParams.Sender)
 	}
 	// The task initiator is also the sender (MUL-2645).
-	if enq.lastInitiatorUID != queries.userBinding.MulticaUserID {
+	if f.enqueuer.lastInitiatorUID != f.queries.userBinding.MulticaUserID {
 		t.Fatalf("p2p task initiator should be sender; got %+v want %+v",
-			enq.lastInitiatorUID, queries.userBinding.MulticaUserID)
+			f.enqueuer.lastInitiatorUID, f.queries.userBinding.MulticaUserID)
 	}
 }
 
 func TestDispatcher_GroupMessageUsesInstallerAsCreator(t *testing.T) {
-	inst := activeInstallation()
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: inst,
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
+	f := newDispatcherFixture()
+	f.enqueuer.task = db.AgentTaskQueue{ID: validUUID(0x77)}
 
-	_, _ = d.Handle(context.Background(), InboundMessage{
+	_, _ = f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
 		ChatType:       ChatTypeGroup,
 		AddressedToBot: true,
@@ -500,9 +560,9 @@ func TestDispatcher_GroupMessageUsesInstallerAsCreator(t *testing.T) {
 		Body:           "hey",
 		MessageID:      "msg-g",
 	})
-	if chat.lastEnsureParams.Sender != inst.InstallerUserID {
+	if f.chat.lastEnsureParams.Sender != f.queries.installationByApp.InstallerUserID {
 		t.Fatalf("group session creator should be installer; got %+v want %+v",
-			chat.lastEnsureParams.Sender, inst.InstallerUserID)
+			f.chat.lastEnsureParams.Sender, f.queries.installationByApp.InstallerUserID)
 	}
 }
 
@@ -514,25 +574,10 @@ func TestDispatcher_GroupMessageUsesInstallerAsCreator(t *testing.T) {
 // passes the sender's MulticaUserID to EnqueueChatTask; this asserts that the
 // enqueued initiator is the sender (boundUser), NOT the installer.
 func TestDispatcher_GroupMessageEnqueuesWithSenderAsInitiator(t *testing.T) {
-	inst := activeInstallation()
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: inst,
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-	}
+	f := newDispatcherFixture()
+	f.enqueuer.task = db.AgentTaskQueue{ID: validUUID(0x77)}
 
-	// Batching is disabled (d.batcher == nil), so the flush fires inline and the
-	// enqueue is observable synchronously.
-	_, err := d.Handle(context.Background(), InboundMessage{
+	_, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
 		ChatType:       ChatTypeGroup,
 		AddressedToBot: true,
@@ -543,45 +588,29 @@ func TestDispatcher_GroupMessageEnqueuesWithSenderAsInitiator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if enq.called != 1 {
-		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", enq.called)
+	f.dispatcher.FlushPendingRuns()
+	if f.enqueuer.called != 1 {
+		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", f.enqueuer.called)
 	}
 	// Session creator stays the installer (member-churn stability)...
-	if chat.lastEnsureParams.Sender != inst.InstallerUserID {
-		t.Fatalf("group session creator should be installer; got %+v", chat.lastEnsureParams.Sender)
+	if f.chat.lastEnsureParams.Sender != f.queries.installationByApp.InstallerUserID {
+		t.Fatalf("group session creator should be installer; got %+v", f.chat.lastEnsureParams.Sender)
 	}
 	// ...but the task initiator is the SENDER, not the installer.
-	if enq.lastInitiatorUID != queries.userBinding.MulticaUserID {
+	if f.enqueuer.lastInitiatorUID != f.queries.userBinding.MulticaUserID {
 		t.Fatalf("group task initiator should be the sender; got %+v want %+v",
-			enq.lastInitiatorUID, queries.userBinding.MulticaUserID)
+			f.enqueuer.lastInitiatorUID, f.queries.userBinding.MulticaUserID)
 	}
-	if enq.lastInitiatorUID == inst.InstallerUserID {
-		t.Fatalf("group task initiator must NOT be the installer (%+v)", inst.InstallerUserID)
+	if f.enqueuer.lastInitiatorUID == f.queries.installationByApp.InstallerUserID {
+		t.Fatalf("group task initiator must NOT be the installer (%+v)", f.queries.installationByApp.InstallerUserID)
 	}
 }
 
 func TestDispatcher_DedupHitDoesNotEnqueue(t *testing.T) {
-	// Pre-seed the dedup table so the top-level dedup gate trips on
-	// the first Handle call — simulates a Lark reconnect replaying an
-	// event we already processed in a previous run.
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-dup"): {processed: true, token: validUUID(0xAB)}},
-	}
-	chat := &fakeChat{
-		ensureID: validUUID(0x66),
-	}
-	enq := &fakeEnqueuer{}
-	audit := &fakeAudit{}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       audit,
-		TaskService: enq,
-	}
+	f := newDispatcherFixture()
+	f.queries.dedup = map[string]*fakeDedupRow{seedDedupKey("msg-dup"): {processed: true, token: validUUID(0xAB)}}
 
-	res, _ := d.Handle(context.Background(), InboundMessage{
+	res, _ := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -591,19 +620,19 @@ func TestDispatcher_DedupHitDoesNotEnqueue(t *testing.T) {
 	if res.Outcome != OutcomeDropped || res.DropReason != DropReasonDuplicate {
 		t.Fatalf("expected duplicate drop, got %+v", res)
 	}
-	if enq.called != 0 {
-		t.Fatalf("dedup hit must not enqueue task, called=%d", enq.called)
+	if f.enqueuer.called != 0 {
+		t.Fatalf("dedup hit must not enqueue task, called=%d", f.enqueuer.called)
 	}
-	if chat.calledEnsure != 0 || chat.calledAppend != 0 {
+	if f.chat.calledEnsure != 0 || f.chat.calledAppend != 0 {
 		t.Fatalf("dedup hit must short-circuit before chat lookup; ensure=%d append=%d",
-			chat.calledEnsure, chat.calledAppend)
+			f.chat.calledEnsure, f.chat.calledAppend)
 	}
-	if queries.calledUserBinding != 0 {
+	if f.queries.calledUserBinding != 0 {
 		t.Fatalf("dedup hit must short-circuit before identity check, got %d binding calls",
-			queries.calledUserBinding)
+			f.queries.calledUserBinding)
 	}
-	if len(audit.drops) != 1 || audit.drops[0].Reason != DropReasonDuplicate {
-		t.Fatalf("expected duplicate audit row, got %+v", audit.drops)
+	if len(f.audit.drops) != 1 || f.audit.drops[0].Reason != DropReasonDuplicate {
+		t.Fatalf("expected duplicate audit row, got %+v", f.audit.drops)
 	}
 }
 
@@ -615,14 +644,10 @@ func TestDispatcher_DedupHitDoesNotEnqueue(t *testing.T) {
 // filter ran first and unbounded replays produced unbounded audit
 // noise + reply-card spam.
 func TestDispatcher_DedupBeforeGroupFilter(t *testing.T) {
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-replay"): {processed: true, token: validUUID(0xAB)}},
-	}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	f := newDispatcherFixture()
+	f.queries.dedup = map[string]*fakeDedupRow{seedDedupKey("msg-replay"): {processed: true, token: validUUID(0xAB)}}
 
-	res, _ := d.Handle(context.Background(), InboundMessage{
+	res, _ := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
 		ChatType:       ChatTypeGroup,
 		AddressedToBot: false,
@@ -631,8 +656,8 @@ func TestDispatcher_DedupBeforeGroupFilter(t *testing.T) {
 	if res.DropReason != DropReasonDuplicate {
 		t.Fatalf("dedup must beat group filter; got drop reason %q", res.DropReason)
 	}
-	if len(audit.drops) != 1 || audit.drops[0].Reason != DropReasonDuplicate {
-		t.Fatalf("expected exactly one duplicate audit row, got %+v", audit.drops)
+	if len(f.audit.drops) != 1 || f.audit.drops[0].Reason != DropReasonDuplicate {
+		t.Fatalf("expected exactly one duplicate audit row, got %+v", f.audit.drops)
 	}
 }
 
@@ -646,22 +671,13 @@ func TestDispatcher_DedupBeforeGroupFilter(t *testing.T) {
 // to dedup before its filter ran — every @ to the "second" bot
 // silently disappeared.
 func TestDispatcher_DedupIsScopedPerInstallation(t *testing.T) {
-	otherInst := activeInstallation()
-	otherInst.ID = validUUID(0x12) // distinct from the default 0x11
-	queries := &fakeQueries{
-		installationByApp: otherInst,
-		// Pre-seed a terminal dedup row for installation 0x11 — that's
-		// the OTHER bot's already-processed claim. The current Handle
-		// runs under installation 0x12 (composite-key miss → fresh
-		// claim → continues processing).
-		dedup: map[string]*fakeDedupRow{
-			dedupKey(validUUID(0x11), "msg-shared"): {processed: true, token: validUUID(0xAB)},
-		},
+	f := newDispatcherFixture()
+	f.queries.installationByApp.ID = validUUID(0x12)
+	f.queries.dedup = map[string]*fakeDedupRow{
+		dedupKey(validUUID(0x11), "msg-shared"): {processed: true, token: validUUID(0xAB)},
 	}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
 
-	res, _ := d.Handle(context.Background(), InboundMessage{
+	res, _ := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
 		ChatType:       ChatTypeGroup,
 		AddressedToBot: false, // simulate "not @-ed FROM this bot's perspective"
@@ -670,10 +686,8 @@ func TestDispatcher_DedupIsScopedPerInstallation(t *testing.T) {
 	if res.DropReason != DropReasonNotAddressedInGroup {
 		t.Fatalf("composite-key dedup miss must let group filter run, got drop reason %q", res.DropReason)
 	}
-	// And the new (0x12, msg-shared) row must now exist — only the
-	// other installation's row was pre-seeded.
-	if _, ok := queries.dedup[dedupKey(otherInst.ID, "msg-shared")]; !ok {
-		t.Fatalf("expected a fresh claim row for installation 0x12; got %v", queries.dedup)
+	if _, ok := f.queries.dedup[dedupKey(f.queries.installationByApp.ID, "msg-shared")]; !ok {
+		t.Fatalf("expected a fresh claim row for installation 0x12; got %v", f.queries.dedup)
 	}
 }
 
@@ -682,15 +696,11 @@ func TestDispatcher_DedupIsScopedPerInstallation(t *testing.T) {
 // re-fire the OutcomeNeedsBinding path on every reconnect — that
 // would spam the user with binding-prompt cards.
 func TestDispatcher_DedupBeforeIdentityCheck(t *testing.T) {
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBindingErr:    pgx.ErrNoRows, // unbound — would normally trigger OutcomeNeedsBinding
-		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-replay"): {processed: true, token: validUUID(0xAB)}},
-	}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	f := newDispatcherFixture()
+	f.queries.userBindingErr = pgx.ErrNoRows
+	f.queries.dedup = map[string]*fakeDedupRow{seedDedupKey("msg-replay"): {processed: true, token: validUUID(0xAB)}}
 
-	res, _ := d.Handle(context.Background(), InboundMessage{
+	res, _ := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -699,41 +709,22 @@ func TestDispatcher_DedupBeforeIdentityCheck(t *testing.T) {
 	if res.Outcome != OutcomeDropped || res.DropReason != DropReasonDuplicate {
 		t.Fatalf("dedup must beat identity check; got %+v", res)
 	}
-	if queries.calledUserBinding != 0 {
+	if f.queries.calledUserBinding != 0 {
 		t.Fatalf("identity check must not run for a deduped replay, got %d calls",
-			queries.calledUserBinding)
+			f.queries.calledUserBinding)
 	}
 }
 
 func TestDispatcher_IssueCommandCreatesIssue(t *testing.T) {
-	sessionID := validUUID(0x66)
-	inst := activeInstallation()
-	queries := &fakeQueries{
-		installationByApp: inst,
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
-		workspace:         db.Workspace{ID: inst.WorkspaceID, IssuePrefix: "MUL"},
-	}
-	chat := &fakeChat{
-		ensureID: sessionID,
-		appendResult: AppendResult{
-			IssueCommand: &IssueCommand{Title: "ship it", Description: "ship the thing"},
-		},
-	}
-	issueSvc := &fakeIssueCreator{result: service.IssueCreateResult{Issue: db.Issue{
+	f := newDispatcherFixture()
+	f.chat.appendResult.IssueCommand = &IssueCommand{Title: "ship it", Description: "ship the thing"}
+	f.issues.result = service.IssueCreateResult{Issue: db.Issue{
 		ID:     validUUID(0x88),
 		Number: 42,
 		Title:  "ship it",
-	}}}
-	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: issueSvc,
-		TaskService:  &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
+	}}
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -743,18 +734,18 @@ func TestDispatcher_IssueCommandCreatesIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if issueSvc.called != 1 {
-		t.Fatalf("expected IssueService.Create called once, got %d", issueSvc.called)
+	if f.issues.called != 1 {
+		t.Fatalf("expected IssueService.Create called once, got %d", f.issues.called)
 	}
-	if issueSvc.params.Title != "ship it" || issueSvc.params.Description.String != "ship the thing" {
-		t.Fatalf("wrong issue params: %+v", issueSvc.params)
+	if f.issues.params.Title != "ship it" || f.issues.params.Description.String != "ship the thing" {
+		t.Fatalf("wrong issue params: %+v", f.issues.params)
 	}
-	if issueSvc.params.OriginType.String != originLarkChat {
-		t.Fatalf("origin_type should be lark_chat, got %q", issueSvc.params.OriginType.String)
+	if f.issues.params.OriginType.String != originLarkChat {
+		t.Fatalf("origin_type should be lark_chat, got %q", f.issues.params.OriginType.String)
 	}
-	if !issueSvc.params.AssigneeType.Valid || issueSvc.params.AssigneeType.String != "agent" ||
-		issueSvc.params.AssigneeID != inst.AgentID {
-		t.Fatalf("assignee should default to the installation's agent: %+v", issueSvc.params)
+	if !f.issues.params.AssigneeType.Valid || f.issues.params.AssigneeType.String != "agent" ||
+		f.issues.params.AssigneeID != f.queries.installationByApp.AgentID {
+		t.Fatalf("assignee should default to the installation's agent: %+v", f.issues.params)
 	}
 	if !res.IssueID.Valid || res.IssueNumber != 42 {
 		t.Fatalf("issue id/number not propagated: %+v", res)
@@ -777,34 +768,16 @@ func TestDispatcher_IssueCommandCreatesIssue(t *testing.T) {
 // confirmation. We emit "#42" instead of "MUL-42" in that case so
 // the user still sees that the issue was created.
 func TestDispatcher_IssueIdentifierFallsBackToNumberOnWorkspaceLookupErr(t *testing.T) {
-	sessionID := validUUID(0x66)
-	inst := activeInstallation()
-	queries := &fakeQueries{
-		installationByApp: inst,
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
-		workspaceErr:      errors.New("workspace lookup failed"),
-	}
-	chat := &fakeChat{
-		ensureID: sessionID,
-		appendResult: AppendResult{
-			IssueCommand: &IssueCommand{Title: "fallback path", Description: ""},
-		},
-	}
-	issueSvc := &fakeIssueCreator{result: service.IssueCreateResult{Issue: db.Issue{
+	f := newDispatcherFixture()
+	f.queries.workspaceErr = errors.New("workspace lookup failed")
+	f.chat.appendResult.IssueCommand = &IssueCommand{Title: "fallback path"}
+	f.issues.result = service.IssueCreateResult{Issue: db.Issue{
 		ID:     validUUID(0x88),
 		Number: 7,
 		Title:  "fallback path",
-	}}}
-	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: issueSvc,
-		TaskService:  &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
+	}}
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -820,39 +793,20 @@ func TestDispatcher_IssueIdentifierFallsBackToNumberOnWorkspaceLookupErr(t *test
 }
 
 func TestDispatcher_EmptyTitleSurfacesError(t *testing.T) {
-	sessionID := validUUID(0x66)
-	inst := activeInstallation()
-	queries := &fakeQueries{
-		installationByApp: inst,
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
-	}
-	chat := &fakeChat{
-		ensureID: sessionID,
-		appendResult: AppendResult{
-			IssueCommand: &IssueCommand{Title: ""},
-		},
-	}
-	issueSvc := &fakeIssueCreator{}
-	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: issueSvc,
-		TaskService:  &fakeEnqueuer{},
-	}
+	f := newDispatcherFixture()
+	f.chat.appendResult.IssueCommand = &IssueCommand{}
 
-	_, err := d.Handle(context.Background(), InboundMessage{
+	_, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
 		Body:         "/issue",
 		MessageID:    "msg-empty",
 	})
-	if !errors.Is(err, ErrEmptyIssueTitle) {
-		t.Fatalf("expected ErrEmptyIssueTitle wrapped, got %v", err)
+	if !errors.Is(err, errEmptyIssueTitle) {
+		t.Fatalf("expected errEmptyIssueTitle wrapped, got %v", err)
 	}
-	if issueSvc.called != 0 {
+	if f.issues.called != 0 {
 		t.Fatalf("IssueService.Create must not run when title is empty")
 	}
 }
@@ -870,74 +824,13 @@ func (c *captureReply) reply(_ context.Context, _ db.LarkInstallation, _ Inbound
 	c.results = append(c.results, res)
 }
 
-func TestDispatcher_AgentOfflineRepliesAtFlush(t *testing.T) {
-	// With the run trigger debounced (MUL-2968), the agent-offline verdict
-	// is only known at flush time. Handle itself returns OutcomeIngested
-	// (the message is durable + ACKed); the offline notice is delivered
-	// through FlushReply. With batching disabled the flush fires inline.
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	enq := &fakeEnqueuer{err: service.ErrChatTaskAgentNoRuntime}
-	cap := &captureReply{}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-		FlushReply:  cap.reply,
-	}
-
-	res, err := d.Handle(context.Background(), InboundMessage{
-		AppID:        "ok",
-		ChatType:     ChatTypeP2P,
-		SenderOpenID: "ou_user_a",
-		Body:         "hi",
-		MessageID:    "msg-off",
-	})
-	if err != nil {
-		t.Fatalf("offline path should not return error, got %v", err)
-	}
-	if res.Outcome != OutcomeIngested {
-		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
-	}
-	if enq.called != 1 {
-		t.Fatalf("flush must call EnqueueChatTask exactly once; called=%d", enq.called)
-	}
-	if cap.count != 1 {
-		t.Fatalf("expected exactly one flush reply; got %d", cap.count)
-	}
-	if cap.results[0].Outcome != OutcomeAgentOffline {
-		t.Fatalf("expected OutcomeAgentOffline at flush, got %q", cap.results[0].Outcome)
-	}
-	if cap.results[0].ChatSessionID != sessionID {
-		t.Fatalf("session id not propagated to flush reply: %+v", cap.results[0].ChatSessionID)
-	}
-}
-
 func TestDispatcher_AgentArchivedRepliesAtFlush(t *testing.T) {
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	enq := &fakeEnqueuer{err: service.ErrChatTaskAgentArchived}
+	f := newDispatcherFixture()
+	f.enqueuer.err = service.ErrChatTaskAgentArchived
 	cap := &captureReply{}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-		FlushReply:  cap.reply,
-	}
+	f.dispatcher.FlushReply = cap.reply
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -950,37 +843,19 @@ func TestDispatcher_AgentArchivedRepliesAtFlush(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
 	}
+	f.dispatcher.FlushPendingRuns()
 	if cap.count != 1 || cap.results[0].Outcome != OutcomeAgentArchived {
 		t.Fatalf("expected OutcomeAgentArchived at flush, got count=%d results=%+v", cap.count, cap.results)
 	}
 }
 
 func TestDispatcher_FlushInfraFailureIsNotReplied(t *testing.T) {
-	// A DB / load / create failure from EnqueueChatTask is NOT a
-	// productizable state. The inbound frame was ACKed and the message is
-	// already durable, so Handle returns no error (nothing for the
-	// connector to retry against), the failure is logged, and NO
-	// offline/archived card is sent — a bogus "offline" card would
-	// silently hide the outage.
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	infraErr := errors.New("create chat task: connection refused")
-	enq := &fakeEnqueuer{err: infraErr}
+	f := newDispatcherFixture()
+	f.enqueuer.err = errors.New("create chat task: connection refused")
 	cap := &captureReply{}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-		FlushReply:  cap.reply,
-	}
+	f.dispatcher.FlushReply = cap.reply
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -993,8 +868,9 @@ func TestDispatcher_FlushInfraFailureIsNotReplied(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
 	}
-	if enq.called != 1 {
-		t.Fatalf("flush must attempt EnqueueChatTask once; called=%d", enq.called)
+	f.dispatcher.FlushPendingRuns()
+	if f.enqueuer.called != 1 {
+		t.Fatalf("flush must attempt EnqueueChatTask once; called=%d", f.enqueuer.called)
 	}
 	if cap.count != 0 {
 		t.Fatalf("infra failure must not emit any offline/archived card; replies=%d", cap.count)
@@ -1002,25 +878,13 @@ func TestDispatcher_FlushInfraFailureIsNotReplied(t *testing.T) {
 }
 
 func TestDispatcher_DebounceCoalescesRunTrigger(t *testing.T) {
-	// Two messages in the same chat_session within the silence window must
-	// produce exactly ONE EnqueueChatTask (one agent run). The run reads
-	// the whole session history, so both messages are covered by it. This
-	// is the core MUL-2968 behaviour: "forward a transcript, then type a
-	// note" stops triggering two runs.
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
-	f := &fakeTimerFactory{}
-	d := &Dispatcher{Queries: queries, Chat: chat, Audit: &fakeAudit{}, TaskService: enq}
-	d.batcher = newTestBatcher(f)
+	fixture := newDispatcherFixture()
+	fixture.enqueuer.task = db.AgentTaskQueue{ID: validUUID(0x77)}
+	timers := &fakeTimerFactory{}
+	fixture.dispatcher.batcher = newTestBatcher(timers)
 
 	send := func(id string) {
-		res, err := d.Handle(context.Background(), InboundMessage{
+		res, err := fixture.dispatcher.Handle(context.Background(), InboundMessage{
 			AppID:        "ok",
 			ChatType:     ChatTypeP2P,
 			SenderOpenID: "ou_user_a",
@@ -1038,24 +902,22 @@ func TestDispatcher_DebounceCoalescesRunTrigger(t *testing.T) {
 	send("m1")
 	send("m2")
 
-	// Both messages are durable + ACKed, but the run is still pending.
-	if enq.called != 0 {
-		t.Fatalf("run trigger must be debounced; enqueue called=%d before window closed", enq.called)
+	if fixture.enqueuer.called != 0 {
+		t.Fatalf("run trigger must be debounced; enqueue called=%d before window closed", fixture.enqueuer.called)
 	}
-	if got := pendingBatchCount(d.batcher); got != 1 {
+	if got := pendingBatchCount(&fixture.dispatcher.batcher); got != 1 {
 		t.Fatalf("both messages share one session window; pending=%d", got)
 	}
 
-	f.fireArmed() // window closes
-	if enq.called != 1 {
-		t.Fatalf("a coalesced burst must enqueue exactly once; called=%d", enq.called)
+	timers.fireArmed()
+	if fixture.enqueuer.called != 1 {
+		t.Fatalf("a coalesced burst must enqueue exactly once; called=%d", fixture.enqueuer.called)
 	}
 
-	// A message arriving after the window fired is a new burst → new run.
 	send("m3")
-	f.fireArmed()
-	if enq.called != 2 {
-		t.Fatalf("a message after the window must start a new run; called=%d", enq.called)
+	timers.fireArmed()
+	if fixture.enqueuer.called != 2 {
+		t.Fatalf("a message after the window must start a new run; called=%d", fixture.enqueuer.called)
 	}
 }
 
@@ -1065,23 +927,17 @@ func TestDispatcher_DebounceCoalescesRunTrigger(t *testing.T) {
 // only the latest scheduled flush per session, and each flush captures its own
 // message's sender, so the final enqueue carries the last sender's identity.
 func TestDispatcher_LatestSenderWinsAsInitiator(t *testing.T) {
-	sessionID := validUUID(0x66)
+	fixture := newDispatcherFixture()
 	alice := boundUser() // MulticaUserID 0x55, open id ou_alice below
 	bob := boundUser()
 	bob.MulticaUserID = validUUID(0xBB)
-	queries := &fakeQueries{
-		installationByApp:   activeInstallation(),
-		chatSession:         db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-		userBindingByOpenID: map[string]db.LarkUserBinding{"ou_alice": alice, "ou_bob": bob},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
-	f := &fakeTimerFactory{}
-	d := &Dispatcher{Queries: queries, Chat: chat, Audit: &fakeAudit{}, TaskService: enq}
-	d.batcher = newTestBatcher(f)
+	fixture.queries.userBindingByOpenID = map[string]db.LarkUserBinding{"ou_alice": alice, "ou_bob": bob}
+	fixture.enqueuer.task = db.AgentTaskQueue{ID: validUUID(0x77)}
+	timers := &fakeTimerFactory{}
+	fixture.dispatcher.batcher = newTestBatcher(timers)
 
 	send := func(openID, msgID string) {
-		if _, err := d.Handle(context.Background(), InboundMessage{
+		if _, err := fixture.dispatcher.Handle(context.Background(), InboundMessage{
 			AppID:        "ok",
 			ChatType:     ChatTypeP2P,
 			SenderOpenID: OpenID(openID),
@@ -1094,48 +950,23 @@ func TestDispatcher_LatestSenderWinsAsInitiator(t *testing.T) {
 
 	send("ou_alice", "m1") // Alice first...
 	send("ou_bob", "m2")   // ...then Bob, within the same window.
-	f.fireArmed()          // window closes → one coalesced run
+	timers.fireArmed()     // window closes → one coalesced run
 
-	if enq.called != 1 {
-		t.Fatalf("a coalesced burst must enqueue exactly once; called=%d", enq.called)
+	if fixture.enqueuer.called != 1 {
+		t.Fatalf("a coalesced burst must enqueue exactly once; called=%d", fixture.enqueuer.called)
 	}
-	if enq.lastInitiatorUID != bob.MulticaUserID {
+	if fixture.enqueuer.lastInitiatorUID != bob.MulticaUserID {
 		t.Fatalf("latest sender (Bob) should be the initiator; got %+v want %+v",
-			enq.lastInitiatorUID, bob.MulticaUserID)
+			fixture.enqueuer.lastInitiatorUID, bob.MulticaUserID)
 	}
 }
 
-// TestDispatcher_EnsureChatSessionFailureReleasesClaim is the
-// regression for the dedup-blocker Elon flagged in PR #3277: the
-// pre-fix Dispatcher inserted the dedup row before EnsureChatSession,
-// so an infra error in EnsureChatSession would leave a permanent
-// dedup row behind and the WS adapter's retry would be mis-classified
-// as a duplicate — the user's message would be silently lost.
-//
-// With the two-phase claim/Release contract, the first attempt's
-// claim is released, and the retry must observe a fresh first
-// delivery: identity check + EnsureChatSession + AppendUserMessage
-// run normally, no duplicate drop.
 func TestDispatcher_EnsureChatSessionFailureReleasesClaim(t *testing.T) {
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{
-		ensureID:  sessionID,
-		ensureErr: errors.New("ensure chat session: connection refused"),
-	}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
+	f := newDispatcherFixture()
+	f.chat.ensureErr = errors.New("ensure chat session: connection refused")
+	f.chat.queries = f.queries
 
-	// First attempt — infra error in EnsureChatSession.
-	_, err := d.Handle(context.Background(), InboundMessage{
+	_, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1145,22 +976,18 @@ func TestDispatcher_EnsureChatSessionFailureReleasesClaim(t *testing.T) {
 	if err == nil {
 		t.Fatalf("first attempt should surface ensure-chat-session error, got nil")
 	}
-	if queries.calledMark != 0 {
-		t.Fatalf("must not mark processed when no durable side effect landed; calledMark=%d", queries.calledMark)
+	if f.queries.calledMark != 0 {
+		t.Fatalf("must not mark processed when no durable side effect landed; calledMark=%d", f.queries.calledMark)
 	}
-	if queries.calledRelease != 1 {
-		t.Fatalf("must release the claim on pre-durable infra error; calledRelease=%d", queries.calledRelease)
+	if f.queries.calledRelease != 1 {
+		t.Fatalf("must release the claim on pre-durable infra error; calledRelease=%d", f.queries.calledRelease)
 	}
-	if _, present := queries.dedup[seedDedupKey("msg-retry")]; present {
-		t.Fatalf("release must delete the in-flight claim row; dedup=%+v", queries.dedup)
+	if _, present := f.queries.dedup[seedDedupKey("msg-retry")]; present {
+		t.Fatalf("release must delete the in-flight claim row; dedup=%+v", f.queries.dedup)
 	}
 
-	// Retry — same message_id, ensure succeeds this time. The claim
-	// was released, so the retry must be able to re-claim and run
-	// the full ingest pipeline. The bug being regressed would have
-	// caused a DropReasonDuplicate here.
-	chat.ensureErr = nil
-	res, err := d.Handle(context.Background(), InboundMessage{
+	f.chat.ensureErr = nil
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1173,22 +1000,19 @@ func TestDispatcher_EnsureChatSessionFailureReleasesClaim(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("retry must ingest; got outcome=%q reason=%q", res.Outcome, res.DropReason)
 	}
-	if chat.calledAppend != 1 {
-		t.Fatalf("retry must reach AppendUserMessage; calledAppend=%d", chat.calledAppend)
+	if f.chat.calledAppend != 1 {
+		t.Fatalf("retry must reach AppendUserMessage; calledAppend=%d", f.chat.calledAppend)
 	}
-	if queries.calledMark != 1 {
-		t.Fatalf("retry must mark processed; calledMark=%d", queries.calledMark)
+	if f.queries.calledMark != 1 {
+		t.Fatalf("retry must mark processed; calledMark=%d", f.queries.calledMark)
 	}
-	if row, ok := queries.dedup[seedDedupKey("msg-retry")]; !ok || !row.processed {
-		t.Fatalf("retry must finalize claim as processed; dedup=%+v", queries.dedup)
+	if row, ok := f.queries.dedup[seedDedupKey("msg-retry")]; !ok || !row.processed {
+		t.Fatalf("retry must finalize claim as processed; dedup=%+v", f.queries.dedup)
 	}
 
-	// A third attempt with the same message_id (post-success replay)
-	// must now be a duplicate-drop — the Mark from the retry is the
-	// terminal state.
-	queries.calledClaim = 0
-	chat.calledAppend = 0
-	res, err = d.Handle(context.Background(), InboundMessage{
+	f.queries.calledClaim = 0
+	f.chat.calledAppend = 0
+	res, err = f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1201,37 +1025,16 @@ func TestDispatcher_EnsureChatSessionFailureReleasesClaim(t *testing.T) {
 	if res.Outcome != OutcomeDropped || res.DropReason != DropReasonDuplicate {
 		t.Fatalf("post-success replay must duplicate-drop; got %+v", res)
 	}
-	if chat.calledAppend != 0 {
-		t.Fatalf("post-success replay must not re-append; calledAppend=%d", chat.calledAppend)
+	if f.chat.calledAppend != 0 {
+		t.Fatalf("post-success replay must not re-append; calledAppend=%d", f.chat.calledAppend)
 	}
 }
 
-// TestDispatcher_AppendUserMessageFailureReleasesClaim is the
-// regression for the second variant of the dedup blocker: an infra
-// error from AppendUserMessage (e.g. tx commit failure) must also
-// release the claim so a retry can re-ingest. AppendUserMessage's
-// transaction is atomic — an error means rollback, no chat_message
-// landed.
 func TestDispatcher_AppendUserMessageFailureReleasesClaim(t *testing.T) {
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{
-		ensureID:  sessionID,
-		appendErr: errors.New("create chat message: connection refused"),
-	}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
+	f := newDispatcherFixture()
+	f.chat.appendErr = errors.New("create chat message: connection refused")
 
-	// First attempt — append fails.
-	_, err := d.Handle(context.Background(), InboundMessage{
+	_, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1241,16 +1044,15 @@ func TestDispatcher_AppendUserMessageFailureReleasesClaim(t *testing.T) {
 	if err == nil {
 		t.Fatalf("first attempt should surface append error, got nil")
 	}
-	if queries.calledMark != 0 {
-		t.Fatalf("must not mark processed when AppendUserMessage rolled back; calledMark=%d", queries.calledMark)
+	if f.queries.calledMark != 0 {
+		t.Fatalf("must not mark processed when AppendUserMessage rolled back; calledMark=%d", f.queries.calledMark)
 	}
-	if queries.calledRelease != 1 {
-		t.Fatalf("must release the claim; calledRelease=%d", queries.calledRelease)
+	if f.queries.calledRelease != 1 {
+		t.Fatalf("must release the claim; calledRelease=%d", f.queries.calledRelease)
 	}
 
-	// Retry — same message_id, append succeeds.
-	chat.appendErr = nil
-	res, err := d.Handle(context.Background(), InboundMessage{
+	f.chat.appendErr = nil
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1263,43 +1065,19 @@ func TestDispatcher_AppendUserMessageFailureReleasesClaim(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("retry must ingest; got %+v", res)
 	}
-	if chat.calledAppend != 2 {
-		t.Fatalf("expected exactly two append attempts (1 failed + 1 retry); calledAppend=%d", chat.calledAppend)
+	if f.chat.calledAppend != 2 {
+		t.Fatalf("expected exactly two append attempts (1 failed + 1 retry); calledAppend=%d", f.chat.calledAppend)
 	}
 }
 
-// TestDispatcher_DurableErrorMarksClaim pins the inverse of the
-// release path: when AppendUserMessage has succeeded (chat_message
-// committed) but a downstream step returns an error, the dispatcher
-// MUST mark the claim processed. Otherwise a replay would re-process
-// the message and write a second chat_message row.
-//
-// The run-trigger enqueue is now debounced and cannot fail synchronously,
-// so the synchronous downstream error this pins is the /issue create
-// path — the remaining step that runs after the chat_message is durable
-// and can still surface an error to the caller.
 func TestDispatcher_DurableErrorMarksClaim(t *testing.T) {
-	sessionID := validUUID(0x66)
-	inst := activeInstallation()
-	queries := &fakeQueries{
-		installationByApp: inst,
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: inst.AgentID},
-	}
-	chat := &fakeChat{
-		ensureID:     sessionID,
-		appendResult: AppendResult{IssueCommand: &IssueCommand{Title: "boom"}},
-	}
+	f := newDispatcherFixture()
+	f.chat.appendResult.IssueCommand = &IssueCommand{Title: "boom"}
+	f.chat.queries = f.queries
 	issueErr := errors.New("create issue: connection refused")
-	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: &fakeIssueCreator{err: issueErr},
-		TaskService:  &fakeEnqueuer{},
-	}
+	f.issues.err = issueErr
 
-	_, err := d.Handle(context.Background(), InboundMessage{
+	_, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1309,14 +1087,14 @@ func TestDispatcher_DurableErrorMarksClaim(t *testing.T) {
 	if !errors.Is(err, issueErr) {
 		t.Fatalf("expected post-append durable error to propagate, got %v", err)
 	}
-	if queries.calledRelease != 0 {
-		t.Fatalf("must not release: chat_message already committed; calledRelease=%d", queries.calledRelease)
+	if f.queries.calledRelease != 0 {
+		t.Fatalf("must not release: chat_message already committed; calledRelease=%d", f.queries.calledRelease)
 	}
-	if queries.calledMark != 1 {
-		t.Fatalf("must mark processed: chat_message committed before the enqueue error; calledMark=%d", queries.calledMark)
+	if f.queries.calledMark != 1 {
+		t.Fatalf("must mark processed: chat_message committed before the enqueue error; calledMark=%d", f.queries.calledMark)
 	}
-	if row, ok := queries.dedup[seedDedupKey("msg-durable-err")]; !ok || !row.processed {
-		t.Fatalf("dedup row must end up processed=true; got %+v", queries.dedup)
+	if row, ok := f.queries.dedup[seedDedupKey("msg-durable-err")]; !ok || !row.processed {
+		t.Fatalf("dedup row must end up processed=true; got %+v", f.queries.dedup)
 	}
 }
 
@@ -1326,24 +1104,20 @@ func TestDispatcher_DurableErrorMarksClaim(t *testing.T) {
 // binding-prompt side effect. This is the "no audit / card spam"
 // invariant from §4.3.
 func TestDispatcher_DropMarksClaim(t *testing.T) {
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBindingErr:    pgx.ErrNoRows,
-	}
-	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	f := newDispatcherFixture()
+	f.queries.userBindingErr = pgx.ErrNoRows
 
-	_, _ = d.Handle(context.Background(), InboundMessage{
+	_, _ = f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
 		MessageID:    "msg-unbound",
 	})
-	if queries.calledMark != 1 {
-		t.Fatalf("unbound-user drop must mark claim processed; calledMark=%d", queries.calledMark)
+	if f.queries.calledMark != 1 {
+		t.Fatalf("unbound-user drop must mark claim processed; calledMark=%d", f.queries.calledMark)
 	}
-	if queries.calledRelease != 0 {
-		t.Fatalf("unbound-user drop must not release; calledRelease=%d", queries.calledRelease)
+	if f.queries.calledRelease != 0 {
+		t.Fatalf("unbound-user drop must not release; calledRelease=%d", f.queries.calledRelease)
 	}
 }
 
@@ -1352,19 +1126,16 @@ func TestDispatcher_DropMarksClaim(t *testing.T) {
 // deduplicate by, and the dispatcher must not call Claim / Mark /
 // Release for them.
 func TestDispatcher_EmptyMessageIDSkipsDedup(t *testing.T) {
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-	}
-	d := &Dispatcher{Queries: queries, Audit: &fakeAudit{}}
+	f := newDispatcherFixture()
 
-	_, _ = d.Handle(context.Background(), InboundMessage{
+	_, _ = f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:    "ok",
 		ChatType: ChatTypeGroup, // group filter drops it
 		// MessageID intentionally empty
 	})
-	if queries.calledClaim != 0 || queries.calledMark != 0 || queries.calledRelease != 0 {
+	if f.queries.calledClaim != 0 || f.queries.calledMark != 0 || f.queries.calledRelease != 0 {
 		t.Fatalf("empty MessageID must skip dedup entirely; claim=%d mark=%d release=%d",
-			queries.calledClaim, queries.calledMark, queries.calledRelease)
+			f.queries.calledClaim, f.queries.calledMark, f.queries.calledRelease)
 	}
 }
 
@@ -1375,22 +1146,10 @@ func TestDispatcher_EmptyMessageIDSkipsDedup(t *testing.T) {
 // simultaneously consuming the same Lark event during a brief
 // double-leased window.
 func TestDispatcher_InFlightClaimDropsReplay(t *testing.T) {
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		// In-flight claim (processed=false) and reclaim disabled
-		// (simulates "the row is fresh — not stale yet").
-		dedup: map[string]*fakeDedupRow{seedDedupKey("msg-inflight"): {processed: false, token: validUUID(0xAB)}},
-	}
-	chat := &fakeChat{}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{},
-	}
+	f := newDispatcherFixture()
+	f.queries.dedup = map[string]*fakeDedupRow{seedDedupKey("msg-inflight"): {token: validUUID(0xAB)}}
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1403,9 +1162,9 @@ func TestDispatcher_InFlightClaimDropsReplay(t *testing.T) {
 	if res.Outcome != OutcomeDropped || res.DropReason != DropReasonDuplicate {
 		t.Fatalf("in-flight claim must drop the replay; got %+v", res)
 	}
-	if chat.calledEnsure != 0 || chat.calledAppend != 0 {
+	if f.chat.calledEnsure != 0 || f.chat.calledAppend != 0 {
 		t.Fatalf("in-flight drop must short-circuit before chat lookup; ensure=%d append=%d",
-			chat.calledEnsure, chat.calledAppend)
+			f.chat.calledEnsure, f.chat.calledAppend)
 	}
 }
 
@@ -1414,23 +1173,12 @@ func TestDispatcher_InFlightClaimDropsReplay(t *testing.T) {
 // TTL must be re-takeable so a process crash mid-pipeline does not
 // leave the message stuck forever.
 func TestDispatcher_StaleInFlightClaimReclaimable(t *testing.T) {
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-stale"): {processed: false, token: validUUID(0xAB)}},
-		dedupReclaim:      true, // simulates received_at < now() - 60s
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
+	f := newDispatcherFixture()
+	f.queries.dedup = map[string]*fakeDedupRow{seedDedupKey("msg-stale"): {token: validUUID(0xAB)}}
+	f.queries.dedupReclaim = true
+	f.chat.queries = f.queries
 
-	res, err := d.Handle(context.Background(), InboundMessage{
+	res, err := f.dispatcher.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
 		ChatType:     ChatTypeP2P,
 		SenderOpenID: "ou_user_a",
@@ -1443,8 +1191,8 @@ func TestDispatcher_StaleInFlightClaimReclaimable(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("stale-claim retry must ingest; got %+v", res)
 	}
-	if queries.calledMark != 1 {
-		t.Fatalf("stale-claim retry must mark processed; calledMark=%d", queries.calledMark)
+	if f.queries.calledMark != 1 {
+		t.Fatalf("stale-claim retry must mark processed; calledMark=%d", f.queries.calledMark)
 	}
 }
 
@@ -1476,10 +1224,10 @@ func TestDispatcher_StaleReclaimRaceDoesNotDoubleWrite(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	chat.queries = queries // model the production in-tx Mark
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	// Inject worker B's reclaim. The hook fires while worker A's
@@ -1593,10 +1341,10 @@ func TestDispatcher_InTxMarkPreventsPostCommitReclaim(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	chat.queries = queries
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -1613,11 +1361,7 @@ func TestDispatcher_InTxMarkPreventsPostCommitReclaim(t *testing.T) {
 		t.Fatalf("first delivery must ingest; got %+v", res)
 	}
 
-	// AppendUserMessage's in-tx Mark fired; the dispatcher's post-
-	// pipeline applyFinalize saw DedupMarked=true and skipped its
-	// own Mark call. Total fakeQueries.MarkLarkInboundDedupProcessed
-	// calls must therefore be exactly 1 — proves the in-tx path was
-	// the sole writer.
+	// AppendUserMessage's in-tx Mark is the sole writer.
 	if queries.calledMark != 1 {
 		t.Fatalf("expected exactly one Mark call (in-tx only, no post-finalize duplicate); calledMark=%d",
 			queries.calledMark)
@@ -1660,49 +1404,5 @@ func TestDispatcher_InTxMarkPreventsPostCommitReclaim(t *testing.T) {
 	if queries.dedup[seedDedupKey("msg-atomic")].rotations != 1 {
 		t.Fatalf("claim_token must not rotate when the row is already processed; rotations=%d",
 			queries.dedup[seedDedupKey("msg-atomic")].rotations)
-	}
-}
-
-// TestDispatcher_InTxMarkSucceedsAndSkipsPostFinalize is a positive
-// regression for the in-tx Mark path: when AppendUserMessage returns
-// DedupMarked=true the dispatcher must NOT issue an additional Mark
-// from applyFinalize. This is the contract that makes the new design
-// safe — calling Mark twice is benign at the SQL layer (the
-// processed_at IS NULL guard makes the second call a no-op), but the
-// extra round-trip would defeat the "in-tx atomic finalize" goal.
-func TestDispatcher_InTxMarkSucceedsAndSkipsPostFinalize(t *testing.T) {
-	sessionID := validUUID(0x66)
-	queries := &fakeQueries{
-		installationByApp: activeInstallation(),
-		userBinding:       boundUser(),
-		chatSession:       db.ChatSession{ID: sessionID, AgentID: validUUID(0x33)},
-	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
-	chat.queries = queries
-	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
-	}
-
-	_, err := d.Handle(context.Background(), InboundMessage{
-		AppID:        "ok",
-		ChatType:     ChatTypeP2P,
-		SenderOpenID: "ou_user_a",
-		Body:         "hi",
-		MessageID:    "msg-in-tx",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if queries.calledMark != 1 {
-		t.Fatalf("exactly one Mark call expected (in-tx only); calledMark=%d", queries.calledMark)
-	}
-	// Verify the dispatcher did not also Release — applyFinalize must
-	// be a no-op (finalizeNone) when AppendUserMessage marked in-tx.
-	if queries.calledRelease != 0 {
-		t.Fatalf("dispatcher must not release after successful in-tx Mark; calledRelease=%d",
-			queries.calledRelease)
 	}
 }

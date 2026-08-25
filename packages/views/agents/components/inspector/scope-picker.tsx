@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Globe, Lock } from "lucide-react";
-import type { AgentScope } from "@multica/core/types";
+import type { ResourceScope } from "@multica/core/types";
 import {
   PickerItem,
   PropertyPicker,
@@ -16,10 +16,10 @@ export function ScopePicker({
   canEdit = true,
   onChange,
 }: {
-  value: AgentScope;
+  value: ResourceScope;
   /** When false, render a read-only `<ScopeBadge>` and skip the popover. */
   canEdit?: boolean;
-  onChange: (next: AgentScope) => Promise<void> | void;
+  onChange: (next: ResourceScope) => Promise<void> | void;
 }) {
   const [open, setOpen] = useState(false);
   const { t } = useT("agents");
@@ -32,7 +32,7 @@ export function ScopePicker({
   const label = t(($) => $.scope[value].label);
   const tooltip = t(($) => $.scope[value].tooltip);
 
-  const select = async (next: AgentScope) => {
+  const select = async (next: ResourceScope) => {
     setOpen(false);
     if (next !== value) await onChange(next);
   };

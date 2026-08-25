@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // TestProfileSetSignature_StableUnderReorder ensures the digest only
@@ -18,11 +20,11 @@ import (
 // workspaceSyncLoop would re-register on every tick whenever the server
 // shuffled rows (which the API contract does not forbid).
 func TestProfileSetSignature_StableUnderReorder(t *testing.T) {
-	a := []RuntimeProfile{
+	a := []protocol.RuntimeProfileResponse{
 		{ID: "p-a", ProtocolFamily: "codex", CommandName: "a", Enabled: true},
 		{ID: "p-b", ProtocolFamily: "claude", CommandName: "b", Enabled: true},
 	}
-	b := []RuntimeProfile{
+	b := []protocol.RuntimeProfileResponse{
 		{ID: "p-b", ProtocolFamily: "claude", CommandName: "b", Enabled: true},
 		{ID: "p-a", ProtocolFamily: "codex", CommandName: "a", Enabled: true},
 	}
@@ -36,12 +38,11 @@ func TestProfileSetSignature_StableUnderReorder(t *testing.T) {
 // Coverage gaps here would mean a real server-side change goes undetected
 // and the user has to restart the daemon — the bug MUL-3332 is about.
 func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
-	base := []RuntimeProfile{{
+	base := []protocol.RuntimeProfileResponse{{
 		ID:             "p1",
 		ProtocolFamily: "codex",
 		CommandName:    "company-codex",
 		FixedArgs:      []string{"--foo"},
-		Visibility:     "workspace",
 		Enabled:        true,
 	}}
 	baseSig := profileSetSignature(base)
@@ -53,34 +54,29 @@ func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		mutate func([]RuntimeProfile) []RuntimeProfile
+		mutate func([]protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse
 	}{
-		{"add new profile", func(in []RuntimeProfile) []RuntimeProfile {
-			return append(in, RuntimeProfile{ID: "p2", ProtocolFamily: "claude", CommandName: "c", Enabled: true})
+		{"add new profile", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			return append(in, protocol.RuntimeProfileResponse{ID: "p2", ProtocolFamily: "claude", CommandName: "c", Enabled: true})
 		}},
-		{"flip enabled", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"flip enabled", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].Enabled = !out[0].Enabled
 			return out
 		}},
-		{"change command_name", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"change command_name", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].CommandName = "different-bin"
 			return out
 		}},
-		{"change protocol_family", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"change protocol_family", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].ProtocolFamily = "claude"
 			return out
 		}},
-		{"change fixed_args", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
+		{"change fixed_args", func(in []protocol.RuntimeProfileResponse) []protocol.RuntimeProfileResponse {
+			out := append([]protocol.RuntimeProfileResponse(nil), in...)
 			out[0].FixedArgs = []string{"--foo", "--bar"}
-			return out
-		}},
-		{"change visibility", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
-			out[0].Visibility = "private"
 			return out
 		}},
 	}
@@ -95,20 +91,22 @@ func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
 	}
 }
 
-// driftFixture wires a Daemon against a fake server whose runtime-profiles
+// runtimeProfileFixture wires a Daemon against a fake server whose runtime-profiles
 // response can be swapped at runtime. It also tracks how many times the
 // server saw a /api/daemon/register, /api/daemon/runtimes/:id/recover-orphans,
 // and /api/daemon/deregister call so tests can assert exactly which side
 // effects the drift refresh triggered (or didn't).
-type driftFixture struct {
+type runtimeProfileFixture struct {
 	daemon              *Daemon
 	server              *httptest.Server
 	registerCalls       atomic.Int32
+	sentRuntimes        []map[string]any
 	recoverOrphansCalls []string // runtime IDs the server received recover-orphans for, in order
 	recoverOrphansMu    sync.Mutex
 	deregisterCalls     [][]string // each entry is one Deregister call's runtime_ids payload, in order
 	deregisterMu        sync.Mutex
-	currentProfiles     []RuntimeProfile
+	currentProfiles     []protocol.RuntimeProfileResponse
+	profilesStatus      int
 }
 
 // setProfiles swaps the profile set returned by the fake server. The
@@ -116,13 +114,13 @@ type driftFixture struct {
 // drive the fixture from a single goroutine, so the field is unguarded;
 // add a mutex if a future test publishes profile updates concurrently with
 // daemon background work.
-func (fx *driftFixture) setProfiles(profiles []RuntimeProfile) {
+func (fx *runtimeProfileFixture) setProfiles(profiles []protocol.RuntimeProfileResponse) {
 	fx.currentProfiles = profiles
 }
 
 // recordedRecoverOrphans returns a copy of the runtime IDs the fake server
 // received /recover-orphans calls for since the fixture was created.
-func (fx *driftFixture) recordedRecoverOrphans() []string {
+func (fx *runtimeProfileFixture) recordedRecoverOrphans() []string {
 	fx.recoverOrphansMu.Lock()
 	defer fx.recoverOrphansMu.Unlock()
 	out := make([]string, len(fx.recoverOrphansCalls))
@@ -132,7 +130,7 @@ func (fx *driftFixture) recordedRecoverOrphans() []string {
 
 // recordedDeregisters returns a copy of every Deregister call's runtime_ids
 // payload, in the order the fake server received them.
-func (fx *driftFixture) recordedDeregisters() [][]string {
+func (fx *runtimeProfileFixture) recordedDeregisters() [][]string {
 	fx.deregisterMu.Lock()
 	defer fx.deregisterMu.Unlock()
 	out := make([][]string, len(fx.deregisterCalls))
@@ -144,9 +142,9 @@ func (fx *driftFixture) recordedDeregisters() [][]string {
 	return out
 }
 
-func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
+func newRuntimeProfileFixture(t *testing.T, initial []protocol.RuntimeProfileResponse) *runtimeProfileFixture {
 	t.Helper()
-	fx := &driftFixture{currentProfiles: initial}
+	fx := &runtimeProfileFixture{currentProfiles: initial, profilesStatus: http.StatusOK}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/daemon/register":
@@ -155,6 +153,7 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 				Runtimes []map[string]any `json:"runtimes"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			fx.sentRuntimes = body.Runtimes
 			var resp RegisterResponse
 			for i, rt := range body.Runtimes {
 				id := "rt-" + strconv.Itoa(i)
@@ -187,8 +186,12 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 			fx.deregisterMu.Unlock()
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/runtime-profiles"):
+			if fx.profilesStatus != http.StatusOK {
+				w.WriteHeader(fx.profilesStatus)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RuntimeProfilesResponse{
+			_ = json.NewEncoder(w).Encode(protocol.RuntimeProfilesResponse{
 				WorkspaceID:     "ws-1",
 				RuntimeProfiles: fx.currentProfiles,
 			})
@@ -198,10 +201,35 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 	}))
 	t.Cleanup(srv.Close)
 	d := freshDaemon(srv.URL)
-	d.profileCommandPaths = make(map[string]string)
+	d.profileLaunches = make(map[string]runtimeProfileLaunch)
 	fx.daemon = d
 	fx.server = srv
 	return fx
+}
+
+func testRuntimeProfile(id, family, command string) protocol.RuntimeProfileResponse {
+	return protocol.RuntimeProfileResponse{
+		ID: id, WorkspaceID: "ws-1", DisplayName: id,
+		ProtocolFamily: family, CommandName: command, Enabled: true,
+	}
+}
+
+func registerTrackedRuntimeProfiles(t *testing.T, fx *runtimeProfileFixture, agents map[string]AgentEntry) []Runtime {
+	t.Helper()
+	d := fx.daemon
+	d.cfg.Agents = agents
+	resp, profileSig, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("initial register: %v", err)
+	}
+	ids := make([]string, 0, len(resp.Runtimes))
+	for _, rt := range resp.Runtimes {
+		ids = append(ids, rt.ID)
+		d.runtimeIndex[rt.ID] = rt
+	}
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, nil, nil)
+	d.workspaces["ws-1"].profileSetSig = profileSig
+	return resp.Runtimes
 }
 
 // TestRefreshWorkspaceRuntimeProfiles_NoDrift_DoesNotReregister verifies the
@@ -212,25 +240,10 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 func TestRefreshWorkspaceRuntimeProfiles_NoDrift_DoesNotReregister(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	profiles := []RuntimeProfile{{
-		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
-	}}
-	fx := newDriftFixture(t, profiles)
+	profiles := []protocol.RuntimeProfileResponse{testRuntimeProfile("prof-1", "codex", "company-codex")}
+	fx := newRuntimeProfileFixture(t, profiles)
 	d := fx.daemon
-	d.cfg.Agents = map[string]AgentEntry{}
-
-	// Initial register seeds workspaceState (and ws.profileSetSig).
-	resp, profileSig, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1")
-	if err != nil {
-		t.Fatalf("initial register: %v", err)
-	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{resp.Runtimes[0].ID}, "", nil, nil)
-	d.workspaces["ws-1"].profileSetSig = profileSig
-	for _, rt := range resp.Runtimes {
-		d.runtimeIndex[rt.ID] = rt
-	}
+	registerTrackedRuntimeProfiles(t, fx, map[string]AgentEntry{})
 	if fx.registerCalls.Load() != 1 {
 		t.Fatalf("setup expected 1 register call, got %d", fx.registerCalls.Load())
 	}
@@ -254,38 +267,17 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 		"company-codex": "/opt/bin/company-codex",
 		"team-claude":   "/opt/bin/team-claude",
 	})
-	initial := []RuntimeProfile{{
-		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
-	}}
-	fx := newDriftFixture(t, initial)
+	initial := []protocol.RuntimeProfileResponse{testRuntimeProfile("prof-1", "codex", "company-codex")}
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
-	d.cfg.Agents = map[string]AgentEntry{}
-
-	// Initial register with one profile.
-	resp, profileSig, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1")
-	if err != nil {
-		t.Fatalf("initial register: %v", err)
-	}
-	ids := make([]string, 0, len(resp.Runtimes))
-	for _, rt := range resp.Runtimes {
-		ids = append(ids, rt.ID)
-		d.runtimeIndex[rt.ID] = rt
-	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, "", nil, nil)
-	d.workspaces["ws-1"].profileSetSig = profileSig
+	registerTrackedRuntimeProfiles(t, fx, map[string]AgentEntry{})
 	beforeRegisterCalls := fx.registerCalls.Load()
 
 	// User adds a second profile via the web UI: server's response now
 	// includes prof-2.
-	fx.setProfiles([]RuntimeProfile{
-		{ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-			ProtocolFamily: "codex", CommandName: "company-codex",
-			Visibility: "workspace", Enabled: true},
-		{ID: "prof-2", WorkspaceID: "ws-1", DisplayName: "Team Claude",
-			ProtocolFamily: "claude", CommandName: "team-claude",
-			Visibility: "workspace", Enabled: true},
+	fx.setProfiles([]protocol.RuntimeProfileResponse{
+		testRuntimeProfile("prof-1", "codex", "company-codex"),
+		testRuntimeProfile("prof-2", "claude", "team-claude"),
 	})
 
 	if err := d.refreshWorkspaceRuntimeProfiles(context.Background(), "ws-1"); err != nil {
@@ -349,38 +341,18 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 	// Mixed setup: one built-in runtime (claude) plus one custom profile,
 	// the closest analogue of "a daemon that is running real work and the
 	// user just added another profile". Profile drift fires next.
-	initial := []RuntimeProfile{{
-		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
-	}}
-	fx := newDriftFixture(t, initial)
+	initial := []protocol.RuntimeProfileResponse{testRuntimeProfile("prof-1", "codex", "company-codex")}
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
-	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
-
-	resp, profileSig, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1")
-	if err != nil {
-		t.Fatalf("initial register: %v", err)
-	}
-	ids := make([]string, 0, len(resp.Runtimes))
-	for _, rt := range resp.Runtimes {
-		ids = append(ids, rt.ID)
-		d.runtimeIndex[rt.ID] = rt
-	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, "", nil, nil)
-	d.workspaces["ws-1"].profileSetSig = profileSig
-	if len(ids) < 2 {
-		t.Fatalf("setup expected at least 2 runtimes (built-in + custom); got %d", len(ids))
+	runtimes := registerTrackedRuntimeProfiles(t, fx, map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}})
+	if len(runtimes) < 2 {
+		t.Fatalf("setup expected at least 2 runtimes (built-in + custom); got %d", len(runtimes))
 	}
 
 	// User adds a second profile.
-	fx.setProfiles([]RuntimeProfile{
-		{ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-			ProtocolFamily: "codex", CommandName: "company-codex",
-			Visibility: "workspace", Enabled: true},
-		{ID: "prof-2", WorkspaceID: "ws-1", DisplayName: "Team Claude",
-			ProtocolFamily: "claude", CommandName: "team-claude",
-			Visibility: "workspace", Enabled: true},
+	fx.setProfiles([]protocol.RuntimeProfileResponse{
+		testRuntimeProfile("prof-1", "codex", "company-codex"),
+		testRuntimeProfile("prof-2", "claude", "team-claude"),
 	})
 
 	if err := d.refreshWorkspaceRuntimeProfiles(context.Background(), "ws-1"); err != nil {
@@ -405,28 +377,14 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	initial := []RuntimeProfile{{
-		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
-	}}
-	fx := newDriftFixture(t, initial)
+	initial := []protocol.RuntimeProfileResponse{testRuntimeProfile("prof-1", "codex", "company-codex")}
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
-	// Custom-only daemon: no built-in agents at all.
-	d.cfg.Agents = map[string]AgentEntry{}
-
-	// Initial register: one custom runtime.
-	resp, profileSig, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1")
-	if err != nil {
-		t.Fatalf("initial register: %v", err)
+	runtimes := registerTrackedRuntimeProfiles(t, fx, map[string]AgentEntry{})
+	if len(runtimes) != 1 {
+		t.Fatalf("setup expected exactly one runtime; got %d", len(runtimes))
 	}
-	if len(resp.Runtimes) != 1 {
-		t.Fatalf("setup expected exactly one runtime; got %d", len(resp.Runtimes))
-	}
-	initialRuntimeID := resp.Runtimes[0].ID
-	d.runtimeIndex[initialRuntimeID] = resp.Runtimes[0]
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{initialRuntimeID}, "", nil, nil)
-	d.workspaces["ws-1"].profileSetSig = profileSig
+	initialRuntimeID := runtimes[0].ID
 
 	// User disables the only profile: server's daemon-facing list now
 	// returns zero enabled profiles.
@@ -504,36 +462,22 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *tes
 func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	initial := []RuntimeProfile{{
-		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
-		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
-	}}
-	fx := newDriftFixture(t, initial)
+	initial := []protocol.RuntimeProfileResponse{testRuntimeProfile("prof-1", "codex", "company-codex")}
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
-	// Mixed: one built-in + one custom.
-	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
-
-	resp, profileSig, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1")
-	if err != nil {
-		t.Fatalf("initial register: %v", err)
-	}
-	if len(resp.Runtimes) != 2 {
-		t.Fatalf("setup expected 2 runtimes; got %d (%+v)", len(resp.Runtimes), resp.Runtimes)
+	runtimes := registerTrackedRuntimeProfiles(t, fx, map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}})
+	if len(runtimes) != 2 {
+		t.Fatalf("setup expected 2 runtimes; got %d (%+v)", len(runtimes), runtimes)
 	}
 	var customID string
-	for _, rt := range resp.Runtimes {
-		d.runtimeIndex[rt.ID] = rt
+	for _, rt := range runtimes {
 		if rt.ProfileID == "prof-1" {
 			customID = rt.ID
 		}
 	}
 	if customID == "" {
-		t.Fatalf("setup expected a runtime for prof-1; got %+v", resp.Runtimes)
+		t.Fatalf("setup expected a runtime for prof-1; got %+v", runtimes)
 	}
-	initialIDs := []string{resp.Runtimes[0].ID, resp.Runtimes[1].ID}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", initialIDs, "", nil, nil)
-	d.workspaces["ws-1"].profileSetSig = profileSig
 
 	// User disables the custom profile.
 	fx.setProfiles(nil)
@@ -573,16 +517,16 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t 
 }
 
 // TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort verifies that
-// a network blip or older server (404) does NOT clear the cached signature
+// a network blip or an unexpected 404 does NOT clear the cached signature
 // or trigger a spurious re-register. Without this, a transient 5xx during
 // the workspace sync loop would loop the daemon into re-registering forever.
 func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
-	profiles := []RuntimeProfile{{
+	profiles := []protocol.RuntimeProfileResponse{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	// Server that returns 404 for the profiles route.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -594,9 +538,9 @@ func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	d := freshDaemon(srv.URL)
-	d.profileCommandPaths = make(map[string]string)
+	d.profileLaunches = make(map[string]runtimeProfileLaunch)
 	knownSig := profileSetSignature(profiles)
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{"rt-1"}, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{"rt-1"}, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = knownSig
 
 	err := d.refreshWorkspaceRuntimeProfiles(context.Background(), "ws-1")

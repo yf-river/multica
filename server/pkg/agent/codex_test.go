@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +42,38 @@ func newTestCodexClient(t *testing.T) (*codexClient, *fakeStdin, []Message) {
 type fakeStdin struct {
 	mu   sync.Mutex
 	data []byte
+}
+
+type failingStdin struct{ err error }
+
+func (f failingStdin) Write([]byte) (int, error) { return 0, f.err }
+
+func TestCodexNotifyReturnsWriteFailure(t *testing.T) {
+	wantErr := errors.New("stdin closed")
+	c := &codexClient{stdin: failingStdin{err: wantErr}}
+
+	if err := c.notify("initialized"); !errors.Is(err, wantErr) {
+		t.Fatalf("notify() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestCodexServerResponseWriteFailureMarksProcessExited(t *testing.T) {
+	wantErr := errors.New("stdin closed")
+	c := &codexClient{
+		cfg:         Config{Logger: slog.Default()},
+		stdin:       failingStdin{err: wantErr},
+		pending:     make(map[int]*pendingRPC),
+		processDone: make(chan struct{}),
+	}
+
+	c.handleLine(`{"jsonrpc":"2.0","id":7,"method":"execCommandApproval"}`)
+
+	c.mu.Lock()
+	gotErr := c.processErr
+	c.mu.Unlock()
+	if !errors.Is(gotErr, wantErr) {
+		t.Fatalf("process error = %v, want wrapped %v", gotErr, wantErr)
+	}
 }
 
 func (f *fakeStdin) Write(p []byte) (int, error) {
@@ -592,9 +626,7 @@ func TestCodexRawThreadStatusIdle(t *testing.T) {
 	}
 }
 
-// Regression for #1181: subagent threads (e.g. memory consolidation)
-// are multiplexed on the same stdio pipe. Their turn/completed must not
-// terminate the main turn.
+// Subagent events share the stdio pipe but must not terminate the main turn.
 func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -619,8 +651,7 @@ func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	}
 }
 
-// Regression for #1181: subagent agentMessage/final_answer must not
-// trigger turn completion or leak text into the main output stream.
+// Subagent final answers must not complete or leak into the main turn.
 func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -708,44 +739,31 @@ func TestCodexHandleInvalidJSON(t *testing.T) {
 
 func TestExtractThreadID(t *testing.T) {
 	t.Parallel()
-
-	data := json.RawMessage(`{"thread":{"id":"t-123"}}`)
-	got := extractThreadID(data)
-	if got != "t-123" {
-		t.Fatalf("expected t-123, got %q", got)
-	}
-}
-
-func TestExtractThreadIDMissing(t *testing.T) {
-	t.Parallel()
-
-	got := extractThreadID(json.RawMessage(`{}`))
-	if got != "" {
-		t.Fatalf("expected empty, got %q", got)
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: `{"thread":{"id":"t-123"}}`, want: "t-123"},
+		{raw: `{}`},
+	} {
+		if got := extractThreadID(json.RawMessage(tc.raw)); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
 	}
 }
 
 func TestExtractNestedString(t *testing.T) {
 	t.Parallel()
-
-	m := map[string]any{
-		"a": map[string]any{
-			"b": "value",
-		},
-	}
-	got := extractNestedString(m, "a", "b")
-	if got != "value" {
-		t.Fatalf("expected 'value', got %q", got)
-	}
-}
-
-func TestExtractNestedStringMissingKey(t *testing.T) {
-	t.Parallel()
-
-	m := map[string]any{"a": "flat"}
-	got := extractNestedString(m, "a", "b")
-	if got != "" {
-		t.Fatalf("expected empty, got %q", got)
+	for _, tc := range []struct {
+		value any
+		want  string
+	}{
+		{value: map[string]any{"b": "value"}, want: "value"},
+		{value: "flat"},
+	} {
+		if got := extractNestedString(map[string]any{"a": tc.value}, "a", "b"); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
 	}
 }
 
@@ -1179,45 +1197,18 @@ func TestCodexExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 	// real os/exec stderr pipe-copy goroutine — without drainAndWait joining
 	// cmd.Wait() before sampling stderrBuf.Tail(), Result.Error would come
 	// back empty or truncated here.
-	fakePath := filepath.Join(t.TempDir(), "codex")
 	script := "#!/bin/sh\n" +
 		"echo \"error: unexpected argument '-m' found\" >&2\n" +
 		"exit 2\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("codex", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new codex backend: %v", err)
+	result := executeBackendScript(t, "codex", "codex", script, ExecOptions{Timeout: 5 * time.Second})
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	if !strings.Contains(result.Error, "codex initialize failed") {
+		t.Fatalf("expected error to mention initialize failure, got %q", result.Error)
 	}
-	// Drain message stream so the lifecycle goroutine can progress.
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, "codex initialize failed") {
-			t.Fatalf("expected error to mention initialize failure, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "unexpected argument '-m' found") {
-			t.Fatalf("expected error to include stderr hint, got %q", result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if !strings.Contains(result.Error, "unexpected argument '-m' found") {
+		t.Fatalf("expected error to include stderr hint, got %q", result.Error)
 	}
 }
 
@@ -1227,15 +1218,7 @@ func TestCodexExecuteTimesOutWhenTurnStopsAfterToolResult(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-stale"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-stale","turn":{"id":"turn-stale"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-stale", "turn-stale", ""+
 		`echo '{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-stale","item":{"type":"commandExecution","id":"cmd-1","command":"git status"}}}'`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-stale","item":{"type":"commandExecution","id":"cmd-1","aggregatedOutput":"clean"}}}'`+"\n"+
 		`sleep 5`+"\n")
@@ -1261,15 +1244,7 @@ func TestCodexExecuteFirstTurnNoProgressSurfacesDiagnostics(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-stuck"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-stuck","turn":{"id":"turn-stuck"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-stuck", "turn-stuck", ""+
 		`echo 'ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit' >&2`+"\n"+
 		`sleep 5`+"\n")
 
@@ -1302,15 +1277,7 @@ func TestCodexExecuteFailsWhenProcessExitsDuringActiveTurn(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-crash"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-crash","turn":{"id":"turn-crash"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-crash", "turn-crash", ""+
 		`echo 'fatal: app-server crashed after turn/start' >&2`+"\n"+
 		`exit 2`+"\n")
 
@@ -1338,15 +1305,7 @@ func TestCodexExecuteTimeoutWinsOverProcessExitDuringActiveTurn(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-timeout"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-timeout","turn":{"id":"turn-timeout"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-timeout", "turn-timeout", ""+
 		`read line`+"\n")
 
 	result := executeFakeCodex(t, fakePath, ExecOptions{
@@ -1370,15 +1329,7 @@ func TestCodexExecuteFirstTurnRetryErrorDoesNotSatisfyProgress(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-retry"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-retry","turn":{"id":"turn-retry"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-retry", "turn-retry", ""+
 		`echo '{"jsonrpc":"2.0","method":"error","params":{"threadId":"thr-retry","error":{"message":"temporary reconnect"},"willRetry":true}}'`+"\n"+
 		`sleep 5`+"\n")
 
@@ -1403,15 +1354,7 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousMessages(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-progress"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-progress","turn":{"id":"turn-progress"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-progress", "turn-progress", ""+
 		`sleep 0.05`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-progress","item":{"type":"agentMessage","id":"msg-1","text":"still working"}}}'`+"\n"+
 		`sleep 0.05`+"\n"+
@@ -1437,15 +1380,7 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousDeltaProgress(t *testing.
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-delta"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-delta","turn":{"id":"turn-delta"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-delta", "turn-delta", ""+
 		`echo '{"jsonrpc":"2.0","method":"item/commandExecution/outputDelta","params":{"threadId":"thr-delta","item":{"type":"commandExecution","id":"cmd-1"},"delta":"line 1\n"}}'`+"\n"+
 		`sleep 0.05`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thr-delta","item":{"type":"agentMessage","id":"msg-1"},"delta":"thinking"}}'`+"\n"+
@@ -1471,15 +1406,7 @@ func TestCodexExecuteSemanticInactivityDoesNotAffectNormalTurnCompletion(t *test
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := writeFakeCodexAppServer(t, ""+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
-		`read line`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-normal"}}}'`+"\n"+
-		`read line`+"\n"+
-		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
-		`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-normal","turn":{"id":"turn-normal"}}}'`+"\n"+
+	fakePath := writeFakeCodexTurnServer(t, "thr-normal", "turn-normal", ""+
 		`echo '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-normal","item":{"type":"agentMessage","id":"msg-1","text":"Done"}}}'`+"\n"+
 		`echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-normal","turn":{"id":"turn-normal","status":"completed"}}}'`+"\n")
 
@@ -1505,12 +1432,31 @@ func writeFakeCodexAppServer(t *testing.T, body string) string {
 	return fakePath
 }
 
+func writeFakeCodexTurnServer(t *testing.T, threadID, turnID, body string) string {
+	t.Helper()
+	return writeFakeCodexAppServer(t, ""+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":1,"result":{}}'`+"\n"+
+		`read line`+"\n"+
+		`read line`+"\n"+
+		fmt.Sprintf(`echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"%s"}}}'`, threadID)+"\n"+
+		`read line`+"\n"+
+		`echo '{"jsonrpc":"2.0","id":3,"result":{}}'`+"\n"+
+		fmt.Sprintf(`echo '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"%s","turn":{"id":"%s"}}}'`, threadID, turnID)+"\n"+
+		body)
+}
+
 func executeFakeCodex(t *testing.T, fakePath string, opts ExecOptions) Result {
 	t.Helper()
 	backend, err := New("codex", Config{ExecutablePath: fakePath, Logger: slog.Default()})
 	if err != nil {
 		t.Fatalf("new codex backend: %v", err)
 	}
+	return executeCodex(t, backend, opts)
+}
+
+func executeCodex(t *testing.T, backend Backend, opts ExecOptions) Result {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	session, err := backend.Execute(ctx, "prompt", opts)
@@ -1550,7 +1496,7 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		ExtraArgs:  []string{"--listen", "tcp://evil", "--sandbox", "read-only"},
 		CustomArgs: []string{"--sandbox", "workspace-write", "--listen=bad"},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "tcp://evil") || strings.Contains(joined, "--listen=bad") {
 		t.Fatalf("blocked args should be filtered from both layers: %v", args)
@@ -1574,7 +1520,7 @@ func TestBuildCodexArgsDisablesImageGenerationWhenRequested(t *testing.T) {
 
 	args := buildCodexArgs(ExecOptions{
 		Model: "some-model",
-	}, slog.Default(), true)
+	}, nil, slog.Default(), true)
 
 	if !containsArgPair(args, "--disable", "image_generation") {
 		t.Fatalf("expected image_generation to be disabled, got %v", args)
@@ -1586,7 +1532,7 @@ func TestBuildCodexArgsLeavesImageGenerationWhenAllowed(t *testing.T) {
 
 	args := buildCodexArgs(ExecOptions{
 		Model: "some-model",
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 
 	if containsArgPair(args, "--disable", "image_generation") {
 		t.Fatalf("did not expect image_generation to be disabled, got %v", args)
@@ -1657,13 +1603,13 @@ func TestParseCodexModelCapabilities(t *testing.T) {
 	}`)
 	got := parseCodexModelCapabilities(raw)
 
-	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.5"]) {
+	if !shouldDisableCodexImageGenerationForCatalog(codexImageGenerationAuto, "gpt-5.5", got, true) {
 		t.Fatalf("expected image input alone not to support image_generation: %+v", got["gpt-5.5"])
 	}
-	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.3-codex-spark"]) {
+	if !shouldDisableCodexImageGenerationForCatalog(codexImageGenerationAuto, "gpt-5.3-codex-spark", got, true) {
 		t.Fatalf("expected spark fixture to disable image_generation: %+v", got["gpt-5.3-codex-spark"])
 	}
-	if !codexModelCapabilitySupportsImageGeneration(got["image-tool"]) {
+	if shouldDisableCodexImageGenerationForCatalog(codexImageGenerationAuto, "image-tool", got, true) {
 		t.Fatalf("expected explicit tool fixture to support image_generation: %+v", got["image-tool"])
 	}
 }
@@ -1675,6 +1621,55 @@ func containsArgPair(args []string, first, second string) bool {
 		}
 	}
 	return false
+}
+
+func TestCodexRuntimeOverrides(t *testing.T) {
+	t.Parallel()
+
+	linux := codexRuntimeOverrides(nil, "linux", "/tmp/multica-task")
+	for _, pair := range [][2]string{
+		{"-c", `sandbox_mode="workspace-write"`},
+		{"-c", "sandbox_workspace_write.network_access=true"},
+		{"--disable", "multi_agent"},
+		{"--disable", "memories"},
+		{"-c", "memories.generate_memories=false"},
+		{"-c", "memories.use_memories=false"},
+	} {
+		if !containsArgPair(linux, pair[0], pair[1]) {
+			t.Errorf("linux overrides missing %q %q: %v", pair[0], pair[1], linux)
+		}
+	}
+	trusted := "projects." + strconv.Quote("/tmp/multica-task") + `.trust_level="trusted"`
+	if !containsArgPair(linux, "-c", trusted) {
+		t.Errorf("linux overrides missing trusted workdir %q: %v", trusted, linux)
+	}
+
+	darwin := codexRuntimeOverrides(nil, "darwin", "")
+	if !containsArgPair(darwin, "-c", `sandbox_mode="danger-full-access"`) {
+		t.Errorf("darwin overrides missing sandbox fallback: %v", darwin)
+	}
+	if containsArgPair(darwin, "-c", "sandbox_workspace_write.network_access=true") {
+		t.Errorf("darwin overrides must not add workspace-write network config: %v", darwin)
+	}
+
+}
+
+func TestBuildCodexArgsAppendsRuntimePolicyAfterCustomConfig(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		Cwd:        "/tmp/current-task",
+		CustomArgs: []string{"-c", `sandbox_mode="read-only"`, "--enable", "multi_agent"},
+	}, nil, slog.Default(), false)
+
+	customSandbox := slices.Index(args, `sandbox_mode="read-only"`)
+	managedSandbox := slices.Index(args, `sandbox_mode="workspace-write"`)
+	if customSandbox < 0 || managedSandbox <= customSandbox {
+		t.Fatalf("managed sandbox override must follow custom config: %v", args)
+	}
+	if !containsArgPair(args, "--disable", "multi_agent") {
+		t.Fatalf("managed multi-agent policy missing: %v", args)
+	}
 }
 
 func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
@@ -1689,7 +1684,7 @@ func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `model="o3"`},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "mcp_servers") {
@@ -1738,17 +1733,15 @@ func TestCodexExecuteFailsClosedWhenMcpConfigInvalid(t *testing.T) {
 		t.Fatalf("new codex backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = backend.Execute(ctx, "prompt", ExecOptions{
+	result := executeCodex(t, backend, ExecOptions{
 		Timeout:   2 * time.Second,
 		McpConfig: json.RawMessage(`not json`),
 	})
-	if err == nil {
-		t.Fatal("expected Execute to fail closed on malformed mcp_config, got nil error")
+	if result.Status != "failed" {
+		t.Fatalf("expected malformed mcp_config to fail closed, got status=%q", result.Status)
 	}
-	if !strings.Contains(err.Error(), "mcp_config") {
-		t.Fatalf("expected error to mention mcp_config, got %q", err)
+	if !strings.Contains(result.Error, "mcp_config") {
+		t.Fatalf("expected error to mention mcp_config, got %q", result.Error)
 	}
 }
 
@@ -1772,17 +1765,15 @@ func TestCodexExecuteFailsClosedWhenManagedMcpButNoCodexHome(t *testing.T) {
 		t.Fatalf("new codex backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = backend.Execute(ctx, "prompt", ExecOptions{
+	result := executeCodex(t, backend, ExecOptions{
 		Timeout:   2 * time.Second,
 		McpConfig: json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`),
 	})
-	if err == nil {
-		t.Fatal("expected Execute to fail closed when managed mcp_config but no CODEX_HOME, got nil error")
+	if result.Status != "failed" {
+		t.Fatalf("expected managed mcp_config without CODEX_HOME to fail closed, got status=%q", result.Status)
 	}
-	if !strings.Contains(err.Error(), "CODEX_HOME") {
-		t.Fatalf("expected error to mention CODEX_HOME, got %q", err)
+	if !strings.Contains(result.Error, "CODEX_HOME") {
+		t.Fatalf("expected error to mention CODEX_HOME, got %q", result.Error)
 	}
 }
 
@@ -1797,7 +1788,7 @@ func TestBuildCodexArgsPreservesCustomMcpOverridesWhenUnmanaged(t *testing.T) {
 	// namespace once an admin opts in via the MCP Tab.
 	args := buildCodexArgs(ExecOptions{
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "uvx" }`, "-c", `model="o3"`},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 	foundMcp := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
@@ -1820,7 +1811,7 @@ func TestBuildCodexArgsDropsCustomMcpOverridesWhenManaged(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "evil" }`, "-c", `model="o3"`},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
 			t.Fatalf("custom_args mcp_servers must be filtered when managed mcp_config is present, got %v", args)
@@ -1894,24 +1885,12 @@ func TestEnsureCodexMcpConfigEmptyClearsBlock(t *testing.T) {
 	// When agent.mcp_config is null/empty the managed block is removed
 	// from config.toml, but unrelated content (sandbox block, user-level
 	// `[mcp_servers.user]`) is left untouched.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
 	initial := "sandbox_mode = \"workspace-write\"\n\n" +
 		multicaCodexMcpBeginMarker + "\n" +
 		"[mcp_servers.fetch]\ncommand = \"uvx\"\n" +
 		multicaCodexMcpEndMarker + "\n\n" +
 		"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-		t.Fatalf("seed config: %v", err)
-	}
-
-	if err := ensureCodexMcpConfig(tmp, nil, slog.Default()); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	data, err := os.ReadFile(tmp)
-	if err != nil {
-		t.Fatalf("read after: %v", err)
-	}
-	got := string(data)
+	got := ensureCodexMcpConfigFromInitial(t, initial, nil)
 	if strings.Contains(got, multicaCodexMcpBeginMarker) {
 		t.Fatalf("managed block should be cleared, got:\n%s", got)
 	}
@@ -2012,21 +1991,12 @@ func TestEnsureCodexMcpConfigStripsUserMcpServersWhenManaged(t *testing.T) {
 	// user's global servers silently being mixed in with the strict
 	// agent-managed list. Sub-tables like `[mcp_servers.x.env]` are also
 	// dropped as part of their parent.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
 	initial := "sandbox_mode = \"workspace-write\"\n\n" +
 		"[mcp_servers.global_fetch]\ncommand = \"uvx-old\"\n\n" +
 		"[mcp_servers.global_fetch.env]\nOLD_KEY = \"old\"\n\n" +
 		"[other_section]\nkeep_me = true\n"
-	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
 	raw := json.RawMessage(`{"mcpServers":{"new_server":{"command":"new"}}}`)
-	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-		t.Fatalf("ensure: %v", err)
-	}
-	data, _ := os.ReadFile(tmp)
-	got := string(data)
+	got := ensureCodexMcpConfigFromInitial(t, initial, raw)
 
 	if strings.Contains(got, "global_fetch") {
 		t.Fatalf("user mcp_servers tables must be stripped when agent has its own mcp_config, got:\n%s", got)
@@ -2045,24 +2015,20 @@ func TestEnsureCodexMcpConfigStripsUserMcpServersWhenManaged(t *testing.T) {
 func TestEnsureCodexMcpConfigIdempotent(t *testing.T) {
 	t.Parallel()
 
-	// Running ensure twice with the same input must produce byte-identical
-	// output — needed because Prepare and Reuse may both call into this on
-	// the same per-task config.toml across a task's lifetime.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
-	raw := json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx","args":["a","b"]}}}`)
-
-	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-		t.Fatalf("first ensure: %v", err)
-	}
-	first, _ := os.ReadFile(tmp)
-
-	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-		t.Fatalf("second ensure: %v", err)
-	}
-	second, _ := os.ReadFile(tmp)
-
-	if string(first) != string(second) {
-		t.Fatalf("non-idempotent write:\nfirst:\n%s\nsecond:\n%s", first, second)
+	// Prepare and Reuse may both apply either a populated or an explicitly
+	// empty managed set; neither form may accrete markers or blank lines.
+	for _, tc := range []struct {
+		name    string
+		initial []byte
+		raw     json.RawMessage
+	}{
+		{"populated", nil, json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx","args":["a","b"]}}}`)},
+		{"empty managed set", []byte("sandbox_mode = \"workspace-write\"\n"), json.RawMessage(`{}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertEnsureCodexMcpConfigIdempotent(t, tc.initial, tc.raw)
+		})
 	}
 }
 
@@ -2091,81 +2057,66 @@ func TestEnsureCodexMcpConfigRejectsBadShapes(t *testing.T) {
 	}
 }
 
-func TestEnsureCodexMcpConfigAbsentLeavesUserTablesAlone(t *testing.T) {
+func TestEnsureCodexMcpConfigOwnershipStates(t *testing.T) {
 	t.Parallel()
 
-	// nil / `null` map to the API's "absent" state: the agent has no
-	// managed mcp_config, so the daemon must not touch the user's
-	// inherited `[mcp_servers.*]` tables — the run falls back to the
-	// user's global CLI config.
-	for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`)} {
-		tmp := filepath.Join(t.TempDir(), "config.toml")
-		initial := "sandbox_mode = \"workspace-write\"\n\n" +
-			"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-		if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-			t.Fatalf("ensure (%q): %v", string(raw), err)
-		}
-		data, _ := os.ReadFile(tmp)
-		got := string(data)
-		if !strings.Contains(got, "[mcp_servers.user_global]") {
-			t.Fatalf("absent mcp_config (%q) must leave user MCP tables alone, got:\n%s", string(raw), got)
-		}
-		if strings.Contains(got, multicaCodexMcpBeginMarker) {
-			t.Fatalf("absent mcp_config (%q) must not write managed markers, got:\n%s", string(raw), got)
-		}
-	}
-}
-
-func TestEnsureCodexMcpConfigEmptyManagedSetStripsUserMcp(t *testing.T) {
-	t.Parallel()
-
-	// `{}` / `{"mcpServers":{}}` map to the API's "present, empty" state.
-	// The admin saved an explicit (empty) MCP list, so the daemon must
-	// strip inherited user `[mcp_servers.*]` tables and pin the managed
-	// markers — equivalent to Claude's --strict-mcp-config with an empty
-	// servers map. Falling back to the user's global MCP would defeat
-	// the affordance.
-	for _, raw := range []json.RawMessage{
-		json.RawMessage(`{}`),
-		json.RawMessage(`{"mcpServers":{}}`),
+	// Absent input preserves inherited user MCP configuration. An explicitly
+	// managed empty set strips it and pins markers, matching strict MCP mode.
+	for _, tc := range []struct {
+		name    string
+		raw     json.RawMessage
+		managed bool
+	}{
+		{"nil is absent", nil, false},
+		{"JSON null is absent", json.RawMessage(`null`), false},
+		{"empty object is managed", json.RawMessage(`{}`), true},
+		{"empty server map is managed", json.RawMessage(`{"mcpServers":{}}`), true},
 	} {
-		tmp := filepath.Join(t.TempDir(), "config.toml")
-		initial := "sandbox_mode = \"workspace-write\"\n\n" +
-			"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-		if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-			t.Fatalf("ensure (%q): %v", string(raw), err)
-		}
-		data, _ := os.ReadFile(tmp)
-		got := string(data)
-		if strings.Contains(got, "user_global") {
-			t.Fatalf("managed empty set (%q) must strip user MCP tables, got:\n%s", string(raw), got)
-		}
-		if !strings.Contains(got, multicaCodexMcpBeginMarker) || !strings.Contains(got, multicaCodexMcpEndMarker) {
-			t.Fatalf("managed empty set (%q) must still write markers so future runs find them, got:\n%s", string(raw), got)
-		}
-		if !strings.Contains(got, `sandbox_mode = "workspace-write"`) {
-			t.Fatalf("unrelated content must survive (%q), got:\n%s", string(raw), got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			initial := "sandbox_mode = \"workspace-write\"\n\n" +
+				"[mcp_servers.user_global]\ncommand = \"keep\"\n"
+			got := ensureCodexMcpConfigFromInitial(t, initial, tc.raw)
+			if strings.Contains(got, "user_global") == tc.managed {
+				t.Fatalf("managed=%v must determine inherited user MCP ownership, got:\n%s", tc.managed, got)
+			}
+			hasMarkers := strings.Contains(got, multicaCodexMcpBeginMarker) && strings.Contains(got, multicaCodexMcpEndMarker)
+			if hasMarkers != tc.managed {
+				t.Fatalf("managed=%v, markers=%v, got:\n%s", tc.managed, hasMarkers, got)
+			}
+			if !strings.Contains(got, `sandbox_mode = "workspace-write"`) {
+				t.Fatalf("unrelated content must survive, got:\n%s", got)
+			}
+		})
 	}
 }
 
-func TestEnsureCodexMcpConfigEmptyManagedSetIdempotent(t *testing.T) {
-	t.Parallel()
+func ensureCodexMcpConfigFromInitial(t *testing.T, initial string, raw json.RawMessage) string {
+	t.Helper()
 
-	// Running ensure twice with the same `{}` input must produce
-	// byte-identical output — guards against the empty-marker block
-	// accreting blank lines or duplicate markers across reruns.
 	tmp := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(tmp, []byte("sandbox_mode = \"workspace-write\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	raw := json.RawMessage(`{}`)
+	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
+		t.Fatalf("ensure (%q): %v", string(raw), err)
+	}
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	return string(data)
+}
+
+func assertEnsureCodexMcpConfigIdempotent(t *testing.T, initial []byte, raw json.RawMessage) {
+	t.Helper()
+
+	tmp := filepath.Join(t.TempDir(), "config.toml")
+	if initial != nil {
+		if err := os.WriteFile(tmp, initial, 0o600); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
 	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
 		t.Fatalf("first ensure: %v", err)
 	}

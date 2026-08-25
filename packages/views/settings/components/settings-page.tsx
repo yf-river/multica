@@ -19,8 +19,10 @@ import { PreferencesTab } from "./preferences-tab";
 import { TokensTab } from "./tokens-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
-import { RepositoriesTab } from "./repositories-tab";
-import { IntegrationsTab } from "./integrations-tab";
+import { ProjectGongfengRepositories } from "./project-gongfeng-repositories";
+import { GitHubTab } from "./github-tab";
+import { GitHubMark } from "./github-mark";
+import { LarkTab } from "./lark-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { useT } from "../../i18n";
 
@@ -35,32 +37,27 @@ const ACCOUNT_TAB_ICONS = {
 const WORKSPACE_TAB_KEYS = [
   "general",
   "repositories",
+  "github",
   "integrations",
   "members",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
   repositories: "repositories",
+  github: "github",
   integrations: "integrations",
   members: "members",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
   repositories: FolderGit2,
+  github: GitHubMark,
   integrations: Plug,
   members: Users,
 } as const;
 
 const DEFAULT_TAB = "profile";
 const TAB_QUERY_KEY = "tab";
-
-// Legacy `?tab=…` values that have been collapsed into another tab. Old
-// bookmarks still land on the correct surface without us preserving a
-// dead TabsContent entry. Lark used to be its own top-level workspace
-// tab; it now lives inside Integrations.
-const LEGACY_WORKSPACE_TAB_REDIRECTS: Record<string, string> = {
-  lark: "integrations",
-};
 
 export interface ExtraSettingsTab {
   value: string;
@@ -93,11 +90,8 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
-  const candidateTab = tabFromUrl
-    ? LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
-    : null;
   const activeTab =
-    candidateTab && validTabs.has(candidateTab) ? candidateTab : DEFAULT_TAB;
+    tabFromUrl && validTabs.has(tabFromUrl) ? tabFromUrl : DEFAULT_TAB;
 
   // replace (not push) so settings tab switches don't pollute browser history.
   // Preserve any other query params the page may carry.
@@ -162,8 +156,19 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="notifications"><NotificationsTab /></TabsContent>
           <TabsContent value="tokens"><TokensTab /></TabsContent>
           <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
-          <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
-          <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
+          <TabsContent value="repositories">
+            <section className="space-y-4">
+              <h2 className="text-sm font-semibold">{t(($) => $.repositories.section_title)}</h2>
+              <ProjectGongfengRepositories />
+            </section>
+          </TabsContent>
+          <TabsContent value="github"><GitHubTab /></TabsContent>
+          <TabsContent value="integrations">
+            <section className="space-y-4">
+              <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
+              <LarkTab />
+            </section>
+          </TabsContent>
           <TabsContent value="members"><MembersTab /></TabsContent>
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>

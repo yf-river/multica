@@ -28,7 +28,7 @@ function renderLink(
 }
 
 describe("AppLink", () => {
-  it("calls caller onClick BEFORE push so synchronous side effects (close menu, etc) commit before the transition starts", () => {
+  it("runs caller onClick before navigation", () => {
     const order: string[] = [];
     const adapter = makeAdapter({
       push: vi.fn(() => order.push("push")),
@@ -42,7 +42,7 @@ describe("AppLink", () => {
     expect(order).toEqual(["onClick", "push"]);
   });
 
-  it("calls adapter.prefetch on hover, alongside the caller's onMouseEnter — neither is overridden by {...props}", () => {
+  it("prefetches on hover without replacing the caller handler", () => {
     const prefetch = vi.fn();
     const callerMouseEnter = vi.fn();
     const adapter = makeAdapter({ prefetch });
@@ -90,14 +90,13 @@ describe("AppLink", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("a caller-supplied onClick passed via spread cannot silently override the navigation handler", () => {
+  it("preserves navigation when onClick arrives through a spread", () => {
     const push = vi.fn();
     const adapter = makeAdapter({ push });
     const spreadOnClick = vi.fn((e: React.MouseEvent) => e.preventDefault());
 
     render(
       <NavigationProvider value={adapter}>
-        {/* simulate a caller that passes onClick through a spread bag */}
         <AppLink href="/issues" {...{ onClick: spreadOnClick }}>
           go
         </AppLink>
@@ -105,7 +104,6 @@ describe("AppLink", () => {
     );
 
     fireEvent.click(screen.getByText("go"));
-    // Caller still runs (it was hoisted into the named param), but push runs too.
     expect(spreadOnClick).toHaveBeenCalled();
     expect(push).toHaveBeenCalledWith("/issues");
   });

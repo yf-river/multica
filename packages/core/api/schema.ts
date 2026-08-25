@@ -16,6 +16,66 @@ export interface ParseOptions {
   endpoint: string;
 }
 
+export class ApiResponseValidationError extends Error {
+  readonly code = "api_response_contract_invalid";
+  readonly endpoint: string;
+  readonly mayHaveCommitted: boolean;
+
+  constructor(endpoint: string, mayHaveCommitted: boolean) {
+    super("服务器返回格式异常，请刷新后确认操作结果");
+    this.name = "ApiResponseValidationError";
+    this.endpoint = endpoint;
+    this.mayHaveCommitted = mayHaveCommitted;
+  }
+}
+
+type ReceivedShape =
+  | { kind: "null" }
+  | { kind: "array"; length: number }
+  | { kind: "object"; keys: string[] }
+  | { kind: "string"; length: number }
+  | { kind: "number" | "boolean" | "bigint" | "undefined" | "symbol" | "function" };
+
+function describeReceivedShape(data: unknown): ReceivedShape {
+  if (data === null) return { kind: "null" };
+  if (Array.isArray(data)) return { kind: "array", length: data.length };
+  if (typeof data === "object") {
+    return { kind: "object", keys: Object.keys(data).slice(0, 32) };
+  }
+  if (typeof data === "string") return { kind: "string", length: data.length };
+  switch (typeof data) {
+    case "number":
+      return { kind: "number" };
+    case "boolean":
+      return { kind: "boolean" };
+    case "bigint":
+      return { kind: "bigint" };
+    case "undefined":
+      return { kind: "undefined" };
+    case "symbol":
+      return { kind: "symbol" };
+    case "function":
+      return { kind: "function" };
+    default:
+      return { kind: "undefined" };
+  }
+}
+
+function logValidationFailure(
+  data: unknown,
+  issues: ReadonlyArray<{ code: string; path: PropertyKey[] }>,
+  opts: ParseOptions,
+): void {
+  schemaLogger.warn(
+    `API response failed schema validation: ${opts.endpoint}`,
+    {
+      endpoint: opts.endpoint,
+      issues: issues.map((issue) => ({ code: issue.code, path: issue.path })),
+      received: describeReceivedShape(data),
+    },
+  );
+}
+
 /**
  * Validate a JSON value parsed from an API response against a zod schema,
  * returning the parsed value on success or `fallback` on failure.
@@ -43,13 +103,18 @@ export function parseWithFallback<T>(
 ): T {
   const result = schema.safeParse(data);
   if (result.success) return result.data as T;
-  schemaLogger.warn(
-    `API response failed schema validation: ${opts.endpoint}`,
-    {
-      endpoint: opts.endpoint,
-      issues: result.error.issues,
-      received: data,
-    },
-  );
+  logValidationFailure(data, result.error.issues, opts);
   return fallback;
+}
+
+/** Validate a successful mutation response without manufacturing success. */
+export function parseOrThrow<T>(
+  data: unknown,
+  schema: ZodType,
+  opts: ParseOptions & { mayHaveCommitted?: boolean },
+): T {
+  const result = schema.safeParse(data);
+  if (result.success) return result.data as T;
+  logValidationFailure(data, result.error.issues, opts);
+  throw new ApiResponseValidationError(opts.endpoint, opts.mayHaveCommitted ?? true);
 }

@@ -30,10 +30,6 @@ func eq(a, b []string) bool {
 	return true
 }
 
-// TestTrailingUserMessages pins the message-selection logic behind the daemon
-// chat prompt: the agent must receive every user message since its last reply
-// (the MUL-2968 debounce can land several before one run fires), not just the
-// most recent one.
 func TestTrailingUserMessages(t *testing.T) {
 	cases := []struct {
 		name string

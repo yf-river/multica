@@ -1,4 +1,4 @@
-export { labelKeys, labelListOptions, issueLabelsOptions } from "./queries";
+export { labelListOptions, issueLabelsOptions } from "./queries";
 export {
   useCreateLabel,
   useUpdateLabel,

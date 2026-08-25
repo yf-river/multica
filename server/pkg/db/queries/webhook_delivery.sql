@@ -10,12 +10,13 @@ INSERT INTO webhook_delivery (
     workspace_id, autopilot_id, trigger_id, provider, event,
     dedupe_key, dedupe_source, signature_status, status,
     selected_headers, content_type, raw_body,
-    replayed_from_delivery_id
+    replayed_from_delivery_id, replay_actor_id, replay_request_key, replay_request_hash
 ) VALUES (
     $1, $2, $3, $4, $5,
     sqlc.narg('dedupe_key'), sqlc.narg('dedupe_source'), $6, $7,
     $8, sqlc.narg('content_type'), sqlc.narg('raw_body'),
-    sqlc.narg('replayed_from_delivery_id')
+    sqlc.narg('replayed_from_delivery_id'), sqlc.narg('replay_actor_id'),
+    sqlc.narg('replay_request_key'), sqlc.narg('replay_request_hash')
 ) RETURNING *;
 
 -- name: GetWebhookDelivery :one
@@ -26,6 +27,12 @@ WHERE id = $1;
 -- Workspace-scoped read for authenticated detail / replay endpoints.
 SELECT * FROM webhook_delivery
 WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetWebhookReplayByRequest :one
+SELECT * FROM webhook_delivery
+WHERE workspace_id = $1
+  AND replay_actor_id = $2
+  AND replay_request_key = $3;
 
 -- name: GetWebhookDeliveryByTriggerAndDedupe :one
 -- Looks up the existing delivery for a (trigger, dedupe_key) pair so that

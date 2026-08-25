@@ -10,12 +10,13 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
+import { useRuntimeNow } from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import { agentListOptions } from "@multica/core/workspace/queries";
-import { memberListOptions } from "@multica/core/workspace/queries";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -47,18 +48,37 @@ import { useT } from "../../i18n";
 
 const MACHINE_FILTERS: RuntimeMachineFilter[] = ["all", "online", "issues"];
 
-// Re-render every 30s so derived health (recently_lost → offline transitions)
-// catches up even when no underlying query data has changed.
-function useNowTick(intervalMs = 30_000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
+interface RuntimesPageProps {
+  /** Desktop-only daemon id used to mark the row for this Mac. */
+  localDaemonId?: string | null;
+  /** Desktop-only friendly device name for the local daemon. */
+  localMachineName?: string | null;
+  /** Desktop-only controls shown when the local machine is selected. */
+  localMachineActions?: React.ReactNode;
+  /**
+   * Desktop-only signal: this host always owns a local machine, even
+   * when no runtime is currently registered (daemon stopped, not yet
+   * started, or runtime GC'd). When true, a placeholder local row is
+   * synthesized so `localMachineActions` (the daemon Start button) is
+   * always reachable. Web omits this.
+   */
+  hasLocalMachine?: boolean;
+  /**
+   * Desktop-only signal: the bundled daemon is still booting / hasn't
+   * registered with the server yet. Forwarded so the empty state can show
+   * a "starting" indicator instead of the static "register a runtime" hint
+   * during the boot window. Web omits this.
+   */
+  bootstrapping?: boolean;
 }
 
-function RuntimesPage() {
+function RuntimesPage({
+  localDaemonId,
+  localMachineName,
+  localMachineActions,
+  hasLocalMachine,
+  bootstrapping,
+}: RuntimesPageProps = {}) {
   const isLoading = useAuthStore((s) => s.isLoading);
   const { t } = useT("runtimes");
   const pendingMachineName = t(($) => $.machine.pending_custom_runtimes);
@@ -92,15 +112,11 @@ function RuntimesPage() {
   );
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { role } = useCurrentMember(wsId);
 
   // Custom runtime management is an admin-only affordance, gated the same
   // way the runtime list gates delete: workspace owner/admin role.
-  const currentMember = currentUserId
-    ? members.find((m) => m.user_id === currentUserId)
-    : null;
-  const canManageProfiles =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManageProfiles = canManageWorkspace(role);
   const [showProfilesDialog, setShowProfilesDialog] = useState(false);
 
   const handleDaemonEvent = useCallback(() => {
@@ -108,7 +124,7 @@ function RuntimesPage() {
   }, [qc, wsId]);
   useWSEvent("daemon:register", handleDaemonEvent);
 
-  const now = useNowTick();
+  const now = useRuntimeNow();
 
   useEffect(() => {
     if (pendingProfiles.length === 0) return;
@@ -606,9 +622,7 @@ function MachineDetail({
   const runtimesMeta = t(($) => $.machine.metrics.runtimes_hint, {
     count: machine.onlineCount,
   });
-  // Single inline meta strip replaces the old 4-card grid. Health is already
-  // shown as a chip in the title row; CLI / daemon id are scanning-grade
-  // info, not headline numbers — they belong in muted secondary text.
+  // Health stays in the title row; CLI and daemon id are secondary metadata.
   const metaParts: React.ReactNode[] = [
     <span key="runtimes">
       <span className="font-medium tabular-nums text-foreground">

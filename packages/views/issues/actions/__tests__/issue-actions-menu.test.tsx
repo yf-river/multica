@@ -1,56 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { mockIssue, wrapIssueActionsMenu } from "./issue-actions-test-helpers";
+import { mockOpenModal } from "./issue-actions-test-mocks";
 
 // ---------------------------------------------------------------------------
 // Mocks — same pattern as the issue-detail test suite.
 // ---------------------------------------------------------------------------
-
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
-const mockOpenModal = vi.fn();
-vi.mock("@multica/core/modals", () => ({
-  useModalStore: Object.assign(
-    (selector?: any) => {
-      const state = { open: mockOpenModal };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ open: mockOpenModal }) },
-  ),
-}));
-
-const mockAuthState = { user: { id: "user-1" }, isAuthenticated: true };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => (selector ? selector(mockAuthState) : mockAuthState),
-    { getState: () => mockAuthState },
-  ),
-  registerAuthStore: vi.fn(),
-}));
-
-vi.mock("@multica/core/workspace/queries", () => ({
-  memberListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "members"],
-    queryFn: () =>
-      Promise.resolve([
-        { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
-      ]),
-  }),
-  agentListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "agents"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  squadListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "squads"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  assigneeFrequencyOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "assignee-frequency"],
-    queryFn: () => Promise.resolve([]),
-  }),
-}));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({ getActorName: (_t: string, _id: string) => "" }),
@@ -67,31 +22,6 @@ vi.mock("@multica/core/pins", () => ({
 
 vi.mock("@multica/core/issues/mutations", () => ({
   useUpdateIssue: () => ({ mutate: vi.fn() }),
-}));
-
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
-    "@multica/core/paths",
-  );
-  return {
-    ...actual,
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Test", slug: "test" }),
-    useWorkspacePaths: () => actual.paths.workspace("test"),
-  };
-});
-
-vi.mock("../../../navigation", () => ({
-  useNavigation: () => ({
-    push: vi.fn(),
-    pathname: "/test/issues/issue-1",
-    searchParams: new URLSearchParams(),
-    back: vi.fn(),
-    replace: vi.fn(),
-  }),
-}));
-
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("../../../common/actor-avatar", () => ({
@@ -147,8 +77,7 @@ describe("IssueActionsDropdown", () => {
     fireEvent.click(await screen.findByText("负责人"));
 
     // The shared picker exposes a search input and renders the workspace
-    // member under a "成员" group — both come from `AssigneePicker`, not
-    // the legacy submenu (which had neither).
+    // member under a "成员" group.
     expect(
       await screen.findByPlaceholderText("分配给..."),
     ).toBeInTheDocument();
@@ -193,5 +122,26 @@ describe("IssueActionsContextMenu", () => {
 
     expect(await screen.findByText("状态")).toBeInTheDocument();
     expect(screen.getByText("删除任务")).toBeInTheDocument();
+  });
+
+  it("anchors the shared AssigneePicker at the context-menu position", async () => {
+    render(
+      wrapIssueActionsMenu(
+        <IssueActionsContextMenu issue={mockIssue}>
+          <div data-testid="row">Row</div>
+        </IssueActionsContextMenu>,
+      ),
+    );
+
+    fireEvent.contextMenu(screen.getByTestId("row"), {
+      clientX: 120,
+      clientY: 80,
+    });
+    fireEvent.click(await screen.findByText("负责人"));
+
+    expect(
+      await screen.findByPlaceholderText("分配给..."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
   });
 });

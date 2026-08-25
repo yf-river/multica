@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
-import { LinkExtension } from "./index";
+import { createEditorExtensions } from "./index";
+
+const LinkExtension = createEditorExtensions({}).find(
+  ({ name }) => name === "link",
+)!;
 
 let editor: Editor | null = null;
 

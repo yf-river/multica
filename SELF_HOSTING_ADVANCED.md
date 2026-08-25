@@ -150,7 +150,7 @@ Usage 与 Runtime dashboard 从 `task_usage_hourly` 读，该派生表由 `rollu
 
 ### 进程内调度器工作机制
 
-每个后端副本每 30 秒 tick 一次，尝试认领 `sys_cron_executions` 中当前 5 分钟 UTC plan。唯一键 `(job_name, scope_kind, scope_id, plan_time)` 让认领成为跨副本的单赢家竞赛，多实例部署不会双写。handler 然后调用 `SELECT rollup_task_usage_hourly()`；SQL 函数内部持有 advisory lock `4246`，所以残留的 `pg_cron` job 或手动调用可与调度器并存，不会在 rollup 本身上冲突。查审计表看稳态：
+Every backend replica ticks every 30 seconds and tries to claim the current 5-minute UTC plan in `sys_cron_executions`. The unique key `(job_name, scope_kind, scope_id, plan_time)` makes the claim a single-winner contest across all replicas, so multi-instance deployments do not double-write. The handler then calls `SELECT rollup_task_usage_hourly()`; the SQL function holds advisory lock `4246` internally so manual calls cannot race the scheduler. Inspect the audit table for steady-state operation:
 
 ```sql
 SELECT plan_time, status, attempt, runner_id,
@@ -161,18 +161,16 @@ SELECT plan_time, status, attempt, runner_id,
  LIMIT 20;
 ```
 
-新数据库从首次调度 tick 起生成 hourly rollup，不需要 `pg_cron`、外部 CronJob 或 standalone backfill 命令。
+## Manual Setup (Without Docker Compose)
 
-## 无 Docker Compose 的手动配置
+If you prefer to build and run services manually:
 
-偏好手动构建与运行服务时：
-
-**前置：** Go 1.26+、Node.js 20+、pnpm 10.28+、PostgreSQL 17 with pgvector。
+**Prerequisites:** Go 1.26+, Node.js 20+, pnpm 10.28+, PostgreSQL 17 with pgvector.
 
 ```bash
-# 启动你的 PostgreSQL（或用：docker compose up -d postgres）
+# Start your PostgreSQL (or use: docker compose up -d postgres)
 
-# 构建后端
+# Build the backend
 make build
 
 # 启动后端 server；空数据库会自动初始化

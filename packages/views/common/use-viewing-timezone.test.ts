@@ -32,42 +32,15 @@ describe("useViewingTimezone", () => {
     expect(result.current).toBe("Asia/Tokyo");
   });
 
-  it("falls back to the browser tz when there is no user", () => {
-    userRef.current = null;
-    const { result } = renderHook(() => useViewingTimezone());
-    expect(result.current).toBe("America/Chicago");
-  });
-
-  it("falls back to the browser tz when timezone is null", () => {
-    userRef.current = { timezone: null };
-    const { result } = renderHook(() => useViewingTimezone());
-    expect(result.current).toBe("America/Chicago");
-  });
-
-  it("falls back to the browser tz when timezone is blank", () => {
-    userRef.current = { timezone: "   " };
-    const { result } = renderHook(() => useViewingTimezone());
-    expect(result.current).toBe("America/Chicago");
-  });
-
-  it("falls back to the browser tz when stored timezone is invalid", () => {
-    userRef.current = { timezone: "Etc/Unknown" };
-    const { result } = renderHook(() => useViewingTimezone());
-    expect(result.current).toBe("America/Chicago");
-  });
-
-  // The preferences clear-flow PATCHes timezone: "" and the server may echo
-  // the empty string back before normalising it to null. The hook must
-  // treat "" as "no preference" and fall back to the browser tz.
-  it("falls back to the browser tz when timezone is an empty string", () => {
-    userRef.current = { timezone: "" };
-    const { result } = renderHook(() => useViewingTimezone());
-    expect(result.current).toBe("America/Chicago");
-  });
-
-  // Auth store still initialising: user is undefined, not null.
-  it("falls back to the browser tz when the user is undefined", () => {
-    userRef.current = undefined as never;
+  it.each([
+    null,
+    { timezone: null },
+    { timezone: "   " },
+    { timezone: "Etc/Unknown" },
+    { timezone: "" },
+    undefined,
+  ])("falls back to the browser timezone for %j", (user) => {
+    userRef.current = user as typeof userRef.current;
     const { result } = renderHook(() => useViewingTimezone());
     expect(result.current).toBe("America/Chicago");
   });

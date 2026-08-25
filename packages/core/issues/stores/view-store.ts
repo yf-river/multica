@@ -6,10 +6,11 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority } from "../../types";
 import { ALL_STATUSES } from "../config";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
 export type ViewMode = "board" | "list" | "gantt" | "swimlane";
+export type IssuesScope = "all" | "members" | "agents";
 export type GanttZoom = "day" | "week" | "month";
 export type IssueGrouping = "status" | "assignee";
 export type SwimlaneGrouping = "parent" | "project" | "assignee";
@@ -25,7 +26,7 @@ export interface IssueDateFilter {
 
 export const SWIMLANE_GROUPINGS: SwimlaneGrouping[] = ["parent", "project", "assignee"];
 
-export interface CardProperties {
+interface CardProperties {
   priority: boolean;
   description: boolean;
   assignee: boolean;
@@ -126,6 +127,11 @@ export interface IssueViewState {
   /** Toggle a lane key in the currently active swimlane grouping. */
   toggleSwimlaneCollapsed: (key: string) => void;
 }
+
+type WorkspaceIssueViewState = IssueViewState & {
+  scope: IssuesScope;
+  setScope: (scope: IssuesScope) => void;
+};
 
 export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): IssueViewState => ({
   viewMode: "board",
@@ -313,68 +319,44 @@ export const viewStorePersistOptions = (name: string) => ({
     swimlaneOrders: state.swimlaneOrders,
     collapsedSwimlanes: state.collapsedSwimlanes,
   }),
-  // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
-  // saved before a new toggle was introduced wins entirely and the new key is
-  // missing — the dropdown switch then reads `undefined` and renders unchecked
-  // even though defaults treat it as on. Deep-merge `cardProperties` so newly
-  // added toggles inherit their default value for existing users.
-  merge: mergeViewStatePersisted,
 });
-
-/**
- * Reusable persist `merge` for view-state stores. Generic over T so the same
- * deep-merge for `cardProperties` works for both the issues view store and
- * the my-issues view store (which extends IssueViewState).
- */
-export function mergeViewStatePersisted<T extends IssueViewState>(
-  persisted: unknown,
-  current: T,
-): T {
-  const p = (persisted ?? {}) as Partial<T>;
-  // `collapsedSwimlanes` changed shape from `string[]` to
-  // `Record<SwimlaneGrouping, string[]>`. A snapshot saved in the old
-  // shape would otherwise overwrite the default record with an array
-  // and crash on first read — fall back to the default when the
-  // persisted value isn't a plain object.
-  const isRecord = (v: unknown): v is Record<string, unknown> =>
-    v !== null && typeof v === "object" && !Array.isArray(v);
-  return {
-    ...current,
-    ...p,
-    cardProperties: {
-      ...current.cardProperties,
-      ...(p.cardProperties ?? {}),
-    },
-    swimlaneOrders: isRecord(p.swimlaneOrders)
-      ? { ...current.swimlaneOrders, ...p.swimlaneOrders }
-      : current.swimlaneOrders,
-    collapsedSwimlanes: isRecord(p.collapsedSwimlanes)
-      ? { ...current.collapsedSwimlanes, ...p.collapsedSwimlanes }
-      : current.collapsedSwimlanes,
-  };
-}
 
 /** Factory: creates a vanilla StoreApi for use with React Context. */
 export function createIssueViewStore(persistKey: string): StoreApi<IssueViewState> {
   const store = createStore<IssueViewState>()(
     persist(viewStoreSlice, viewStorePersistOptions(persistKey))
   );
-  registerForWorkspaceRehydration(() => store.persist.rehydrate());
+  registerWorkspacePersistStore(store);
   return store;
 }
 
 /** Global singleton for the /issues page. */
-export const useIssueViewStore = create<IssueViewState>()(
-  persist(viewStoreSlice, viewStorePersistOptions("multica_issues_view"))
+const issueViewPersistOptions = viewStorePersistOptions("multica_issues_view");
+export const useIssueViewStore = create<WorkspaceIssueViewState>()(
+  persist(
+    (set) => ({
+      ...viewStoreSlice(
+        set as unknown as StoreApi<IssueViewState>["setState"],
+      ),
+      scope: "all",
+      setScope: (scope) => set({ scope }),
+    }),
+    {
+      ...issueViewPersistOptions,
+      partialize: (state) => ({
+        ...issueViewPersistOptions.partialize(state),
+        scope: state.scope,
+      }),
+    },
+  ),
 );
 
-registerForWorkspaceRehydration(() => useIssueViewStore.persist.rehydrate());
+registerWorkspacePersistStore(useIssueViewStore);
 
 /**
  * Clears the given view store's filters whenever the workspace id changes.
  *
- * URL-driven: wsId arrives from `useWorkspaceId()` (Context fed by the
- * `[workspaceSlug]` route). We track the previous id via ref so the first
+ * URL-driven: the route owner supplies wsId. We track the previous id via ref so the first
  * render doesn't wipe persisted filters — clearing only fires on transitions
  * from one defined workspace to another.
  */

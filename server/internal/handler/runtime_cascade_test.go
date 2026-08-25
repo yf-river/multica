@@ -141,7 +141,7 @@ func TestDeleteAgentRuntime_StructuredConflict(t *testing.T) {
 	ctx := context.Background()
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade 409 Runtime")
-	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade 409 Agent")
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade 409 Agent")
 	_ = agentID
 
 	w := httptest.NewRecorder()
@@ -179,7 +179,7 @@ func TestArchiveAgentsAndDeleteRuntime_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade Happy Runtime")
-	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Happy Agent")
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Happy Agent")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/runtimes/"+runtimeID+"/archive-agents-and-delete",
@@ -221,8 +221,8 @@ func TestArchiveAgentsAndDeleteRuntime_PlanChanged(t *testing.T) {
 	ctx := context.Background()
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade Drift Runtime")
-	agent1 := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Drift Agent A")
-	agent2 := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Drift Agent B")
+	agent1 := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Drift Agent A")
+	agent2 := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Drift Agent B")
 
 	// User confirmed only agent1 — but the live set is {agent1, agent2}.
 	w := httptest.NewRecorder()
@@ -279,13 +279,13 @@ func createCascadeFixtureRuntime(t *testing.T, ctx context.Context, name string)
 		// Best-effort cleanup. The cascade endpoint deletes the runtime;
 		// these statements only matter when the test failed before the
 		// cascade ran.
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
 
-func createCascadeFixtureAgent(t *testing.T, ctx context.Context, runtimeID, name string) string {
+func createHandlerTestPersonalCloudAgent(t *testing.T, ctx context.Context, runtimeID, name string) string {
 	t.Helper()
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
@@ -299,7 +299,7 @@ func createCascadeFixtureAgent(t *testing.T, ctx context.Context, runtimeID, nam
 		t.Fatalf("insert cascade fixture agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }

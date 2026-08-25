@@ -10,7 +10,7 @@ const mockState = vi.hoisted(() => ({
   taskMessagesOptions: vi.fn(),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
@@ -85,7 +85,6 @@ function makeTask(overrides: Partial<AgentTask>): AgentTask {
     runtime_id: "runtime-1",
     issue_id: "issue-1",
     status: "running",
-    priority: 0,
     dispatched_at: null,
     started_at: "2026-06-08T08:00:00Z",
     completed_at: null,

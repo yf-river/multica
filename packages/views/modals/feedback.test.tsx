@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { forwardRef, useImperativeHandle } from "react";
 
 let storedDraftMessage = "saved draft";
+const { mutateFeedback } = vi.hoisted(() => ({ mutateFeedback: vi.fn() }));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { changeLanguage: vi.fn() } }),
@@ -43,7 +44,7 @@ vi.mock("@multica/core/platform", () => ({
   enterKey: "enter",
 }));
 vi.mock("@multica/core/feedback", () => ({
-  useCreateFeedback: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useCreateFeedback: () => ({ isPending: false, mutateAsync: mutateFeedback }),
   useFeedbackDraftStore: (selector: any) =>
     selector({ draft: { message: storedDraftMessage }, setDraft: vi.fn(), clearDraft: vi.fn() }),
 }));
@@ -69,6 +70,8 @@ import { FeedbackModal } from "./feedback";
 
 describe("FeedbackModal", () => {
   beforeEach(() => {
+    mutateFeedback.mockReset();
+    mutateFeedback.mockResolvedValue({ id: "feedback-1" });
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -92,5 +95,21 @@ describe("FeedbackModal", () => {
     expect(screen.getByLabelText("feedback editor")).toHaveValue(
       "saved draft\n\n---\n\nkind: desktop_route_error",
     );
+  });
+
+  it("submits the current explicit feedback kind", async () => {
+    storedDraftMessage = "current feedback";
+    render(<FeedbackModal onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Send/ }));
+
+    await waitFor(() => {
+      expect(mutateFeedback).toHaveBeenCalledWith({
+        message: "current feedback",
+        kind: "general",
+        url: "http://localhost:3000/",
+        workspace_id: "ws1",
+      });
+    });
   });
 });

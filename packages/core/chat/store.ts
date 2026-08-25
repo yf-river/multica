@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import type { StorageAdapter } from "../types";
 import type { Attachment } from "../types/attachment";
-import { getCurrentSlug, registerForWorkspaceRehydration } from "../platform/workspace-storage";
-import { createLogger } from "../logger";
-
-const logger = createLogger("chat.store");
+import {
+  createWorkspaceAwareStorage,
+  getCurrentSlug,
+  registerWorkspaceStoreLifecycle,
+} from "../platform/workspace-storage";
 
 const AGENT_STORAGE_KEY = "multica:chat:selectedAgentId";
 const SESSION_STORAGE_KEY = "multica:chat:activeSessionId";
@@ -13,7 +14,7 @@ const DRAFTS_KEY = "multica:chat:drafts";
 /** Draft attachment records per workspace: { [sessionId]: Attachment[] }. */
 const DRAFT_ATTACHMENTS_KEY = "multica:chat:draft-attachments";
 /** Placeholder sessionId for a chat that hasn't been created yet. */
-export const DRAFT_NEW_SESSION = "__new__";
+const DRAFT_NEW_SESSION = "__new__";
 
 /**
  * Draft storage key for an as-yet-uncreated chat with the given agent.
@@ -36,7 +37,7 @@ const CHAT_EXPANDED_KEY = "multica:chat:expanded";
  */
 const OPEN_KEY = "multica:chat:isOpen";
 
-function readDrafts(storage: StorageAdapter, key: string): Record<string, string> {
+function readRecord(storage: StorageAdapter, key: string): Record<string, unknown> {
   const raw = storage.getItem(key);
   if (!raw) return {};
   try {
@@ -47,18 +48,29 @@ function readDrafts(storage: StorageAdapter, key: string): Record<string, string
   }
 }
 
-function writeDrafts(storage: StorageAdapter, key: string, drafts: Record<string, string>) {
-  // Prune empty entries so the blob doesn't grow unbounded.
-  const pruned: Record<string, string> = {};
-  for (const [k, v] of Object.entries(drafts)) {
-    if (v) pruned[k] = v;
-  }
-  if (Object.keys(pruned).length === 0) {
+function readDrafts(storage: StorageAdapter, key: string): Record<string, string> {
+  return readRecord(storage, key) as Record<string, string>;
+}
+
+function writeNonEmptyRecord<Value>(
+  storage: StorageAdapter,
+  key: string,
+  values: Record<string, Value>,
+  keep: (value: Value) => boolean,
+) {
+  const entries = Object.entries(values).filter(([, value]) => keep(value));
+  if (entries.length === 0) {
     storage.removeItem(key);
   } else {
-    storage.setItem(key, JSON.stringify(pruned));
+    storage.setItem(key, JSON.stringify(Object.fromEntries(entries)));
   }
 }
+
+const writeDrafts = (
+  storage: StorageAdapter,
+  key: string,
+  drafts: Record<string, string>,
+) => writeNonEmptyRecord(storage, key, drafts, Boolean);
 
 function isAttachmentDraft(value: unknown): value is Attachment {
   return (
@@ -70,21 +82,13 @@ function isAttachmentDraft(value: unknown): value is Attachment {
 }
 
 function readDraftAttachments(storage: StorageAdapter, key: string): Record<string, Attachment[]> {
-  const raw = storage.getItem(key);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return {};
-    const out: Record<string, Attachment[]> = {};
-    for (const [draftKey, value] of Object.entries(parsed)) {
-      if (!Array.isArray(value)) continue;
-      const attachments = value.filter(isAttachmentDraft);
-      if (attachments.length > 0) out[draftKey] = attachments;
-    }
-    return out;
-  } catch {
-    return {};
+  const out: Record<string, Attachment[]> = {};
+  for (const [draftKey, value] of Object.entries(readRecord(storage, key))) {
+    if (!Array.isArray(value)) continue;
+    const attachments = value.filter(isAttachmentDraft);
+    if (attachments.length > 0) out[draftKey] = attachments;
   }
+  return out;
 }
 
 function writeDraftAttachments(
@@ -92,38 +96,20 @@ function writeDraftAttachments(
   key: string,
   drafts: Record<string, Attachment[]>,
 ) {
-  const pruned: Record<string, Attachment[]> = {};
-  for (const [k, v] of Object.entries(drafts)) {
-    if (v.length > 0) pruned[k] = v;
-  }
-  if (Object.keys(pruned).length === 0) {
-    storage.removeItem(key);
-  } else {
-    storage.setItem(key, JSON.stringify(pruned));
-  }
+  writeNonEmptyRecord(
+    storage,
+    key,
+    drafts,
+    (attachments) => attachments.length > 0,
+  );
 }
 
 export const CHAT_MIN_W = 360;
 export const CHAT_MIN_H = 480;
-export const CHAT_DEFAULT_W = 380;
-export const CHAT_DEFAULT_H = 600;
+const CHAT_DEFAULT_W = 380;
+const CHAT_DEFAULT_H = 600;
 
-/**
- * Kept as a public type because existing consumers (chat-message-list,
- * views/chat types) import it. Items themselves no longer live in the
- * store — they flow through the React Query cache keyed by task id.
- */
-export interface ChatTimelineItem {
-  seq: number;
-  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
-  tool?: string;
-  content?: string;
-  input?: Record<string, unknown>;
-  output?: string;
-  created_at?: string;
-}
-
-export interface ChatState {
+interface ChatState {
   isOpen: boolean;
   activeSessionId: string | null;
   selectedAgentId: string | null;
@@ -144,22 +130,20 @@ export interface ChatState {
   setInputDraftAttachments: (sessionId: string, attachments: Attachment[]) => void;
   addInputDraftAttachment: (sessionId: string, attachment: Attachment) => void;
   clearInputDraft: (sessionId: string) => void;
+  /** Clear a captured workspace's draft without following a later route switch. */
+  clearInputDraftForWorkspace: (workspaceSlug: string, sessionId: string) => void;
   /** Persist raw size and auto-exit expanded mode. */
   setChatSize: (width: number, height: number) => void;
   setExpanded: (expanded: boolean) => void;
 }
 
-export interface ChatStoreOptions {
+interface ChatStoreOptions {
   storage: StorageAdapter;
 }
 
 export function createChatStore(options: ChatStoreOptions) {
   const { storage } = options;
-
-  const wsKey = (base: string) => {
-    const slug = getCurrentSlug();
-    return slug ? `${base}:${slug}` : base;
-  };
+  const workspaceStorage = createWorkspaceAwareStorage(storage);
 
   // Resolve initial isOpen from storage. The three-state read (null /
   // "true" / "false") is what enables the "new user → open" default while
@@ -169,51 +153,43 @@ export function createChatStore(options: ChatStoreOptions) {
 
   const store = create<ChatState>((set, get) => ({
     isOpen: initialIsOpen,
-    activeSessionId: storage.getItem(wsKey(SESSION_STORAGE_KEY)),
-    selectedAgentId: storage.getItem(wsKey(AGENT_STORAGE_KEY)),
-    inputDrafts: readDrafts(storage, wsKey(DRAFTS_KEY)),
-    inputDraftAttachments: readDraftAttachments(storage, wsKey(DRAFT_ATTACHMENTS_KEY)),
+    activeSessionId: workspaceStorage.getItem(SESSION_STORAGE_KEY),
+    selectedAgentId: workspaceStorage.getItem(AGENT_STORAGE_KEY),
+    inputDrafts: readDrafts(workspaceStorage, DRAFTS_KEY),
+    inputDraftAttachments: readDraftAttachments(
+      workspaceStorage,
+      DRAFT_ATTACHMENTS_KEY,
+    ),
     chatWidth: Number(storage.getItem(CHAT_WIDTH_KEY)) || CHAT_DEFAULT_W,
     chatHeight: Number(storage.getItem(CHAT_HEIGHT_KEY)) || CHAT_DEFAULT_H,
-    isExpanded: storage.getItem(wsKey(CHAT_EXPANDED_KEY)) === "true",
+    isExpanded: workspaceStorage.getItem(CHAT_EXPANDED_KEY) === "true",
     setOpen: (open) => {
-      logger.debug("setOpen", { from: get().isOpen, to: open });
       storage.setItem(OPEN_KEY, String(open));
       set({ isOpen: open });
     },
-    toggle: () => {
-      const next = !get().isOpen;
-      logger.debug("toggle", { to: next });
-      storage.setItem(OPEN_KEY, String(next));
-      set({ isOpen: next });
-    },
+    toggle: () => get().setOpen(!get().isOpen),
     setActiveSession: (id) => {
-      logger.info("setActiveSession", { from: get().activeSessionId, to: id });
       if (id) {
-        storage.setItem(wsKey(SESSION_STORAGE_KEY), id);
+        workspaceStorage.setItem(SESSION_STORAGE_KEY, id);
       } else {
-        storage.removeItem(wsKey(SESSION_STORAGE_KEY));
+        workspaceStorage.removeItem(SESSION_STORAGE_KEY);
       }
       set({ activeSessionId: id });
     },
     setSelectedAgentId: (id) => {
-      logger.info("setSelectedAgentId", { from: get().selectedAgentId, to: id });
-      storage.setItem(wsKey(AGENT_STORAGE_KEY), id);
+      workspaceStorage.setItem(AGENT_STORAGE_KEY, id);
       set({ selectedAgentId: id });
     },
     setInputDraft: (sessionId, draft) => {
-      // Debug level — onUpdate fires on every keystroke.
-      logger.debug("setInputDraft", { sessionId, length: draft.length });
       const next = { ...get().inputDrafts, [sessionId]: draft };
-      writeDrafts(storage, wsKey(DRAFTS_KEY), next);
+      writeDrafts(workspaceStorage, DRAFTS_KEY, next);
       set({ inputDrafts: next });
     },
     setInputDraftAttachments: (sessionId, attachments) => {
-      logger.debug("setInputDraftAttachments", { sessionId, count: attachments.length });
       const next = { ...get().inputDraftAttachments };
       if (attachments.length > 0) next[sessionId] = attachments;
       else delete next[sessionId];
-      writeDraftAttachments(storage, wsKey(DRAFT_ATTACHMENTS_KEY), next);
+      writeDraftAttachments(workspaceStorage, DRAFT_ATTACHMENTS_KEY, next);
       set({ inputDraftAttachments: next });
     },
     addInputDraftAttachment: (sessionId, attachment) => {
@@ -224,64 +200,114 @@ export function createChatStore(options: ChatStoreOptions) {
         ? existing.map((a) => (a.id === attachment.id ? attachment : a))
         : [...existing, attachment];
       const next = { ...current, [sessionId]: nextForKey };
-      writeDraftAttachments(storage, wsKey(DRAFT_ATTACHMENTS_KEY), next);
+      writeDraftAttachments(workspaceStorage, DRAFT_ATTACHMENTS_KEY, next);
       set({ inputDraftAttachments: next });
     },
     clearInputDraft: (sessionId) => {
       const currentDrafts = get().inputDrafts;
       const currentAttachments = get().inputDraftAttachments;
       if (!(sessionId in currentDrafts) && !(sessionId in currentAttachments)) {
-        logger.debug("clearInputDraft skipped (no draft)", { sessionId });
         return;
       }
-      logger.info("clearInputDraft", { sessionId });
       const nextDrafts = { ...currentDrafts };
       const nextAttachments = { ...currentAttachments };
       delete nextDrafts[sessionId];
       delete nextAttachments[sessionId];
-      writeDrafts(storage, wsKey(DRAFTS_KEY), nextDrafts);
-      writeDraftAttachments(storage, wsKey(DRAFT_ATTACHMENTS_KEY), nextAttachments);
+      writeDrafts(workspaceStorage, DRAFTS_KEY, nextDrafts);
+      writeDraftAttachments(
+        workspaceStorage,
+        DRAFT_ATTACHMENTS_KEY,
+        nextAttachments,
+      );
       set({ inputDrafts: nextDrafts, inputDraftAttachments: nextAttachments });
     },
+    clearInputDraftForWorkspace: (workspaceSlug, sessionId) => {
+      const draftsKey = `${DRAFTS_KEY}:${workspaceSlug}`;
+      const attachmentsKey = `${DRAFT_ATTACHMENTS_KEY}:${workspaceSlug}`;
+      const nextDrafts = readDrafts(storage, draftsKey);
+      const nextAttachments = readDraftAttachments(storage, attachmentsKey);
+      delete nextDrafts[sessionId];
+      delete nextAttachments[sessionId];
+      writeDrafts(storage, draftsKey, nextDrafts);
+      writeDraftAttachments(storage, attachmentsKey, nextAttachments);
+
+      // Only update the mounted editor store if it still represents the same
+      // workspace. A late request from workspace A must never mutate B's UI.
+      if (getCurrentSlug() === workspaceSlug) {
+        set({ inputDrafts: nextDrafts, inputDraftAttachments: nextAttachments });
+      }
+    },
     setChatSize: (w, h) => {
-      logger.debug("setChatSize", { w, h });
       storage.setItem(CHAT_WIDTH_KEY, String(w));
       storage.setItem(CHAT_HEIGHT_KEY, String(h));
       // Dragging = user chose a manual size → exit expanded mode
-      storage.removeItem(wsKey(CHAT_EXPANDED_KEY));
+      workspaceStorage.removeItem(CHAT_EXPANDED_KEY);
       set({ chatWidth: w, chatHeight: h, isExpanded: false });
     },
     setExpanded: (expanded) => {
-      logger.info("setExpanded", { to: expanded });
       if (expanded) {
-        storage.setItem(wsKey(CHAT_EXPANDED_KEY), "true");
+        workspaceStorage.setItem(CHAT_EXPANDED_KEY, "true");
       } else {
-        storage.removeItem(wsKey(CHAT_EXPANDED_KEY));
+        workspaceStorage.removeItem(CHAT_EXPANDED_KEY);
       }
       set({ isExpanded: expanded });
     },
   }));
 
-  registerForWorkspaceRehydration(() => {
-    const nextSession = storage.getItem(wsKey(SESSION_STORAGE_KEY));
-    const nextAgent = storage.getItem(wsKey(AGENT_STORAGE_KEY));
-    const nextDrafts = readDrafts(storage, wsKey(DRAFTS_KEY));
-    const nextDraftAttachments = readDraftAttachments(storage, wsKey(DRAFT_ATTACHMENTS_KEY));
-    logger.info("workspace rehydration", {
-      prevSession: store.getState().activeSessionId,
-      nextSession,
-      prevAgent: store.getState().selectedAgentId,
-      nextAgent,
-      draftCount: Object.keys(nextDrafts).length,
-      draftAttachmentCount: Object.keys(nextDraftAttachments).length,
-    });
-    store.setState({
-      activeSessionId: nextSession,
-      selectedAgentId: nextAgent,
-      inputDrafts: nextDrafts,
-      inputDraftAttachments: nextDraftAttachments,
-    });
+  registerWorkspaceStoreLifecycle({
+    reset: () => {
+      store.setState({
+        activeSessionId: null,
+        selectedAgentId: null,
+        inputDrafts: {},
+        inputDraftAttachments: {},
+        isExpanded: false,
+      });
+    },
+    rehydrate: () => {
+      const nextSession = workspaceStorage.getItem(SESSION_STORAGE_KEY);
+      const nextAgent = workspaceStorage.getItem(AGENT_STORAGE_KEY);
+      const nextDrafts = readDrafts(workspaceStorage, DRAFTS_KEY);
+      const nextDraftAttachments = readDraftAttachments(
+        workspaceStorage,
+        DRAFT_ATTACHMENTS_KEY,
+      );
+      store.setState({
+        activeSessionId: nextSession,
+        selectedAgentId: nextAgent,
+        inputDrafts: nextDrafts,
+        inputDraftAttachments: nextDraftAttachments,
+        isExpanded: workspaceStorage.getItem(CHAT_EXPANDED_KEY) === "true",
+      });
+    },
   });
 
   return store;
 }
+
+type ChatStoreInstance = ReturnType<typeof createChatStore>;
+
+let chatStore: ChatStoreInstance | null = null;
+
+export function registerChatStore(store: ChatStoreInstance) {
+  chatStore = store;
+}
+
+export const useChatStore: ChatStoreInstance = new Proxy(
+  (() => {}) as unknown as ChatStoreInstance,
+  {
+    apply(_target, _thisArg, args) {
+      if (!chatStore) {
+        throw new Error(
+          "Chat store not initialised — call registerChatStore() first",
+        );
+      }
+      return (chatStore as unknown as (...values: unknown[]) => unknown)(
+        ...args,
+      );
+    },
+    get(_target, property) {
+      return chatStore ? Reflect.get(chatStore, property) : undefined;
+    },
+  },
+);

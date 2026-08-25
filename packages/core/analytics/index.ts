@@ -14,7 +14,7 @@ import { redactExceptionProperties } from "./redact-exception";
 import { shouldDropException } from "./exception-dedupe";
 import { isBenignException } from "./benign-exceptions";
 
-export const EVENT_SCHEMA_VERSION = 2;
+const EVENT_SCHEMA_VERSION = 2;
 
 let initialized = false;
 // auth-initializer fetches /api/config and /api/me in parallel — on a
@@ -34,14 +34,12 @@ let pendingPageview: string | undefined | null = null;
 // capturePageview / normalizePageviewPath. Cleared on reset so a fresh
 // session re-emits its first pageview.
 let lastCapturedPath: string | null = null;
-// Frontend-emitted events (captureEvent) and person-property updates
-// (setPersonProperties) can also arrive before init — same config-race as
+// Frontend-emitted events can also arrive before init — same config-race as
 // identify/pageview. We replay them in order once init succeeds. These
 // only ever carry user-triggered signals on identified users, so the
 // buffer stays small (~one step-transition worth).
 type PendingOp =
   | { kind: "event"; name: string; props?: Record<string, unknown> }
-  | { kind: "set"; props: Record<string, unknown> }
   | { kind: "exception"; error: unknown; props?: Record<string, unknown> };
 const pendingOps: PendingOp[] = [];
 // Cached super-properties so resetAnalytics() can re-register them after
@@ -50,12 +48,9 @@ const pendingOps: PendingOp[] = [];
 // event until a full reload.
 let superProperties: Record<string, unknown> = {};
 
-export {
-  captureFeedbackOpened,
-  type FeedbackOpenedSource,
-} from "./feedback";
+export { captureFeedbackOpened } from "./feedback";
 
-export interface AnalyticsConfig {
+interface AnalyticsConfig {
   key: string;
   host: string;
   /**
@@ -68,7 +63,7 @@ export interface AnalyticsConfig {
   environment?: string;
 }
 
-export type ClientType = "web";
+type ClientType = "desktop" | "web";
 
 /**
  * Classify the current runtime. The desktop app has been removed, so this is
@@ -76,7 +71,13 @@ export type ClientType = "web";
  * the super-property registration site stays explicit and the call graph is
  * greppable.
  */
-export function detectClientType(): ClientType {
+function detectClientType(): ClientType {
+  if (typeof window === "undefined") return "web";
+  const w = window as unknown as { electron?: unknown; desktopAPI?: unknown };
+  if (w.electron || w.desktopAPI) return "desktop";
+  if (typeof navigator !== "undefined" && /Electron/i.test(navigator.userAgent)) {
+    return "desktop";
+  }
   return "web";
 }
 
@@ -173,18 +174,15 @@ export function initAnalytics(config: AnalyticsConfig | null | undefined): boole
     lastCapturedPath = pendingPageview ?? null;
     pendingPageview = null;
   }
-  // Replay buffered events / person-property updates in their original
-  // order — funnel correctness depends on sequence (e.g. a user submits
-  // the questionnaire and then finishes onboarding within the same
-  // config-race window).
+  // Replay buffered events in their original
+  // order so funnel transitions remain correctly ordered across the config
+  // initialization race.
   while (pendingOps.length > 0) {
     const op = pendingOps.shift()!;
     if (op.kind === "event") {
       posthog.capture(op.name, withClientEventProperties(op.props));
-    } else if (op.kind === "exception") {
-      posthog.captureException(op.error, withClientEventProperties(op.props));
     } else {
-      capturePersonSet(op.props);
+      posthog.captureException(op.error, withClientEventProperties(op.props));
     }
   }
   return true;
@@ -274,31 +272,6 @@ export function captureException(
   posthog.captureException(error, withClientEventProperties(props));
 }
 
-/**
- * Set (overwrite) person properties on the currently identified user.
- * Mirrors the backend's `Event.Set` path — keep these aligned so the
- * same cohort signals (role, use_case, platform_preference) are
- * queryable regardless of which side emitted last. Use for mutable
- * signals; use `identify(userId, { $set_once: {...} })` style for
- * attribution fields that must never be overwritten.
- */
-export function setPersonProperties(props: Record<string, unknown>): void {
-  if (!initialized) {
-    pendingOps.push({ kind: "set", props });
-    return;
-  }
-  capturePersonSet(props);
-}
-
-// The public wire-level contract for `$set` is a no-op event carrying a
-// `$set` property. Wrapping it here (rather than calling
-// `posthog.setPersonProperties` directly) keeps us version-independent —
-// older posthog-js builds expose the same protocol under `posthog.people.set`,
-// and the capture form works uniformly.
-function capturePersonSet(props: Record<string, unknown>): void {
-  posthog.capture("$set", { $set: props });
-}
-
 function withClientEventProperties(
   props?: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -354,7 +327,7 @@ const ISSUE_KEY_SEGMENT = /^[A-Z][A-Z0-9]*-\d+$/;
  *
  * Exported for unit testing; callers should go through capturePageview.
  */
-export function normalizePageviewPath(path?: string): string | undefined {
+function normalizePageviewPath(path?: string): string | undefined {
   if (!path) return path ?? undefined;
   const clean = path.split(/[?#]/)[0] ?? "";
   const segments = clean.split("/").filter((s) => s.length > 0);

@@ -1,6 +1,9 @@
 package lark
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // OpenID is a Lark user's per-installation identifier. Different
 // installations of the same app produce different open_ids for the
@@ -24,15 +27,9 @@ const (
 	ChatTypeGroup ChatType = "group"
 )
 
-// InstallationStatus mirrors the lark_installation.status check
-// constraint. A revoked installation accepts no further events; its
-// WebSocket is torn down and inbound events are dropped with an
-// audit row.
-type InstallationStatus string
-
 const (
-	InstallationActive  InstallationStatus = "active"
-	InstallationRevoked InstallationStatus = "revoked"
+	installationStatusActive  = "active"
+	installationStatusRevoked = "revoked"
 )
 
 // Region identifies which Lark open-platform cloud an installation lives
@@ -40,8 +37,8 @@ const (
 // Lark (international, open.larksuite.com / accounts.larksuite.com) are
 // separate clouds with distinct hosts; a single Multica deployment serves
 // both by resolving the host per installation from this value rather than
-// from a deployment-wide env var. Mirrors the lark_installation.region
-// CHECK constraint; keep the two in lockstep.
+// from a deployment-wide env var. Mirrors the current
+// lark_installation.region CHECK constraint — keep the two in lockstep.
 type Region string
 
 const (
@@ -58,7 +55,8 @@ const larkInternationalOpenBaseURL = "https://open.larksuite.com"
 
 // OpenPlatformBaseURL maps a region to its open-platform host — the base
 // URL for both the REST API (http_client.go) and the WebSocket
-// /callback/ws/endpoint bootstrap (ws_endpoint.go).
+// /callback/ws/endpoint bootstrap (ws_endpoint.go). Invalid regions return an
+// empty host so callers fail closed instead of contacting the wrong cloud.
 func (r Region) OpenPlatformBaseURL() string {
 	switch r {
 	case RegionFeishu:
@@ -68,6 +66,18 @@ func (r Region) OpenPlatformBaseURL() string {
 	default:
 		return ""
 	}
+}
+
+func ParseRegion(value string) (Region, error) {
+	region := Region(value)
+	if !isSupportedRegion(region) {
+		return "", fmt.Errorf("invalid Lark region %q", value)
+	}
+	return region, nil
+}
+
+func isSupportedRegion(region Region) bool {
+	return region == RegionFeishu || region == RegionLark
 }
 
 // DropReason enumerates the categories the inbound pipeline writes

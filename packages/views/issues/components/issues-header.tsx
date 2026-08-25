@@ -49,9 +49,10 @@ import {
   ALL_STATUSES,
   PRIORITY_ORDER,
 } from "@multica/core/issues/config";
-import { StatusIcon, PriorityIcon } from ".";
+import { PriorityIcon } from "./priority-icon";
+import { StatusIcon } from "./status-icon";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { labelListOptions } from "@multica/core/labels/queries";
@@ -64,23 +65,21 @@ import {
   SWIMLANE_GROUPINGS,
   CARD_PROPERTY_OPTIONS,
   type ActorFilterValue,
+  type IssuesScope,
   type IssueDateField,
   type IssueDateFilter,
   type SortField,
   type IssueGrouping,
   type SwimlaneGrouping,
   type ViewMode,
+  useIssueViewStore,
 } from "@multica/core/issues/stores/view-store";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
-import { addDaysDateOnly, dateOnlyToLocalDate, formatDateOnly, toDateOnly, todayDateOnly } from "@multica/core/issues/date";
-import {
-  useIssuesScopeStore,
-  type IssuesScope,
-} from "@multica/core/issues/stores/issues-scope-store";
+import { addDaysDateOnly, dateOnlyToLocalDate, formatShortDateOnly, toDateOnly, todayDateOnly } from "@multica/core/issues/date";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import type { Issue } from "@multica/core/types";
 import { useT } from "../../i18n";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { WorkspaceAgentWorkingChip } from "./workspace-agent-working-chip";
 
@@ -116,7 +115,7 @@ function getActiveFilterCount(state: {
 }
 
 function shortDateLabel(dateOnly: string) {
-  return formatDateOnly(dateOnly, { month: "short", day: "numeric" }) || dateOnly;
+  return formatShortDateOnly(dateOnly) || dateOnly;
 }
 
 function normalizeDateRange(from: Date, to: Date) {
@@ -290,14 +289,12 @@ function ActorSubContent({
     enabled: enabled && !!wsId,
   });
   const query = search.trim().toLowerCase();
-  const filteredMembers = members.filter((m) =>
-    m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query),
-  );
+  const filteredMembers = members.filter((m) => matchesTextQuery(m.name, query));
   const filteredAgents = agents.filter((a) =>
-    !a.archived_at && (a.name.toLowerCase().includes(query) || matchesPinyin(a.name, query)),
+    !a.archived_at && matchesTextQuery(a.name, query),
   );
   const filteredSquads = squads.filter((s) =>
-    !s.archived_at && (s.name.toLowerCase().includes(query) || matchesPinyin(s.name, query)),
+    !s.archived_at && matchesTextQuery(s.name, query),
   );
 
   const isSelected = (type: "member" | "agent" | "squad", id: string) =>
@@ -727,8 +724,8 @@ export function IssuesHeader({
   onDateFilterChange?: (filter: IssueDateFilter | null) => void;
 }) {
   const { t } = useT("issues");
-  const scope = useIssuesScopeStore((s) => s.scope);
-  const setScope = useIssuesScopeStore((s) => s.setScope);
+  const scope = useIssueViewStore((s) => s.scope);
+  const setScope = useIssueViewStore((s) => s.setScope);
   // Bind the workspace agents-working chip to the active view store so
   // shared IssuesHeader consumers (/issues and project detail) toggle the
   // same filter state as the rest of the display controls. /my-issues keeps

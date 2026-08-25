@@ -19,7 +19,6 @@ import {
 import { useCreateFeedback, useFeedbackDraftStore } from "@multica/core/feedback";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
-import { api } from "@multica/core/api";
 import { captureFeedbackOpened } from "@multica/core/analytics";
 import { useT } from "../i18n";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
@@ -62,7 +61,7 @@ export function FeedbackModal({
   const { isDragOver, dropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((f) => editorRef.current?.uploadFile(f)),
   });
-  const { uploadWithToast } = useFileUpload(api);
+  const { uploadWithToast } = useFileUpload();
   const mutation = useCreateFeedback();
 
   // Fire the "modal opened" analytics event once per mount. Pairs with
@@ -70,7 +69,7 @@ export function FeedbackModal({
   // Workspace id is captured from the closure at mount time — the modal
   // is short-lived, so there's no meaningful workspace switch to track.
   useEffect(() => {
-    captureFeedbackOpened("help_menu", workspace?.id);
+    captureFeedbackOpened(workspace?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -97,6 +96,7 @@ export function FeedbackModal({
     try {
       await mutation.mutateAsync({
         message: latest,
+        kind: "general",
         url: typeof window !== "undefined" ? window.location.href : undefined,
         workspace_id: workspace?.id,
       });

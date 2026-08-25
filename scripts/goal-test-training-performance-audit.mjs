@@ -1,35 +1,36 @@
-import { chromium } from "@playwright/test";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 import {
   attachBrowserAuditEvents,
   attachBrowserErrorEvents,
   browserRequestPath as requestPath,
 } from "./lib/browser-audit-events.mjs";
-import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./lib/goal-test-audit-env.mjs";
+import {
+  configureGoalTestNoProxy,
+  createBrowserRequestTools,
+  launchGoalTestBrowser,
+  loadGoalTestBrowserAudit,
+  loginGoalTest,
+  verifyGoalTestDeploymentLogs,
+} from "./lib/goal-test-browser-audit.mjs";
 
-const env = loadGoalTestIntEnv();
-const { frontendURL, browserURL, backendURL } = resolveGoalTestAuditUrls(env);
-const noProxy = mergeNoProxy(process.env.NO_PROXY || process.env.no_proxy || "", [browserURL, frontendURL, backendURL]);
-process.env.NO_PROXY = noProxy;
-process.env.no_proxy = noProxy;
-const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
-const account = process.env.GOAL_TEST_ACCOUNT || "develop";
-const password = process.env.GOAL_TEST_PASSWORD || "develop123";
-const maxRouteMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_ROUTE_MS || "3500");
-const maxClickMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_CLICK_MS || "3500");
-const maxApiMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_MS || "1200");
+const {
+  env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
+  artifactRoot, generatedAt, stamp,
+} = loadGoalTestBrowserAudit();
+configureGoalTestNoProxy([browserURL, frontendURL, backendURL]);
+const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRequestTools(
+  [frontendURL, browserURL, backendURL],
+  requestPath,
+);
+const maxRouteMs = 3500;
+const maxClickMs = 3500;
+const maxApiMs = 1200;
 // Optimization mode also loads project resource context for skill candidates.
 // Keep the budget tight, but allow a small number of workspace/project resource
 // calls so the audit is not coupled to having exactly three demo projects.
-const maxApiRequests = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_REQUESTS || "20");
-const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_TRAINING_AUDIT_DIR);
-const generatedAt = new Date().toISOString();
-const stamp = generatedAt.replace(/[:.]/g, "-");
-
+const maxApiRequests = 20;
 mkdirSync(artifactRoot, { recursive: true });
 
 const routes = [
@@ -40,14 +41,8 @@ const routes = [
   { id: "evaluation-runs", label: "评测记录", path: `/${workspaceSlug}/evaluation/runs`, expect: "评测记录", nav: false },
 ];
 
-const token = await login();
-const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server", "--proxy-server=direct://", "--proxy-bypass-list=*"] });
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
-await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
-await context.addInitScript((authToken) => {
-  localStorage.setItem("multica_token", authToken);
-  localStorage.setItem("multica:chat:isOpen", "false");
-}, token);
+const token = await loginGoalTest({ backendURL, account, password });
+const { browser, context } = await launchGoalTestBrowser(browserURL, token);
 
 const results = [];
 for (const route of routes) {
@@ -60,7 +55,7 @@ const clickResults = await auditTrainingRouteClicks(clickPage);
 await clickPage.close().catch(() => {});
 await browser.close();
 
-const deploymentLogs = runDeploymentLogVerification();
+const deploymentLogs = verifyGoalTestDeploymentLogs(env);
 const summary = summarize(results, clickResults, deploymentLogs);
 const payload = {
   schema: "multica.goal_test.training_performance_audit.v1",
@@ -172,21 +167,6 @@ async function auditTrainingRoute(page, route) {
     console_errors: consoleErrors,
     page_errors: pageErrors,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 24),
-  };
-}
-
-function buildApiRequestBudget(requests) {
-  const projectResourceRequests = requests.filter((item) => /^\/api\/projects\/[^/]+\/resources$/.test(requestPath(item.url)));
-  const projectResourcePathCounts = countByPath(projectResourceRequests);
-  const uniqueProjectResourcePaths = projectResourcePathCounts.length;
-  const duplicateProjectResourceRequests = projectResourceRequests.length - uniqueProjectResourcePaths;
-  const projectResourceBudget = Math.min(uniqueProjectResourcePaths, 3) + duplicateProjectResourceRequests;
-  return {
-    count: requests.length - projectResourceRequests.length + projectResourceBudget,
-    actual_count: requests.length,
-    project_resource_actual_count: projectResourceRequests.length,
-    project_resource_unique_paths: uniqueProjectResourcePaths,
-    project_resource_budget: projectResourceBudget,
   };
 }
 
@@ -313,20 +293,6 @@ function formatBoundaryName(key) {
   return labels[key] || key;
 }
 
-async function login() {
-  const response = await fetch(`${backendURL}/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ account, password }),
-  });
-  if (!response.ok) {
-    throw new Error(`login failed: ${response.status} ${await response.text()}`);
-  }
-  const data = await response.json();
-  if (!data.token) throw new Error("login response did not include token");
-  return data.token;
-}
-
 function summarize(routeResults, clickResults, logEvidence) {
   const routeFailures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
   const clickFailures = clickResults.ok ? [] : clickResults.failures.map((failure) => `点击审计：${failure}`);
@@ -349,28 +315,6 @@ function summarize(routeResults, clickResults, logEvidence) {
     deployment_logs_ok: logEvidence.ok,
     slowest_routes: slowestRoutes,
     failures,
-  };
-}
-
-function runDeploymentLogVerification() {
-  const target = env.GOAL_TEST_ENV || "int";
-  const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  const raw = result.stdout || result.stderr || "";
-  let evidence = null;
-  try {
-    evidence = raw ? JSON.parse(raw) : null;
-  } catch {
-    evidence = null;
-  }
-  return {
-    ok: result.status === 0 && evidence?.ok === true,
-    target,
-    exit_code: result.status,
-    evidence,
-    error: result.status === 0 ? "" : (result.stderr || result.stdout || "").slice(0, 2000),
   };
 }
 
@@ -426,39 +370,4 @@ function renderMarkdown(payload) {
 
 function hasPath(requests, needle) {
   return requests.some((item) => requestPath(item.url).includes(needle));
-}
-
-function countByPath(requests) {
-  const counts = new Map();
-  for (const request of requests) {
-    const key = requestPath(request.url);
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([path, count]) => ({ path, count }));
-}
-
-function isAuditedRequest(url) {
-  return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
-}
-
-function mergeNoProxy(current, urls) {
-  const hosts = new Set(
-    String(current || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
-  );
-  for (const url of urls) {
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname) hosts.add(parsed.hostname);
-    } catch {
-      // Ignore non-URL values.
-    }
-  }
-  hosts.add("127.0.0.1");
-  hosts.add("localhost");
-  return Array.from(hosts).join(",");
 }

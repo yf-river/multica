@@ -1,9 +1,9 @@
 "use client";
 
-import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
-import { formatDateOnly } from "@multica/core/issues/date";
+import { formatShortDateOnly } from "@multica/core/issues/date";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { StatusIcon, PriorityIcon } from "../../issues/components";
+import { PriorityIcon } from "../../issues/components/priority-icon";
+import { StatusIcon } from "../../issues/components/status-icon";
 import type { InboxItem, InboxItemType, IssueStatus, IssuePriority } from "@multica/core/types";
 import { getQuickCreateFailureDetail } from "./inbox-display";
 import { useT } from "../../i18n";
@@ -35,14 +35,9 @@ export function useTypeLabels(): Record<InboxItemType, string> {
   };
 }
 
-// start_date / due_date are calendar days — format timezone-safely so the day
-// never shifts with the viewer's offset (see @multica/core/issues/date).
-function shortDate(dateStr: string): string {
-  return formatDateOnly(dateStr, { month: "short", day: "numeric" }, "zh-CN");
-}
-
 export function InboxDetailLabel({ item }: { item: InboxItem }) {
   const { t } = useT("inbox");
+  const { t: issueT } = useT("issues");
   const typeLabels = useTypeLabels();
   const { getActorName } = useActorName();
   const details = item.details ?? {};
@@ -50,7 +45,7 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
   switch (item.type) {
     case "status_changed": {
       if (!details.to) return <span>{typeLabels[item.type]}</span>;
-      const label = STATUS_CONFIG[details.to as IssueStatus]?.label ?? details.to;
+      const label = issueT(($) => $.status[details.to as IssueStatus]);
       return (
         <span className="inline-flex items-center gap-1">
           {t(($) => $.labels.set_status_to)}
@@ -61,7 +56,7 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
     }
     case "priority_changed": {
       if (!details.to) return <span>{typeLabels[item.type]}</span>;
-      const label = PRIORITY_CONFIG[details.to as IssuePriority]?.label ?? details.to;
+      const label = issueT(($) => $.priority[details.to as IssuePriority]);
       return (
         <span className="inline-flex items-center gap-1">
           {t(($) => $.labels.set_priority_to)}
@@ -85,11 +80,11 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
       return <span>{typeLabels[item.type]}</span>;
     }
     case "start_date_changed": {
-      if (details.to) return <span>{t(($) => $.labels.set_start_date_to, { date: shortDate(details.to) })}</span>;
+      if (details.to) return <span>{t(($) => $.labels.set_start_date_to, { date: formatShortDateOnly(details.to, "zh-CN") })}</span>;
       return <span>{t(($) => $.labels.removed_start_date)}</span>;
     }
     case "due_date_changed": {
-      if (details.to) return <span>{t(($) => $.labels.set_due_date_to, { date: shortDate(details.to) })}</span>;
+      if (details.to) return <span>{t(($) => $.labels.set_due_date_to, { date: formatShortDateOnly(details.to, "zh-CN") })}</span>;
       return <span>{t(($) => $.labels.removed_due_date)}</span>;
     }
     case "new_comment": {

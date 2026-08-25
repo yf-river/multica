@@ -137,14 +137,14 @@ chart 在目标 namespace 创建：
 - `multica-postgres` — `pgvector/pgvector:pg17`，背后是 10Gi PVC
 - `multica-backend` — Go API/WS server。默认背后是 5Gi `ReadWriteOnce` uploads PVC；配置了 S3（`backend.config.s3Bucket`）且不想要该 PVC 时设 `backend.uploads.persistence.enabled=false`
 - `multica-frontend` — Next.js standalone server
-- 两个 `Ingress`：一个 web host，一个 backend host
-- `multica-config` ConfigMap（从 `values.yaml` 渲染）
+- Two `Ingress` resources: the web host routes `/api`, `/ws`, `/auth`, and
+  `/uploads` directly to the release's backend Service and all other paths to
+  the frontend; the backend host routes directly to the same backend Service
+- `multica-config` ConfigMap (rendered from `values.yaml`)
 
 `multica-secrets` Secret **不由 chart 管理**——用 `kubectl` 创建一次，真实值不必进 git。
 
-> **每个 namespace 一个 release：** 预构建的 `multica-web` 镜像在构建时把 `REMOTE_API_URL=http://backend:8080` 烤进去，所以 chart 提供一个名为 `backend` 的 ExternalName Service。因该名无前缀，每个 namespace 只能跑一个 Multica release，`helm install` 在已存在 `Service/backend` 时会失败（传 `--take-ownership`，或用专用 namespace）。若你构建了改 `REMOTE_API_URL` 的 web 镜像，设 `frontend.compatibility.backendAlias: false` 去掉 alias。
-
-> **前置：** `kubectl` 与 `helm`（v3.13+ 支持 `--take-ownership`，或 v4+）已配置好目标集群、一个 Ingress controller（Traefik / NGINX）、一个默认 StorageClass。
+> **Prerequisites:** `kubectl` and Helm 3.13+ (or Helm 4) configured for the target cluster, an Ingress controller (Traefik / NGINX), and a default StorageClass.
 
 ### 步骤 1 — 把主机名指向集群
 
@@ -284,9 +284,7 @@ helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
 helm -n multica rollback multica
 ```
 
-开发阶段不支持数据库原地升级。切换到 schema 不同的版本前，请备份所需数据、重建数据库，再启动新版本后端。
-
-### 拆除
+### Tearing down
 
 ```bash
 # 移除工作负载但保留 PVC 与 Secret
@@ -306,7 +304,11 @@ Usage / Runtime dashboard 从派生的 `task_usage_hourly` 表读，由 `rollup_
 
 ## 停止服务
 
-通过安装脚本装的：
+Full scheduler and audit-table details live in [Advanced Configuration → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup).
+
+## Stopping Services
+
+If you installed via the install script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --stop
@@ -341,7 +343,8 @@ docker compose -f docker-compose.selfhost.yml pull
 docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-`.env` 中把 `MULTICA_IMAGE_TAG` pin 到精确版本（如 `v0.2.4`）可留在特定 release。开发阶段不支持数据库原地升级；切换到 schema 不同的版本前先备份所需数据并重建数据库。若所选 GHCR tag 尚未发布，回退到 `make selfhost-build` 或 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`。
+Pin `MULTICA_IMAGE_TAG` in `.env` to an exact version like `v0.2.4` if you want to stay on a specific release. Migrations run automatically on backend startup.
+If the selected GHCR tag has not been published yet, fall back to `make selfhost-build` or `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`.
 
 ---
 

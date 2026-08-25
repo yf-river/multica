@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type RecordIssueSourceFetchRequest struct {
@@ -49,23 +48,23 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req RecordIssueSourceFetchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
+	existing := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
+	requestFingerprint := req
 	if req.AutoFetch {
-		fetched, err := h.autoFetchIssueSource(r.Context(), userID, issue, req)
+		fetched, err := h.autoFetchTAPDSource(r.Context(), userID, req, existing)
 		if err != nil {
 			req.Status = "fetch_failed"
 			req.Error = err.Error()
 			if req.Provider == "" {
 				req.Provider = "tapd"
 			}
-			metadata := parseIssueMetadata(issue.Metadata)
-			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
-			req.ResourceType = firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
-			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
-			req.URL = firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
+			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(existing, "tapd_workspace_id"))
+			req.ResourceType = firstNonEmpty(req.ResourceType, stringFromMetadata(existing, "tapd_resource_type"))
+			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(existing, "tapd_resource_id"))
+			req.URL = firstNonEmpty(req.URL, stringFromMetadata(existing, "source_url"))
 		} else {
 			req = fetched
 		}
@@ -76,7 +75,6 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	metadataUpdates := sourceFetchMetadata(normalized)
-	existing := parseIssueMetadata(issue.Metadata)
 	newKeyCount := 0
 	for key := range metadataUpdates {
 		if _, present := existing[key]; !present {
@@ -93,10 +91,10 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to begin source fetch transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	var updated db.Issue = issue
+	updated := issue
 	for key, value := range metadataUpdates {
 		buf, err := json.Marshal(value)
 		if err != nil {
@@ -119,16 +117,24 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			ID:          issue.ID,
 			WorkspaceID: issue.WorkspaceID,
 			Key:         "source_fetch_error",
-		}); err == nil {
-			latest, _ := qtx.GetIssue(r.Context(), issue.ID)
-			if latest.ID.Valid {
-				updated = latest
-			}
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to clear source fetch error")
+			return
 		}
+		latest, err := qtx.GetIssue(r.Context(), issue.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reload source fetch metadata")
+			return
+		}
+		updated = latest
 	}
 
 	traceResponse := map[string]any(nil)
 	if taskID := strings.TrimSpace(r.Header.Get("X-Task-ID")); taskID != "" {
+		idempotencyKey, ok := requireIdempotencyKey(w, r)
+		if !ok {
+			return
+		}
 		taskUUID, err := util.ParseUUID(taskID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "X-Task-ID must be a UUID")
@@ -139,7 +145,13 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, "X-Task-ID must belong to this issue")
 			return
 		}
+		requestHash, err := hashRequestFingerprint(requestFingerprint)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to fingerprint source fetch request")
+			return
+		}
 		traceMeta, _ := json.Marshal(map[string]any{
+			"request_hash":   requestHash,
 			"provider":       normalized.Provider,
 			"fetch_provider": normalized.FetchProvider,
 			"workspace_id":   normalized.WorkspaceID,
@@ -163,6 +175,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			errorType = "source_fetch_failed"
 		}
 		ev, err := qtx.CreateTaskTraceEvent(r.Context(), db.CreateTaskTraceEventParams{
+			ID:            idempotencyKey,
 			WorkspaceID:   issue.WorkspaceID,
 			TaskID:        task.ID,
 			IssueID:       issue.ID,
@@ -180,6 +193,10 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			Metadata:      traceMeta,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusConflict, "idempotency key already used for a different source fetch")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to record source fetch trace")
 			return
 		}
@@ -196,12 +213,8 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	workspaceID := uuidToString(updated.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	metadata := parseIssueMetadata(updated.Metadata)
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id": uuidToString(updated.ID),
-		"metadata": metadata,
-	})
+	actorType, actorID := resolveActor(r, userID)
+	metadata := h.publishIssueMetadataChanged(workspaceID, actorType, actorID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"metadata":    metadata,
 		"trace_event": traceResponse,
@@ -272,28 +285,24 @@ func normalizeSourceFetchRequest(w http.ResponseWriter, req RecordIssueSourceFet
 	return req, true
 }
 
-func (h *Handler) autoFetchIssueSource(ctx context.Context, userID string, issue db.Issue, req RecordIssueSourceFetchRequest) (RecordIssueSourceFetchRequest, error) {
-	return h.autoFetchTAPDSource(ctx, userID, req, parseIssueMetadata(issue.Metadata))
-}
-
 func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req RecordIssueSourceFetchRequest, metadata map[string]any) (RecordIssueSourceFetchRequest, error) {
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(req.Provider, "tapd")))
 	if provider != externalCredentialProviderTAPD {
 		return req, fmt.Errorf("auto_fetch currently supports tapd only")
 	}
-	workspaceID := firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
+	workspaceID := firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"))
 	resourceType := firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
-	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
+	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"))
 	sourceURL := firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
 	if ref, ok := parseTAPDSourceURL(sourceURL); ok {
 		sourceURL = ref.URL
 		workspaceID = firstNonEmpty(workspaceID, ref.WorkspaceID)
 		resourceID = firstNonEmpty(resourceID, ref.ResourceID)
-		if resourceType == "" || resourceType == "tapd_resource" {
+		if resourceType == "" {
 			resourceType = ref.ResourceType
 		}
 	}
-	if (resourceType == "" || resourceType == "tapd_resource") && strings.Contains(sourceURL, "/markdown_wikis/") {
+	if resourceType == "" && strings.Contains(sourceURL, "/markdown_wikis/") {
 		resourceType = "markdown_wiki"
 	}
 	if workspaceID == "" || resourceID == "" {
@@ -313,7 +322,10 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 	if strings.EqualFold(profile.Status, "disabled") {
 		return req, fmt.Errorf("TAPD credential profile is disabled")
 	}
-	token := h.resolveExternalCredentialToken(profile)
+	token, err := h.resolveExternalCredentialToken(profile)
+	if err != nil {
+		return req, fmt.Errorf("resolve TAPD credential token: %w", err)
+	}
 	if token == "" {
 		return req, fmt.Errorf("TAPD credential profile has no resolvable token")
 	}
@@ -427,7 +439,7 @@ func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceTy
 	if err != nil {
 		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		switch resp.StatusCode {
@@ -454,11 +466,11 @@ func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceTy
 
 func tapdSourceEndpoint(resourceType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(resourceType)) {
-	case "", "markdown_wiki", "wiki", "tapd_wiki":
+	case "", "markdown_wiki":
 		return "tapd_wikis", true
-	case "story", "stories":
+	case "story":
 		return "stories", true
-	case "task", "tasks":
+	case "task":
 		return "tasks", true
 	default:
 		return "", false

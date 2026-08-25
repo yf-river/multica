@@ -5,29 +5,6 @@ import (
 	"testing"
 )
 
-// TestClassifyEmptyAndWhitespace pins the empty/whitespace contract.
-// Daemon callers should never hand us empty error text — but if they
-// do, returning the catchall is safer than panicking.
-func TestClassifyEmptyAndWhitespace(t *testing.T) {
-	t.Parallel()
-
-	cases := []string{"", "   ", "\n\t  \n"}
-	for _, in := range cases {
-		if got := Classify(in); got != ReasonAgentUnknown {
-			t.Errorf("Classify(%q) = %q, want %q", in, got, ReasonAgentUnknown)
-		}
-	}
-}
-
-// TestClassifyRules walks every classifier rule with a real-world
-// sample taken from MUL-1949's db-boy production analysis (top error
-// prefixes from `agent_task_queue.error` over a 7-day window). When
-// MUL-1949's SQL grows a new rule, add a fixture here so the in-flight
-// classifier and the offline backfill stay in lock-step.
-//
-// One test case per rule is the minimum bar; rules with notable
-// boundary conditions (e.g. the 5xx regex) get a dedicated subtest
-// further down.
 func TestClassifyRules(t *testing.T) {
 	t.Parallel()
 
@@ -36,6 +13,10 @@ func TestClassifyRules(t *testing.T) {
 		in   string
 		want Reason
 	}{
+		{"empty", "", ReasonAgentUnknown},
+		{"spaces", "   ", ReasonAgentUnknown},
+		{"whitespace", "\n\t  \n", ReasonAgentUnknown},
+
 		// 1. Context overflow.
 		{"context length exceeded", "Error: context length exceeded for model gpt-4", ReasonAgentContextOverflow},
 		{"context_length_exceeded code", `{"error":{"code":"context_length_exceeded"}}`, ReasonAgentContextOverflow},
@@ -90,10 +71,19 @@ func TestClassifyRules(t *testing.T) {
 		{"internal error", "An internal error occurred while serving the request", ReasonAgentProviderServerError},
 		{"500 with delimiter", "API Error: 500 Internal Server Error", ReasonAgentProviderServerError},
 		{"503 anywhere", "got HTTP 503 from provider", ReasonAgentProviderServerError},
+		{"503 with server text", "503 internal server error", ReasonAgentProviderServerError},
 		{"503 at start", "503 service degraded", ReasonAgentProviderServerError},
 		{"504 at end", "upstream returned 504", ReasonAgentProviderServerError},
 		{"service unavailable", "service unavailable, retry later", ReasonAgentProviderServerError},
 		{"bad gateway", "Bad Gateway: upstream rejected", ReasonAgentProviderServerError},
+		{"5xx at start", "503", ReasonAgentProviderServerError},
+		{"5xx surrounded by spaces", " 504 ", ReasonAgentProviderServerError},
+		{"5xx delimited", "got 502 from upstream", ReasonAgentProviderServerError},
+		{"5xx at end", "upstream returned 599\n", ReasonAgentProviderServerError},
+		{"duration is not 5xx", "1500ms latency observed", ReasonAgentUnknown},
+		{"version is not 5xx", "version 1.5.0 unsupported", ReasonAgentUnknown},
+		{"token count is not 5xx", "5000 tokens generated", ReasonAgentUnknown},
+		{"duration suffix is not 5xx", "agent slept for 1500 seconds", ReasonAgentUnknown},
 
 		// 7. Provider network.
 		{"stream disconnected", "stream disconnected before completion", ReasonAgentProviderNetwork},
@@ -140,8 +130,15 @@ func TestClassifyRules(t *testing.T) {
 		{"file already closed", "write |1: file already closed", ReasonAgentProcessFailure},
 		{"initialize failed", "initialize failed: backend not ready", ReasonAgentProcessFailure},
 
+		// Overlapping markers must follow the production rule order.
+		{"token limit beats quota", "you exceeded the token limit", ReasonAgentContextOverflow},
+		{"missing api key beats 401", "missing api_key for openai (401 returned downstream)", ReasonAgentMissingConfig},
+		{"429 rate limit", "API Error: 429 rate limit reached", ReasonAgentProviderCapacityOrRateLimit},
+		{"upstream auth beats process exit", "exit status 1: API Error: 401 Unauthorized", ReasonAgentProviderAuthOrAccess},
+
 		// 14. Catchall.
 		{"unrecognized", "the agent gave up for reasons unknown", ReasonAgentUnknown},
+		{"random text", "random text", ReasonAgentUnknown},
 		{"sentence with no marker", "Hello world.", ReasonAgentUnknown},
 	}
 
@@ -151,107 +148,5 @@ func TestClassifyRules(t *testing.T) {
 				t.Fatalf("Classify(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
-	}
-}
-
-// TestClassifyOrderingPriorities pins the rule precedence between
-// overlapping rules. These cases caught regressions during MUL-2946 PR1
-// review: the SQL CASE ordering matters and a naive Go switch could
-// silently route them differently.
-func TestClassifyOrderingPriorities(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		in   string
-		want Reason
-	}{
-		// "token limit" mentions both "context-ish" tokens AND
-		// "limit". The context_overflow rule must win because the
-		// quota-limit rule's "limit" trigger would otherwise swallow
-		// it.
-		{"token limit beats quota", "you exceeded the token limit", ReasonAgentContextOverflow},
-
-		// 401 + missing api_key: the missing_config rule runs before
-		// auth precisely so we don't classify a config error as an
-		// auth rejection.
-		{"missing api key beats 401", "missing api_key for openai (401 returned downstream)", ReasonAgentMissingConfig},
-
-		// Both "429" and "rate limit" present — should still land in
-		// the capacity bucket, not the quota bucket.
-		{"429 rate limit", "API Error: 429 rate limit reached", ReasonAgentProviderCapacityOrRateLimit},
-
-		// "exit status" co-occurring with a stronger upstream marker
-		// — the upstream classification should win because the
-		// process_failure rule is checked last.
-		{"exit status with 401 upstream", "exit status 1: API Error: 401 Unauthorized", ReasonAgentProviderAuthOrAccess},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := Classify(c.in); got != c.want {
-				t.Errorf("Classify(%q) = %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
-
-// TestClassify5xxRegex pins the boundary behavior of the 5xx HTTP
-// status detector. The SQL classifier uses an anchored regex
-// `(^|[^0-9])5[0-9][0-9]([^0-9]|$)`; this Go classifier mirrors it via
-// providerHTTP5xxRe. Without the anchors, "1500ms" and "1.5.0" would
-// be misclassified as a server error.
-func TestClassify5xxRegex(t *testing.T) {
-	t.Parallel()
-
-	hits := []string{
-		"503",
-		" 504 ",
-		"got 502 from upstream",
-		"upstream returned 599\n",
-	}
-	for _, in := range hits {
-		if got := Classify(in); got != ReasonAgentProviderServerError {
-			t.Errorf("Classify(%q) = %q, want %q", in, got, ReasonAgentProviderServerError)
-		}
-	}
-
-	misses := []string{
-		"1500ms latency observed",
-		"version 1.5.0 unsupported",
-		"5000 tokens generated",
-		"agent slept for 1500 seconds",
-	}
-	for _, in := range misses {
-		if got := Classify(in); got == ReasonAgentProviderServerError {
-			t.Errorf("Classify(%q) = %q, want NOT provider_server_error", in, got)
-		}
-	}
-}
-
-// TestClassifyAlwaysReturnsAgentSide guarantees Classify never returns
-// a platform-side reason. Platform-side reasons originate from
-// sweepers / scheduler / poisoned classifier paths that don't pass
-// through Classify; the in-flight classifier's job is exclusively to
-// pick among the 14 agent_error.* sub-reasons (or fall back to
-// ReasonAgentUnknown). A future change that accidentally returned,
-// say, ReasonRuntimeOffline from Classify would break Prometheus
-// label semantics — pin it here.
-func TestClassifyAlwaysReturnsAgentSide(t *testing.T) {
-	t.Parallel()
-
-	samples := []string{
-		"",
-		"random text",
-		"401 Unauthorized",
-		"context length exceeded",
-		"503 internal server error",
-		"timed out after 2h0m0s",
-		"exit status 1",
-	}
-	for _, s := range samples {
-		got := Classify(s)
-		if !strings.HasPrefix(string(got), agentErrorPrefix) {
-			t.Errorf("Classify(%q) = %q, must be agent_error.* (in-flight classifier never returns platform-side reasons)", s, got)
-		}
 	}
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { resetAccountState } from "../platform/workspace-storage";
 import { selectRecentContexts, useRecentContextStore } from "./recent-context-store";
 
 beforeEach(() => {
@@ -94,5 +95,15 @@ describe("selectRecentContexts", () => {
     expect(a).toBe(b);
     expect(a).toBe(c);
     expect(a).toEqual([]);
+  });
+});
+
+describe("account cleanup", () => {
+  it("clears recent context snapshots from memory", () => {
+    useRecentContextStore
+      .getState()
+      .recordVisit("ws-a", { type: "issue", id: "issue-1" });
+    resetAccountState();
+    expect(useRecentContextStore.getState().byWorkspace).toEqual({});
   });
 });

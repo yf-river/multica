@@ -15,23 +15,8 @@ import (
 // already authenticated the installation row and decrypted its
 // app_secret. The client never reads `lark_installation` itself.
 type APIClient interface {
-	// IsConfigured reports whether this APIClient can reach Lark over
-	// the network. It is the "HTTP outbound is wired" signal: the stub
-	// returns false; the real Lark HTTP client returns true once
-	// instantiated. Handlers consult this when deciding whether to
-	// surface install / management UI that needs to talk to Lark.
-	IsConfigured() bool
-
-	// SendInteractiveCard posts an interactive card into a Lark chat
-	// and returns Lark's message_id for the card. The patcher persists
-	// this id in lark_outbound_card_message so subsequent patches can
-	// target the same card.
+	// SendInteractiveCard posts an interactive card into a Lark chat.
 	SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error)
-
-	// PatchInteractiveCard replaces the body of a previously-sent card.
-	// The throttling decision belongs to the caller; this method just
-	// performs the network call.
-	PatchInteractiveCard(ctx context.Context, p PatchCardParams) error
 
 	// SendTextMessage posts a plain text message into a Lark chat.
 	// Used for the agent's chat reply when the body has no markdown
@@ -146,7 +131,6 @@ type LarkMessage struct {
 	SenderType     string // sender.sender_type: user / app / anonymous / …
 	CreateTime     string // epoch milliseconds, as Lark returns it (a string)
 	ParentID       string
-	RootID         string
 	UpperMessageID string // the merge_forward parent a child hangs under
 	Deleted        bool
 	Mentions       []LarkMessageMention
@@ -196,13 +180,6 @@ type SendCardParams struct {
 	// through opaque so the card-template package can evolve without
 	// dragging this transport interface along.
 	CardJSON string
-}
-
-// PatchCardParams is the input shape for updating an existing card.
-type PatchCardParams struct {
-	InstallationID    InstallationCredentials
-	LarkCardMessageID string
-	CardJSON          string
 }
 
 // SendTextParams is the input shape for posting a plain text message.

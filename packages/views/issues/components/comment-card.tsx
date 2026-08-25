@@ -39,7 +39,8 @@ import { CommentTriggerChips } from "./comment-trigger-chips";
 import { useCommentTriggerPreview } from "../hooks/use-comment-trigger-preview";
 import type { TimelineEntry, Attachment } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
-import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
+import { useCommentCollapseStore } from "@multica/core/issues/stores/comment-collapse-store";
+import { useCommentDraftStore } from "@multica/core/issues/stores/comment-draft-store";
 import { useT } from "../../i18n";
 import { CommentsFoldBar } from "./resolved-thread-bar";
 import { deriveThreadResolution } from "./thread-utils";
@@ -48,17 +49,6 @@ const highlightedCommentBackgroundClass =
   "bg-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
 const highlightedCommentFadeClass =
   "after:from-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
-
-export function formatCommentContentForDisplay(content: string): string {
-  if (!content || content.includes("\n") || content.includes("```")) return content;
-  if (!/[：:]\s*1[.、]\s*\S/.test(content) || !/[。！？?；;]\s*2[.、]\s*\S/.test(content)) {
-    return content;
-  }
-  return content
-    .replace(/([：:])\s*(1[.、]\s*)/, "$1\n\n$2")
-    .replace(/([。！？?；;])\s*(\d+[.、]\s*)/g, "$1\n$2")
-    .replace(/([。！？?；;])\s*(建议[：:])/, "$1\n\n$2");
-}
 
 function StickyHeaderShell({
   className,
@@ -191,11 +181,9 @@ export function AttachmentList({
   onRemove?: (attachmentId: string) => void;
 }) {
   if (!attachments?.length) return null;
-  // Skip attachments whose URL (stable or legacy) is already referenced
-  // in the markdown content, and duplicates of the same file (same
-  // name/type/size) that are referenced. The dual-shape match is the
-  // MUL-3130 follow-through — a comment can mix the new
-  // /api/attachments/<id>/download URL and the legacy att.url shape.
+  // Skip attachments whose stable id URL is already referenced in the
+  // markdown content, and duplicates of the same file (same name/type/size)
+  // that are referenced.
   const standalone = content
     ? attachments.filter((a) => {
         if (contentReferencesAttachment(content, a)) return false;
@@ -323,7 +311,7 @@ function useEditAttachmentState(
   onEdit: (commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[]) => Promise<void>,
 ) {
   const { t } = useT("issues");
-  const { uploadWithToast } = useFileUpload(api);
+  const { uploadWithToast } = useFileUpload();
   const [editing, setEditing] = useState(false);
   const editorRef = useRef<ContentEditorRef>(null);
   const cancelledRef = useRef(false);
@@ -476,6 +464,36 @@ function useEditAttachmentState(
   };
 }
 
+function CommentEditEditor({
+  issueId,
+  edit,
+}: {
+  issueId: string;
+  edit: ReturnType<typeof useEditAttachmentState>;
+}) {
+  const { t } = useT("issues");
+
+  return (
+    <div className="text-sm leading-relaxed">
+      <ContentEditor
+        ref={edit.editorRef}
+        defaultValue={edit.initialValue}
+        placeholder={t(($) => $.comment.edit_placeholder)}
+        onUpdate={(markdown) => {
+          edit.setContent(markdown);
+          if (markdown.trim().length > 0) edit.setDraft(edit.draftKey, markdown);
+          else edit.clearDraft(edit.draftKey);
+        }}
+        onSubmit={edit.saveEdit}
+        onUploadFile={edit.handleUpload}
+        debounceMs={100}
+        currentIssueId={issueId}
+        attachments={edit.editorAttachments}
+      />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Single comment row (used for both parent and replies within the same Card)
 // ---------------------------------------------------------------------------
@@ -619,23 +637,7 @@ function CommentRow({
           className="relative pl-12 pr-4 pt-1"
           onKeyDown={(e) => { if (e.key === "Escape") edit.cancelEdit(); }}
         >
-          <div className="text-sm leading-relaxed">
-            <ContentEditor
-              ref={edit.editorRef}
-              defaultValue={edit.initialValue}
-              placeholder={t(($) => $.comment.edit_placeholder)}
-              onUpdate={(md) => {
-                edit.setContent(md);
-                if (md.trim().length > 0) edit.setDraft(edit.draftKey, md);
-                else edit.clearDraft(edit.draftKey);
-              }}
-              onSubmit={edit.saveEdit}
-              onUploadFile={edit.handleUpload}
-              debounceMs={100}
-              currentIssueId={issueId}
-              attachments={edit.editorAttachments}
-            />
-          </div>
+          <CommentEditEditor issueId={issueId} edit={edit} />
           {edit.standaloneEditAttachments.length > 0 && (
             <AttachmentList
               attachments={edit.standaloneEditAttachments}
@@ -666,7 +668,7 @@ function CommentRow({
       ) : (
         <>
           <div className="pl-12 pr-4 pt-1 text-sm leading-relaxed text-foreground/85">
-            <ReadonlyContent content={formatCommentContentForDisplay(entry.content ?? "")} attachments={entry.attachments} />
+            <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4" />
           {retryableAgentFailureComment(entry) && (
@@ -904,23 +906,7 @@ function CommentCardImpl({
                 className="relative pl-10"
                 onKeyDown={(e) => { if (e.key === "Escape") edit.cancelEdit(); }}
               >
-                <div className="text-sm leading-relaxed">
-                  <ContentEditor
-                    ref={edit.editorRef}
-                    defaultValue={edit.initialValue}
-                    placeholder={t(($) => $.comment.edit_placeholder)}
-                    onUpdate={(md) => {
-                      edit.setContent(md);
-                      if (md.trim().length > 0) edit.setDraft(edit.draftKey, md);
-                      else edit.clearDraft(edit.draftKey);
-                    }}
-                    onSubmit={edit.saveEdit}
-                    onUploadFile={edit.handleUpload}
-                    debounceMs={100}
-                    currentIssueId={issueId}
-                    attachments={edit.editorAttachments}
-                  />
-                </div>
+                <CommentEditEditor issueId={issueId} edit={edit} />
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     {edit.standaloneEditAttachments.length > 0 && (
@@ -951,7 +937,7 @@ function CommentCardImpl({
             ) : (
               <>
                 <div className="pl-10 text-sm leading-relaxed text-foreground/85">
-                  <ReadonlyContent content={formatCommentContentForDisplay(entry.content ?? "")} attachments={entry.attachments} />
+                  <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10" />
                 {retryableAgentFailureComment(entry) && (

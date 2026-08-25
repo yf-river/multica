@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { projectListOptions, projectDetailOptions } from "@multica/core/projects/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { ProjectIcon } from "./project-icon";
 import { useT } from "../../i18n";
 
@@ -13,7 +13,7 @@ import { useT } from "../../i18n";
  * Not a link / button: callers wrap it in whatever interactive shell they
  * need. Pure UI — data is queried internally so callers can pass just an id.
  */
-export interface ProjectChipProps {
+interface ProjectChipProps {
   projectId: string;
   /** Shown when the project can't be resolved. */
   fallbackLabel?: string;

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -73,11 +74,9 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	userID := requestUserID(r)
 
-	// Reject agent actors before anything else. resolveActor returns
-	// "agent" iff both X-Agent-ID and a valid X-Task-ID are present and
-	// the task belongs to that agent — so this guard is precise and
-	// cannot be tricked by a member-supplied header.
-	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	// Reject task-token agents before anything else. Client-supplied actor
+	// headers remain a member request because auth owns X-Actor-Source.
+	actorType, _ := resolveActor(r, userID)
 	if actorType == "agent" {
 		writeError(w, http.StatusForbidden, "agents may not access env management endpoints")
 		return db.Agent{}, db.Member{}, false
@@ -109,15 +108,28 @@ func (h *Handler) GetAgentEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customEnv := unmarshalCustomEnv(agent)
+	customEnv, err := unmarshalCustomEnv(agent)
+	if err != nil {
+		slog.Error("decode agent custom_env failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to decode agent env")
+		return
+	}
 
-	revealedKeys := sortedKeys(customEnv)
-	details, _ := json.Marshal(map[string]any{
+	revealedKeys := make([]string, 0, len(customEnv))
+	for key := range customEnv {
+		revealedKeys = append(revealedKeys, key)
+	}
+	sort.Strings(revealedKeys)
+	details, err := json.Marshal(map[string]any{
 		"agent_id":      uuidToString(agent.ID),
 		"agent_name":    agent.Name,
 		"revealed_keys": revealedKeys,
 		"key_count":     len(revealedKeys),
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build env audit record")
+		return
+	}
 	if _, err := h.Queries.CreateActivity(r.Context(), db.CreateActivityParams{
 		WorkspaceID: agent.WorkspaceID,
 		IssueID:     pgtype.UUID{}, // env access is not tied to an issue
@@ -158,15 +170,19 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateAgentEnvRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.CustomEnv == nil {
 		req.CustomEnv = map[string]string{}
 	}
 
-	existing := unmarshalCustomEnv(agent)
+	existing, err := unmarshalCustomEnv(agent)
+	if err != nil {
+		slog.Error("decode agent custom_env failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to decode agent env")
+		return
+	}
 	merged, audit := mergeAgentEnv(existing, req.CustomEnv)
 
 	envBytes, err := json.Marshal(merged)
@@ -182,7 +198,7 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update env")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	updated, err := qtx.UpdateAgentCustomEnv(r.Context(), db.UpdateAgentCustomEnvParams{
@@ -204,7 +220,11 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		"changed_keys":   audit.changed,
 		"preserved_keys": audit.preserved,
 	}
-	details, _ := json.Marshal(auditDetails)
+	details, err := json.Marshal(auditDetails)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build env audit record")
+		return
+	}
 	if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{
 		WorkspaceID: agent.WorkspaceID,
 		IssueID:     pgtype.UUID{},
@@ -219,22 +239,26 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Broadcast an agent:status update so connected clients refresh the
+	// "N variables configured" indicator. Payload is the redacted
+	// AgentResponse — no env values are sent. Build it before commit so a
+	// projection failure rolls the env and audit writes back. Skills are reloaded so the
+	// broadcast doesn't tell subscribers the agent has no skills (#3459).
+	resp, err := agentToResponse(updated)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, uuidToString(updated.ID), err)
+		return
+	}
+	if err := attachAgentSkills(r.Context(), qtx, &resp, updated.ID); err != nil {
+		slog.Warn("load agent skills after env update failed",
+			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(updated.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Error("agent_env update: tx commit failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to update env")
-		return
-	}
-
-	// Broadcast an agent:status update so connected clients refresh the
-	// "N variables configured" indicator. Payload is the redacted
-	// AgentResponse — no env values are sent. Skills are reloaded so the
-	// broadcast doesn't tell subscribers the agent has no skills (#3459).
-	resp := agentToResponse(updated)
-	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
-		slog.Warn("load agent skills after env update failed",
-			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(updated.ID))...)
-		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
 	workspaceID := uuidToString(updated.WorkspaceID)
@@ -311,29 +335,16 @@ func mergeAgentEnv(existing, request map[string]string) (map[string]string, envA
 	return merged, audit
 }
 
-// unmarshalCustomEnv decodes an agent's stored custom_env bytea into a
-// map, returning an empty (never nil) map so callers can iterate
-// safely.
-func unmarshalCustomEnv(a db.Agent) map[string]string {
-	out := map[string]string{}
-	if len(a.CustomEnv) == 0 {
-		return out
-	}
+// unmarshalCustomEnv decodes the persisted string map. Database constraints
+// make this shape an invariant; an error is surfaced rather than pretending a
+// damaged secret document is empty.
+func unmarshalCustomEnv(a db.Agent) (map[string]string, error) {
+	var out map[string]string
 	if err := json.Unmarshal(a.CustomEnv, &out); err != nil {
-		slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(a.ID), "error", err)
-		return map[string]string{}
+		return nil, fmt.Errorf("decode custom_env: %w", err)
 	}
 	if out == nil {
-		return map[string]string{}
+		return nil, fmt.Errorf("decode custom_env: expected JSON object")
 	}
-	return out
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	return out, nil
 }

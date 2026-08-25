@@ -8,27 +8,21 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// workspaceCoAuthoredByEnabled gates the prepare-commit-msg hook installed in
-// agent worktrees. RFC MUL-2414 adds the `github_enabled` master switch:
-// when it is explicitly false the hook must NOT be installed even if
-// `co_authored_by_enabled` is true. The function also defaults to true
-// whenever settings are absent or malformed so existing workspaces keep
-// their historical behavior.
 func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 	cases := []struct {
-		name       string
-		register   bool
-		settings   string
-		want       bool
+		name     string
+		register bool
+		settings string
+		want     bool
 	}{
-		{"unknown workspace defaults on", false, "", true},
-		{"registered workspace, nil settings defaults on", true, "", true},
-		{"empty object defaults on", true, "{}", true},
-		{"co_authored_by absent defaults on", true, `{"github_enabled":true}`, true},
-		{"co_authored_by true", true, `{"co_authored_by_enabled":true}`, true},
-		{"co_authored_by false", true, `{"co_authored_by_enabled":false}`, false},
+		{"unknown workspace is disabled", false, "", false},
+		{"registered workspace without settings is disabled", true, "", false},
+		{"both settings enabled", true, `{"github_enabled":true,"co_authored_by_enabled":true}`, true},
+		{"co-authored-by disabled", true, `{"github_enabled":true,"co_authored_by_enabled":false}`, false},
 		{
 			"master off forces hook off even when co_authored_by true",
 			true,
@@ -41,7 +35,7 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 			`{"github_enabled":true,"co_authored_by_enabled":false}`,
 			false,
 		},
-		{"malformed settings defaults on", true, `not json`, true},
+		{"malformed settings is disabled", true, `not json`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,7 +45,7 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 				if tc.settings != "" {
 					raw = json.RawMessage(tc.settings)
 				}
-				d.workspaces["ws"] = newWorkspaceState("ws", nil, "", nil, raw)
+				d.workspaces["ws"] = newWorkspaceState("ws", nil, nil, raw)
 			}
 			if got := d.workspaceCoAuthoredByEnabled("ws"); got != tc.want {
 				t.Fatalf("workspaceCoAuthoredByEnabled(%q) = %v, want %v",
@@ -61,13 +55,6 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 	}
 }
 
-// syncWorkspacesFromAPI must refresh the cached workspace settings on already-
-// tracked workspaces so that toggling `co_authored_by_enabled` (or the
-// `github_enabled` master switch) in the web UI takes effect on the next gated
-// operation without a daemon restart. Reviewed in PR #2847 by Emacs — the
-// original cut only wrote settings during registration, so a running daemon
-// would keep installing the Co-authored-by hook on the next `repo checkout`
-// even after the workspace flipped the switch off.
 func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -79,12 +66,12 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces":
-			json.NewEncoder(w).Encode([]WorkspaceInfo{{ID: workspaceID, Name: "ws"}})
+			_ = json.NewEncoder(w).Encode([]protocol.WorkspaceResponse{{ID: workspaceID, Name: "ws"}})
 		case "/api/daemon/workspaces/" + workspaceID + "/repos":
 			raw, _ := settingsPayload.Load().(json.RawMessage)
-			json.NewEncoder(w).Encode(WorkspaceReposResponse{
+			_ = json.NewEncoder(w).Encode(protocol.DaemonWorkspaceReposResponse{
 				WorkspaceID:  workspaceID,
-				Repos:        []RepoData{},
+				Repos:        []protocol.TaskRepository{},
 				ReposVersion: "v1",
 				Settings:     raw,
 			})
@@ -101,13 +88,9 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 		runtimeIndex: make(map[string]Runtime),
 		runtimeSet:   newRuntimeSetWatcher(),
 	}
-	// Pretend the workspace was already registered with co-author ON. A live
-	// runtime ID keeps workspaceNeedsRuntimeRecovery from short-circuiting the
-	// sync into a re-register.
 	d.workspaces[workspaceID] = newWorkspaceState(
 		workspaceID,
 		[]string{"rt-1"},
-		"v1",
 		nil,
 		json.RawMessage(`{"github_enabled":true,"co_authored_by_enabled":true}`),
 	)
@@ -116,7 +99,6 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 		t.Fatalf("precondition: expected co-author hook to start enabled")
 	}
 
-	// The user opens Settings → GitHub and turns the master switch off.
 	settingsPayload.Store(json.RawMessage(`{"github_enabled":false,"co_authored_by_enabled":true}`))
 
 	if err := d.syncWorkspacesFromAPI(context.Background()); err != nil {
@@ -127,8 +109,6 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 		t.Fatalf("expected co-author hook disabled after toggle; daemon is still using stale cached settings")
 	}
 
-	// Flipping the master switch back on must take effect the next sync too —
-	// the refresh path is not one-way.
 	settingsPayload.Store(json.RawMessage(`{"github_enabled":true,"co_authored_by_enabled":true}`))
 	if err := d.syncWorkspacesFromAPI(context.Background()); err != nil {
 		t.Fatalf("syncWorkspacesFromAPI (re-enable): %v", err)

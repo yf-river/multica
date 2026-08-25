@@ -8,19 +8,23 @@ import type { ReactElement, ReactNode } from "react";
 import { RESOURCES } from "../locales";
 import type { SupportedLocale } from "@multica/core/i18n";
 
-// Single i18n test wrapper for the whole package. Wraps the production
-// `RESOURCES` map (every namespace registered there is available to the
-// component under test) so when a new namespace lands the test never
-// silently renders translation keys-as-text — the test sees the same
-// resource set users do. The previous pattern of inlining a per-file
-// `TEST_RESOURCES` slice meant every test author had to remember to
-// extend the slice when their component started using a new namespace.
-//
-// Use `renderWithI18n` like the standard `render`. The UI language is fixed
-// to Simplified Chinese.
 type RenderArgs = Omit<RenderOptions, "wrapper"> & {
   locale?: SupportedLocale;
 };
+
+export function TestI18nProvider({
+  children,
+  locale = "zh-Hans",
+}: {
+  children: ReactNode;
+  locale?: SupportedLocale;
+}) {
+  return (
+    <I18nProvider locale={locale} resources={RESOURCES}>
+      {children}
+    </I18nProvider>
+  );
+}
 
 export function renderWithI18n(
   ui: ReactElement,
@@ -28,11 +32,7 @@ export function renderWithI18n(
 ): RenderResult {
   const { locale = "zh-Hans", ...rest } = options;
   function Wrapper({ children }: { children: ReactNode }) {
-    return (
-      <I18nProvider locale={locale} resources={RESOURCES}>
-        {children}
-      </I18nProvider>
-    );
+    return <TestI18nProvider locale={locale}>{children}</TestI18nProvider>;
   }
   return render(ui, { wrapper: Wrapper, ...rest });
 }

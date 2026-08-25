@@ -16,8 +16,8 @@ SELECT * FROM workspace
 WHERE slug = $1;
 
 -- name: CreateWorkspace :one
-INSERT INTO workspace (name, slug, description, context, issue_prefix)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO workspace (id, name, slug, description, context, issue_prefix)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: UpdateWorkspace :one

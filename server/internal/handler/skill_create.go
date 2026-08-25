@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type skillCreateInput struct {
@@ -17,8 +18,52 @@ type skillCreateInput struct {
 	Name        string
 	Description string
 	Content     string
-	Config      any
-	Files       []CreateSkillFileRequest
+	Config      map[string]any
+	Files       []protocol.SkillFile
+	// AllowNameConflict returns pgx.ErrNoRows without aborting the transaction
+	// when another skill owns the name. Rename import uses this to try the next
+	// deterministic suffix inside one transaction.
+	AllowNameConflict bool
+}
+
+func upsertSkillFiles(ctx context.Context, q *db.Queries, skillID pgtype.UUID, files []protocol.SkillFile) ([]SkillFileResponse, error) {
+	responses := make([]SkillFileResponse, 0, len(files))
+	for _, file := range files {
+		// SKILL.md is the primary skill content stored on skill.Content. Files
+		// contains only supporting assets across create, update and import.
+		if skillpkg.IsReservedContentPath(file.Path) {
+			continue
+		}
+		stored, err := q.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
+			SkillID: skillID,
+			Path:    sanitizePostgresText(file.Path),
+			Content: sanitizePostgresText(file.Content),
+		})
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, skillFileToResponse(stored))
+	}
+	return responses, nil
+}
+
+func marshalSkillConfig(config map[string]any) ([]byte, error) {
+	if config == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(config)
+}
+
+func storeSkillFilesResponse(ctx context.Context, q *db.Queries, skill db.Skill, files []protocol.SkillFile) (SkillWithFilesResponse, error) {
+	fileResponses, err := upsertSkillFiles(ctx, q, skill.ID, files)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	skillResponse, err := skillToResponse(skill)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	return SkillWithFilesResponse{SkillResponse: skillResponse, Files: fileResponses}, nil
 }
 
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
@@ -27,48 +72,30 @@ type skillCreateInput struct {
 // template materialization) inside one outer transaction. For standalone
 // skill creation, prefer createSkillWithFiles, which manages its own tx.
 func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillCreateInput) (SkillWithFilesResponse, error) {
-	config, err := json.Marshal(input.Config)
+	config, err := marshalSkillConfig(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	if input.Config == nil {
-		config = []byte("{}")
-	}
 
-	skill, err := qtx.CreateSkill(ctx, db.CreateSkillParams{
+	params := db.CreateSkillParams{
 		WorkspaceID: input.WorkspaceID,
-		Name:        sanitizeNullBytes(input.Name),
-		Description: sanitizeNullBytes(input.Description),
-		Content:     sanitizeNullBytes(input.Content),
+		Name:        sanitizePostgresText(input.Name),
+		Description: sanitizePostgresText(input.Description),
+		Content:     sanitizePostgresText(input.Content),
 		Config:      config,
 		CreatedBy:   input.CreatorID,
-	})
+	}
+	var skill db.Skill
+	if input.AllowNameConflict {
+		skill, err = qtx.CreateSkillIfNameAvailable(ctx, db.CreateSkillIfNameAvailableParams(params))
+	} else {
+		skill, err = qtx.CreateSkill(ctx, params)
+	}
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
 
-	fileResps := make([]SkillFileResponse, 0, len(input.Files))
-	for _, f := range input.Files {
-		// SKILL.md is reserved for the primary skill content (skill.Content).
-		// Supporting files must carry additional assets, not duplicate the main file.
-		if skillpkg.IsReservedContentPath(f.Path) {
-			continue
-		}
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
-		})
-		if err != nil {
-			return SkillWithFilesResponse{}, err
-		}
-		fileResps = append(fileResps, skillFileToResponse(sf))
-	}
-
-	return SkillWithFilesResponse{
-		SkillResponse: skillToResponse(skill),
-		Files:         fileResps,
-	}, nil
+	return storeSkillFilesResponse(ctx, qtx, skill, input.Files)
 }
 
 func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInput) (SkillWithFilesResponse, error) {
@@ -76,7 +103,7 @@ func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInp
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := h.Queries.WithTx(tx)
 
@@ -114,8 +141,8 @@ type skillOverwriteInput struct {
 	ExpectedName string
 	Description  string
 	Content      string
-	Config       any
-	Files        []CreateSkillFileRequest
+	Config       map[string]any
+	Files        []protocol.SkillFile
 }
 
 // overwriteSkillWithFiles re-imports a bundle onto an existing skill in a single
@@ -130,22 +157,11 @@ type skillOverwriteInput struct {
 // content, config (origin), and the full file set — files absent from the new
 // bundle are pruned via DeleteSkillFilesBySkill. On any error the tx rolls back,
 // leaving the original skill unchanged.
-func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
-	config, err := json.Marshal(input.Config)
+func overwriteSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillOverwriteInput) (SkillWithFilesResponse, error) {
+	config, err := marshalSkillConfig(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	if input.Config == nil {
-		config = []byte("{}")
-	}
-
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-	defer tx.Rollback(ctx)
-
-	qtx := h.Queries.WithTx(tx)
 
 	existing, err := qtx.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{
 		ID:          input.TargetSkillID,
@@ -173,8 +189,8 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	// unique-name churn.
 	skill, err := qtx.UpdateSkill(ctx, db.UpdateSkillParams{
 		ID:          existing.ID,
-		Description: pgtype.Text{String: sanitizeNullBytes(input.Description), Valid: true},
-		Content:     pgtype.Text{String: sanitizeNullBytes(input.Content), Valid: true},
+		Description: pgtype.Text{String: sanitizePostgresText(input.Description), Valid: true},
+		Content:     pgtype.Text{String: sanitizePostgresText(input.Content), Valid: true},
 		Config:      config,
 	})
 	if err != nil {
@@ -192,25 +208,22 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	if err := qtx.DeleteSkillFilesBySkill(ctx, skill.ID); err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	fileResps := make([]SkillFileResponse, 0, len(input.Files))
-	for _, f := range input.Files {
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
-		})
-		if err != nil {
-			return SkillWithFilesResponse{}, err
-		}
-		fileResps = append(fileResps, skillFileToResponse(sf))
-	}
+	return storeSkillFilesResponse(ctx, qtx, skill, input.Files)
+}
 
+func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	result, err := overwriteSkillWithFilesInTx(ctx, h.Queries.WithTx(tx), input)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-
-	return SkillWithFilesResponse{
-		SkillResponse: skillToResponse(skill),
-		Files:         fileResps,
-	}, nil
+	return result, nil
 }

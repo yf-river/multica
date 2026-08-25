@@ -92,24 +92,9 @@ func validateIssueMetadataObject(raw map[string]json.RawMessage) (map[string][]b
 	return out, nil
 }
 
-// parseIssueMetadata decodes the JSONB bytes from db.Issue.Metadata into a
-// Go map suitable for response serialization. Empty or unparseable blobs
-// degrade to an empty map — the DB CHECK guarantees object shape, so this
-// path is only hit on rows somehow predating the migration.
-func parseIssueMetadata(raw []byte) map[string]any {
-	if len(raw) == 0 {
-		return map[string]any{}
-	}
-	var out map[string]any
-	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
-		return map[string]any{}
-	}
-	return out
-}
-
 // parseMetadataFilterParam reads the `metadata` query parameter (a JSON
-// object) and returns it as the JSONB filter blob passed to ListIssues /
-// CountIssues / ListOpenIssues. Empty input means "no filter" and returns
+// object) and returns it as the JSONB filter blob passed to the current issue
+// list queries. Empty input means "no filter" and returns
 // a nil []byte, which the SQL layer interprets as "skip the @> check".
 //
 // Validates that the filter is itself a flat object of primitives, mirroring
@@ -153,7 +138,16 @@ func (h *Handler) ListIssueMetadata(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"metadata": parseIssueMetadata(issue.Metadata)})
+	writeJSON(w, http.StatusOK, map[string]any{"metadata": mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")})
+}
+
+func (h *Handler) publishIssueMetadataChanged(workspaceID, actorType, actorID string, issue db.Issue) map[string]any {
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
+	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
+		"issue_id": uuidToString(issue.ID),
+		"metadata": metadata,
+	})
+	return metadata
 }
 
 func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
@@ -165,8 +159,7 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SetIssueMetadataKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if err := validateIssueMetadataValue(req.Value); err != nil {
@@ -186,7 +179,7 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 	// Enforce the key-count cap in the handler. The DB only guards size,
 	// and a clear 4xx for "too many keys" beats a CHECK violation that
 	// happens to fire on the size cap once enough keys accumulate.
-	existing := parseIssueMetadata(issue.Metadata)
+	existing := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if _, present := existing[key]; !present && len(existing) >= maxIssueMetadataKeys {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("metadata cannot exceed %d keys", maxIssueMetadataKeys))
 		return
@@ -209,12 +202,8 @@ func (h *Handler) SetIssueMetadataKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := uuidToString(updated.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	metadata := parseIssueMetadata(updated.Metadata)
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id": uuidToString(updated.ID),
-		"metadata": metadata,
-	})
+	actorType, actorID := resolveActor(r, userID)
+	metadata := h.publishIssueMetadataChanged(workspaceID, actorType, actorID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata})
 }
 
@@ -251,11 +240,7 @@ func (h *Handler) DeleteIssueMetadataKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	workspaceID := uuidToString(updated.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	metadata := parseIssueMetadata(updated.Metadata)
-	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-		"issue_id": uuidToString(updated.ID),
-		"metadata": metadata,
-	})
+	actorType, actorID := resolveActor(r, userID)
+	metadata := h.publishIssueMetadataChanged(workspaceID, actorType, actorID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"metadata": metadata})
 }

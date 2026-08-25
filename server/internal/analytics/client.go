@@ -45,11 +45,6 @@ type Event struct {
 	// so later events don't overwrite the origin.
 	SetOnce map[string]any
 
-	// Set properties attach to the person record and overwrite on every write.
-	// Use this for mutable cohort signals (role, use_case, platform_preference)
-	// that users can legitimately change during onboarding.
-	Set map[string]any
-
 	// Timestamp is optional; when zero the client fills in time.Now().
 	Timestamp time.Time
 }
@@ -85,11 +80,7 @@ func NewFromEnv() Client {
 		host = "https://us.i.posthog.com"
 	}
 	slog.Info("analytics: posthog client enabled", "host", host)
-	return NewPostHogClient(PostHogConfig{
-		APIKey:      key,
-		Host:        host,
-		Environment: EnvironmentFromEnv(),
-	})
+	return newPostHogClient(key, host, EnvironmentFromEnv())
 }
 
 func isDisabled() bool {

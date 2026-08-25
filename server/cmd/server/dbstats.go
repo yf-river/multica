@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,20 +37,22 @@ const (
 
 // newDBPool builds a pgxpool with sane production defaults and env overrides.
 //
-// pgxpool.New(ctx, url) — used previously — silently picks MaxConns =
-// max(4, NumCPU). On our prod pods (small CPU request) that resolved to 4,
-// which got fully saturated by the daemon claim/heartbeat traffic and showed
-// up as ~900ms acquire waits on every query.
-//
 // Configuration precedence (highest first):
 //  1. DATABASE_MAX_CONNS / DATABASE_MIN_CONNS env vars
 //  2. pool_max_conns / pool_min_conns query params on DATABASE_URL
 //     (honored natively by pgxpool.ParseConfig)
 //  3. The defaults defined here (defaultMaxConns / defaultMinConns)
 //
-// pgx's own built-in default (max(4, NumCPU)) is intentionally NOT used as a
-// fallback — it is the value that caused the prod incident.
+// Explicit defaults keep the pool independent of host CPU count.
 func newDBPool(ctx context.Context, dbURL string) (*pgxpool.Pool, error) {
+	cfg, err := dbPoolConfig(dbURL)
+	if err != nil {
+		return nil, err
+	}
+	return pgxpool.NewWithConfig(ctx, cfg)
+}
+
+func dbPoolConfig(dbURL string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
@@ -60,27 +60,25 @@ func newDBPool(ctx context.Context, dbURL string) (*pgxpool.Pool, error) {
 
 	urlParams := poolParamsFromURL(dbURL)
 
-	// Compute the non-env fallback first: honor URL pool_* params if the
-	// operator set them, otherwise use our code default. This fallback is
-	// also what an *invalid* env value falls back to — never pgx's built-in
-	// default of 4/0, which is the value that caused the prod incident.
+	// URL parameters override code defaults; environment values override both.
+	// Invalid environment values preserve the URL/default result.
 	maxFallback := defaultMaxConns
 	if urlParams["pool_max_conns"] {
 		maxFallback = cfg.MaxConns
 	}
-	cfg.MaxConns = envInt32("DATABASE_MAX_CONNS", maxFallback)
+	cfg.MaxConns = envPositiveInteger("DATABASE_MAX_CONNS", maxFallback)
 
 	minFallback := defaultMinConns
 	if urlParams["pool_min_conns"] {
 		minFallback = cfg.MinConns
 	}
-	cfg.MinConns = envInt32("DATABASE_MIN_CONNS", minFallback)
+	cfg.MinConns = envPositiveInteger("DATABASE_MIN_CONNS", minFallback)
 
 	if cfg.MinConns > cfg.MaxConns {
 		cfg.MinConns = cfg.MaxConns
 	}
 
-	return pgxpool.NewWithConfig(ctx, cfg)
+	return cfg, nil
 }
 
 // poolParamsFromURL returns the set of pool_* query params present on the
@@ -97,22 +95,6 @@ func poolParamsFromURL(dbURL string) map[string]bool {
 		out[k] = true
 	}
 	return out
-}
-
-// envInt32 reads an int32 from the named env var. Empty / invalid values fall
-// back to def and emit a warn so misconfiguration is visible in startup logs.
-func envInt32(name string, def int32) int32 {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.ParseInt(raw, 10, 32)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid env var, using default",
-			"name", name, "value", raw, "default", def, "error", err)
-		return def
-	}
-	return int32(v)
 }
 
 // logPoolConfig prints the effective pgxpool configuration once at startup.
@@ -199,10 +181,10 @@ func runDBStatsLogger(ctx context.Context, pool *pgxpool.Pool) {
 const samplerMaxConns int32 = 2
 
 // newSamplerDBPool builds a tiny pgxpool aimed exclusively at the
-// BusinessSamplerCollector. Keeping it isolated from the main pool means a
+// business sampler. Keeping it isolated from the main pool means a
 // stalled sampler scrape can never starve business traffic — the worst
 // case is the next /metrics returning stale numbers, which is exactly the
-// safety contract documented on BusinessSamplerOptions.
+// safety contract documented by the sampler.
 //
 // The pool is built from the same DATABASE_URL as the main pool so it
 // hits the same database; the sizing knobs (DATABASE_MAX_CONNS et al.) on

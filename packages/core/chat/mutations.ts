@@ -1,27 +1,50 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useWorkspaceId } from "../hooks";
-import { chatKeys } from "./queries";
 import { createLogger } from "../logger";
+import { useWorkspaceId } from "../paths";
+import { chatKeys } from "./queries";
 import type { ChatSession } from "../types";
 
 const logger = createLogger("chat.mut");
 
+function useOptimisticSessionMutation<Variables, Result>(
+  operation: string,
+  mutationFn: (variables: Variables) => Promise<Result>,
+  update: (sessions: ChatSession[], variables: Variables) => ChatSession[],
+) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  const queryKey = chatKeys.sessions(wsId);
+
+  return useMutation<Result, Error, Variables, ChatSession[] | undefined>({
+    mutationFn,
+    onMutate: async (variables) => {
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<ChatSession[]>(queryKey);
+      qc.setQueryData<ChatSession[]>(queryKey, (sessions) =>
+        sessions ? update(sessions, variables) : sessions,
+      );
+      return previous;
+    },
+    onError: (error, _variables, previous) => {
+      logger.error(`${operation}.error.rollback`, error);
+      if (previous !== undefined) qc.setQueryData(queryKey, previous);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey });
+    },
+  });
+}
+
 export function useCreateChatSession() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
-
   return useMutation({
-    mutationFn: (data: { agent_id: string; title?: string }) => {
-      logger.info("createChatSession.start", { agent_id: data.agent_id, titleLength: data.title?.length ?? 0 });
-      return api.createChatSession(data);
+    mutationFn: (data: { agent_id: string; title?: string; idempotencyKey: string }) => {
+      const { idempotencyKey, ...request } = data;
+      return api.createChatSession(request, idempotencyKey);
     },
-    onSuccess: (session) => {
-      logger.info("createChatSession.success", { sessionId: session.id, agentId: session.agent_id });
-    },
-    onError: (err) => {
-      logger.error("createChatSession.error", err);
-    },
+    onError: (error) => logger.error("createChatSession.error", error),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
     },
@@ -35,33 +58,14 @@ export function useCreateChatSession() {
  * also sync.
  */
 export function useMarkChatSessionRead() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-
-  return useMutation({
-    mutationFn: (sessionId: string) => {
-      logger.info("markChatSessionRead.start", { sessionId });
-      return api.markChatSessionRead(sessionId);
-    },
-    onMutate: async (sessionId) => {
-      await qc.cancelQueries({ queryKey: chatKeys.sessions(wsId) });
-
-      const prevSessions = qc.getQueryData<ChatSession[]>(chatKeys.sessions(wsId));
-
-      const clear = (old?: ChatSession[]) =>
-        old?.map((s) => (s.id === sessionId ? { ...s, has_unread: false } : s));
-      qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), clear);
-
-      return { prevSessions };
-    },
-    onError: (err, sessionId, ctx) => {
-      logger.error("markChatSessionRead.error.rollback", { sessionId, err });
-      if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
-    },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
-    },
-  });
+  return useOptimisticSessionMutation(
+    "markChatSessionRead",
+    (sessionId: string) => api.markChatSessionRead(sessionId),
+    (sessions, sessionId) =>
+      sessions.map((session) =>
+        session.id === sessionId ? { ...session, has_unread: false } : session,
+      ),
+  );
 }
 
 /**
@@ -71,36 +75,15 @@ export function useMarkChatSessionRead() {
  * tabs/devices in sync — see use-realtime-sync.ts.
  */
 export function useUpdateChatSession() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-
-  return useMutation({
-    mutationFn: (data: { sessionId: string; title: string }) => {
-      logger.info("updateChatSession.start", {
-        sessionId: data.sessionId,
-        titleLength: data.title.length,
-      });
-      return api.updateChatSession(data.sessionId, { title: data.title });
-    },
-    onMutate: async ({ sessionId, title }) => {
-      await qc.cancelQueries({ queryKey: chatKeys.sessions(wsId) });
-
-      const prevSessions = qc.getQueryData<ChatSession[]>(chatKeys.sessions(wsId));
-
-      const patch = (old?: ChatSession[]) =>
-        old?.map((s) => (s.id === sessionId ? { ...s, title } : s));
-      qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), patch);
-
-      return { prevSessions };
-    },
-    onError: (err, vars, ctx) => {
-      logger.error("updateChatSession.error.rollback", { sessionId: vars.sessionId, err });
-      if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
-    },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
-    },
-  });
+  return useOptimisticSessionMutation(
+    "updateChatSession",
+    (data: { sessionId: string; title: string }) =>
+      api.updateChatSession(data.sessionId, { title: data.title }),
+    (sessions, { sessionId, title }) =>
+      sessions.map((session) =>
+        session.id === sessionId ? { ...session, title } : session,
+      ),
+  );
 }
 
 /**
@@ -110,32 +93,10 @@ export function useUpdateChatSession() {
  * in sync — see use-realtime-sync.ts.
  */
 export function useDeleteChatSession() {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-
-  return useMutation({
-    mutationFn: (sessionId: string) => {
-      logger.info("deleteChatSession.start", { sessionId });
-      return api.deleteChatSession(sessionId);
-    },
-    onMutate: async (sessionId) => {
-      await qc.cancelQueries({ queryKey: chatKeys.sessions(wsId) });
-
-      const prevSessions = qc.getQueryData<ChatSession[]>(chatKeys.sessions(wsId));
-
-      const drop = (old?: ChatSession[]) => old?.filter((s) => s.id !== sessionId);
-      qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), drop);
-
-      logger.debug("deleteChatSession.optimistic", { sessionId });
-      return { prevSessions };
-    },
-    onError: (err, sessionId, ctx) => {
-      logger.error("deleteChatSession.error.rollback", { sessionId, err });
-      if (ctx?.prevSessions) qc.setQueryData(chatKeys.sessions(wsId), ctx.prevSessions);
-    },
-    onSettled: (_data, _err, sessionId) => {
-      logger.debug("deleteChatSession.settled", { sessionId });
-      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
-    },
-  });
+  return useOptimisticSessionMutation(
+    "deleteChatSession",
+    (sessionId: string) => api.deleteChatSession(sessionId),
+    (sessions, sessionId) =>
+      sessions.filter((session) => session.id !== sessionId),
+  );
 }

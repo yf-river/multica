@@ -1,6 +1,6 @@
 -- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2))
+INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetChatSession :one
@@ -12,17 +12,10 @@ SELECT * FROM chat_session
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: ListChatSessionsByCreator :many
--- Returns active sessions with a boolean unread flag. Unread is strictly
+-- Returns sessions with a boolean unread flag. Unread is strictly
 -- per-session: either the user has uncleared assistant replies in this
 -- session or they don't. Counting messages would be misleading.
-SELECT cs.*,
-       (cs.unread_since IS NOT NULL)::bool AS has_unread
-FROM chat_session cs
-WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
-ORDER BY cs.updated_at DESC;
-
--- name: ListAllChatSessionsByCreator :many
-SELECT cs.*,
+SELECT sqlc.embed(cs),
        (cs.unread_since IS NOT NULL)::bool AS has_unread
 FROM chat_session cs
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
@@ -32,19 +25,6 @@ ORDER BY cs.updated_at DESC;
 UPDATE chat_session SET title = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
-
--- name: UpdateChatSessionSession :exec
--- Updates the resume pointer for a chat session. Empty/NULL inputs are
--- ignored via COALESCE so a task that completes without a session_id (e.g.
--- the agent crashed before establishing one) cannot wipe out a previously
--- recorded resume pointer. This makes the chat memory robust against
--- intermittent agent failures.
-UPDATE chat_session
-SET session_id = COALESCE(sqlc.narg('session_id'), session_id),
-    work_dir = COALESCE(sqlc.narg('work_dir'), work_dir),
-    runtime_id = COALESCE(sqlc.narg('runtime_id'), runtime_id),
-    updated_at = now()
-WHERE id = sqlc.arg('id');
 
 -- name: LockChatSessionForDelete :one
 -- Acquires an exclusive (FOR UPDATE) row lock on chat_session(id). Used by
@@ -57,6 +37,14 @@ WHERE id = sqlc.arg('id');
 SELECT id FROM chat_session
 WHERE id = $1
 FOR UPDATE;
+
+-- name: LockChatSessionForSend :one
+-- Serialize sends within one session and conflict with hard delete. The agent
+-- row is always locked first by callers, so archive/delete cannot introduce a
+-- reverse lock order.
+SELECT * FROM chat_session
+WHERE id = $1 AND workspace_id = $2 AND creator_id = $3
+FOR NO KEY UPDATE;
 
 -- name: DeleteChatSession :exec
 -- Hard delete. chat_message rows cascade via FK ON DELETE CASCADE; the
@@ -103,26 +91,31 @@ WHERE chat_session_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $2;
 
+-- name: GetUserChatMessageByTask :one
+SELECT * FROM chat_message
+WHERE task_id = $1 AND role = 'user'
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
+
 -- name: CreateChatTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id, initiator_user_id)
 VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
 RETURNING *;
 
--- name: GetLastChatTaskSession :one
+-- name: GetChatResumePointer :one
 -- Returns the most recent task in this chat session that managed to record a
 -- session_id. Includes both completed and failed tasks: even a failed task
 -- may have established a real agent session before failing, and we'd rather
--- resume there than start over and lose conversation memory. Used as a
--- fallback when chat_session.session_id is NULL. Resume-unsafe failures are
--- excluded because replaying those sessions deterministically reproduces the
--- same terminal state.
+-- resume there than start over and lose conversation memory. The task row is
+-- the sole resume-pointer owner. Resume-unsafe failures are excluded because
+-- replaying those sessions deterministically reproduces the same terminal state.
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE chat_session_id = $1
   AND (
     status = 'completed'
     OR (
       status = 'failed'
-      AND failure_reason NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
+      AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
     )
   )
   AND session_id IS NOT NULL
@@ -136,7 +129,7 @@ LIMIT 1;
 -- elapsed = now - task.created_at), so the pill survives refresh / reopen
 -- without "resetting to 0s".
 SELECT id, status, created_at FROM agent_task_queue
-WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running')
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -149,7 +142,7 @@ FROM agent_task_queue atq
 JOIN chat_session cs ON cs.id = atq.chat_session_id
 WHERE cs.workspace_id = $1
   AND cs.creator_id = $2
-  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND atq.status IN ('queued', 'dispatched', 'running')
 ORDER BY atq.created_at DESC;
 
 -- name: MarkChatSessionRead :exec

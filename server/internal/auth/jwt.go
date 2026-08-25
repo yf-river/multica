@@ -1,15 +1,23 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
 const defaultJWTSecret = "multica-dev-secret-change-in-production"
+
+const (
+	composeJWTSecretPlaceholder = "change-me-in-production"
+	minimumJWTSecretBytes       = 32
+)
 
 var (
 	jwtSecret     []byte
@@ -28,13 +36,40 @@ func JWTSecret() []byte {
 	return jwtSecret
 }
 
-// GeneratePATToken creates a new personal access token: "mul_" + 40 random hex chars.
-func GeneratePATToken() (string, error) {
-	b := make([]byte, 20) // 20 bytes = 40 hex chars
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate PAT token: %w", err)
+// ValidateJWTConfiguration rejects weak signing keys in production while
+// preserving the zero-setup local development fallback.
+func ValidateJWTConfiguration(appEnv, secret string) error {
+	if !strings.EqualFold(strings.TrimSpace(appEnv), "production") {
+		return nil
 	}
-	return "mul_" + hex.EncodeToString(b), nil
+	return ValidateJWTSecret(secret)
+}
+
+// ValidateJWTSecret returns a safe diagnostic without echoing secret data.
+func ValidateJWTSecret(secret string) error {
+	if secret == "" {
+		return errors.New("JWT_SECRET is not set")
+	}
+	if secret != strings.TrimSpace(secret) {
+		return errors.New("JWT_SECRET must not contain surrounding whitespace")
+	}
+	if secret == defaultJWTSecret || secret == composeJWTSecretPlaceholder {
+		return errors.New("JWT_SECRET uses a published placeholder")
+	}
+	if len(secret) < minimumJWTSecretBytes {
+		return fmt.Errorf("JWT_SECRET must contain at least %d bytes", minimumJWTSecretBytes)
+	}
+	return nil
+}
+
+// DerivePATToken deterministically derives a PAT for one authenticated create
+// operation. The caller-owned request key is public; security comes from the
+// same deployment secret that already authorizes user sessions. This lets the
+// server replay a response after it was lost without storing the raw PAT.
+func DerivePATToken(userID, requestKey string) string {
+	mac := hmac.New(sha256.New, JWTSecret())
+	_, _ = mac.Write([]byte("pat-create\x00" + userID + "\x00" + requestKey))
+	return "mul_" + hex.EncodeToString(mac.Sum(nil)[:20])
 }
 
 // GenerateAgentTaskToken creates a new task-scoped agent auth token:

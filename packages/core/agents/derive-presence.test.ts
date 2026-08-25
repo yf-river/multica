@@ -4,14 +4,11 @@ import {
   buildPresenceMap,
   deriveAgentAvailability,
   deriveAgentPresenceDetail,
-  deriveWorkload,
-  deriveWorkloadDetail,
 } from "./derive-presence";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
     id: "agent-1",
-    workspace_id: "ws-1",
     runtime_id: "rt-1",
     name: "Test Agent",
     description: "",
@@ -20,16 +17,18 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
+    custom_env_key_count: 0,
+    mcp_config: null,
+    mcp_config_redacted: false,
     scope: "workspace",
-    status: "idle",
     max_concurrent_tasks: 6,
     model: "",
+    thinking_level: "",
     owner_id: null,
     skills: [],
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }
@@ -37,7 +36,6 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     id: "rt-1",
-    workspace_id: "ws-1",
     daemon_id: "daemon-1",
     name: "Test Runtime",
     runtime_mode: "local",
@@ -48,16 +46,12 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     metadata: {},
     owner_id: null,
     scope: "personal",
+    profile_id: null,
     last_seen_at: "2026-04-27T11:59:50Z",
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
     ...overrides,
   };
 }
 
-// Anchor for all wall-clock comparisons in the suite. Pairs with the
-// runtime fixture's last_seen_at (10s before NOW) so an "online" runtime
-// looks fresh by default.
 const NOW = new Date("2026-04-27T12:00:00Z").getTime();
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
@@ -67,7 +61,6 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
     runtime_id: "rt-1",
     issue_id: "",
     status: "queued",
-    priority: 0,
     dispatched_at: null,
     started_at: null,
     completed_at: null,
@@ -79,9 +72,6 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
 }
 
 describe("deriveAgentAvailability", () => {
-  // Reachability dimension only — runtime + clock decide it; tasks are
-  // irrelevant to this axis.
-
   it("returns online when runtime is fresh-online", () => {
     expect(deriveAgentAvailability(makeRuntime(), NOW)).toBe("online");
   });
@@ -107,7 +97,6 @@ describe("deriveAgentAvailability", () => {
   it("collapses about_to_gc into offline (it's a runtime-card concern, not the dot)", () => {
     expect(
       deriveAgentAvailability(
-        // 6.5 days ago — past the 6-day about_to_gc threshold.
         makeRuntime({ status: "offline", last_seen_at: "2026-04-21T00:00:00Z" }),
         NOW,
       ),
@@ -119,125 +108,7 @@ describe("deriveAgentAvailability", () => {
   });
 });
 
-describe("deriveWorkload", () => {
-  // Atomic 3-way classifier — used by both Agent (per-agent task counts)
-  // and Runtime (per-runtime aggregated counts). Pure functional mapping
-  // from a count pair to a workload label.
-
-  it("returns working when runningCount > 0", () => {
-    expect(deriveWorkload({ runningCount: 1, queuedCount: 0 })).toBe("working");
-    expect(deriveWorkload({ runningCount: 3, queuedCount: 5 })).toBe("working");
-  });
-
-  it("returns queued when nothing running but queuedCount > 0", () => {
-    expect(deriveWorkload({ runningCount: 0, queuedCount: 1 })).toBe("queued");
-    expect(deriveWorkload({ runningCount: 0, queuedCount: 5 })).toBe("queued");
-  });
-
-  it("returns idle when both counts are zero", () => {
-    expect(deriveWorkload({ runningCount: 0, queuedCount: 0 })).toBe("idle");
-  });
-});
-
-describe("deriveWorkloadDetail", () => {
-  // Aggregates a task list into running/queued counts before classifying.
-  // Terminal statuses (completed / failed / cancelled) are silently
-  // ignored — workload is "what's on the plate right now", not history.
-
-  it("returns idle when no tasks at all", () => {
-    const r = deriveWorkloadDetail([]);
-    expect(r.workload).toBe("idle");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(0);
-  });
-
-  it("returns working when at least one task is running", () => {
-    const r = deriveWorkloadDetail([makeTask({ status: "running" })]);
-    expect(r.workload).toBe("working");
-    expect(r.runningCount).toBe(1);
-    expect(r.queuedCount).toBe(0);
-  });
-
-  it("returns queued when only queued / dispatched tasks exist (no running)", () => {
-    // The "stuck on offline runtime" scenario in isolation: runningCount=0,
-    // queuedCount>0 surfaces as `queued` so the UI can honestly say
-    // "Queued · N" instead of misleading "Running 0/3 +Nq".
-    const r = deriveWorkloadDetail([
-      makeTask({ status: "queued" }),
-      makeTask({ id: "t2", status: "dispatched" }),
-    ]);
-    expect(r.workload).toBe("queued");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(2);
-  });
-
-  it("counts waiting_local_directory as queued (daemon parked on a path lock)", () => {
-    // waiting_local_directory is the daemon-side "blocked on a busy
-    // local_directory" hold state. It is still on the agent's plate —
-    // the chip must not flip to idle just because the run phase hasn't
-    // started yet — and is grouped with queued/dispatched in the
-    // presence verdict so the user sees "Queued · 1" rather than
-    // "Idle".
-    const r = deriveWorkloadDetail([
-      makeTask({ status: "waiting_local_directory" }),
-    ]);
-    expect(r.workload).toBe("queued");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(1);
-  });
-
-  it("returns working when running coexists with queued (overflow)", () => {
-    // Capacity-saturated agent: still running, but with a queue building.
-    // The chip says "Working" with the queue expressed as a `+Nq` badge.
-    const r = deriveWorkloadDetail([
-      makeTask({ id: "t1", status: "running" }),
-      makeTask({ id: "t2", status: "queued" }),
-      makeTask({ id: "t3", status: "queued" }),
-    ]);
-    expect(r.workload).toBe("working");
-    expect(r.runningCount).toBe(1);
-    expect(r.queuedCount).toBe(2);
-  });
-
-  it("ignores terminal statuses entirely (no historical state in workload)", () => {
-    // Failed / completed / cancelled tasks contribute no count and don't
-    // change the verdict — Recent Work + Inbox handle history, not workload.
-    const r = deriveWorkloadDetail([
-      makeTask({
-        id: "t-failed",
-        status: "failed",
-        completed_at: "2026-04-27T11:30:00Z",
-      }),
-      makeTask({
-        id: "t-completed",
-        status: "completed",
-        completed_at: "2026-04-27T11:00:00Z",
-      }),
-      makeTask({
-        id: "t-cancelled",
-        status: "cancelled",
-        completed_at: "2026-04-27T10:30:00Z",
-      }),
-    ]);
-    expect(r.workload).toBe("idle");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(0);
-  });
-
-  it("classifies running over queued when both present, regardless of order", () => {
-    const r = deriveWorkloadDetail([
-      makeTask({ id: "t1", status: "queued" }),
-      makeTask({ id: "t2", status: "running" }),
-    ]);
-    expect(r.workload).toBe("working");
-  });
-});
-
 describe("deriveAgentPresenceDetail", () => {
-  // Composition: the two dimensions are derived independently and the
-  // detail object exposes both. No cross-axis override — workload never
-  // colours the dot, availability never overrides workload.
-
   it("composes online + working for the common busy case", () => {
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
@@ -252,14 +123,9 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.workload).toBe("working");
     expect(detail.runningCount).toBe(1);
     expect(detail.queuedCount).toBe(1);
-    expect(detail.capacity).toBe(6);
   });
 
-  it("composes offline + queued — the canonical 'stuck' case (was previously misleading 'running 0/N')", () => {
-    // The motivation for the redesign: runtime offline + queued tasks
-    // used to surface as `running` with `0/3 +2q` counts (literally false).
-    // Workload now returns `queued` honestly, paired with offline
-    // availability — UI reads "Offline · Queued · 2".
+  it("composes offline + queued for an unreachable agent with pending work", () => {
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
       runtime: makeRuntime({
@@ -268,7 +134,7 @@ describe("deriveAgentPresenceDetail", () => {
       }),
       tasks: [
         makeTask({ status: "queued" }),
-        makeTask({ id: "t2", status: "queued" }),
+        makeTask({ id: "t2", status: "dispatched" }),
       ],
       now: NOW,
     });
@@ -279,9 +145,6 @@ describe("deriveAgentPresenceDetail", () => {
   });
 
   it("composes unstable + working — runtime hiccup with tasks still in flight", () => {
-    // Recently-lost runtime, but a task is still recorded as running.
-    // Both signals surface independently — amber dot AND working chip —
-    // so the user sees "connection wobbling" alongside "agent is busy".
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
       runtime: makeRuntime({
@@ -336,22 +199,7 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.workload).toBe("idle");
   });
 
-  it("mirrors agent.max_concurrent_tasks into capacity", () => {
-    const detail = deriveAgentPresenceDetail({
-      agent: makeAgent({ max_concurrent_tasks: 3 }),
-      runtime: makeRuntime(),
-      tasks: [],
-      now: NOW,
-    });
-    expect(detail.capacity).toBe(3);
-  });
-
   it("reports archived over any runtime/task signal for an archived agent", () => {
-    // Archived wins over presence: a leftover online runtime and a running
-    // task must never make a retired agent read as live. Availability
-    // collapses to "archived" and workload is forced idle with zero counts
-    // so no consumer (dot, hover card, list row) can surface "Online" or
-    // "Working" for an archived agent.
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent({ archived_at: "2026-04-27T10:00:00Z" }),
       runtime: makeRuntime(),
@@ -396,14 +244,10 @@ describe("buildPresenceMap", () => {
     });
     const o = map.get("orphan");
     expect(o?.availability).toBe("offline");
-    // Workload still resolves independently — running task counts.
     expect(o?.workload).toBe("working");
   });
 
   it("threads the same `now` so every agent on a shared runtime gets the same availability", () => {
-    // Multi-agent scenario: one local daemon backs N agents, daemon dies.
-    // All dependent agents should report unstable together — the shared
-    // `now` parameter is what guarantees consistent bucket boundaries.
     const agentA = makeAgent({ id: "a", runtime_id: "rt-1" });
     const agentB = makeAgent({ id: "b", runtime_id: "rt-1" });
     const map = buildPresenceMap({

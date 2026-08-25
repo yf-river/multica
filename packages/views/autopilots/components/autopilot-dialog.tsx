@@ -38,7 +38,7 @@ import {
 import { TimeInput } from "@multica/ui/components/ui/time-input";
 import { TimezonePicker } from "./pickers/timezone-picker";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import {
@@ -47,7 +47,7 @@ import {
   useUpdateAutopilot,
   useUpdateAutopilotTrigger,
 } from "@multica/core/autopilots/mutations";
-import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
+import { buildAutopilotWebhookUrl } from "@multica/core/autopilots/webhook";
 import { api } from "@multica/core/api";
 import type {
   AutopilotAssigneeType,
@@ -64,6 +64,8 @@ import {
   getDefaultTriggerConfig,
   getLocalTimezone,
   parseCronExpression,
+  COMMON_TIMEZONES,
+  TRIGGER_FREQUENCIES,
   toCronExpression,
   type TriggerConfig,
   type TriggerFrequency,
@@ -87,7 +89,7 @@ interface AutopilotInitial {
   subscriber_user_ids?: string[];
 }
 
-export type AutopilotDialogProps =
+type AutopilotDialogProps =
   | {
       mode: "create";
       open: boolean;
@@ -108,14 +110,6 @@ export type AutopilotDialogProps =
 // Static schema-level data (not user-visible)
 // ---------------------------------------------------------------------------
 
-const FREQUENCY_KEYS: TriggerFrequency[] = [
-  "hourly",
-  "daily",
-  "weekdays",
-  "weekly",
-  "custom",
-];
-
 const DAY_KEYS = [
   "sunday",
   "monday",
@@ -125,27 +119,6 @@ const DAY_KEYS = [
   "friday",
   "saturday",
 ] as const;
-
-const TIMEZONE_OPTIONS = [
-  "UTC",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
-  "America/Sao_Paulo",
-  "Europe/London",
-  "Europe/Paris",
-  "Europe/Berlin",
-  "Europe/Moscow",
-  "Asia/Dubai",
-  "Asia/Kolkata",
-  "Asia/Singapore",
-  "Asia/Shanghai",
-  "Asia/Tokyo",
-  "Asia/Seoul",
-  "Australia/Sydney",
-  "Pacific/Auckland",
-];
 
 const OUTPUT_MODE_KEYS: AutopilotExecutionMode[] = ["create_issue", "run_only"];
 
@@ -388,46 +361,28 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             user_type: "member" as const,
             user_id,
           })),
+          trigger:
+            triggerKind === "webhook"
+              ? {
+                  kind: "webhook",
+                  event_filters:
+                    eventFilters.length > 0 ? eventFilters : undefined,
+                }
+              : {
+                  kind: "schedule",
+                  cron_expression: toCronExpression(triggerConfig),
+                  timezone: triggerConfig.timezone,
+                },
         });
-        let triggerOk = true;
-        let triggerErrMessage: string | null = null;
-        let webhookTrigger: AutopilotTrigger | null = null;
-        try {
-          if (triggerKind === "webhook") {
-            webhookTrigger = await createTrigger.mutateAsync({
-              autopilotId: autopilot.id,
-              kind: "webhook",
-              event_filters: eventFilters.length > 0 ? eventFilters : undefined,
-            });
-          } else {
-            await createTrigger.mutateAsync({
-              autopilotId: autopilot.id,
-              kind: "schedule",
-              cron_expression: toCronExpression(triggerConfig),
-              timezone: triggerConfig.timezone,
-            });
-          }
-        } catch (err) {
-          triggerOk = false;
-          triggerErrMessage =
-            err instanceof Error && err.message ? err.message : null;
-        }
-        if (triggerKind === "webhook" && webhookTrigger) {
+        if (triggerKind === "webhook") {
           // Stay in the dialog and surface the URL inline so the user
           // can copy it without first navigating to the detail page.
-          setCreatedWebhookTrigger(webhookTrigger);
+          setCreatedWebhookTrigger(autopilot.initial_trigger);
           toast.success(t(($) => $.dialog.toast_created));
           return;
         }
         onOpenChange(false);
-        if (triggerOk) {
-          toast.success(t(($) => $.dialog.toast_created));
-        } else {
-          // Partial success: autopilot saved, schedule failed. Show the
-          // server-provided reason so the user can act on it (cron syntax
-          // error, conflict, etc.) instead of seeing a generic message.
-          toast.error(formatSchedulePartialFailureToast(t, "create", triggerErrMessage));
-        }
+        toast.success(t(($) => $.dialog.toast_created));
       } else {
         await updateAutopilot.mutateAsync({
           id: props.autopilotId,
@@ -929,8 +884,8 @@ function ScheduleSection({
   const next = useMemo(() => computeNextRun(config, now), [config, now]);
   const timezones = useMemo(() => {
     const local = getLocalTimezone();
-    if (TIMEZONE_OPTIONS.includes(local)) return TIMEZONE_OPTIONS;
-    return [local, ...TIMEZONE_OPTIONS];
+    if (COMMON_TIMEZONES.includes(local)) return COMMON_TIMEZONES;
+    return [local, ...COMMON_TIMEZONES];
   }, []);
 
   const selectedDay = config.daysOfWeek[0] ?? 1;
@@ -956,7 +911,7 @@ function ScheduleSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {FREQUENCY_KEYS.map((freq) => (
+              {TRIGGER_FREQUENCIES.map((freq) => (
                 <SelectItem key={freq} value={freq}>
                   {t(($) => $.dialog.frequency_long[freq])}
                 </SelectItem>

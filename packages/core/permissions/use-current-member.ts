@@ -2,31 +2,32 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "../auth";
-import type { MemberRole, MemberWithUser } from "../types";
 import { memberListOptions } from "../workspace/queries";
+import type { MemberWithUser } from "../types";
+import type { PermissionContext } from "./types";
+
+export function resolveCurrentMember(
+  members: readonly MemberWithUser[] | undefined,
+  userId: string | null | undefined,
+): PermissionContext {
+  const normalizedUserId = userId ?? null;
+  const member = members?.find((candidate) => candidate.user_id === normalizedUserId);
+  return {
+    userId: normalizedUserId,
+    role: member?.role ?? null,
+  };
+}
 
 /**
  * Resolves the current user's membership in the given workspace. Single source
  * of truth for "what role am I" — replaces ad-hoc `members.find(...)` lookups
  * scattered across the views.
  *
- * `wsId` is explicit (not via `useWorkspaceId()` Context) so this hook stays
- * usable in components that may render before workspace context is wired,
- * matching the repo rule for workspace-aware hooks.
+ * `wsId` is explicit so this hook stays usable before a workspace route has
+ * resolved.
  */
-export function useCurrentMember(wsId: string): {
-  userId: string | null;
-  role: MemberRole | null;
-  member: MemberWithUser | null;
-  isLoading: boolean;
-} {
+export function useCurrentMember(wsId: string): PermissionContext {
   const userId = useAuthStore((s) => s.user?.id ?? null);
-  const { data: members, isLoading } = useQuery(memberListOptions(wsId));
-  const member = members?.find((m) => m.user_id === userId) ?? null;
-  return {
-    userId,
-    role: member?.role ?? null,
-    member,
-    isLoading,
-  };
+  const { data: members } = useQuery(memberListOptions(wsId));
+  return resolveCurrentMember(members, userId);
 }

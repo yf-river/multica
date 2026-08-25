@@ -4,4 +4,4 @@
 // because Next.js vendors a stripped React build for those contexts.
 // Always pair with "use client" or import only inside client trees.
 export { createI18n } from "./create-i18n";
-export { I18nProvider, type I18nProviderProps } from "./provider";
+export { I18nProvider } from "./provider";

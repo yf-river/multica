@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -190,13 +189,14 @@ func shouldPersistFinalOutputAsArtifact(task Task, result TaskResult, output str
 	if strings.TrimSpace(task.IssueID) == "" || strings.TrimSpace(output) == "" || result.Status != "completed" {
 		return false
 	}
-	if task.ExecutionPolicy == nil || !isBoundedReviewStage(*task.ExecutionPolicy) || task.ExecutionPolicy.CanEditRepo {
+	if task.ExecutionPolicy == nil || !task.ExecutionPolicy.IsBoundedStage() || task.ExecutionPolicy.CanEditRepo {
 		return false
 	}
 	if strings.HasPrefix(output, "# ") || strings.Contains(output, "\n# ") || strings.Contains(output, "\n## ") {
 		return true
 	}
-	return len([]rune(output)) >= 700
+	runes := []rune(output)
+	return len(runes) >= 700
 }
 
 func finalOutputArtifactFilename(task Task) string {
@@ -635,18 +635,9 @@ func (c *Client) UploadTaskArtifact(ctx context.Context, token, workspaceID, age
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	c.setTaskHeaders(req, token, workspaceID, agentID, taskID)
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return uploadedTaskArtifact{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return uploadedTaskArtifact{}, &requestError{Method: http.MethodPost, Path: "/api/upload-file", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
 	var out uploadedTaskArtifact
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return uploadedTaskArtifact{}, fmt.Errorf("decode upload response: %w", err)
+	if err := c.executeRequest(req, "/api/upload-file", &out, "decode upload response"); err != nil {
+		return uploadedTaskArtifact{}, err
 	}
 	return out, nil
 }
@@ -671,17 +662,7 @@ func (c *Client) CreateTaskArtifactComment(ctx context.Context, token, workspace
 	req.Header.Set("Content-Type", "application/json")
 	c.setTaskHeaders(req, token, workspaceID, agentID, taskID)
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	io.Copy(io.Discard, resp.Body)
-	return nil
+	return c.executeRequest(req, path, nil, "")
 }
 
 func (c *Client) setTaskHeaders(req *http.Request, token, workspaceID, agentID, taskID string) {

@@ -43,7 +43,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@multica/ui/components/ui/collapsible";
 import { StatusIcon } from "../issues/components/status-icon";
 import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
-import { openCreateIssueWithPreference } from "@multica/core/issues/stores/create-mode-store";
+import { openCreateIssue } from "@multica/core/issues";
 import {
   Sidebar,
   SidebarContent,
@@ -265,21 +265,21 @@ function SortablePinItem({
             WebkitMaskImage: "linear-gradient(to right, black calc(100% - 12px), transparent)",
           }}
         >{label}</span>
-        <Tooltip>
-          <TooltipTrigger
-            render={<span role="button" />}
-            className="hidden size-2.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground group-hover/pin:flex hover:text-foreground"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onUnpin();
-            }}
-          >
-            <X className="size-1" />
-          </TooltipTrigger>
-          <TooltipContent side="top" sideOffset={4}>{t(($) => $.sidebar.unpin_tooltip)}</TooltipContent>
-        </Tooltip>
       </SidebarMenuButton>
+      <Tooltip>
+        <TooltipTrigger
+          render={<button type="button" aria-label={t(($) => $.sidebar.unpin_tooltip)} />}
+          className="absolute right-2 top-1/2 hidden size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground group-hover/pin:flex hover:text-foreground"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onUnpin();
+          }}
+        >
+          <X className="size-2.5" />
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={4}>{t(($) => $.sidebar.unpin_tooltip)}</TooltipContent>
+      </Tooltip>
     </SidebarMenuItem>
   );
 }
@@ -470,12 +470,10 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
       if (isEditable) return;
       if (useModalStore.getState().modal) return;
       e.preventDefault();
-      // Auto-fill project when on a project detail page. The manual form
-      // consumes `project_id`; quick-create also honours it as a seed for
-      // its project picker, so passing it through is safe for both modes.
+      // Auto-fill the project when invoked from a project detail page.
       const projectMatch = pathname.match(/^\/[^/]+\/projects\/([^/]+)$/);
       const data = projectMatch ? { project_id: projectMatch[1] } : undefined;
-      openCreateIssueWithPreference(data);
+      openCreateIssue(data);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
@@ -576,7 +574,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarMenuItem>
               <SidebarMenuButton
                 className="text-muted-foreground"
-                onClick={() => openCreateIssueWithPreference()}
+                onClick={() => openCreateIssue()}
               >
                 <span className="relative">
                   <SquarePen />

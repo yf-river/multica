@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,18 +10,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/scheduler"
-	"github.com/multica-ai/multica/server/internal/schema"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -56,39 +58,27 @@ func closeRedisClient(label string, client *redis.Client) {
 	}
 }
 
-func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
-	cfg := realtime.DefaultShardedStreamRelayConfig()
-	cfg.Shards = envPositiveInt("REALTIME_RELAY_SHARDS", cfg.Shards)
-	cfg.StreamMaxLen = envPositiveInt64("REALTIME_RELAY_STREAM_MAXLEN", cfg.StreamMaxLen)
-	cfg.ReadCount = envPositiveInt64("REALTIME_RELAY_XREAD_COUNT", cfg.ReadCount)
-	cfg.ReadBlock = envDuration("REALTIME_RELAY_XREAD_BLOCK", cfg.ReadBlock)
-	return cfg
+func registerDurableEvents(dispatcher *eventoutbox.Dispatcher, name string, consumer eventoutbox.Consumer, eventTypes ...string) error {
+	for _, eventType := range eventTypes {
+		if err := dispatcher.Register(eventType, name, consumer); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func envPositiveInt(name string, def int) int {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def, "error", err)
-		return def
-	}
-	return v
-}
-
-func envPositiveInt64(name string, def int64) int64 {
+func envPositiveInteger[T ~int | ~int32 | ~int64](name string, def T) T {
 	raw := os.Getenv(name)
 	if raw == "" {
 		return def
 	}
 	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || v <= 0 {
+	converted := T(v)
+	if err != nil || v <= 0 || int64(converted) != v {
 		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def, "error", err)
 		return def
 	}
-	return v
+	return converted
 }
 
 func envDuration(name string, def time.Duration) time.Duration {
@@ -107,12 +97,13 @@ func envDuration(name string, def time.Duration) time.Duration {
 func main() {
 	logger.Init()
 
-	initSchemaOnly := flag.Bool("init-schema-only", false, "initialize or verify the database schema, then exit")
-	flag.Parse()
-
-	// Warn about missing configuration
-	if os.Getenv("JWT_SECRET") == "" {
-		slog.Warn("JWT_SECRET is not set — using insecure default. Set JWT_SECRET for production use.")
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if err := auth.ValidateJWTConfiguration(os.Getenv("APP_ENV"), jwtSecret); err != nil {
+		slog.Error("invalid production authentication configuration", "error", err)
+		os.Exit(1)
+	}
+	if err := auth.ValidateJWTSecret(jwtSecret); err != nil {
+		slog.Warn("insecure JWT configuration allowed outside production", "reason", err)
 	}
 
 	port := os.Getenv("PORT")
@@ -141,24 +132,15 @@ func main() {
 	slog.Info("connected to database")
 	logPoolConfig(pool)
 
-	if err := schema.EnsureCurrent(ctx, pool); err != nil {
-		slog.Error("database schema is not usable; reset the database before starting this server", "error", err)
-		os.Exit(1)
-	}
-	if *initSchemaOnly {
-		slog.Info("database schema is current")
-		return
-	}
-
 	bus := events.New()
 	hub := realtime.NewHub()
 	go hub.Run()
 	daemonHub := daemonws.NewHub()
 	var daemonWakeup service.TaskWakeupNotifier = daemonHub
 
-	// When REDIS_URL is set, route fanout through a Redis relay so multiple
-	// API nodes can deliver each other's events. Without it the server runs
-	// explicitly in single-node mode.
+	// When REDIS_URL is set, route fanout through the fixed-shard Redis relay
+	// so multiple API nodes can deliver each other's events. Without Redis the
+	// local hub is the sole broadcaster and the server runs in single-node mode.
 	// Runtime local-skill stores and realtime relay traffic use separate Redis
 	// clients so blocking stream consumers cannot starve request-path Redis
 	// operations.
@@ -167,7 +149,7 @@ func main() {
 	var storeRedis *redis.Client
 	var relayWriteRedis *redis.Client
 	var relayReadRedis *redis.Client
-	var relay realtime.ManagedRelay
+	var relay *realtime.ShardedStreamRelay
 	defer func() {
 		if relay != nil {
 			relay.Stop()
@@ -183,31 +165,26 @@ func main() {
 	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
 		opts, err := redis.ParseURL(redisURL)
 		if err != nil {
-			slog.Error("invalid REDIS_URL", "error", err)
-			os.Exit(1)
+			slog.Error("invalid REDIS_URL — falling back to in-memory hub", "error", err)
+		} else {
+			storeRedis = newNamedRedisClient(opts, "store")
+			relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
+			relayReadRedis = newNamedRedisClient(opts, "realtime-read")
+			sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis)
+			sharded.SetDaemonRuntimeDeliverer(daemonHub)
+			relay = sharded
+			daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
+			relay.Start(relayCtx)
+			broadcaster = realtime.NewDualWriteBroadcaster(hub, relay)
+			slog.Info(
+				"realtime: Redis relay enabled",
+				"node_id", relay.NodeID(),
+				"mode", "sharded",
+				"store_pool_size", opts.PoolSize,
+				"realtime_write_pool_size", opts.PoolSize,
+				"realtime_read_pool_size", opts.PoolSize,
+			)
 		}
-		storeRedis = newNamedRedisClient(opts, "store")
-		relayWriteRedis = newNamedRedisClient(opts, "realtime-write")
-
-		relayConfig := shardedRelayConfigFromEnv()
-		relayReadRedis = newNamedRedisClient(opts, "realtime-read")
-		sharded := realtime.NewShardedStreamRelay(hub, relayWriteRedis, relayReadRedis, relayConfig)
-		sharded.SetDaemonRuntimeDeliverer(daemonHub)
-		relay = sharded
-		daemonWakeup = daemonws.NewRelayNotifier(daemonHub, sharded)
-		relay.Start(relayCtx)
-		broadcaster = realtime.NewRelayBroadcaster(hub, relay)
-		slog.Info(
-			"realtime: Redis relay enabled",
-			"node_id", relay.NodeID(),
-			"shards", relayConfig.Shards,
-			"stream_max_len", relayConfig.StreamMaxLen,
-			"xread_count", relayConfig.ReadCount,
-			"xread_block", relayConfig.ReadBlock.String(),
-			"store_pool_size", opts.PoolSize,
-			"realtime_write_pool_size", opts.PoolSize,
-			"realtime_read_pool_size", opts.PoolSize,
-		)
 	} else {
 		slog.Info("realtime: REDIS_URL not set — using in-memory hub (single-node mode)")
 	}
@@ -217,13 +194,34 @@ func main() {
 	defer analyticsClient.Close()
 
 	queries := db.New(pool)
-	hub.SetAuthorizer(newScopeAuthorizer(queries))
-	// Order matters: subscriber listeners must register BEFORE notification listeners.
-	// The notification listener queries the subscriber table to determine recipients,
-	// so subscribers must be written first within the same synchronous event dispatch.
-	registerSubscriberListeners(bus, queries)
-	registerActivityListeners(bus, queries)
-	registerNotificationListeners(bus, queries)
+	hub.SetAuthorizer(&dbScopeAuthorizer{q: queries})
+	eventDispatcher, err := eventoutbox.NewDispatcher(
+		queries,
+		pool,
+		bus,
+		"api-"+uuid.NewString(),
+	)
+	if err != nil {
+		slog.Error("initialize domain event dispatcher", "error", err)
+		os.Exit(1)
+	}
+	for _, registration := range []struct {
+		failureMessage string
+		run            func(*eventoutbox.Dispatcher) error
+	}{
+		{"register durable audience consumers", registerDurableAudienceConsumers},
+		{"register durable activity consumers", registerDurableActivityConsumers},
+		{"register durable chat consumers", registerDurableChatConsumers},
+		{"register durable prompt evaluation consumers", registerDurablePromptEvaluationConsumers},
+		{"register durable quick-create consumers", registerDurableQuickCreateConsumers},
+		{"register durable autopilot consumers", registerDurableAutopilotConsumers},
+		{"register durable reaction consumers", registerDurableReactionConsumers},
+	} {
+		if err := registration.run(eventDispatcher); err != nil {
+			slog.Error(registration.failureMessage, "error", err)
+			os.Exit(1)
+		}
+	}
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server
@@ -231,7 +229,7 @@ func main() {
 	var businessMetrics *obsmetrics.BusinessMetrics
 	var samplerPool *pgxpool.Pool
 	if metricsConfig.Enabled() {
-		// Build a dedicated tiny pool for the BusinessSamplerCollector
+		// Build a dedicated tiny pool for the business sampler
 		// so a stalled scrape can never starve business traffic. If the
 		// pool fails to construct we log and continue without the
 		// sampler — the rest of /metrics is still useful.
@@ -243,17 +241,13 @@ func main() {
 		}
 
 		metricsRegistry := obsmetrics.NewRegistry(obsmetrics.RegistryOptions{
-			Pool:     pool,
-			Realtime: realtime.M,
-			DaemonWS: daemonws.M,
-			Version:  version,
-			Commit:   commit,
-			BusinessSampler: func() *obsmetrics.BusinessSamplerOptions {
-				if samplerPool == nil {
-					return nil
-				}
-				return &obsmetrics.BusinessSamplerOptions{Pool: samplerPool}
-			}(),
+			Pool:                pool,
+			OutboxPool:          samplerPool,
+			Realtime:            realtime.M,
+			DaemonWS:            daemonws.M,
+			Version:             version,
+			Commit:              commit,
+			BusinessSamplerPool: samplerPool,
 		})
 		httpMetrics = metricsRegistry.HTTP
 		businessMetrics = metricsRegistry.Business
@@ -280,13 +274,18 @@ func main() {
 	// shutdown so any pending bumps are flushed before we exit.
 	heartbeatScheduler := handler.NewBatchedHeartbeatScheduler(queries, handler.DefaultHeartbeatBatchInterval)
 
-	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
+	r, h, err := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:        httpMetrics,
 		BusinessMetrics:    businessMetrics,
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
 		HeartbeatScheduler: heartbeatScheduler,
+		EventDispatcher:    eventDispatcher,
 	})
+	if err != nil {
+		slog.Error("invalid server configuration", "error", err)
+		os.Exit(1)
+	}
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -300,26 +299,30 @@ func main() {
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
-	registerAutopilotListeners(bus, autopilotSvc)
+	// Analytics stays outside the durable projection transaction.
+	bus.Subscribe(protocol.EventAutopilotRunDone, func(event events.Event) {
+		autopilotSvc.CaptureAutopilotRunDone(context.Background(), event)
+	})
 
 	// Construct a LivenessStore that mirrors the one wired into the HTTP
 	// handler. Both the heartbeat write path (handler) and the sweeper read
 	// path (here) must agree on the same Redis-or-Noop choice; if they
 	// disagree, online runtimes get falsely marked offline.
-	var liveness handler.LivenessStore = handler.NewNoopLivenessStore()
+	liveness := handler.NewNoopLivenessStore()
 	if storeRedis != nil {
 		liveness = handler.NewRedisLivenessStore(storeRedis)
 	}
 
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
+	go eventDispatcher.Run(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotScheduler(autopilotCtx, queries, autopilotSvc)
-	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
+	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, productionFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
 
 	// Lark inbound supervisor: holds the §4.4 WS lease per installation
-	// and runs the EventConnector for each. Nil when the Lark master
+	// and runs the event connector for each. Nil when the Lark master
 	// key is unset — self-host deployments that have not opted in to
 	// Lark do not pay any goroutine cost. Lifecycle is bound to
 	// sweepCtx so the Hub winds down alongside the other long-running
@@ -330,20 +333,29 @@ func main() {
 
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
 	// `sys_cron_executions` table into the distributed lease + audit
-	// log for internal periodic jobs. The first job is
-	// `rollup_task_usage_hourly`; the SQL function holds advisory lock
-	// 4246 so multiple server replicas cannot process the same window.
+	// log for internal periodic jobs. Usage rollup and durable request retention
+	// share this one scheduling boundary; the rollup SQL additionally holds
+	// advisory lock 4246 so manual invocations cannot race the scheduler.
 	//
-	// A failure to register the job is treated as fatal here only at
-	// the registration step (a duplicate name is the only realistic
-	// cause and indicates a code bug). Once running, the manager
-	// surfaces transient errors such as a temporarily unreachable DB by
-	// logging them on the tick that fails and retrying on the next cycle,
-	// so a temporary outage does not crash the server.
-	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
-	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
-		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)
-	} else {
+	// Registration failures identify the job by name and do not disable other
+	// valid jobs. Once running, the manager
+	// surfaces transient errors — DB unreachable, sys_cron_executions
+	// missing because of an unusual partial-migration state — by
+	// logging them on the tick that fails and retrying on the next
+	// cycle, so a temporary outage does not crash the server.
+	schedulerMgr := scheduler.NewManager(pool)
+	registeredJobs := 0
+	for _, job := range []scheduler.JobSpec{
+		scheduler.TaskUsageHourlyJob(pool),
+		scheduler.ResourceCreateRequestRetentionJob(pool),
+	} {
+		if err := schedulerMgr.Register(job); err != nil {
+			slog.Error("scheduler: failed to register job", "job", job.Name, "error", err)
+			continue
+		}
+		registeredJobs++
+	}
+	if registeredJobs > 0 {
 		go func() {
 			_ = schedulerMgr.Run(sweepCtx)
 		}()
@@ -395,7 +407,7 @@ func main() {
 	// otherwise the next replica would have to wait the full LeaseTTL
 	// before picking up the installation on the other side of the
 	// redeploy. The wait is bounded — if a supervisor is wedged (DB
-	// pool stalled, a future real EventConnector ignoring ctx, etc.)
+	// pool stalled, a future connector ignoring ctx, etc.)
 	// the fallback is the natural LeaseTTL expiry on the other side,
 	// which is strictly better than holding shutdown open forever.
 	if h.LarkHub != nil {

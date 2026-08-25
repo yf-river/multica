@@ -26,8 +26,6 @@ func TestParseUUID_InvalidReturnsError(t *testing.T) {
 				t.Fatalf("expected error for %q, got nil (u.Valid=%v)", s, u.Valid)
 			}
 			if u.Valid {
-				// Critical invariant: invalid input must NOT yield a valid UUID.
-				// Returning a valid zero-UUID was the root cause of #1661.
 				t.Fatalf("expected u.Valid = false for %q, got true", s)
 			}
 		})
@@ -61,7 +59,7 @@ func TestParseCalendarDate_DateOnly(t *testing.T) {
 	}
 }
 
-func TestParseCalendarDate_RejectsTimestamp(t *testing.T) {
+func TestParseCalendarDate_RejectsTimestampFormats(t *testing.T) {
 	cases := []string{
 		"2026-03-01T00:00:00Z",
 		"2026-02-28T16:00:00Z",
@@ -71,7 +69,7 @@ func TestParseCalendarDate_RejectsTimestamp(t *testing.T) {
 	for _, s := range cases {
 		t.Run(s, func(t *testing.T) {
 			if _, err := ParseCalendarDate(s); err == nil {
-				t.Fatalf("expected error for non-midnight instant %q, got nil", s)
+				t.Fatalf("expected date-only error for %q, got nil", s)
 			}
 		})
 	}

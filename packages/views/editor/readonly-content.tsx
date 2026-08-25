@@ -30,7 +30,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { createLowlight, common } from "lowlight";
 import { toHtml } from "hast-util-to-html";
 import { cn } from "@multica/ui/lib/utils";
-import { useWorkspacePaths, useWorkspaceSlug } from "@multica/core/paths";
+import { useWorkspacePaths } from "@multica/core/paths";
 import type { Attachment } from "@multica/core/types";
 import { useNavigation } from "../navigation";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
@@ -108,57 +108,52 @@ function urlTransform(url: string): string {
 // Custom react-markdown components
 // ---------------------------------------------------------------------------
 
-function IssueMentionLink({ issueId, label }: { issueId: string; label?: string }) {
+function MentionLink({
+  path,
+  label,
+  children,
+}: {
+  path: string;
+  label?: string;
+  children: React.ReactNode;
+}) {
   const { push, openInNewTab } = useNavigation();
-  const p = useWorkspacePaths();
-  const path = p.issueDetail(issueId);
   return (
     <span
       className="inline align-middle"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.metaKey || e.ctrlKey || e.shiftKey) {
-          if (openInNewTab) {
-            openInNewTab(path, label);
-          }
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.metaKey || event.ctrlKey || event.shiftKey) {
+          openInNewTab?.(path, label);
           return;
         }
         push(path);
       }}
     >
-      <IssueMentionCard issueId={issueId} fallbackLabel={label} />
+      {children}
     </span>
+  );
+}
+
+function IssueMentionLink({ issueId, label }: { issueId: string; label?: string }) {
+  const p = useWorkspacePaths();
+  return (
+    <MentionLink path={p.issueDetail(issueId)} label={label}>
+      <IssueMentionCard issueId={issueId} fallbackLabel={label} />
+    </MentionLink>
   );
 }
 
 function ProjectMentionLink({ projectId, label }: { projectId: string; label?: string }) {
-  const { push, openInNewTab } = useNavigation();
   const p = useWorkspacePaths();
-  const path = p.projectDetail(projectId);
   return (
-    <span
-      className="inline align-middle"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.metaKey || e.ctrlKey || e.shiftKey) {
-          if (openInNewTab) {
-            openInNewTab(path, label);
-          }
-          return;
-        }
-        push(path);
-      }}
-    >
+    <MentionLink path={p.projectDetail(projectId)} label={label}>
       <ProjectChip projectId={projectId} fallbackLabel={label} className="cursor-pointer hover:bg-accent transition-colors" />
-    </span>
+    </MentionLink>
   );
 }
 
-// Named component so it can call useWorkspaceSlug() — arrow function inlined
-// inside `components` below would still work, but extracting it keeps the
-// hook usage explicit and avoids hook-in-object-literal surprises.
 function ReadonlyLink({
   href,
   children,
@@ -166,8 +161,6 @@ function ReadonlyLink({
   href?: string;
   children?: React.ReactNode;
 }) {
-  const slug = useWorkspaceSlug();
-
   if (href?.startsWith("slash://skill/")) {
     return <span className="slash-command">{children}</span>;
   }
@@ -202,7 +195,7 @@ function ReadonlyLink({
       href={href}
       onClick={(e) => {
         e.preventDefault();
-        if (href) openLink(href, slug);
+        if (href) openLink(href);
       }}
     >
       {children}

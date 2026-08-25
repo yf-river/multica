@@ -6,7 +6,6 @@ import {
   BarChart3,
   Bug,
   Clock,
-  Code,
   FileSearch,
   GitPullRequest,
   Newspaper,
@@ -22,12 +21,11 @@ import { autopilotListOptions } from "@multica/core/autopilots/queries";
 import {
   useAutopilotsViewStore,
   AUTOPILOT_DEFAULT_HIDDEN_COLUMNS,
-  AUTOPILOT_SCOPES,
   type AutopilotColumnKey,
   type AutopilotScope,
   type AutopilotSortField,
 } from "@multica/core/autopilots/stores";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { Autopilot } from "@multica/core/types";
@@ -48,8 +46,12 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { AutopilotDialog } from "./autopilot-dialog";
 import { AutopilotListToolbar, actorFilterValue } from "./autopilot-list-toolbar";
 import {
@@ -93,28 +95,15 @@ const COLUMN_WIDTHS: Record<AutopilotColumnKey, number> = {
 // still carry gaps).
 const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
 
-function columnTrackVars(
-  isVisible: (key: AutopilotColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: AutopilotColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as AutopilotColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--apc-assignee": width("assignee"),
-    "--apc-trigger": width("trigger"),
-    "--apc-lastrun": width("lastRun"),
-    "--apc-nextrun": width("nextRun"),
-    "--apc-mode": width("mode"),
-    "--apc-creator": width("creator"),
-    "--apc-created": width("created"),
-    "--apc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  assignee: "--apc-assignee",
+  trigger: "--apc-trigger",
+  lastRun: "--apc-lastrun",
+  nextRun: "--apc-nextrun",
+  mode: "--apc-mode",
+  creator: "--apc-creator",
+  created: "--apc-created",
+}, "--apc-minw");
 
 // ---------------------------------------------------------------------------
 // Templates for the empty state (unchanged from the previous page version).
@@ -250,7 +239,6 @@ function AssigneeCell({ autopilot }: { autopilot: Autopilot }) {
 const TRIGGER_ICONS: Record<string, typeof Zap> = {
   schedule: Clock,
   webhook: Webhook,
-  api: Code,
 };
 
 function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
@@ -269,7 +257,7 @@ function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
         // Server-driven enum: unknown kinds get a generic icon + raw label.
         const Icon = TRIGGER_ICONS[kind] ?? Zap;
         const label =
-          kind === "schedule" || kind === "webhook" || kind === "api"
+          kind === "schedule" || kind === "webhook"
             ? t(($) => $.trigger_kind[kind])
             : kind;
         return (
@@ -420,67 +408,42 @@ function AutopilotListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.page.table.name)}
       </ListGridHeaderCell>
-      {isColVisible("assignee") ? (
-        <ListGridHeaderCell>
-          {t(($) => $.page.table.assignee)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="px-0" />
-      )}
-      {isColVisible("trigger") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.trigger)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("lastRun") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("lastRun")}
-          onSort={() => onSort("lastRun")}
-        >
-          {t(($) => $.page.table.last_run)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("nextRun") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("nextRun")}
-          onSort={() => onSort("nextRun")}
-        >
-          {t(($) => $.page.table.next_run)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("mode") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.mode)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("creator") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.created_by)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.page.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell visible={isColVisible("assignee")}>
+        {t(($) => $.page.table.assignee)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("trigger")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.trigger)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("lastRun")}
+        className="hidden @2xl:flex"
+        sorted={sorted("lastRun")}
+        onSort={() => onSort("lastRun")}
+      >
+        {t(($) => $.page.table.last_run)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("nextRun")}
+        className="hidden @2xl:flex"
+        sorted={sorted("nextRun")}
+        onSort={() => onSort("nextRun")}
+      >
+        {t(($) => $.page.table.next_run)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("mode")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.mode)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("creator")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.created_by)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.page.table.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );
@@ -566,14 +529,8 @@ export function AutopilotsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] =
     useState<AutopilotTemplate | null>(null);
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  // Persisted scope may hold a retired value (e.g. "archived" from an older
-  // build) — fall back to "all" instead of stranding the user on an
-  // unreachable scope.
-  const rawScope = useAutopilotsViewStore((s) => s.scope);
-  const scope = AUTOPILOT_SCOPES.includes(rawScope) ? rawScope : "all";
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const scope = useAutopilotsViewStore((s) => s.scope);
   const setScope = useAutopilotsViewStore((s) => s.setScope);
   const sortField = useAutopilotsViewStore((s) => s.sortField);
   const sortDirection = useAutopilotsViewStore((s) => s.sortDirection);
@@ -588,15 +545,6 @@ export function AutopilotsPage() {
 
   const isColVisible = (key: AutopilotColumnKey) =>
     !hiddenColumns.includes(key);
-
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   // Scope counts come from the FULL set (filters never affect them — they
   // are stage inventories, not result counts). API-archived rows (no UI
@@ -692,12 +640,16 @@ export function AutopilotsPage() {
     setCreateOpen(true);
   };
 
-  const selectedRows = rows.filter((a) => selectedIds.has(a.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
-  const someSelected = selectedRows.length > 0 && !allSelected;
-  const handleToggleAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(rows.map((a) => a.id)));
-  };
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
+  const selectedRows = rows.filter((autopilot) => selectedIds.has(autopilot.id));
+  const rowIds = rows.map((autopilot) => autopilot.id);
+  const { allSelected, someSelected } = getListGridSelectionState(
+    rowIds,
+    selectedIds,
+  );
+  const handleToggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(rowIds));
 
   const virtualItems = rowVirtualizer.getVirtualItems();
   const firstVirtual = virtualItems[0];

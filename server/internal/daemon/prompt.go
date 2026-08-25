@@ -7,19 +7,16 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-const squadOperatingProtocolHeadingZH = "## 小队负责人操作协议"
+const squadOperatingProtocolHeading = "## 小队负责人操作协议"
 
 func hasSquadLeaderBriefing(instructions string) bool {
-	return strings.Contains(instructions, squadOperatingProtocolHeadingZH)
+	return strings.Contains(instructions, squadOperatingProtocolHeading)
 }
 
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
-// injected by execenv.InjectRuntimeConfig. The provider string is threaded
-// through to comment-triggered tasks' per-turn reply template; ordinary agents
-// use the provider-agnostic `--content-file` template, while coordinator tasks
-// without file-write tools use final output auto-commenting.
-func BuildPrompt(task Task, provider string) string {
+// injected by execenv.InjectRuntimeConfig.
+func BuildPrompt(task Task) string {
 	if task.SourceSummaryPrompt != "" {
 		return buildSourceSummaryPrompt(task)
 	}
@@ -27,7 +24,7 @@ func BuildPrompt(task Task, provider string) string {
 		return buildChatPrompt(task)
 	}
 	if task.TriggerCommentID != "" {
-		return buildCommentPrompt(task, provider)
+		return buildCommentPrompt(task)
 	}
 	if task.AutopilotRunID != "" {
 		return buildAutopilotPrompt(task)
@@ -38,7 +35,7 @@ func BuildPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	if isNoRepoBoundedPromptTask(task) {
+	if task.ExecutionPolicy != nil && task.ExecutionPolicy.IsNoRepoBoundedStage() {
 		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
 		b.WriteString("Use only the issue, source, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
 		writeSourceContextPrompt(&b, task)
@@ -107,12 +104,8 @@ func buildQuickCreatePrompt(task Task) string {
 
 	// assignee
 	b.WriteString("- **assignee**:\n")
-	if task.QuickCreateAssigneeID != "" {
-		fmt.Fprintf(&b, "    - Required for this run. Pass `--assignee-id %q`; this assignee was selected in the create modal and is authoritative. Do not infer or replace it from names in the user input.\n", task.QuickCreateAssigneeID)
-	} else {
-		b.WriteString("    - When the user names someone (\"assign to X\" / \"@X\"), call `multica workspace member list --output json`, `multica agent list --output json`, and `multica squad list --output json` and find the matching entity by display name. Squads are first-class assignees too — a squad name (e.g. \"Super Human\") routes work to the squad leader, who then delegates. On a clean unambiguous match, prefer `--assignee-id <uuid>` using the `user_id` (member) or `id` (agent or squad) from that JSON — UUID matching is exact and robust to name collisions in workspaces with overlapping names. `--assignee <name>` (fuzzy) is acceptable as a fallback when names are unambiguous. On no match or ambiguous match, do NOT pass either flag — instead append a final line to the description: `Unrecognized assignee: X`.\n")
-		b.WriteString("    - Treat bare @-routing as an assignee directive even when the user did not write the English word \"assign\". This includes Chinese imperatives like `让 @独立团 review 这个 PR`, `给 @X 处理`, or `交给 @X`; strip the leading `@`/`＠` before matching display names. Do not keep that routing wrapper or `@Name` in the description unless it is a true CC-style notification rather than ownership. If the matched entity is a squad, pass the squad's `id` as `--assignee-id`, not the leader agent's id.\n")
-	}
+	b.WriteString("    - When the user names someone (\"assign to X\" / \"@X\"), call `multica workspace member list --output json`, `multica agent list --output json`, and `multica squad list --output json` and find the matching entity by display name. Squads are first-class assignees too — a squad name (e.g. \"Super Human\") routes work to the squad leader, who then delegates. On a clean unambiguous match, prefer `--assignee-id <uuid>` using the `user_id` (member) or `id` (agent or squad) from that JSON — UUID matching is exact and robust to name collisions in workspaces with overlapping names. `--assignee <name>` (fuzzy) is acceptable as a fallback when names are unambiguous. On no match or ambiguous match, do NOT pass either flag — instead append a final line to the description: `Unrecognized assignee: X`.\n")
+	b.WriteString("    - Treat bare @-routing as an assignee directive even when the user did not write the English word \"assign\". This includes Chinese imperatives like `让 @独立团 review 这个 PR`, `给 @X 处理`, or `交给 @X`; strip the leading `@`/`＠` before matching display names. Do not keep that routing wrapper or `@Name` in the description unless it is a true CC-style notification rather than ownership. If the matched entity is a squad, pass the squad's `id` as `--assignee-id`, not the leader agent's id.\n")
 	agentID := ""
 	agentName := ""
 	if task.Agent != nil {
@@ -120,8 +113,6 @@ func buildQuickCreatePrompt(task Task) string {
 		agentName = task.Agent.Name
 	}
 	switch {
-	case task.QuickCreateAssigneeID != "":
-		b.WriteString("\n")
 	case task.SquadID != "":
 		// The user opened quick-create with a SQUAD selected. The task
 		// runs on the squad's leader agent, but the squad is the expected
@@ -194,7 +185,7 @@ func buildQuickCreatePrompt(task Task) string {
 // The reply instructions (including the current TriggerCommentID as --parent)
 // are re-emitted on every turn so resumed sessions cannot carry forward a
 // previous turn's --parent UUID.
-func buildCommentPrompt(task Task, provider string) string {
+func buildCommentPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
@@ -216,7 +207,7 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "⚠️ **小队负责人 no_action 规则：** 如果你判断无需行动，调用 `multica squad activity %s no_action --reason \"...\"` 后直接退出。不要发布任何评论，包括“无需行动”或“静默退出”这类评论。squad activity 已经记录了你的决策，额外评论只会制造噪声。阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action；这些都必须发布用户可见评论，并按 action/failed 记录 activity。\n\n", task.IssueID)
 		}
 	}
-	if isNoRepoBoundedPromptTask(task) {
+	if task.ExecutionPolicy != nil && task.ExecutionPolicy.IsNoRepoBoundedStage() {
 		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
 		b.WriteString("Use only the issue, source, triggering comment, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
 		writeSourceContextPrompt(&b, task)
@@ -240,47 +231,21 @@ func buildCommentPrompt(task Task, provider string) string {
 		fmt.Fprintf(&b, "Read the discussion: `multica issue comment list %s --output json` (long issue? use `--recent 20`).\n\n", task.IssueID)
 	}
 	writeSourceContextPrompt(&b, task)
-	b.WriteString(buildTaskCommentReplyInstructions(provider, task))
+	b.WriteString(buildTaskCommentReplyInstructions(task))
 	return b.String()
 }
 
-func buildTaskCommentReplyInstructions(provider string, task Task) string {
+func buildTaskCommentReplyInstructions(task Task) string {
 	if task.TriggerCommentID == "" {
 		return ""
 	}
-	if isFinalOutputAutoCommentTask(task) {
+	if task.ExecutionPolicy != nil && task.ExecutionPolicy.UsesFinalOutput() {
 		return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Write the complete stage result as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 	}
-	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
-		return execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID)
+	if task.ExecutionPolicy == nil || !task.ExecutionPolicy.IsCoordinatorWithoutRepo() {
+		return execenv.BuildCommentReplyInstructions(task.IssueID, task.TriggerCommentID)
 	}
 	return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Coordinator mode has no native file-write tool, so write the complete Markdown reply as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
-}
-
-func isNoRepoBoundedPromptTask(task Task) bool {
-	if task.ExecutionPolicy == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
-	case "planning_stage", "verification_stage":
-		return !task.ExecutionPolicy.CanAccessRepo
-	default:
-		return false
-	}
-}
-
-func isFinalOutputAutoCommentTask(task Task) bool {
-	if task.ExecutionPolicy == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
-	case "planning_stage", "verification_stage":
-		return !task.ExecutionPolicy.CanEditRepo
-	case "coordinator":
-		return !task.ExecutionPolicy.CanAccessRepo
-	default:
-		return false
-	}
 }
 
 func writeSourceContextPrompt(b *strings.Builder, task Task) {

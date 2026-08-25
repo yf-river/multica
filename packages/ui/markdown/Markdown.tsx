@@ -12,7 +12,6 @@ import { CODE_LIGATURE_CLASS } from '@multica/ui/lib/code-style'
 import { CodeBlock, InlineCode } from './CodeBlock'
 import { isAllowedFileCardHref, preprocessFileCards } from './file-cards'
 import { preprocessLinks } from './linkify'
-import { preprocessMentionShortcodes } from './mentions'
 import 'katex/dist/katex.min.css'
 import './markdown.css'
 
@@ -56,11 +55,6 @@ export interface MarkdownProps {
    * When not provided, mentions render as a simple styled span.
    */
   renderMention?: (props: { type: string; id: string }) => React.ReactNode
-  /**
-   * CDN hostname for file card detection (e.g. "multica-static.copilothub.ai").
-   * When provided, enables file card preprocessing and rendering.
-   */
-  cdnDomain?: string
   /**
    * Optional override for the image renderer. When provided, replaces the
    * default `<img>` with constrained sizing. The views-package wrapper uses
@@ -411,23 +405,22 @@ export function Markdown({
   onFileClick,
   renderMention,
   renderImage,
-  renderFileCard,
-  cdnDomain
+  renderFileCard
 }: MarkdownProps): React.JSX.Element {
   const components = React.useMemo(
     () => createComponents(mode, onUrlClick, onFileClick, renderMention, renderImage, renderFileCard),
     [mode, onUrlClick, onFileClick, renderMention, renderImage, renderFileCard]
   )
 
-  // Preprocess: convert mention shortcodes, raw URLs, and file cards to renderable content
+  // Normalize raw URLs and file cards before rendering.
   const processedContent = React.useMemo(
     () => {
-      let result = preprocessMentionShortcodes(children)
+      let result = children
       result = preprocessLinks(result)
-      result = preprocessFileCards(result, cdnDomain ?? '')
+      result = preprocessFileCards(result)
       return result
     },
-    [children, cdnDomain]
+    [children]
   )
 
   return (
@@ -447,23 +440,3 @@ export function Markdown({
     </div>
   )
 }
-
-/**
- * MemoizedMarkdown - Optimized for streaming scenarios
- *
- * Splits content into blocks and memoizes each block separately,
- * so only new/changed blocks re-render during streaming.
- */
-export const MemoizedMarkdown = React.memo(Markdown, (prevProps, nextProps) => {
-  // If id is provided, use it for memoization
-  if (prevProps.id && nextProps.id) {
-    return (
-      prevProps.id === nextProps.id &&
-      prevProps.children === nextProps.children &&
-      prevProps.mode === nextProps.mode
-    )
-  }
-  // Otherwise compare content and mode
-  return prevProps.children === nextProps.children && prevProps.mode === nextProps.mode
-})
-MemoizedMarkdown.displayName = 'MemoizedMarkdown'

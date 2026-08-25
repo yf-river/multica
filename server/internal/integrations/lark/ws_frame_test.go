@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const FrameHeaderTypeEvent = "event"
+
 // TestFrameRoundTripPreservesAllFields ensures every set field on the
 // outbound Frame survives marshal+unmarshal. This catches symmetric
 // bugs (where our marshal and unmarshal agree but neither matches the
@@ -17,7 +19,7 @@ func TestFrameRoundTripPreservesAllFields(t *testing.T) {
 		LogID:           99,
 		Service:         7,
 		Method:          FrameMethodData,
-		Headers:         []FrameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
+		Headers:         []frameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
 		PayloadEncoding: "json",
 		PayloadType:     "im.message.receive_v1",
 		Payload:         []byte(`{"schema":"2.0"}`),
@@ -95,11 +97,11 @@ func TestFrameMarshalIsSDKByteCompatible(t *testing.T) {
 			expected: "08001000182a20002a0c0a04747970651204706f6e6732003a004a00",
 		},
 		{
-			name:  "ack_data_frame",
+			name: "ack_data_frame",
 			frame: NewAckFrame(&Frame{
 				Method:  FrameMethodData,
 				Service: 7,
-				Headers: []FrameHeader{
+				Headers: []frameHeader{
 					{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeEvent},
 					{Key: FrameHeaderMessageIDKey, Value: "om-42"},
 				},
@@ -115,7 +117,7 @@ func TestFrameMarshalIsSDKByteCompatible(t *testing.T) {
 				LogID:           99,
 				Service:         7,
 				Method:          FrameMethodData,
-				Headers:         []FrameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
+				Headers:         []frameHeader{{Key: "type", Value: "event"}, {Key: "message_id", Value: "om-1"}},
 				PayloadEncoding: "json",
 				PayloadType:     "im.message.receive_v1",
 				Payload:         []byte(`{"schema":"2.0"}`),
@@ -192,7 +194,7 @@ func TestNewAckFrameReusesInboundHeaders(t *testing.T) {
 	inbound := &Frame{
 		Method:  FrameMethodData,
 		Service: 7,
-		Headers: []FrameHeader{
+		Headers: []frameHeader{
 			{Key: FrameHeaderTypeKey, Value: FrameHeaderTypeEvent},
 			{Key: FrameHeaderMessageIDKey, Value: "om-42"},
 		},

@@ -12,16 +12,7 @@ import (
 	"time"
 )
 
-// TestHelperStatusErrorsAreClassified is an integration test that drives the
-// real client helpers against a fake server and asserts the error they return
-// flows correctly through the top-level FormatError / ExitCodeFor. This is the
-// coverage the unit tests were missing: it proves that the actual command
-// paths (issue update -> PutJSON, comment list -> GetJSONWithHeaders, project
-// delete -> DeleteJSON, agent update -> PatchJSON, upload, download) all get
-// the friendly copy and the tiered exit code, not the old raw string + exit 1.
 func TestHelperStatusErrorsAreClassified(t *testing.T) {
-	// Each helper wraps a real client call onto a fixed path. The server
-	// returns whatever status the current case dictates.
 	helpers := []struct {
 		name string
 		call func(c *APIClient, ctx context.Context) error
@@ -81,7 +72,7 @@ func TestHelperStatusErrorsAreClassified(t *testing.T) {
 			w.WriteHeader(sc.status)
 			// Validation responses carry a server message that FormatError
 			// should surface verbatim; other statuses ignore the body.
-			io.WriteString(w, `{"error":"title is required"}`)
+			_, _ = io.WriteString(w, `{"error":"title is required"}`)
 		}))
 
 		for _, h := range helpers {
@@ -138,7 +129,7 @@ func TestCommandContextNotTruncatedBelowHTTPTimeout(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(120 * time.Millisecond) // < 400ms transport timeout
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		}))
 		defer srv.Close()
 

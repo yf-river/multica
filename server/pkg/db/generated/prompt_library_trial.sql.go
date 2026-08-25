@@ -19,7 +19,6 @@ INSERT INTO prompt_library_trial (
     agent_id,
     chat_session_id,
     task_id,
-    input,
     rendered_message,
     variables,
     status,
@@ -29,15 +28,14 @@ INSERT INTO prompt_library_trial (
     $2,
     $3,
     $4,
-    $7,
-    $8,
-    $5,
     $6,
-    COALESCE($9::jsonb, '{}'::jsonb),
-    COALESCE($10, 'queued'),
-    $11
+    $7,
+    $5,
+    COALESCE($8::jsonb, '{}'::jsonb),
+    COALESCE($9, 'queued'),
+    $10
 )
-RETURNING id, workspace_id, prompt_id, version_id, agent_id, chat_session_id, task_id, input, rendered_message, variables, status, output_preview, created_by, created_at, updated_at
+RETURNING id, workspace_id, prompt_id, version_id, agent_id, chat_session_id, task_id, rendered_message, variables, status, output_preview, created_by, created_at, updated_at
 `
 
 type CreatePromptLibraryTrialParams struct {
@@ -45,7 +43,6 @@ type CreatePromptLibraryTrialParams struct {
 	PromptID        pgtype.UUID `json:"prompt_id"`
 	VersionID       pgtype.UUID `json:"version_id"`
 	AgentID         pgtype.UUID `json:"agent_id"`
-	Input           string      `json:"input"`
 	RenderedMessage string      `json:"rendered_message"`
 	ChatSessionID   pgtype.UUID `json:"chat_session_id"`
 	TaskID          pgtype.UUID `json:"task_id"`
@@ -60,7 +57,6 @@ func (q *Queries) CreatePromptLibraryTrial(ctx context.Context, arg CreatePrompt
 		arg.PromptID,
 		arg.VersionID,
 		arg.AgentID,
-		arg.Input,
 		arg.RenderedMessage,
 		arg.ChatSessionID,
 		arg.TaskID,
@@ -77,7 +73,6 @@ func (q *Queries) CreatePromptLibraryTrial(ctx context.Context, arg CreatePrompt
 		&i.AgentID,
 		&i.ChatSessionID,
 		&i.TaskID,
-		&i.Input,
 		&i.RenderedMessage,
 		&i.Variables,
 		&i.Status,
@@ -91,21 +86,9 @@ func (q *Queries) CreatePromptLibraryTrial(ctx context.Context, arg CreatePrompt
 
 const listPromptLibraryTrials = `-- name: ListPromptLibraryTrials :many
 SELECT
-    plt.id,
-    plt.workspace_id,
-    plt.prompt_id,
-    plt.version_id,
-    plt.agent_id,
-    plt.chat_session_id,
-    plt.task_id,
-    plt.input,
-    plt.rendered_message,
-    plt.variables,
-    COALESCE(atq.status, plt.status) AS status,
-    COALESCE(NULLIF(assistant_message.content, ''), plt.output_preview) AS output_preview,
-    plt.created_by,
-    plt.created_at,
-    plt.updated_at
+    plt.id, plt.workspace_id, plt.prompt_id, plt.version_id, plt.agent_id, plt.chat_session_id, plt.task_id, plt.rendered_message, plt.variables, plt.status, plt.output_preview, plt.created_by, plt.created_at, plt.updated_at,
+    COALESCE(atq.status, plt.status) AS effective_status,
+    COALESCE(NULLIF(assistant_message.content, ''), plt.output_preview) AS effective_output_preview
 FROM prompt_library_trial plt
 LEFT JOIN agent_task_queue atq ON atq.id = plt.task_id
 LEFT JOIN LATERAL (
@@ -129,21 +112,9 @@ type ListPromptLibraryTrialsParams struct {
 }
 
 type ListPromptLibraryTrialsRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
-	PromptID        pgtype.UUID        `json:"prompt_id"`
-	VersionID       pgtype.UUID        `json:"version_id"`
-	AgentID         pgtype.UUID        `json:"agent_id"`
-	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
-	TaskID          pgtype.UUID        `json:"task_id"`
-	Input           string             `json:"input"`
-	RenderedMessage string             `json:"rendered_message"`
-	Variables       []byte             `json:"variables"`
-	Status          string             `json:"status"`
-	OutputPreview   string             `json:"output_preview"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	PromptLibraryTrial     PromptLibraryTrial `json:"prompt_library_trial"`
+	EffectiveStatus        string             `json:"effective_status"`
+	EffectiveOutputPreview string             `json:"effective_output_preview"`
 }
 
 func (q *Queries) ListPromptLibraryTrials(ctx context.Context, arg ListPromptLibraryTrialsParams) ([]ListPromptLibraryTrialsRow, error) {
@@ -156,21 +127,22 @@ func (q *Queries) ListPromptLibraryTrials(ctx context.Context, arg ListPromptLib
 	for rows.Next() {
 		var i ListPromptLibraryTrialsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.PromptID,
-			&i.VersionID,
-			&i.AgentID,
-			&i.ChatSessionID,
-			&i.TaskID,
-			&i.Input,
-			&i.RenderedMessage,
-			&i.Variables,
-			&i.Status,
-			&i.OutputPreview,
-			&i.CreatedBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.PromptLibraryTrial.ID,
+			&i.PromptLibraryTrial.WorkspaceID,
+			&i.PromptLibraryTrial.PromptID,
+			&i.PromptLibraryTrial.VersionID,
+			&i.PromptLibraryTrial.AgentID,
+			&i.PromptLibraryTrial.ChatSessionID,
+			&i.PromptLibraryTrial.TaskID,
+			&i.PromptLibraryTrial.RenderedMessage,
+			&i.PromptLibraryTrial.Variables,
+			&i.PromptLibraryTrial.Status,
+			&i.PromptLibraryTrial.OutputPreview,
+			&i.PromptLibraryTrial.CreatedBy,
+			&i.PromptLibraryTrial.CreatedAt,
+			&i.PromptLibraryTrial.UpdatedAt,
+			&i.EffectiveStatus,
+			&i.EffectiveOutputPreview,
 		); err != nil {
 			return nil, err
 		}

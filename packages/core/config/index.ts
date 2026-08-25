@@ -7,18 +7,13 @@ interface ConfigState {
   // (CloudFront signing enabled server-side). Renderers must not treat a raw
   // storage URL on that domain as a loadable media source (MUL-3254).
   cdnSigned: boolean;
-  allowSignup: boolean;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
-  // must be hidden. Defaults to false so unknown / older servers behave like
-  // the managed-cloud case.
+  // must be hidden.
   workspaceCreationDisabled: boolean;
-  setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
-  setAuthConfig: (config: {
-    allowSignup: boolean;
-    workspaceCreationDisabled?: boolean;
-  }) => void;
+  setCdnConfig: (config: { cdnDomain: string; cdnSigned: boolean }) => void;
+  setWorkspaceCreationDisabled: (disabled: boolean) => void;
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
     daemonAppUrl?: string;
@@ -28,19 +23,16 @@ interface ConfigState {
 export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
   cdnSigned: false,
-  allowSignup: true,
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
-  setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
-  setAuthConfig: ({ allowSignup, workspaceCreationDisabled = false }) =>
-    set({ allowSignup, workspaceCreationDisabled }),
+  setCdnConfig: ({ cdnDomain, cdnSigned }) => set({ cdnDomain, cdnSigned }),
+  setWorkspaceCreationDisabled: (workspaceCreationDisabled) =>
+    set({ workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));
 
-export function useConfigStore(): ConfigState;
-export function useConfigStore<T>(selector: (state: ConfigState) => T): T;
-export function useConfigStore<T>(selector?: (state: ConfigState) => T) {
-  return useStore(configStore, selector as (state: ConfigState) => T);
+export function useConfigStore<T>(selector: (state: ConfigState) => T): T {
+  return useStore(configStore, selector);
 }

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { createRef } from "react";
 import type { Attachment } from "@multica/core/types";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import { renderWithI18n as render } from "../test/i18n";
 
 const mockFocus = vi.hoisted(() => vi.fn());
 const mockSetContent = vi.hoisted(() => vi.fn());
@@ -62,7 +62,10 @@ vi.mock("./attachment-download-context", () => ({
 const editorRef = vi.hoisted<{ current: unknown }>(() => ({ current: null }));
 const onCreateFired = vi.hoisted(() => ({ value: false }));
 const latestEditorOptions = vi.hoisted<{
-  current?: { onUpdate?: (args: { editor: unknown }) => void };
+  current?: {
+    onUpdate?: (args: { editor: unknown }) => void;
+    editorProps?: { attributes?: Record<string, string> };
+  };
 }>(() => ({}));
 
 vi.mock("@tiptap/react", () => ({
@@ -140,6 +143,16 @@ describe("ContentEditor", () => {
     fireEvent.mouseDown(shell!);
 
     expect(mockFocus).toHaveBeenCalledWith("end");
+  });
+
+  it("exposes the rich editor as a labelled multiline textbox", () => {
+    render(<ContentEditor placeholder="添加描述..." />);
+
+    expect(latestEditorOptions.current?.editorProps?.attributes).toMatchObject({
+      role: "textbox",
+      "aria-multiline": "true",
+      "aria-label": "添加描述...",
+    });
   });
 
   it("does not hijack clicks that land inside the ProseMirror node", () => {
@@ -366,26 +379,14 @@ describe("ContentEditor", () => {
 function makeAttachment(id: string, overrides: Partial<Attachment> = {}): Attachment {
   return {
     id,
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "u-1",
     filename: `${id}.png`,
     url: `/uploads/${id}.png`,
     download_url: `/api/attachments/${id}/download`,
     markdown_url: `https://api.multica.test/api/attachments/${id}/download`,
     content_type: "image/png",
     size_bytes: 1,
-    created_at: "2026-06-10T00:00:00Z",
     ...overrides,
   };
-}
-
-function asUploadResult(att: Attachment): UploadResult {
-  return { ...att, link: att.url, markdownLink: `/api/attachments/${att.id}/download` };
 }
 
 // MUL-3192 — surfaces like the quick-create modal upload images through the
@@ -395,7 +396,7 @@ function asUploadResult(att: Attachment): UploadResult {
 // Attachment.normalize() couldn't swap it for a freshly-loadable URL — the
 // <img> rendered broken on Desktop where the renderer's origin doesn't
 // proxy /api to the API host. ContentEditor now wraps onUploadFile so the
-// successful UploadResult lands in the provider as a tracked record.
+// successful attachment response lands in the provider as a tracked record.
 describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
   it("seeds the AttachmentDownloadProvider with the caller-supplied attachments prop", () => {
     const att = makeAttachment("seed-1");
@@ -405,12 +406,12 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
 
   it("appends a successful upload result to the provider's attachments list", async () => {
     const onUploadFile = vi.fn(async (_file: File) =>
-      asUploadResult(makeAttachment("uploaded-1")),
+      makeAttachment("uploaded-1"),
     );
     // Capture the wrapped uploader the editor hands to uploadAndInsertFile,
     // then invoke it the same way the file-upload extension would.
     let capturedHandler:
-      | ((file: File) => Promise<UploadResult | null>)
+      | ((file: File) => Promise<Attachment | null>)
       | undefined;
     uploadAndInsertFileMock.mockImplementation(
       async (_editor: unknown, file: File, handler: typeof capturedHandler) => {
@@ -457,7 +458,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
     const collision = makeAttachment("shared-1", {
       download_url: "https://cdn.example/freshly-signed.png?Signature=stale",
     });
-    const onUploadFile = vi.fn(async () => asUploadResult(collision));
+    const onUploadFile = vi.fn(async () => collision);
     uploadAndInsertFileMock.mockImplementation(
       async (_e: unknown, file: File, handler: (f: File) => Promise<unknown>) => {
         await handler(file);
@@ -483,7 +484,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
     expect(providerProps.attachments?.[0]?.download_url).toContain("Signature=fresh");
   });
 
-  it("backfills an empty caller download_url from the session upload on id collision", async () => {
+  it("fills an empty caller download_url from the session upload on id collision", async () => {
     // The create-issue draft persists attachment records with download_url
     // stripped (the signed URL is response-scoped). While the upload session
     // is still alive, the provider should hand back the signed URL so the
@@ -493,7 +494,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
     const uploaded = makeAttachment("draft-1", {
       download_url: "https://cdn.example/draft-1.png?Signature=fresh",
     });
-    const onUploadFile = vi.fn(async () => asUploadResult(uploaded));
+    const onUploadFile = vi.fn(async () => uploaded);
     uploadAndInsertFileMock.mockImplementation(
       async (_e: unknown, file: File, handler: (f: File) => Promise<unknown>) => {
         await handler(file);
@@ -517,12 +518,12 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
 
     expect(providerProps.attachments).toHaveLength(1);
     expect(providerProps.attachments?.[0]?.download_url).toContain("Signature=fresh");
-    // Everything except the backfilled field still comes from the caller copy.
+    // Everything except the filled field still comes from the caller copy.
     expect(providerProps.attachments?.[0]?.filename).toBe(draftRecord.filename);
   });
 
   it("does not append a duplicate when the same upload result returns twice (paste-then-drop the same blob)", async () => {
-    const result = asUploadResult(makeAttachment("dedup-1"));
+    const result = makeAttachment("dedup-1");
     const onUploadFile = vi.fn(async () => result);
     uploadAndInsertFileMock.mockImplementation(
       async (_e: unknown, file: File, handler: (f: File) => Promise<unknown>) => {
