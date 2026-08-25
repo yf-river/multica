@@ -1,6 +1,7 @@
 {
   "page": {
     "breadcrumb_title": "任务",
+    "breadcrumb_workspace_fallback": "工作区",
     "empty_title": "还没有任务",
     "empty_hint": "创建一个任务开始使用。",
     "move_failed": "移动任务失败"
@@ -9,7 +10,7 @@
     "backlog": "待规划",
     "todo": "待办",
     "in_progress": "进行中",
-    "in_review": "验收中",
+    "in_review": "审核中",
     "done": "已完成",
     "blocked": "已阻塞",
     "cancelled": "已取消"
@@ -152,6 +153,7 @@
   },
   "detail": {
     "not_found": "这个任务不存在或已在该工作区被删除。",
+    "breadcrumb_project_unknown": "未知项目",
     "back_to_issues": "返回任务列表",
     "title_placeholder": "任务标题",
     "desc_placeholder": "添加描述...",
@@ -164,7 +166,9 @@
     "section_properties": "属性",
     "section_parent_issue": "父任务",
     "section_pull_requests": "Merge Request",
+    "section_metadata": "元数据",
     "section_details": "详情",
+    "section_token_usage": "Token 用量",
     "tapd_source_aria": "TAPD 来源材料",
     "tapd_source_label": "TAPD 来源",
     "tapd_source_type_markdown_wiki": "TAPD Wiki",
@@ -211,6 +215,11 @@
     "prop_created_by": "创建者",
     "prop_created": "创建时间",
     "prop_updated": "更新时间",
+    "prop_input": "输入",
+    "prop_output": "输出",
+    "prop_cache": "缓存",
+    "prop_cache_value": "{{read}} 读 / {{write}} 写",
+    "prop_runs": "运行次数",
     "activity_section": "动态",
     "subscribe": "订阅",
     "unsubscribe": "取消订阅",
@@ -334,11 +343,16 @@
     "is_queued": "{{name}} 排队中",
     "queued_elapsed_prefix": "已排队 {{elapsed}}",
     "fallback_name": "智能体",
+    "tool_count_other": "{{count}} 次工具调用",
+    "transcript_button": "查看记录",
+    "stop_button": "停止",
     "stop_tooltip": "停止智能体",
     "cancel_failed": "取消任务失败"
   },
   "execution_log": {
     "section": "执行日志",
+    "show_past": "显示历史运行（{{count}}）",
+    "hide_past": "隐藏历史运行（{{count}}）",
     "cancel_task_tooltip": "取消任务",
     "cancel_task_aria": "取消任务",
     "retry_task_tooltip": "重试任务",

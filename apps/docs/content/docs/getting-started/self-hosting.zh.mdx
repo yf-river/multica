@@ -1,0 +1,447 @@
+---
+title: 自部署指南
+description: 在团队自己的服务器或内网环境部署 Multica。
+---
+
+## 架构概览
+
+Multica 由三部分组成：
+
+| 组件 | 作用 | 技术 |
+| --- | --- | --- |
+| **后端** | REST API、WebSocket、任务队列、运行证据 | Go |
+| **前端** | Web 应用 | Next.js 16 |
+| **数据库** | 主数据、trace、usage、训练评估 | PostgreSQL 17 + pgvector |
+
+需要执行 Agent 的成员还要在自己的电脑或服务器上安装 **`multica` CLI**，并启动 daemon。
+
+## 前置条件
+
+- Docker 和 Docker Compose
+
+## 快速安装
+
+两条命令完成服务部署和本机运行时连接：
+
+```bash
+# 安装 CLI，并部署自托管服务
+curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
+
+# 配置 CLI、登录并启动 daemon
+multica setup self-host
+```
+
+
+<Callout>
+如果服务端已经部署好，只需要在 macOS/Linux 上安装 CLI，可以使用 Homebrew：`brew install multica-ai/tap/multica`。
+</Callout>
+
+<Callout>
+需要逐步操作时，按下面步骤执行。
+</Callout>
+
+## 分步部署
+
+### 第 1 步：启动服务端
+
+```bash
+git clone https://github.com/multica-ai/multica.git
+cd multica
+make selfhost
+```
+
+`make selfhost` 会自动创建 `.env`，生成随机 `JWT_SECRET` 和 Postgres 密码，并通过 Docker Compose 启动服务。
+
+默认会从 GHCR 拉取稳定镜像。如果要从当前 checkout 构建后端和前端，使用 `make selfhost-build`。如果选择的 GHCR tag 尚未发布，命令会提示你改用本地构建。
+
+启动后访问：
+
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:8080
+
+<Callout>
+如果要手动执行 Docker Compose：`cp .env.example .env`，修改 `JWT_SECRET`、`POSTGRES_PASSWORD` 和 `DATABASE_URL` 中的密码，然后运行 `docker compose -f docker-compose.selfhost.yml pull && docker compose -f docker-compose.selfhost.yml up -d`。
+</Callout>
+
+### 第 2 步：登录
+
+
+
+
+<Callout>
+</Callout>
+
+### 第 3 步：安装 CLI 并启动 daemon
+
+daemon 运行在你的电脑或服务器上，不在 Docker 服务端容器里。它会检测已安装的 AI Agent CLI，向服务端注册运行时，并执行分派给 Agent 的任务。
+
+### a) 安装 CLI 和 Agent CLI
+
+```bash
+brew install multica-ai/tap/multica
+```
+
+还需要至少一个 AI Agent CLI：
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
+- [Codex](https://github.com/openai/codex) (`codex` on PATH)
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini` on PATH)
+- OpenCode (`opencode` on PATH)
+- Hermes (`hermes` on PATH)
+
+### b) 一条命令完成配置
+
+```bash
+multica setup self-host
+```
+
+该命令会自动：
+
+1. 把 CLI 指向本机自部署服务。
+2. 打开浏览器完成登录。
+3. 发现你的工作区。
+4. 在后台启动 daemon。
+
+内网域名或反向代理部署：
+
+```bash
+multica setup self-host --server-url https://api.example.com --app-url https://app.example.com
+```
+
+确认 daemon 已运行：
+
+```bash
+multica daemon status
+```
+
+<Callout>
+也可以逐步配置：`multica config set server_url http://localhost:8080 && multica config set app_url http://localhost:3000 && multica login && multica daemon start`
+</Callout>
+
+### 第 4 步：验证并开始使用
+
+1. 打开 http://localhost:3000。
+2. 进入 **设置 → 运行时**，确认你的电脑在线。
+3. 进入 **设置 → Agent** 创建 Agent。
+4. 创建 issue 并分派给 Agent 或小队。
+
+## 用量看板汇总
+
+用量和运行时看板读取派生表 `task_usage_hourly`。后端会通过数据库调度表 `sys_cron_executions` 在进程内定期运行 `rollup_task_usage_hourly()`。新部署不需要额外 cron、systemd timer 或 Kubernetes `CronJob`。
+
+多副本安全：每个后端副本都会尝试认领当前 5 分钟计划，但唯一键 `(job_name, scope_kind, scope_id, plan_time)` 保证只有一个副本执行成功。可以查看审计表：
+
+```sql
+SELECT plan_time, status, attempt, runner_id,
+       error_code, error_msg, started_at, finished_at
+  FROM sys_cron_executions
+ WHERE job_name = 'rollup_task_usage_hourly'
+ ORDER BY plan_time DESC
+ LIMIT 20;
+```
+
+## 停止服务
+
+```bash
+# 停止 Docker Compose 服务
+make selfhost-stop
+
+# 停止本机 daemon
+multica daemon stop
+```
+
+## 切换 CLI 到其他内部环境
+
+如果要把 CLI 从当前环境切到另一套内部部署：
+
+```bash
+multica setup self-host --server-url https://api.other.internal --app-url https://multica.other.internal
+```
+
+命令会提示是否覆盖当前配置，并重新登录、重启 daemon。
+
+<Callout>
+本机 Docker 服务不会被自动停止。如果不再需要当前自部署环境，请单独停止。
+</Callout>
+
+## 升级
+
+```bash
+docker compose -f docker-compose.selfhost.yml pull
+docker compose -f docker-compose.selfhost.yml up -d
+```
+
+如果需要固定版本，在 `.env` 中把 `MULTICA_IMAGE_TAG` 设置成明确版本，例如 `v0.2.4`。后端启动时会自动初始化空数据库；schema 不一致时需要重建数据库。
+如果指定的 GHCR tag 尚未发布，改用 `make selfhost-build` 或 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build` 从当前代码构建。
+
+---
+
+## 配置
+
+所有服务端配置都通过环境变量完成。建议先复制 `.env.example`，再按团队环境修改。
+
+### 必填变量
+
+| 变量 | 说明 | 示例 |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL 连接串。密码部分要和 `POSTGRES_PASSWORD` 保持一致。 | `postgres://multica:<postgres-password>@localhost:5432/multica?sslmode=disable` |
+| `POSTGRES_PASSWORD` | **必须改掉默认值。** 内置 Postgres 容器使用的密码，同时同步到 `DATABASE_URL`。 | `openssl rand -hex 24` |
+| `JWT_SECRET` | **必须改掉默认值。** JWT 签名密钥，使用足够长的随机字符串。 | `openssl rand -hex 32` |
+| `FRONTEND_ORIGIN` | 前端访问地址，用于 CORS 和登录跳转。 | `https://multica.example.internal` |
+
+
+| 变量 | 说明 |
+|----------|-------------|
+
+
+### 注册控制（可选）
+
+| 变量 | 说明 |
+|----------|-------------|
+| `ALLOW_SIGNUP` | 私有部署建议设置为 `false`，禁止新用户自行注册。 |
+
+修改后重启后端或 Compose 服务即可生效。Web UI 会在运行时从 `/api/config` 读取 `ALLOW_SIGNUP`，不需要重新构建前端。
+
+### 文件存储（可选）
+
+上传文件和附件可以接入 S3 兼容存储；内网部署也可以使用 MinIO、R2、B2 等兼容实现。需要公网或跨网访问时，再按团队基础设施配置 CDN 或签名下载域名。
+
+| 变量 | 说明 |
+|----------|-------------|
+| `S3_BUCKET` | Bucket 名称，不要带 `.s3.<region>.amazonaws.com` 后缀。服务端会根据 `S3_BUCKET` 和 `S3_REGION` 生成默认访问地址。 |
+| `S3_REGION` | 存储区域，必须和 Bucket 实际区域一致，用于 SDK 签名和默认公开地址。 |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | 静态凭证。两者都不设置时，使用 AWS SDK 默认凭证链。 |
+| `AWS_ENDPOINT_URL` | S3 兼容端点，例如 MinIO、R2、B2。设置后会使用 path-style URL。 |
+| `CLOUDFRONT_DOMAIN` | 可选的 CDN 或签名下载域名；设置后，公开地址会使用该域名。 |
+| `CLOUDFRONT_KEY_PAIR_ID` | 签名下载使用的 key pair id。 |
+| `CLOUDFRONT_PRIVATE_KEY` | 签名下载私钥，PEM 格式。 |
+
+### Cookie
+
+| 变量 | 说明 |
+|----------|-------------|
+| `COOKIE_DOMAIN` | session 和签名下载 cookie 的可选 `Domain` 属性。单机、本地、内网 IP 或单域名部署请保持为空。只有当前端和后端位于同一注册域名的不同子域时才设置，例如 `.example.com`。**不要填写 IP**，浏览器会丢弃这类 `Set-Cookie`。 |
+
+session cookie 的 `Secure` 标记会根据 `FRONTEND_ORIGIN` 自动判断：HTTPS 地址使用 `Secure` cookie；内网或本地 HTTP 地址使用非 `Secure` cookie，保证浏览器可以正常保存。
+
+### 服务端
+
+| 变量 | 默认值 | 说明 |
+|----------|---------|-------------|
+| `PORT` | `8080` | 后端服务端口 |
+| `FRONTEND_PORT` | `3000` | 前端服务端口 |
+| `CORS_ALLOWED_ORIGINS` | `FRONTEND_ORIGIN` 的值 | 允许跨域访问的来源，多个值用英文逗号分隔。 |
+| `LOG_LEVEL` | `info` | 日志级别：`debug`、`info`、`warn`、`error`。 |
+
+### CLI / Daemon
+
+这些变量配置在每个成员自己的电脑或服务器上，不配置在服务端容器里：
+
+| 变量 | 默认值 | 说明 |
+|----------|---------|-------------|
+| `MULTICA_SERVER_URL` | `ws://localhost:8080/ws` | daemon 连接服务端的 WebSocket 地址。 |
+| `MULTICA_APP_URL` | `http://localhost:3000` | CLI 登录流程打开的前端地址。 |
+| `MULTICA_DAEMON_POLL_INTERVAL` | `3s` | daemon 拉取任务的间隔。 |
+| `MULTICA_DAEMON_HEARTBEAT_INTERVAL` | `15s` | daemon 心跳间隔。 |
+
+Agent 专用覆盖项：
+
+| 变量 | 说明 |
+|----------|-------------|
+| `MULTICA_CLAUDE_PATH` | 自定义 `claude` 可执行文件路径 |
+| `MULTICA_CLAUDE_MODEL` | 覆盖 Claude 使用的模型 |
+| `MULTICA_CODEX_PATH` | 自定义 `codex` 可执行文件路径 |
+| `MULTICA_CODEX_MODEL` | 覆盖 Codex 使用的模型 |
+| `MULTICA_OPENCODE_PATH` | 自定义 `opencode` 可执行文件路径 |
+| `MULTICA_OPENCODE_MODEL` | 覆盖 OpenCode 使用的模型 |
+| `MULTICA_HERMES_PATH` | 自定义 `hermes` 可执行文件路径 |
+| `MULTICA_HERMES_MODEL` | 覆盖 Hermes 使用的模型 |
+| `MULTICA_GEMINI_PATH` | 自定义 `gemini` 可执行文件路径 |
+| `MULTICA_GEMINI_MODEL` | 覆盖 Gemini 使用的模型 |
+
+## 数据库配置
+
+Multica 需要 PostgreSQL 17，并启用 pgvector 扩展。
+
+### 使用内置 Docker Compose
+
+```bash
+docker compose up -d postgres
+```
+
+该命令会在 5432 端口启动 `pgvector/pgvector:pg17` 容器，默认账号密码为 `multica` / `multica`。
+
+### 使用自己的 PostgreSQL
+
+确保数据库中可以创建 pgvector 扩展：
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+### 初始化数据库
+
+后端启动时会自动初始化空数据库。需要只初始化或验证 schema 而不启动服务时：
+
+```bash
+# 使用已构建的二进制
+./server/bin/server --init-schema-only
+
+# 或从源码执行
+cd server && go run ./cmd/server --init-schema-only
+```
+
+## 手工部署（不使用 Docker Compose）
+
+如果要手工构建并运行服务：
+
+**前置条件：** Go 1.26+、Node.js 20+、pnpm 10.28+、带 pgvector 的 PostgreSQL 17。
+
+```bash
+# 启动 PostgreSQL（或使用：docker compose up -d postgres）
+
+# 构建后端
+make build
+
+# 启动后端服务；空数据库会自动初始化
+DATABASE_URL="your-database-url" PORT=8080 JWT_SECRET="your-secret" ./server/bin/server
+```
+
+前端：
+
+```bash
+pnpm install
+pnpm build
+
+# 启动前端（生产模式）
+cd apps/web
+REMOTE_API_URL=http://localhost:8080 pnpm start
+```
+
+## 反向代理
+
+生产环境建议在后端和前端前面放一层反向代理，由它处理 TLS、域名和路由。
+
+### Caddy（推荐）
+
+**单域名部署**：前端和后端共用同一个 hostname（`docker-compose.selfhost.yml` 默认就是这种方式）：
+
+```
+multica.example.com {
+    # WebSocket 路由，必须放在 catch-all 之前
+    @multica_ws path /ws /ws/*
+    handle @multica_ws {
+        reverse_proxy localhost:8080 {
+            flush_interval -1
+        }
+    }
+
+    # 其他请求转发到前端
+    reverse_proxy localhost:3000
+}
+```
+
+**双域名部署**：前端和后端使用不同 hostname：
+
+```
+app.example.com {
+    reverse_proxy localhost:3000
+}
+
+api.example.com {
+    @multica_ws path /ws /ws/*
+    handle @multica_ws {
+        reverse_proxy localhost:8080 {
+            flush_interval -1
+        }
+    }
+
+    reverse_proxy localhost:8080
+}
+```
+
+`/ws` 配置里有两个容易忽略的点，也是 Caddy 代理后实时更新失效的常见原因：
+
+- **`path /ws /ws/*`（不是 `/ws*`）**：单独写 `handle /ws` 只匹配精确路径，未来 `/ws/` 下的路径会落到前端 block。写成 `handle /ws*` 又会过度匹配，例如 `/ws-foo` 这种合法工作区路径也会被拦截。显式列出 `/ws` 和 `/ws/*` 可以覆盖真实 WebSocket 路径且不过度匹配。
+- **`flush_interval -1`**：关闭响应缓冲，WebSocket frame 到达后立即转发。不设置时，frame 可能被 Caddy 默认 flush 窗口延迟，看起来像评论延迟、输入状态丢失，或者评论刷新页面后才出现。
+
+### Nginx
+
+```nginx
+# Frontend
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Backend API
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket 支持
+    location /ws {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+前后端使用不同域名时，按实际地址设置这些环境变量：
+
+```bash
+# 后端
+FRONTEND_ORIGIN=https://app.example.com
+CORS_ALLOWED_ORIGINS=https://app.example.com
+
+# 前端
+REMOTE_API_URL=https://api.example.com
+NEXT_PUBLIC_API_URL=https://api.example.com
+NEXT_PUBLIC_WS_URL=wss://api.example.com/ws
+```
+
+## 健康检查
+
+后端提供以下公开健康检查端点：
+
+```text
+GET /health
+→ {"status":"ok"}
+
+GET /readyz
+→ {"status":"ok","checks":{"db":"ok","schema":"ok"}}
+
+GET /healthz
+→ 和 /readyz 相同
+```
+
+`/health` 适合基础存活和可达性检查。`/readyz` 会检查依赖，适合 readiness probe 和外部监控；当数据库不可用或 schema 不匹配时应失败。`/healthz` 作为运维习惯兼容别名保留。
+
+## 升级
+
+开发阶段不支持数据库原地升级。切换到 schema 不同的版本前，请备份所需数据并重建数据库；新版本后端会在启动时初始化空库。

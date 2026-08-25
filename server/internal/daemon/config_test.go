@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 func TestPatternsFromEnv_DefaultsWhenUnset(t *testing.T) {
@@ -492,6 +494,7 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 	for _, name := range []string{
 		"MULTICA_CLAUDE_PATH",
 		"MULTICA_OPENCODE_PATH",
+		"MULTICA_OPENCLAW_PATH",
 		"MULTICA_HERMES_PATH",
 		"MULTICA_GEMINI_PATH",
 		"MULTICA_PI_PATH",
@@ -673,7 +676,7 @@ func TestLoadConfig_WithoutBackendConfigUsesPathDiscovery(t *testing.T) {
 // must not prevent daemon startup. This matters for diskcorruption /
 // partial-write recovery — the daemon should log and proceed using
 // env-var-only configuration.
-func TestLoadConfig_MalformedConfigFileNonFatal(t *testing.T) {
+func TestLoadConfig_BackendOverrides_MalformedConfigFileNonFatal(t *testing.T) {
 	stageFakeAgent(t)
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

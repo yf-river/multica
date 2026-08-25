@@ -497,8 +497,8 @@ func TestDecodeLarkFramePostResolvesMentions(t *testing.T) {
 				"message_id":"m","chat_id":"c","chat_type":"group","message_type":"post",
 				"content":` + string(escaped) + `,
 				"mentions":[
-					{"key":"@_user_1","id":{"union_id":"on_bot"},"name":"Bot"},
-					{"key":"@_user_2","id":{"union_id":"on_alice"},"name":"Alice"}
+					{"key":"@_user_1","id":{"open_id":"ou_bot"},"name":"Bot"},
+					{"key":"@_user_2","id":{"open_id":"ou_alice"},"name":"Alice"}
 				]
 			}
 		}

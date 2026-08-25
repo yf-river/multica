@@ -69,12 +69,12 @@ type AgentResponse struct {
 }
 
 // runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
-// any non-empty legacy `runtime_config.gateway.token`. The token is a bearer
-// credential; surfacing the real value through GET responses would let anyone
-// with read access to the agent dump the gateway secret. The mask is a
-// sentinel — when the UI later PATCHes the agent and submits the same mask
-// verbatim under that field, the update handler restores the persisted token
-// instead of overwriting it.
+// any non-empty `runtime_config.gateway.token` (openclaw gateway mode, issue
+// #3260). The token is a bearer credential; surfacing the real value through
+// GET responses would let anyone with read access to the agent dump the
+// gateway secret. The mask is a sentinel — when the UI later PATCHes the
+// agent and submits the same mask verbatim under that field, the update
+// handler restores the persisted token instead of overwriting it.
 const runtimeConfigGatewayTokenMask = "***"
 
 func agentToResponse(a db.Agent) (AgentResponse, error) {

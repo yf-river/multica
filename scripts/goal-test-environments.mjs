@@ -161,7 +161,7 @@ async function deployEnvironment(item, build) {
     run("make", ["build"], env);
     run("pnpm", ["--filter", "@multica/web", "build"], env);
   }
-  run("bash", ["-lc", "cd server && ./bin/server --init-schema-only"], env);
+  run("bash", ["-lc", "cd server && ./bin/migrate up"], env);
   seedDemoIdentity(env.DATABASE_URL, item);
   const daemonProfilePath = ensureDaemonProfile(item, env);
   stopPid(pidPath(item, "server"));

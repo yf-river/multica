@@ -1,8 +1,8 @@
-# 依赖
+# Dependencies
 node_modules
 .pnpm-store
 
-# 构建产物
+# Build outputs
 .next
 dist
 server/bin
@@ -12,7 +12,7 @@ server/tmp
 .git
 .gitignore
 
-# 环境
+# Environment
 .env
 .env.*
 !.env.example
@@ -27,9 +27,12 @@ server/tmp
 .DS_Store
 Thumbs.db
 
-# 测试
+# Test
 e2e/test-results
 coverage
 
-# 文档
+# Docs
 docs/
+
+# Desktop app (not needed for web self-hosting)
+apps/desktop

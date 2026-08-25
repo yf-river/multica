@@ -1,20 +1,20 @@
-# 自部署 Docker Compose — 启动 PostgreSQL、后端、前端。
+# Self-hosting Docker Compose — starts PostgreSQL, backend, and frontend.
 #
-# 服务仅绑 127.0.0.1。跨机器或公开访问时，前置反向代理
-# （Caddy / nginx / Cloudflare Tunnel）终止 TLS 并转发到
-# 127.0.0.1:8080（后端）与 127.0.0.1:3000（前端）。
-# 不要把这些绑定改成 0.0.0.0——Docker 默认绕过主机防火墙
-# （UFW/iptables），用默认 JWT_SECRET 与 Postgres 凭证的话原始端口会
-# 直接暴露到互联网。见：
+# Services bind to 127.0.0.1 only. For cross-machine or public access, front
+# them with a reverse proxy (Caddy / nginx / Cloudflare Tunnel) that terminates
+# TLS and forwards to 127.0.0.1:8080 (backend) and 127.0.0.1:3000 (frontend).
+# Do NOT change these bindings to 0.0.0.0 — Docker bypasses host firewalls
+# (UFW/iptables) by default, so the raw ports would be exposed to the internet
+# with the default JWT_SECRET and Postgres credentials. See:
 #   apps/docs/content/docs/self-host-quickstart.mdx
 #
-# 用法：
+# Usage:
 #   cp .env.example .env
-#   # 编辑 .env——至少改 JWT_SECRET
+#   # Edit .env — change JWT_SECRET at minimum
 #   docker compose -f docker-compose.selfhost.yml up -d
 #
-# 前端：http://localhost:${FRONTEND_PORT:-3000}
-# 后端：http://localhost:${BACKEND_PORT:-8080}
+# Frontend: http://localhost:${FRONTEND_PORT:-3000}
+# Backend:  http://localhost:${BACKEND_PORT:-8080}
 
 name: multica
 
@@ -82,9 +82,10 @@ services:
       # intentionally NOT used to derive this value, to avoid Host /
       # X-Forwarded-Host spoofing on misconfigured proxies.
       MULTICA_PUBLIC_URL: ${MULTICA_PUBLIC_URL:-}
-      # 逗号分隔的 CIDR，允许其源 IP 为 webhook per-IP 限流器设置
-      # X-Forwarded-For / X-Real-IP。空默认 = 忽略 header，用 RemoteAddr。
-      # 如 same-host 反向代理用 "127.0.0.1/32"。
+      # Comma-separated CIDRs whose source IP is allowed to set
+      # X-Forwarded-For / X-Real-IP for the webhook per-IP rate limiter.
+      # Empty default = headers ignored, RemoteAddr used. Set e.g.
+      # "127.0.0.1/32" when running behind a same-host reverse proxy.
       MULTICA_TRUSTED_PROXIES: ${MULTICA_TRUSTED_PROXIES:-}
       # Lark / Feishu bot integration. MULTICA_LARK_SECRET_KEY is the
       # opt-in: unset = integration disabled. Mainland 飞书 and international

@@ -1,4 +1,4 @@
-# --- 依赖 ---
+# --- Dependencies ---
 ARG NODE_BASE_IMAGE=node:22-alpine
 FROM ${NODE_BASE_IMAGE} AS deps
 
@@ -6,7 +6,7 @@ RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
 
 WORKDIR /app
 
-# 复制 workspace 配置与所有 package.json 用于依赖解析
+# Copy workspace config and all package.json files for dependency resolution
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json .npmrc ./
 COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
@@ -17,25 +17,25 @@ COPY packages/eslint-config/package.json packages/eslint-config/
 
 RUN pnpm install --frozen-lockfile
 
-# --- 构建 ---
+# --- Build ---
 FROM ${NODE_BASE_IMAGE} AS builder
 
 RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
 
 WORKDIR /app
 
-# 复制已装依赖（保留 pnpm symlink 结构）
+# Copy installed dependencies (preserves pnpm symlink structure)
 COPY --from=deps /app ./
 
-# 复制源码
+# Copy source
 COPY package.json turbo.json pnpm-workspace.yaml ./
 COPY apps/web/ apps/web/
 COPY packages/ packages/
 
-# 源码覆盖后重新 link（修复被 COPY 覆盖的 symlink）
+# Re-link after source overlay (fixes any symlinks overwritten by COPY)
 RUN pnpm install --frozen-lockfile --offline
 
-# 构建时 env：告诉 Next.js rewrite 把 API 调用代理到后端 service
+# Set build-time env: tells Next.js rewrites to proxy API calls to the backend service
 ARG REMOTE_API_URL=http://backend:8080
 ARG NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_APP_VERSION=dev
@@ -44,10 +44,10 @@ ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_APP_VERSION=$NEXT_PUBLIC_APP_VERSION
 ENV STANDALONE=true
 
-# 构建 web 应用（standalone 输出，最小运行时）
+# Build the web app (standalone output for minimal runtime)
 RUN pnpm --filter @multica/web build
 
-# --- 运行时 ---
+# --- Runtime ---
 FROM ${NODE_BASE_IMAGE} AS runner
 
 WORKDIR /app
@@ -57,11 +57,11 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# 复制 standalone 输出（含被 trace 的 node_modules）
+# Copy standalone output (includes traced node_modules)
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-# 复制静态文件（standalone 不含）
+# Copy static files (not included in standalone)
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
-# 复制公开资源
+# Copy public assets
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 
 USER nextjs

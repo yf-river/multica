@@ -30,6 +30,11 @@ INSERT INTO prompt_evaluation_case_operation (
 )
 RETURNING *;
 
+-- name: GetPromptEvaluationCaseOperationInWorkspace :one
+SELECT * FROM prompt_evaluation_case_operation
+WHERE id = $1
+  AND workspace_id = $2;
+
 -- name: MarkPromptEvaluationCaseOperationRunning :one
 UPDATE prompt_evaluation_case_operation
 SET status = '运行中',

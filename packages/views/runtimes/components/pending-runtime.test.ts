@@ -53,7 +53,7 @@ describe("pending custom runtime rows", () => {
 
     expect(pending.id).toBe("pending-runtime-profile:profile-1");
     expect(pending.name).toBe("Team Codex (MacBook)");
-    expect(pending.daemon_id).toBeNull();
+    expect(pending.daemon_id).toBe("daemon-1");
     expect(pending.profile_id).toBe("profile-1");
     expect(pending.provider).toBe("codex");
     expect(isPendingCustomRuntime(pending)).toBe(true);
@@ -74,6 +74,8 @@ describe("pending custom runtime rows", () => {
         pendingProfiles: [{ profile: prof, createdAt }],
         runtimes: [baseRuntime],
         ownerId: "user-1",
+        localDaemonId: "daemon-1",
+        localMachineName: "MacBook",
       }).map((item) => item.id),
     ).toEqual(["runtime-1", "pending-runtime-profile:profile-1"]);
 
@@ -82,6 +84,8 @@ describe("pending custom runtime rows", () => {
         pendingProfiles: [{ profile: prof, createdAt }],
         runtimes: [baseRuntime, registeredRuntime],
         ownerId: "user-1",
+        localDaemonId: "daemon-1",
+        localMachineName: "MacBook",
       }).map((item) => item.id),
     ).toEqual(["runtime-1", "runtime-custom"]);
   });

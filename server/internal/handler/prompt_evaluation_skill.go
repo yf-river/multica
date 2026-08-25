@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/util/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -692,7 +691,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		Name:                     name,
 		Description:              description,
 		AssetType:                promptEvaluationAssetTestSuite,
-		Payload:                  prompteval.MustJSONBytes(payload),
+		Payload:                  mustJSONBytes(payload),
 		Status:                   "启用",
 		CreatedBy:                requestActorID,
 		StructureSchema:          profile.StructureSchema,
@@ -823,7 +822,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to load skill re-eval asset")
 		return
 	}
-	payload := prompteval.DecodePayloadObject(asset.Payload)
+	payload := decodePayloadObject(asset.Payload)
 	if err := validatePromptEvaluationSkillReEvalAsset(candidate, asset, payload); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -870,7 +869,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
-		Payload:     prompteval.MustJSONBytes(payload),
+		Payload:     mustJSONBytes(payload),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save skill re-eval run")
@@ -1022,7 +1021,7 @@ SET metrics = COALESCE(metrics, '{}'::jsonb) || $3::jsonb,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candidate_content, rationale, failed_case_count, source_failure_summary, source_prompt_snapshot, metrics, status, published_prompt_id, published_at, created_by, created_at, updated_at
-`, candidateID, workspaceID, prompteval.MustJSONBytes(patch))
+`, candidateID, workspaceID, mustJSONBytes(patch))
 	var item db.PromptEvaluationOptimizationCandidate
 	err := row.Scan(
 		&item.ID,

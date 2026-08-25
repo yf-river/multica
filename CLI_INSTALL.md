@@ -1,10 +1,10 @@
-# Multica CLI 安装指南（面向 AI 智能体）
+# Multica CLI — Installation Guide for AI Agents
 
-> **读者：** 本文档为 AI 智能体（Claude Code、Codex 等）设计，按步骤执行。每步包含要跑的精确 shell 命令、预期结果与错误处理。
+> **Audience:** This document is designed for AI agents (Claude Code, Codex, etc.) to read and execute step-by-step. Each step includes the exact shell commands to run, expected outcomes, and error handling.
 
-## 给用户的一条指令
+## One-Line Instruction for Users
 
-把这条指令交给你的 AI 智能体：
+Give this instruction to your AI agent:
 
 ```
 Fetch https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md and follow the instructions to install Multica CLI, log in, and start the daemon on this machine.
@@ -12,70 +12,70 @@ Fetch https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md and follow 
 
 ---
 
-## 步骤 1：检查 Multica CLI 是否已安装
+## Step 1: Check if Multica CLI is already installed
 
-运行：
+Run:
 
 ```bash
 multica version
 ```
 
-- **若打印版本字符串**（如 `multica v0.x.x`）：跳到**步骤 3**。
-- **若 command not found**：继续**步骤 2**。
+- **If it prints a version string** (e.g. `multica v0.x.x`): skip to **Step 3**.
+- **If command not found**: continue to **Step 2**.
 
 ---
 
-## 步骤 2：安装 Multica CLI
+## Step 2: Install the Multica CLI
 
-> **Windows 用户：** 跳到下方 [选项 C：Windows（PowerShell）](#选项-cwindowspowershell)。
+> **Windows users:** Skip to [Option C: Windows (PowerShell)](#option-c-windows-powershell) below.
 
-### 选项 A：Homebrew（首选——macOS/Linux）
+### Option A: Homebrew (preferred — macOS/Linux)
 
-检查 Homebrew 是否可用：
+Check if Homebrew is available:
 
 ```bash
 which brew
 ```
 
-若找到 `brew`，通过 Homebrew 安装：
+If `brew` is found, install via Homebrew:
 
 ```bash
 brew install multica-ai/tap/multica
 ```
 
-然后验证：
+Then verify:
 
 ```bash
 multica version
 ```
 
-若版本打印成功，跳到**步骤 3**。
+If the version prints successfully, skip to **Step 3**.
 
-后续升级用：
+To upgrade later, run:
 
 ```bash
 brew upgrade multica-ai/tap/multica
 ```
 
-### 选项 B：从 GitHub Releases 下载（macOS/Linux，无 Homebrew）
+### Option B: Download from GitHub Releases (macOS/Linux, no Homebrew)
 
-若没有 Homebrew，直接下载二进制。
+If Homebrew is not available, download the binary directly.
 
-检测 OS 与架构，下载正确归档：
+Detect OS and architecture, then download the correct archive:
 
 ```bash
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')   # "darwin" 或 "linux"
-ARCH=$(uname -m)                                # "x86_64" 或 "arm64"
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')   # "darwin" or "linux"
+ARCH=$(uname -m)                                # "x86_64" or "arm64"
 
-# 规范化架构名
+# Normalize architecture name
 if [ "$ARCH" = "x86_64" ]; then
   ARCH="amd64"
 fi
 
-# 从 GitHub 获取最新 release tag
+# Get the latest release tag from GitHub
 LATEST=$(curl -sI https://github.com/multica-ai/multica/releases/latest | grep -i '^location:' | sed 's/.*tag\///' | tr -d '\r\n')
 
-# 下载并解压
+# Download and extract
 VERSION="${LATEST#v}"
 curl -sL "https://github.com/multica-ai/multica/releases/download/${LATEST}/multica-cli-${VERSION}-${OS}-${ARCH}.tar.gz" -o /tmp/multica.tar.gz
 tar -xzf /tmp/multica.tar.gz -C /tmp multica
@@ -83,119 +83,119 @@ sudo mv /tmp/multica /usr/local/bin/multica
 rm /tmp/multica.tar.gz
 ```
 
-验证：
+Verify:
 
 ```bash
 multica version
 ```
 
-**若失败：**
-- 检查 `/usr/local/bin` 是否在 `$PATH` 中。
-- Linux 上可能需要 `chmod +x /usr/local/bin/multica`。
-- 若无 `sudo`，装到用户可写目录：`mv /tmp/multica ~/.local/bin/multica`，并确保 `~/.local/bin` 在 `$PATH` 中。
+**If this fails:**
+- Check that `/usr/local/bin` is in `$PATH`.
+- On Linux, you may need `chmod +x /usr/local/bin/multica`.
+- If `sudo` is not available, install to a user-writable directory: `mv /tmp/multica ~/.local/bin/multica` and ensure `~/.local/bin` is in `$PATH`.
 
-### 选项 C：Windows（PowerShell）
+### Option C: Windows (PowerShell)
 
-在 PowerShell 中运行（无需管理员）：
+Run in PowerShell (no admin required):
 
 ```powershell
 irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
 ```
 
-这会从 GitHub Releases 下载最新 Windows 二进制，装到 `%USERPROFILE%\.multica\bin\`，并加入用户 PATH。
+This downloads the latest Windows binary from GitHub Releases, installs it to `%USERPROFILE%\.multica\bin\`, and adds it to your user PATH.
 
-验证：
+Verify:
 
 ```powershell
 multica version
 ```
 
-**若失败：**
-- 重启终端让更新后的 PATH 生效。
-- 若用 Scoop，安装器会自动用它：`scoop bucket add multica https://github.com/multica-ai/scoop-bucket.git && scoop install multica`
-- 若执行策略阻止脚本：`Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` 后重跑。
+**If this fails:**
+- Restart your terminal so the updated PATH takes effect.
+- If you use Scoop, the installer will use it automatically: `scoop bucket add multica https://github.com/multica-ai/scoop-bucket.git && scoop install multica`
+- If your execution policy blocks the script: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` then re-run.
 
 ---
 
-## 步骤 3：登录
+## Step 3: Log in
 
-运行：
+Run:
 
 ```bash
 multica login
 ```
 
-**重要：** 该命令会打开浏览器做 Multica 账号/密码认证。告诉用户：
+**Important:** This command opens a browser window for Multica account/password authentication. Tell the user:
 
-> 「浏览器会打开 Multica 登录页，请在浏览器中完成认证后回到这里。」
+> "A browser window will open for Multica login. Please complete the authentication in your browser, then come back here."
 
-等命令完成。它会自动发现并 watch 用户所属的所有工作区。
+Wait for the command to complete. It will automatically discover and watch all workspaces the user belongs to.
 
-验证：
+Verify:
 
 ```bash
 multica auth status
 ```
 
-预期输出显示已认证用户与 server URL。
+Expected output should show the authenticated user and server URL.
 
-**若登录失败：**
-- 若无浏览器（headless 环境），用户可在 `https://app.multica.ai/settings` 生成 Personal Access Token 后跑：`multica login --token <mul_...>`（用 `--token=` 加空值做交互式提示输入）。
-- 若需自定义 server URL：先 `multica config set server_url <url>` 再登录。
+**If login fails:**
+- If no browser is available (headless environment), the user can generate a Personal Access Token at `https://app.multica.ai/settings` and run: `multica login --token <mul_...>` (use `--token=` with an empty value to be prompted interactively).
+- If the server URL needs to be customized: `multica config set server_url <url>` before logging in.
 
 ---
 
-## 步骤 4：启动守护进程
+## Step 4: Start the daemon
 
-先检查守护进程是否在跑：
+First, check if the daemon is already running:
 
 ```bash
 multica daemon status
 ```
 
-- **若状态为 "running"**：跳到**步骤 5**。
-- **若状态为 "stopped"**：启动它：
+- **If status is "running"**: skip to **Step 5**.
+- **If status is "stopped"**: start it:
 
 ```bash
 multica daemon start
 ```
 
-等 3 秒后验证：
+Wait 3 seconds, then verify:
 
 ```bash
 multica daemon status
 ```
 
-预期输出显示 `running` 状态及检测到的智能体（如 `claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi`、`cursor-agent`）。
+Expected output should show `running` status with detected agents (e.g. `claude`, `codex`, `copilot`, `opencode`, `openclaw`, `hermes`, `gemini`, `pi`, `cursor-agent`).
 
-**若守护进程启动失败：**
-- 查日志：`multica daemon logs`
-- 若端口冲突，守护进程可能已在另一个 profile 下运行。
-- 若未检测到智能体，确保至少一个 AI CLI（`claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi` 或 `cursor-agent`）已安装且在 `$PATH` 中。
+**If daemon fails to start:**
+- Check logs: `multica daemon logs`
+- If a port conflict occurs, the daemon may already be running under a different profile.
+- If no agents are detected, ensure at least one AI CLI (`claude`, `codex`, `copilot`, `opencode`, `openclaw`, `hermes`, `gemini`, `pi`, or `cursor-agent`) is installed and on the `$PATH`.
 
 ---
 
-## 步骤 5：验证一切正常
+## Step 5: Verify everything is working
 
-运行：
+Run:
 
 ```bash
 multica daemon status
 ```
 
-确认：
-1. 状态为 `running`
-2. 至少列出一个智能体（如 `claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi` 或 `cursor-agent`）
-3. 至少 watch 一个工作区
+Confirm:
+1. Status is `running`
+2. At least one agent is listed (e.g. `claude`, `codex`, `copilot`, `opencode`, `openclaw`, `hermes`, `gemini`, `pi`, or `cursor-agent`)
+3. At least one workspace is being watched
 
-若智能体列表为空，告诉用户：
+If the agents list is empty, tell the user:
 
-> 「Multica 守护进程在跑但未检测到任何 AI 智能体 CLI。请安装至少一个受支持的 CLI（`claude`、`codex`、`copilot`、`opencode`、`hermes`、`gemini`、`pi` 或 `cursor-agent`），然后用 `multica daemon stop && multica daemon start` 重启守护进程。」
+> "The Multica daemon is running but no AI agent CLIs were detected. Please install at least one supported CLI (`claude`, `codex`, `copilot`, `opencode`, `openclaw`, `hermes`, `gemini`, `pi`, or `cursor-agent`), then restart the daemon with `multica daemon stop && multica daemon start`."
 
 ---
 
-## 总结
+## Summary
 
-所有步骤完成后，告诉用户：
+When all steps are complete, inform the user:
 
-> 「Multica CLI 已安装、守护进程在运行。工作区里的智能体现在可以在本机执行任务。用 `multica workspace list` 管理工作区，用 `multica daemon logs -f` 查看守护进程日志。」
+> "Multica CLI is installed and the daemon is running. Agents in your workspaces can now execute tasks on this machine. You can manage workspaces with `multica workspace list` and view daemon logs with `multica daemon logs -f`."

@@ -100,6 +100,21 @@
         "**/*.{ts,tsx,mjs}"
       ]
     },
+    "apps/desktop": {
+      "entry": [
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/src/main.tsx",
+        "electron.vite.config.ts",
+        "eslint.config.mjs",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "scripts/**/*.mjs",
+        "*.{ts,mjs}"
+      ]
+    },
     "apps/docs": {
       "entry": [
         "app/**/*.{ts,tsx,mdx}",

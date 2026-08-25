@@ -1,4 +1,4 @@
-# --- 构建阶段 ---
+# --- Build stage ---
 ARG GO_BASE_IMAGE=golang:1.26-alpine
 ARG ALPINE_BASE_IMAGE=alpine:3.21
 FROM ${GO_BASE_IMAGE} AS builder
@@ -7,14 +7,14 @@ RUN apk add --no-cache git
 
 WORKDIR /src
 
-# 缓存依赖
+# Cache dependencies
 COPY server/go.mod server/go.sum ./server/
 RUN cd server && go mod download
 
-# 复制 server 源码
+# Copy server source
 COPY server/ ./server/
 
-# 构建二进制
+# Build binaries
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
@@ -22,7 +22,7 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSIO
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" -o bin/multica ./cmd/multica
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
 
-# --- 运行时阶段 ---
+# --- Runtime stage ---
 FROM ${ALPINE_BASE_IMAGE}
 
 RUN apk add --no-cache ca-certificates tzdata

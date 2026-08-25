@@ -123,6 +123,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     ["Kimi", "kimi"],
     ["Kiro", "kiro"],
     ["OpenCode", "opencode"],
+    ["OpenClaw", "openclaw"],
   ])("renders the MCP tab when the agent runs on the %s runtime", (_label, provider) => {
     renderPane([makeRuntime(provider)]);
     expect(screen.getByRole("button", { name: /^MCP$/i })).toBeInTheDocument();

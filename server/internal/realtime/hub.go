@@ -373,7 +373,7 @@ func (h *Hub) BroadcastToScope(scopeType, scopeID string, message []byte) {
 
 // BroadcastToScopeDedup is the same as BroadcastToScope but skips delivery
 // to clients that have already seen eventID (used by the Redis relay to
-// deduplicate the local fast path of RelayBroadcaster).
+// deduplicate the local fast path of DualWriteBroadcaster).
 func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, eventID string) {
 	if scopeType == "" || scopeID == "" {
 		return

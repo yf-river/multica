@@ -1,36 +1,36 @@
-# 自部署指南
+# Self-Hosting Guide
 
-几分钟内在自己的基础设施上部署 Multica。
+Deploy Multica on your own infrastructure in minutes.
 
-## 架构
+## Architecture
 
-| 组件 | 说明 | 技术栈 |
+| Component | Description | Technology |
 |-----------|-------------|------------|
-| **后端** | REST API + WebSocket server | Go（单二进制） |
-| **前端** | Web 应用 | Next.js 16 |
-| **数据库** | 主数据存储 | PostgreSQL 17 with pgvector |
+| **Backend** | REST API + WebSocket server | Go (single binary) |
+| **Frontend** | Web application | Next.js 16 |
+| **Database** | Primary data store | PostgreSQL 17 with pgvector |
 
-每个本地跑 AI 智能体的用户还需在自己的机器上装 **`multica` CLI** 并运行**智能体守护进程**。
+Each user who runs AI agents locally also installs the **`multica` CLI** and runs the **agent daemon** on their own machine.
 
-## 快速安装（推荐）
+## Quick Install (Recommended)
 
-两条命令搞定一切——server、CLI、配置：
+Two commands to set up everything — server, CLI, and configuration:
 
 ```bash
-# 1. 装 CLI 并 provision 自部署 server
+# 1. Install CLI + provision the self-host server
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
 
-# 2. 配置 CLI、认证、启动守护进程
+# 2. Configure CLI, authenticate, and start the daemon
 multica setup self-host
 ```
 
-这会装 `multica` CLI、checkout 最新自部署素材、从 GHCR 拉取官方 Multica 镜像，并配好 localhost。
+This installs the `multica` CLI, checks out the latest self-host assets, pulls the official Multica images from GHCR, and configures everything for localhost.
 
-打开 http://localhost:3000 用账号名与密码登录。详情见 [步骤 2 — 登录](#step-2--登录)。
+Open http://localhost:3000 and log in with an account name and password. See [Step 2 — Log In](#step-2--log-in) for details.
 
-> **前置：** 需安装 Docker 与 Docker Compose。脚本会检查并给出安装链接。
+> **Prerequisites:** Docker and Docker Compose must be installed. The script checks for this and provides install links if missing.
 >
-> **只要 CLI？** 若自部署 server 已在跑，且仅需在 macOS/Linux 机器上装 CLI，用 Homebrew：
+> **CLI only?** If the self-host server is already running and you only need the CLI on a macOS/Linux machine, install it with Homebrew:
 >
 > ```bash
 > brew install multica-ai/tap/multica
@@ -38,13 +38,13 @@ multica setup self-host
 
 ---
 
-## 分步配置（备选）
+## Step-by-Step Setup (Alternative)
 
-若偏好手动跑每一步：
+If you prefer to run each step manually:
 
-### 步骤 1 — 启动 server
+### Step 1 — Start the Server
 
-**前置：** Docker 与 Docker Compose。
+**Prerequisites:** Docker and Docker Compose.
 
 ```bash
 git clone https://github.com/multica-ai/multica.git
@@ -52,125 +52,128 @@ cd multica
 make selfhost
 ```
 
-`make selfhost` 自动从示例创建 `.env`、生成随机 `JWT_SECRET`，并通过 Docker Compose 启动所有服务。
+`make selfhost` automatically creates `.env` from the example, generates a random `JWT_SECRET`, and starts all services via Docker Compose.
 
-默认从 GHCR 拉最新稳定 release 镜像。要从当前 checkout 构建后端/前端，跑 `make selfhost-build`。若所选 GHCR tag 尚未发布，`make selfhost` 会提示回退到 `make selfhost-build`。`make selfhost-build` 用本地 `multica-backend:dev` / `multica-web:dev` tag，不会覆盖拉取的 `:latest` 镜像。
+By default it pulls the latest stable release images from GHCR. To build the backend/web from your current checkout instead, run `make selfhost-build`.
+If the selected GHCR tag has not been published yet, `make selfhost` now tells you to fall back to `make selfhost-build`.
+`make selfhost-build` uses local `multica-backend:dev` / `multica-web:dev` tags, so it does not overwrite the pulled `:latest` images.
 
-就绪后：
+Once ready:
 
-- **前端：** http://localhost:3000
-- **后端 API：** http://localhost:8080
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:8080
 
-> **提示：** 若偏好手动跑 Docker Compose 步骤，见下方 [手动 Docker Compose 配置](#手动-docker-compose-配置)。
+> **Note:** If you prefer to run the Docker Compose steps manually, see [Manual Docker Compose Setup](#manual-docker-compose-setup) below.
 
-### 步骤 2 — 登录
+### Step 2 — Log In
 
-浏览器打开 http://localhost:3000，用账号名与密码登录。开启 signup 时，首次成功登录创建账号；后续登录需用同一密码。
+Open http://localhost:3000 in your browser and log in with an account name and password. When signup is enabled, the first successful login creates the account; later logins require the same password.
 
-`ALLOW_SIGNUP` 与 `DISABLE_WORKSPACE_CREATION` 的变更需重启后端 / compose stack 后生效。Web UI 在运行时从 `/api/config` 读这两个值，无需 web 重建。锁定工作区创建的推荐顺序见 [高级配置 → 注册控制](SELF_HOSTING_ADVANCED.md#注册控制可选)。
+Changes to `ALLOW_SIGNUP` and `DISABLE_WORKSPACE_CREATION` take effect after restarting the backend / compose stack. The web UI reads both from `/api/config` at runtime, so no web rebuild is needed. See [Advanced Configuration → Signup Controls](SELF_HOSTING_ADVANCED.md#signup-controls-optional) for the recommended sequence to lock down workspace creation.
 
-### 步骤 3 — 装 CLI 并启动守护进程
+### Step 3 — Install CLI & Start Daemon
 
-守护进程跑在你本地机器上（不在 Docker 内）。它检测已装的 AI 智能体 CLI、向 server 注册，并在智能体被分配任务时执行。
+The daemon runs on your local machine (not inside Docker). It detects installed AI agent CLIs, registers them with the server, and executes tasks when agents are assigned work.
 
-每个想本地跑 AI 智能体的团队成员需：
+Each team member who wants to run AI agents locally needs to:
 
-#### a) 装 CLI 与一个 AI 智能体
+### a) Install the CLI and an AI agent
 
 ```bash
 brew install multica-ai/tap/multica
 ```
 
-还需至少装一个 AI 智能体 CLI：
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（PATH 中的 `claude`）
-- [Codex](https://github.com/openai/codex)（PATH 中的 `codex`）
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot)（PATH 中的 `copilot`）
-- [OpenCode](https://github.com/anomalyco/opencode)（PATH 中的 `opencode`）
-- [Hermes](https://github.com/NousResearch/hermes)（PATH 中的 `hermes`）
-- Gemini（PATH 中的 `gemini`）
-- [Pi](https://pi.dev/)（PATH 中的 `pi`）
-- [Cursor Agent](https://cursor.com/)（PATH 中的 `cursor-agent`）
-- Kimi（PATH 中的 `kimi`）
-- Kiro CLI（PATH 中的 `kiro-cli`）
+You also need at least one AI agent CLI installed:
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
+- [Codex](https://github.com/openai/codex) (`codex` on PATH)
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot) (`copilot` on PATH)
+- [OpenClaw](https://github.com/openclaw/openclaw) (`openclaw` on PATH)
+- [OpenCode](https://github.com/anomalyco/opencode) (`opencode` on PATH)
+- [Hermes](https://github.com/NousResearch/hermes) (`hermes` on PATH)
+- Gemini (`gemini` on PATH)
+- [Pi](https://pi.dev/) (`pi` on PATH)
+- [Cursor Agent](https://cursor.com/) (`cursor-agent` on PATH)
+- Kimi (`kimi` on PATH)
+- Kiro CLI (`kiro-cli` on PATH)
 
-#### b) 一键配置
+### b) One-command setup
 
 ```bash
 multica setup self-host
 ```
 
-自动：
-1. 配置 CLI 连接 `localhost`（端口 8080/3000）
-2. 打开浏览器认证
-3. 发现你的工作区
-4. 后台启动守护进程
+This automatically:
+1. Configures the CLI to connect to `localhost` (ports 8080/3000)
+2. Opens your browser for authentication
+3. Discovers your workspaces
+4. Starts the daemon in the background
 
-自定义域名部署：
+For on-premise deployments with custom domains:
 
 ```bash
 multica setup self-host --server-url https://api.example.com --app-url https://app.example.com
 ```
 
-验证守护进程在跑：
+To verify the daemon is running:
 
 ```bash
 multica daemon status
 ```
 
-> **备选：** 偏好手动步骤见下方 [手动 CLI 配置](#手动-cli-配置)。
+> **Alternative:** If you prefer manual steps, see [Manual CLI Configuration](#manual-cli-configuration) below.
 
-### 步骤 4 — 验证并开始使用
+### Step 4 — Verify & Start Using
 
-1. 在 web 应用 http://localhost:3000 打开你的工作区
-2. 进入 **设置 → 运行时**——应看到你的机器已列出
-3. 进入 **设置 → 智能体**，新建一个智能体
-4. 创建 issue 并分配给你的智能体——它会自动接手任务
+1. Open your workspace in the web app at http://localhost:3000
+2. Navigate to **Settings → Runtimes** — you should see your machine listed
+3. Go to **Settings → Agents** and create a new agent
+4. Create an issue and assign it to your agent — it will pick up the task automatically
 
 ---
 
-## Kubernetes 部署（备选）
+## Kubernetes Deployment (Alternative)
 
-若已有 Kubernetes 集群，可改用发布的 OCI Helm chart（`oci://ghcr.io/multica-ai/charts/multica`）或源码 chart（[`deploy/helm/multica/`](deploy/helm/multica/)）部署 Multica。目标是一个典型的 k3s / k8s 环境，带 Ingress controller 和默认 `ReadWriteOnce` StorageClass——按 k3s + Traefik + `local-path` 编写，其他集群小调即可。
+If you already run a Kubernetes cluster, you can deploy Multica there instead of Docker Compose using the released OCI Helm chart at `oci://ghcr.io/multica-ai/charts/multica` or the source chart at [`deploy/helm/multica/`](deploy/helm/multica/). It targets a typical k3s / k8s setup with an Ingress controller and a default `ReadWriteOnce` StorageClass — authored against k3s + Traefik + `local-path`, and should work on any cluster with minor tweaks.
 
-chart 在目标 namespace 创建：
+The chart creates the following resources in the target namespace:
 
-- `multica-postgres` — `pgvector/pgvector:pg17`，背后是 10Gi PVC
-- `multica-backend` — Go API/WS server。默认背后是 5Gi `ReadWriteOnce` uploads PVC；配置了 S3（`backend.config.s3Bucket`）且不想要该 PVC 时设 `backend.uploads.persistence.enabled=false`
+- `multica-postgres` — `pgvector/pgvector:pg17` backed by a 10Gi PVC
+- `multica-backend` — Go API/WS server. Backed by a 5Gi `ReadWriteOnce` uploads PVC by default; set `backend.uploads.persistence.enabled=false` when you have configured S3 (`backend.config.s3Bucket`) and don't want the chart to declare the PVC at all.
 - `multica-frontend` — Next.js standalone server
 - Two `Ingress` resources: the web host routes `/api`, `/ws`, `/auth`, and
   `/uploads` directly to the release's backend Service and all other paths to
   the frontend; the backend host routes directly to the same backend Service
 - `multica-config` ConfigMap (rendered from `values.yaml`)
 
-`multica-secrets` Secret **不由 chart 管理**——用 `kubectl` 创建一次，真实值不必进 git。
+The `multica-secrets` Secret is **not** managed by the chart — you create it once with `kubectl` so real values never need to land in git.
 
 > **Prerequisites:** `kubectl` and Helm 3.13+ (or Helm 4) configured for the target cluster, an Ingress controller (Traefik / NGINX), and a default StorageClass.
 
-### 步骤 1 — 把主机名指向集群
+### Step 1 — Point hostnames at the cluster
 
-chart 默认 `multica.dev.lan`（web）与 `api.multica.dev.lan`（backend）。选其一：
+The chart defaults to `multica.dev.lan` (web) and `api.multica.dev.lan` (backend). Pick one of:
 
-- **`/etc/hosts`**（每台需访问的机器：开发者笔记本 + 跑守护进程的机器）：
+- **`/etc/hosts`** on every machine that needs access (developer laptops + the machine running the daemon):
 
   ```text
   192.168.1.206  multica.dev.lan api.multica.dev.lan
   ```
 
-  把 `192.168.1.206` 换成你的 Ingress controller Service 可达的任一节点 IP。
+  Replace `192.168.1.206` with any node IP where your Ingress controller's Service is reachable.
 
-- **本地 DNS**（Pi-hole、Unbound 等）：为两个主机名加 A 记录指向集群 Ingress IP。
+- **Local DNS** (Pi-hole, Unbound, etc.): add A records for both hostnames pointing at the cluster Ingress IP.
 
-要用不同主机名，安装时覆盖对应 value（见 [步骤 4](#step-4--安装-chart)）——`ingress.frontend.host`、`ingress.backend.host`，加上 `backend.config.appUrl`、`backend.config.frontendOrigin`、`backend.config.localUploadBaseUrl`。
+To use different hostnames, override the matching values at install time (see [Step 4](#step-4--install-the-chart)) — `ingress.frontend.host`, `ingress.backend.host`, plus `backend.config.appUrl`, `backend.config.frontendOrigin`, and `backend.config.localUploadBaseUrl`.
 
-### 步骤 2 — 创建 namespace
+### Step 2 — Create the namespace
 
 ```bash
 kubectl create namespace multica
 ```
 
-### 步骤 3 — 创建 `multica-secrets` Secret
+### Step 3 — Create the `multica-secrets` Secret
 
-chart 按名引用该 Secret。创建一次，值随机：
+The chart references this Secret by name. Create it once with random values:
 
 ```bash
 kubectl -n multica create secret generic multica-secrets \
@@ -179,9 +182,9 @@ kubectl -n multica create secret generic multica-secrets \
   --from-literal=CLOUDFRONT_PRIVATE_KEY=""
 ```
 
-可选值现在留空——后续再填（见 [步骤 5 — 登录](#step-5--登录)）。
+Leave optional values empty for now — you can fill them in later (see [Step 5 — Log In](#step-5--log-in)).
 
-### 步骤 4 — 安装 chart
+### Step 4 — Install the chart
 
 ```bash
 helm install multica oci://ghcr.io/multica-ai/charts/multica \
@@ -189,50 +192,50 @@ helm install multica oci://ghcr.io/multica-ai/charts/multica \
   -n multica
 ```
 
-发布的 chart 版本去掉 Git tag 的前导 `v`。例如 release tag `v0.3.5` 发布 chart 版本 `0.3.5`；chart 默认后端与前端镜像 tag 为 `v0.3.5`。
+Released chart versions strip the leading `v` from the Git tag. For example, release tag `v0.3.5` publishes chart version `0.3.5`; the chart defaults the backend and frontend image tags to `v0.3.5`.
 
-覆盖默认值：导出 chart values、编辑、用 `-f` 传：
+To override defaults, export the chart values, edit them, and pass them with `-f`:
 
 ```bash
 helm show values oci://ghcr.io/multica-ai/charts/multica \
   --version <chart-version> > my-values.yaml
-# 编辑 my-values.yaml——如改 ingress host、镜像 tag、资源限制
+# edit my-values.yaml — e.g. change ingress hosts, image tags, resource limits
 helm install multica oci://ghcr.io/multica-ai/charts/multica \
   --version <chart-version> \
   -n multica \
   -f my-values.yaml
 ```
 
-从 checkout 开发时，用本地 chart 路径：
+When developing from a checkout, use the local chart path instead:
 
 ```bash
 helm install multica deploy/helm/multica -n multica
 ```
 
-观察 pod 起来：
+Watch the pods come up:
 
 ```bash
 kubectl -n multica get pods -w
 ```
 
-冷集群上后端可能 `Running` 但不 `Ready` 持续几分钟，等待 PostgreSQL 并初始化 schema——startupProbe 吸收这段时间，pod 不会重启。后端 `Ready` 后，`/healthz` 返回 OK：
+On a cold cluster the backend can sit `Running` but not `Ready` for a few minutes while it waits on PostgreSQL and runs migrations — a startupProbe absorbs this, so the pod should not restart. Once the backend reports `Ready`, migrations have completed and `/healthz` returns OK:
 
 ```bash
 curl -H "Host: api.multica.dev.lan" http://<ingress-ip>/healthz
-# {"status":"ok","checks":{"db":"ok","schema":"ok"}}
+# {"status":"ok","checks":{"db":"ok","migrations":"ok"}}
 ```
 
-然后浏览器打开 http://multica.dev.lan。
+Then open http://multica.dev.lan in your browser.
 
-### 步骤 5 — 登录
+### Step 5 — Log In
 
-chart 默认 `APP_ENV=production`（在 `values.yaml` 的 `backend.config.appEnv`）。打开前端用账号名与密码登录。
+The chart defaults to `APP_ENV=production` (set in `values.yaml` under `backend.config.appEnv`). Open the frontend and log in with an account name and password.
 
-`ALLOW_SIGNUP`、`ALLOWED_ACCOUNTS`、`DISABLE_WORKSPACE_CREATION` 在 `values.yaml` 的 `backend.config.*` 下（`allowSignup`、`allowedAccounts`、`disableWorkspaceCreation`）。`helm upgrade` 后 ConfigMap hash 变化，后端 pod 自动滚动；web UI 在运行时从 `/api/config` 读 signup/工作区创建 flag，无需 web 重建。
+`ALLOW_SIGNUP`, `ALLOWED_ACCOUNTS`, and `DISABLE_WORKSPACE_CREATION` live under `backend.config.*` in `values.yaml` (as `allowSignup`, `allowedAccounts`, and `disableWorkspaceCreation`). After `helm upgrade`, the backend pod rolls automatically because the ConfigMap hash changes; the web UI reads signup/workspace creation flags from `/api/config` at runtime, so no web rebuild is needed.
 
-### 步骤 6 — 装 CLI 并启动守护进程
+### Step 6 — Install CLI & Start Daemon
 
-守护进程跑在你本地机器上，不在集群里。按上方 [步骤 3](#step-3--装-cli-并启动守护进程) 装 CLI 与一个 AI 智能体，然后把 CLI 指向你的 Ingress 主机名：
+The daemon runs on your local machine, not in the cluster. Install the CLI and an AI agent as in [Step 3](#step-3--install-cli--start-daemon) above, then point the CLI at your Ingress hostnames:
 
 ```bash
 multica setup self-host \
@@ -240,17 +243,17 @@ multica setup self-host \
   --app-url http://multica.dev.lan
 ```
 
-确保跑守护进程的机器有 [步骤 1](#step-1--把主机名指向集群) 中相同的 `/etc/hosts`（或 DNS）条目。
+Make sure the machine running the daemon has the same `/etc/hosts` (or DNS) entries from [Step 1](#step-1--point-hostnames-at-the-cluster).
 
-### 更新
+### Updating
 
-values 仍用可变的 `latest` 镜像 tag 时，不换 chart 版本拉最新镜像：
+To pull the latest images without changing the chart version when your values still use the mutable `latest` image tag:
 
 ```bash
 kubectl -n multica rollout restart deploy/multica-backend deploy/multica-frontend
 ```
 
-升级到特定 Multica release 时升级到对应 chart 版本。发布的 chart 默认 app 镜像为对应 Git tag：
+To upgrade to a specific Multica release, upgrade to the matching chart version. The released chart defaults its app images to the matching Git tag:
 
 ```bash
 helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
@@ -259,7 +262,7 @@ helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
   -f my-values.yaml
 ```
 
-需要独立于 chart 版本覆盖 app 镜像时，在 values 文件设镜像 tag：
+If you need to override the app images independently from the chart version, set the image tags in your values file:
 
 ```yaml
 images:
@@ -269,7 +272,7 @@ images:
     tag: v0.2.4
 ```
 
-然后用同一升级命令带 `-f my-values.yaml`：
+Then run the same upgrade command with `-f my-values.yaml`:
 
 ```bash
 helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
@@ -278,7 +281,7 @@ helm upgrade multica oci://ghcr.io/multica-ai/charts/multica \
   -f my-values.yaml
 ```
 
-仅在新旧版本使用相同 schema 时才能直接回滚：
+To roll back if an upgrade goes sideways:
 
 ```bash
 helm -n multica rollback multica
@@ -287,10 +290,10 @@ helm -n multica rollback multica
 ### Tearing down
 
 ```bash
-# 移除工作负载但保留 PVC 与 Secret
+# Remove the workloads but keep the PVCs and the Secret
 helm -n multica uninstall multica
 
-# 全部清空，含 PostgreSQL 数据与 uploads
+# Wipe everything, including PostgreSQL data and uploads
 kubectl delete namespace multica
 ```
 
@@ -298,11 +301,18 @@ kubectl delete namespace multica
 
 ## Usage Dashboard Rollup
 
-Usage / Runtime dashboard 从派生的 `task_usage_hourly` 表读，由 `rollup_task_usage_hourly()` 填充。MUL-2957 之后后端通过 DB 调度器（`sys_cron_executions`）在**进程内**跑该 rollup，每个副本都跑；全新自部署安装无需运维操作，自带 `pgvector/pgvector:pg17` 镜像即可——**不需要**换带 `pg_cron` 的镜像、注册外部 cron job、设 systemd timer、跑 Kubernetes `CronJob`。
+The Usage / Runtime dashboards read from a derived `task_usage_hourly` table populated by `rollup_task_usage_hourly()`. As of MUL-2957 the backend runs this rollup **in-process** on every replica via a DB-backed scheduler (`sys_cron_executions`); a fresh self-host install needs no operator action and the bundled `pgvector/pgvector:pg17` image works without changes — you do **not** need to swap it for an image that ships `pg_cron`, register an external cron job, set up a systemd timer, or run a Kubernetes `CronJob`.
 
-完整参考（审计表语义与 advisory lock 4246）见 [高级配置 → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup)。
+Multiple backend replicas are safe: each replica ticks every 30 seconds and tries to claim the current 5-minute UTC plan, but the unique key `(job_name, scope_kind, scope_id, plan_time)` means only one wins each plan. Inspect steady-state operation:
 
-## 停止服务
+```sql
+SELECT plan_time, status, attempt, runner_id,
+       error_code, error_msg, started_at, finished_at
+  FROM sys_cron_executions
+ WHERE job_name = 'rollup_task_usage_hourly'
+ ORDER BY plan_time DESC
+ LIMIT 20;
+```
 
 Full scheduler and audit-table details live in [Advanced Configuration → Usage Dashboard Rollup](SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup).
 
@@ -314,29 +324,29 @@ If you installed via the install script:
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --stop
 ```
 
-手动 clone 仓库的：
+If you cloned the repo manually:
 
 ```bash
-# 停止 Docker Compose 服务（后端、前端、数据库）
+# Stop the Docker Compose services (backend, frontend, database)
 make selfhost-stop
 
-# 停止本地守护进程
+# Stop the local daemon
 multica daemon stop
 ```
 
-## 切到 Multica Cloud
+## Switching to Multica Cloud
 
-若你之前自部署、想把 CLI 切到 [Multica Cloud](https://multica.ai)：
+If you've been self-hosting and want to switch your CLI to [Multica Cloud](https://multica.ai):
 
 ```bash
 multica setup
 ```
 
-这会把 CLI 重配为 multica.ai、重新认证、重启守护进程。覆盖既有配置前会提示。
+This reconfigures the CLI for multica.ai, re-authenticates, and restarts the daemon. You will be prompted before overwriting the existing configuration.
 
-> 本地 Docker 服务不受影响。若不再需要请单独停掉。
+> Your local Docker services are unaffected. Stop them separately if you no longer need them.
 
-## 升级
+## Upgrading
 
 ```bash
 docker compose -f docker-compose.selfhost.yml pull
@@ -348,9 +358,9 @@ If the selected GHCR tag has not been published yet, fall back to `make selfhost
 
 ---
 
-## 手动 Docker Compose 配置
+## Manual Docker Compose Setup
 
-偏好手动跑 Docker Compose 而非 `make selfhost`：
+If you prefer running Docker Compose steps manually instead of `make selfhost`:
 
 ```bash
 git clone https://github.com/multica-ai/multica.git
@@ -358,36 +368,36 @@ cd multica
 cp .env.example .env
 ```
 
-编辑 `.env`——至少改 `JWT_SECRET`：
+Edit `.env` — at minimum, change `JWT_SECRET`:
 
 ```bash
 JWT_SECRET=$(openssl rand -hex 32)
 ```
 
-然后启动一切：
+Then start everything:
 
 ```bash
 docker compose -f docker-compose.selfhost.yml pull
 docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-## 手动 CLI 配置
+## Manual CLI Configuration
 
-偏好逐步配置 CLI 而非 `multica setup`：
+If you prefer configuring the CLI step by step instead of `multica setup`:
 
 ```bash
-# 把 CLI 指向本地 server
+# Point CLI to your local server
 multica config set server_url http://localhost:8080
 multica config set app_url http://localhost:3000
 
-# 登录（打开浏览器）
+# Login (opens browser)
 multica login
 
-# 启动守护进程
+# Start the daemon
 multica daemon start
 ```
 
-带 TLS 的生产部署：
+For production deployments with TLS:
 
 ```bash
 multica config set app_url https://app.example.com
@@ -396,6 +406,6 @@ multica login
 multica daemon start
 ```
 
-## 高级配置
+## Advanced Configuration
 
-环境变量、无 Docker 的手动配置、反向代理、数据库配置等见 [高级配置指南](SELF_HOSTING_ADVANCED.md)。
+For environment variables, manual setup (without Docker), reverse proxy configuration, database setup, and more, see the [Advanced Configuration Guide](SELF_HOSTING_ADVANCED.md).

@@ -35,14 +35,15 @@ describe("runtime machine grouping", () => {
         makeRuntime({ id: "rt-claude", provider: "claude", name: "Claude (dev.local)" }),
         makeRuntime({ id: "rt-codex", provider: "codex", name: "Codex (dev.local)" }),
       ],
-      { now: NOW },
+      { now: NOW, localDaemonId: "daemon-1" },
     );
 
     expect(machines).toHaveLength(1);
     expect(machines[0]).toMatchObject({
       id: "local:daemon-1",
       title: "dev.local",
-      section: "remote",
+      section: "local",
+      isCurrent: true,
       onlineCount: 2,
       issueCount: 0,
       providerNames: ["claude", "codex"],
@@ -90,7 +91,7 @@ describe("runtime machine grouping", () => {
           device_info: "dev.local · codex-cli 0.118.0",
         }),
       ],
-      { now: NOW },
+      { now: NOW, localDaemonId: "daemon-1" },
     );
 
     expect(machines).toHaveLength(1);

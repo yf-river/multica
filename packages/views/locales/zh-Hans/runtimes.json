@@ -1,18 +1,38 @@
 {
   "page": {
     "title": "运行时",
+    "tagline": "为智能体跑 CLI 会话的机器和云端执行节点。",
+    "learn_more": "了解更多 →",
     "connect_remote": "添加电脑",
+    "search_placeholder": "搜索运行时...",
+    "scope_mine": "我的",
+    "scope_all": "全部",
+    "live": "实时",
+    "live_tooltip": "实时更新 · 离线检测 75 秒以内",
+    "filter_all": "全部",
+    "filter_all_description": "当前视图下的所有运行时",
     "empty": {
       "title": "还没有运行时",
       "hint": "桌面端会自动扫描这台电脑。想把另一台电脑加进来 —— 服务器、远程开发机，或任何能开终端的电脑 —— 在这里添加。"
+    },
+    "no_matches": {
+      "title": "无匹配",
+      "with_query": "没有运行时匹配 \"{{query}}\"{{filterSuffix}}。",
+      "with_query_filter_suffix": "（在当前筛选下）",
+      "no_query": "当前筛选下没有匹配的运行时。",
+      "try_widening": "试试放宽筛选或清除条件。"
+    },
+    "bootstrapping": {
+      "title": "正在启动本地运行时...",
+      "hint": "通常需要几秒钟。守护进程正在向工作区注册。"
     }
   },
   "machine": {
     "search_placeholder": "搜索机器...",
     "filters": {
+      "all": "全部",
       "online": "在线",
-      "issues": "异常",
-      "all": "全部"
+      "issues": "异常"
     },
     "section_local": "本机",
     "section_remote": "远程",
@@ -26,9 +46,18 @@
     "no_matches_hint": "没有机器匹配当前搜索或筛选。",
     "select_machine": "选择一台机器查看它的运行时。",
     "metrics": {
+      "runtimes": "运行时",
       "runtimes_hint_other": "{{count}} 个在线",
+      "health": "健康度",
+      "health_clear": "无异常",
+      "health_issues_other": "{{count}} 个异常",
+      "workload": "工作负载",
+      "workload_value_idle": "空闲",
       "workload_idle": "全部空闲",
-      "workload_hint": "{{running}} 个运行中 · {{queued}} 个排队中"
+      "workload_hint": "{{running}} 个运行中 · {{queued}} 个排队中",
+      "cli": "CLI",
+      "cloud_worker": "云端执行节点",
+      "local_daemon": "本地守护进程"
     }
   },
   "health": {
@@ -50,10 +79,16 @@
     }
   },
   "detail": {
+    "all_runtimes": "全部运行时",
     "read_only": "只读",
     "delete_button": "删除运行时",
     "last_seen": "最后活跃 {{when}}",
+    "fact_owner": "所有者",
+    "fact_device": "设备",
+    "fact_runtime": "运行时",
     "technical_details": "技术详情",
+    "fact_daemon_cli": "守护进程 CLI",
+    "fact_daemon_id": "守护进程 ID",
     "serving_title": "服务中",
     "serving_count_other": "{{count}} 个智能体",
     "no_agents": "还没有智能体绑定到这个运行时。",
@@ -117,6 +152,8 @@
     "not_found_title": "未找到运行时",
     "not_found_hint": "它可能已被删除，或你没有访问权限。"
   },
+  "running_other": "{{count}} 个运行中",
+  "queued_other": "{{count}} 个排队中",
   "connect": {
     "title": "添加电脑",
     "description": "在要添加的电脑上运行这两条命令。守护进程一上线，这里就会自动识别。",
@@ -140,11 +177,16 @@
     "create_agent": "创建智能体"
   },
   "update": {
+    "cli_version_label": "CLI 版本：",
     "version_unknown": "未知",
+    "managed_by_desktop": "由桌面端管理",
+    "managed_by_desktop_title": "CLI 二进制由 Multica 桌面端管理 —— 升级桌面端即可升级 CLI。",
     "latest": "最新",
     "available": "可用",
     "action": "更新",
     "retry": "重试",
+    "unknown_error": "未知错误",
+    "initiate_failed": "启动更新失败",
     "status": {
       "pending": "等待守护进程...",
       "running": "更新中...",
@@ -166,9 +208,11 @@
     "col_cost": "费用 · 7 天",
     "col_cli": "CLI",
     "cost_delta_flat": "持平",
+    "cli_managed_badge": "桌面端",
     "row_actions_aria": "行操作",
     "delete_action": "删除",
     "delete_permission_hint": "只有运行时所有者和工作区管理员可以删除这个运行时",
+    "delete_admin_hint": "只有运行时所有者和工作区管理员可以删除运行时。",
     "badge_builtin": "内置",
     "badge_custom": "自定义",
     "badge_registering": "注册中",
@@ -212,6 +256,7 @@
       "default_description": "从左侧列表中选择一项查看详情。"
     },
     "form": {
+      "create_title": "新建自定义运行时",
       "edit_title": "编辑自定义运行时",
       "step_family_label": "选择基础协议类型",
       "step_family_hint": "此运行时使用的底层 CLI 协议。",

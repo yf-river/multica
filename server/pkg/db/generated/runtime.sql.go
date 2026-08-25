@@ -618,7 +618,7 @@ type MergeAgentRuntimeMetadataParams struct {
 }
 
 // Merges a top-level runtime metadata patch without overwriting unrelated
-// keys such as registration version or cli_version.
+// keys such as registration version, cli_version, or launched_by.
 func (q *Queries) MergeAgentRuntimeMetadata(ctx context.Context, arg MergeAgentRuntimeMetadataParams) error {
 	_, err := q.db.Exec(ctx, mergeAgentRuntimeMetadata, arg.Metadata, arg.ID)
 	return err

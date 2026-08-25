@@ -125,7 +125,6 @@ func createDispatchedAutopilotIssue(t *testing.T, ctx context.Context, autopilot
 
 	body := map[string]any{
 		"title":                autopilotTitle,
-		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": issueTitle,
@@ -269,7 +268,6 @@ func TestCreateAutopilotRejectsNonMemberSubscriberType(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Bad subscriber type",
-		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{
@@ -294,7 +292,6 @@ func TestCreateAutopilotRejectsForeignSubscriber(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Foreign subscriber",
-		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 		"subscribers": []map[string]any{

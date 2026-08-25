@@ -107,7 +107,7 @@ rejects any non-empty value with a 400.
 
 `model` is a first-class persisted column the daemon reads directly.
 `custom_args` are raw provider CLI args. The CLI help notes that some providers
-(such as codex app-server) reject `--model` inside `custom_args` — but that is
+(codex app-server, openclaw) reject `--model` inside `custom_args` — but that is
 documented CLI guidance, not a server-enforced invariant; nothing in the create
 handler inspects `custom_args` for a model flag.
 

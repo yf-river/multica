@@ -54,7 +54,7 @@ func (i ClientIdentity) primaryWorkspaceID() string {
 	if len(ids) == 0 {
 		return ""
 	}
-	return i.WorkspaceIDs[0]
+	return ids[0]
 }
 
 // AllowsWorkspace reports whether workspaceID is within the authenticated
@@ -394,7 +394,7 @@ func (h *Hub) register(c *client) {
 		}
 		conns[c] = true
 	}
-	workspaceIDs := c.identity.WorkspaceIDs
+	workspaceIDs := c.identity.AuthorizedWorkspaceIDs()
 	for _, workspaceID := range workspaceIDs {
 		conns := h.byWorkspace[workspaceID]
 		if conns == nil {
@@ -433,7 +433,7 @@ func (h *Hub) unregister(c *client) {
 			}
 		}
 	}
-	workspaceIDs := c.identity.WorkspaceIDs
+	workspaceIDs := c.identity.AuthorizedWorkspaceIDs()
 	for _, workspaceID := range workspaceIDs {
 		if conns := h.byWorkspace[workspaceID]; conns != nil {
 			delete(conns, c)

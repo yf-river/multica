@@ -147,7 +147,11 @@ func (s *S3Storage) KeyFromURL(rawURL string) string {
 			return strings.TrimPrefix(rawURL, prefix)
 		}
 	}
-	return ""
+	// Fallback: take everything after the last "/".
+	if i := strings.LastIndex(rawURL, "/"); i >= 0 {
+		return rawURL[i+1:]
+	}
+	return rawURL
 }
 
 // GetReader streams the object body back to the caller. The returned

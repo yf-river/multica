@@ -185,9 +185,6 @@ func (s *chatSessionService) createSessionAndBinding(ctx context.Context, p Ensu
 // open (stale-reclaim race + Mark-window crash): the durable write
 // and the dedup Mark commit (or roll back) atomically.
 func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUserMessageParams) (AppendResult, error) {
-	if !p.ClaimToken.Valid || p.LarkMessageID == "" {
-		return AppendResult{}, errors.New("claim token and lark message id are required")
-	}
 	tx, err := s.txStarter.Begin(ctx)
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("begin tx: %w", err)

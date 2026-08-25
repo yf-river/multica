@@ -41,9 +41,14 @@ type PrepareParams struct {
 	OpenclawBin    string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
-	// via a per-task config file. Cursor consumes it here; other
+	// via a per-task config file. Cursor and OpenClaw consume it here; other
 	// providers wire MCP via ExecOptions.McpConfig in the agent backend.
 	McpConfig json.RawMessage
+	// OpenclawGateway pins the OpenClaw Gateway endpoint inside the per-task
+	// wrapper. Only consulted when Provider == "openclaw" and the agent's
+	// runtime_config selected gateway mode (issue #3260). Zero means "inherit
+	// whatever the user's global openclaw.json already configures".
+	OpenclawGateway OpenclawGatewayPin
 	// LocalWorkDir, when non-empty, redirects the agent's working directory
 	// to a user-supplied absolute path instead of the synthesised envRoot/
 	// workdir. The path is NOT copied or mounted — the agent operates on
@@ -141,6 +146,19 @@ type Environment struct {
 	ManagedWorktree bool
 	// CodexHome is the path to the per-task CODEX_HOME directory (set only for codex provider).
 	CodexHome string
+	// OpenclawConfigPath is the path to the per-task synthesized OpenClaw
+	// config (set only for openclaw provider). The daemon exports this as
+	// OPENCLAW_CONFIG_PATH on the openclaw subprocess so its native skill
+	// scanner pins workspaceDir to WorkDir.
+	OpenclawConfigPath string
+	// OpenclawIncludeRoot is the directory of the user's active OpenClaw
+	// config (set only for openclaw provider with an on-disk user config).
+	// The daemon must prepend it to OPENCLAW_INCLUDE_ROOTS so OpenClaw is
+	// allowed to follow the wrapper's `$include` link out of envRoot into
+	// the user's config — by default OpenClaw confines `$include` to the
+	// directory holding the wrapper file. Empty when no $include is
+	// emitted (fresh install).
+	OpenclawIncludeRoot string
 	// CursorDataDir is the per-task Cursor data directory (set only for
 	// cursor provider when the agent has managed mcp_config). The daemon
 	// exports this as CURSOR_DATA_DIR so project-level MCP approvals are
@@ -251,6 +269,25 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
 		return nil, fmt.Errorf("execenv: write sidecar manifest: %w", err)
+	}
+
+	// For OpenClaw, synthesize a per-task config that pins workspace to
+	// workDir. The skill scanner then reads {workDir}/skills/ (written by
+	// writeContextFiles above). Fail closed on errors: a malformed user
+	// config that the openclaw CLI can't read is a real problem and
+	// silently degrading to a minimal config would mask it by booting
+	// OpenClaw without the agents / providers / API keys it expects.
+	if params.Provider == "openclaw" {
+		result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
+			OpenclawBin: params.OpenclawBin,
+			McpConfig:   params.McpConfig,
+			Gateway:     params.OpenclawGateway,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("execenv: prepare openclaw config: %w", err)
+		}
+		env.OpenclawConfigPath = result.ConfigPath
+		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
 	logger.Info("execenv: prepared env", "root", envRoot, "repos_available", len(params.Task.Repos))

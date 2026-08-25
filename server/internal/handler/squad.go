@@ -506,7 +506,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 }
 
 func userCenterSOPMCPConfig() []byte {
-	return prompteval.MustJSONBytes(map[string]any{
+	return mustJSONBytes(map[string]any{
 		"mcpServers": map[string]any{
 			"mcp-server-tapd": map[string]any{
 				"command": "uvx",

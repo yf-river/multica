@@ -183,8 +183,7 @@ workspace skill identity:
 
 ```json
 {
-  "status": "conflict",
-  "reason": "a skill with this name already exists; use --on-conflict overwrite to replace it or --on-conflict rename to import a copy",
+  "error": "a skill with this name already exists",
   "existing_skill": {
     "id": "<skill-id>",
     "name": "<skill-name>"

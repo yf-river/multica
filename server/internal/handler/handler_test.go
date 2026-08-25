@@ -806,7 +806,6 @@ func createSameTitleAutopilotFixture(t *testing.T, ctx context.Context, issueTit
 	w = httptest.NewRecorder()
 	req = newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                autopilotTitle,
-		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": issueTitle,
@@ -1976,7 +1975,6 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Creator attribution autopilot",
-		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": title,
@@ -2077,7 +2075,6 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Project-linked autopilot",
-		"assignee_type":        "agent",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
 		"issue_title_template": title,
@@ -2151,7 +2148,6 @@ func TestUpdateAutopilotCanSetAndClearProject(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Project update autopilot",
-		"assignee_type":  "agent",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
 	})

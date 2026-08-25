@@ -5,56 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
-
-// repoNameFromURL, sanitizeName, and nonAlphanumeric were dropped from
-// prod (git.go) because nothing outside tests calls them — the live copies
-// used by daemon/repocache live in internal/daemon/repocache/cache.go.
-// They are kept here so the existing TestSanitizeName / TestRepoNameFromURL
-// coverage still pins the historic execenv semantics.
-
-func repoNameFromURL(url string) string {
-	url = strings.TrimRight(url, "/")
-	url = strings.TrimSuffix(url, ".git")
-
-	if i := strings.LastIndex(url, "/"); i >= 0 {
-		url = url[i+1:]
-	}
-	if i := strings.LastIndex(url, ":"); i >= 0 {
-		url = url[i+1:]
-		if j := strings.LastIndex(url, "/"); j >= 0 {
-			url = url[j+1:]
-		}
-	}
-
-	name := strings.TrimSpace(url)
-	if name == "" {
-		return "repo"
-	}
-	return name
-}
-
-var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9]+`)
-
-func sanitizeName(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	s = nonAlphanumeric.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) > 30 {
-		s = s[:30]
-		s = strings.TrimRight(s, "-")
-	}
-	if s == "" {
-		s = "agent"
-	}
-	return s
-}
 
 func testLogger() *slog.Logger {
 	return slog.Default()
@@ -95,7 +51,7 @@ func prepareSeededCodexConfigHome(t *testing.T) preparedCodexConfigHome {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("first prepareCodexHome: %v", err)
 	}
 
@@ -790,12 +746,12 @@ func TestReuseRejectsPartialContextRefresh(t *testing.T) {
 // rollback (removeReusedManagedSkillDirs + CleanupSidecars + writeContextFiles
 // — the exact sequence Reuse runs) directly across the file-based providers,
 // including the stray-agent-file boundary. Driving the sequence rather than
-// full Reuse avoids the per-provider config setup (codex-home
+// full Reuse avoids the per-provider config setup (codex-home, openclaw
 // binary) while still covering each provider's skills-dir layout.
 func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"claude", "copilot", ""} {
+	for _, provider := range []string{"claude", "openclaw", "copilot", ""} {
 		provider := provider
 		name := provider
 		if name == "" {
@@ -1577,7 +1533,7 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 	t.Cleanup(func() { runtimeGOOS = saved })
 
 	for _, host := range []string{"linux", "darwin", "windows"} {
-		for _, provider := range []string{"claude", "opencode", "hermes", "kimi", "kiro", "cursor", "gemini"} {
+		for _, provider := range []string{"claude", "opencode", "openclaw", "hermes", "kimi", "kiro", "cursor", "gemini"} {
 			t.Run(provider+"/"+host, func(t *testing.T) {
 				runtimeGOOS = host
 				dir := t.TempDir()
@@ -1911,7 +1867,7 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2014,7 +1970,7 @@ model = "o3"
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2045,7 +2001,7 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2110,7 +2066,7 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2149,7 +2105,7 @@ env_key = "NEW_API_KEY"
 	seedSharedCodexConfigFiles(t, home.sharedHome, "rotate", newConfig, `{"model":"new-model"}`, "new instructions")
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHomeWithOpts(home.codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
@@ -2214,7 +2170,7 @@ func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T)
 	}
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHomeWithOpts(home.codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
@@ -3873,5 +3829,95 @@ func TestPrepareLocalWorkDir(t *testing.T) {
 	contextPath := filepath.Join(userDir, ".agent_context", "issue_context.md")
 	if _, err := os.Stat(contextPath); err != nil {
 		t.Fatalf("expected context file in user dir: %v", err)
+	}
+}
+
+func TestEnvironmentCleanupPreservesLocalDirectory(t *testing.T) {
+	t.Parallel()
+	workspacesRoot := t.TempDir()
+	userDir := t.TempDir()
+
+	// Drop a sentinel file inside the user's directory so we can verify
+	// Cleanup never removed it.
+	sentinel := filepath.Join(userDir, "user-file.txt")
+	if err := os.WriteFile(sentinel, []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-local",
+		TaskID:         "b1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		AgentName:      "Test Agent",
+		LocalWorkDir:   userDir,
+		Task:           TaskContextForEnv{IssueID: "issue-1"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+
+	// removeAll=true on a local_directory env MUST NOT touch the user's
+	// directory. envRoot (the daemon's logbook) is fair game.
+	if err := env.Cleanup(true); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("user file removed by Cleanup: %v", err)
+	}
+	if _, err := os.Stat(env.RootDir); !os.IsNotExist(err) {
+		t.Fatalf("expected envRoot to be cleaned, got err=%v", err)
+	}
+
+	// removeAll=false should also leave the user's directory alone (the
+	// existing semantics for non-local tasks would have removed WorkDir
+	// — that's exactly what we must NOT do here).
+	env2, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-local-2",
+		TaskID:         "b2b2c3d4-e5f6-7890-abcd-ef1234567890",
+		AgentName:      "Test Agent",
+		LocalWorkDir:   userDir,
+		Task:           TaskContextForEnv{IssueID: "issue-1"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare 2: %v", err)
+	}
+	if err := env2.Cleanup(false); err != nil {
+		t.Fatalf("Cleanup 2: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("partial Cleanup removed user file: %v", err)
+	}
+}
+
+// TestEnvironmentCleanupStandardModeRemovesWorkdir is the negative control:
+// a non-local_directory env preserves its existing semantics so the
+// local_directory branch can't silently regress the regular flow.
+func TestEnvironmentCleanupStandardModeRemovesWorkdir(t *testing.T) {
+	t.Parallel()
+	workspacesRoot := t.TempDir()
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-std",
+		TaskID:         "c1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		AgentName:      "Test Agent",
+		Task:           TaskContextForEnv{IssueID: "issue-1"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if env.LocalDirectory {
+		t.Fatal("expected LocalDirectory to be false for standard env")
+	}
+	if err := env.Cleanup(false); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+	if _, err := os.Stat(env.WorkDir); !os.IsNotExist(err) {
+		t.Fatalf("expected workdir to be removed in standard mode")
+	}
+	// output/logs should remain.
+	if _, err := os.Stat(filepath.Join(env.RootDir, "output")); err != nil {
+		t.Fatalf("output/ removed by partial cleanup: %v", err)
 	}
 }

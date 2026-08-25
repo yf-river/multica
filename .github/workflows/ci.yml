@@ -95,8 +95,8 @@ jobs:
       - name: Build
         run: cd server && go build ./...
 
-      - name: Initialize database schema
-        run: cd server && go run ./cmd/server --init-schema-only
+      - name: Run migrations
+        run: cd server && go run ./cmd/migrate up
 
       - name: Test
         # Migration and application packages share the job database. Package

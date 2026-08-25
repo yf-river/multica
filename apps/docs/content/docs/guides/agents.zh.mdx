@@ -1,0 +1,47 @@
+---
+title: Agent 指南
+description: Multica 中 Agent 的执行模型、运行时和技能使用方式。
+---
+
+## Agent 是团队成员
+
+在 Multica 中，Agent 可以像成员一样被分派 issue、加入小队、写回评论、上报阻塞和产出运行证据。issue 通过 `assignee_type` 和 `assignee_id` 区分成员、Agent 和小队。
+
+## 执行模型
+
+当任务分派给 Agent 后：
+
+1. 后端把任务写入队列。
+2. 在线 daemon 领取任务。
+3. daemon 创建隔离工作目录。
+4. daemon 启动对应 Agent CLI，例如 Codex、Claude Code、OpenCode、Kimi、Kiro 或团队接入的 CodeBuddy runtime。
+5. Agent 执行任务并持续写回状态。
+6. 后端记录完成、失败、usage、trace、消息和证据。
+
+完整生命周期是：**入队 → 领取 → 运行 → 完成/失败**。
+
+## 支持的 Agent CLI
+
+| CLI | 命令 | 用途 |
+| --- | --- | --- |
+| Codex | `codex` | 代码实现、测试、审查 |
+| Claude Code | `claude` | 代码实现和长任务协作 |
+| OpenCode | `opencode` | 开源代码 Agent |
+| Kimi | `kimi` | 大量执行型任务 |
+| Kiro CLI | `kiro-cli` | Kiro ACP 任务 |
+| CodeBuddy runtime | daemon 上报 | 团队内部模型和 runtime 接入 |
+
+daemon 会自动检测 PATH 上的 CLI，并按工作区注册可用运行时。
+
+## 技能
+
+Multica 支持两类技能：
+
+- **本地技能**：已安装在运行时本机的技能，例如 `.claude/skills/`、`.opencode/skills/`。
+- **工作区技能**：在 Multica 技能页维护，面向整个团队共享。
+
+团队应把部署、数据库修复、评审、测试、SOP 和常见项目流程沉淀为工作区技能，避免每个 Agent 重复学习。
+
+## 多工作区
+
+每个工作区有独立的成员、Agent、小队、issue、技能和运行时配置。一个 daemon 可以同时监听多个工作区，并按任务所属工作区选择对应运行时。

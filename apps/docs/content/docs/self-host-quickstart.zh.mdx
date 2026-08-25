@@ -35,9 +35,9 @@ make selfhost
 3. 用 `docker-compose.selfhost.yml` 启动全部服务
 4. 等后端 `/health` 端点准备就绪
 
-如果是启动完成后的生产探针，想让数据库或 schema 异常也体现为失败，请改用 `/readyz`。
+如果是启动完成后的生产探针，想让数据库或 migration 异常也体现为失败，请改用 `/readyz`。
 
-后端启动时会自动初始化空数据库。数据库非空但 schema 与当前版本不一致时，后端会拒绝启动；开发阶段不支持原地升级，需要重建数据库。
+后端容器启动时会**自动跑数据库 migration**（`docker/entrypoint.sh` 在启动 server 前执行 `./migrate up`）——你会在 backend 日志里看到 migration 输出。升级版本时同样自动处理。
 
 <Callout type="info">
 **镜像还没发布？** 如果 `make selfhost` 报拉不到镜像，可能是你在某个未发布的版本标签上。切到稳定版本或直接从源码构建：`make selfhost-build`。
@@ -151,11 +151,11 @@ helm install multica deploy/helm/multica -n multica
 
 默认主机名是 `multica.dev.lan`（web）和 `api.multica.dev.lan`（backend）。把它们加进 `/etc/hosts`（或者本地 DNS），指向任意一个 Ingress 可达的节点 IP 就行。要换主机名，就把 `deploy/helm/multica/values.yaml` 复制一份，改掉 `ingress.frontend.host` / `ingress.backend.host`，再把 `backend.config.appUrl` / `frontendOrigin` / `localUploadBaseUrl` 改成相应的地址，然后 `helm install ... -f my-values.yaml`。
 
-冷集群上 backend 可能会 `Running` 但 `Not Ready` 持续几分钟，等待 Postgres 并初始化 schema——startupProbe 会兜住这一段，pod 不会被 liveness 重启。等它 `Ready` 之后：
+冷集群上 backend 可能会 `Running` 但 `Not Ready` 持续几分钟，等 Postgres 起来并跑完 migration——startupProbe 会兜住这一段，pod 不会被 liveness 重启。等它 `Ready` 之后：
 
 ```bash
 curl -H "Host: api.multica.dev.lan" http://<ingress-ip>/healthz
-# {"status":"ok","checks":{"db":"ok","schema":"ok"}}
+# {"status":"ok","checks":{"db":"ok","migrations":"ok"}}
 ```
 
 然后浏览器打开 `http://multica.dev.lan`，回到上面的 [第 4 步——首次登录](#4-首次登录--创建工作区) 继续。命令行连到你的 Ingress 主机：
@@ -195,3 +195,4 @@ multica setup self-host \
 - [部署验证与运行观测](/production-observability) —— 用页面、API 和日志确认当前部署可用
 - [GitHub 集成](/github-integration) —— 连接 GitHub App，同步 PR 与检查状态，并把 PR 显式关联到 issue
 - [故障排查](/troubleshooting) —— 遇到问题先来这里
+- [桌面应用](/desktop-app) —— 可以通过 `~/.multica/desktop.json` 连接 Desktop；Web 前端 + CLI 仍然是最快的自部署路径

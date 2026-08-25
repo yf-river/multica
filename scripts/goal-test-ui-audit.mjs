@@ -130,6 +130,7 @@ const forbiddenText = [
   "Issues",
   "Sign up",
   "Sign in",
+  "Download desktop",
   "Cloud computer",
   "ACME-123",
   "HTML preview",

@@ -85,7 +85,7 @@ func DecodeLarkFrame(payload []byte, inst db.LarkInstallation) (InboundMessage, 
 	switch evt.Message.MessageType {
 	case "text", "post":
 		msg.Body = resolveMentions(flattenContent(evt.Message.MessageType, evt.Message.Content),
-			evt.Message.Mentions, botUnionID)
+			evt.Message.Mentions, inst.BotOpenID, botUnionID)
 	}
 
 	// Snapshot the user's own text as the command source BEFORE any
@@ -95,7 +95,7 @@ func DecodeLarkFrame(payload []byte, inst db.LarkInstallation) (InboundMessage, 
 	msg.CommandBody = msg.Body
 
 	if msg.ChatType == ChatTypeGroup {
-		msg.AddressedToBot = containsMention(evt.Message.Mentions, botUnionID)
+		msg.AddressedToBot = containsMention(evt.Message.Mentions, inst.BotOpenID, botUnionID)
 	}
 
 	return msg, true, nil
@@ -170,7 +170,7 @@ type larkMention struct {
 //     trailing space already in the output. Tabs, indentation, code
 //     blocks, table pipes, and any other intentional whitespace in
 //     the user's message are preserved verbatim.
-func resolveMentions(text string, mentions []larkMention, botUnionID string) string {
+func resolveMentions(text string, mentions []larkMention, botOpenID, botUnionID string) string {
 	if text == "" || len(mentions) == 0 {
 		return text
 	}
@@ -203,7 +203,7 @@ func resolveMentions(text string, mentions []larkMention, botUnionID string) str
 		}
 		end := i + len(matched.Key)
 		switch {
-		case isBotMention(*matched, botUnionID):
+		case isBotMention(*matched, botOpenID, botUnionID):
 			// Strip: eat one adjacent space (after the placeholder
 			// preferred; else backtrack one space we already emitted)
 			// so the seam is not left with a double space or a

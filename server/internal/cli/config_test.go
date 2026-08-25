@@ -169,6 +169,10 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 	if loaded.Token != original.Token {
 		t.Errorf("Token = %q, want %q", loaded.Token, original.Token)
 	}
+	if loaded.Backends == nil || loaded.Backends.OpenClaw == nil ||
+		loaded.Backends.OpenClaw.StateDir != "/var/lib/openclaw-prod" {
+		t.Errorf("Backends.OpenClaw not preserved: %+v", loaded.Backends)
+	}
 }
 
 func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {

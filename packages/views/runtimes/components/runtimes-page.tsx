@@ -92,7 +92,8 @@ function RuntimesPage({
     null,
   );
   // Tracks whether the user has explicitly picked a machine. Until then,
-  // auto-default keeps preferring the Local section.
+  // auto-default keeps preferring the Local section (which on desktop may
+  // appear later than remotes — `localDaemonId` is fetched async).
   const userSelectedRef = useRef(false);
   const handleSelectMachine = useCallback((id: string) => {
     userSelectedRef.current = true;
@@ -148,9 +149,18 @@ function RuntimesPage({
         pendingProfiles,
         runtimes,
         ownerId: currentUserId,
+        localDaemonId,
+        localMachineName,
         fallbackMachineName: pendingMachineName,
       }),
-    [pendingProfiles, runtimes, currentUserId, pendingMachineName],
+    [
+      pendingProfiles,
+      runtimes,
+      currentUserId,
+      localDaemonId,
+      localMachineName,
+      pendingMachineName,
+    ],
   );
 
   const workloadIndex = useMemo(
@@ -162,9 +172,21 @@ function RuntimesPage({
     () =>
       buildRuntimeMachines(visibleRuntimes, {
         now,
+        localDaemonId,
+        localMachineName,
+        currentUserId,
         workloadByRuntimeId: workloadIndex,
+        ensureLocalMachine: hasLocalMachine,
       }),
-    [visibleRuntimes, now, workloadIndex],
+    [
+      visibleRuntimes,
+      now,
+      localDaemonId,
+      localMachineName,
+      currentUserId,
+      workloadIndex,
+      hasLocalMachine,
+    ],
   );
 
   const machineCounts = useMemo(() => runtimeMachineCounts(machines), [machines]);
@@ -199,7 +221,9 @@ function RuntimesPage({
   if (isLoading || fetching) return <RuntimesPageSkeleton />;
 
   const totalCount = visibleRuntimes.length;
-  const showEmpty = totalCount === 0;
+  // Desktop always has a synthesized local machine row, so the
+  // "register a runtime" empty state would hide the Start button.
+  const showEmpty = totalCount === 0 && !bootstrapping && !hasLocalMachine;
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -218,6 +242,7 @@ function RuntimesPage({
         <div className="flex min-h-0 flex-1 flex-col bg-background">
           <MachineSidebar
             machines={filteredMachines}
+            totalMachines={machines.length}
             counts={machineCounts}
             selectedMachineId={selectedMachine?.id ?? null}
             search={machineSearch}
@@ -229,6 +254,10 @@ function RuntimesPage({
           <MachineDetail
             machine={selectedMachine}
             now={now}
+            bootstrapping={bootstrapping}
+            actions={
+              selectedMachine?.isCurrent ? localMachineActions : undefined
+            }
           />
         </div>
       ) : (
@@ -248,6 +277,7 @@ function RuntimesPage({
             >
               <MachineSidebar
                 machines={filteredMachines}
+                totalMachines={machines.length}
                 counts={machineCounts}
                 selectedMachineId={selectedMachine?.id ?? null}
                 search={machineSearch}
@@ -263,6 +293,10 @@ function RuntimesPage({
               <MachineDetail
                 machine={selectedMachine}
                 now={now}
+                bootstrapping={bootstrapping}
+                actions={
+                  selectedMachine?.isCurrent ? localMachineActions : undefined
+                }
               />
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -356,6 +390,7 @@ function PageHeaderBar({
 
 function MachineSidebar({
   machines,
+  totalMachines,
   counts,
   selectedMachineId,
   search,
@@ -366,6 +401,7 @@ function MachineSidebar({
   className,
 }: {
   machines: RuntimeMachine[];
+  totalMachines: number;
   counts: { all: number; online: number; issues: number };
   selectedMachineId: string | null;
   search: string;
@@ -452,7 +488,9 @@ function MachineSidebar({
               {t(($) => $.machine.no_matches_title)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {t(($) => $.machine.no_matches_hint)}
+              {totalMachines > 0
+                ? t(($) => $.machine.no_matches_hint)
+                : t(($) => $.page.bootstrapping.hint)}
             </p>
           </div>
         )}
@@ -592,9 +630,13 @@ function ProviderIconStack({ providers }: { providers: string[] }) {
 function MachineDetail({
   machine,
   now,
+  bootstrapping,
+  actions,
 }: {
   machine: RuntimeMachine | null;
   now: number;
+  bootstrapping?: boolean;
+  actions?: React.ReactNode;
 }) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
@@ -602,10 +644,24 @@ function MachineDetail({
   if (!machine) {
     return (
       <main className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
-        <Monitor className="h-8 w-8 text-muted-foreground/40" />
-        <p className="mt-3 text-sm text-muted-foreground">
-          {t(($) => $.machine.select_machine)}
-        </p>
+        {bootstrapping ? (
+          <>
+            <Server className="h-8 w-8 animate-pulse text-muted-foreground/40" />
+            <p className="mt-3 text-sm text-muted-foreground">
+              {t(($) => $.page.bootstrapping.title)}
+            </p>
+            <p className="mt-1 max-w-xs text-xs text-muted-foreground/70">
+              {t(($) => $.page.bootstrapping.hint)}
+            </p>
+          </>
+        ) : (
+          <>
+            <Monitor className="h-8 w-8 text-muted-foreground/40" />
+            <p className="mt-3 text-sm text-muted-foreground">
+              {t(($) => $.machine.select_machine)}
+            </p>
+          </>
+        )}
       </main>
     );
   }
@@ -679,6 +735,7 @@ function MachineDetail({
               ))}
             </div>
           </div>
+          {actions && <div className="shrink-0">{actions}</div>}
         </div>
       </div>
 

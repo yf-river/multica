@@ -1297,6 +1297,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               </div>
             </div>
 
+            <LocalDirectoryHint projectId={issue?.project_id} />
+
             {/* The "agent is working" live signal now lives in the header
                 (IssueAgentHeaderChip) so it stays in one fixed place and
                 doesn't compete with sticky banners in this content column.

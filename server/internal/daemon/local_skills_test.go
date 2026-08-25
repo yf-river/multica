@@ -269,6 +269,29 @@ func TestLoadRuntimeLocalSkillBundle_OpenCode(t *testing.T) {
 	}
 }
 
+func TestListRuntimeLocalSkills_OpenClaw(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeTestLocalSkill(t, filepath.Join(home, ".openclaw", "skills"), "planner", map[string]string{
+		"SKILL.md": "# Planner\n",
+	})
+
+	skills, supported, err := listRuntimeLocalSkills("openclaw")
+	if err != nil {
+		t.Fatalf("listRuntimeLocalSkills: %v", err)
+	}
+	if !supported {
+		t.Fatal("openclaw should be supported")
+	}
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].SourcePath != "~/.openclaw/skills/planner" {
+		t.Fatalf("source_path = %q", skills[0].SourcePath)
+	}
+}
+
 func TestLoadRuntimeLocalSkillBundle_Cursor(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

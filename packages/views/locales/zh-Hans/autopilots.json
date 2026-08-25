@@ -15,6 +15,7 @@
       "next_run": "下次运行",
       "created": "创建时间"
     },
+    "last_run_empty": "--",
     "empty": {
       "title": "还没有自动化",
       "hint": "为你的智能体安排周期性任务。从模板选一个，或从空白开始。"
@@ -246,15 +247,19 @@
     "toast_update_partial": "自动化已更新，但时间表保存失败",
     "toast_update_partial_with_reason": "自动化已更新，但时间表保存失败：{{reason}}",
     "toast_update_failed": "更新自动化失败",
+    "section_agent": "智能体",
     "section_assignee": "执行方",
+    "select_agent": "选择智能体",
     "select_assignee": "选择智能体或小队",
     "section_project": "关联项目",
     "no_project": "不关联项目",
     "section_output_mode": "输出模式",
     "section_subscribers": "订阅者",
     "subscribers_hint": "每次跑出来的 任务默认订阅",
+    "subscribers_empty": "暂无订阅者——添加成员后，每次触发都会通知到他",
     "subscribers_add": "添加订阅者",
     "subscribers_search_placeholder": "按名称搜索成员……",
+    "subscribers_no_results": "没有匹配的成员",
     "subscribers_remove_tooltip": "移除",
     "section_schedule": "时间表",
     "section_trigger_kind": "触发方式",
@@ -309,6 +314,15 @@
       "weekly": "按天",
       "custom": "自定义"
     },
+    "days_short": {
+      "sun": "日",
+      "mon": "一",
+      "tue": "二",
+      "wed": "三",
+      "thu": "四",
+      "fri": "五",
+      "sat": "六"
+    },
     "cron_label": "Cron 表达式",
     "cron_hint": "标准 5 字段 cron（分 时 日 月 星期）",
     "minute_label": "分钟",
@@ -335,19 +349,11 @@
       "hours_minutes": "{{hours}} 小时 {{minutes}} 分",
       "minutes": "{{minutes}} 分",
       "less_than_minute": "不到 1 分"
-    },
-    "days_short": {
-      "sun": "日",
-      "mon": "一",
-      "tue": "二",
-      "wed": "三",
-      "thu": "四",
-      "fri": "五",
-      "sat": "六"
     }
   },
   "agent_picker": {
     "filter_placeholder": "筛选智能体或小队...",
+    "select_agent": "选择智能体",
     "select_assignee": "选择智能体或小队",
     "agents_group": "智能体",
     "squads_group": "小队"

@@ -299,10 +299,6 @@ func gitCloneBare(url, dest string) error {
 		}
 		return fmt.Errorf("configure fetch refspec: %w", err)
 	}
-	if err := gitFetch(dest); err != nil {
-		os.RemoveAll(dest)
-		return fmt.Errorf("populate remote-tracking refs: %w", err)
-	}
 	return nil
 }
 

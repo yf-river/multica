@@ -120,7 +120,7 @@ RETURNING *;
 
 -- name: MergeAgentRuntimeMetadata :exec
 -- Merges a top-level runtime metadata patch without overwriting unrelated
--- keys such as registration version or cli_version.
+-- keys such as registration version, cli_version, or launched_by.
 UPDATE agent_runtime
 SET metadata = COALESCE(metadata, '{}'::jsonb) || @metadata::jsonb,
     updated_at = now()

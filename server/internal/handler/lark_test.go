@@ -158,7 +158,7 @@ WHERE installation_id = $1 AND lark_open_id = 'binding-expired-user'
 
 func TestBeginLarkInstall_NotConfigured(t *testing.T) {
 	// When the device-flow registration service is nil (no at-rest
-	// key or no real API client), the begin
+	// key, or the stub APIClient is the only one wired), the begin
 	// endpoint must short-circuit to 503 — silently returning a
 	// "configured: false" envelope would hide a real misconfiguration
 	// from the operator. The UI hides the bind button in that case

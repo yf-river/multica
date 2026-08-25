@@ -191,6 +191,41 @@ func (q *Queries) FailPromptEvaluationCaseOperation(ctx context.Context, arg Fai
 	return i, err
 }
 
+const getPromptEvaluationCaseOperationInWorkspace = `-- name: GetPromptEvaluationCaseOperationInWorkspace :one
+SELECT id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at FROM prompt_evaluation_case_operation
+WHERE id = $1
+  AND workspace_id = $2
+`
+
+type GetPromptEvaluationCaseOperationInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetPromptEvaluationCaseOperationInWorkspace(ctx context.Context, arg GetPromptEvaluationCaseOperationInWorkspaceParams) (PromptEvaluationCaseOperation, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationCaseOperationInWorkspace, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationCaseOperation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.OperationType,
+		&i.Filter,
+		&i.Input,
+		&i.ChangedCount,
+		&i.SkippedCount,
+		&i.SampleCaseIds,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listPromptEvaluationCaseOperations = `-- name: ListPromptEvaluationCaseOperations :many
 SELECT id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at FROM prompt_evaluation_case_operation
 WHERE workspace_id = $1

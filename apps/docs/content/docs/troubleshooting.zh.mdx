@@ -25,7 +25,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 multica daemon logs --lines 100    # 看 daemon 侧错误
 echo $MULTICA_SERVER_URL          # 确认地址配对
 curl -i http://<server-host>:8080/health   # 直接戳 server
-curl -i http://<server-host>:8080/readyz  # 连同 DB + schema readiness 一起检查
+curl -i http://<server-host>:8080/readyz  # 连同 DB + migration readiness 一起检查
 cat ~/.multica/config.json        # 看 api_token 是否存在
 multica workspace list            # 确认你是目标工作区成员
 ```

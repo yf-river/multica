@@ -12,3 +12,4 @@ export * from "./constants";
 export * from "./create";
 export { useWorkspaceAgentAvailability } from "./use-workspace-agent-availability";
 export * from "./mcp-support";
+export * from "./openclaw-runtime-config";

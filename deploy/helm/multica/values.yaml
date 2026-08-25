@@ -53,10 +53,13 @@ postgres:
 # Backend (Go API + WS server)
 # -----------------------------------------------------------------------------
 backend:
-  # Concurrent backend pods safely initialize an empty database under a
-  # PostgreSQL transaction-level advisory lock. 1 remains the recommended
-  # default because the chart uses strategy: Recreate and background work is
-  # not leader-elected.
+  # Concurrent backend pods are now safe to start: cmd/migrate uses a
+  # Postgres session-level advisory lock to serialize the startup
+  # `migrate up` run, so late-arriving pods queue and then no-op (see
+  # GitHub multica-ai/multica#3647). 1 is still the recommended default
+  # because the chart Deployment uses strategy: Recreate and there is no
+  # leader-elected workload split — increase this only if you actually
+  # need horizontal scale of the API/WS server.
   replicas: 1
   uploads:
     persistence:
@@ -70,7 +73,8 @@ backend:
       # ReadWriteOnce, which prevents `backend.replicas > 1` from scheduling a
       # second pod (Multi-Attach error); disabling persistence — or switching
       # accessModes to a ReadWriteMany class — removes that constraint on the
-      # storage side.
+      # storage side. Note: backend startup migrations are not yet serialized
+      # across pods, so multi-replica still requires care beyond the chart.
       enabled: true
       size: 5Gi
       # Leave empty to use the cluster's default StorageClass.

@@ -78,7 +78,6 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	publicAgentID := createHandlerTestAgent(t, "ap-personal-leader-public", nil)
 	ap := createAutopilotFixture(t, map[string]any{
 		"title":          "update target ap",
-		"assignee_type":  "agent",
 		"assignee_id":    publicAgentID,
 		"execution_mode": "create_issue",
 	})

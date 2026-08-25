@@ -9,12 +9,14 @@ import {
 } from "@multica/core/platform";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
+import { isDesktopShell } from "../../platform";
 import { useT } from "../../i18n";
 
 /**
  * Web-only control for the browser permission that native notification banners
- * require. Renders nothing when the Notification API is unavailable (SSR,
- * older browsers).
+ * require. Desktop delivers banners through the OS via Electron (no browser
+ * permission involved), so this renders nothing there. It also renders nothing
+ * when the Notification API is unavailable (SSR, older browsers).
  *
  * Capability and permission are read from `window`, so the first paint defers
  * to a post-mount effect to keep SSR and client markup identical (no hydration
@@ -31,8 +33,8 @@ export function BrowserNotificationSetting() {
     setPermission(getWebNotificationPermission());
   }, []);
 
-  // Pre-mount or where the API is missing → nothing to manage.
-  if (!mounted || !isWebNotificationSupported()) return null;
+  // Pre-mount, on desktop, or where the API is missing → nothing to manage.
+  if (!mounted || isDesktopShell() || !isWebNotificationSupported()) return null;
 
   const handleEnable = async () => {
     setPermission(await requestWebNotificationPermission());

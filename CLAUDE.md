@@ -1,54 +1,47 @@
 # CLAUDE.md
 
-本文件为在本仓库中工作的 AI 智能体（Claude Code、Codex 等）提供工程规范。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 语言约定（重要）
+## Conventions reference
 
-- 根目录 Markdown 文档与面向用户的运维配置注释统一使用**中文**。
-- **Go / TypeScript 源代码注释仍使用英文**，保持与现有代码库一致。
-- Makefile 章节/目标说明、`make help` 输出、错误与进度信息使用中文；命令、参数与必须精确匹配的输出保持原样。
-- JSON / YAML 键名、环境变量名、镜像名、服务名、文件名、正则表达式、命令参数、锁文件数据**不修改**。
+The single source of truth for **code naming, the i18n translation glossary, and the Chinese voice guide** is the docs site:
 
-## 命名与文案规范
+- **`apps/docs/content/docs/developers/conventions.mdx`** (English)
+- **`apps/docs/content/docs/developers/conventions.zh.mdx`** (Chinese)
 
-**代码命名、i18n 翻译词汇表、中文文案风格**的唯一权威来源是文档站点：
+Read that page before:
 
-- **`apps/docs/content/docs/developers/conventions.mdx`**（英文）
-- **`apps/docs/content/docs/developers/conventions.zh.mdx`**（中文）
+- Writing or editing translations (`packages/views/locales/`)
+- Naming a new route, package, file, DB column, or TS type
+- Writing Chinese product copy (UI strings, error messages, docs)
 
 Visual implementation rules live in **`docs/design.md`**. Read them before
 changing colors, typography, spacing, interaction states, icons, or motion.
 
-- 编写或修改翻译（`packages/views/locales/`）
-- 命名新的路由、包、文件、数据库列或 TS 类型
-- 编写中文产品文案（UI 文案、错误信息、文档）
+## Project Context
 
-旧版 `packages/views/locales/glossary.md` 现仅是跳转到上述文档的桩文件，不要依赖它。
+Multica is an AI-native task management platform — like Linear, but with AI agents as first-class citizens.
 
-## 项目上下文
+- Agents can be assigned issues, create issues, comment, and change status
+- Supports local daemon and fixed-machine agent runtimes
+- Built for 2-10 person AI-native teams
 
-Multica 是一个 AI 原生任务管理平台——类似 Linear，但 AI 智能体是一等公民。
+## Goal Execution Profile
 
-- 智能体可以被分配 issue、创建 issue、发表评论、修改状态
-- 支持本地守护进程与固定机器的智能体运行时
-- 面向 2-10 人的 AI 原生团队
+Use this profile when generating or running long Codex goals for this repository.
 
-## Goal 执行档案
+- Main repository: `/data/ida/goal-test`
+- Decision ledger: `/data/ida/docs/tapd/20260605-ai设计/全流程sop设计-v4`
+- Integration environment: `http://9.134.129.162:13682`
+- Integration login page: `http://9.134.129.162:13682/login`
+- Default acceptance account: `develop`
+- Default acceptance password for local E2E scripts: `develop123`; prefer the relevant environment variable when one is set.
+- Default scope: validate the integration environment first. Touch production only when the user explicitly requests it.
+- AI Studio environment files: `.run/env/goal-test-int.env`, `.run/env/goal-test-prod.env`
+- AI Studio logs: `.run/int-server.log`, `.run/int-web.log`, `.run/int-daemon.log`, `.run/prod-server.log`, `.run/prod-web.log`, `.run/prod-daemon.log`
+- Evidence directories: `artifacts/acceptance/` and `artifacts/acceptance/ui-audit-screenshots/`
 
-生成长 Codex goal 或在本仓库运行 goal 时使用以下档案。
-
-- 主仓库：`/data/ida/multica`
-- 决策账本：`/data/ida/docs/tapd/20260605-ai设计/全流程sop设计-v4`
-- 联调环境：`http://9.134.129.162:13682`
-- 联调登录页：`http://9.134.129.162:13682/login`
-- 默认验收账号：`develop`
-- 本地 E2E 脚本默认验收密码：`develop123`；若设置了对应环境变量，优先使用环境变量。
-- 默认范围：先验证联调环境。仅在用户明确要求时才触碰生产环境。
-- AI Studio 环境文件：`.run/env/goal-test-int.env`、`.run/env/goal-test-prod.env`
-- AI Studio 日志：`.run/int-server.log`、`.run/int-web.log`、`.run/int-daemon.log`、`.run/prod-server.log`、`.run/prod-web.log`、`.run/prod-daemon.log`
-- 证据目录：`artifacts/acceptance/` 与 `artifacts/acceptance/ui-audit-screenshots/`
-
-常用 goal-test 命令：
+Useful goal-test commands:
 
 ```bash
 make goal-test-verify-env
@@ -67,47 +60,54 @@ GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=precommit
 RUN_PRODUCTION_ACCEPTANCE=1 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
 ```
 
-复杂 goal-test 交付时，主控模型按团队当前在用配置选择高能力模型；生成本地 goal 提示词或只读探索可使用更低成本模型。本地运行时优先使用 Codex，除非用户明确选择其他运行时。
+For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.
 
-AI Studio 验收必须包含真实浏览器 UI 检查、E2E/API 数据闭环、性能证据、当前部署 `.run` 日志窗口扫描、决策账本更新，以及一次提交或明确的不提交理由。联调 Playwright 运行先执行 `make goal-test-e2e-preflight`，再使用 `.run/env/goal-test-int.env` 中的项目变量加上 `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`；不要只依赖 `E2E_BASE_URL`。E2E 测试可复用默认账号/工作区，但必须通过公开 API/UI 创建自己的业务数据，不要依赖已有的 prompt、issue 或素材。优先使用 `TestApiClient.createPromptForE2E` 和 `TestApiClient.createIssueForE2E` 创建唯一命名的 fixture。
+AI Studio acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, first run `make goal-test-e2e-preflight`, then use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets. Prefer `TestApiClient.createPromptForE2E` and `TestApiClient.createIssueForE2E` for unique named fixtures.
 
-广泛的 goal-test UI 或训练审计前先跑 `make goal-test-smoke`。`make goal-test-ui-audit` 和 `make goal-test-training-performance-audit` 已在 JSON 证据中包含 smoke 与当前部署标记日志扫描。部署前会把旧的 `.run/*-{server,web,daemon}.log` 归档到 `.run/log-archive/`，再写入新的标记窗口。
+For broad goal-test UI or training audits, run `make goal-test-smoke` first. `make goal-test-ui-audit` and `make goal-test-training-performance-audit` already include smoke plus the current deployment marker log scan in their JSON evidence. Deployments archive previous `.run/*-{server,web,daemon}.log` files under `.run/log-archive/` before writing the new marker window.
 
-### 验证策略（速优优先）
+Speed-first goal-test validation protocol:
 
-- 开发期：优先 `make goal-test-fast-check` 或 `make goal-test-smart-verify MODE=dev`；不要每次小改动都跑部署、广泛 UI 审计或训练性能审计。
-- 提交前：用 `make goal-test-smart-verify MODE=precommit` 做 changed-aware 聚焦检查；仅在切片稳定、需要账本证据时才使用 `MODE=final`。
-- 每个 60-120 分钟切片至多跑一次 `make goal-test-deploy-dev`；仅当后端启动、迁移、环境文件、构建配置或远端环境本身变更时才提前重新部署。
-- 若 `MODE=final` 发现当前提交已部署且无部署相关文件变更，必须验证现有环境而非重新部署。
-- 同一条 Playwright 或审计命令失败两次后，停止盲目重跑。检查 trace、screenshot、console/pageerror 与 `.run/int-{server,web,daemon}.log`，修复根因后再重跑最小的失败 grep/spec。
-- `scripts/goal-test-smart-verify.mjs` 把命令耗时写入 `artifacts/acceptance/command-timings.jsonl`；启动下一轮长续跑前先查该文件识别重复的昂贵门禁。
-- token 优化是平衡的，不是全局的。`scripts/goal-test-smart-verify.mjs` 可通过 `scripts/goal-test-command-wrapper.mjs` 对高噪声命令做摘要，但必须把原始输出完整保留在 `artifacts/acceptance/raw-command-logs/`，并在 `command-timings.jsonl` 中记录原始/摘要字节数。
-- 不要自动压缩发现类或精确证据类命令：`rg`、`find`、`ls`、`git diff`、失败测试堆栈窗口、部署失败窗口、任何 `panic`/`FATAL`/`ERROR` 窗口必须可直接查看。重跑宽门禁前先看原始日志路径。
-- RTK 仅通过 `GOAL_TEST_TOKEN_OPTIMIZER=rtk` 显式开启；当 `rtk` 已安装且命令在安全白名单内时，包装器向 `rtk rewrite` 请求具体的 `rtk ...` 命令并执行该重写后的命令。若 RTK 缺失、不安全或拒绝重写，回退到保留原始输出的内置摘要。除非用户明确要求，不要为本仓库安装全局 RTK hook。
+- During implementation, prefer `make goal-test-fast-check` or `make goal-test-smart-verify MODE=dev`; do not run deployment, broad UI audit, or training performance audit after every small edit.
+- Each 60-120 minute slice should run at most one `make goal-test-deploy-dev`. Only redeploy earlier if server startup, migrations, environment files, build configuration, or the remote environment itself changed.
+- Before committing, use `make goal-test-smart-verify MODE=precommit` for changed-aware focused checks. Use `MODE=final` only when the slice is stable and ready for ledger evidence.
+- If `MODE=final` sees that the current commit is already deployed and no deployment-affecting files changed, it must verify the existing environment instead of redeploying.
+- If the same Playwright or audit command fails twice, stop rerunning it blindly. Inspect trace, screenshot, console/pageerror, and `.run/int-{server,web,daemon}.log`, fix the root cause, then rerun the smallest failing grep/spec.
+- `scripts/goal-test-smart-verify.mjs` writes command timings to `artifacts/acceptance/command-timings.jsonl`; use that file to identify repeated expensive gates before starting another long continuation.
+- Token optimization is balanced, not global. `scripts/goal-test-smart-verify.mjs` may summarize high-noise commands through `scripts/goal-test-command-wrapper.mjs`, but it must preserve full raw output under `artifacts/acceptance/raw-command-logs/` and record raw/summary byte counts in `command-timings.jsonl`.
+- Do not auto-compress discovery or exact-evidence commands: `rg`, `find`, `ls`, `git diff`, failing test stack windows, deploy failure windows, and any `panic`/`FATAL`/`ERROR` window must stay directly inspectable. Use the raw log path before rerunning broad gates.
+- RTK is opt-in only via `GOAL_TEST_TOKEN_OPTIMIZER=rtk`; when `rtk` is installed and the command is on the safe allowlist, the wrapper asks `rtk rewrite` for the concrete `rtk ...` command and executes that rewritten command. If RTK is absent, unsafe, or declines to rewrite, fall back to the raw-preserving built-in summary. Never install a global RTK hook for this repository unless the user explicitly asks.
+Continuous goal-test governance for long sessions:
 
-### 长会话治理
+- Output a checkpoint after every 3-5 decision-ledger entries, at every wave end, before and after final acceptance, and before automatically entering a new topic. The checkpoint must include approximate completion percentage, current branch, committed commit, deployed commit, uncommitted diff, running commands, evidence paths, open P0/P1, next suggested command, next-slice benefit/cost/risk, and explicit "do not do next" notes.
+- Before starting another automatic P0/P1 slice, write why it is worth doing now. Include expected user/product benefit, validation cost, likely risk, whether deploy/E2E is needed, and what would be deferred if the slice is skipped.
+- Classify failures before rerunning or widening scope. Use these categories by default: product gap, test script bug, fixture or dirty-data noise, external runtime or sandbox instability, deploy mismatch, log noise, performance regression, and evidence parsing error.
+- Dirty deploy is allowed only to prove or disprove a hypothesis. Ledger evidence, final acceptance, and demo evidence must come from a clean committed deploy, or the inability to clean-deploy must be recorded as a blocker.
+- Acceptance data must be created through public UI/API/CLI with unique names. Prefer archive, hide, disable, or test marking over deleting evidence; delete only when the test contract explicitly allows it. Reused evidence must state why it is still valid and what would invalidate it.
+- Separate `demo-ready` from `production-complete`. A flow can be demo-ready when the integration UI/API/E2E evidence is solid enough to show, but it is not production-complete while deep Opik features, permissions, security, migrations, stability, cost controls, or full final acceptance remain open.
 
-- 每 3-5 条决策账本条目后、每个 wave 结束时、最终验收前后、自动进入新主题前，输出一次 checkpoint。checkpoint 必须包含：近似完成百分比、当前分支、已提交 commit、已部署 commit、未提交 diff、运行中的命令、证据路径、未结 P0/P1、下一步建议命令、下一切片收益/成本/风险、明确的「不要接着做」事项。
-- 启动下一个自动 P0/P1 切片前，写明为什么现在值得做。包含预期用户/产品收益、验证成本、可能风险、是否需要部署/E2E、跳过该切片会推迟什么。
-- 重跑或扩大范围前先对失败分类。默认分类：产品缺口、测试脚本 bug、fixture 或脏数据噪声、外部运行时或沙箱不稳定、部署不匹配、日志噪声、性能回退、证据解析错误。
-- 仅在证明或证伪某个假设时才允许脏部署。账本证据、最终验收、演示证据必须来自干净的已提交部署，否则把「无法干净部署」记为 blocker。
-- 验收数据必须通过公开 UI/API/CLI 用唯一命名创建。优先归档、隐藏、禁用或测试标记，而非删除证据；仅在测试合同明确允许时才删除。复用证据必须说明为何仍然有效、什么会让它失效。
-- 区分 `demo-ready` 与 `production-complete`。联调 UI/API/E2E 证据足够展示时可视为 demo-ready；但当深度 Opik 功能、权限、安全、迁移、稳定性、成本控制或完整最终验收仍有未结项时，不算 production-complete。
+AI Studio gate applicability:
 
-### 门禁适用范围
+- Dev gate: `make goal-test-fast-check` or `make goal-test-smart-verify MODE=dev`; use while editing and before broad validation.
+- Precommit gate: `make goal-test-smart-verify MODE=precommit`; use before committing focused code changes.
+- Deployment/log gate: `make goal-test-deploy-dev`, then `make goal-test-verify-env` and `make goal-test-verify-logs`; use when code needs integration-environment proof.
+- UI acceptance gate: `make goal-test-ui-acceptance`; use for broad deployed UI behavior without forcing every long daemon path.
+- Broad gate: `make goal-test-smoke` or `make goal-test-ui-acceptance`; use for wave or milestone closure when current UI, observability, and deployed behavior must be demonstrated together.
+- Training UI gate: `make goal-test-training-performance-audit`; use for current training pages, route panels, datasets, test suites, evaluation records, or performance-sensitive training navigation.
+- Real-agent gate: `make goal-test-real-agent-e2e`; use when real-agent dispatch or cross-project runtime behavior changed.
+- Performance gates: `make goal-test-dashboard-click-audit` and `make goal-test-public-training-performance-audit`; use only when the affected surface or milestone requires that evidence.
 
-- 开发门禁：`make goal-test-fast-check` 或 `make goal-test-smart-verify MODE=dev`；编辑中与广泛验证前使用。
-- 提交门禁：`make goal-test-smart-verify MODE=precommit`；提交聚焦代码变更前使用。
-- 部署/日志门禁：`make goal-test-deploy-dev`，然后 `make goal-test-verify-env` 和 `make goal-test-verify-logs`；当代码需要联调环境证据时使用。
-- UI 验收门禁：`make goal-test-ui-acceptance`；用于广泛的已部署 UI 行为，不强制跑每条长守护进程路径。
-- 宽门禁：`make goal-test-smoke` 或 `make goal-test-ui-acceptance`；当当前 UI、可观测性与已部署行为必须一起展示时，用于 wave 或里程碑收尾。
-- 训练 UI 门禁：`make goal-test-training-performance-audit`；用于当前训练页面、路由面板、数据集、测试套件、评估记录或性能敏感的训练导航。
-- 真实智能体门禁：`make goal-test-real-agent-e2e`；当真实智能体派发或跨项目运行时行为变更时使用。
-- 性能门禁：`make goal-test-dashboard-click-audit` 和 `make goal-test-public-training-performance-audit`；仅当受影响面或里程碑需要该证据时使用。
+## Architecture
 
-## 架构
+**Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.**
 
-**Go 后端 + monorepo 前端（pnpm workspaces + Turborepo）+ 共享包。**
+- `server/` — Go backend (Chi router, sqlc for DB, gorilla/websocket for real-time)
+- `apps/web/` — Next.js frontend (App Router)
+- `apps/desktop/` — Electron desktop app (electron-vite)
+- `packages/core/` — Headless business logic (zero react-dom)
+- `packages/ui/` — Atomic UI components (zero business logic)
+- `packages/views/` — Shared business pages/components (zero next/* imports, zero react-router imports)
+- `packages/tsconfig/` — Shared TypeScript configuration
 
 The compact drift-checked current-system inventory is
 [`docs/architecture/current-system-summary.md`](docs/architecture/current-system-summary.md),
@@ -122,65 +122,64 @@ summary with `pnpm check:current-system-map`, and runs semantic inventory tests.
 
 What lives where for sharing purposes is documented in *Sharing Principles* below — read it once.
 
-*共享原则*一节说明了为共享目的各模块放在哪里——读一次即可。
+### Key Architectural Decisions
 
-### 关键架构决策
+**Internal Packages pattern** — all shared packages export raw `.ts`/`.tsx` files (no pre-compilation). The consuming app's bundler compiles them directly. This gives zero-config HMR and instant go-to-definition.
 
-**Internal Packages 模式** — 所有共享包都导出原始 `.ts`/`.tsx` 文件（无预编译）。消费方应用的 bundler 直接编译，零配置 HMR，即时跳转定义。
+**Dependency direction:** `views/ → core/ + ui/`. Core and UI are independent of each other. No package imports from `next/*`, `react-router-dom`, or app-specific code.
 
-**依赖方向：** `views/ → core/ + ui/`。core 与 ui 互相独立。任何包都不得导入 `next/*` 或应用专属代码。
+**Platform bridge:** `packages/core/platform/` provides `CoreProvider` — initializes API client, auth/workspace stores, WS connection, and QueryClient. Each app wraps its root with `<CoreProvider>` and provides its own `NavigationAdapter` for routing.
 
-**平台桥：** `packages/core/platform/` 提供 `CoreProvider`——初始化 API client、auth/workspace store、WS 连接和 QueryClient。每个应用用 `<CoreProvider>` 包裹根组件，并自行提供 `NavigationAdapter` 处理路由。
+**pnpm catalog** — `pnpm-workspace.yaml` defines `catalog:` for version pinning. All shared deps use `catalog:` references to guarantee a single version across all packages. When adding new shared deps (including test deps), add to catalog first.
 
-**pnpm catalog** — `pnpm-workspace.yaml` 通过 `catalog:` 固定版本。所有共享依赖使用 `catalog:` 引用以保证各包版本一致。新增共享依赖（含测试依赖）时先加到 catalog。
+### State Management
 
-### 状态管理
+The architecture relies on a strict split between server state and client state. Mixing them is the most common way to break it.
 
-架构依赖服务端状态与客户端状态的严格分离。混用是最常见的架构破坏方式。
+- **TanStack Query owns all server state.** Issues, users, workspaces, inbox — anything fetched from the API lives in the Query cache. WS events keep it fresh via invalidation; no polling, no `staleTime` workarounds.
+- **Zustand owns all client state.** UI selections, filters, drafts, modal state, navigation history. Stores live in `packages/core/` (never in `packages/views/`) so they're shared.
+- **React Context** is reserved for cross-cutting platform plumbing — `WorkspaceIdProvider`, `NavigationProvider`. Don't reach for it for general state.
+- **Auth and workspace stores are the only stores allowed to call `api.*` directly**, because they manage critical state that must exist before queries can run. They're created via factory + injected dependencies, registered by the platform layer.
 
-- **TanStack Query 拥有所有服务端状态。** issue、用户、工作区、inbox——任何从 API 取的数据都活在 Query 缓存里。WS 事件通过 invalidation 保持新鲜；不要轮询，不要用 `staleTime` 绕路。
-- **Zustand 拥有所有客户端状态。** UI 选择、过滤器、草稿、modal 状态、导航历史。store 放在 `packages/core/`（绝不放 `packages/views/`），这样才能共享。
-- **React Context** 留给横切平台管道——`WorkspaceIdProvider`、`NavigationProvider`。不要拿它装通用状态。
-- **auth 和 workspace store 是仅有的允许直接调用 `api.*` 的 store**，因为它们管理着 query 能跑之前必须存在的关键状态。通过工厂函数 + 依赖注入创建，由平台层注册。
+**Hard rules — these are how the architecture stays coherent:**
 
-**硬性规则——架构一致性靠它们维持：**
+- **Never duplicate server data into Zustand.** If it came from the API, it belongs in the Query cache. Copying it into a store creates two sources of truth and they will drift.
+- **Workspace-scoped queries must key on `wsId`.** This is what makes workspace switching automatic — the cache key changes, the right data appears, no manual invalidation needed.
+- **Mutations are optimistic by default.** Apply the change locally, send the request, roll back on failure, invalidate on settle. The user shouldn't wait for the server.
+- **WS events invalidate queries — they never write to stores directly.** This keeps the cache as the single source of truth and avoids race conditions.
+- **Persist what's worth preserving across restarts** (user preferences, drafts, tab layout). **Don't persist ephemeral UI state** (modal open/close, transient selections) or server data.
 
-- **绝不把服务端数据复制到 Zustand。** 来自 API 的数据属于 Query 缓存。复制到 store 会造成两个真相来源并最终漂移。
-- **工作区作用域 query 必须以 `wsId` 为 key。** 这样切换工作区是自动的——cache key 变了，正确数据出现，无需手动 invalidation。
-- **mutation 默认乐观。** 本地先应用变更，发请求，失败回滚，settle 时 invalidate。用户不该等服务端。
-- **WS 事件 invalidate query——绝不直接写 store。** 这让缓存成为唯一真相来源，避免竞态。
-- **跨重启值得保留的才持久化**（用户偏好、草稿、tab 布局）。**不要持久化临时 UI 状态**（modal 开关、瞬时选择）或服务端数据。
+**Common Zustand footguns to avoid:**
 
-**Zustand 常见坑：**
+- Selectors must return stable references. Returning a freshly built object or array on every call (e.g. `s => ({ a: s.a, b: s.b })` or `s => s.items.map(...)`) triggers infinite re-renders. Either select primitives separately or use shallow comparison.
+- Hooks that need workspace context should accept `wsId` as a parameter, not call `useWorkspaceId()` internally — this lets them work outside the `WorkspaceIdProvider` (e.g. in a sidebar that renders before workspace is loaded).
 
-- selector 必须返回稳定引用。每次调用都返回新建对象或数组（如 `s => ({ a: s.a, b: s.b })` 或 `s => s.items.map(...)`）会触发无限重渲染。要么分别 select 基础类型，要么用 shallow 比较。
-- 需要 workspace 上下文的 hook 应接受 `wsId` 作为参数，而不是内部调用 `useWorkspaceId()`——这样它能在 `WorkspaceIdProvider` 之外工作（例如在工作区加载前渲染的 sidebar）。
+## Sharing Principles
 
-## 共享原则
+The monorepo splits into two share zones:
 
-monorepo 分为两个共享区：
+- **Web and desktop** share business logic, components, hooks, stores, and views through `packages/core/`, `packages/ui/`, and `packages/views/`. Existing model — keep using it.
 
-- **Web 与桌面**通过 `packages/core/`、`packages/ui/`、`packages/views/` 共享业务逻辑、组件、hook、store 与 view。沿用既有模式即可。
-
-## 命令
+## Commands
 
 ```bash
-# 一键开发（自动配置 + 启动一切）
-make dev              # 自动创建 env、安装依赖、启动 DB、初始化 schema、启动应用
+# One-command dev (auto-setup + start everything)
+make dev              # Auto-creates env, installs deps, starts DB, migrates, launches app
 
-# 显式配置与运行（若偏好分开）
-make setup            # 首次：确保共享 DB、创建应用 DB、初始化 schema
-make start            # 同时启动后端 + 前端
-make stop             # 停止当前 checkout 的应用进程
-make db-down          # 停止共享 PostgreSQL 容器
+# Explicit setup & run (if you prefer separate steps)
+make setup            # First-time: ensure shared DB, create app DB, migrate
+make start            # Start backend + frontend together
+make stop             # Stop app processes for the current checkout
+make db-down          # Stop the shared PostgreSQL container
 
-# 前端（所有命令走 Turborepo）
+# Frontend (all commands go through Turborepo)
 pnpm install
-pnpm dev:web          # Next.js dev server（端口 3000）
-pnpm build            # 构建所有前端应用
-pnpm typecheck        # TypeScript 检查（所有包 + 应用，经 turbo）
+pnpm dev:web          # Next.js dev server (port 3000)
+pnpm dev:desktop      # Electron dev (electron-vite, HMR)
+pnpm build            # Build all frontend apps
+pnpm typecheck        # TypeScript check (all packages + apps via turbo)
 pnpm lint             # ESLint
-pnpm test             # TS 测试（Vitest，所有包 + 应用，经 turbo）
+pnpm test             # TS tests (Vitest, all packages + apps via turbo)
 
 # Backend (Go)
 make server           # Run Go server only (port 8080)
@@ -193,61 +192,65 @@ make migrate-up       # Run database migrations
 make migrate-down     # Roll back the latest applied migration
 make migrate-down-all CONFIRM=yes # Destructively roll back every migration
 
-# 跑单个 TS 测试（任何含 test 脚本的包都适用）
+# Run a single TS test (works for any package with a test script)
 pnpm --filter @multica/views exec vitest run auth/login-page.test.tsx
 pnpm --filter @multica/core exec vitest run runtimes/version.test.ts
 pnpm --filter @multica/web exec vitest run app/\(auth\)/login/page.test.tsx
 
-# 跑单个 Go 测试
+# Run a single Go test
 cd server && go test ./internal/handler/ -run TestName
 
-# 跑单个 E2E 测试（需后端 + 前端运行中）
+# Run a single E2E test (requires backend + frontend running)
 pnpm exec playwright test e2e/tests/specific-test.spec.ts
 
-# shadcn — 配置在 packages/ui/components.json（Base UI 变体，base-nova 风格）
-pnpm ui:add badge                # 添加组件到 packages/ui/components/ui/
+# Desktop build & package
+pnpm --filter @multica/desktop build      # Compile TS → JS (reads .env.production)
+pnpm --filter @multica/desktop package    # Package into .app/.dmg/.exe (current platform only)
 
-# 基础设施
-make db-up            # 启动共享 PostgreSQL（pgvector/pg17 镜像）
-make db-down          # 停止共享 PostgreSQL
-make db-reset         # 删除 + 重建当前 env 的 DB，再初始化 schema（仅本地；先停后端）
+# shadcn — config lives in packages/ui/components.json (Base UI variant, base-nova style)
+pnpm ui:add badge                # Adds component to packages/ui/components/ui/
+
+# Infrastructure
+make db-up            # Start shared PostgreSQL (pgvector/pg17 image)
+make db-down          # Stop shared PostgreSQL
+make db-reset         # Drop + recreate current env's DB, then re-run migrations (local only; stop backend first)
 ```
 
-### CI 要求
+### CI Requirements
 
-CI 在 Node 22、Go 1.26.1 上运行，配合 `pgvector/pgvector:pg17` PostgreSQL service。见 `.github/workflows/ci.yml`。
+CI runs on Node 22 and Go 1.26.1 with a `pgvector/pgvector:pg17` PostgreSQL service. See `.github/workflows/ci.yml`.
 
-### Worktree 支持
+### Worktree Support
 
-所有 checkout 共享一个 PostgreSQL 容器。隔离在数据库级别——每个 worktree 通过 `.env.worktree` 拿到独立 DB 名和端口。主 checkout 用 `.env`。
+All checkouts share one PostgreSQL container. Isolation is at the database level — each worktree gets its own DB name and unique ports via `.env.worktree`. Main checkouts use `.env`.
 
-`make dev` 自动检测 worktree 并处理一切。显式控制：
+`make dev` auto-detects worktrees and handles everything. For explicit control:
 
 ```bash
-make worktree-env       # 生成带独立 DB/端口的 .env.worktree
-make setup-worktree     # 用 .env.worktree 配置
-make start-worktree     # 用 .env.worktree 启动
+make worktree-env       # Generate .env.worktree with unique DB/ports
+make setup-worktree     # Setup using .env.worktree
+make start-worktree     # Start using .env.worktree
 ```
 
-## 编码规则
+## Coding Rules
 
-- TypeScript 严格模式已开启；保持类型显式。
-- Go 代码遵循标准 Go 规范（gofmt、go vet）。
-- **代码注释仅用英文。**
-- 优先使用既有模式/组件，不要引入并行的抽象。
-- 除非用户明确要求向后兼容，**不要**为内部、非边界代码（同一包内函数互相调用、组件读自身状态、store helper 等）添加兼容层、回退路径、双写逻辑、legacy 适配器或临时 shim。
-- 该规则**不**适用于 API 边界：桌面应用无法假设它对话的后端与构建时形状一致（旧桌面安装会活过任何一次后端构建）。API 响应处理必须遵守下方 **API 响应兼容** 规则——那是防御性边界，不是 legacy shim。
-- 若一个流程或 API 正在被替换且产品尚未上线，优先移除旧路径，而非保留新旧两套行为。
-- 除非任务需要，避免大范围重构。
-- 新的全局（pre-workspace）路由必须使用单个词（`/login`、`/inbox`）或 `/{noun}/{verb}` 对（`/workspaces/new`）。绝不加连字符的多词根路由（`/new-workspace`、`/create-team`）——它们会与常见用户工作区名冲突，迫使你做无休止的保留 slug 审计。保留名词（`workspaces`）即自动保护整棵 `/workspaces/*` 子树。
-- 保留 slug 列表只活在**一处**：`server/internal/handler/reserved_slugs.json`。Go 侧 embed 该 JSON；`packages/core/paths/reserved-slugs.ts` 由 `pnpm generate:reserved-slugs` 从中生成。改 JSON，跑生成器，两者一起提交。CI 会重跑生成器并在漂移时失败，所以陈旧的 TS 文件进不来。
-- 当你修改 CLI 命令或 flag、API 请求/响应字段，或内置 skill 文档化（`server/internal/service/builtin_skills/*`）的产品行为时，必须在同一 PR 更新该 skill 的 `SKILL.md` **和**其 `references/*-source-map.md`。内置 skill 是发给智能体的源可追溯合同——代码动了 skill 不动，会默默教错行为。
+- TypeScript strict mode is enabled; keep types explicit.
+- Go code follows standard Go conventions (gofmt, go vet).
+- Keep comments in code **English only**.
+- Prefer existing patterns/components over introducing parallel abstractions.
+- Unless the user explicitly asks for backwards compatibility, do **not** add compatibility layers, fallback paths, dual-write logic, legacy adapters, or temporary shims **for internal, non-boundary code** (a function calling another function in the same package, a component reading its own state, a store helper, etc.).
+- This rule does **not** apply at API boundaries: the desktop app cannot assume the backend it talks to has the same shape as the one it was built against (older desktop installs will outlive any given server build). API response handling must follow the rules in **API Response Compatibility** below — that is a defensive boundary, not a legacy shim.
+- If a flow or API is being replaced and the product is not yet live, prefer removing the old path instead of preserving both old and new behavior.
+- Avoid broad refactors unless required by the task.
+- New global (pre-workspace) routes MUST use a single word (`/login`, `/inbox`) or a `/{noun}/{verb}` pair (`/workspaces/new`). NEVER add hyphenated word-group root routes (`/new-workspace`, `/create-team`) — they collide with common user workspace names and force endless reserved-slug audits. Reserving the noun (`workspaces`) automatically protects the entire `/workspaces/*` subtree.
+- The reserved-slug list lives in **one** place: `server/internal/handler/reserved_slugs.json`. The Go side embeds the JSON; `packages/core/paths/reserved-slugs.ts` is generated from it by `pnpm generate:reserved-slugs`. Edit the JSON, run the generator, commit both. CI re-runs the generator and fails on any drift, so a stale TS file cannot land.
+- When you change a CLI command or flag, an API request/response field, or product behavior that a built-in skill documents (`server/internal/service/builtin_skills/*`), update that skill's `SKILL.md` **and** its `references/*-source-map.md` in the same PR. The built-in skills are source-traced contracts shipped to agents — if the code moves and the skill doesn't, it silently teaches stale behavior.
 
-### API 响应兼容
+### API Response Compatibility
 
-用户机器上安装的桌面应用比它对话的任何后端都旧：0.2.26 的用户会命中 0.3.x 的 server，然后 0.4.x，再往后。每个响应形状都是一份**会**漂移的合同，前端必须能在漂移中存活而不白屏。已有三起事故因违反此规则而发生——#2143、#2147、#2192。
+The desktop app installed on a user's machine is older than any backend it talks to: a user on 0.2.26 will hit a server running 0.3.x, then 0.4.x, then beyond. Every response shape is a contract that **will** drift, and the frontend must survive drift without white-screening. Three concrete incidents already happened from violating this — #2143, #2147, #2192.
 
-编写消费 API 响应的代码时，遵循：
+When writing code that consumes an API response, follow these rules:
 
 - **Parse, don't cast.** Untyped JSON crossing the network is not `T`. Every consumed response must pass through a `zod` schema in `packages/core/api/schema.ts`.
 - **Fallback only when degradation is safe.** Read-only display queries and optional enhancements use `parseWithFallback` when an empty or partial result cannot trigger a write, erase data, bypass a permission decision, or manufacture success.
@@ -259,48 +262,50 @@ make start-worktree     # 用 .env.worktree 启动
 - **Enum drift downgrades, not crashes.** A new server-side enum value should render a generic fallback. `switch` statements on server-driven strings must have a `default` branch.
 - **When you add or change an endpoint:** add the schema in the same PR, and write at least one test that feeds a malformed response through it (missing field, wrong type, `null` array). Assert the correct policy explicitly: safe fallback for degradable reads, controlled rejection and reconciliation for writes or sensitive reads.
 
-这不是过度防御——这是已部署应用架构的必要防御。前端构建与后端部署是独立发布的，响应形状会漂移，前端必须能在漂移中存活而不白屏。
+This is not premature defense — it is the *only* defense for an installed-app architecture. CSR-only browser apps can ship a fix in minutes; an Electron build sitting on a developer's laptop cannot.
 
-### 后端 Handler UUID 解析约定
+### Backend Handler UUID Parsing Convention
 
-`server/internal/handler/` 下每个 Go handler 都遵循这些规则。约定存在是因为 `util.ParseUUID` 曾对非法输入默默返回零 UUID，导致 #1661——一个 `DELETE` 返回 204 成功，而 SQL `DELETE` 匹配 0 行。
+Every Go handler in `server/internal/handler/` follows these rules. The convention exists because `util.ParseUUID` used to silently return a zero UUID on invalid input, which caused #1661 — a `DELETE` returning 204 success while the SQL `DELETE` matched zero rows.
 
-- **既接受 UUID 也接受人类可读标识的资源路径参数**（如 issue 的 `chi.URLParam(r, "id")`，同时接受 `MUL-123` 和 UUID）必须通过专用 loader（`loadIssueForUser` / `loadSkillForUser` / `loadAgentForUser` / `requireDaemonRuntimeAccess`）解析。解析后所有后续 DB 调用——尤其是 `Queries.Delete*` / `Queries.Update*`——必须用解析对象的 `entity.ID`。绝不要把原始 URL 字符串再 round-trip 过 `parseUUID` 用于写查询。
-- **来自请求边界的纯 UUID 输入**（总是 UUID 的 URL 参数、请求体字段、query 参数、header）必须用 `parseUUIDOrBadRequest(w, s, fieldName)` 校验。非法输入时写 400 并返回 `ok=false`——立即返回。
-- **可信 UUID round-trip**（sqlc 返回的 UUID 再传回 query、测试 fixture）用 `parseUUID(s)`，它调用 `util.MustParseUUID`，非法输入时 panic。这里的 panic 意味着一个未防护的用户输入字符串溜进来了——这是真 bug。`chi` 的 `middleware.Recoverer` 把 panic 转成 500，进程继续跑。
-- **`util.ParseUUID(s) (pgtype.UUID, error)`** 是 handler 包外唯一安全的变体。始终检查 error。
+- **Resource path params that accept either a UUID or a human-readable identifier** (e.g. `chi.URLParam(r, "id")` for an issue, which accepts both `MUL-123` and a UUID) MUST be resolved through the dedicated loader (`loadIssueForUser` / `loadSkillForUser` / `loadAgentForUser` / `requireDaemonRuntimeAccess`). After resolution, all subsequent DB calls — especially `Queries.Delete*` / `Queries.Update*` — MUST use `entity.ID` from the resolved object. Never round-trip the raw URL string through `parseUUID` for a write query.
+- **Pure-UUID inputs from request boundaries** (URL params that are always UUIDs, request body fields, query params, headers) MUST be validated with `parseUUIDOrBadRequest(w, s, fieldName)`. On invalid input it writes a 400 and returns `ok=false` — return immediately.
+- **Trusted UUID round-trips** (sqlc-returned UUIDs being passed back into queries, test fixtures) use `parseUUID(s)` which calls `util.MustParseUUID` and panics on invalid input. A panic here means an unguarded user-input string slipped in — that is a real bug. `chi`'s `middleware.Recoverer` translates the panic into a 500 so the process keeps running.
+- **`util.ParseUUID(s) (pgtype.UUID, error)`** is the only safe variant outside the handler package. Always check the error.
 
-新增 `Queries.Delete*` 或 `Queries.Update*` 调用时问自己：「这个 UUID 从哪来？」若答案是「未校验的原始用户输入」，先过 `parseUUIDOrBadRequest` 或 loader。
+When adding a `Queries.Delete*` or `Queries.Update*` call, ask: "Where did this UUID come from?" If the answer is "raw user input that hasn't been validated," route it through `parseUUIDOrBadRequest` or a loader first.
 
-### 依赖声明规则
+### Dependency Declaration Rule
 
-每个 workspace（`apps/` 与 `packages/` 目录）必须在自己的 `package.json` 中显式声明所有直接导入的外部包。禁止依赖 pnpm hoist 解析未声明的导入（幽灵依赖）——pnpm 创建 peer-dep 变体时会导致生产构建失败。
+Every workspace (`apps/` and `packages/` directories) must explicitly declare all directly imported external packages in its own `package.json`. Relying on pnpm hoist to resolve undeclared imports (phantom deps) is prohibited — it causes production build failures when pnpm creates peer-dep variants.
 
-- 用 `"pkg": "catalog:"` 引用 `pnpm-workspace.yaml` 中的共享版本。
-- CI 通过 `eslint-plugin-import-x/no-extraneous-dependencies` 强制。
+- Use `"pkg": "catalog:"` to reference the shared version from `pnpm-workspace.yaml`.
+- CI enforces this via `eslint-plugin-import-x/no-extraneous-dependencies`.
+### Package Boundary Rules
 
-### 包边界规则
+These are hard constraints. Violating them breaks the cross-platform architecture:
 
-这些是硬约束。违反会破坏架构：
+- `packages/core/` — zero react-dom, zero localStorage (use StorageAdapter), zero process.env, zero UI libraries. **Shared Zustand stores live here**, even view-related ones (filters, view modes) — stores are pure state, not UI.
+- `packages/ui/` — zero `@multica/core` imports (pure UI, no business logic).
+- `packages/views/` — zero `next/*` imports, zero `react-router-dom` imports, zero stores. Use `NavigationAdapter` for all routing.
+- `apps/web/platform/` — the only place for Next.js APIs (`next/navigation`).
+- `apps/desktop/src/renderer/src/platform/` — the only place for react-router-dom navigation wiring.
 
-- `packages/core/` — 零 react-dom、零 localStorage（用 StorageAdapter）、零 process.env、零 UI 库。**共享 Zustand store 放这里**，连 view 相关的也放（过滤器、view mode）——store 是纯状态，不是 UI。
-- `packages/ui/` — 零 `@multica/core` 导入（纯 UI，无业务逻辑）。
-- `packages/views/` — 零 `next/*` 导入、零 store。所有路由用 `NavigationAdapter`。
-- `apps/web/platform/` — 唯一允许 Next.js API（`next/navigation`）的地方。
+### The No-Duplication Rule (web + desktop)
 
-### 不重复规则
+**If the same logic exists in both web and desktop, it must be extracted to a shared package.**
 
-**若同一逻辑在多处出现，必须抽取到共享包。**
+This applies to everything between web and desktop: components, hooks, guards, providers, utility functions. The decision process:
 
-适用于组件、hook、guard、provider、工具函数。决策流程：
+1. Does this code depend on Next.js or Electron APIs? → Keep in the respective app.
+2. Does it depend on `react-router-dom` or `next/navigation`? → Keep in app's `platform/` layer.
+3. Everything else → belongs in `packages/core/` (headless logic) or `packages/views/` (UI components).
 
-1. 这段代码依赖 Next.js API 吗？→ 留在 `apps/web/`。
-2. 依赖 `next/navigation` 吗？→ 留在 `apps/web/platform/` 层。
-3. 其他 → 属于 `packages/core/`（无头逻辑）或 `packages/views/`（UI 组件）。
+When the two apps need different behavior for the same concept (e.g., different loading UI), extract the shared logic into a component with props/slots for the differences. Don't duplicate the logic.
 
-当不同位置对同一概念需要不同行为（如不同 loading UI），把共享逻辑抽成带 props/slot 的组件。不要复制逻辑。
+### Cross-Platform Development Rules (web + desktop)
 
-### 跨平台开发规则
+When adding a new page or feature for web/desktop:
 
 1. **New page component** → add to `packages/views/<domain>/`. Never import from `next/*` or `react-router-dom`.
 2. **Wire it in both apps** → add a route in `apps/web/app/` (Next.js page file) AND in the desktop router. **Exception**: workspace creation is not a desktop route; it uses `WorkspaceCreationOverlay`. See *Desktop-specific Rules → Route categories*.
@@ -309,30 +314,21 @@ make start-worktree     # 用 .env.worktree 启动
 5. **Platform-specific UI** → if a feature is web-only or desktop-only, keep it in the respective app. Use props slots (`extra`, `topSlot`) on shared layout components to inject platform-specific UI.
 6. **New hooks that need workspace context** → accept `wsId` as parameter instead of reading from `useWorkspaceId()` Context, so they work both inside and outside `WorkspaceIdProvider`.
 
-1. **新页面组件** → 加到 `packages/views/<domain>/`。绝不从 `next/*` 导入。
-2. **在应用中接线** → 在 `apps/web/app/`（Next.js page 文件）加路由。
-3. **导航** → 用 `useNavigation().push()` 或 `<AppLink>`。共享代码中绝不用框架专属的 link/router API。
-4. **共享 guard/provider** → 用 `packages/views/layout/` 的 `DashboardGuard`。不要另搞一套 guard 逻辑。
-5. **平台专属 UI** → 若功能只属于 web，留在 `apps/web/`。用共享布局组件的 props slot（`extra`、`topSlot`）注入平台专属 UI。
-6. **需要 workspace 上下文的新 hook** → 接受 `wsId` 参数，而不是从 `useWorkspaceId()` Context 读，这样它在 `WorkspaceIdProvider` 内外都能工作。
+### CSS Architecture (web + desktop)
 
-### CSS 架构
+Web and desktop share the same CSS foundation from `packages/ui/styles/`.
 
-Web 应用使用 `packages/ui/styles/` 的 CSS 基础。
+- **Design tokens** → use semantic tokens (`bg-background`, `text-muted-foreground`). Never use hardcoded Tailwind colors (`text-red-500`, `bg-gray-100`).
+- **Shared styles** → `packages/ui/styles/`. Never duplicate scrollbar styling, keyframes, or base layer rules in app CSS.
+- **`@source` directives** → both apps scan shared packages so Tailwind sees all class names.
 
-- **Design token** → 用语义 token（`bg-background`、`text-muted-foreground`）。绝不用硬编码 Tailwind 颜色（`text-red-500`、`bg-gray-100`）。
-- **共享样式** → `packages/ui/styles/`。绝不在应用 CSS 中重复滚动条样式、keyframe 或 base 层规则。
-- **`@source` 指令** → 应用扫描共享包，让 Tailwind 看到所有类名。
+## Desktop-specific Rules
 
-## UI/UX 规则
+These rules apply to `apps/desktop/` only. Web has different constraints (URL bar, SSR, no tabs) and doesn't share these concerns. Every rule in this section was added after a concrete bug — treat them as enforced, not suggestions.
 
-- 优先用 shadcn 组件而非自定义实现。通过 `pnpm ui:add <component>` 从项目根安装——加到 `packages/ui/components/ui/`。所有组件用 Base UI 原语（`@base-ui/react`），不是 Radix。
-- 用 shadcn design token 做样式。避免硬编码颜色值。
-- 除非设计明确需要，不要引入额外状态（useState、context、reducer）。
-- 密切关注 **overflow**（截断长文本、可滚动容器）、**alignment**、**spacing** 一致性。
-- **若一个组件在多处复用，它属于共享包。** 不要复制粘贴。
+### Route categories
 
-## 测试规则
+Every path in the desktop app falls into exactly one category. Choosing the wrong one reproduces bugs we've already fixed.
 
 - **Session routes** — workspace-scoped pages (`/:slug/issues`, `/:slug/settings`). Rendered by the per-tab memory router under `WorkspaceRouteLayout`. These are legitimate tab destinations.
 - **Workspace creation** — a pre-workspace transition, **not a route**. It uses `WorkspaceCreationOverlay`, dispatched when the navigation adapter sees `push('/workspaces/new')` or a user has no workspace. The shared `NewWorkspacePage` supplies the content.
@@ -341,46 +337,83 @@ Web 应用使用 `packages/ui/styles/` 的 CSS 基础。
 Do not put `/workspaces/new` into `routes.tsx`; keep its state in
 `stores/workspace-creation-overlay-store.ts` so the tab system cannot persist it.
 
-| 测试对象 | 测试位置 | 原因 |
+### Workspace context
+
+`setCurrentWorkspace(slug, uuid)` from `@multica/core/platform` is the single source of truth for the active workspace. `WorkspaceRouteLayout` sets it on mount; unmount does NOT clear it. Code that leaves workspace context (leave/delete workspace, force-navigate to overlay) must call `setCurrentWorkspace(null, null)` explicitly.
+
+### Workspace destructive operations
+
+Leave / Delete workspace flows must follow this order, otherwise concurrent refetches race and the renderer hard-reloads:
+
+1. Read destination from cached workspace list.
+2. `setCurrentWorkspace(null, null)`.
+3. `navigation.push(destination)`.
+4. THEN `await mutation.mutateAsync(workspaceId)`.
+
+### Tab isolation
+
+Tabs are grouped per workspace in `stores/tab-store.ts`. The TabBar shows only the active workspace's tabs; cross-workspace tab leakage is impossible by construction (no flat global tabs array).
+
+Cross-workspace `push(path)` is detected by the navigation adapter (`platform/navigation.tsx`) and translated into `switchWorkspace(slug, targetPath)` — NOT a navigation within the current tab's router. Don't bypass the adapter; always go through `useNavigation()` from shared code.
+
+### Drag region (macOS)
+
+Every full-window desktop view (anything outside the dashboard shell) must mount `<DragStrip />` from `@multica/views/platform` as the first flex child of the page root, otherwise users can't drag the window. Interactive UI inside the top 48px needs `WebkitAppRegion: "no-drag"` to stay clickable.
+
+## UI/UX Rules
+
+- Prefer shadcn components over custom implementations. Install via `pnpm ui:add <component>` from project root — adds to `packages/ui/components/ui/`. All components use Base UI primitives (`@base-ui/react`), not Radix.
+- Use shadcn design tokens for styling. Avoid hardcoded color values.
+- Do not introduce extra state (useState, context, reducers) unless explicitly required by the design.
+- Pay close attention to **overflow** (truncate long text, scrollable containers), **alignment**, and **spacing** consistency.
+- **If a component is identical between web and desktop, it belongs in a shared package.** Do not copy-paste between apps.
+
+## Testing Rules
+
+### Where to write tests
+
+Tests follow the code, not the app. This is the most important testing principle in this monorepo:
+
+| What you're testing | Where the test lives | Why |
 |---|---|---|
-| 共享业务逻辑（store、query、hook） | `packages/core/*.test.ts` | 无需 DOM，纯逻辑 |
-| 共享 UI 组件（页面、表单、modal） | `packages/views/*.test.tsx` | jsdom，无框架 mock |
-| 平台专属接线（cookie、redirect、searchParams） | `apps/web/*.test.tsx` | 需要框架专属 mock |
-| 端到端用户流程 | `e2e/*.spec.ts` | 真实浏览器、真实后端 |
+| Shared business logic (stores, queries, hooks) | `packages/core/*.test.ts` | No DOM needed, pure logic |
+| Shared UI components (pages, forms, modals) | `packages/views/*.test.tsx` | jsdom, no framework mocks |
+| Platform-specific wiring (cookies, redirects, searchParams) | `apps/web/*.test.tsx` or `apps/desktop/` | Needs framework-specific mocks |
+| End-to-end user flows | `e2e/*.spec.ts` | Real browser, real backend |
 
-**绝不要在应用测试文件里测共享组件行为。** 若一个测试需要 mock `next/navigation` 才能测 `@multica/views` 的组件，说明测试位置错了——移到 `packages/views/` 并 mock `@multica/core`。
+**Never test shared component behavior in an app's test file.** If a test requires mocking `next/navigation` or `react-router-dom` to test a component from `@multica/views`, the test is in the wrong place — move it to `packages/views/` and mock `@multica/core` instead.
 
-### 测试基础设施
+### Test infrastructure
 
-- `packages/core/` — Vitest，Node 环境（无 DOM）
-- `packages/views/` — Vitest，jsdom 环境，`@testing-library/react`
-- `apps/web/` — Vitest，jsdom 环境，框架专属 mock
+- `packages/core/` — Vitest, Node environment (no DOM)
+- `packages/views/` — Vitest, jsdom environment, `@testing-library/react`
+- `apps/web/` — Vitest, jsdom environment, framework-specific mocks
 - `e2e/` — Playwright
-- `server/` — Go 标准 `go test`
+- `server/` — Go standard `go test`
 
-所有测试依赖在 pnpm catalog 中统一版本。
+All test deps are in the pnpm catalog for unified versioning.
 
-### Mock 约定
+### Mocking conventions
 
-- 用 `vi.hoisted()` + `Object.assign(selectorFn, { getState })` 模式 mock `@multica/core` 的 store（Zustand store 既可调用又有 `.getState()`）。
-- mock `@multica/core/api` 做 API 调用。
-- `packages/views/` 测试中：绝不 mock `next/*`——这里不存在这些。
-- `apps/web/` 测试中：仅 mock 框架专属 API 的平台专属行为。
+- Mock `@multica/core` stores with `vi.hoisted()` + `Object.assign(selectorFn, { getState })` pattern (Zustand stores are both callable and have `.getState()`).
+- Mock `@multica/core/api` for API calls.
+- In `packages/views/` tests: never mock `next/*` or `react-router-dom` — those don't exist here.
+- In `apps/web/` tests: mock framework-specific APIs only for platform-specific behavior.
 
-### TDD 工作流
+### TDD workflow
 
-1. 先在**正确的包**写失败测试。
-2. 写实现。
-3. 跑 `pnpm test`（Turborepo 发现所有包）。
-4. 绿→完成。
+1. Write failing test in the **correct package** first.
+2. Write implementation.
+3. Run `pnpm test` (Turborepo discovers all packages).
+4. Green → done.
 
-### Go 测试
+### Go tests
 
-标准 `go test`。测试应在测试数据库里创建自己的 fixture 数据。
+Standard `go test`. Tests should create their own fixture data in a test database.
 
-### E2E 测试
+### E2E tests
 
-E2E 测试应自包含。用 `TestApiClient` fixture 做数据 setup/teardown：
+E2E tests should be self-contained. Use the `TestApiClient` fixture for data setup/teardown:
 
 ```typescript
 import { loginAsDefault, createTestApi } from "./helpers";
@@ -403,59 +436,58 @@ test("example", async ({ page }) => {
 });
 ```
 
-## 提交规则
+## Commit Rules
 
-- 用按逻辑意图分组的原子提交。
-- 约定格式：`feat(scope)`、`fix(scope)`、`refactor(scope)`、`docs`、`test(scope)`、`chore(scope)`。
+- Use atomic commits grouped by logical intent.
+- Conventional format: `feat(scope)`, `fix(scope)`, `refactor(scope)`, `docs`, `test(scope)`, `chore(scope)`.
 
-## 推送前最低检查
-
-```bash
-make check    # 跑所有检查：typecheck、单测、Go 测试、E2E
-```
-
-仅在用户明确要求时才运行验证。
-
-按需定向检查：
+## Minimum Pre-Push Checks
 
 ```bash
-pnpm typecheck        # 仅 TypeScript 类型错误
-pnpm test             # 仅 TS 单测（Vitest，所有包）
-make test             # 仅 Go 测试
-pnpm exec playwright test   # 仅 E2E（需后端 + 前端运行中）
+make check    # Runs all checks: typecheck, unit tests, Go tests, E2E
 ```
 
-## AI 智能体验证循环
+Run verification only when the user explicitly asks for it.
 
-编写或修改代码后，始终运行完整验证流水线：
+For targeted checks when requested:
+```bash
+pnpm typecheck        # TypeScript type errors only
+pnpm test             # TS unit tests only (Vitest, all packages)
+make test             # Go tests only
+pnpm exec playwright test   # E2E only (requires backend + frontend running)
+```
+
+## AI Agent Verification Loop
+
+After writing or modifying code, always run the full verification pipeline:
 
 ```bash
 make check
 ```
 
-**工作流：**
-- 写代码满足需求
-- 跑 `make check`
-- 若任一步失败，读错误输出，修代码，重跑
-- 重复直到全部通过
-- 然后才算任务完成
+**Workflow:**
+- Write code to satisfy the requirement
+- Run `make check`
+- If any step fails, read the error output, fix the code, and re-run
+- Repeat until all checks pass
+- Only then consider the task complete
 
-**快速迭代：** 若确定只影响 TypeScript 或 Go，先跑对应单项拿更快反馈，最后用完整 `make check` 收尾。
+**Quick iteration:** If you know only TypeScript or Go is affected, run individual checks first for faster feedback, then finish with a full `make check` before marking work complete.
 
-## CLI 发布
+## CLI Release
 
-**前置条件：** 每次 Production 部署必须伴随一次 CLI 发布。
+**Prerequisite:** A CLI release must accompany every Production deployment.
 
-1. 在 `main` 分支创建 tag：`git tag v0.x.x`
-2. 推 tag：`git push origin v0.x.x`
-3. GitHub Actions 自动触发 `release.yml`：跑 Go 测试 → GoReleaser 构建多平台二进制 → 发布到 GitHub Releases + Homebrew tap
+1. Create a tag on the `main` branch: `git tag v0.x.x`
+2. Push the tag: `git push origin v0.x.x`
+3. GitHub Actions automatically triggers `release.yml`: runs Go tests → GoReleaser builds multi-platform binaries → publishes to GitHub Releases + Homebrew tap
 
-除非用户指定版本，每次发布默认 bump patch（如 `v0.1.12` → `v0.1.13`）。
+By default, bump the patch version each release (e.g. `v0.1.12` → `v0.1.13`), unless the user specifies a specific version.
 
-## 多租户
+## Multi-tenancy
 
-所有查询按 `workspace_id` 过滤。成员检查控制访问。`X-Workspace-ID` header 把请求路由到正确工作区。
+All queries filter by `workspace_id`. Membership checks gate access. `X-Workspace-ID` header routes requests to the correct workspace.
 
-## 智能体受理人
+## Agent Assignees
 
-受理人是多态的——可以是 member 或 agent。issue 上是 `assignee_type` + `assignee_id`。智能体用独特样式渲染（紫色背景、机器人图标）。
+Assignees are polymorphic — can be a member or an agent. `assignee_type` + `assignee_id` on issues. Agents render with distinct styling (purple background, robot icon).

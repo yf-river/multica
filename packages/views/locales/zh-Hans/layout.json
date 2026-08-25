@@ -31,6 +31,7 @@
     "new_issue_shortcut": "C",
     "pinned_label": "固定",
     "workspace_group": "工作区",
-    "configure_group": "配置"
+    "configure_group": "配置",
+    "unread_overflow": "99+"
   }
 }

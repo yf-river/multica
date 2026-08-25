@@ -391,7 +391,7 @@ func (e *inboundEnricher) flattenMessage(m LarkMessage) string {
 	if raw == "" {
 		return ""
 	}
-	return resolveMentions(raw, restMentionsToEvent(m.Mentions), "")
+	return resolveMentions(raw, restMentionsToEvent(m.Mentions), "", "")
 }
 
 // restMentionsToEvent adapts the IM REST mention shape (flat string id)

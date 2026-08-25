@@ -76,8 +76,9 @@ type Config struct {
 	DeviceName                     string
 	RuntimeName                    string
 	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
+	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
 	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor, kimi, kiro, antigravity
+	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro, antigravity
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
 	MaxConcurrentTasks             int                   // max tasks running in parallel (default: 20)
@@ -142,7 +143,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// OpenClaw config, and a malformed config does not prevent daemon startup.
 	var profileCommandOverrides map[string]string
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
-		slog.Warn("could not load CLI config; proceeding without profile command overrides",
+		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
 		if cliCfg.Backends != nil {
@@ -217,7 +218,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	agents = filterAgentsByProviderEnv(agents)
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
 	}
 
 	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")

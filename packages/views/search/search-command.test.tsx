@@ -602,7 +602,7 @@ describe("SearchCommand", () => {
     );
 
     expect(screen.getByTitle("张艾丽")).toBeInTheDocument();
-    expect(screen.queryByText("验收中")).not.toBeInTheDocument();
+    expect(screen.queryByText("审核中")).not.toBeInTheDocument();
   });
 
   it("搜索接口失败时清空旧结果并显示可诊断错误", async () => {

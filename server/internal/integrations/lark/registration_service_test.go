@@ -132,7 +132,7 @@ func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
 // mapping — without touching the database. The polling goroutine's
 // DB-write paths (UpsertLarkInstallation + BindInstallerTx in one tx)
 // require a real Postgres + sqlc-generated *db.Queries and are
-// covered by an integration test against the current schema.
+// covered by an integration test against the migration suite.
 
 // TestRegistrationServiceConstructorValidatesDeps pins that every
 // required dependency surfaces as a constructor error rather than a

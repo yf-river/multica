@@ -5,10 +5,10 @@ description: Multica 的后端、前端、daemon、运行时和数据库结构�
 
 ## 总览
 
-Multica 是 Go 后端 + Next.js Web + PostgreSQL 的 monorepo。团队内部使用时，后端负责 API、WebSocket、任务队列、trace、usage 和训练评估数据；daemon 负责在具体电脑上执行 Agent CLI。
+Multica 是 Go 后端 + Next.js Web + Electron 桌面端 + PostgreSQL 的 monorepo。团队内部使用时，后端负责 API、WebSocket、任务队列、trace、usage 和训练评估数据；daemon 负责在具体电脑上执行 Agent CLI。
 
 ```text
-浏览器
+浏览器 / 桌面端
       ↓ REST / WebSocket
 Go 后端（Chi、任务队列、实时事件）
       ↓ sqlc
@@ -21,18 +21,19 @@ daemon（Codex / Claude / OpenCode / CodeBuddy 等运行时）
 
 | 目录 | 作用 |
 | --- | --- |
-| `server/` | Go 后端、CLI、daemon、数据库 schema |
+| `server/` | Go 后端、CLI、daemon、migration |
 | `apps/web/` | Next.js Web 应用 |
+| `apps/desktop/` | Electron 桌面端 |
 | `apps/docs/` | 文档站 |
 | `packages/core/` | 跨端业务逻辑、API client、类型和 store |
 | `packages/ui/` | 基础 UI 组件 |
-| `packages/views/` | 复用业务页面 |
+| `packages/views/` | Web/桌面复用业务页面 |
 
 ## 后端
 
 - `cmd/server`：HTTP API、WebSocket、健康检查。
 - `cmd/multica`：CLI 和 daemon 入口。
-- `internal/schema`：启动时初始化或验证当前数据库 schema。
+- `cmd/migrate`：数据库 migration。
 - `internal/handler`：领域 handler，例如 issue、agent、squad、prompt evaluation。
 - `internal/service/task.go`：任务入队、领取、运行、完成和失败。
 - `internal/realtime`：WebSocket hub。

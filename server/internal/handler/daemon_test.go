@@ -1693,7 +1693,6 @@ func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
 	req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/usage", map[string]any{
 		"usage": []map[string]any{
 			{
-				"provider":           "handler_test_runtime",
 				"model":              "auto",
 				"input_tokens":       120,
 				"output_tokens":      45,
@@ -1821,7 +1820,6 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 		w := httptest.NewRecorder()
 		req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/usage", map[string]any{
 			"usage": []map[string]any{{
-				"provider":           "codebuddy",
 				"model":              "deepseek-v4-pro-ioa",
 				"input_tokens":       input,
 				"output_tokens":      output,

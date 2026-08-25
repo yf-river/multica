@@ -533,7 +533,7 @@ export function weekStartIso(iso: string): string {
 
 // "May 12" — short, locale-aware month/day for a YYYY-MM-DD string. Parsing
 // via UTC keeps the displayed day stable regardless of the browser's tz.
-function formatShortDate(iso: string): string {
+export function formatShortDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   const dt = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1));
   return dt.toLocaleString("en", {

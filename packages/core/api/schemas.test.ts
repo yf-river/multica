@@ -393,6 +393,7 @@ describe("dashboard + runtime usage schema drift", () => {
   });
 
   it("rejects a non-array body so parseWithFallback can return its fallback", () => {
+    expect(DashboardUsageDailyListSchema.safeParse(null).success).toBe(false);
     expect(RuntimeUsageListSchema.safeParse({ rows: [] }).success).toBe(false);
   });
 

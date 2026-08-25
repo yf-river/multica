@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable i18next/no-literal-string */
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -41,6 +40,9 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
+import {
+  useLocalDaemonStatus,
+} from "../../platform";
 import { useT } from "../../i18n";
 import {
   buildGongfengResourceRefFromWorkspaceRepo,
@@ -72,6 +74,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
   const workspace = useCurrentWorkspace();
+  const daemonStatus = useLocalDaemonStatus();
   const [open, setOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
@@ -82,6 +85,8 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const createResource = useCreateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
   const syncResource = useSyncProjectResource(wsId, projectId);
+
+  const localDaemonId = daemonStatus.daemonId;
 
   const attachedUrls = new Set(
     resources.filter(isGongfengRef).map((r) => r.resource_ref.url),
@@ -468,11 +473,14 @@ function LocalDirectoryRow({
   const ref = resource.resource_ref;
   const display = (ref.label || resource.label || ref.local_path).trim() ||
     ref.local_path;
-  // Without a local daemon (web), the owning device is never "this machine" —
-  // the row is always visually de-emphasized and rename is hidden because the
-  // label belongs to the owning device. Delete stays available so the user can
+  const isForeignDaemon =
+    localDaemonId !== null && ref.daemon_id !== localDaemonId;
+  const isLocalUnknown = localDaemonId === null;
+  // "disabled" in the spec sense — visual de-emphasis + no chat hint, and
+  // rename is hidden on foreign / unknown-daemon rows because the label
+  // belongs to the owning device. Delete stays available so the user can
   // drop a stale registration from any device.
-  const mismatch = true;
+  const mismatch = isForeignDaemon || isLocalUnknown;
 
   return (
     <div

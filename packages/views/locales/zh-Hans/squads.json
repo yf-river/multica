@@ -3,6 +3,7 @@
     "title": "小队",
     "new_button": "新建小队",
     "empty_no_squads": "还没有小队，创建一个开始吧。",
+    "empty_no_match": "没有匹配筛选条件的小队。",
     "table": {
       "name": "小队",
       "leader": "队长",
@@ -97,6 +98,8 @@
     "unavailable": "小队不可用",
     "detail_link": "详情 →",
     "archived": "已归档",
+    "member_count_one": "{{count}} 名成员",
+    "member_count_other": "{{count}} 名成员",
     "members_section": "成员",
     "more_members_one": "还有 {{count}} 人",
     "more_members_other": "还有 {{count}} 人"

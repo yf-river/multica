@@ -66,10 +66,14 @@ interface AnalyticsConfig {
 type ClientType = "desktop" | "web";
 
 /**
- * Classify the current runtime. The desktop app has been removed, so this is
- * always "web" now. Kept as a function (rather than inlining the literal) so
- * the super-property registration site stays explicit and the call graph is
- * greppable.
+ * Classify the current runtime as desktop (Electron renderer) or web. Used as
+ * a super-property so every event can be split by client without relying on
+ * PostHog's `$lib`, which reports "web" in both the Next.js app and the
+ * Electron renderer (both Chromium).
+ *
+ * Signals we trust:
+ *   - `window.electron` is exposed by the preload script in every renderer.
+ *   - `navigator.userAgent` contains "Electron" as a fallback.
  */
 function detectClientType(): ClientType {
   if (typeof window === "undefined") return "web";

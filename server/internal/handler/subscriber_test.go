@@ -64,20 +64,6 @@ func listIssueSubscribersForTest(t *testing.T, issueID string) []subscriberRespo
 
 func TestSubscriberAPI(t *testing.T) {
 	ctx := context.Background()
-	isSubscribed := func(t *testing.T, issueID, userType, userID string) bool {
-		t.Helper()
-		var subscribed bool
-		if err := testPool.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				FROM issue_subscriber
-				WHERE issue_id = $1 AND user_type = $2 AND user_id = $3
-			)
-		`, issueID, userType, userID).Scan(&subscribed); err != nil {
-			t.Fatalf("check issue subscriber: %v", err)
-		}
-		return subscribed
-	}
 
 	t.Run("Subscribe", func(t *testing.T) {
 		issueID := newSubscriberTestIssue(t)
