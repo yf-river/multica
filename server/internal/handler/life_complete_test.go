@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -396,6 +397,25 @@ func TestLifeCognitionTasksDoNotJoinQuickCreateSerialization(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = ANY($1::uuid[])`, taskIDs)
 	})
+}
+
+func TestLifeCognitionTasksYieldToInteractiveChat(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := parseUUID(createHandlerTestAgent(t, "BackgroundLifeCognition", nil))
+	task, err := testHandler.Queries.CreateLifeCognitionAgentTask(ctx, db.CreateLifeCognitionAgentTaskParams{
+		AgentID: agentID, RuntimeID: parseUUID(handlerTestRuntimeID(t)), Context: []byte(`{"type":"life_cognition"}`),
+		InitiatorUserID: parseUUID(testUserID), TriggerSummary: pgtype.Text{String: "人生后台任务", Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1`, task.ID)
+	})
+	if task.Priority >= 2 {
+		t.Fatalf("life cognition priority %d must remain below interactive chat priority 2", task.Priority)
+	}
 }
 
 func TestLifeProactiveReviewRecordsValueAndAdjustsRhythm(t *testing.T) {

@@ -564,7 +564,7 @@ WHERE id = $1 AND status = 'running';
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, status, priority, context, initiator_user_id,
     force_fresh_session, trigger_summary
-) VALUES ($1, $2, 'queued', 5, $3, $4, true, $5)
+) VALUES ($1, $2, 'queued', 0, $3, $4, true, $5)
 RETURNING *;
 
 -- name: CompleteLifeCognitionJob :one
