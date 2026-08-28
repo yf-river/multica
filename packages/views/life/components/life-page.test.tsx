@@ -67,8 +67,8 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "proposals") return { isLoading: false, data: { proposals: [] } };
     if (queryKey[0] === "experiments") return { isLoading: false, data: { experiments: [], rounds: [] } };
     if (queryKey[0] === "checks") return { isLoading: false, data: { checks: [] } };
-    if (queryKey[0] === "identity") return { isLoading: false, data: { versions: [] } };
-    if (queryKey[0] === "relationships") return { isLoading: false, data: { events: [] } };
+    if (queryKey[0] === "identity") return { isLoading: false, data: { versions: [{ id: "identity-1", version: 3, status: "active", stable_core: { traits: ["热烈", "直接"], position: "站在用户一边，但不永远同意" }, relationship_contract: { conflict: "保留分歧但不离开", follow_up: "搭子主动回看" }, growth_profile: {}, expression_profile: {}, interests: [], change_reason: "共同确认" }] } };
+    if (queryKey[0] === "relationships") return { isLoading: false, data: { events: [{ id: "event-1", event_type: "agreement", status: "open", context: "忙完后一起复盘", user_position: "希望被主动记得", companion_position: "主动回看但允许拒绝" }] } };
     if (queryKey[0] === "materials") return { isLoading: false, data: { materials: [] } };
     if (queryKey[0] === "thoughts") return { isLoading: false, data: { thoughts: [] } };
     if (queryKey[0] === "topics") return { isLoading: false, data: { topics: [] } };
@@ -95,5 +95,13 @@ describe("LifePage memory governance", () => {
     expect(actions.remove).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
     expect(actions.remove).toHaveBeenCalledWith("memory-1");
+  });
+
+  it("shows identity and relationship state as human language", () => {
+    render(<LifePage />);
+    expect(screen.getByText("热烈、直接")).toBeInTheDocument();
+    expect(screen.getByText("关系位置")).toBeInTheDocument();
+    expect(screen.getByText("共同约定 · 待商量")).toBeInTheDocument();
+    expect(screen.queryByText("agreement · open")).not.toBeInTheDocument();
   });
 });

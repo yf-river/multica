@@ -100,10 +100,10 @@ function MemoryPanel() {
   const activeIdentity = identities.data?.versions.find((version) => version.status === "active");
   return <div className="mx-auto max-w-3xl space-y-8">
     <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.identity_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.identity_description)}</p></div>
-      {activeIdentity ? <article className="rounded-lg border p-4"><div className="text-xs text-muted-foreground">{t(($) => $.complete.current_identity, { version: activeIdentity.version })}</div><p className="mt-2 text-sm">{JSON.stringify(activeIdentity.stable_core)}</p><p className="mt-2 text-xs text-muted-foreground">{JSON.stringify(activeIdentity.relationship_contract)}</p></article> : <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_identity)}</p>}
+      {activeIdentity ? <IdentitySummary identity={activeIdentity} /> : <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_identity)}</p>}
       {(identities.data?.versions ?? []).filter((version) => version.status === "draft").map((version) => <IdentityDraftRow key={version.id} identity={version} />)}
       <IdentityEditor identity={activeIdentity} />
-      {(relationships.data?.events ?? []).filter((event) => event.status !== "resolved").map((event) => <article key={event.id} className="rounded-lg border p-4"><div className="text-xs font-medium">{event.event_type} · {event.status}</div><p className="mt-2 text-sm">{event.context}</p><div className="mt-3 grid gap-1 text-xs text-muted-foreground"><span>{t(($) => $.complete.your_position, { value: event.user_position || t(($) => $.complete.missing) })}</span><span>{t(($) => $.complete.companion_position, { value: event.companion_position || t(($) => $.complete.missing) })}</span></div><Button className="mt-3" size="sm" variant="outline" onClick={() => resolveEvent.mutate(event.id)}>{t(($) => $.complete.finish_review)}</Button></article>)}
+      {(relationships.data?.events ?? []).filter((event) => event.status !== "resolved").map((event) => <article key={event.id} className="rounded-lg border p-4"><div className="text-xs font-medium">{relationshipEventLabel(event.event_type, t)} · {relationshipStatusLabel(event.status, t)}</div><p className="mt-2 text-sm">{event.context}</p><div className="mt-3 grid gap-1 text-xs text-muted-foreground"><span>{t(($) => $.complete.your_position, { value: event.user_position || t(($) => $.complete.missing) })}</span><span>{t(($) => $.complete.companion_position, { value: event.companion_position || t(($) => $.complete.missing) })}</span></div><Button className="mt-3" size="sm" variant="outline" onClick={() => resolveEvent.mutate(event.id)}>{t(($) => $.complete.finish_review)}</Button></article>)}
     </section>
     <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.material_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.material_description)}</p></div><Textarea value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t(($) => $.complete.material_placeholder)}/><Button size="sm" disabled={!material.trim() || addMaterial.isPending} onClick={() => addMaterial.mutate()}><Plus />{t(($) => $.complete.record)}</Button><p className="text-xs text-muted-foreground">{t(($) => $.complete.material_count, { count: materials.data?.materials.length ?? 0 })}</p></section>
     <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.thought_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.thought_description)}</p></div>{(thoughts.data?.thoughts ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_thoughts)}</p> : thoughts.data?.thoughts.map((thought) => <article key={thought.id} className="rounded-lg border p-4"><div className="flex items-center justify-between gap-3"><span className="text-sm font-medium">{thought.title}</span><span className="text-xs text-muted-foreground">{thought.thought_type}</span></div><p className="mt-2 text-sm text-muted-foreground">{thought.content}</p><p className="mt-2 text-xs text-muted-foreground">{t(($) => $.complete.last_developed, { time: new Date(thought.last_developed_at).toLocaleString() })}</p></article>)}</section>
@@ -111,6 +111,52 @@ function MemoryPanel() {
     <section className="space-y-3"><h2 className="text-sm font-medium">{t(($) => $.complete.commitment_title)}</h2>{(commitments.data?.commitments ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_commitments)}</p> : commitments.data?.commitments.map((item) => <article key={item.id} className="flex items-start gap-3 rounded-lg border p-4"><div className="min-w-0 flex-1"><div className="text-sm">{item.content}</div><div className="mt-1 text-xs text-muted-foreground">{item.status}{item.due_at ? ` · ${new Date(item.due_at).toLocaleString()}` : ""}</div></div>{item.status === "candidate" && <Button size="sm" onClick={() => updateCommitment.mutate({ id: item.id, status: "confirmed" })}>{t(($) => $.complete.confirm)}</Button>}{item.status === "confirmed" && <Button size="sm" variant="outline" onClick={() => updateCommitment.mutate({ id: item.id, status: "completed" })}>{t(($) => $.complete.complete)}</Button>}</article>)}</section>
     <section className="space-y-3"><h2 className="text-sm font-medium">{t(($) => $.complete.memory_title)}</h2>{memories.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.memory.empty)}</p> : memories.map((memory) => <MemoryRow key={memory.id} memory={memory} />)}</section>
   </div>;
+}
+
+function IdentitySummary({ identity }: { identity: LifeIdentityVersion }) {
+  const { t } = useT("life");
+  const labels: Record<string, string> = {
+    traits: t(($) => $.complete.identity_traits),
+    position: t(($) => $.complete.identity_position),
+    support: t(($) => $.complete.identity_support),
+    conflict: t(($) => $.complete.identity_conflict),
+    shared_change: t(($) => $.complete.identity_shared_change),
+    reunion: t(($) => $.complete.identity_reunion),
+    follow_up: t(($) => $.complete.identity_follow_up),
+    memory: t(($) => $.complete.identity_memory),
+    support_without_control: t(($) => $.complete.identity_support),
+  };
+  const sections = [
+    [t(($) => $.complete.stable_core), identity.stable_core],
+    [t(($) => $.complete.relationship_contract), identity.relationship_contract],
+  ] as const;
+  return <article className="rounded-lg border p-4"><div className="text-xs text-muted-foreground">{t(($) => $.complete.current_identity, { version: identity.version })}</div><div className="mt-3 grid gap-3">{sections.map(([title, values]) => <div key={title}><div className="text-xs font-medium">{title}</div><dl className="mt-1 grid gap-1 text-sm">{Object.entries(values).map(([key, value]) => <div key={key} className="grid grid-cols-[7rem_1fr] gap-2"><dt className="text-muted-foreground">{labels[key] ?? key.replaceAll("_", " ")}</dt><dd>{formatIdentityValue(value, t)}</dd></div>)}</dl></div>)}</div></article>;
+}
+
+function formatIdentityValue(value: unknown, t: ReturnType<typeof useT<"life">>["t"]): string {
+  if (Array.isArray(value)) return value.map((item) => formatIdentityValue(item, t)).join("、");
+  if (value && typeof value === "object") return Object.values(value).map((item) => formatIdentityValue(item, t)).join("；");
+  if (typeof value === "boolean") return value ? t(($) => $.complete.yes) : t(($) => $.complete.no);
+  return String(value ?? "");
+}
+
+function relationshipEventLabel(value: string, t: ReturnType<typeof useT<"life">>["t"]): string {
+  const labels: Record<string, string> = {
+    conflict: t(($) => $.complete.relationship_conflict),
+    agreement: t(($) => $.complete.relationship_agreement),
+    boundary: t(($) => $.complete.relationship_boundary),
+    reunion: t(($) => $.complete.relationship_reunion),
+  };
+  return labels[value] ?? value;
+}
+
+function relationshipStatusLabel(value: string, t: ReturnType<typeof useT<"life">>["t"]): string {
+  const labels: Record<string, string> = {
+    open: t(($) => $.complete.relationship_open),
+    waiting: t(($) => $.complete.relationship_waiting),
+    retained_difference: t(($) => $.complete.relationship_retained_difference),
+  };
+  return labels[value] ?? value;
 }
 
 function IdentityDraftRow({ identity }: { identity: LifeIdentityVersion }) {

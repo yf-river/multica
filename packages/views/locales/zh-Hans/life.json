@@ -66,7 +66,7 @@
     "save": "保存"
   },
   "complete": {
-    "identity_title": "人格与关系", "identity_description": "稳定底色有版本记录；新的版本必须由你确认后才生效。", "current_identity": "当前人格 · v{{version}}", "no_identity": "尚未建立人格版本。", "your_position": "你的立场：{{value}}", "companion_position": "搭子的立场：{{value}}", "missing": "待补充", "finish_review": "完成这次复盘",
+    "identity_title": "人格与关系", "identity_description": "稳定底色有版本记录；新的版本必须由你确认后才生效。", "current_identity": "当前人格 · v{{version}}", "no_identity": "尚未建立人格版本。", "identity_traits": "底色", "identity_position": "关系位置", "identity_support": "相处方式", "identity_conflict": "冲突时", "identity_shared_change": "共享修改", "identity_reunion": "久别重逢", "identity_follow_up": "约定回看", "identity_memory": "记忆主权", "yes": "是", "no": "否", "relationship_conflict": "意见冲突", "relationship_agreement": "共同约定", "relationship_boundary": "关系边界", "relationship_reunion": "久别重逢", "relationship_open": "待商量", "relationship_waiting": "等待合适时机", "relationship_retained_difference": "保留分歧", "your_position": "你的立场：{{value}}", "companion_position": "搭子的立场：{{value}}", "missing": "待补充", "finish_review": "完成这次复盘",
     "material_title": "随手留下材料", "material_description": "日记、念头和事实会进入材料流，由搭子理解；不会自动升级成确认记忆。", "material_placeholder": "今天发生了什么，或者你现在在想什么？", "record": "记下来", "material_count": "最近已接入 {{count}} 条材料",
     "thought_title": "搭子的资料库", "thought_description": "搭子可以继续发展自己的兴趣、问题、观点和调研；涉及你的共享世界时仍会先提案。", "no_thoughts": "搭子还没有形成需要长期发展的思考。", "last_developed": "最近发展：{{time}}",
     "topic_title": "正在形成的主题", "no_topics": "还没有形成持续主题。", "commitment_title": "承诺与回看", "no_commitments": "还没有需要共同记住的承诺。", "confirm": "确认", "complete": "完成", "memory_title": "记忆",
