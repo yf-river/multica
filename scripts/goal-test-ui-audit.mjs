@@ -35,6 +35,20 @@ const forbiddenAcceptanceTexts = [
 const routes = [
   { id: "login", label: "登录页", path: "/login", auth: false, expect: ["登录 Multica"] },
   {
+    id: "companion",
+    label: "搭子",
+    path: `/${workspaceSlug}/companion`,
+    expect: ["搭子"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "life",
+    label: "人生",
+    path: `/${workspaceSlug}/life`,
+    expect: ["人生"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
     id: "issues",
     label: "任务",
     path: `/${workspaceSlug}/issues`,
@@ -49,10 +63,24 @@ const routes = [
     uiContract: { forbiddenText: forbiddenAcceptanceTexts },
   },
   {
+    id: "my-issues",
+    label: "我的任务",
+    path: `/${workspaceSlug}/my-issues`,
+    expect: ["我的任务"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
     id: "projects",
     label: "项目",
     path: `/${workspaceSlug}/projects`,
     expect: ["项目"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "autopilots",
+    label: "自动化",
+    path: `/${workspaceSlug}/autopilots`,
+    expect: ["自动化"],
     uiContract: { forbiddenText: forbiddenAcceptanceTexts },
   },
   {
@@ -76,6 +104,7 @@ const routes = [
     expect: ["运行复盘"],
   },
   { id: "runtimes", label: "运行时", path: `/${workspaceSlug}/runtimes`, expect: ["运行时"] },
+  { id: "skills", label: "技能", path: `/${workspaceSlug}/skills`, expect: ["技能"] },
   { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
 ];
 

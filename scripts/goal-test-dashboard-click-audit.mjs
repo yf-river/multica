@@ -28,13 +28,18 @@ const maxApiRequests = 20;
 mkdirSync(artifactRoot, { recursive: true });
 
 const dashboardClicks = [
+  { id: "companion", label: "搭子", link: "搭子", path: `/${workspaceSlug}/companion`, ready: { heading: "搭子" } },
+  { id: "life", label: "人生", link: "人生", path: `/${workspaceSlug}/life`, ready: { heading: "人生" } },
   { id: "inbox", label: "收件箱", link: "收件箱", path: `/${workspaceSlug}/inbox`, ready: { heading: "收件箱" } },
+  { id: "my-issues", label: "我的任务", link: "我的任务", path: `/${workspaceSlug}/my-issues`, ready: { heading: "我的任务" } },
   { id: "issues", label: "任务", link: "任务", path: `/${workspaceSlug}/issues`, ready: { heading: "任务" } },
   { id: "projects", label: "项目", link: "项目", path: `/${workspaceSlug}/projects`, ready: { heading: "项目" } },
+  { id: "autopilots", label: "自动化", link: "自动化", path: `/${workspaceSlug}/autopilots`, ready: { heading: "自动化" } },
   { id: "agents", label: "智能体", link: "智能体", path: `/${workspaceSlug}/agents`, ready: { heading: "智能体" } },
   { id: "squads", label: "小队", link: "小队", path: `/${workspaceSlug}/squads`, ready: { heading: "小队" } },
   { id: "run-reviews", label: "运行复盘", link: "运行复盘", path: `/${workspaceSlug}/run-reviews`, ready: { heading: "运行复盘" } },
   { id: "runtimes", label: "运行时", link: "运行时", path: `/${workspaceSlug}/runtimes`, ready: { heading: "运行时" } },
+  { id: "skills", label: "技能", link: "技能", path: `/${workspaceSlug}/skills`, ready: { heading: "技能" } },
   { id: "settings", label: "设置", link: "设置", path: `/${workspaceSlug}/settings`, ready: { heading: "设置" } },
 ];
 
