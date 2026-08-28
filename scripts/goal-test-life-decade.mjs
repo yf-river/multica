@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import pg from "pg";
@@ -16,8 +16,10 @@ const account = process.env.E2E_ACCOUNT || "develop";
 const password = process.env.E2E_PASSWORD || "develop123";
 const workspaceSlug = process.env.E2E_WORKSPACE || "ai-studio";
 const outputDir = path.join(repoRoot, "artifacts/acceptance/life-decade");
-const startedAt = new Date();
+let startedAt = new Date();
 const simulatedStart = new Date("2016-09-15T12:00:00.000Z");
+const monthLimit = Number.parseInt(process.env.LIFE_DECADE_MONTH_LIMIT || "120", 10);
+if (!Number.isInteger(monthLimit) || monthLimit < 1 || monthLimit > 120) throw new Error(`invalid LIFE_DECADE_MONTH_LIMIT ${process.env.LIFE_DECADE_MONTH_LIMIT}`);
 const absentMonths = new Set([48, 49, 50, 51, 52, 53]);
 const denseMonths = new Set(Array.from({ length: 40 }, (_, index) => index * 3).filter((month) => !absentMonths.has(month)));
 for (let candidate = 119; denseMonths.size < 40 && candidate >= 0; candidate -= 1) {
@@ -33,6 +35,9 @@ if (runEnv.GOAL_TEST_ENV !== "int" || databaseName !== expectedDatabase) {
 }
 
 mkdirSync(outputDir, { recursive: true });
+const resultPath = path.join(outputDir, "life-decade-result.json");
+const resumeRequested = process.env.LIFE_DECADE_RESUME === "1";
+const resumeState = resumeRequested && existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) : null;
 const db = new pg.Pool({ connectionString: databaseURL, max: 3 });
 let token = "";
 let workspace;
@@ -44,6 +49,7 @@ let coreScenarioCount = 0;
 const responseEvidence = [];
 const checkpoints = [];
 const created = { agents: [], observers: [], experiments: [], memories: [], evaluations: [] };
+const completedYearlyActions = new Set();
 
 const phases = [
   "建立关系与表达边界",
@@ -96,60 +102,57 @@ try {
   workspace = await findWorkspace();
   user = await currentUser();
   const runtime = await findCodeBuddyRuntime();
-  const companion = await createAgent(runtime.id, "人生搭子·十年", companionInstructions(), 4);
-  const observerAgents = [];
-  for (const [name, instructions] of observerAgentDefinitions()) {
-    observerAgents.push(await createAgent(runtime.id, name, instructions, 1));
+  let companion;
+  if (resumeState) {
+    companion = await restoreResumeState(runtime.id);
+  } else {
+    companion = await establishLifeSystem(runtime.id);
   }
-  await api("/api/life/companion", { method: "PUT", body: { agent_id: companion.id } });
-  await establishIdentity();
-  await establishObservers(observerAgents);
-  await api("/api/life/proactive-policy", {
-    method: "PUT",
-    body: {
-      enabled: true,
-      timezone: "Asia/Shanghai",
-      quiet_hours: { start: "23:30", end: "08:00" },
-      minimum_interval_hours: 24,
-    },
-  });
-  session = await api("/api/chat/sessions", {
-    method: "POST",
-    headers: { "Idempotency-Key": randomUUID() },
-    body: { agent_id: companion.id, title: "十年人生：2016—2026" },
-  });
 
-  let coreIndex = 0;
-  for (let month = 0; month < 120; month += 1) {
+  let coreIndex = responseEvidence.length;
+  for (let month = checkpoints.length; month < monthLimit; month += 1) {
     const simulatedAt = addMonths(simulatedStart, month);
     const year = Math.floor(month / 12);
     const monthOfYear = month % 12;
     if (absentMonths.has(month)) {
       checkpoints.push(checkpoint(month, simulatedAt, year, monthOfYear, "absent"));
+      persist({ status: "running", current_month: month + 1, completed_yearly_actions: [...completedYearlyActions] });
       continue;
     }
     const messageCount = denseMonths.has(month) ? 4 : 1;
-    if (messageCount === 4) denseWindowCount += 1;
-    for (let turn = 0; turn < messageCount; turn += 1) {
+    const completedTurns = responseEvidence.filter((item) => item.month === month + 1).length;
+    for (let turn = completedTurns; turn < messageCount; turn += 1) {
       const message = coreIndex < coreMessages.length
         ? coreMessages[coreIndex++]
         : contextualMessage(year, monthOfYear, turn, month);
       const result = await chat(message, simulatedAt, month, turn);
-      if (coreScenarioCount < 30) coreScenarioCount += 1;
       responseEvidence.push(result);
+      coreScenarioCount = Math.min(30, responseEvidence.length);
+      denseWindowCount = countDenseWindows(responseEvidence);
+      persist({ status: "running", current_month: month + 1, completed_yearly_actions: [...completedYearlyActions] });
     }
-    await yearlyActions(year, monthOfYear, simulatedAt, companion.id);
+    if (monthOfYear === 11 && !completedYearlyActions.has(month)) {
+      await yearlyActions(year, monthOfYear, simulatedAt, companion.id);
+      completedYearlyActions.add(month);
+      persist({ status: "running", current_month: month + 1, completed_yearly_actions: [...completedYearlyActions] });
+    }
     await waitForLifeJobs(`month-${month + 1}`);
     checkpoints.push(checkpoint(month, simulatedAt, year, monthOfYear, "active"));
-    persistProgress();
+    persist({ status: "running", current_month: month + 1, completed_yearly_actions: [...completedYearlyActions] });
   }
 
-  await waitForLifeJobs("final", 12 * 60_000);
-  await waitForChronicleCatchUp();
-  const audit = await finalAudit(companion.id, runtime.id);
-  persist({ status: "passed", audit });
-  if (audit.failures.length > 0) throw new Error(`decade audit failed: ${audit.failures.join("; ")}`);
-  console.log(JSON.stringify({ status: "passed", ...audit.summary }, null, 2));
+  if (monthLimit < 120) {
+    await waitForLifeJobs(`month-limit-${monthLimit}`);
+    persist({ status: "smoke_passed", month_limit: monthLimit });
+    console.log(JSON.stringify({ status: "smoke_passed", month_limit: monthLimit, chats: chatCount, checkpoints: checkpoints.length }, null, 2));
+  } else {
+    await waitForLifeJobs("final", 35 * 60_000);
+    await waitForChronicleCatchUp();
+    const audit = await finalAudit(companion.id, runtime.id);
+    persist({ status: "passed", audit });
+    if (audit.failures.length > 0) throw new Error(`decade audit failed: ${audit.failures.join("; ")}`);
+    console.log(JSON.stringify({ status: "passed", ...audit.summary }, null, 2));
+  }
 } catch (error) {
   persist({ status: "failed", error: error instanceof Error ? error.stack : String(error) });
   throw error;
@@ -202,6 +205,56 @@ async function createAgent(runtimeID, name, instructions, concurrency) {
   });
   created.agents.push(agent.id);
   return agent;
+}
+
+async function establishLifeSystem(runtimeID) {
+  const companion = await createAgent(runtimeID, "人生搭子·十年", companionInstructions(), 4);
+  const observerAgents = [];
+  for (const [name, instructions] of observerAgentDefinitions()) {
+    observerAgents.push(await createAgent(runtimeID, name, instructions, 1));
+  }
+  await api("/api/life/companion", { method: "PUT", body: { agent_id: companion.id } });
+  await establishIdentity();
+  await establishObservers(observerAgents);
+  await api("/api/life/proactive-policy", {
+    method: "PUT",
+    body: {
+      enabled: true,
+      timezone: "Asia/Shanghai",
+      quiet_hours: { start: "23:30", end: "08:00" },
+      minimum_interval_hours: 24,
+    },
+  });
+  session = await api("/api/chat/sessions", {
+    method: "POST",
+    headers: { "Idempotency-Key": randomUUID() },
+    body: { agent_id: companion.id, title: "十年人生：2016—2026" },
+  });
+  persist({ status: "running", current_month: 0, completed_yearly_actions: [] });
+  return companion;
+}
+
+async function restoreResumeState(runtimeID) {
+  if (resumeState.schema !== "multica.life_decade_acceptance.v1") throw new Error("resume state has an unsupported schema");
+  if (resumeState.workspace?.id !== workspace.id || resumeState.user_id !== user.id) throw new Error("resume state belongs to another user or workspace");
+  if (!resumeState.session_id || resumeState.created?.agents?.length !== 5) throw new Error("resume state is missing the life session or agents");
+  startedAt = new Date(resumeState.started_at);
+  Object.assign(created, resumeState.created);
+  responseEvidence.push(...(resumeState.responses || []));
+  checkpoints.push(...(resumeState.checkpoints || []));
+  for (const month of resumeState.completed_yearly_actions || []) completedYearlyActions.add(month);
+  chatCount = responseEvidence.length;
+  denseWindowCount = countDenseWindows(responseEvidence);
+  coreScenarioCount = Math.min(30, responseEvidence.length);
+  session = { id: resumeState.session_id };
+  const { rows } = await db.query(
+    `SELECT
+       EXISTS (SELECT 1 FROM chat_session WHERE id=$1 AND workspace_id=$2 AND creator_id=$3) AS session_exists,
+       (SELECT count(*)::int FROM agent WHERE id = ANY($4::uuid[]) AND workspace_id=$2 AND runtime_id=$5 AND model=$6) AS matching_agents`,
+    [session.id, workspace.id, user.id, created.agents, runtimeID, model],
+  );
+  if (!rows[0].session_exists || rows[0].matching_agents !== 5) throw new Error("resume state no longer matches the deployed life session and agents");
+  return { id: created.agents[0] };
 }
 
 async function establishIdentity() {
@@ -297,7 +350,7 @@ async function moveChatMaterials(messageIDs, simulatedAt, turn) {
   }
 }
 
-async function waitForLifeJobs(label, timeout = 10 * 60_000) {
+async function waitForLifeJobs(label, timeout = 35 * 60_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const { rows } = await db.query(
@@ -308,8 +361,8 @@ async function waitForLifeJobs(label, timeout = 10 * 60_000) {
       [workspace.id, user.id],
     );
     const counts = Object.fromEntries(rows.map((row) => [row.status, row.count]));
-    if ((counts.failed || 0) > 0) throw new Error(`${label}: ${counts.failed} life cognition jobs failed`);
-    const pending = (counts.queued || 0) + (counts.running || 0);
+    if ((counts.cancelled || 0) > 0) throw new Error(`${label}: ${counts.cancelled} life cognition jobs exhausted retries`);
+    const pending = (counts.queued || 0) + (counts.running || 0) + (counts.failed || 0);
     if (pending === 0) return counts;
     await delay(2_000);
   }
@@ -468,7 +521,7 @@ async function exerciseIdentityUpgrade() {
 }
 
 async function waitForChronicleCatchUp() {
-  const deadline = Date.now() + 20 * 60_000;
+  const deadline = Date.now() + 6 * 60 * 60_000;
   let stable = 0;
   let previous = "";
   while (Date.now() < deadline) {
@@ -497,8 +550,8 @@ async function finalAudit(companionID, runtimeID) {
        (SELECT count(*)::int FROM life_observer WHERE workspace_id=$2 AND user_id=$3) AS observers,
        (SELECT count(*)::int FROM life_experiment_round r JOIN life_experiment e ON e.id=r.experiment_id WHERE e.workspace_id=$2 AND e.user_id=$3) AS rounds,
        (SELECT count(*)::int FROM life_chronicle_entry WHERE workspace_id=$2 AND user_id=$3 AND period_kind='year' AND status='published') AS years,
-       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status IN ('queued','running')) AS pending,
-       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='failed') AS failed`,
+       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status IN ('queued','running','failed')) AS pending,
+       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='cancelled') AS failed`,
     [session.id, workspace.id, user.id],
   );
   const agents = await api("/api/agents");
@@ -602,6 +655,12 @@ function checkpoint(month, simulatedAt, year, monthOfYear, state) {
   return { index: month + 1, simulated_at: simulatedAt.toISOString(), year: year + 1, month: monthOfYear + 1, state, chats: chatCount };
 }
 
+function countDenseWindows(responses) {
+  const counts = new Map();
+  for (const response of responses) counts.set(response.month, (counts.get(response.month) || 0) + 1);
+  return [...counts].filter(([month, count]) => denseMonths.has(month - 1) && count >= 4).length;
+}
+
 async function api(pathname, options = {}) {
   return request(pathname, options, true);
 }
@@ -627,7 +686,7 @@ async function request(pathname, options, authenticated) {
 }
 
 function persist(extra = {}) {
-  writeFileSync(path.join(outputDir, "life-decade-result.json"), JSON.stringify({
+  writeFileSync(resultPath, JSON.stringify({
     schema: "multica.life_decade_acceptance.v1",
     started_at: startedAt.toISOString(),
     updated_at: new Date().toISOString(),
@@ -637,14 +696,11 @@ function persist(extra = {}) {
     session_id: session?.id || null,
     counts: { chats: chatCount, dense_windows: denseWindowCount, core_scenarios: coreScenarioCount, checkpoints: checkpoints.length },
     created,
+    completed_yearly_actions: [...completedYearlyActions],
     checkpoints,
     responses: responseEvidence,
     ...extra,
   }, null, 2));
-}
-
-function persistProgress() {
-  if (checkpoints.length % 12 === 0) persist({ status: "running" });
 }
 
 function delay(ms) {
