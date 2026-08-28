@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestLifeIdentityObserverAndPolicyAreUserGoverned(t *testing.T) {
@@ -332,6 +335,54 @@ func TestLifeCognitionOutputRejectsFieldsFromAnotherJobType(t *testing.T) {
 	if got := outputErr.Error(); got != "proactive_assessment is not allowed for proactive_check" {
 		t.Fatalf("unexpected output error: %q", got)
 	}
+}
+
+func TestLifeCognitionTasksDoNotJoinQuickCreateSerialization(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "ConcurrentLifeCognition", nil)
+	runtimeID := handlerTestRuntimeID(t)
+	var taskIDs []string
+	createTask := func(taskType string) {
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id,runtime_id,status,context)
+			VALUES ($1,$2,'queued',jsonb_build_object('type',$3::text)) RETURNING id
+		`, agentID, runtimeID, taskType).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		taskIDs = append(taskIDs, id)
+	}
+	claim := func() error {
+		_, err := testHandler.Queries.ClaimAgentTaskForRuntime(ctx, db.ClaimAgentTaskForRuntimeParams{
+			AgentID: parseUUID(agentID), RuntimeID: parseUUID(runtimeID),
+		})
+		return err
+	}
+
+	createTask("life_cognition")
+	createTask("life_cognition")
+	if err := claim(); err != nil {
+		t.Fatalf("claim first life cognition task: %v", err)
+	}
+	if err := claim(); err != nil {
+		t.Fatalf("claim concurrent life cognition task: %v", err)
+	}
+	mustExec(t, ctx, `UPDATE agent_task_queue SET status='completed', completed_at=now() WHERE id = ANY($1::uuid[])`, taskIDs)
+
+	createTask("quick_create")
+	createTask("quick_create")
+	if err := claim(); err != nil {
+		t.Fatalf("claim first quick-create task: %v", err)
+	}
+	if _, err := testHandler.Queries.ClaimAgentTaskForRuntime(ctx, db.ClaimAgentTaskForRuntimeParams{
+		AgentID: parseUUID(agentID), RuntimeID: parseUUID(runtimeID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("second quick-create claim should remain serialized, got %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = ANY($1::uuid[])`, taskIDs)
+	})
 }
 
 func TestLifeProactiveReviewRecordsValueAndAdjustsRhythm(t *testing.T) {

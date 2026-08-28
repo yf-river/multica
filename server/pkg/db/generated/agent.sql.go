@@ -533,9 +533,11 @@ WHERE id = (
                 atq.issue_id IS NULL
                 AND atq.chat_session_id IS NULL
                 AND atq.autopilot_run_id IS NULL
+                AND COALESCE(atq.context->>'type', '') <> 'life_cognition'
                 AND active.issue_id IS NULL
                 AND active.chat_session_id IS NULL
                 AND active.autopilot_run_id IS NULL
+                AND COALESCE(active.context->>'type', '') <> 'life_cognition'
               )
             )
       )
@@ -557,8 +559,10 @@ type ClaimAgentTaskForRuntimeParams struct {
 // issue in parallel while preventing a single agent from running duplicate tasks.
 // Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
 // Quick-create tasks have no issue / chat / autopilot link, so they serialize on
-// "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
-// otherwise a user mashing the create button could fire concurrent quick-creates
+// "any other quick-create-shaped task" (all four FKs NULL) for the same agent.
+// Life cognition tasks use the same nullable links but are independent durable jobs,
+// so they run up to the agent's configured concurrency instead of joining this lock.
+// Otherwise a user mashing the create button could fire concurrent quick-creates
 // whose completion lookup would race over "most recent issue by this agent".
 func (q *Queries) ClaimAgentTaskForRuntime(ctx context.Context, arg ClaimAgentTaskForRuntimeParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, claimAgentTaskForRuntime, arg.AgentID, arg.RuntimeID)
