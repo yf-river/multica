@@ -47,6 +47,8 @@ func TestBuildLifeJobPromptUsesOnlyTheCurrentJobContract(t *testing.T) {
 		"proactive_decision{status,trigger_source,reason,message,context_snapshot",
 		"do not inspect the product repository or source code",
 		"never invent an ID",
+		"must be an RFC3339 timestamp",
+		"never submit synthetic or reduced probe outputs",
 	)
 	assertPromptExcludes(t, out,
 		"proactive_assessment{check_id",

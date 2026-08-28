@@ -219,7 +219,191 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 			return invalidLifeJobOutput("%s is not allowed for %s", field, jobType)
 		}
 	}
+	for i, candidate := range output.MemoryCandidates {
+		if !validLifeMemoryKind(candidate.Kind) || strings.TrimSpace(candidate.Content) == "" || candidate.Confidence < 0 || candidate.Confidence > 1 || candidate.Urgency < 0 || candidate.Urgency > 1 {
+			return invalidLifeJobOutput("memory_candidates[%d] is invalid", i)
+		}
+		if err := validateLifeJobEvidence("memory_candidates", i, candidate.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, topic := range output.Topics {
+		if strings.TrimSpace(topic.Title) == "" || topic.Confidence < 0 || topic.Confidence > 1 || !validLifeTopicStatus(topic.Status) {
+			return invalidLifeJobOutput("topics[%d] is invalid", i)
+		}
+		if err := validateOptionalLifeJobID("topics", i, "topic_id", topic.ID); err != nil {
+			return err
+		}
+		for _, memoryID := range topic.MemoryIDs {
+			if _, err := util.ParseUUID(memoryID); err != nil {
+				return invalidLifeJobOutput("topics[%d].memory_ids contains an invalid id", i)
+			}
+		}
+		if err := validateLifeJobEvidence("topics", i, topic.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, commitment := range output.Commitments {
+		if strings.TrimSpace(commitment.Content) == "" {
+			return invalidLifeJobOutput("commitments[%d].content is required", i)
+		}
+		if err := validateOptionalLifeJobID("commitments", i, "source_memory_id", commitment.SourceMemoryID); err != nil {
+			return err
+		}
+		if _, err := parseLifeJobOptionalTime(commitment.DueAt); err != nil {
+			return invalidLifeJobOutput("commitments[%d].due_at: %v", i, err)
+		}
+		if _, err := parseLifeJobOptionalTime(commitment.RevisitAfter); err != nil {
+			return invalidLifeJobOutput("commitments[%d].revisit_after: %v", i, err)
+		}
+		if err := validateLifeJobEvidence("commitments", i, commitment.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, thought := range output.InternalThoughts {
+		if !oneOf(thought.Type, "interest", "opinion", "question", "research", "draft") || strings.TrimSpace(thought.Title) == "" || strings.TrimSpace(thought.Content) == "" {
+			return invalidLifeJobOutput("internal_thoughts[%d] is invalid", i)
+		}
+		if err := validateLifeJobEvidence("internal_thoughts", i, thought.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, event := range output.RelationshipEvents {
+		if !oneOf(event.Type, "conflict", "agreement", "boundary", "reunion") || !oneOf(event.Status, "", "open", "waiting", "resolved", "retained_difference") {
+			return invalidLifeJobOutput("relationship_events[%d] has an invalid type or status", i)
+		}
+		if _, err := parseLifeJobOptionalTime(event.RevisitAfter); err != nil {
+			return invalidLifeJobOutput("relationship_events[%d].revisit_after: %v", i, err)
+		}
+		if err := validateLifeJobEvidence("relationship_events", i, event.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, proposal := range output.ActionProposals {
+		if !oneOf(proposal.ProposalType, "experiment_start", "experiment_extend", "workspace_issue", "agent_action", "project_create", "module_adoption", "memory_change", "identity_change") || strings.TrimSpace(proposal.Title) == "" || proposal.Payload == nil {
+			return invalidLifeJobOutput("action_proposals[%d] is invalid", i)
+		}
+		if _, err := parseLifeJobOptionalTime(proposal.ExpiresAt); err != nil {
+			return invalidLifeJobOutput("action_proposals[%d].expires_at: %v", i, err)
+		}
+		if err := validateLifeJobEvidence("action_proposals", i, proposal.Evidence); err != nil {
+			return err
+		}
+	}
+	if decision := output.ProactiveDecision; decision != nil {
+		if !oneOf(decision.Status, "silent", "spoke") || !oneOf(decision.TriggerSource, "schedule", "commitment", "risk", "manual") || strings.TrimSpace(decision.Reason) == "" {
+			return invalidLifeJobOutput("proactive_decision is invalid")
+		}
+		if err := validateLifeJobEvidence("proactive_decision", 0, decision.Evidence); err != nil {
+			return err
+		}
+	}
+	if assessment := output.ProactiveAssessment; assessment != nil {
+		if _, err := util.ParseUUID(assessment.CheckID); err != nil || strings.TrimSpace(assessment.ValueAssessment) == "" || assessment.MinimumIntervalHours < 1 || assessment.MinimumIntervalHours > 168 {
+			return invalidLifeJobOutput("proactive_assessment is invalid")
+		}
+	}
+	for i, observation := range output.ExperimentObservations {
+		if _, err := util.ParseUUID(observation.RoundID); err != nil || !oneOf(observation.Type, "natural_material", "user_checkin", "companion_inference", "result") || strings.TrimSpace(observation.Content) == "" {
+			return invalidLifeJobOutput("experiment_observations[%d] is invalid", i)
+		}
+		if err := validateOptionalLifeJobID("experiment_observations", i, "material_id", observation.MaterialID); err != nil {
+			return err
+		}
+		if _, err := parseLifeJobOptionalTime(observation.ObservedAt); err != nil {
+			return invalidLifeJobOutput("experiment_observations[%d].observed_at: %v", i, err)
+		}
+	}
+	if review := output.ExperimentReview; review != nil {
+		if _, err := util.ParseUUID(review.RoundID); err != nil {
+			return invalidLifeJobOutput("experiment_review.round_id is invalid")
+		}
+		if err := validateLifeJobEvidence("experiment_review", 0, review.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, judgement := range output.ObserverJudgements {
+		if !oneOf(judgement.Status, "internal", "published", "withdrawn") || strings.TrimSpace(judgement.Title) == "" || strings.TrimSpace(judgement.Content) == "" || judgement.Confidence < 0 || judgement.Confidence > 1 {
+			return invalidLifeJobOutput("observer_judgements[%d] is invalid", i)
+		}
+		if err := validateLifeJobEvidence("observer_judgements", i, judgement.Evidence); err != nil {
+			return err
+		}
+	}
+	for i, topic := range output.ObservationTopics {
+		if strings.TrimSpace(topic.Title) == "" || len(topic.JudgementIDs) == 0 || !oneOf(topic.Status, "", "open", "surfaced", "discussing", "resolved", "archived") {
+			return invalidLifeJobOutput("observation_topics[%d] is invalid", i)
+		}
+		if err := validateOptionalLifeJobID("observation_topics", i, "topic_id", topic.ID); err != nil {
+			return err
+		}
+		for _, judgementID := range topic.JudgementIDs {
+			if _, err := util.ParseUUID(judgementID); err != nil {
+				return invalidLifeJobOutput("observation_topics[%d].judgement_ids contains an invalid id", i)
+			}
+		}
+	}
+	for i, chronicle := range output.Chronicles {
+		if !oneOf(chronicle.PeriodKind, "day", "week", "month", "year", "event") {
+			return invalidLifeJobOutput("chronicles[%d].period_kind is invalid", i)
+		}
+		if _, err := parseLifeJobTime(chronicle.PeriodStart, time.Time{}); err != nil {
+			return invalidLifeJobOutput("chronicles[%d].period_start: %v", i, err)
+		}
+		if _, err := parseLifeJobTime(chronicle.PeriodEnd, time.Time{}); err != nil {
+			return invalidLifeJobOutput("chronicles[%d].period_end: %v", i, err)
+		}
+		if err := validateLifeJobEvidence("chronicles", i, chronicle.Evidence); err != nil {
+			return err
+		}
+	}
+	if evaluation := output.UpgradeEvaluation; evaluation != nil {
+		if _, err := util.ParseUUID(evaluation.EvaluationID); err != nil || !oneOf(evaluation.Status, "passed", "failed", "unknown") {
+			return invalidLifeJobOutput("upgrade_evaluation is invalid")
+		}
+		if err := validateLifeJobEvidence("upgrade_evaluation", 0, evaluation.Evidence); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateLifeJobEvidence(field string, index int, evidence []lifeJobEvidenceOutput) error {
+	for evidenceIndex, item := range evidence {
+		if !validLifeEvidenceSourceType(item.SourceType) || strings.TrimSpace(item.SourceID) == "" || !oneOf(item.Stance, "", "supports", "contradicts", "context") {
+			return invalidLifeJobOutput("%s[%d].evidence[%d] is invalid", field, index, evidenceIndex)
+		}
+		if _, err := util.ParseUUID(item.SourceID); err != nil {
+			return invalidLifeJobOutput("%s[%d].evidence[%d].source_id is invalid", field, index, evidenceIndex)
+		}
+		if _, err := parseLifeJobOptionalTime(item.ObservedAt); err != nil {
+			return invalidLifeJobOutput("%s[%d].evidence[%d].observed_at: %v", field, index, evidenceIndex, err)
+		}
+	}
+	return nil
+}
+
+func validateOptionalLifeJobID(field string, index int, name, raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if _, err := util.ParseUUID(raw); err != nil {
+		return invalidLifeJobOutput("%s[%d].%s is invalid", field, index, name)
+	}
+	return nil
+}
+
+func validLifeTopicStatus(status string) bool {
+	return oneOf(status, "", "candidate", "active", "contradicted", "resolved", "archived")
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func validLifeEvidenceSourceType(value string) bool {
@@ -906,13 +1090,13 @@ func parseLifeJobOptionalTime(raw string) (pgtype.Timestamptz, error) {
 func parseLifeJobTime(raw string, fallback time.Time) (pgtype.Timestamptz, error) {
 	if strings.TrimSpace(raw) == "" {
 		if fallback.IsZero() {
-			return pgtype.Timestamptz{}, fmt.Errorf("time is required")
+			return pgtype.Timestamptz{}, invalidLifeJobOutput("time is required")
 		}
 		return pgtype.Timestamptz{Time: fallback, Valid: true}, nil
 	}
 	parsed, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		return pgtype.Timestamptz{}, fmt.Errorf("invalid RFC3339 time %q", raw)
+		return pgtype.Timestamptz{}, invalidLifeJobOutput("invalid RFC3339 time %q", raw)
 	}
 	return pgtype.Timestamptz{Time: parsed, Valid: true}, nil
 }

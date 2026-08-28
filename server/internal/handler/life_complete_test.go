@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -334,6 +335,18 @@ func TestLifeCognitionOutputRejectsFieldsFromAnotherJobType(t *testing.T) {
 	}
 	if got := outputErr.Error(); got != "proactive_assessment is not allowed for proactive_check" {
 		t.Fatalf("unexpected output error: %q", got)
+	}
+}
+
+func TestLifeCognitionOutputRejectsProseInTimestampFields(t *testing.T) {
+	err := validateLifeJobOutput("understand_materials", lifeCognitionOutput{
+		RelationshipEvents: []lifeJobRelationshipOutput{{
+			Type: "boundary", Status: "waiting", RevisitAfter: "等用户准备好再回看",
+		}},
+	})
+	var outputErr lifeJobOutputError
+	if !errors.As(err, &outputErr) || !strings.Contains(outputErr.Error(), "invalid RFC3339 time") {
+		t.Fatalf("expected precise timestamp validation error, got %v", err)
 	}
 }
 
