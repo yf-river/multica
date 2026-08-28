@@ -227,18 +227,31 @@ function AssistantMessage({
   message: ChatMessage;
   isPending: boolean;
 }) {
+  const { t } = useT("chat");
   const taskId = message.task_id;
   const canFetchTaskMessages = isTaskMessageTaskId(taskId);
+
+  // Completed replies already contain their final persisted content. Fetching
+  // every historical task transcript on mount creates one request per visible
+  // assistant message, so load that optional process only when the user asks.
+  const [processRequested, setProcessRequested] = useState(false);
+  const shouldFetchTaskMessages = shouldFetchAssistantTaskMessages(
+    canFetchTaskMessages,
+    isPending,
+    !!message.failure_reason,
+    processRequested,
+  );
 
   // Use the shared taskMessagesOptions so this cache entry is the same one
   // seeded by useRealtimeSync during task execution — zero refetch when the
   // task finishes, since WS already populated it.
-  const { data: taskMessages } = useQuery({
+  const taskMessagesQuery = useQuery({
     ...taskMessagesOptions(taskId ?? ""),
-    enabled: canFetchTaskMessages,
+    enabled: shouldFetchTaskMessages,
   });
 
-  const timeline: TimelineItem[] = buildTimeline(taskMessages ?? []);
+  const timeline: TimelineItem[] = buildTimeline(taskMessagesQuery.data ?? []);
+  const processItems = splitTimeline(timeline).middle;
 
   // Failure bubble path: when the server's FailTask wrote a failure
   // chat_message (failure_reason set), render a destructive bubble with the
@@ -257,12 +270,28 @@ function AssistantMessage({
 
   return (
     <div className="w-full space-y-1.5">
-      {timeline.length > 0 ? (
+      {isPending && timeline.length > 0 ? (
         <TimelineView items={timeline} attachments={message.attachments} />
       ) : (
         <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none">
           <Markdown attachments={message.attachments}>{message.content}</Markdown>
         </div>
+      )}
+      {!isPending && canFetchTaskMessages && !processRequested && (
+        <button
+          type="button"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => setProcessRequested(true)}
+        >
+          <ChevronRight className="size-3" />
+          <span>{t(($) => $.message_list.show_details)}</span>
+        </button>
+      )}
+      {!isPending && processRequested && taskMessagesQuery.isFetching && (
+        <Skeleton className="h-4 w-16" />
+      )}
+      {!isPending && processRequested && processItems.length > 0 && (
+        <OuterProcessFold items={processItems} defaultOpen attachments={message.attachments} />
       )}
       <AttachmentList
         attachments={message.attachments}
@@ -275,6 +304,15 @@ function AssistantMessage({
       />
     </div>
   );
+}
+
+export function shouldFetchAssistantTaskMessages(
+  hasPersistedTaskId: boolean,
+  isPending: boolean,
+  isFailed: boolean,
+  processRequested: boolean,
+): boolean {
+  return hasPersistedTaskId && (isPending || isFailed || processRequested);
 }
 
 // Inline footer row beneath the assistant reply: "Replied in 38s · [Copy]".
