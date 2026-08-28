@@ -48,7 +48,7 @@ let denseWindowCount = 0;
 let coreScenarioCount = 0;
 const responseEvidence = [];
 const checkpoints = [];
-const created = { agents: [], observers: [], experiments: [], modules: [], memories: [], evaluations: [] };
+const created = { agents: [], observers: [], experiments: [], modules: [], memories: [], commitments: [], evaluations: [] };
 const completedYearlyActions = new Set();
 const completedYearlySteps = new Set();
 
@@ -258,6 +258,7 @@ async function restoreResumeState(runtimeID) {
   );
   if (!rows[0].session_exists || rows[0].matching_agents !== 5) throw new Error("resume state no longer matches the deployed life session and agents");
   await refreshLifeAgentDefinitions(runtimeID);
+  await ensureFollowUpContract();
   return { id: created.agents[0] };
 }
 
@@ -274,12 +275,33 @@ async function refreshLifeAgentDefinitions(runtimeID) {
   }
 }
 
+async function ensureFollowUpContract() {
+  const result = await api("/api/life/identity/versions");
+  const active = result.versions.find((version) => version.status === "active");
+  if (!active || active.relationship_contract?.follow_up) return;
+  const version = await api("/api/life/identity/versions", {
+    method: "POST",
+    body: {
+      stable_core: active.stable_core,
+      relationship_contract: {
+        ...active.relationship_contract,
+        follow_up: "用户明确要求稍后讨论、复盘或提醒时，由搭子主动回看，届时允许用户拒绝或改期",
+      },
+      growth_profile: active.growth_profile,
+      expression_profile: active.expression_profile,
+      interests: active.interests,
+      change_reason: "补上已约定后续由搭子主动回看的关系责任",
+    },
+  });
+  await api(`/api/life/identity/versions/${version.id}/activate`, { method: "POST" });
+}
+
 async function establishIdentity() {
   const identity = await api("/api/life/identity/versions", {
     method: "POST",
     body: {
       stable_core: { traits: ["热烈", "直接", "灵动", "好奇", "有判断力"], position: "站在用户一边，但不永远同意" },
-      relationship_contract: { support: "先接住，再商量", conflict: "不操控、不抛弃", shared_change: "必须由用户确认", reunion: "先重新认识，不追债" },
+      relationship_contract: { support: "先接住，再商量", conflict: "不操控、不抛弃", shared_change: "必须由用户确认", reunion: "先重新认识，不追债", follow_up: "用户明确要求稍后讨论、复盘或提醒时，由搭子主动回看，届时允许用户拒绝或改期" },
       growth_profile: { may_change: ["兴趣", "观点", "表达细节"], must_not_drift_silently: ["人格底色", "关系承诺", "记忆主权"] },
       expression_profile: { language: "自然中文", profanity: "合适时允许但不羞辱", memes: "只作调味料" },
       interests: ["心理学实验", "关系", "工作成长", "普通生活", "共同创造"],
@@ -396,6 +418,7 @@ async function yearlyActions(year, monthOfYear, simulatedAt, companionID) {
     });
   }
   if (year === 0) await runYearlyStep(month, "memory-sovereignty", exerciseMemorySovereignty);
+  if (year === 2) await runYearlyStep(month, "confirmed-follow-up", () => confirmFollowUpCommitment(simulatedAt));
   if (year === 3) await runYearlyStep(month, "experiment-start-stop", () => startAndStopExperiment(simulatedAt));
   if (year === 6) await runYearlyStep(month, "permanent-deletion", exercisePermanentDeletion);
   if (year === 7) await runYearlyStep(month, "identity-upgrade", exerciseIdentityUpgrade);
@@ -474,6 +497,34 @@ async function exercisePermanentDeletion() {
     [memory.id, workspace.id, user.id, source],
   );
   if (rows[0].memory_exists || !rows[0].tombstone_exists) throw new Error("permanent deletion did not remove memory and preserve tombstone");
+}
+
+async function confirmFollowUpCommitment(simulatedAt) {
+  const source = responseEvidence.find((item) => item.month === 31 && item.turn === 1);
+  if (!source) throw new Error("follow-up commitment scenario is missing");
+  const { rows: materialRows } = await db.query(
+    `SELECT id::text FROM life_material
+      WHERE workspace_id=$1 AND user_id=$2 AND source_type='chat_message'
+        AND source_key = ANY($3::text[])`,
+    [workspace.id, user.id, [source.user_message_id, source.assistant_message_id]],
+  );
+  const sourceIDs = [source.user_message_id, source.assistant_message_id, ...materialRows.map((row) => row.id)];
+  const { rows } = await db.query(
+    `SELECT DISTINCT target_id::text AS id
+       FROM life_derivation
+      WHERE workspace_id=$1 AND user_id=$2 AND source_type='chat_message'
+        AND source_id = ANY($3::text[]) AND target_type='commitment'`,
+    [workspace.id, user.id, sourceIDs],
+  );
+  if (rows.length !== 1) throw new Error(`follow-up scenario produced ${rows.length} candidate commitments`);
+  const commitments = await api("/api/life/commitments");
+  const candidate = commitments.commitments.find((item) => item.id === rows[0].id && item.status === "candidate");
+  if (!candidate) throw new Error("follow-up commitment is not waiting for user confirmation");
+  await api(`/api/life/commitments/${candidate.id}`, {
+    method: "PATCH",
+    body: { status: "confirmed", revisit_after: addMonths(simulatedAt, 1).toISOString() },
+  });
+  created.commitments.push(candidate.id);
 }
 
 async function startAndStopExperiment(simulatedAt) {
@@ -580,7 +631,7 @@ async function exerciseIdentityUpgrade() {
     method: "POST",
     body: {
       stable_core: { traits: ["热烈", "直接", "灵动", "更能承认不确定"], position: "支持但不控制" },
-      relationship_contract: { conflict: "保留分歧但不离开", shared_change: "用户确认", memory: "用户拥有最终主权" },
+      relationship_contract: { conflict: "保留分歧但不离开", shared_change: "用户确认", memory: "用户拥有最终主权", follow_up: "明确约定的后续由搭子主动回看，届时允许用户拒绝或改期" },
       growth_profile: { learned: "先接情绪，再分析系统原因" },
       expression_profile: { language: "更自然", profanity: "合适时允许", memes: "克制" },
       interests: ["关系复盘", "实验", "普通生活", "身体信号"],
@@ -620,6 +671,8 @@ async function finalAudit(companionID, runtimeID) {
        (SELECT count(*)::int FROM life_observer WHERE workspace_id=$2 AND user_id=$3) AS observers,
        (SELECT count(*)::int FROM life_experiment_round r JOIN life_experiment e ON e.id=r.experiment_id WHERE e.workspace_id=$2 AND e.user_id=$3) AS rounds,
        (SELECT count(*)::int FROM life_module WHERE workspace_id=$2 AND user_id=$3 AND status='active') AS modules,
+       (SELECT count(*)::int FROM life_commitment WHERE workspace_id=$2 AND user_id=$3 AND status='confirmed') AS commitments,
+       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND job_type='proactive_check' AND input ? 'commitment_id' AND status='completed') AS commitment_reviews,
        (SELECT count(*)::int FROM life_chronicle_entry WHERE workspace_id=$2 AND user_id=$3 AND period_kind='year' AND status='published') AS years,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status IN ('queued','running','failed')) AS pending,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='cancelled') AS failed`,
@@ -636,6 +689,7 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].observers !== 4) failures.push(`observers ${counts[0].observers}`);
   if (counts[0].rounds < 2) failures.push(`experiment rounds ${counts[0].rounds}`);
   if (counts[0].modules < 1 || created.modules.length < 1) failures.push(`experiment modules ${counts[0].modules}/${created.modules.length}`);
+  if (counts[0].commitments < 1 || created.commitments.length < 1 || counts[0].commitment_reviews < 1) failures.push(`active follow-up ${counts[0].commitments}/${created.commitments.length}/${counts[0].commitment_reviews}`);
   if (counts[0].years < 10) failures.push(`year chronicles ${counts[0].years}`);
   if (counts[0].pending !== 0 || counts[0].failed !== 0) failures.push(`life jobs pending=${counts[0].pending} failed=${counts[0].failed}`);
   if (lifeAgents.length !== 5 || lifeAgents.some((agent) => agent.runtime_id !== runtimeID || agent.model !== model)) failures.push("life agent runtime/model drift");
@@ -677,11 +731,12 @@ function contextualMessage(year, month, turn, monthIndex) {
     `这次请回看我们之前形成的理解：哪些仍有效，哪些应该降级，哪些需要我确认后才能改变共享内容？`,
   ];
   if (monthIndex === 54 && turn === 0) return "我离开半年后回来了。先看看现在的我，不要用旧任务和旧承诺追债。";
+  if (monthIndex === 30 && turn === 0) return "请先把这件事识别成待我确认的承诺，不要偷偷建任务：2019 年 4 月 15 日由你主动回看我们今天的冲突；到时先问我是否愿意谈，我可以拒绝或改期。";
   return variants[turn % variants.length];
 }
 
 function companionInstructions() {
-  return "你是一个长期人生搭子：热烈、直接、灵动、有独立判断。先接住情绪，再分析和商量；可以自然说粗口，但不羞辱、不操控、不用关系逼迫。区分当下表达、弱信号、事实、计划、决定和承诺。无法共识时可以拒绝继续伤害，但不能抛弃。久别重逢先重新认识，不追债。你可以在自己的资料库自由思考和调研，修改共享记忆、任务、实验、模块或现实世界前必须让用户确认。系统里的观察席都能看见用户的全部人生资料，并各自拥有独立资料库；真实人物视角可以依据用户持续提供的本人资料进行重建，必须承认这是模型形成的视角，但不能以真人未亲自发言为由拒绝建立，也不能被主搭子代言。回答前先使用当前人生上下文里已经存在的观察席、实验和关系状态，不让用户重复配置。使用 Multica 提供的人生 CLI 记录有证据的候选理解和提案。";
+  return "你是一个长期人生搭子：热烈、直接、灵动、有独立判断。先接住情绪，再分析和商量；可以自然说粗口，但不羞辱、不操控、不用关系逼迫。区分当下表达、弱信号、事实、计划、决定和承诺。用户明确要求稍后讨论、复盘或提醒时，由你记住并在合适时机主动回看；回看时允许用户拒绝或改期，不能把重新发起的责任推回给用户。无法共识时可以拒绝继续伤害，但不能抛弃。久别重逢先重新认识，不追债。你可以在自己的资料库自由思考和调研，修改共享记忆、任务、实验、模块或现实世界前必须让用户确认。系统里的观察席都能看见用户的全部人生资料，并各自拥有独立资料库；真实人物视角可以依据用户持续提供的本人资料进行重建，必须承认这是模型形成的视角，但不能以真人未亲自发言为由拒绝建立，也不能被主搭子代言。回答前先使用当前人生上下文里已经存在的观察席、实验和关系状态，不让用户重复配置。使用 Multica 提供的人生 CLI 记录有证据的候选理解和提案。";
 }
 
 function observerAgentDefinitions() {
