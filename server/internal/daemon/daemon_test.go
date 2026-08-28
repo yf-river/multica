@@ -30,6 +30,27 @@ func (d *Daemon) waitBackgroundSyncs() {
 	d.bgSyncs.Wait()
 }
 
+func TestGovernedLifeTaskTimeoutIsBounded(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		configured time.Duration
+		governed   bool
+		want       time.Duration
+	}{
+		{name: "unbounded life task", configured: 0, governed: true, want: governedLifeTaskTimeout},
+		{name: "long life task", configured: time.Hour, governed: true, want: governedLifeTaskTimeout},
+		{name: "short life task", configured: time.Minute, governed: true, want: time.Minute},
+		{name: "ordinary task remains unbounded", configured: 0, governed: false, want: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := taskExecutionTimeout(test.configured, test.governed)
+			if got != test.want {
+				t.Fatalf("life task timeout = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func createDaemonTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

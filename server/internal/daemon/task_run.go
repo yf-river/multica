@@ -17,6 +17,15 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
+const governedLifeTaskTimeout = 10 * time.Minute
+
+func taskExecutionTimeout(configured time.Duration, governedLifeTask bool) time.Duration {
+	if governedLifeTask && (configured <= 0 || configured > governedLifeTaskTimeout) {
+		return governedLifeTaskTimeout
+	}
+	return configured
+}
+
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (TaskResult, error) {
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
@@ -435,12 +444,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	toolPolicy := executionPolicyForToolEnvelope(task, executionPolicy)
+	executionTimeout := taskExecutionTimeout(d.cfg.AgentTimeout, governedLifeTask)
 	execOpts := agent.ExecOptions{
 		Cwd:                       env.WorkDir,
 		Model:                     model,
 		ThreadName:                deriveTaskThreadName(task),
 		MaxTurns:                  maxTurnsForExecutionPolicy(0, toolPolicy),
-		Timeout:                   d.cfg.AgentTimeout,
+		Timeout:                   executionTimeout,
 		SemanticInactivityTimeout: d.cfg.CodexSemanticInactivityTimeout,
 		ResumeSessionID:           task.PriorSessionID,
 		DisableSessionPersistence: governedLifeTask,
@@ -622,7 +632,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// goes through the FailTask path that forwards session info.
 		comment := result.Error
 		if comment == "" {
-			comment = fmt.Sprintf("%s timed out after %s", provider, d.cfg.AgentTimeout)
+			comment = fmt.Sprintf("%s timed out after %s", provider, execOpts.Timeout)
 		}
 		failureReason := "timeout"
 		if reason, ok := classifyResumeUnsafeTimeout(provider, comment); ok {
