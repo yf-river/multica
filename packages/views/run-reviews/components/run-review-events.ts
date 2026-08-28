@@ -286,10 +286,10 @@ export function buildRunReviewEventRows(
       return a.id.localeCompare(b.id);
     });
 }
-export function toolMessageKey(taskId: string, seq: number) {
+function toolMessageKey(taskId: string, seq: number) {
   return `${taskId}:${seq}`;
 }
-export function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): IssueExecutionNode[] {
+function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): IssueExecutionNode[] {
   if (!tree) return [];
   const result: IssueExecutionNode[] = [];
   const walk = (node: IssueExecutionNode) => {
@@ -451,7 +451,7 @@ interface SemanticToolAction {
   suppressFailureSignal?: boolean;
 }
 
-export function semanticToolAction(tool: string | undefined, input: Record<string, unknown> | undefined, output: string | undefined): SemanticToolAction {
+function semanticToolAction(tool: string | undefined, input: Record<string, unknown> | undefined, output: string | undefined): SemanticToolAction {
   const command = stringFromUnknown(input?.command);
   if (command) return semanticCommandAction(command, output);
 
@@ -632,7 +632,7 @@ function outputOutcome(
   };
 }
 
-export function toolOutputText(output: string) {
+function toolOutputText(output: string) {
   const trimmed = output.trim();
   if (!trimmed.startsWith("[")) return output;
   try {
@@ -714,7 +714,7 @@ function toolOutputHasNonEmptyStderr(output: string) {
   });
 }
 
-export function extractErrorLine(output: string) {
+function extractErrorLine(output: string) {
   const patterns = [
     /^\s*Error:\s*.+/i,
     /^\s*Traceback\b.*/i,
@@ -872,7 +872,7 @@ function readableToolName(tool: string | undefined) {
   return tool ?? "工具调用";
 }
 
-export function summarizeToolOutput(output: string) {
+function summarizeToolOutput(output: string) {
   const firstLine = output.split("\n").find((line) => line.trim().length > 0) ?? "";
   return truncateText(firstLine, 220);
 }
@@ -924,7 +924,7 @@ function taskMessageKindLabel(type: TaskMessagePayload["type"]): string {
   }
 }
 
-export function taskMessageText(message: TaskMessagePayload): string {
+function taskMessageText(message: TaskMessagePayload): string {
   return message.content || message.output || "";
 }
 

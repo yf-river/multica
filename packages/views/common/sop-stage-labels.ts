@@ -1,4 +1,4 @@
-export const SOP_STAGE_DEFINITIONS = [
+const SOP_STAGE_DEFINITIONS = [
   { key: "pm", label: "PM-项目经理", names: ["pm", "PM", "PM-项目经理", "项目经理"] },
   { key: "01", label: "01-需求澄清", names: ["01", "01-clarify", "clarify", "01-需求澄清", "需求澄清"] },
   { key: "02", label: "02-方案设计", names: ["02", "02-design", "design", "02-方案设计", "方案设计"] },

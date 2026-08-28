@@ -1,10 +1,8 @@
 import type { AgentTaskArtifact, IssueExecutionTreeResponse, IssueTimelineNode } from "@multica/core/types";
 import { isActiveAgentTaskStatus } from "@multica/core/agents";
-import { SOP_STAGE_DEFINITIONS, normalizeSopStageName, sopStageDisplayName } from "../../common/sop-stage-labels";
+import { normalizeSopStageName, sopStageDisplayName } from "../../common/sop-stage-labels";
 import { isActiveTimelineNode } from "./run-review-live";
 import { formatDateTime, formatDuration, formatNumber, parseTimeMs, statusLabel } from "./run-review-format";
-
-const STAGES = SOP_STAGE_DEFINITIONS;
 
 interface TimelineNodeSegment {
   key: string;
@@ -185,18 +183,6 @@ export function formatTimeTick(value: number) {
   }).format(new Date(value));
 }
 
-export function buildStageRows(nodes: IssueTimelineNode[]) {
-  return STAGES.map((stage) => ({
-    ...stage,
-    node: nodes.filter((node) => {
-      if (node.node_type !== "agent_task") return false;
-      const agentName = normalizeSopStageName(node.agent_name);
-      if (!agentName) return false;
-      return stage.names.some((name) => agentName === normalizeSopStageName(name));
-    }).sort(compareStageNodeCandidates)[0],
-  }));
-}
-
 export function buildTimelineAgentRows(nodes: IssueTimelineNode[]): TimelineNodeRow[] {
   const agentNodes = nodes.filter((node) => node.node_type === "agent_task");
   const grouped = new Map<string, TimelineNodeRow>();
@@ -251,21 +237,6 @@ function timelineAgentRowBaseLabel(node: IssueTimelineNode, index: number) {
   const taskId = node.node_id.replace(/^task:/, "");
   const agentName = node.agent_name || taskId || `agent-node-${index + 1}`;
   return sopStageDisplayName(agentName) || node.summary || agentName;
-}
-
-function compareStageNodeCandidates(left: IssueTimelineNode, right: IssueTimelineNode) {
-  return stageNodeScore(right) - stageNodeScore(left);
-}
-
-function stageNodeScore(node: IssueTimelineNode) {
-  let score = 0;
-  if (node.node_type === "agent_task") score += 1000;
-  if (node.status === "completed" || node.status === "已完成") score += 200;
-  if (node.status === "cancelled" || node.status === "已取消") score -= 200;
-  if ((node.input_tokens ?? 0) + (node.output_tokens ?? 0) > 0) score += 100;
-  if (node.started_at && node.completed_at) score += 50;
-  if ((node.agent_turn_count ?? 0) > 0) score += 25;
-  return score;
 }
 
 export function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
