@@ -20,10 +20,11 @@ const startedAt = new Date();
 const simulatedStart = new Date("2016-09-15T12:00:00.000Z");
 const absentMonths = new Set([48, 49, 50, 51, 52, 53]);
 const denseMonths = new Set(Array.from({ length: 40 }, (_, index) => index * 3).filter((month) => !absentMonths.has(month)));
-while (denseMonths.size < 40) {
-  const candidate = 119 - denseMonths.size;
+for (let candidate = 119; denseMonths.size < 40 && candidate >= 0; candidate -= 1) {
   if (!absentMonths.has(candidate)) denseMonths.add(candidate);
 }
+const plannedChatCount = 120 - absentMonths.size + denseMonths.size * 3;
+if (denseMonths.size !== 40 || plannedChatCount !== 234) throw new Error(`invalid decade coverage plan: dense=${denseMonths.size} chats=${plannedChatCount}`);
 
 if (!databaseURL) throw new Error("missing integration DATABASE_URL");
 const databaseName = new URL(databaseURL).pathname.slice(1);
@@ -194,7 +195,7 @@ async function createAgent(runtimeID, name, instructions, concurrency) {
       runtime_config: {},
       custom_env: {},
       custom_args: [],
-      scope: "personal",
+      scope: "workspace",
       max_concurrent_tasks: concurrency,
       model,
     },
