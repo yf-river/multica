@@ -51,6 +51,7 @@ const checkpoints = [];
 const created = { agents: [], observers: [], experiments: [], modules: [], memories: [], commitments: [], evaluations: [] };
 const completedYearlyActions = new Set();
 const completedYearlySteps = new Set();
+let pendingTurn = resumeState?.pending_turn || null;
 
 const phases = [
   "建立关系与表达边界",
@@ -129,6 +130,7 @@ try {
         : contextualMessage(year, monthOfYear, turn, month);
       const result = await chat(message, simulatedAt, month, turn);
       responseEvidence.push(result);
+      pendingTurn = null;
       coreScenarioCount = Math.min(30, responseEvidence.length);
       denseWindowCount = countDenseWindows(responseEvidence);
       persist({ status: "running", current_month: month + 1, completed_yearly_actions: [...completedYearlyActions] });
@@ -340,10 +342,28 @@ async function establishObservers(agents) {
 }
 
 async function chat(content, simulatedAt, month, turn) {
-  const sentAt = Date.now();
+  const recovered = await recoverCompletedChat(content, simulatedAt, month, turn);
+  if (recovered) {
+    chatCount += 1;
+    return { index: chatCount, ...recovered };
+  }
+  if (pendingTurn && (pendingTurn.month !== month + 1 || pendingTurn.turn !== turn + 1 || pendingTurn.prompt !== content)) {
+    throw new Error(`pending turn does not match month ${month + 1} turn ${turn + 1}`);
+  }
+  if (!pendingTurn) {
+    pendingTurn = {
+      month: month + 1,
+      turn: turn + 1,
+      prompt: content,
+      idempotency_key: randomUUID(),
+      started_at: new Date().toISOString(),
+    };
+    persist({ status: "running", current_month: month + 1, completed_yearly_actions: [...completedYearlyActions] });
+  }
+  const sentAt = new Date(pendingTurn.started_at).getTime();
   const sent = await api(`/api/chat/sessions/${session.id}/messages`, {
     method: "POST",
-    headers: { "Idempotency-Key": randomUUID() },
+    headers: { "Idempotency-Key": pendingTurn.idempotency_key },
     body: { content },
   });
   const assistant = await waitForAssistant(sent.task_id);
@@ -361,6 +381,45 @@ async function chat(content, simulatedAt, month, turn) {
     latency_ms: Date.now() - sentAt,
     prompt: content,
     response: assistant.content,
+  };
+}
+
+async function recoverCompletedChat(content, simulatedAt, month, turn) {
+  const recordedTaskIDs = responseEvidence.map((item) => item.task_id);
+  const { rows } = await db.query(
+    `SELECT user_message.id AS user_message_id,
+            assistant_message.id AS assistant_message_id,
+            user_message.task_id,
+            assistant_message.content AS response,
+            COALESCE(assistant_message.elapsed_ms,
+              (extract(epoch FROM (assistant_message.created_at - user_message.created_at)) * 1000)::bigint) AS latency_ms
+       FROM chat_message user_message
+       JOIN chat_message assistant_message
+         ON assistant_message.chat_session_id = user_message.chat_session_id
+        AND assistant_message.task_id = user_message.task_id
+        AND assistant_message.role = 'assistant'
+      WHERE user_message.chat_session_id = $1
+        AND user_message.role = 'user'
+        AND user_message.content = $2
+        AND NOT (user_message.task_id = ANY($3::uuid[]))
+      ORDER BY user_message.created_at DESC
+      LIMIT 1`,
+    [session.id, content, recordedTaskIDs],
+  );
+  const recovered = rows[0];
+  if (!recovered) return null;
+  await moveChatMaterials([recovered.user_message_id, recovered.assistant_message_id], simulatedAt, turn);
+  return {
+    month: month + 1,
+    turn: turn + 1,
+    simulated_at: simulatedAt.toISOString(),
+    task_id: recovered.task_id,
+    user_message_id: recovered.user_message_id,
+    assistant_message_id: recovered.assistant_message_id,
+    latency_ms: Number(recovered.latency_ms),
+    prompt: content,
+    response: recovered.response,
+    recovered_after_interruption: true,
   };
 }
 
@@ -811,6 +870,7 @@ function persist(extra = {}) {
     created,
     completed_yearly_actions: [...completedYearlyActions],
     completed_yearly_steps: [...completedYearlySteps],
+    pending_turn: pendingTurn,
     checkpoints,
     responses: responseEvidence,
     ...extra,
