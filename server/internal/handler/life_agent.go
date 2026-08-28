@@ -408,7 +408,17 @@ func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.R
 		return
 	}
 	completed, err := h.completeLifeCognitionJob(r.Context(), scope, raw)
+	var outputErr lifeJobOutputError
+	if errors.As(err, &outputErr) {
+		writeError(w, http.StatusUnprocessableEntity, outputErr.Error())
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
+		current, currentErr := h.Queries.GetLifeCognitionJobForTask(r.Context(), scope.taskID)
+		if currentErr == nil && current.Status == "running" {
+			writeError(w, http.StatusUnprocessableEntity, "structured output references a record unavailable for this job")
+			return
+		}
 		writeError(w, http.StatusConflict, "life cognition job is not running")
 		return
 	}

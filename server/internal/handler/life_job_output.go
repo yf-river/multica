@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -167,6 +169,59 @@ type lifeCognitionOutput struct {
 	UpgradeEvaluation      *lifeJobUpgradeEvaluationOutput      `json:"upgrade_evaluation"`
 }
 
+type lifeJobOutputError struct {
+	message string
+}
+
+func (e lifeJobOutputError) Error() string {
+	return e.message
+}
+
+func invalidLifeJobOutput(format string, args ...any) error {
+	return lifeJobOutputError{message: fmt.Sprintf(format, args...)}
+}
+
+func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
+	provided := map[string]bool{
+		"memory_candidates":       len(output.MemoryCandidates) > 0,
+		"topics":                  len(output.Topics) > 0,
+		"commitments":             len(output.Commitments) > 0,
+		"internal_thoughts":       len(output.InternalThoughts) > 0,
+		"relationship_events":     len(output.RelationshipEvents) > 0,
+		"action_proposals":        len(output.ActionProposals) > 0,
+		"proactive_decision":      output.ProactiveDecision != nil,
+		"proactive_assessment":    output.ProactiveAssessment != nil,
+		"experiment_observations": len(output.ExperimentObservations) > 0,
+		"experiment_review":       output.ExperimentReview != nil,
+		"observer_judgements":     len(output.ObserverJudgements) > 0,
+		"observation_topics":      len(output.ObservationTopics) > 0,
+		"chronicles":              len(output.Chronicles) > 0,
+		"upgrade_evaluation":      output.UpgradeEvaluation != nil,
+	}
+	allowed := map[string]map[string]bool{
+		"understand_materials":  {"memory_candidates": true, "topics": true, "commitments": true, "internal_thoughts": true, "relationship_events": true, "action_proposals": true, "proactive_decision": true, "chronicles": true},
+		"review_memories":       {"topics": true, "internal_thoughts": true, "action_proposals": true},
+		"develop_thought":       {"internal_thoughts": true, "action_proposals": true},
+		"proactive_check":       {"proactive_decision": true},
+		"proactive_review":      {"proactive_assessment": true},
+		"experiment_check":      {"experiment_observations": true, "experiment_review": true, "action_proposals": true},
+		"observer_run":          {"observer_judgements": true},
+		"observation_aggregate": {"observation_topics": true},
+		"chronicle_generate":    {"chronicles": true},
+		"relationship_reunion":  {"memory_candidates": true, "topics": true, "commitments": true, "internal_thoughts": true, "relationship_events": true, "action_proposals": true, "proactive_decision": true},
+		"upgrade_evaluation":    {"upgrade_evaluation": true},
+	}[jobType]
+	if allowed == nil {
+		return invalidLifeJobOutput("unsupported life cognition job type %q", jobType)
+	}
+	for field, present := range provided {
+		if present && !allowed[field] {
+			return invalidLifeJobOutput("%s is not allowed for %s", field, jobType)
+		}
+	}
+	return nil
+}
+
 func validLifeEvidenceSourceType(value string) bool {
 	switch value {
 	case "chat_message", "task", "comment", "project", "manual", "external", "memory", "experiment_round":
@@ -235,8 +290,16 @@ func lifeEvidenceWasForgotten(ctx context.Context, q *db.Queries, scope lifeJobT
 
 func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTaskScope, raw []byte) (db.LifeCognitionJob, error) {
 	var output lifeCognitionOutput
-	if err := json.Unmarshal(raw, &output); err != nil {
-		return db.LifeCognitionJob{}, fmt.Errorf("decode life job output: %w", err)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&output); err != nil {
+		return db.LifeCognitionJob{}, invalidLifeJobOutput("decode life job output: %v", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return db.LifeCognitionJob{}, invalidLifeJobOutput("life job output must contain one JSON object")
+	}
+	if err := validateLifeJobOutput(scope.job.JobType, output); err != nil {
+		return db.LifeCognitionJob{}, err
 	}
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {

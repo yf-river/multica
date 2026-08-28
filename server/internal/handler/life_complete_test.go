@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -318,6 +319,19 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_cognition_job WHERE id=$1`, staleJobID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1`, staleTaskID)
 	})
+}
+
+func TestLifeCognitionOutputRejectsFieldsFromAnotherJobType(t *testing.T) {
+	err := validateLifeJobOutput("proactive_check", lifeCognitionOutput{
+		ProactiveAssessment: &lifeJobProactiveAssessmentOutput{CheckID: "invented"},
+	})
+	var outputErr lifeJobOutputError
+	if !errors.As(err, &outputErr) {
+		t.Fatalf("expected governed output error, got %v", err)
+	}
+	if got := outputErr.Error(); got != "proactive_assessment is not allowed for proactive_check" {
+		t.Fatalf("unexpected output error: %q", got)
+	}
 }
 
 func TestLifeProactiveReviewRecordsValueAndAdjustsRhythm(t *testing.T) {

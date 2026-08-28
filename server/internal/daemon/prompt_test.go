@@ -41,6 +41,20 @@ func assertPromptExcludes(t *testing.T, out string, values ...string) {
 	}
 }
 
+func TestBuildLifeJobPromptUsesOnlyTheCurrentJobContract(t *testing.T) {
+	out := BuildPrompt(Task{LifeJobID: "job-1", LifeJobType: "proactive_check"})
+	assertPromptContains(t, out,
+		"proactive_decision{status,trigger_source,reason,message,context_snapshot",
+		"do not inspect the product repository or source code",
+		"never invent an ID",
+	)
+	assertPromptExcludes(t, out,
+		"proactive_assessment{check_id",
+		"Record the decision with `multica life check`",
+		"memory_candidates[{kind",
+	)
+}
+
 func tapdSource(resourceID, status string) *protocol.TaskSourceContext {
 	return &protocol.TaskSourceContext{
 		Provider: "tapd",

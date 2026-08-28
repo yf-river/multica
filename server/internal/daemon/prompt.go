@@ -63,8 +63,8 @@ func buildLifeJobPrompt(task Task) string {
 	}
 	b.WriteString("\nUse semantic model judgment and the governed task context. Never upgrade a temporary feeling into a fact, decision, plan, or commitment. Preserve evidence, counterevidence, confidence, uncertainty, and time.\n")
 	b.WriteString("The context contains exact new materials plus compact long-term indexes, not the user's entire raw history. When an older material or chronicle may change the judgment, resolve its typed reference with `multica life evidence resolve --ref material:<id> --ref chronicle:<id>` before concluding. Do not guess unavailable evidence.\n")
-	b.WriteString("Use `multica life --help` for the governed operations available to this task. Internal thoughts and drafts may be developed freely. Shared memories, tasks, experiments, modules, personality rules, and reality changes still require the user's confirmation.\n")
-	b.WriteString("Return a structured job result with only the applicable fields from this contract: memory_candidates[{kind,content,confidence,urgency,uncertainty,evidence[{source_type,source_id,excerpt,observed_at,stance}]}], topics[{topic_id?,title,summary,status,confidence,uncertainty,memory_ids,relations,evidence}], commitments[{content,source_memory_id,due_at,revisit_after,evidence}], internal_thoughts[{type,title,content,metadata,evidence}], relationship_events[{type,status,user_position,companion_position,context,revisit_after,evidence}], action_proposals[{proposal_type,title,summary,payload,expires_at,evidence}], proactive_decision{status,trigger_source,reason,message,context_snapshot,evidence}, proactive_assessment{check_id,value_assessment,minimum_interval_hours}, experiment_observations[{round_id,material_id,type,content,observed_at}], experiment_review{round_id,outcome,feelings,burden,companion_correction,module_proposal,evidence}, observer_judgements[{status,title,content,evidence,confidence,uncertainty}], observation_topics[{topic_id?,title,summary,status,judgement_ids}], chronicles[{period_kind,period_start,period_end,facts,feelings,understanding_then,actions,understanding_later,evidence}], upgrade_evaluation{evaluation_id,status,result,rollback_recommended,evidence}. Here `evidence` always uses [{source_type,source_id,excerpt,observed_at,stance}], with stance=supports|contradicts|context. Every statement derived from user material must cite its exact sources so permanent deletion can propagate; omit the record when its source cannot be named. Reuse topic_id when new evidence belongs to an existing semantic topic; do not create a duplicate merely because wording changed or a fixed count was reached. Proactive status must be silent or spoke, and trigger_source must be schedule, commitment, risk, or manual. Omit unsupported conclusions; an empty object is valid.\n")
+	b.WriteString("For this background job, use only `multica life evidence resolve` when exact older evidence is necessary and `multica life job complete` to submit the result. Do not call other life mutation commands and do not inspect the product repository or source code to infer the contract. Internal thoughts and drafts may be developed freely. Shared memories, tasks, experiments, modules, personality rules, and reality changes still require the user's confirmation.\n")
+	b.WriteString("Return a structured job result using only this job's fields: " + lifeJobOutputContract(task.LifeJobType) + ". Here `evidence` always uses [{source_type,source_id,excerpt,observed_at,stance}], with stance=supports|contradicts|context. Every statement derived from user material must cite its exact sources so permanent deletion can propagate; omit the record when its source cannot be named. Reuse an ID only when that exact ID was supplied by the governed context; never invent an ID. Omit unsupported conclusions; an empty object is valid.\n")
 	b.WriteString("Enum rules: memory kind=current_expression|weak_signal|understanding|fact|plan|commitment; topic status=candidate|active|contradicted|resolved|archived; internal thought type=interest|opinion|question|research|draft; relationship type=conflict|agreement|boundary|reunion and status=open|waiting|resolved|retained_difference; experiment observation type=natural_material|user_checkin|companion_inference|result; observer judgement status=internal|published|withdrawn; observation topic status=open|surfaced|discussing|resolved|archived; chronicle period_kind=day|week|month|year|event.\n")
 	b.WriteString("Shared-change proposal_type=experiment_start|experiment_extend|workspace_issue|agent_action|project_create|module_adoption|memory_change|identity_change. Payloads: workspace_issue{issue_title,issue_description}; agent_action{action_title,action_instructions} queues the companion to use its configured tools only after confirmation; project_create{project_title,project_description}; module_adoption{module_name,module_id?,module_definition,source_experiment_id?}; memory_change{memory_id,memory_action=confirm|correct|downgrade|archive,memory_kind?,memory_content?,memory_confidence?,memory_urgency?,memory_uncertainty?}; identity_change{stable_core,relationship_contract,growth_profile,expression_profile,interests,change_reason}; experiments use {experiment_id?,previous_round_id?,problem,hypothesis,method,plan,starts_at,ends_at,memory_ids,issue_title?,issue_description?}. Never place a shared change only in prose.\n")
 	switch task.LifeJobType {
@@ -75,7 +75,7 @@ func buildLifeJobPrompt(task Task) string {
 	case "develop_thought":
 		b.WriteString("Continue the companion's own unfinished thought. Research when useful, distinguish sourced facts from your opinion, and update internal_thoughts freely. Any change to the shared world must still be emitted as an action_proposal.\n")
 	case "proactive_check":
-		b.WriteString("Decide whether speaking now would provide real relational value. Silence is a successful result. If speaking, be natural and concise; respect quiet hours, unanswered messages, and the reunion rule. Record the decision with `multica life check`.\n")
+		b.WriteString("Decide whether speaking now would provide real relational value. Silence is a successful result. If speaking, be natural and concise; respect quiet hours, unanswered messages, and the reunion rule. Return the decision only through proactive_decision.\n")
 	case "proactive_review":
 		b.WriteString("Assess whether the user's response indicates that the prior proactive message was helpful, neutral, mistimed, or burdensome. Explain the evidence in value_assessment and recommend a 1-168 hour minimum interval that improves the relationship rhythm. Do not treat mere response as proof that the message was valuable.\n")
 	case "experiment_check":
@@ -93,6 +93,36 @@ func buildLifeJobPrompt(task Task) string {
 	}
 	b.WriteString("When finished, write the structured result to a temporary JSON file and always call `multica life job complete --job-id " + task.LifeJobID + " --output-file <path>`.\n")
 	return b.String()
+}
+
+func lifeJobOutputContract(jobType string) string {
+	const evidence = "evidence[{source_type,source_id,excerpt,observed_at,stance}]"
+	switch jobType {
+	case "understand_materials":
+		return "memory_candidates[{kind,content,confidence,urgency,uncertainty," + evidence + "}], topics[{topic_id?,title,summary,status,confidence,uncertainty,memory_ids,relations," + evidence + "}], commitments[{content,source_memory_id,due_at,revisit_after," + evidence + "}], internal_thoughts[{type,title,content,metadata," + evidence + "}], relationship_events[{type,status,user_position,companion_position,context,revisit_after," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}], proactive_decision{status,trigger_source,reason,message,context_snapshot," + evidence + "}, chronicles[{period_kind,period_start,period_end,facts,feelings,understanding_then,actions,understanding_later," + evidence + "}"
+	case "review_memories":
+		return "topics[{topic_id,title,summary,status,confidence,uncertainty,memory_ids,relations," + evidence + "}], internal_thoughts[{type,title,content,metadata," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}]"
+	case "develop_thought":
+		return "internal_thoughts[{type,title,content,metadata," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}]"
+	case "proactive_check":
+		return "proactive_decision{status,trigger_source,reason,message,context_snapshot," + evidence + "}"
+	case "proactive_review":
+		return "proactive_assessment{check_id,value_assessment,minimum_interval_hours}"
+	case "experiment_check":
+		return "experiment_observations[{round_id,material_id,type,content,observed_at}], experiment_review{round_id,outcome,feelings,burden,companion_correction,module_proposal," + evidence + "}, action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}]"
+	case "observer_run":
+		return "observer_judgements[{status,title,content," + evidence + ",confidence,uncertainty}]"
+	case "observation_aggregate":
+		return "observation_topics[{topic_id?,title,summary,status,judgement_ids}]"
+	case "chronicle_generate":
+		return "chronicles[{period_kind,period_start,period_end,facts,feelings,understanding_then,actions,understanding_later," + evidence + "}]"
+	case "relationship_reunion":
+		return "memory_candidates[{kind,content,confidence,urgency,uncertainty," + evidence + "}], topics[{topic_id?,title,summary,status,confidence,uncertainty,memory_ids,relations," + evidence + "}], commitments[{content,source_memory_id,due_at,revisit_after," + evidence + "}], internal_thoughts[{type,title,content,metadata," + evidence + "}], relationship_events[{type,status,user_position,companion_position,context,revisit_after," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}], proactive_decision{status,trigger_source,reason,message,context_snapshot," + evidence + "}"
+	case "upgrade_evaluation":
+		return "upgrade_evaluation{evaluation_id,status,result,rollback_recommended," + evidence + "}"
+	default:
+		return "summary"
+	}
 }
 
 func buildSourceSummaryPrompt(task Task) string {
