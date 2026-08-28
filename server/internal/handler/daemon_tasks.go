@@ -149,7 +149,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		outcome = "error_build"
 		return
 	}
-	executionPolicy := taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), false)
+	executionPolicy := taskExecutionPolicy(agent, *task)
 	// Workspace-bound skills first, then platform built-in skills. Built-in
 	// names carry a "multica-" prefix so their on-disk slugs never collide
 	// with a user-authored workspace skill (see writeSkillFiles).
@@ -611,28 +611,24 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	// Life cognition task: a durable companion background job with no issue,
 	// chat, or autopilot parent. Its context carries the governed user scope.
-	hasLifeCognition := false
-	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
-		var lifeJob lifeCognitionTaskContext
-		if json.Unmarshal(task.Context, &lifeJob) == nil && lifeJob.Type == lifeCognitionContextType {
-			hasLifeCognition = true
-			resp.WorkspaceID = lifeJob.WorkspaceID
-			resp.ThreadName = "人生后台任务：" + lifeJob.JobType
-			resp.LifeJobID = lifeJob.JobID
-			resp.LifeJobType = lifeJob.JobType
-			resp.LifeJobInput = lifeJob.Input
-			resp.IsCompanion = true
-			lifeContext, err := h.buildLifeJobContext(r.Context(), lifeRequestScope{
-				workspaceID: parseUUID(lifeJob.WorkspaceID),
-				userID:      parseUUID(lifeJob.UserID),
-			}, lifeJob.JobType, task.AgentID)
-			if err != nil {
-				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition context", err)
-				outcome = "error_build"
-				return
-			}
-			resp.LifeContext = lifeContext
+	lifeJob, hasLifeCognition := lifeCognitionContextForTask(*task)
+	if hasLifeCognition {
+		resp.WorkspaceID = lifeJob.WorkspaceID
+		resp.ThreadName = "人生后台任务：" + lifeJob.JobType
+		resp.LifeJobID = lifeJob.JobID
+		resp.LifeJobType = lifeJob.JobType
+		resp.LifeJobInput = lifeJob.Input
+		resp.IsCompanion = true
+		lifeContext, err := h.buildLifeJobContext(r.Context(), lifeRequestScope{
+			workspaceID: parseUUID(lifeJob.WorkspaceID),
+			userID:      parseUUID(lifeJob.UserID),
+		}, lifeJob.JobType, task.AgentID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition context", err)
+			outcome = "error_build"
+			return
 		}
+		resp.LifeContext = lifeContext
 	}
 
 	// Quick-create task: no issue / chat / autopilot link — workspace and

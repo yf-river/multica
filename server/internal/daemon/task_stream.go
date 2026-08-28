@@ -682,6 +682,9 @@ func allowedBuiltinToolsForExecutionPolicy(provider string, policy executionpoli
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return nil
 	}
+	if policy.IsLifeCognition() {
+		return []string{"Bash"}
+	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return []string{"Bash"}
 	}
@@ -701,6 +704,9 @@ func allowedToolsForExecutionPolicy(provider string, policy executionpolicy.Poli
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return nil
 	}
+	if policy.IsLifeCognition() {
+		return []string{"Bash(multica life *)"}
+	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return []string{"Bash(multica *)"}
 	}
@@ -713,6 +719,9 @@ func allowedToolsForExecutionPolicy(provider string, policy executionpolicy.Poli
 func permissionModeForExecutionPolicy(provider string, policy executionpolicy.Policy) string {
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return ""
+	}
+	if policy.IsLifeCognition() {
+		return "bypassPermissions"
 	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return "bypassPermissions"
@@ -734,6 +743,19 @@ func disallowedToolsForExecutionPolicy(provider string, policy executionpolicy.P
 		"Agent",
 		"TodoRead",
 		"TodoWrite",
+	}
+	if policy.IsLifeCognition() {
+		return append(append([]string{}, nativeDelegationTools...),
+			"Read",
+			"Edit",
+			"Write",
+			"MultiEdit",
+			"Grep",
+			"Glob",
+			"LS",
+			"NotebookRead",
+			"NotebookEdit",
+		)
 	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return append(append([]string{}, nativeDelegationTools...),
@@ -780,7 +802,7 @@ func maxTurnsForExecutionPolicy(configured int, policy executionpolicy.Policy) i
 	if configured > 0 {
 		return configured
 	}
-	if policy.IsCoordinatorWithoutRepo() {
+	if policy.IsLifeCognition() || policy.IsCoordinatorWithoutRepo() {
 		return 12
 	}
 	return 0

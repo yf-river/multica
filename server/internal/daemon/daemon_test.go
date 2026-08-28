@@ -213,6 +213,24 @@ func TestGovernedLifeTaskIsolation(t *testing.T) {
 
 func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	t.Parallel()
+	life := executionpolicy.Policy{RoleKind: "life_cognition"}
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", life); len(got) != 1 || got[0] != "Bash" {
+		t.Fatalf("life cognition allowed tools = %v, want [Bash]", got)
+	}
+	if got := allowedToolsForExecutionPolicy("codebuddy", life); len(got) != 1 || got[0] != "Bash(multica life *)" {
+		t.Fatalf("life cognition scoped allowed tools = %v", got)
+	}
+	if got := permissionModeForExecutionPolicy("codebuddy", life); got != "bypassPermissions" {
+		t.Fatalf("life cognition permission mode = %q", got)
+	}
+	if got := maxTurnsForExecutionPolicy(0, life); got != 12 {
+		t.Fatalf("life cognition default max turns = %d", got)
+	}
+	for _, want := range []string{"Read", "Edit", "Write", "Grep", "Glob", "Task", "Agent"} {
+		if !containsString(disallowedToolsForExecutionPolicy("codebuddy", life), want) {
+			t.Fatalf("life cognition denied tools missing %q", want)
+		}
+	}
 
 	pm := executionpolicy.Policy{RoleKind: "coordinator", CanAccessRepo: false}
 	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash" {

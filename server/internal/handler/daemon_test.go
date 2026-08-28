@@ -225,6 +225,20 @@ func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
 	}
 }
 
+func TestTaskExecutionPolicyRestrictsLifeCognition(t *testing.T) {
+	agent := db.Agent{RuntimeConfig: []byte(`{}`)}
+	task := db.AgentTaskQueue{Context: []byte(`{"type":"life_cognition","job_id":"00000000-0000-0000-0000-000000000001"}`)}
+	policy := taskExecutionPolicy(agent, task)
+	if !policy.IsLifeCognition() || policy.CanAccessRepo || policy.CanEditRepo || policy.ProjectSkillMode != "none" {
+		t.Fatalf("life cognition policy = %+v, want no repository access", policy)
+	}
+
+	task.IssueID = pgtype.UUID{Valid: true}
+	if got := taskExecutionPolicy(agent, task); got.IsLifeCognition() {
+		t.Fatalf("issue task must not inherit life cognition policy: %+v", got)
+	}
+}
+
 func TestNoRepoBoundedStageSkipsPriorSession(t *testing.T) {
 	stage01 := taskExecutionPolicyForRole("01-clarify", false)
 	if !stage01.IsNoRepoBoundedStage() {

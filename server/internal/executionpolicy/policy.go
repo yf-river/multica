@@ -40,6 +40,10 @@ func (p Policy) IsImplementationStage() bool {
 	return strings.EqualFold(strings.TrimSpace(p.RoleKind), "implementation_stage") && p.CanAccessRepo && p.CanEditRepo
 }
 
+func (p Policy) IsLifeCognition() bool {
+	return strings.EqualFold(strings.TrimSpace(p.RoleKind), "life_cognition")
+}
+
 func (p Policy) UsesFinalOutput() bool {
 	return (p.IsBoundedStage() && !p.CanEditRepo) || p.IsCoordinatorWithoutRepo()
 }

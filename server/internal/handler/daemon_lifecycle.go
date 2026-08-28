@@ -16,6 +16,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -776,6 +777,24 @@ func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) executionpol
 		return executionpolicy.Policy{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
 	}
 	return executionpolicy.Policy{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
+}
+
+func taskExecutionPolicy(agent db.Agent, task db.AgentTaskQueue) executionpolicy.Policy {
+	if _, ok := lifeCognitionContextForTask(task); ok {
+		return executionpolicy.Policy{RoleKind: "life_cognition", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none"}
+	}
+	return taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), false)
+}
+
+func lifeCognitionContextForTask(task db.AgentTaskQueue) (lifeCognitionTaskContext, bool) {
+	if task.Context == nil || task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return lifeCognitionTaskContext{}, false
+	}
+	var lifeJob lifeCognitionTaskContext
+	if json.Unmarshal(task.Context, &lifeJob) != nil || lifeJob.Type != lifeCognitionContextType {
+		return lifeCognitionTaskContext{}, false
+	}
+	return lifeJob, true
 }
 
 func filterSkillsForExecutionPolicy(skills []protocol.TaskSkill, policy executionpolicy.Policy) []protocol.TaskSkill {
