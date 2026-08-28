@@ -250,7 +250,38 @@ WHERE workspace_id = $1 AND user_id = $2
   AND (source_type || ':' || source_id) = ANY($3::text[]);
 
 -- name: ScrubLifeCognitionTasksByMaterialIDs :exec
-WITH affected_tasks AS MATERIALIZED (
+WITH queued_batches AS MATERIALIZED (
+    SELECT job.id,
+           (SELECT COALESCE(jsonb_agg(value ORDER BY value), '[]'::jsonb)
+              FROM jsonb_array_elements_text(
+                  COALESCE(job.input->'material_ids', jsonb_build_array(job.input->>'material_id'))
+              ) material_id(value)
+             WHERE value <> ALL($3::text[])) AS remaining_material_ids,
+           (SELECT COALESCE(jsonb_agg(value ORDER BY value), '[]'::jsonb)
+              FROM jsonb_array_elements_text(COALESCE(job.input->'processing_cursors', '[]'::jsonb)) cursor(value)
+             WHERE replace(value, 'material:', '') <> ALL($3::text[])) AS remaining_cursors
+      FROM life_cognition_job job
+     WHERE job.workspace_id = $1 AND job.user_id = $2
+       AND job.task_id IS NULL AND job.status IN ('queued', 'failed')
+       AND (job.input->>'material_id' = ANY($3::text[]) OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements_text(COALESCE(job.input->'material_ids', '[]'::jsonb)) material_id(value)
+            WHERE value = ANY($3::text[])
+       ))
+), update_nonempty_batches AS (
+    UPDATE life_cognition_job job
+       SET input = jsonb_set(
+               jsonb_set(job.input - 'material_id', '{material_ids}', batch.remaining_material_ids),
+               '{processing_cursors}', batch.remaining_cursors
+           ),
+           updated_at = now()
+      FROM queued_batches batch
+     WHERE job.id = batch.id AND jsonb_array_length(batch.remaining_material_ids) > 0
+), delete_empty_batches AS (
+    DELETE FROM life_cognition_job job
+     USING queued_batches batch
+     WHERE job.id = batch.id AND jsonb_array_length(batch.remaining_material_ids) = 0
+), affected_tasks AS MATERIALIZED (
     SELECT DISTINCT task.id
     FROM agent_task_queue task
     JOIN life_cognition_job job ON job.task_id = task.id
@@ -536,6 +567,14 @@ INSERT INTO life_cognition_job (
 ON CONFLICT (workspace_id, user_id, job_type, dedupe_key)
 DO UPDATE SET scheduled_at = LEAST(life_cognition_job.scheduled_at, EXCLUDED.scheduled_at)
 RETURNING *;
+
+-- name: QueueLifeMaterialUnderstanding :one
+SELECT queue_life_material_understanding(
+    sqlc.arg(workspace_id)::uuid,
+    sqlc.arg(user_id)::uuid,
+    sqlc.arg(companion_agent_id)::uuid,
+    sqlc.arg(material_id)::uuid
+) AS job_id;
 
 -- name: ClaimDueLifeCognitionJobs :many
 WITH due AS (

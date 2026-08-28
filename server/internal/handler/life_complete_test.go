@@ -24,6 +24,84 @@ func TestCoalesceLifeMemoryEvidenceMergesOneSource(t *testing.T) {
 	}
 }
 
+func TestQueueLifeMaterialUnderstandingBatchesExactSources(t *testing.T) {
+	requireHandlerDatabase(t)
+	companionID := parseUUID(createHandlerTestAgent(t, "BatchLifeMaterials", nil))
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin batch transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+
+	var firstMaterialID, secondMaterialID pgtype.UUID
+	for index, destination := range []*pgtype.UUID{&firstMaterialID, &secondMaterialID} {
+		err = tx.QueryRow(context.Background(), `
+			INSERT INTO life_material (
+				workspace_id, user_id, source_type, source_key, source_revision, content, metadata, occurred_at
+			) VALUES ($1, $2, 'manual', $3, '1', $4, '{}'::jsonb, now())
+			RETURNING id`, testWorkspaceID, testUserID, "batch-material-"+time.Now().Format("150405.000000000")+string(rune('a'+index)), "material").Scan(destination)
+		if err != nil {
+			t.Fatalf("insert material %d: %v", index, err)
+		}
+	}
+	queries := db.New(tx)
+	firstJobID, err := queries.QueueLifeMaterialUnderstanding(context.Background(), db.QueueLifeMaterialUnderstandingParams{
+		WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(testUserID), CompanionAgentID: companionID, MaterialID: firstMaterialID,
+	})
+	if err != nil {
+		t.Fatalf("queue first material: %v", err)
+	}
+	secondJobID, err := queries.QueueLifeMaterialUnderstanding(context.Background(), db.QueueLifeMaterialUnderstandingParams{
+		WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(testUserID), CompanionAgentID: companionID, MaterialID: secondMaterialID,
+	})
+	if err != nil {
+		t.Fatalf("queue second material: %v", err)
+	}
+	if firstJobID != secondJobID {
+		t.Fatalf("same-minute materials created different jobs: %v != %v", firstJobID, secondJobID)
+	}
+	var input []byte
+	var secondsUntilDue float64
+	if err := tx.QueryRow(context.Background(), `
+		SELECT input, extract(epoch FROM (scheduled_at - now()))
+		FROM life_cognition_job WHERE id=$1`, firstJobID).Scan(&input, &secondsUntilDue); err != nil {
+		t.Fatalf("read material batch: %v", err)
+	}
+	var payload struct {
+		MaterialIDs       []string `json:"material_ids"`
+		ProcessingCursors []string `json:"processing_cursors"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		t.Fatalf("decode material batch: %v", err)
+	}
+	if len(payload.MaterialIDs) != 2 || len(payload.ProcessingCursors) != 2 {
+		t.Fatalf("batch input = %s", input)
+	}
+	if secondsUntilDue <= 0 || secondsUntilDue > 65 {
+		t.Fatalf("batch due in %.3fs, want (0,65]", secondsUntilDue)
+	}
+	if err := queries.ScrubLifeCognitionTasksByMaterialIDs(context.Background(), db.ScrubLifeCognitionTasksByMaterialIDsParams{
+		WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(testUserID), Column3: []string{uuidToString(firstMaterialID)},
+	}); err != nil {
+		t.Fatalf("forget first queued material: %v", err)
+	}
+	if err := tx.QueryRow(context.Background(), `SELECT input FROM life_cognition_job WHERE id=$1`, firstJobID).Scan(&input); err != nil {
+		t.Fatalf("read reduced material batch: %v", err)
+	}
+	if err := json.Unmarshal(input, &payload); err != nil || len(payload.MaterialIDs) != 1 || payload.MaterialIDs[0] != uuidToString(secondMaterialID) {
+		t.Fatalf("reduced batch input = %s, error=%v", input, err)
+	}
+	if err := queries.ScrubLifeCognitionTasksByMaterialIDs(context.Background(), db.ScrubLifeCognitionTasksByMaterialIDsParams{
+		WorkspaceID: parseUUID(testWorkspaceID), UserID: parseUUID(testUserID), Column3: []string{uuidToString(secondMaterialID)},
+	}); err != nil {
+		t.Fatalf("forget final queued material: %v", err)
+	}
+	var remainingJobs int
+	if err := tx.QueryRow(context.Background(), `SELECT count(*) FROM life_cognition_job WHERE id=$1`, firstJobID).Scan(&remainingJobs); err != nil || remainingJobs != 0 {
+		t.Fatalf("empty material batch survived: count=%d error=%v", remainingJobs, err)
+	}
+}
+
 func TestLifeIdentityObserverAndPolicyAreUserGoverned(t *testing.T) {
 	requireHandlerDatabase(t)
 	companionID := createHandlerTestAgent(t, "CompleteLifeCompanion", nil)

@@ -275,12 +275,18 @@ func (h *Handler) CreateLifeMaterial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profile, err := h.Queries.GetCompanionProfile(r.Context(), db.GetCompanionProfileParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to resolve life companion")
+		return
+	}
 	if err == nil {
-		input, _ := json.Marshal(map[string]any{
-			"material_id": uuidToString(row.ID), "source_type": row.SourceType,
-			"source_key": row.SourceKey, "source_revision": row.SourceRevision,
-		})
-		_, _ = h.Queries.CreateLifeCognitionJob(r.Context(), db.CreateLifeCognitionJobParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: profile.AgentID, JobType: "understand_materials", DedupeKey: "manual:" + row.SourceKey, Input: input, ScheduledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}})
+		if _, err = h.Queries.QueueLifeMaterialUnderstanding(r.Context(), db.QueueLifeMaterialUnderstandingParams{
+			WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			CompanionAgentID: profile.AgentID, MaterialID: row.ID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to schedule life material understanding")
+			return
+		}
 	}
 	writeJSON(w, 201, lifeMaterialResponse(row))
 }

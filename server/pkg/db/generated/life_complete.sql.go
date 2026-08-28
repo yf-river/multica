@@ -3962,6 +3962,34 @@ func (q *Queries) MergeLifeObservationTopic(ctx context.Context, arg MergeLifeOb
 	return i, err
 }
 
+const queueLifeMaterialUnderstanding = `-- name: QueueLifeMaterialUnderstanding :one
+SELECT queue_life_material_understanding(
+    $1::uuid,
+    $2::uuid,
+    $3::uuid,
+    $4::uuid
+) AS job_id
+`
+
+type QueueLifeMaterialUnderstandingParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	UserID           pgtype.UUID `json:"user_id"`
+	CompanionAgentID pgtype.UUID `json:"companion_agent_id"`
+	MaterialID       pgtype.UUID `json:"material_id"`
+}
+
+func (q *Queries) QueueLifeMaterialUnderstanding(ctx context.Context, arg QueueLifeMaterialUnderstandingParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, queueLifeMaterialUnderstanding,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.CompanionAgentID,
+		arg.MaterialID,
+	)
+	var job_id pgtype.UUID
+	err := row.Scan(&job_id)
+	return job_id, err
+}
+
 const recordLifeDerivation = `-- name: RecordLifeDerivation :exec
 INSERT INTO life_derivation (
     workspace_id, user_id, source_type, source_id, target_type, target_id, job_id
@@ -4141,7 +4169,38 @@ func (q *Queries) SaveLifeExperimentReviewDraft(ctx context.Context, arg SaveLif
 }
 
 const scrubLifeCognitionTasksByMaterialIDs = `-- name: ScrubLifeCognitionTasksByMaterialIDs :exec
-WITH affected_tasks AS MATERIALIZED (
+WITH queued_batches AS MATERIALIZED (
+    SELECT job.id,
+           (SELECT COALESCE(jsonb_agg(value ORDER BY value), '[]'::jsonb)
+              FROM jsonb_array_elements_text(
+                  COALESCE(job.input->'material_ids', jsonb_build_array(job.input->>'material_id'))
+              ) material_id(value)
+             WHERE value <> ALL($3::text[])) AS remaining_material_ids,
+           (SELECT COALESCE(jsonb_agg(value ORDER BY value), '[]'::jsonb)
+              FROM jsonb_array_elements_text(COALESCE(job.input->'processing_cursors', '[]'::jsonb)) cursor(value)
+             WHERE replace(value, 'material:', '') <> ALL($3::text[])) AS remaining_cursors
+      FROM life_cognition_job job
+     WHERE job.workspace_id = $1 AND job.user_id = $2
+       AND job.task_id IS NULL AND job.status IN ('queued', 'failed')
+       AND (job.input->>'material_id' = ANY($3::text[]) OR EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements_text(COALESCE(job.input->'material_ids', '[]'::jsonb)) material_id(value)
+            WHERE value = ANY($3::text[])
+       ))
+), update_nonempty_batches AS (
+    UPDATE life_cognition_job job
+       SET input = jsonb_set(
+               jsonb_set(job.input - 'material_id', '{material_ids}', batch.remaining_material_ids),
+               '{processing_cursors}', batch.remaining_cursors
+           ),
+           updated_at = now()
+      FROM queued_batches batch
+     WHERE job.id = batch.id AND jsonb_array_length(batch.remaining_material_ids) > 0
+), delete_empty_batches AS (
+    DELETE FROM life_cognition_job job
+     USING queued_batches batch
+     WHERE job.id = batch.id AND jsonb_array_length(batch.remaining_material_ids) = 0
+), affected_tasks AS MATERIALIZED (
     SELECT DISTINCT task.id
     FROM agent_task_queue task
     JOIN life_cognition_job job ON job.task_id = task.id
