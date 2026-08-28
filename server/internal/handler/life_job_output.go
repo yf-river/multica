@@ -523,7 +523,7 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 		}); err != nil {
 			return db.LifeCognitionJob{}, err
 		}
-		for _, evidence := range candidate.Evidence {
+		for _, evidence := range coalesceLifeMemoryEvidence(candidate.Evidence) {
 			sourceID, err := util.ParseUUID(evidence.SourceID)
 			if err != nil || !validLifeEvidenceSourceType(evidence.SourceType) {
 				return db.LifeCognitionJob{}, fmt.Errorf("invalid memory evidence")
@@ -1078,6 +1078,35 @@ upgradeEvaluationDone:
 	}
 	_ = createdMemories
 	return completed, nil
+}
+
+func coalesceLifeMemoryEvidence(items []lifeJobEvidenceOutput) []lifeJobEvidenceOutput {
+	result := make([]lifeJobEvidenceOutput, 0, len(items))
+	positions := make(map[string]int, len(items))
+	for _, item := range items {
+		key := item.SourceType + ":" + strings.TrimSpace(item.SourceID)
+		position, exists := positions[key]
+		if !exists {
+			positions[key] = len(result)
+			result = append(result, item)
+			continue
+		}
+		existing := &result[position]
+		excerpt := strings.TrimSpace(item.Excerpt)
+		if excerpt != "" && !strings.Contains(existing.Excerpt, excerpt) {
+			if strings.TrimSpace(existing.Excerpt) == "" {
+				existing.Excerpt = excerpt
+			} else {
+				existing.Excerpt = strings.TrimSpace(existing.Excerpt) + "\n" + excerpt
+			}
+		}
+		if existing.Stance == "" {
+			existing.Stance = item.Stance
+		} else if existing.Stance != item.Stance && item.Stance != "" {
+			existing.Stance = "context"
+		}
+	}
+	return result
 }
 
 func parseLifeJobOptionalTime(raw string) (pgtype.Timestamptz, error) {

@@ -14,6 +14,16 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestCoalesceLifeMemoryEvidenceMergesOneSource(t *testing.T) {
+	items := coalesceLifeMemoryEvidence([]lifeJobEvidenceOutput{
+		{SourceType: "chat_message", SourceID: "source", Excerpt: "first", Stance: "supports"},
+		{SourceType: "chat_message", SourceID: "source", Excerpt: "second", Stance: "supports"},
+	})
+	if len(items) != 1 || !strings.Contains(items[0].Excerpt, "first") || !strings.Contains(items[0].Excerpt, "second") || items[0].Stance != "supports" {
+		t.Fatalf("coalesced evidence = %#v", items)
+	}
+}
+
 func TestLifeIdentityObserverAndPolicyAreUserGoverned(t *testing.T) {
 	requireHandlerDatabase(t)
 	companionID := createHandlerTestAgent(t, "CompleteLifeCompanion", nil)
@@ -301,7 +311,10 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 		t.Fatal(err)
 	}
 	mustExec(t, ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, jobID, taskID)
-	evidence := []map[string]any{{"source_type": "manual", "source_id": materialID, "excerpt": "今天第一次记录心情", "observed_at": time.Now().UTC().Format(time.RFC3339)}}
+	evidence := []map[string]any{
+		{"source_type": "manual", "source_id": materialID, "excerpt": "今天第一次记录心情", "observed_at": time.Now().UTC().Format(time.RFC3339)},
+		{"source_type": "manual", "source_id": materialID, "excerpt": "这是同一份材料里的补充证据", "observed_at": time.Now().UTC().Format(time.RFC3339)},
+	}
 	output := map[string]any{
 		"memory_candidates":  []map[string]any{{"kind": "weak_signal", "content": "开始尝试记录心情", "confidence": 0.55, "urgency": 0.2, "uncertainty": "只有一次", "evidence": evidence}},
 		"internal_thoughts":  []map[string]any{{"type": "question", "title": "心情记录是否有帮助", "content": "继续观察记录负担", "metadata": map[string]any{}, "evidence": evidence}},
@@ -315,6 +328,14 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	var memoryID string
 	if err := testPool.QueryRow(ctx, `SELECT id FROM life_memory WHERE workspace_id=$1 AND user_id=$2 AND content='开始尝试记录心情'`, testWorkspaceID, testUserID).Scan(&memoryID); err != nil {
 		t.Fatal(err)
+	}
+	var evidenceCount int
+	var evidenceExcerpt string
+	if err := testPool.QueryRow(ctx, `SELECT count(*), min(excerpt) FROM life_memory_evidence WHERE memory_id=$1`, memoryID).Scan(&evidenceCount, &evidenceExcerpt); err != nil {
+		t.Fatal(err)
+	}
+	if evidenceCount != 1 || !strings.Contains(evidenceExcerpt, "今天第一次记录心情") || !strings.Contains(evidenceExcerpt, "同一份材料里的补充证据") {
+		t.Fatalf("coalesced evidence count=%d excerpt=%q", evidenceCount, evidenceExcerpt)
 	}
 	var inboxCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM inbox_item WHERE workspace_id=$1 AND recipient_id=$2 AND type='life_companion' AND body LIKE '%记下来了%'`, testWorkspaceID, testUserID).Scan(&inboxCount); err != nil {
