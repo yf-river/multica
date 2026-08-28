@@ -44,8 +44,9 @@ func assertPromptExcludes(t *testing.T, out string, values ...string) {
 func TestBuildLifeJobPromptUsesOnlyTheCurrentJobContract(t *testing.T) {
 	out := BuildPrompt(Task{LifeJobID: "job-1", LifeJobType: "proactive_check"})
 	assertPromptContains(t, out,
-		"proactive_decision:{status:string,trigger_source:string,reason:string,message:string,context_snapshot:object",
+		"proactive_decision:{status:silent|spoke,trigger_source:schedule|commitment|risk|manual,reason:string,message:string,context_snapshot:object",
 		"inspect the product repository or source code",
+		"proactive status=silent|spoke and trigger_source=schedule|commitment|risk|manual",
 		"never invent an ID",
 		"must be an RFC3339 timestamp",
 		"never submit synthetic or reduced probe outputs",
