@@ -68,8 +68,9 @@ test.describe("小队 SOP 端到端", () => {
     test.setTimeout(120_000);
 
     const suffix = Date.now();
-    await api.registerDaemonCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
+    const { runtime } = await api.registerDaemonCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
     const template = await api.ensureInternalSquadTemplate("multica-coding");
+    await api.bindAgentsToRuntime(template.agents, runtime.id);
     const squad = template.squad;
     const leader = template.agents.find((agent) => agent.role_key === "captain");
     expect(leader).toBeTruthy();
@@ -170,8 +171,9 @@ test.describe("小队 SOP 端到端", () => {
     test.setTimeout(120_000);
 
     const suffix = Date.now();
-    await api.registerDaemonCodeBuddyRuntime(`E2E PM 小队 Runtime ${suffix}`);
+    const { runtime } = await api.registerDaemonCodeBuddyRuntime(`E2E PM 小队 Runtime ${suffix}`);
     const template = await api.ensureInternalSquadTemplate("user-center");
+    await api.bindAgentsToRuntime(template.agents, runtime.id);
     const squad = template.squad;
     const leader = template.agents.find((agent) => agent.role_key === "pm");
     expect(leader).toBeTruthy();

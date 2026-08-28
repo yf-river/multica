@@ -10,8 +10,9 @@ test.describe("user-center 小队 SOP 页面证据", () => {
 
     try {
       const suffix = Date.now();
-      await api.registerDaemonCodeBuddyRuntime(`E2E PM 小队页面 Runtime ${suffix}`);
+      const { runtime } = await api.registerDaemonCodeBuddyRuntime(`E2E PM 小队页面 Runtime ${suffix}`);
       const template = await api.ensureInternalSquadTemplate("user-center");
+      await api.bindAgentsToRuntime(template.agents, runtime.id);
       const squad = template.squad;
       const leader = template.agents.find((agent) => agent.role_key === "pm");
       expect(leader).toBeTruthy();

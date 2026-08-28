@@ -10,8 +10,9 @@ test.describe("Multica 编码小队页面证据", () => {
 
     try {
       const suffix = Date.now();
-      await api.registerDaemonCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
+      const { runtime } = await api.registerDaemonCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
       const template = await api.ensureInternalSquadTemplate("multica-coding");
+      await api.bindAgentsToRuntime(template.agents, runtime.id);
       const squad = template.squad;
       const leader = template.agents.find((agent) => agent.role_key === "captain");
       const designer = template.agents.find((agent) => agent.role_key === "designer");

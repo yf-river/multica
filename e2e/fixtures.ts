@@ -323,6 +323,18 @@ export class TestApiClient {
     return { daemonId, runtime };
   }
 
+  async bindAgentsToRuntime(agents: Array<{ id: string }>, runtimeId: string) {
+    for (const agent of agents) {
+      const res = await this.authedFetch(`/api/agents/${agent.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ runtime_id: runtimeId }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to bind agent ${agent.id} to runtime: ${res.status} ${await res.text()}`);
+      }
+    }
+  }
+
   async completeNextDaemonModelList(
     runtimeId: string,
     models = [
