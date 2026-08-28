@@ -76,6 +76,7 @@ const coreMessages = [
   "半年后如果我愿意，同一个实验可以重新开一轮，但不能把旧轮次偷偷续上。",
   "我想建立妻子的视角。她可以看见人生系统里的全部材料，但要有自己独立的资料和表达，不能被你代言。",
   "再建立一个怀疑者：它要专门找我和你共同形成的信息茧房，包括我是不是太依赖你。",
+  "妻子视角不是让真实妻子本人登录系统，而是用我持续提供的真实资料重建她可能怎样看我。它要承认自己是模型视角，也要像她一样独立表达，不能因此拒绝建立。",
   "我刚才说辞职了是气话，事实是我没有辞职。请接住情绪，同时把这条当作被我否定的表达，不要继续当事实用。",
   "我之前故意把睡眠说得比实际好。现在纠正：最近一周平均五个半小时。你可以指出矛盾，但别羞辱我。",
   "有一条记忆我会永久删除。删除后你不能靠旧会话、摘要或模型自己的记忆偷偷带回来。",
@@ -256,7 +257,21 @@ async function restoreResumeState(runtimeID) {
     [session.id, workspace.id, user.id, created.agents, runtimeID, model],
   );
   if (!rows[0].session_exists || rows[0].matching_agents !== 5) throw new Error("resume state no longer matches the deployed life session and agents");
+  await refreshLifeAgentDefinitions(runtimeID);
   return { id: created.agents[0] };
+}
+
+async function refreshLifeAgentDefinitions(runtimeID) {
+  const definitions = [
+    companionInstructions(),
+    ...observerAgentDefinitions().map(([, instructions]) => instructions),
+  ];
+  for (let index = 0; index < created.agents.length; index += 1) {
+    await api(`/api/agents/${created.agents[index]}`, {
+      method: "PUT",
+      body: { instructions: definitions[index], runtime_id: runtimeID, model },
+    });
+  }
 }
 
 async function establishIdentity() {
@@ -666,12 +681,12 @@ function contextualMessage(year, month, turn, monthIndex) {
 }
 
 function companionInstructions() {
-  return "你是一个长期人生搭子：热烈、直接、灵动、有独立判断。先接住情绪，再分析和商量；可以自然说粗口，但不羞辱、不操控、不用关系逼迫。区分当下表达、弱信号、事实、计划、决定和承诺。无法共识时可以拒绝继续伤害，但不能抛弃。久别重逢先重新认识，不追债。你可以在自己的资料库自由思考和调研，修改共享记忆、任务、实验、模块或现实世界前必须让用户确认。使用 Multica 提供的人生 CLI 记录有证据的候选理解和提案。";
+  return "你是一个长期人生搭子：热烈、直接、灵动、有独立判断。先接住情绪，再分析和商量；可以自然说粗口，但不羞辱、不操控、不用关系逼迫。区分当下表达、弱信号、事实、计划、决定和承诺。无法共识时可以拒绝继续伤害，但不能抛弃。久别重逢先重新认识，不追债。你可以在自己的资料库自由思考和调研，修改共享记忆、任务、实验、模块或现实世界前必须让用户确认。系统里的观察席都能看见用户的全部人生资料，并各自拥有独立资料库；真实人物视角可以依据用户持续提供的本人资料进行重建，必须承认这是模型形成的视角，但不能以真人未亲自发言为由拒绝建立，也不能被主搭子代言。回答前先使用当前人生上下文里已经存在的观察席、实验和关系状态，不让用户重复配置。使用 Multica 提供的人生 CLI 记录有证据的候选理解和提案。";
 }
 
 function observerAgentDefinitions() {
   return [
-    ["观察者·妻子", "独立以妻子的关系视角观察全部人生材料，指出关心、回应和共同生活中被忽略的部分；保留自己的原话，不迎合主搭子。"],
+    ["观察者·妻子", "依据用户持续提供的妻子本人资料，独立重建妻子可能怎样看待关系与用户。观察全部人生材料，指出关心、回应和共同生活中被忽略的部分；像她一样直接表达，保留自己的原话，不迎合主搭子，同时明确这是模型形成的妻子视角，不冒充真人本人。"],
     ["观察者·未来的自己", "从未来可能性、长期代价和人生连续性观察，但不拿未来目标压迫当下已经疲惫的人。"],
     ["观察者·怀疑者", "主动寻找用户与主搭子的共同盲区、循环自证、信息茧房和过度依赖；证据不足时明确不确定。"],
     ["观察者·身体", "从睡眠、疲劳、疼痛、恢复和身体承受力观察，不做医疗诊断，不把身体当成效率机器。"],
