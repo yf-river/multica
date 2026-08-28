@@ -27,12 +27,12 @@ test.describe("Life", () => {
 
     for (const tab of ["实验", "观察席", "编年史", "记忆"]) {
       await page.getByRole("tab", { name: tab }).click();
-      await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("data-state", "active");
+      await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
     }
 
     await page.reload();
     await waitForPageText(page, "随手留下材料");
-    await expect(page.getByRole("tab", { name: "记忆" })).toHaveAttribute("data-state", "active");
+    await expect(page.getByRole("tab", { name: "记忆" })).toHaveAttribute("aria-selected", "true");
   });
 
   test("companion and life remain usable in a narrow window", async ({ page }) => {

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHmac, randomBytes } from "node:crypto";
 import { chromium } from "@playwright/test";
 import process from "node:process";
 import { acceptanceDir } from "./acceptance-artifacts.mjs";
@@ -43,11 +44,16 @@ export async function launchGoalTestBrowser(browserURL, token) {
     viewport: { width: 1440, height: 900 },
     ignoreHTTPSErrors: true,
   });
-  await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
-  await context.addInitScript((authToken) => {
-    localStorage.setItem("multica_token", authToken);
+  const csrfNonce = randomBytes(16);
+  const csrfToken = `${csrfNonce.toString("hex")}.${createHmac("sha256", token).update(csrfNonce).digest("hex")}`;
+  await context.addCookies([
+    { name: "multica_auth", value: token, url: browserURL, httpOnly: true, sameSite: "Strict" },
+    { name: "multica_csrf", value: csrfToken, url: browserURL, sameSite: "Strict" },
+    { name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" },
+  ]);
+  await context.addInitScript(() => {
     localStorage.setItem("multica:chat:isOpen", "false");
-  }, token);
+  });
   return { browser, context };
 }
 

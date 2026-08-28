@@ -1,4 +1,3 @@
-import { chromium } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -8,6 +7,7 @@ import {
 } from "./lib/browser-audit-events.mjs";
 import {
   createBrowserRequestTools,
+  launchGoalTestBrowser,
   loadGoalTestBrowserAudit,
   loginGoalTest,
   verifyGoalTestDeploymentLogs,
@@ -108,22 +108,20 @@ const forbiddenText = [
 
 const token = await loginGoalTest({ backendURL, account, password });
 const warmup = await warmupRoutes(token);
-const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
-await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
-await context.addInitScript((authToken) => {
-  localStorage.setItem("multica_token", authToken);
-  localStorage.setItem("multica:chat:isOpen", "false");
-}, token);
+const { browser, context } = await launchGoalTestBrowser(browserURL, token);
 
 const results = [];
 const events = [];
 
 for (const route of routes) {
-  const page = await context.newPage();
+  const routeContext = route.auth === false
+    ? await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true })
+    : context;
+  const page = await routeContext.newPage();
   const step = await auditRoute(page, route);
   events.push(...step.events);
   await page.close().catch(() => {});
+  if (routeContext !== context) await routeContext.close().catch(() => {});
   results.push(step);
 }
 
@@ -187,12 +185,6 @@ async function auditRoute(page, route) {
   let screenshot = "";
   try {
     await page.goto(`${browserURL}${route.path}`, { waitUntil: "domcontentloaded", timeout: 10_000 });
-    if (route.auth !== false) {
-      await page.evaluate((authToken) => {
-        localStorage.setItem("multica_token", authToken);
-        localStorage.setItem("multica:chat:isOpen", "false");
-      }, token);
-    }
     if (route.finalPathIncludes) {
       await page.waitForURL((url) => url.href.includes(route.finalPathIncludes), { timeout: 8_000 }).catch(() => {});
     }
@@ -211,7 +203,7 @@ async function auditRoute(page, route) {
   const { requests, failedRequests } = auditEvents;
   const routeEvents = auditEvents.errors;
   const badStatuses = responses
-    .filter((item) => item.status >= 400)
+    .filter((item) => item.status >= 400 && !isExpectedPublicAuthProbe(route, item))
     .map((item) => ({ status: item.status, path: requestPath(item.url), resource_type: item.resource_type }))
     .slice(0, 20);
   const apiRequests = requests.filter((item) => item.url.includes("/api/"));
@@ -268,6 +260,12 @@ async function auditRoute(page, route) {
     screenshot,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 40),
   };
+}
+
+function isExpectedPublicAuthProbe(route, response) {
+  if (route.auth !== false || response.status !== 401) return false;
+  const path = requestPath(response.url);
+  return path === "/api/me" || path === "/api/workspaces";
 }
 
 async function auditRouteUiContract(page, route, bodyText) {
