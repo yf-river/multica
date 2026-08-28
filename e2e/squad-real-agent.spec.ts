@@ -21,16 +21,6 @@ test.describe("小队真实 Agent 闭环", () => {
     const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_E2E.workspace);
 
     try {
-      const readiness = await api.getPromptEvaluationRuntimeReadiness();
-      expect(readiness).toMatchObject({
-        status: "就绪",
-      });
-      expect(readiness.model).toBe(REAL_AGENT_E2E.model);
-      expect(readiness.runtime).toMatchObject({
-        provider: REAL_AGENT_E2E.provider,
-        status: "online",
-      });
-
       const template = await api.ensureInternalSquadTemplate("user-center", {
         name: `E2E 真实 PM 小队 ${suffix}`,
         runtime_provider: REAL_AGENT_E2E.provider,

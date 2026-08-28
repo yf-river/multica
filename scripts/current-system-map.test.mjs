@@ -73,7 +73,7 @@ test("runtime environment helpers are inventoried", () => {
 test("implicit database and websocket contracts are visible", () => {
   assert.equal(inventory.persistence.database.functions.length, 9);
   assert.equal(inventory.persistence.database.triggers.length, 4);
-  assert.ok(inventory.persistence.database.indexes.length >= 180);
+  assert.ok(inventory.persistence.database.indexes.length >= 140);
   assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
 });
 
@@ -343,32 +343,6 @@ test("the current domain ownership map stays anchored to routes, tables and sour
         "server/internal/service/task_complete.go",
         "server/internal/service/task_fail.go",
         "server/cmd/server/task_projection.go",
-      ],
-    },
-    {
-      name: "Prompt Evaluation",
-      routes: [
-        "POST /api/prompt-evaluation-assets/{id}/run",
-        "POST /api/prompt-evaluation-runs/{id}/sync",
-        "POST /api/prompt-evaluation-runs/{id}/review",
-        "POST /api/prompt-evaluation-optimization-candidates/{id}/skill-apply",
-      ],
-      tables: [
-        "prompt_evaluation_asset",
-        "prompt_evaluation_case",
-        "prompt_evaluation_dataset_version",
-        "prompt_evaluation_run",
-        "prompt_evaluation_trial",
-        "prompt_evaluation_evidence_snapshot",
-        "prompt_evaluation_optimization_candidate",
-      ],
-      sources: [
-        "server/internal/handler/prompt_evaluation_asset.go",
-        "server/internal/handler/prompt_evaluation_dataset_versions.go",
-        "server/internal/service/prompt_evaluation_sync.go",
-        "server/cmd/server/prompt_evaluation_projection.go",
-        "packages/views/prompt-library/components/use-prompt-library-mutations.ts",
-        "packages/views/prompt-library/components/use-skill-candidate-workflow-actions.ts",
       ],
     },
     {

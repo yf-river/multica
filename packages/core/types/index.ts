@@ -5,6 +5,7 @@ export type {
   IssueExecutionTreeResponse,
   IssueTimelineNode,
   IssueTimelineSummary,
+  ToolCallChain,
 } from "./issue-execution";
 export type {
   Agent,
@@ -94,53 +95,6 @@ export type {
   UpdateProjectResourceRequest,
 } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
-export type {
-  PromptLibraryItem,
-  PromptLibraryVersion,
-  PromptLibraryTrial,
-  ListPromptLibraryItemsParams,
-  CreatePromptLibraryItemRequest,
-  CreatePromptLibraryVersionRequest,
-  CreatePromptLibraryVersionResponse,
-  CreatePromptLibraryTrialRequest,
-} from "./prompt-library";
-export type {
-  AgentPlaygroundExperiment,
-  AgentPlaygroundDetail,
-  ListAgentPlaygroundExperimentsResponse,
-  CreateAgentPlaygroundExperimentRequest,
-  JudgeAgentPlaygroundExperimentRequest,
-} from "./agent-playground";
-export type {
-  PromptEvaluationAsset,
-  PromptEvaluationRun,
-  PromptEvaluationRunEvidence,
-  PromptEvaluationEvidenceSnapshot,
-  PromptEvaluationEvidenceSnapshotType,
-  PromptEvaluationAssetEvidenceArchivePackage,
-  PromptEvaluationStructuredCase,
-  PromptEvaluationDatasetVersion,
-  CreatePromptEvaluationDatasetFromTracesRequest,
-  PromptEvaluationOptimizationCandidate,
-  PromptEvaluationOptimizationCandidateStatus,
-  CheckPromptEvaluationSkillFreshnessRequest,
-  PromptEvaluationSkillFreshnessResult,
-  ApplyPromptEvaluationSkillCandidateRequest,
-  PreparePromptEvaluationSkillReEvalRequest,
-  RunPromptEvaluationSkillReEvalRequest,
-  RejectPromptEvaluationOptimizationCandidateRequest,
-  PromptEvaluationAssetType,
-  ListPromptEvaluationAssetsParams,
-  ListPromptEvaluationRunsParams,
-  ListPromptEvaluationCasesParams,
-  ListPromptEvaluationOptimizationCandidatesParams,
-  CreatePromptEvaluationAssetRequest,
-  CreatePromptEvaluationDatasetVersionRequest,
-  UpdatePromptEvaluationAssetRequest,
-  ReviewPromptEvaluationRunRequest,
-  CreatePromptEvaluationCaseRequest,
-  UpdatePromptEvaluationCaseRequest,
-} from "./prompt-evaluation";
 export type { SquadSOPRun, ObservabilitySummary } from "./sop";
 export type {
   GitHubPullRequest,

@@ -228,11 +228,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 	}
 	h := handler.New(queries, pool, hub, bus, store, cfSigner, analyticsClient, signupConfig, opts.HeartbeatScheduler, daemonHub)
-	if opts.EventDispatcher != nil {
-		if err := h.RegisterPromptEvaluationCaseOperationConsumer(opts.EventDispatcher); err != nil {
-			return nil, nil, fmt.Errorf("register prompt evaluation case operation consumer: %w", err)
-		}
-	}
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
@@ -781,105 +776,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/members", h.AddSquadMember)
 					r.Delete("/members", h.RemoveSquadMember)
 					r.Patch("/members/role", h.UpdateSquadMemberRole)
-				})
-			})
-
-			// Prompt library
-			r.Route("/api/prompt-library", func(r chi.Router) {
-				r.Get("/", h.ListPromptLibraryItems)
-				r.Post("/", h.CreatePromptLibraryItem)
-				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/", h.GetPromptLibraryItem)
-					r.Put("/", h.UpdatePromptLibraryItem)
-					r.Delete("/", h.DeletePromptLibraryItem)
-					r.Get("/versions", h.ListPromptLibraryVersions)
-					r.Post("/versions", h.CreatePromptLibraryVersion)
-					r.Get("/trials", h.ListPromptLibraryTrials)
-					r.Post("/versions/{versionId}/trials", h.CreatePromptLibraryTrial)
-				})
-			})
-
-			// Agent playground
-			r.Route("/api/agent-playground-experiments", func(r chi.Router) {
-				r.Get("/", h.ListAgentPlaygroundExperiments)
-				r.Post("/", h.CreateAgentPlaygroundExperiment)
-				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/", h.GetAgentPlaygroundExperiment)
-					r.Post("/run", h.RunAgentPlaygroundExperiment)
-					r.Post("/sync", h.SyncAgentPlaygroundExperiment)
-					r.Post("/judge", h.JudgeAgentPlaygroundExperiment)
-				})
-			})
-
-			// Prompt evaluation assets
-			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
-			r.Route("/api/prompt-evaluation-assets", func(r chi.Router) {
-				r.Get("/", h.ListPromptEvaluationAssets)
-				r.Post("/", h.CreatePromptEvaluationAsset)
-				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/", h.GetPromptEvaluationAsset)
-					r.Put("/", h.UpdatePromptEvaluationAsset)
-					r.Delete("/", h.DeletePromptEvaluationAsset)
-					r.Post("/run", h.RunPromptEvaluationAsset)
-					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
-					r.Post("/skill-inventory", h.CreatePromptEvaluationSkillInventory)
-					r.Post("/skill-snapshot", h.CreatePromptEvaluationSkillSnapshot)
-					r.Post("/skill-case-drafts", h.CreatePromptEvaluationSkillCaseDrafts)
-					r.Post("/evidence-snapshots", h.CreatePromptEvaluationAssetEvidenceSnapshots)
-					r.Get("/evidence-snapshots/export", h.GetPromptEvaluationAssetEvidenceSnapshotPackage)
-					r.Get("/case-operations", h.ListPromptEvaluationCaseOperations)
-					r.Post("/dataset-from-traces", h.CreatePromptEvaluationDatasetFromTraces)
-					r.Route("/dataset-versions", func(r chi.Router) {
-						r.Get("/", h.ListPromptEvaluationDatasetVersions)
-						r.Post("/", h.CreatePromptEvaluationDatasetVersion)
-						r.Get("/tag-trends", h.ListPromptEvaluationDatasetVersionTagTrends)
-						r.Get("/{versionId}/diff", h.DiffPromptEvaluationDatasetVersion)
-						r.Post("/{versionId}/restore", h.RestorePromptEvaluationDatasetVersion)
-						r.Get("/{versionId}/rows", h.ListPromptEvaluationDatasetVersionRows)
-					})
-				})
-			})
-			r.Route("/api/prompt-evaluation-cases", func(r chi.Router) {
-				r.Get("/", h.ListPromptEvaluationCases)
-				r.Get("/tag-summaries", h.ListPromptEvaluationCaseTagSummaries)
-				r.Get("/tag-dataset-summaries", h.ListPromptEvaluationCaseTagDatasetSummaries)
-				r.Post("/", h.CreatePromptEvaluationCase)
-				r.Post("/bulk-tags", h.BulkUpdatePromptEvaluationCaseTags)
-				r.Route("/{id}", func(r chi.Router) {
-					r.Put("/", h.UpdatePromptEvaluationCase)
-					r.Delete("/", h.DeletePromptEvaluationCase)
-				})
-			})
-			r.Get("/api/prompt-evaluation-dimension-scores", h.ListPromptEvaluationDimensionScores)
-			r.Get("/api/prompt-evaluation-dimension-score-summaries", h.ListPromptEvaluationDimensionScoreSummaries)
-			r.Get("/api/prompt-evaluation-dimension-score-trends", h.ListPromptEvaluationDimensionScoreTrends)
-			r.Get("/api/prompt-evaluation-runtime-readiness", h.GetPromptEvaluationRuntimeReadiness)
-			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
-				r.Get("/", h.ListPromptEvaluationRuns)
-				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/trials", h.ListPromptEvaluationRunTrials)
-					r.Get("/evidence", h.GetPromptEvaluationRunEvidence)
-					r.Route("/evidence-snapshots", func(r chi.Router) {
-						r.Get("/", h.ListPromptEvaluationEvidenceSnapshots)
-						r.Post("/", h.CreatePromptEvaluationEvidenceSnapshot)
-						r.Get("/{snapshotId}", h.GetPromptEvaluationEvidenceSnapshot)
-					})
-					r.Post("/sync", h.SyncPromptEvaluationRunFromTask)
-					r.Post("/cancel", h.CancelPromptEvaluationRun)
-					r.Post("/review", h.ReviewPromptEvaluationRun)
-					r.Post("/optimization-candidates", h.CreatePromptEvaluationOptimizationCandidate)
-				})
-			})
-			r.Route("/api/prompt-evaluation-optimization-candidates", func(r chi.Router) {
-				r.Get("/", h.ListPromptEvaluationOptimizationCandidates)
-				r.Route("/{id}", func(r chi.Router) {
-					r.Put("/", h.UpdatePromptEvaluationOptimizationCandidate)
-					r.Post("/publish", h.PublishPromptEvaluationOptimizationCandidate)
-					r.Post("/reject", h.RejectPromptEvaluationOptimizationCandidate)
-					r.Post("/skill-freshness", h.CheckPromptEvaluationSkillCandidateFreshness)
-					r.Post("/skill-apply", h.ApplyPromptEvaluationSkillCandidate)
-					r.Post("/skill-re-eval-asset", h.PreparePromptEvaluationSkillReEvalAsset)
-					r.Post("/skill-re-eval-run", h.RunPromptEvaluationSkillReEval)
 				})
 			})
 

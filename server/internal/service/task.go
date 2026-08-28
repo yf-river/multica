@@ -53,6 +53,14 @@ type TaskService struct {
 
 var ErrTaskStartConflict = errors.New("task is no longer startable")
 
+func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		panic("service: " + field + " must be a JSON object")
+	}
+	return value
+}
+
 type TaskWakeupNotifier interface {
 	NotifyTaskAvailable(runtimeID, taskID string)
 }

@@ -43,7 +43,6 @@ vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({
     runReviews: () => "/acme/run-reviews",
     issueDetail: (issueId: string) => `/acme/issues/${issueId}`,
-    evaluationView: (view: string) => `/acme/evaluation/${view}`,
   }),
 }));
 
@@ -127,7 +126,6 @@ describe("RunReviewsPage", () => {
     expect(screen.getByText("运行 2")).toBeInTheDocument();
     expect(screen.getByText("项目：账号平台")).toBeInTheDocument();
     expect(screen.getByText("任务：无运行任务")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "生成评测用例" })).toBeEnabled();
     expect(screen.getByText("横向时序图")).toBeInTheDocument();
     expect(screen.getByText("节点表")).toBeInTheDocument();
     expect(screen.getByText("事件流")).toBeInTheDocument();

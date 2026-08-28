@@ -1,10 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api";
-import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueExecutionTreeResponse, IssueTimelineNode, IssueTimelineSummary, TaskTraceEvent } from "@multica/core/types";
+import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, IssueTimelineSummary, TaskTraceEvent, ToolCallChain } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
-import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
-import { createIssueReviewDraftCase } from "./run-review-draft-case";
 import {
   buildEventTaskLabelById,
   buildRunReviewEventGroups,
@@ -79,7 +77,7 @@ function message(overrides: Partial<TaskMessagePayload> = {}): TaskMessagePayloa
   };
 }
 
-function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEvaluationToolCallChain {
+function tool(overrides: Partial<ToolCallChain> = {}): ToolCallChain {
   return {
     id: "tool-1",
     task_id: "task-1",
@@ -1493,151 +1491,4 @@ describe("buildRunReviewEventRows", () => {
     expect(String(sheet?.rows[1]?.at(-1))).toContain("关联 task_message #1 文本");
   });
 
-  it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", async () => {
-    const issue = {
-      id: "issue-1",
-      identifier: "ISS-1",
-      title: "优化运行复盘",
-      status: "done",
-      project: { title: "goal-test" },
-    } as Issue;
-    const tree = {
-      root: {
-        tasks: [task()],
-        task_messages: [
-          message({
-            seq: 1,
-            type: "text",
-            content: "01 阶段输入：用户希望事件流可诊断。handoff: mention://agent/02-design 已明确验收口径。",
-          }),
-        ],
-        trace_events: [trace({ event_type: "task.completed", event_name: "任务完成", status: "completed", failure_reason: "", error_type: "" })],
-        tool_call_chains: [
-          tool({
-            id: "tool-search",
-            tool: "exec_command",
-            input: { command: "rg -n \"生成评测用例\" packages/views" },
-            output: "packages/views/run-reviews/components/run-reviews-page.tsx:226",
-            failure_signal: false,
-            failure_reason: "",
-          }),
-          tool({
-            id: "tool-branch",
-            tool: "Bash",
-            input: { command: "cd /repo && git branch -a 2>&1" },
-            output: "Command: cd /repo && git branch -a 2>&1\nStdout: remotes/origin/v2.1.0_qc_timeout\n\nStderr: (empty)",
-            failure_signal: true,
-            failure_reason: "工具结果包含超时信息",
-          }),
-        ],
-        children: [],
-      },
-      issue_summary: {
-        issue_id: "issue-1",
-        total_duration_ms: 120000,
-        total_input_tokens: 10,
-        total_output_tokens: 20,
-        total_cache_read_tokens: 0,
-        total_cache_write_tokens: 0,
-        message_count: 1,
-        agent_turn_count: 1,
-        trace_event_count: 1,
-        usage_unavailable: false,
-        acceptance_status: "done",
-      },
-      timeline_nodes: [
-        {
-          issue_id: "issue-1",
-          node_id: "task:task-1",
-          node_type: "agent_task",
-          agent_id: "agent-1",
-          agent_name: "01-clarify",
-          status: "completed",
-          started_at: "2026-06-09T10:00:00.000Z",
-          completed_at: "2026-06-09T10:02:00.000Z",
-          duration_ms: 120000,
-          input_tokens: 10,
-          output_tokens: 20,
-          cache_read_tokens: 0,
-          cache_write_tokens: 0,
-          message_count: 1,
-          agent_turn_count: 1,
-          trace_event_count: 1,
-          usage_unavailable_trace: false,
-          summary: "需求澄清完成",
-          evidence_refs: [{ type: "agent_task", id: "task-1" }],
-        },
-      ],
-    } as unknown as IssueExecutionTreeResponse;
-    const stageRows = [
-      {
-        key: "01",
-        label: "01-需求澄清",
-        names: ["01-clarify"],
-        node: tree.timeline_nodes?.[0],
-      },
-      {
-        key: "02",
-        label: "02-方案设计",
-        names: ["02-design"],
-        node: undefined,
-      },
-    ];
-
-    const createPromptEvaluationCase = vi.fn(async (request: CreatePromptEvaluationCaseRequest) => ({
-      id: "case-1",
-      ...request,
-    }));
-    setApiInstance({
-      listPromptEvaluationAssets: vi.fn().mockResolvedValue([
-        { id: "asset-1", name: "Issue 复盘评测 Draft", prompt_id: null },
-      ]),
-      createPromptEvaluationCase,
-    } as unknown as ApiClient);
-
-    await createIssueReviewDraftCase(
-      issue,
-      tree,
-      stageRows as never,
-      [],
-    );
-    const request = createPromptEvaluationCase.mock.calls[0]![0];
-    const input = request.input as Record<string, unknown>;
-    const expected = request.expected as Record<string, unknown>;
-    const runSnapshot = input.run_snapshot as Record<string, unknown>;
-    const stages = runSnapshot.stages as Array<Record<string, unknown>>;
-    const toolEvidence = runSnapshot.tool_evidence as Array<Record<string, unknown>>;
-    const promptSnapshots = runSnapshot.prompt_skill_snapshots as Array<Record<string, unknown>>;
-    const firstStage = stages[0] as Record<string, unknown>;
-    const assertions = expected.assertions as Record<string, unknown>;
-
-    expect(request.status).toBe("draft");
-    expect(request.tags).toEqual(expect.arrayContaining(["run-snapshot", "prompt-snapshot", "skill-snapshot"]));
-    expect(stages[0]).toMatchObject({
-      stage: "01-需求澄清",
-      task_id: "task-1",
-      input_summary: expect.stringContaining("用户要求优化"),
-      output_summary: expect.stringContaining("需求边界明确"),
-    });
-    expect(firstStage.handoff_summary).toContain("mention://agent/02-design");
-    expect(toolEvidence[0]).toMatchObject({
-      category: "搜索",
-      action: "搜索代码：生成评测用例",
-    });
-    expect(toolEvidence.find((item) => item.id === "tool-branch")).toMatchObject({
-      failure_signal: false,
-      failure_reason: "",
-    });
-    expect(promptSnapshots[0]).toMatchObject({
-      role: "01-需求澄清",
-      task_id: "task-1",
-      content_hash: expect.stringMatching(/^fnv1a:/),
-      skill_path: ".codebuddy/skills/01-clarify/SKILL.md",
-    });
-    expect(assertions.required_stages).toContain("01-需求澄清");
-    expect(assertions.disallow_missing_required_stage).toBe(true);
-    expect(assertions.must_keep_evidence).toBe(true);
-    expect(assertions.must_report_blocker_on_failure).toBe(true);
-    expect(request.expected_contains).toContain("05-验证测试");
-  });
 });

@@ -23,8 +23,6 @@ describe("paths.workspace() shape", () => {
         "inbox",
         "myIssues",
         "runtimes",
-        "debug",
-        "evaluation",
         "skills",
         "settings",
       ]),
@@ -46,8 +44,6 @@ describe("paths.workspace() shape", () => {
       ["inbox", "inbox"],
       ["myIssues", "my-issues"],
       ["runtimes", "runtimes"],
-      ["debug", "debug"],
-      ["evaluation", "evaluation"],
       ["skills", "skills"],
       ["settings", "settings"],
     ];
@@ -88,8 +84,4 @@ describe("global path / reserved slug consistency", () => {
     }
   });
 
-  it("reserves canonical workspace route segments", () => {
-    expect(RESERVED_SLUGS.has("debug")).toBe(true);
-    expect(RESERVED_SLUGS.has("evaluation")).toBe(true);
-  });
 });

@@ -5,14 +5,14 @@ description: Multica 的后端、前端、daemon、运行时和数据库结构�
 
 ## 总览
 
-Multica 是 Go 后端 + Next.js Web + PostgreSQL 的 monorepo。团队内部使用时，后端负责 API、WebSocket、任务队列、trace、usage 和训练评估数据；daemon 负责在具体电脑上执行 Agent CLI。
+Multica 是 Go 后端 + Next.js Web + PostgreSQL 的 monorepo。团队内部使用时，后端负责 API、WebSocket、任务队列、trace 和 usage 数据；daemon 负责在具体电脑上执行 Agent CLI。
 
 ```text
 浏览器
       ↓ REST / WebSocket
 Go 后端（Chi、任务队列、实时事件）
       ↓ sqlc
-PostgreSQL（业务数据、trace、usage、训练评估）
+PostgreSQL（业务数据、trace、usage）
       ↑
 daemon（Codex / Claude / OpenCode / CodeBuddy 等运行时）
 ```
@@ -53,7 +53,7 @@ Agent 任务的主链路是：**入队 → 领取 → 运行 → 完成/失败**
 - task message。
 - task usage。
 - task trace event。
-- issue、小队、SOP run、训练评估 run/trial/evidence snapshot 的关联证据。
+- issue、小队、SOP run 和任务执行的关联证据。
 
 ## 多租户
 

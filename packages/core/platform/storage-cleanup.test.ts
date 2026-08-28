@@ -49,14 +49,10 @@ describe("clearWorkspaceStorage", () => {
       ...Object.fromEntries(
         workspaceKeys.map((key) => [`${key}:acme`, "private"]),
       ),
-      "multica:training:selected-prompt:ws-1": "prompt-1",
       "multica:mention-recency:ws-1": "mentions",
       "multica_issue_draft:other": "keep",
     });
-    const session = memoryStorage({
-      "multica:training:case-drafts:ws-1": "case draft",
-      "multica:training:case-drafts:ws-2": "keep",
-    });
+    const session = memoryStorage();
 
     clearWorkspaceStorage(
       { local: local.adapter, session: session.adapter },
@@ -64,9 +60,7 @@ describe("clearWorkspaceStorage", () => {
     );
 
     expect([...local.data.keys()]).toEqual(["multica_issue_draft:other"]);
-    expect([...session.data.keys()]).toEqual([
-      "multica:training:case-drafts:ws-2",
-    ]);
+    expect([...session.data.keys()]).toEqual([]);
   });
 });
 
@@ -76,7 +70,6 @@ describe("clearAccountStorage", () => {
       "multica_issue_draft:unknown-workspace": "draft",
       "multica:chat:drafts:unknown-workspace": "chat",
       "multica:chat:draft-attachments:unknown-workspace": "attachments",
-      "multica:training:selected-prompt:ws-1": "prompt",
       "multica:mention-recency:ws-1": "mentions",
       multica_recent_contexts: "contexts",
       multica_tabs: "tabs",
@@ -84,7 +77,6 @@ describe("clearAccountStorage", () => {
       multica_token: "cleared by auth store",
     });
     const session = memoryStorage({
-      "multica:training:case-drafts:ws-1": "draft",
       "multica_cmdF_warned:issue-1": "1",
       "multica:mermaid:layout:hash": "keep cache",
     });

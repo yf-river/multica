@@ -18,10 +18,6 @@ describe("paths.workspace(slug)", () => {
     expect(ws.inbox()).toBe("/acme/inbox");
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
-    expect(ws.debug()).toBe("/acme/debug");
-    expect(ws.debugView("prompts")).toBe("/acme/debug/prompts");
-    expect(ws.evaluation()).toBe("/acme/evaluation");
-    expect(ws.evaluationView("runs")).toBe("/acme/evaluation/runs");
     expect(ws.skills()).toBe("/acme/skills");
     expect(ws.skillDetail("skl_123")).toBe("/acme/skills/skl_123");
     expect(ws.squads()).toBe("/acme/squads");

@@ -1,9 +1,9 @@
 ---
 title: 部署验证与运行观测
-description: 验证 Multica 服务就绪，并从当前页面和 API 检查任务、评测、trace 与用量证据。
+description: 验证 Multica 服务就绪，并从当前页面和 API 检查任务、trace 与用量证据。
 ---
 
-部署完成后，先确认服务就绪，再用实际工作区验证 Agent 和评测链路。不要只把“进程已启动”当成可用证据。
+部署完成后，先确认服务就绪，再用实际工作区验证 Agent 执行链路。不要只把“进程已启动”当成可用证据。
 
 ## 健康与就绪检查
 
@@ -22,10 +22,10 @@ curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/login
 登录工作区后打开：
 
 ```text
-/{workspaceSlug}/evaluation/runs
+/{workspaceSlug}/run-reviews
 ```
 
-在**评估 → 评测记录**中检查最近一次真实运行。展开记录后应能看到运行状态、触发来源、创建者、开始和结束时间、任务标识、模型、运行时、用例结果、任务消息、trace 事件和 token 用量。失败的运行必须显示真实失败原因，不能表现为成功。
+在**运行复盘**中检查最近一次真实运行。展开记录后应能看到运行状态、开始和结束时间、任务标识、模型、运行时、任务消息、trace 事件和 token 用量。失败的运行必须显示真实失败原因，不能表现为成功。
 
 对当前部署做最小回归时，至少实际完成一次：
 
@@ -44,42 +44,6 @@ curl -fsS \
 
 可选过滤参数为 `since`、`squad_id`、`project_id` 和 `agent_id`。响应汇总 SOP 执行、任务状态、队列和执行耗时、token、预估成本、失败原因、模型及运行时分布。
 
-## 评测与运行证据 API
-
-工作区上下文由当前认证和 `X-Workspace-ID` 决定：
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer <PAT>" \
-  -H "X-Workspace-ID: <workspace_id>" \
-  "http://<server-host>:8080/api/prompt-evaluation-summary"
-
-curl -fsS \
-  -H "Authorization: Bearer <PAT>" \
-  -H "X-Workspace-ID: <workspace_id>" \
-  "http://<server-host>:8080/api/prompt-evaluation-runs?limit=20"
-
-curl -fsS \
-  -H "Authorization: Bearer <PAT>" \
-  -H "X-Workspace-ID: <workspace_id>" \
-  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence"
-```
-
-运行证据包含 `run`、`trials`、`task_usage`、`task_messages` 和 `trace_events`。这些对象应指向同一条运行和任务；缺失数据应以明确的空结果或失败状态表示，而不是由前端补造成功证据。
-
-需要持久化某次运行证据时，可以创建并读取服务端快照：
-
-```bash
-curl -fsS -X POST \
-  -H "Authorization: Bearer <PAT>" \
-  -H "X-Workspace-ID: <workspace_id>" \
-  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots?snapshot_type=manual"
-
-curl -fsS \
-  -H "Authorization: Bearer <PAT>" \
-  -H "X-Workspace-ID: <workspace_id>" \
-  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots"
-```
 
 ## 日志检查
 

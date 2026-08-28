@@ -85,10 +85,9 @@
       "kind": "git subprocess network and local worktrees",
       "environment": [],
       "sources": [
-        "server/internal/daemon/repocache/cache.go",
-        "server/internal/handler/prompt_evaluation_skill_build.go"
+        "server/internal/daemon/repocache/cache.go"
       ],
-      "notes": "Daemon repository caches fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees."
+      "notes": "Daemon repository caches fetch user-configured remotes."
     },
     {
       "id": "gongfeng",

@@ -212,7 +212,6 @@ func main() {
 		{"register durable audience consumers", registerDurableAudienceConsumers},
 		{"register durable activity consumers", registerDurableActivityConsumers},
 		{"register durable chat consumers", registerDurableChatConsumers},
-		{"register durable prompt evaluation consumers", registerDurablePromptEvaluationConsumers},
 		{"register durable quick-create consumers", registerDurableQuickCreateConsumers},
 		{"register durable autopilot consumers", registerDurableAutopilotConsumers},
 		{"register durable reaction consumers", registerDurableReactionConsumers},

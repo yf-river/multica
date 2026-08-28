@@ -1,4 +1,4 @@
-.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
@@ -286,13 +286,11 @@ goal-test-e2e-all: goal-test-e2e-preflight ## Run all goal-test Playwright specs
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs --project=chromium
 
-goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Codex Agent E2E for user-center squad and training/evaluation
+goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Agent E2E for the user-center squad
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	RUN_REAL_AGENT_E2E=1 \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts e2e/prompt-library-real-agent.spec.ts --project=chromium
+	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts --project=chromium
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
@@ -309,8 +307,7 @@ goal-test-ui-acceptance: goal-test-smoke ## Run fixed browser/UI/performance/log
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
-	RUN_PRODUCTION_ACCEPTANCE=1 TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts e2e/production-acceptance.spec.ts --project=chromium
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts --project=chromium
 	node scripts/goal-test-environments.mjs verify-logs int
 
 goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI, performance, console, Chinese semantics, and log-window audit
@@ -320,15 +317,6 @@ goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI
 goal-test-dashboard-click-audit: goal-test-smoke ## Run real-browser dashboard sidebar/navigation click latency audit
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
-
-goal-test-training-performance-audit: goal-test-smoke ## Run real-browser training/evaluation route request, performance, and log-window audit
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
-
-goal-test-public-training-performance-audit: goal-test-smoke ## Run training/evaluation performance audit through the public frontend URL
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	GOAL_TEST_BROWSER_URL="$${GOAL_TEST_BROWSER_URL:-http://9.134.129.162:13682}" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
 
 goal-test-prune-dev-data: goal-test-smoke ## Prune old goal-test integration data through public APIs; pass APPLY=1 to execute
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"

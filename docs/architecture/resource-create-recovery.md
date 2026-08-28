@@ -25,8 +25,6 @@ stores the resource ID and exact response.
 | Issue and Comment | Primary row, attachment claims, task/event projection and exact response commit together |
 | Attachment | Deterministic object identity plus database reconciliation and compensation around external storage |
 | Quick Create | Request UUID is the Task identity or TAPD-backed Issue origin |
-| Prompt Library and Evaluation | Item/version/trial, Run/Trials, candidate, decision or re-evaluation compound rows commit with one response |
-| Agent Playground | Experiment snapshot, bindings and inputs commit together; cell execution has its own natural identity |
 | External credential | Account-scoped UUID/fingerprint witness commits with encrypted or server-side secret ownership |
 
 Every repository-owned caller reuses the same key after network failure,

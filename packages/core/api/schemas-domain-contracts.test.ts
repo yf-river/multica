@@ -25,38 +25,6 @@ import {
   SearchIssuesSchema,
 } from "./schemas-issues";
 import {
-  PromptEvaluationAssetMutationResultSchema,
-  PromptEvaluationAssetListResponseSchema,
-  PromptEvaluationDatasetVersionMutationResultSchema,
-} from "./schemas-prompt-evaluation-assets";
-import {
-  PromptEvaluationDatasetFromTracesResponseSchema,
-  PromptEvaluationCaseListResponseSchema,
-} from "./schemas-prompt-evaluation-cases";
-import { PromptEvaluationCaseMutationResultSchema } from "./schemas-prompt-evaluation-case-model";
-import {
-  PromptEvaluationOptimizationCandidateDecisionStatusSchema,
-  PromptEvaluationOptimizationCandidateCreateResultSchema,
-  PromptEvaluationOptimizationCandidateListResponseSchema,
-  PromptEvaluationSkillApplyStatusSchema,
-  PromptEvaluationSkillReEvalAssetResultSchema,
-  PromptEvaluationSkillReEvalRunStatusSchema,
-  PublishPromptEvaluationOptimizationCandidateNameSchema,
-} from "./schemas-prompt-evaluation-optimization";
-import {
-  PromptEvaluationAssetEvidenceArchivePackageSchema,
-  PromptEvaluationAssetEvidenceSnapshotResponseSchema,
-  PromptEvaluationRunEvidenceSchema,
-  PromptEvaluationEvidenceSnapshotCreateResultSchema,
-  PromptEvaluationRunIDSchema,
-  PromptEvaluationRunListResponseSchema,
-  PromptEvaluationRunReviewResultSchema,
-  PromptEvaluationRunSchema,
-} from "./schemas-prompt-evaluation-runs";
-import {
-  PromptLibraryItemListResponseSchema,
-} from "./schemas-prompt-library";
-import {
   RuntimeLocalSkillImportRequestSchema,
   RuntimeLocalSkillListRequestSchema,
   RuntimeModelListRequestSchema,
@@ -140,9 +108,6 @@ describe("domain response schema fallbacks", () => {
 
   it.each([
     ["issues", { issues: "not-an-array", total: 1 }, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, "GET /api/issues"],
-    ["Prompt Library", { items: 1 }, PromptLibraryItemListResponseSchema, [], "GET /api/prompt-library"],
-    ["evaluation assets", { items: {} }, PromptEvaluationAssetListResponseSchema, [], "GET /api/prompt-evaluation-assets"],
-    ["evaluation runs", { items: "not-an-array" }, PromptEvaluationRunListResponseSchema, [], "GET /api/prompt-evaluation-runs"],
     ["usage", { rows: [] }, RuntimeUsageListSchema, [], "GET /api/runtimes/runtime-1/usage"],
     ["runtime profiles", { runtime_profiles: [{ id: 42 }] }, RuntimeProfileListResponseSchema, [], "GET /api/workspaces/:workspaceId/runtime-profiles"],
     ["webhook deliveries", { deliveries: {}, total: 1 }, WebhookDeliveryListSchema, EMPTY_WEBHOOK_DELIVERIES, "GET /api/webhook-deliveries"],
@@ -166,109 +131,6 @@ describe("domain response schema fallbacks", () => {
   });
 
 
-  it("preserves opaque trial and usage evidence without projecting unused fields", () => {
-    const trial = { id: "trial-1", future_field: { score: 1 } };
-    const usage = { provider_payload: ["kept", 2] };
-    const parsed = PromptEvaluationRunEvidenceSchema.parse({
-      run: {
-        id: "run-1",
-        workspace_id: "workspace-1",
-        asset_id: "asset-1",
-        run_kind: "模板渲染检查",
-        status: "通过",
-      },
-      trials: [trial],
-      task_usage: [usage],
-    });
-
-    expect(parsed.trials).toEqual([trial]);
-    expect(parsed.task_usage).toEqual([usage]);
-    expect(parsed.run).toHaveProperty("workspace_id", "workspace-1");
-    expect(PromptEvaluationRunEvidenceSchema.safeParse({
-      ...parsed,
-      trials: ["not-an-evidence-object"],
-    }).success).toBe(false);
-    expect(PromptEvaluationRunSchema.safeParse({
-      id: "run-1",
-      asset_id: "asset-1",
-      run_kind: "unknown",
-      status: "通过",
-    }).success).toBe(false);
-  });
-
-  it("projects mutation counts while preserving the downloaded evidence archive", () => {
-    expect(PromptEvaluationDatasetFromTracesResponseSchema.parse({
-      created_count: 2,
-      future_result: { kept: true },
-    }).created_count).toBe(2);
-    expect(PromptEvaluationAssetEvidenceSnapshotResponseSchema.parse({
-      created_count: 1,
-      skipped_count: 0,
-      items: [{ run_id: "run-1", summary: { ignored: true } }],
-    })).toEqual({ created_count: 1, skipped_count: 0, items: [{ run_id: "run-1" }] });
-    expect(PromptEvaluationEvidenceSnapshotCreateResultSchema.parse({
-      id: "snapshot-1", run_id: "run-1", summary: {}, snapshot_type: "验收归档", created_at: "now",
-    })).toEqual({ run_id: "run-1" });
-
-    const archive = {
-      archived_run_count: 1,
-      schema_version: "current",
-      items: [{ opaque: { kept: true } }],
-    };
-    expect(PromptEvaluationAssetEvidenceArchivePackageSchema.parse(archive)).toEqual(archive);
-  });
-
-  it("rejects malformed evaluation cases", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { items: false },
-      PromptEvaluationCaseListResponseSchema,
-      fallback,
-      { endpoint: "GET /api/prompt-evaluation-cases" },
-    )).toBe(fallback);
-  });
-
-  it("rejects malformed optimization candidates", () => {
-    const fallback: never[] = [];
-    expect(parseWithFallback(
-      { items: null },
-      PromptEvaluationOptimizationCandidateListResponseSchema,
-      fallback,
-      { endpoint: "GET /api/prompt-evaluation-optimization-candidates" },
-    )).toBe(fallback);
-  });
-
-  it("projects evaluation mutations to the values current callers consume", () => {
-    expect(PromptEvaluationOptimizationCandidateCreateResultSchema.parse({
-      id: "candidate-1", run_id: "run-1", candidate_name: "Current",
-    })).toEqual({ id: "candidate-1" });
-    expect(PromptEvaluationAssetMutationResultSchema.parse({
-      id: "asset-1", prompt_id: "prompt-1",
-    })).toEqual({ id: "asset-1", prompt_id: "prompt-1" });
-    expect(PromptEvaluationDatasetVersionMutationResultSchema.parse({ version: 3 })).toEqual({ version: 3 });
-    expect(PromptEvaluationCaseMutationResultSchema.parse({
-      id: "case-1", case_name: "Current case",
-    })).toEqual({ id: "case-1", case_name: "Current case" });
-    expect(PromptEvaluationRunIDSchema.parse({ id: "run-1" })).toEqual({ id: "run-1" });
-    expect(PromptEvaluationRunReviewResultSchema.parse({
-      id: "run-1", review_decision: "通过", status: "通过",
-    })).toEqual({ id: "run-1", review_decision: "通过", status: "通过" });
-    expect(PromptEvaluationOptimizationCandidateDecisionStatusSchema.parse({
-      id: "candidate-1", status: "已拒绝",
-    })).toBe("已拒绝");
-    expect(PublishPromptEvaluationOptimizationCandidateNameSchema.parse({
-      prompt: { name: "Prompt One" },
-    })).toBe("Prompt One");
-    expect(PromptEvaluationSkillApplyStatusSchema.parse({
-      apply: { status: "applied" },
-    })).toBe("applied");
-    expect(PromptEvaluationSkillReEvalAssetResultSchema.parse({
-      asset: { id: "asset-1" }, case_count: 2,
-    })).toEqual({ assetId: "asset-1", caseCount: 2 });
-    expect(PromptEvaluationSkillReEvalRunStatusSchema.parse({
-      run: { id: "run-1", status: "已入队" },
-    })).toBe("已入队");
-  });
 
 
   it("rejects malformed Autopilot identity and run linkage", () => {

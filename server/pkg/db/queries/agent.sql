@@ -652,23 +652,6 @@ SELECT * FROM agent_task_queue
 WHERE issue_id = $1
 ORDER BY created_at DESC;
 
--- name: GetRecentRuntimeCapacityFailure :one
-SELECT
-  atq.id,
-  atq.completed_at,
-  atq.failure_reason,
-  atq.error
-FROM agent_task_queue atq
-JOIN agent a ON a.id = atq.agent_id
-WHERE a.workspace_id = $1
-  AND atq.runtime_id = $2
-  AND COALESCE(a.model, '') = $4
-  AND atq.status = 'failed'
-  AND atq.failure_reason = 'agent_error.provider_capacity_or_rate_limit'
-  AND atq.completed_at >= $3
-ORDER BY atq.completed_at DESC NULLS LAST
-LIMIT 1;
-
 -- name: RefreshAgentStatusFromTasks :one
 UPDATE agent AS a
 SET status = CASE WHEN EXISTS (

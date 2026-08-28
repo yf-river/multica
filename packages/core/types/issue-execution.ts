@@ -1,7 +1,22 @@
 import type { AgentTask, TaskTraceEvent } from "./agent";
 import type { TaskMessagePayload } from "./events";
 import type { Issue } from "./issue";
-import type { PromptEvaluationToolCallChain } from "./prompt-evaluation";
+
+export interface ToolCallChain {
+  id: string;
+  task_id?: string;
+  tool?: string;
+  status: string;
+  use_seq?: number;
+  result_seq?: number;
+  input?: Record<string, unknown>;
+  output?: string;
+  duration_ms?: number;
+  failure_signal: boolean;
+  failure_reason?: string;
+  created_at?: string;
+  completed_at?: string;
+}
 
 export interface AgentTaskArtifact {
   id: string;
@@ -18,7 +33,7 @@ export interface IssueExecutionNode {
   tasks: AgentTask[];
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
-  tool_call_chains: PromptEvaluationToolCallChain[];
+  tool_call_chains: ToolCallChain[];
   children: IssueExecutionNode[];
 }
 

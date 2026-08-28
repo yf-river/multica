@@ -80,20 +80,27 @@ type issueTimelineSummaryResponse struct {
 	FullAnalysisDeepLink        string `json:"full_analysis_deep_link"`
 }
 
+func ptrString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 type issueExecutionNodeResponse struct {
-	Issue           IssueResponse                             `json:"issue"`
-	Tasks           []AgentTaskResponse                       `json:"tasks"`
-	SOPRuns         []SquadSOPRunResponse                     `json:"sop_runs"`
-	TaskMessages    []protocol.TaskMessagePayload             `json:"task_messages"`
-	TraceEvents     []TaskTraceEventResponse                  `json:"trace_events"`
-	ToolCallChains  []PromptEvaluationToolCallChainResponse   `json:"tool_call_chains"`
-	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
-	Artifacts       []agentTaskArtifactResponse               `json:"artifacts"`
-	WakeupComments  []issueCommentBriefResponse               `json:"wakeup_comments"`
-	ManualComments  []issueCommentBriefResponse               `json:"manual_comments,omitempty"`
-	AgentComments   []issueCommentBriefResponse               `json:"agent_comments,omitempty"`
-	ActivityLogs    []issueActivityBriefResponse              `json:"activity_logs,omitempty"`
-	Children        []issueExecutionNodeResponse              `json:"children"`
+	Issue           IssueResponse                 `json:"issue"`
+	Tasks           []AgentTaskResponse           `json:"tasks"`
+	SOPRuns         []SquadSOPRunResponse         `json:"sop_runs"`
+	TaskMessages    []protocol.TaskMessagePayload `json:"task_messages"`
+	TraceEvents     []TaskTraceEventResponse      `json:"trace_events"`
+	ToolCallChains  []toolCallChainResponse       `json:"tool_call_chains"`
+	ToolCallSummary []toolCallSummaryResponse     `json:"tool_call_summary"`
+	Artifacts       []agentTaskArtifactResponse   `json:"artifacts"`
+	WakeupComments  []issueCommentBriefResponse   `json:"wakeup_comments"`
+	ManualComments  []issueCommentBriefResponse   `json:"manual_comments,omitempty"`
+	AgentComments   []issueCommentBriefResponse   `json:"agent_comments,omitempty"`
+	ActivityLogs    []issueActivityBriefResponse  `json:"activity_logs,omitempty"`
+	Children        []issueExecutionNodeResponse  `json:"children"`
 }
 
 type agentTaskArtifactResponse struct {
@@ -207,8 +214,8 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 			taskMessages = append(taskMessages, taskMessageToPayload(message, taskID, issueID))
 		}
 	}
-	toolCallChains := buildPromptEvaluationToolCallChains(taskMessages)
-	toolCallSummary := buildPromptEvaluationToolCallSummary(toolCallChains)
+	toolCallChains := buildToolCallChains(taskMessages)
+	toolCallSummary := buildToolCallSummary(toolCallChains)
 
 	runs, err := h.Queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
 		IssueID:     issue.ID,

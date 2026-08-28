@@ -17,6 +17,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+const internalSquadRuntimeFreshTTL = 2 * time.Minute
+
 func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Request) {
 	workspaceID := requestctx.WorkspaceID(r.Context())
 	member, ok := requireWorkspaceMemberContext(w, r)
@@ -118,7 +120,7 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		if !agentRuntimeScopeCompatible(scope, member.UserID, runtime) {
 			continue
 		}
-		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
+		if best == nil || internalSquadRuntimeReadinessRank(runtime, checkedAt) > internalSquadRuntimeReadinessRank(*best, checkedAt) {
 			best = &runtime
 		}
 	}
@@ -130,11 +132,21 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用于"+scopeLabel+"小队的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon，并确认 /api/runtimes 出现 provider="+provider+" 且范围匹配的在线 runtime。")
 		return db.AgentRuntime{}, false
 	}
-	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
+	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > internalSquadRuntimeFreshTTL {
 		writeError(w, http.StatusServiceUnavailable, providerName+" runtime 当前未就绪，无法创建真实可执行的内部小队。请启动 daemon 并等待 runtime 心跳刷新。")
 		return db.AgentRuntime{}, false
 	}
 	return *best, true
+}
+
+func internalSquadRuntimeReadinessRank(runtime db.AgentRuntime, now time.Time) int {
+	if runtime.Status == "online" && runtime.LastSeenAt.Valid && now.Sub(runtime.LastSeenAt.Time) <= internalSquadRuntimeFreshTTL {
+		return 3
+	}
+	if runtime.Status == "online" {
+		return 2
+	}
+	return 1
 }
 
 func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadScope string) ([]InternalSquadAgent, error) {

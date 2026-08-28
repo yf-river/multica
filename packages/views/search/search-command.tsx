@@ -16,8 +16,6 @@ import {
   ListTodo,
   FolderKanban,
   Bot,
-  Bug,
-  ChartNoAxesCombined,
   Monitor,
   Moon,
   Sun,
@@ -43,15 +41,6 @@ import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { WorkspacePaths } from "@multica/core/paths";
-import {
-  DEFAULT_DEBUG_WORKBENCH_VIEW,
-  DEFAULT_EVALUATION_WORKBENCH_VIEW,
-  TRAINING_WORKBENCH_VIEWS,
-  debugWorkbenchPath,
-  evaluationWorkbenchPath,
-  trainingWorkbenchCanonicalPath,
-  type TrainingWorkbenchViewId,
-} from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { nameInitials } from "@multica/core/workspace/actor-display";
@@ -86,8 +75,6 @@ type NavKey =
   | "issues"
   | "projects"
   | "agents"
-  | "debug"
-  | "evaluation"
   | "runtimes"
   | "skills"
   | "settings";
@@ -108,21 +95,6 @@ function matchesMember(member: MemberWithUser, query: string) {
     member.account.toLowerCase().includes(query) ||
     (query.length >= 3 && member.role.startsWith(query))
   );
-}
-
-function trainingCommandLabel(t: ReturnType<typeof useT<"search">>["t"], view: TrainingWorkbenchViewId): string {
-  switch (view) {
-    case "prompts":
-      return t(($) => $.commands.open_prompt_library);
-    case "agent-playground":
-      return t(($) => $.commands.open_agent_playground);
-    case "datasets":
-      return t(($) => $.commands.open_datasets);
-    case "test-suites":
-      return t(($) => $.commands.open_test_suites);
-    case "evaluation-runs":
-      return t(($) => $.commands.open_run_history);
-  }
 }
 
 function IssueAssigneeAvatar({
@@ -169,25 +141,11 @@ export function SearchCommand() {
       { key: "issues", label: t(($) => $.pages.issues), icon: ListTodo, keywords: ["issues", "tasks", "bugs"] },
       { key: "projects", label: t(($) => $.pages.projects), icon: FolderKanban, keywords: ["projects", "kanban", "项目"] },
       { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
-      {
-        key: "debug",
-        label: t(($) => $.pages.debug),
-        icon: Bug,
-        keywords: ["debug", "prompt", "prompts", "调试", "提示词", "提示词库"],
-        href: debugWorkbenchPath(p.debug(), DEFAULT_DEBUG_WORKBENCH_VIEW),
-      },
-      {
-        key: "evaluation",
-        label: t(($) => $.pages.evaluation),
-        icon: ChartNoAxesCombined,
-        keywords: ["evaluation", "eval", "dataset", "case", "suite", "评估", "用例", "测试"],
-        href: evaluationWorkbenchPath(p.evaluation(), DEFAULT_EVALUATION_WORKBENCH_VIEW),
-      },
       { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
       { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
       { key: "settings", label: t(($) => $.pages.settings), icon: Settings, keywords: ["settings", "config", "preferences", "设置"] },
     ],
-    [p, t],
+    [t],
   );
   const open = useSearchStore((s) => s.open);
   const setOpen = useSearchStore((s) => s.setOpen);
@@ -254,17 +212,6 @@ export function SearchCommand() {
         />
       ) : undefined;
 
-    const trainingCommand = (view: TrainingWorkbenchViewId, label: string, keywords: string): CommandItem => ({
-      key: `training-${view}`,
-      label,
-      icon: ChartNoAxesCombined,
-      keywords: keywords.split(" "),
-      onSelect: () => {
-        push(trainingWorkbenchCanonicalPath(p, view));
-        setOpen(false);
-      },
-    });
-
     const items: CommandItem[] = [
       {
         key: "new-issue",
@@ -286,9 +233,6 @@ export function SearchCommand() {
           setOpen(false);
         },
       },
-      ...TRAINING_WORKBENCH_VIEWS.map((item) =>
-        trainingCommand(item.view, trainingCommandLabel(t, item.view), item.keywords.join(" ")),
-      ),
     ];
 
     if (currentIssue) {
@@ -358,7 +302,7 @@ export function SearchCommand() {
     );
 
     return items;
-  }, [currentIssue, getShareableUrl, p, pathname, push, setOpen, setTheme, theme, t]);
+  }, [currentIssue, getShareableUrl, pathname, setOpen, setTheme, theme, t]);
 
   const filteredCommands = useMemo(() => {
     const q = query.trim().toLowerCase();

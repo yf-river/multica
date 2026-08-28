@@ -16,8 +16,6 @@
     "./autopilots/components": "./autopilots/components/index.ts",
     "./modals/registry": "./modals/registry.tsx",
     "./my-issues": "./my-issues/components/my-issues-page.tsx",
-    "./prompt-library": "./prompt-library/index.ts",
-    "./agent-playground": "./agent-playground/components/agent-playground-page.tsx",
     "./skills": "./skills/index.ts",
     "./agents": "./agents/index.ts",
     "./members": "./members/index.ts",

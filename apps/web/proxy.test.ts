@@ -25,7 +25,7 @@ describe("web proxy", () => {
     ).toBe("http://localhost/team-a/issues");
   });
 
-  it.each(["/team-a/debug/prompts", "/team-a/evaluation/datasets"])(
+  it.each(["/team-a/issues", "/team-a/run-reviews"])(
     "does not redirect canonical workspace URL %s",
     (path) => {
       const res = proxy(

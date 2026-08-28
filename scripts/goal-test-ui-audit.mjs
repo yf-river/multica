@@ -77,52 +77,6 @@ const routes = [
   },
   { id: "runtimes", label: "运行时", path: `/${workspaceSlug}/runtimes`, expect: ["运行时"] },
   { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
-  {
-    id: "training-prompts",
-    label: "训练与评估/提示词库",
-    path: `/${workspaceSlug}/debug/prompts`,
-    expect: ["提示词库"],
-    uiContract: {
-      requiredTestIds: ["training-route-prompts"],
-      forbiddenText: ["浏览器验收提示词"],
-      forbiddenTestIds: ["training-tab-strip"],
-    },
-  },
-  {
-    id: "training-datasets",
-    label: "训练与评估/数据集",
-    path: `/${workspaceSlug}/evaluation/datasets`,
-    expect: ["数据集"],
-    uiContract: {
-      requiredText: ["数据集工作台", "样本入库、版本快照、下游复用", "trace 导入或手工样本", "生成数据集版本快照"],
-      forbiddenText: ["测试套件工作台", "实验工作台", "优化运行工作台", "页面验收数据集"],
-      requiredTestIds: ["training-route-datasets", "training-route-operating-model-datasets", "training-route-operating-step-datasets-1", "training-route-operating-step-datasets-2", "training-route-operating-step-datasets-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-test-suites", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
-    },
-  },
-  {
-    id: "training-test-suites",
-    label: "训练与评估/测试套件",
-    path: `/${workspaceSlug}/evaluation/test-suites`,
-    expect: ["测试套件"],
-    uiContract: {
-      requiredText: ["测试套件工作台", "固定试卷、断言回归、失败定位", "用例组成套件", "断言级复盘"],
-      forbiddenText: ["数据集工作台", "实验工作台", "优化运行工作台", "页面验收测试套件"],
-      requiredTestIds: ["training-route-test-suites", "training-route-operating-model-test-suites", "training-route-operating-step-test-suites-1", "training-route-operating-step-test-suites-2", "training-route-operating-step-test-suites-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
-    },
-  },
-  {
-    id: "training-evaluation-runs",
-    label: "训练与评估/评测记录",
-    path: `/${workspaceSlug}/evaluation/runs`,
-    expect: ["评测记录"],
-    uiContract: {
-      requiredText: ["评测记录工作台", "运行检索、证据展开、人工复核", "按运行状态定位", "任务和 Trace 展开"],
-      requiredTestIds: ["training-route-intro-evaluation-runs", "training-route-operating-model-evaluation-runs", "training-route-operating-step-evaluation-runs-1", "training-route-operating-step-evaluation-runs-2", "training-route-operating-step-evaluation-runs-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites"],
-    },
-  },
 ];
 
 const forbiddenText = [

@@ -27,7 +27,6 @@ import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
 import { useT } from "../../i18n";
-import { createIssueReviewDraftCase } from "./run-review-draft-case";
 import {
   buildEventTaskLabelById,
   buildRunReviewEventGroups,
@@ -72,7 +71,6 @@ import {
   agentNodeDisplayLabel,
   buildAgentNodeRows,
   buildChildLanes,
-  buildStageRows,
   buildTimelineAgentRows,
   buildTimelineBarRows,
   dedupeArtifacts,
@@ -148,8 +146,6 @@ export function RunReviewsPage() {
               tree={treeQuery.data}
               loading={treeQuery.isLoading}
               issueHref={paths.issueDetail(selectedIssue.id)}
-              evalDraftHref={`${paths.evaluationView("datasets")}?issue=${encodeURIComponent(selectedIssue.id)}&mode=draft`}
-              optimizerHref={`${paths.evaluationView("runs")}?issue=${encodeURIComponent(selectedIssue.id)}`}
             />
           ) : (
             <div className="px-6 py-10 text-sm text-muted-foreground">
@@ -286,15 +282,11 @@ function RunReviewDetail({
   tree,
   loading,
   issueHref,
-  evalDraftHref,
-  optimizerHref,
 }: {
   issue: Issue;
   tree: IssueExecutionTreeResponse | undefined;
   loading: boolean;
   issueHref: string;
-  evalDraftHref: string;
-  optimizerHref: string;
 }) {
   const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
@@ -327,7 +319,6 @@ function RunReviewDetail({
     [activeTasks, baseTimelineNodes, liveNowMs, tree?.issue_summary],
   );
   const wallClockDurationMs = runReviewTotalDurationMs(summary);
-  const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
   const agentNodeRows = buildAgentNodeRows(timelineNodes);
   const visibleTimelineRows = buildTimelineAgentRows(timelineNodes);
@@ -397,16 +388,6 @@ function RunReviewDetail({
       : latestTerminalTask
         ? statusLabel(latestTerminalTask.status)
         : t(($) => $.detail.no_running_task);
-  const createDraftMut = useMutation({
-    mutationFn: () => createIssueReviewDraftCase(issue, tree, stageRows, childLanes),
-    onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["prompt-library"] });
-      toast.success(t(($) => $.toast.case_created, { name: created.case_name || created.id }));
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : t(($) => $.toast.case_create_failed));
-    },
-  });
   const retryTaskMut = useMutation({
     mutationFn: (taskId: string) => api.rerunIssue(issue.id, taskId),
     onSuccess: () => {
@@ -420,11 +401,6 @@ function RunReviewDetail({
       toast.error(error instanceof Error ? error.message : t(($) => $.toast.task_retry_failed));
     },
   });
-  const createdDraft = createDraftMut.data;
-  const createdDraftHref = createdDraft
-    ? `${evalDraftHref}&case=${encodeURIComponent(createdDraft.id)}&status=draft`
-    : evalDraftHref;
-
   return (
     <div className="space-y-4 px-4 py-4">
       <section className="rounded-md border bg-card">
@@ -443,31 +419,8 @@ function RunReviewDetail({
             <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={issueHref}>
               {t(($) => $.detail.back_to_issue)}
             </AppLink>
-            <button
-              type="button"
-              className="rounded border border-info/40 bg-info/10 px-2.5 py-1.5 text-xs text-info hover:bg-info/15 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => createDraftMut.mutate()}
-              disabled={createDraftMut.isPending || !tree}
-              data-testid="run-review-create-eval-draft"
-            >
-              {createDraftMut.isPending
-                ? t(($) => $.detail.generating_case)
-                : t(($) => $.detail.generate_case)}
-            </button>
-            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={optimizerHref}>
-              {t(($) => $.detail.open_evaluation)}
-            </AppLink>
           </div>
         </div>
-
-        {createdDraft && (
-          <div className="border-b bg-info/5 px-4 py-2 text-xs text-muted-foreground" data-testid="run-review-created-eval-draft">
-            {t(($) => $.detail.draft_created, { id: createdDraft.id })}
-            <AppLink className="ml-2 text-info underline-offset-2 hover:underline" href={createdDraftHref}>
-              {t(($) => $.detail.view_draft)}
-            </AppLink>
-          </div>
-        )}
 
         {latestFailedTask && (
           <RunFailureBanner

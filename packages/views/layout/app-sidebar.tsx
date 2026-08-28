@@ -27,12 +27,10 @@ import {
   Plus,
   Check,
   BookOpenText,
-  Bug,
   SquarePen,
   CircleUser,
   FolderKanban,
   BarChart3,
-  ChartNoAxesCombined,
   X,
   Zap,
   Users,
@@ -83,14 +81,6 @@ import type { PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { useT } from "../i18n";
-import {
-  DEFAULT_DEBUG_WORKBENCH_VIEW,
-  DEFAULT_EVALUATION_WORKBENCH_VIEW,
-  TRAINING_WORKBENCH_VIEWS_BY_SECTION,
-  debugWorkbenchPath,
-  evaluationWorkbenchPath,
-  trainingWorkbenchViewFromCanonicalRoute,
-} from "@multica/core/training";
 
 // Top-level nav items stay active when the user is on a child route
 // (e.g. "Projects" stays lit on /:slug/projects/:id). Pinned items keep
@@ -124,8 +114,6 @@ type NavKey =
   | "squads"
   | "usage"
   | "runReviews"
-  | "debug"
-  | "evaluation"
   | "runtimes"
   | "skills"
   | "settings";
@@ -141,8 +129,6 @@ type NavLabelKey =
   | "squads"
   | "usage"
   | "run_reviews"
-  | "debug"
-  | "evaluation"
   | "runtimes"
   | "skills"
   | "settings";
@@ -159,8 +145,6 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
   { key: "runReviews", labelKey: "run_reviews", icon: BarChart3 },
-  { key: "debug", labelKey: "debug", icon: Bug },
-  { key: "evaluation", labelKey: "evaluation", icon: ChartNoAxesCombined },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
@@ -656,31 +640,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {workspaceNav.map((item) => {
-                  const href =
-                    item.key === "debug"
-                      ? debugWorkbenchPath(p.debug(), DEFAULT_DEBUG_WORKBENCH_VIEW)
-                      : item.key === "evaluation"
-                        ? evaluationWorkbenchPath(p.evaluation(), DEFAULT_EVALUATION_WORKBENCH_VIEW)
-                        : p[item.key]();
-                  const activeHref =
-                    item.key === "debug"
-                      ? p.debug()
-                      : item.key === "evaluation"
-                        ? p.evaluation()
-                        : href;
-                  const isActive = !isActivePinnedRoute && isNavActive(pathname, activeHref);
-                  const activeWorkbenchView =
-                    item.key === "debug" && pathname.startsWith(p.debug() + "/")
-                      ? trainingWorkbenchViewFromCanonicalRoute(
-                        "debug",
-                        pathname.slice((p.debug() + "/").length).split("/")[0] ?? null,
-                      )
-                      : item.key === "evaluation" && pathname.startsWith(p.evaluation() + "/")
-                        ? trainingWorkbenchViewFromCanonicalRoute(
-                          "evaluation",
-                          pathname.slice((p.evaluation() + "/").length).split("/")[0] ?? null,
-                        )
-                        : "";
+                  const href = p[item.key]();
+                  const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarNavButton
@@ -689,27 +650,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         isActive={isActive}
                         label={t(($) => $.nav[item.labelKey])}
                       />
-                      {(item.key === "debug" || item.key === "evaluation") && isActive && (
-                        <SidebarMenu className="ml-6 mt-1 gap-0.5 border-l border-sidebar-border pl-2">
-                          {TRAINING_WORKBENCH_VIEWS_BY_SECTION[item.key].map((view) => {
-                            const viewHref = item.key === "debug"
-                              ? debugWorkbenchPath(p.debug(), view.view)
-                              : evaluationWorkbenchPath(p.evaluation(), view.view);
-                            return (
-                              <SidebarMenuItem key={view.view}>
-                                <SidebarMenuButton
-                                  size="sm"
-                                  isActive={activeWorkbenchView === view.view}
-                                  render={<AppLink href={viewHref} />}
-                                  className="h-7 text-xs text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                                >
-                                  <span>{view.tab}</span>
-                                </SidebarMenuButton>
-                              </SidebarMenuItem>
-                            );
-                          })}
-                        </SidebarMenu>
-                      )}
                     </SidebarMenuItem>
                   );
                 })}

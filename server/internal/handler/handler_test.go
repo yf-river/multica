@@ -169,35 +169,6 @@ type failTaskMessageTx struct {
 	calls  int
 }
 
-type failEvidenceSnapshotTxStarter struct {
-	pool   *pgxpool.Pool
-	failAt int
-}
-
-func (s failEvidenceSnapshotTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &failEvidenceSnapshotTx{Tx: tx, failAt: s.failAt}, nil
-}
-
-type failEvidenceSnapshotTx struct {
-	pgx.Tx
-	failAt int
-	calls  int
-}
-
-func (tx *failEvidenceSnapshotTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if strings.Contains(sql, "-- name: CreatePromptEvaluationEvidenceSnapshot ") {
-		tx.calls++
-		if tx.calls == tx.failAt {
-			return errorRow{err: errors.New("injected evidence snapshot create failure")}
-		}
-	}
-	return tx.Tx.QueryRow(ctx, sql, args...)
-}
-
 func (tx *failTaskMessageTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if strings.Contains(sql, "-- name: CreateTaskMessageIdempotent ") {
 		tx.calls++

@@ -122,21 +122,6 @@ identity and retention live in
 - Verification: `server/internal/handler/issue_delete_atomicity_test.go` and
   `server/internal/handler/issue_batch_test.go`.
 
-### Prompt Evaluation
-
-- Entries: Asset run, Run sync/review and Skill-candidate apply routes.
-- HTTP owners: `server/internal/handler/prompt_evaluation_asset.go` and
-  `server/internal/handler/prompt_evaluation_dataset_versions.go`.
-- Projection owners: `server/internal/service/prompt_evaluation_sync.go` and
-  `server/cmd/server/prompt_evaluation_projection.go`.
-- Frontend mutation owners:
-  `packages/views/prompt-library/components/use-prompt-library-mutations.ts`
-  and
-  `packages/views/prompt-library/components/use-skill-candidate-workflow-actions.ts`.
-- Boundary: Runs bind one authoritative Task; terminal projection updates
-  Trials, scores and evidence atomically. Missing machine verdicts require
-  review and never become fabricated pass results.
-
 ### Gongfeng repository and merge request
 
 - Entries: workspace repository probe/resolve, Project resource create, and

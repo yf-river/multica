@@ -161,10 +161,6 @@ vi.mock("@multica/core/paths", () => ({
     issues: () => "/ws-test/issues",
 	    projects: () => "/ws-test/projects",
 	    agents: () => "/ws-test/agents",
-	    debug: () => "/ws-test/debug",
-	    debugView: (view: string) => `/ws-test/debug/${view}`,
-	    evaluation: () => "/ws-test/evaluation",
-	    evaluationView: (view: string) => `/ws-test/evaluation/${view}`,
 	    runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",
@@ -341,12 +337,6 @@ describe("SearchCommand", () => {
 
   it.each([
     ["设置页面", "settings", "page:settings", "/ws-test/settings"],
-    ["调试默认入口", "调试", "page:debug", "/ws-test/debug/prompts"],
-    ["评估默认入口", "评估", "page:evaluation", "/ws-test/evaluation/datasets"],
-    ["提示词库", "提示词库", "command:training-prompts", "/ws-test/debug/prompts"],
-    ["用例库", "用例库", "command:training-datasets", "/ws-test/evaluation/datasets"],
-    ["测试套件", "测试套件", "command:training-test-suites", "/ws-test/evaluation/test-suites"],
-    ["评测记录", "评测记录", "command:training-evaluation-runs", "/ws-test/evaluation/runs"],
   ])("选择%s后跳转并关闭面板", async (_name, query, value, href) => {
     const user = await renderSearchQuery(query);
     await waitFor(() => {

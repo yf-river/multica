@@ -77,19 +77,6 @@ function classifyChanges(files) {
   const scriptFiles = existing.filter((file) => /^scripts\/.*\.(?:mjs|js)$/.test(file));
   const e2eSpecs = existing.filter((file) => /^e2e\/.*\.spec\.ts$/.test(file));
   const docsOnly = normalized.length > 0 && normalized.every(isDocsOnlyFile);
-  const trainingRelated = has((file) =>
-    file.includes("prompt-library") ||
-    file.includes("training") ||
-    file.includes("prompt-evaluation") ||
-    file.includes("goal-test-dashboard-click-audit") ||
-    file.includes("goal-test-training-performance"),
-  );
-  const trainingUiChanged = existing.some((file) =>
-    file.includes("prompt-library") ||
-    file.includes("training") ||
-    file.includes("goal-test-dashboard-click-audit") ||
-    file.includes("goal-test-training-performance"),
-  );
   return {
     empty: normalized.length === 0,
     docs_only: docsOnly,
@@ -108,11 +95,8 @@ function classifyChanges(files) {
       file === "scripts/goal-test-environments.mjs" ||
       file === "scripts/goal-test-e2e-preflight.mjs" ||
       file === "scripts/goal-test-ui-audit.mjs" ||
-      file === "scripts/goal-test-dashboard-click-audit.mjs" ||
-      file === "scripts/goal-test-training-performance-audit.mjs",
+      file === "scripts/goal-test-dashboard-click-audit.mjs",
     ),
-    training_related: trainingRelated,
-    training_ui_changed: trainingUiChanged,
   };
 }
 
@@ -146,7 +130,7 @@ function buildCommands(mode, info) {
     add("web-typecheck", "pnpm --filter @multica/web typecheck", "Web app changed; run the web typecheck.");
   }
   if (info.core_changed) {
-    add("core-training-test", "pnpm --filter @multica/core test -- training/index.test.ts", "Core changed; run the focused training/core tests used by goal-test slices.");
+    add("core-test", "pnpm --filter @multica/core test", "Core changed; run its test suite.");
   }
   if (info.server_changed) {
     add("server-focused-test", "cd server && env -u DATABASE_URL GOWORK=off go test ./internal/handler ./internal/service", "Server changed; run focused backend service and handler tests without the goal-test deployment database.");
@@ -154,12 +138,6 @@ function buildCommands(mode, info) {
 
   if (info.e2e_specs.length > 0) {
     add("changed-e2e-specs", goalTestPlaywrightCommand(`${info.e2e_specs.map(shellQuote).join(" ")} --project=chromium`), "E2E specs changed; run only changed specs against the goal-test int environment.");
-  } else if (shouldRunFocusedTrainingE2E(mode, info)) {
-    add(
-      "focused-training-e2e",
-      goalTestPlaywrightCommand("e2e/navigation.spec.ts --project=chromium --grep 'training playgrounds keep (distinct request boundaries|selected prompt storage isolated by surface)'"),
-      "Training UI changed; run the narrow training playground boundary E2E.",
-    );
   }
 
   if (mode === "precommit") {
@@ -173,12 +151,9 @@ function buildCommands(mode, info) {
     } else {
       add("goal-test-verify-current", "node scripts/goal-test-environments.mjs verify int && node scripts/goal-test-environments.mjs verify-logs int", deployDecision.reason);
     }
-    if (info.views_changed || info.web_changed || info.training_related || info.e2e_changed) {
+    if (info.views_changed || info.web_changed || info.e2e_changed) {
       add("goal-test-ui-audit", "make goal-test-ui-audit", "Final UI gate for changed browser-facing behavior.");
       add("goal-test-dashboard-click-audit", "make goal-test-dashboard-click-audit", "Final click-latency gate for dashboard navigation.");
-    }
-    if (info.training_related) {
-      add("goal-test-training-performance-audit", "make goal-test-training-performance-audit", "Final training/evaluation route performance gate.");
     }
   }
 
@@ -187,11 +162,6 @@ function buildCommands(mode, info) {
   }
 
   return dedupeCommands(commands);
-}
-
-function shouldRunFocusedTrainingE2E(mode, info) {
-  if (mode === "dev" && !info.training_ui_changed) return false;
-  return info.training_ui_changed && (info.views_changed || info.web_changed || info.core_changed);
 }
 
 function shouldDeploy(info) {

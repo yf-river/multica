@@ -43,12 +43,10 @@ const ACCOUNT_LOCAL_KEYS = [
 const ACCOUNT_LOCAL_PREFIXES = [
   ...WORKSPACE_LOCAL_KEYS.map((key) => `${key}:`),
   "multica_recent_",
-  "multica:training:selected-prompt:",
   "multica:mention-recency:",
 ] as const;
 
 const ACCOUNT_SESSION_PREFIXES = [
-  "multica:training:case-drafts:",
   "multica_cmdF_warned:",
 ] as const;
 
@@ -70,13 +68,7 @@ export function clearWorkspaceStorage(
   for (const key of WORKSPACE_LOCAL_KEYS) {
     adapters.local.removeItem(`${key}:${workspace.slug}`);
   }
-  adapters.local.removeItem(
-    `multica:training:selected-prompt:${workspace.id}`,
-  );
   adapters.local.removeItem(`multica:mention-recency:${workspace.id}`);
-  adapters.session.removeItem(
-    `multica:training:case-drafts:${workspace.id}`,
-  );
 }
 
 /** Remove every persisted value that can expose one signed-in account to another. */

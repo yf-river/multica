@@ -80,8 +80,6 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "my-issues",
   "run-reviews",
   "runtimes",
-  "debug",
-  "evaluation",
   "skills",
   "settings",
   "workspaces",

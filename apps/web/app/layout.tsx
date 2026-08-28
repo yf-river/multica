@@ -45,7 +45,7 @@ export const metadata: Metadata = {
     default: "Multica — 团队智能体协作平台",
     template: "%s | Multica",
   },
-  description: "面向团队内部的智能体协作、训练评估、可观测和复盘平台。",
+  description: "面向团队内部的智能体协作、可观测和复盘平台。",
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
     shortcut: ["/favicon.svg"],

@@ -4,9 +4,9 @@ import type {
   IssueExecutionTreeResponse,
   IssueTimelineNode,
   TaskTraceEvent,
+  ToolCallChain,
 } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
-import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { usageTokenTotal } from "../../runtimes/utils";
 import {
   firstNonEmpty,
@@ -405,7 +405,7 @@ function runReviewTraceEvent(event: TaskTraceEvent): RunReviewEventRowData {
   };
 }
 
-function runReviewToolEvent(chain: PromptEvaluationToolCallChain, linkedMessages: TaskMessagePayload[] = []): RunReviewEventRowData {
+function runReviewToolEvent(chain: ToolCallChain, linkedMessages: TaskMessagePayload[] = []): RunReviewEventRowData {
   const semantic = semanticToolAction(chain.tool, chain.input, chain.output);
   const backendFailure = chain.failure_signal && !semantic.suppressFailureSignal;
   const detailParts = [

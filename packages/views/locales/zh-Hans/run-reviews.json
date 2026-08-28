@@ -21,16 +21,9 @@
     "status": "状态：{{value}}",
     "task": "任务：{{value}}",
     "acceptance": "验收：{{value}}",
-    "back_to_issue": "返回 issue",
-    "generating_case": "生成中...",
-    "generate_case": "生成评测用例",
-    "open_evaluation": "进入评测资产",
-    "draft_created": "已生成 draft case {{id}}。请进入训练与评估确认输入、期望行为和验证方式，再批准为 active。",
-    "view_draft": "查看 Draft"
+    "back_to_issue": "返回 issue"
   },
   "toast": {
-    "case_created": "评测用例已生成：{{name}}",
-    "case_create_failed": "生成评测用例失败",
     "task_requeued": "已重新入队最新失败任务",
     "task_retry_failed": "重试失败任务失败"
   },
