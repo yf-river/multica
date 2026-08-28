@@ -87,6 +87,12 @@ func tickLifeCognitionJobs(ctx context.Context, queries *db.Queries) {
 			failLifeCognitionJob(ctx, queries, job.ID, err)
 			continue
 		}
+		if err := queries.UpdateRunningLifeCognitionJobInput(ctx, db.UpdateRunningLifeCognitionJobInputParams{
+			ID: job.ID, Input: input,
+		}); err != nil {
+			failLifeCognitionJob(ctx, queries, job.ID, err)
+			continue
+		}
 		payload, err := json.Marshal(lifeCognitionTaskContext{
 			Type: "life_cognition", JobID: util.UUIDToString(job.ID), JobType: job.JobType,
 			WorkspaceID: util.UUIDToString(job.WorkspaceID), UserID: util.UUIDToString(job.UserID), Input: input,

@@ -560,6 +560,11 @@ UPDATE life_cognition_job
 SET task_id = $2, updated_at = now()
 WHERE id = $1 AND status = 'running';
 
+-- name: UpdateRunningLifeCognitionJobInput :exec
+UPDATE life_cognition_job
+SET input = $2, updated_at = now()
+WHERE id = $1 AND status = 'running' AND task_id IS NULL;
+
 -- name: CreateLifeCognitionAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, status, priority, context, initiator_user_id,

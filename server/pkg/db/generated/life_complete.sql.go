@@ -4528,6 +4528,22 @@ func (q *Queries) UpdateLifeTopic(ctx context.Context, arg UpdateLifeTopicParams
 	return i, err
 }
 
+const updateRunningLifeCognitionJobInput = `-- name: UpdateRunningLifeCognitionJobInput :exec
+UPDATE life_cognition_job
+SET input = $2, updated_at = now()
+WHERE id = $1 AND status = 'running' AND task_id IS NULL
+`
+
+type UpdateRunningLifeCognitionJobInputParams struct {
+	ID    pgtype.UUID `json:"id"`
+	Input []byte      `json:"input"`
+}
+
+func (q *Queries) UpdateRunningLifeCognitionJobInput(ctx context.Context, arg UpdateRunningLifeCognitionJobInputParams) error {
+	_, err := q.db.Exec(ctx, updateRunningLifeCognitionJobInput, arg.ID, arg.Input)
+	return err
+}
+
 const upsertLifeInternalThought = `-- name: UpsertLifeInternalThought :one
 INSERT INTO life_internal_thought (
     workspace_id, user_id, companion_agent_id, thought_type, title, content, status, metadata

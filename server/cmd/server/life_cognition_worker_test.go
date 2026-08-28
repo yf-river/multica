@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -25,6 +26,43 @@ func TestPGIntervalDurationUsesSafeFallback(t *testing.T) {
 	}
 	if got := pgIntervalDuration(pgtype.Interval{Days: 2, Valid: true}, time.Hour); got != 48*time.Hour {
 		t.Fatalf("two days=%s", got)
+	}
+}
+
+func TestRunningLifeCognitionJobPersistsGovernedInput(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+	var agentID, jobID pgtype.UUID
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO life_cognition_job (
+			workspace_id,user_id,companion_agent_id,job_type,dedupe_key,input,status,started_at,attempt
+		) VALUES ($1,$2,$3,'understand_materials',$4,'{}'::jsonb,'running',now(),1)
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID, "persist-input:"+fmt.Sprint(time.Now().UnixNano())).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM life_cognition_job WHERE id=$1`, jobID) })
+
+	input := json.RawMessage(`{"context_version":"life-context-v2","processing_cursor":"cursor-1","new_materials":[{"id":"source-1"}]}`)
+	queries := db.New(testPool)
+	if err := queries.UpdateRunningLifeCognitionJobInput(ctx, db.UpdateRunningLifeCognitionJobInputParams{ID: jobID, Input: input}); err != nil {
+		t.Fatal(err)
+	}
+	var persisted json.RawMessage
+	if err := testPool.QueryRow(ctx, `SELECT input FROM life_cognition_job WHERE id=$1`, jobID).Scan(&persisted); err != nil {
+		t.Fatal(err)
+	}
+	var persistedObject map[string]any
+	if err := json.Unmarshal(persisted, &persistedObject); err != nil {
+		t.Fatal(err)
+	}
+	if persistedObject["context_version"] != lifeCognitionContextVersion || persistedObject["processing_cursor"] != "cursor-1" {
+		t.Fatalf("persisted input mismatch: %s", persisted)
 	}
 }
 

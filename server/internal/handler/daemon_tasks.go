@@ -629,6 +629,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resp.LifeContext = lifeContext
+		slog.Debug("life cognition context built", "task_id", uuidToString(task.ID), "job_type", lifeJob.JobType, "bytes", len(lifeContext))
 	}
 
 	// Quick-create task: no issue / chat / autopilot link — workspace and
