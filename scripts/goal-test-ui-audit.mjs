@@ -21,8 +21,8 @@ const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRe
   [frontendURL, browserURL, backendURL],
   requestPath,
 );
-const maxRouteMs = 3000;
-const maxApiMs = 1000;
+const maxRouteMs = 2000;
+const maxApiMs = 500;
 const maxApiRequests = 20;
 const screenshotDir = path.join(artifactRoot, "ui-audit-screenshots");
 
@@ -39,6 +39,7 @@ const routes = [
     label: "搭子",
     path: `/${workspaceSlug}/companion`,
     expect: ["搭子"],
+    readySelector: '[data-testid="virtuoso-item-list"] [data-index]',
     uiContract: { forbiddenText: forbiddenAcceptanceTexts },
   },
   {
@@ -170,7 +171,6 @@ const payload = {
     max_route_ms: maxRouteMs,
     max_api_ms: maxApiMs,
     max_api_requests: maxApiRequests,
-    post_load_wait_ms: 1_500,
   },
   warmup,
   deployment_logs: deploymentLogs,
@@ -218,6 +218,9 @@ async function auditRoute(page, route) {
       await page.waitForURL((url) => url.href.includes(route.finalPathIncludes), { timeout: 8_000 }).catch(() => {});
     }
     await waitForRouteText(page, route.expect);
+    if (route.readySelector) {
+      await page.locator(route.readySelector).first().waitFor({ state: "visible", timeout: 8_000 });
+    }
     bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
     title = await page.title().catch(() => "");
     screenshot = path.join(screenshotDir, `${route.id}-${stamp}.png`);
