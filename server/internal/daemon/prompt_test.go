@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -69,6 +70,25 @@ func TestBuildChronicleLifeJobPromptPinsScalarNarrativeAndDirectSubmission(t *te
 		"the only business operations available are `life_evidence_resolve` and `life_job_complete`",
 	)
 	assertPromptExcludes(t, out, "--output-file <path>", "multica life job complete")
+}
+
+func TestBuildExperimentCheckPromptDistinguishesRunningAndStoppedRounds(t *testing.T) {
+	out := BuildPrompt(Task{
+		LifeJobID:    "job-experiment",
+		LifeJobType:  "experiment_check",
+		LifeJobInput: json.RawMessage(`{"round_id":"round-1","status":"awaiting_review","stop_reason":"stopped_by_user"}`),
+	})
+
+	for _, want := range []string{
+		`"status":"awaiting_review"`,
+		`"stop_reason":"stopped_by_user"`,
+		"For an awaiting_review round",
+		"return an experiment_review draft",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func tapdSource(resourceID, status string) *protocol.TaskSourceContext {

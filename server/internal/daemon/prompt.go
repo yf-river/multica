@@ -79,7 +79,7 @@ func buildLifeJobPrompt(task Task) string {
 	case "proactive_review":
 		b.WriteString("Assess whether the user's response indicates that the prior proactive message was helpful, neutral, mistimed, or burdensome. Explain the evidence in value_assessment and recommend a 1-168 hour minimum interval that improves the relationship rhythm. Do not treat mere response as proof that the message was valuable.\n")
 	case "experiment_check":
-		b.WriteString("Review the active experiment using only minimum necessary material. Record useful observations, avoid追债式 prompts, and do not continue an expired or stopped round.\n")
+		b.WriteString("Review the experiment using only minimum necessary material. The job input is authoritative for the round status and stop reason. For a running round, record only useful observations and avoid追债式 prompts. For an awaiting_review round, do not continue it: return an experiment_review draft that honestly covers outcome, feelings, burden, companion correction, evidence, and a module proposal only when the evidence supports one.\n")
 	case "observer_run":
 		b.WriteString("Act only as the assigned independent observer. Form an independent private judgement first; publish it only when it is important enough for the observation seat. Do not imitate or defer to the main companion.\n")
 	case "observation_aggregate":

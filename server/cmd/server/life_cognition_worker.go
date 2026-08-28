@@ -419,7 +419,12 @@ func scheduleLifeExperimentChecks(ctx context.Context, queries *db.Queries, now 
 	for _, row := range rows {
 		_ = createScheduledLifeJob(ctx, queries, row.WorkspaceID, row.UserID, row.AgentID,
 			"experiment_check", "round:"+util.UUIDToString(row.ID)+":"+day,
-			map[string]any{"round_id": util.UUIDToString(row.ID), "plan": json.RawMessage(row.Plan), "ends_at": timestampValue(row.EndsAt)}, now)
+			map[string]any{
+				"round_id": util.UUIDToString(row.ID), "status": row.Status,
+				"plan": json.RawMessage(row.Plan), "starts_at": timestampValue(row.StartsAt),
+				"ends_at": timestampValue(row.EndsAt), "stopped_at": timestampValue(row.StoppedAt),
+				"stop_reason": row.StopReason,
+			}, now)
 	}
 }
 
