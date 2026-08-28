@@ -43,24 +43,30 @@ type Task struct {
 	ThreadName               string                            `json:"thread_name,omitempty"` // semantic title for provider-native session/thread history
 	Agent                    *protocol.TaskAgent               `json:"agent,omitempty"`
 	Repos                    []protocol.TaskRepository         `json:"repos,omitempty"`
-	ProjectID                string                            `json:"project_id,omitempty"`                  // issue's project, when present
-	ProjectTitle             string                            `json:"project_title,omitempty"`               // human-readable project title for context injection
-	ProjectResources         []protocol.TaskProjectResource    `json:"project_resources,omitempty"`           // project-scoped resources to expose to the agent
-	IssueExecutionSpace      *protocol.TaskIssueExecutionSpace `json:"issue_execution_space,omitempty"`       // issue-scoped daemon-managed worktree, when enabled
-	ExecutionPolicy          *executionpolicy.Policy           `json:"execution_policy,omitempty"`            // role/profile-scoped task capabilities
-	SourceContext            *protocol.TaskSourceContext       `json:"source_context,omitempty"`              // structured source/MCP context for TAPD/Gongfeng-backed tasks
-	SourceSummaryPrompt      string                            `json:"source_summary_prompt,omitempty"`       // non-empty for source-summary tasks that should only write a requirement summary
-	PriorSessionID           string                            `json:"prior_session_id,omitempty"`            // Claude session ID from a previous task on this issue
-	PriorWorkDir             string                            `json:"prior_work_dir,omitempty"`              // work_dir from a previous task on this issue
-	TriggerCommentID         string                            `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
-	TriggerThreadID          string                            `json:"trigger_thread_id,omitempty"`           // root comment ID for the triggering thread
-	TriggerCommentContent    string                            `json:"trigger_comment_content,omitempty"`     // content of the triggering comment
-	TriggerAuthorType        string                            `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind for the triggering comment
-	TriggerAuthorName        string                            `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
-	NewCommentCount          int                               `json:"new_comment_count,omitempty"`           // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
-	NewCommentsSince         string                            `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
-	ChatSessionID            string                            `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatMessage              string                            `json:"chat_message,omitempty"`                // user message content for chat tasks
+	ProjectID                string                            `json:"project_id,omitempty"`              // issue's project, when present
+	ProjectTitle             string                            `json:"project_title,omitempty"`           // human-readable project title for context injection
+	ProjectResources         []protocol.TaskProjectResource    `json:"project_resources,omitempty"`       // project-scoped resources to expose to the agent
+	IssueExecutionSpace      *protocol.TaskIssueExecutionSpace `json:"issue_execution_space,omitempty"`   // issue-scoped daemon-managed worktree, when enabled
+	ExecutionPolicy          *executionpolicy.Policy           `json:"execution_policy,omitempty"`        // role/profile-scoped task capabilities
+	SourceContext            *protocol.TaskSourceContext       `json:"source_context,omitempty"`          // structured source/MCP context for TAPD/Gongfeng-backed tasks
+	SourceSummaryPrompt      string                            `json:"source_summary_prompt,omitempty"`   // non-empty for source-summary tasks that should only write a requirement summary
+	PriorSessionID           string                            `json:"prior_session_id,omitempty"`        // Claude session ID from a previous task on this issue
+	PriorWorkDir             string                            `json:"prior_work_dir,omitempty"`          // work_dir from a previous task on this issue
+	TriggerCommentID         string                            `json:"trigger_comment_id,omitempty"`      // comment that triggered this task
+	TriggerThreadID          string                            `json:"trigger_thread_id,omitempty"`       // root comment ID for the triggering thread
+	TriggerCommentContent    string                            `json:"trigger_comment_content,omitempty"` // content of the triggering comment
+	TriggerAuthorType        string                            `json:"trigger_author_type,omitempty"`     // "agent" or "member" — author kind for the triggering comment
+	TriggerAuthorName        string                            `json:"trigger_author_name,omitempty"`     // display name of the triggering comment author
+	NewCommentCount          int                               `json:"new_comment_count,omitempty"`       // issue-wide comments since this agent's last run (excludes its own and the injected trigger); 0/omitted for old daemons or cold start
+	NewCommentsSince         string                            `json:"new_comments_since,omitempty"`      // RFC3339 anchor (last run's started_at) the count is measured from; empty on cold start
+	ChatSessionID            string                            `json:"chat_session_id,omitempty"`         // non-empty for chat tasks
+	ChatMessage              string                            `json:"chat_message,omitempty"`            // user message content for chat tasks
+	ChatMessageIDs           []string                          `json:"chat_message_ids,omitempty"`        // current user-message ids available as life evidence
+	IsCompanion              bool                              `json:"is_companion,omitempty"`            // configured life-companion conversation
+	LifeContext              string                            `json:"life_context,omitempty"`            // confirmed companion memories serialized as JSON data
+	LifeJobID                string                            `json:"life_job_id,omitempty"`
+	LifeJobType              string                            `json:"life_job_type,omitempty"`
+	LifeJobInput             json.RawMessage                   `json:"life_job_input,omitempty"`
 	ChatMessageAttachments   []protocol.ChatAttachmentMeta     `json:"chat_message_attachments,omitempty"`    // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
 	AutopilotRunID           string                            `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot run_only tasks
 	AutopilotID              string                            `json:"autopilot_id,omitempty"`                // autopilot that spawned this run

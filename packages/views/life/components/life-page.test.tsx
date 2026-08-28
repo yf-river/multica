@@ -1,0 +1,99 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { LifePage } from "./life-page";
+
+const actions = vi.hoisted(() => ({ confirm: vi.fn(), update: vi.fn(), downgrade: vi.fn(), archive: vi.fn(), remove: vi.fn() }));
+
+vi.mock("../../i18n", async () => {
+  const resource = (await import("../../locales/zh-Hans/life.json")).default;
+  return {
+    useT: () => ({
+      t: (selector: (value: typeof resource) => string, values?: Record<string, unknown>) => {
+        let result = selector(resource);
+        for (const [key, value] of Object.entries(values ?? {})) result = result.replace(`{{${key}}}`, String(value));
+        return result;
+      },
+    }),
+  };
+});
+vi.mock("@multica/core/paths", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/api", () => ({ api: {} }));
+vi.mock("@multica/core/chat", () => ({
+  useChatStore: (selector: (value: unknown) => unknown) => selector({
+    setOpen: vi.fn(),
+    setExpanded: vi.fn(),
+  }),
+}));
+vi.mock("@multica/core/life", () => ({
+  lifeKeys: { chronicle: () => ["chronicle"], proposals: () => ["proposals"], identity: () => ["identity"], relationships: () => ["relationships"], materials: () => ["materials"], thoughts: () => ["thoughts"], topics: () => ["topics"], commitments: () => ["commitments"], modules: () => ["modules"], observers: () => ["observers"], observationSeat: () => ["seat"], jobs: () => ["jobs"], upgrades: () => ["upgrades"], policy: () => ["policy"] },
+  lifeMemoryListOptions: () => ({ queryKey: ["memories"] }),
+  companionProfileOptions: () => ({ queryKey: ["companion"] }),
+  lifeProposalListOptions: () => ({ queryKey: ["proposals"] }),
+  lifeExperimentListOptions: () => ({ queryKey: ["experiments"] }),
+  lifeProactiveCheckListOptions: () => ({ queryKey: ["checks"] }),
+  lifeChronicleListOptions: () => ({ queryKey: ["chronicle"] }),
+  lifeIdentityListOptions: () => ({ queryKey: ["identity"] }),
+  lifeRelationshipListOptions: () => ({ queryKey: ["relationships"] }),
+  lifeMaterialListOptions: () => ({ queryKey: ["materials"] }),
+  lifeInternalThoughtListOptions: () => ({ queryKey: ["thoughts"] }),
+  lifeTopicListOptions: () => ({ queryKey: ["topics"] }),
+  lifeCommitmentListOptions: () => ({ queryKey: ["commitments"] }),
+  lifeModuleListOptions: () => ({ queryKey: ["modules"] }),
+  lifeObserverListOptions: () => ({ queryKey: ["observers"] }),
+  lifeObservationSeatOptions: () => ({ queryKey: ["seat"] }),
+  lifeCognitionJobListOptions: () => ({ queryKey: ["jobs"] }),
+  lifeUpgradeEvaluationListOptions: () => ({ queryKey: ["upgrades"] }),
+  lifeProactivePolicyOptions: () => ({ queryKey: ["policy"] }),
+  useConfirmLifeMemory: () => ({ mutate: actions.confirm, isPending: false }),
+  useUpdateLifeMemory: () => ({ mutate: actions.update, isPending: false }),
+  useDowngradeLifeMemory: () => ({ mutate: actions.downgrade, isPending: false }),
+  useArchiveLifeMemory: () => ({ mutate: actions.archive, isPending: false }),
+  useDeleteLifeMemory: () => ({ mutate: actions.remove, isPending: false }),
+  useConfirmLifeProposal: () => ({ mutate: vi.fn(), isPending: false }),
+  useStopLifeExperimentRound: () => ({ mutate: vi.fn(), isPending: false }),
+  useReviewLifeExperimentRound: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQuery: ({ queryKey }: { queryKey: string[] }) => {
+		if (queryKey[0] === "life-memory-revisions") return { isLoading: false, data: undefined };
+    if (queryKey[0] === "memories") return { isLoading: false, data: { memories: [{
+      id: "memory-1", kind: "weak_signal", status: "candidate", content: "最近出现离职冲动，但尚未形成离职决定",
+      confidence: 0.62, urgency: 0.3, uncertainty: "目前只有一次表达，需要继续观察",
+      valid_from: null, valid_to: null, confirmed_at: null, created_by_type: "agent", created_by_id: "agent-1",
+      created_at: "", updated_at: "", evidence: [{ source_type: "chat_message", source_id: "message-1", excerpt: "我不想干了", observed_at: "" }],
+    }] } };
+    if (queryKey[0] === "companion") return { isLoading: false, data: { profile: { agent_id: "agent-1" } } };
+    if (queryKey[0] === "proposals") return { isLoading: false, data: { proposals: [] } };
+    if (queryKey[0] === "experiments") return { isLoading: false, data: { experiments: [], rounds: [] } };
+    if (queryKey[0] === "checks") return { isLoading: false, data: { checks: [] } };
+    if (queryKey[0] === "identity") return { isLoading: false, data: { versions: [] } };
+    if (queryKey[0] === "relationships") return { isLoading: false, data: { events: [] } };
+    if (queryKey[0] === "materials") return { isLoading: false, data: { materials: [] } };
+    if (queryKey[0] === "thoughts") return { isLoading: false, data: { thoughts: [] } };
+    if (queryKey[0] === "topics") return { isLoading: false, data: { topics: [] } };
+    if (queryKey[0] === "commitments") return { isLoading: false, data: { commitments: [] } };
+    return { isLoading: false, data: { entries: [] } };
+  },
+  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
+
+describe("LifePage memory governance", () => {
+  it("shows evidence, confidence and uncertainty before confirmation", () => {
+    render(<LifePage />);
+    expect(screen.getByText("最近出现离职冲动，但尚未形成离职决定")).toBeInTheDocument();
+    expect(screen.getByText("可信度 62%")).toBeInTheDocument();
+    expect(screen.getByText("不确定：目前只有一次表达，需要继续观察")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+    expect(actions.confirm).toHaveBeenCalledWith("memory-1");
+  });
+
+  it("requires a second explicit action before permanent deletion", () => {
+    render(<LifePage />);
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+    expect(actions.remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认永久删除" }));
+    expect(actions.remove).toHaveBeenCalledWith("memory-1");
+  });
+});

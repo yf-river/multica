@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -19,6 +20,17 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+const lifeCognitionContextType = "life_cognition"
+
+type lifeCognitionTaskContext struct {
+	Type        string          `json:"type"`
+	JobID       string          `json:"job_id"`
+	JobType     string          `json:"job_type"`
+	WorkspaceID string          `json:"workspace_id"`
+	UserID      string          `json:"user_id"`
+	Input       json.RawMessage `json:"input"`
+}
 
 // projectResourcesForClaim converts the persisted project resource model into
 // the two daemon-facing views used by every task source: the complete resource
@@ -471,6 +483,27 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		resp.WorkspaceID = uuidToString(cs.WorkspaceID)
 		resp.ChatSessionID = uuidToString(cs.ID)
 		resp.ThreadName = cs.Title
+		if _, err := h.Queries.GetCompanionProfileForAgent(r.Context(), db.GetCompanionProfileForAgentParams{
+			WorkspaceID: cs.WorkspaceID,
+			UserID:      cs.CreatorID,
+			AgentID:     cs.AgentID,
+		}); err == nil {
+			resp.IsCompanion = true
+			lifeContext, err := h.buildCompanionChatLifeContext(r.Context(), lifeRequestScope{
+				workspaceID: cs.WorkspaceID,
+				userID:      cs.CreatorID,
+			}, cs.AgentID)
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life context", err)
+				outcome = "error_build"
+				return
+			}
+			resp.LifeContext = lifeContext
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "companion profile", err)
+			outcome = "error_build"
+			return
+		}
 		if !task.ForceFreshSession {
 			// A task row is the sole chat resume-pointer owner. Only resume the
 			// provider session on the same Runtime; preserving the last workdir
@@ -516,6 +549,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		parts := make([]string, 0, len(unanswered))
 		for _, m := range unanswered {
+			resp.ChatMessageIDs = append(resp.ChatMessageIDs, uuidToString(m.ID))
 			if strings.TrimSpace(m.Content) != "" {
 				parts = append(parts, m.Content)
 			}
@@ -572,6 +606,32 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.WorkspaceID == "" {
 			resp.WorkspaceID = uuidToString(ap.WorkspaceID)
+		}
+	}
+
+	// Life cognition task: a durable companion background job with no issue,
+	// chat, or autopilot parent. Its context carries the governed user scope.
+	hasLifeCognition := false
+	if task.Context != nil && !task.IssueID.Valid && !task.ChatSessionID.Valid && !task.AutopilotRunID.Valid {
+		var lifeJob lifeCognitionTaskContext
+		if json.Unmarshal(task.Context, &lifeJob) == nil && lifeJob.Type == lifeCognitionContextType {
+			hasLifeCognition = true
+			resp.WorkspaceID = lifeJob.WorkspaceID
+			resp.ThreadName = "人生后台任务：" + lifeJob.JobType
+			resp.LifeJobID = lifeJob.JobID
+			resp.LifeJobType = lifeJob.JobType
+			resp.LifeJobInput = lifeJob.Input
+			resp.IsCompanion = true
+			lifeContext, err := h.buildLifeJobContext(r.Context(), lifeRequestScope{
+				workspaceID: parseUUID(lifeJob.WorkspaceID),
+				userID:      parseUUID(lifeJob.UserID),
+			}, lifeJob.JobType, task.AgentID)
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition context", err)
+				outcome = "error_build"
+				return
+			}
+			resp.LifeContext = lifeContext
 		}
 	}
 
@@ -726,6 +786,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			"has_chat", task.ChatSessionID.Valid,
 			"has_autopilot_run", task.AutopilotRunID.Valid,
 			"has_quick_create", hasQuickCreate,
+			"has_life_cognition", hasLifeCognition,
 		)
 		if _, cerr := h.TaskService.CancelTask(r.Context(), task.ID); cerr != nil {
 			slog.Error("task claim: cancel after workspace check failed",

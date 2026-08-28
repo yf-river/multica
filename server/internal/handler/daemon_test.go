@@ -3027,6 +3027,9 @@ type claimRuntimeGuardTask struct {
 	PriorSessionID           string                         `json:"prior_session_id"`
 	PriorWorkDir             string                         `json:"prior_work_dir"`
 	ChatMessage              string                         `json:"chat_message"`
+	LifeContext              string                         `json:"life_context"`
+	IsCompanion              bool                           `json:"is_companion"`
+	ChatMessageIDs           []string                       `json:"chat_message_ids"`
 	ThreadName               string                         `json:"thread_name"`
 	QuickCreateAttachmentIDs []string                       `json:"quick_create_attachment_ids"`
 	ProjectID                string                         `json:"project_id"`
@@ -3528,6 +3531,72 @@ func TestClaimTask_ChatDeliversAllUnansweredUserMessages(t *testing.T) {
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
 	if task.ChatMessage != "深圳呢" {
 		t.Fatalf("after a reply, only the new user message must be delivered; got %q", task.ChatMessage)
+	}
+}
+
+func TestClaimTask_CompanionSeparatesConfirmedAndCandidateMemoriesAcrossSessions(t *testing.T) {
+	requireHandlerDatabase(t)
+
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO companion_profile (workspace_id, user_id, agent_id)
+		VALUES ($1, $2, $3)
+	`, testWorkspaceID, testUserID, agentID); err != nil {
+		t.Fatalf("setup companion profile: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM companion_profile WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, testUserID)
+	})
+
+	oldMessageID := createLifeChatEvidence(t, agentID, "计划明年初再评估是否离职。")
+	confirmed := createLifeMemoryForTest(t, "chat_message", oldMessageID, "plan", "明年初再综合评估是否离职")
+	w := callLifeHandler(t, http.MethodPost, "/api/life/memories/"+confirmed.ID+"/confirm", nil,
+		map[string]string{"memoryId": confirmed.ID}, testHandler.ConfirmLifeMemory)
+	if w.Code != http.StatusOK {
+		t.Fatalf("confirm cross-session memory: %d %s", w.Code, w.Body.String())
+	}
+
+	candidate := createLifeMemoryForTest(t, "chat_message", oldMessageID, "commitment", "已经决定立刻辞职")
+	deleted := createLifeMemoryForTest(t, "chat_message", oldMessageID, "fact", "这条已删除的确认记忆不能再出现")
+	w = callLifeHandler(t, http.MethodPost, "/api/life/memories/"+deleted.ID+"/confirm", nil,
+		map[string]string{"memoryId": deleted.ID}, testHandler.ConfirmLifeMemory)
+	if w.Code != http.StatusOK {
+		t.Fatalf("confirm memory before deletion: %d %s", w.Code, w.Body.String())
+	}
+	w = callLifeHandler(t, http.MethodDelete, "/api/life/memories/"+deleted.ID, nil,
+		map[string]string{"memoryId": deleted.ID}, testHandler.DeleteLifeMemory)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete confirmed memory: %d %s", w.Code, w.Body.String())
+	}
+
+	var newSessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'new companion session')
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&newSessionID); err != nil {
+		t.Fatalf("setup new companion session: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, newSessionID) })
+	mustExec(t, ctx, `INSERT INTO chat_message (chat_session_id, role, content) VALUES ($1, 'user', '我今天又不想干了')`, newSessionID)
+	mustExec(t, ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 2)
+	`, agentID, runtimeID, newSessionID)
+
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if !task.IsCompanion || len(task.ChatMessageIDs) != 1 {
+		t.Fatalf("companion identity/evidence was not carried to daemon task: %#v", task)
+	}
+	if !strings.Contains(task.LifeContext, confirmed.Content) {
+		t.Fatalf("confirmed memory missing from new session context: %s", task.LifeContext)
+	}
+	if !strings.Contains(task.LifeContext, candidate.Content) || !strings.Contains(task.LifeContext, `"candidate_memories_not_facts"`) {
+		t.Fatalf("candidate memory was not carried as an explicitly unconfirmed signal: %s", task.LifeContext)
+	}
+	if strings.Contains(task.LifeContext, deleted.Content) {
+		t.Fatalf("deleted memory leaked into new session context: %s", task.LifeContext)
 	}
 }
 

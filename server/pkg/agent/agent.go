@@ -33,6 +33,7 @@ type ExecOptions struct {
 	Timeout                   time.Duration
 	SemanticInactivityTimeout time.Duration
 	ResumeSessionID           string          // if non-empty, resume a previous agent session
+	DisableSessionPersistence bool            // do not pin or reuse provider-native session state
 	ExtraArgs                 []string        // daemon-wide default CLI arguments appended before CustomArgs; currently read by claude and codex backends only
 	CustomArgs                []string        // per-agent CLI arguments appended after ExtraArgs
 	AllowedBuiltinTools       []string        // provider-native built-in tool allowlist; currently read by claude and codebuddy backends only

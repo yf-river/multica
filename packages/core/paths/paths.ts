@@ -18,6 +18,8 @@ function workspaceScoped(slug: string) {
   const ws = `/${encode(slug)}`;
   return {
     root: () => `${ws}/issues`,
+    companion: () => `${ws}/companion`,
+    life: () => `${ws}/life`,
     usage: () => `${ws}/usage`,
     runReviews: () => `${ws}/run-reviews`,
     issues: () => `${ws}/issues`,

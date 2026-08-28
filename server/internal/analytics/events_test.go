@@ -29,13 +29,14 @@ func TestMetricsOnlyEventsContainOnlyMetricInputs(t *testing.T) {
 	}
 	for _, event := range cases {
 		var want map[string]any
-		if event.Name == EventRuntimeReady {
+		switch event.Name {
+		case EventRuntimeReady:
 			want = map[string]any{"runtime_mode": "local", "provider": "codex", "ready_duration_ms": int64(123)}
-		} else if event.Name == EventRuntimeFailed {
+		case EventRuntimeFailed:
 			want = map[string]any{"runtime_mode": "local", "provider": "codex", "failure_reason": "registration_failed", "recoverable": true}
-		} else if event.Name == EventRuntimeRegistered || event.Name == EventRuntimeOffline {
+		case EventRuntimeRegistered, EventRuntimeOffline:
 			want = map[string]any{"runtime_mode": "local", "provider": "codex"}
-		} else {
+		default:
 			want = map[string]any{"cadence": "manual", "trigger_kind": "manual"}
 		}
 		if !reflect.DeepEqual(event.Properties, want) {

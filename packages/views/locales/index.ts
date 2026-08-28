@@ -22,6 +22,7 @@ import zhHansUsage from "./zh-Hans/usage.json";
 import zhHansUi from "./zh-Hans/ui.json";
 import zhHansSquads from "./zh-Hans/squads.json";
 import zhHansRunReviews from "./zh-Hans/run-reviews.json";
+import zhHansLife from "./zh-Hans/life.json";
 
 export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
   "zh-Hans": {
@@ -48,5 +49,6 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: zhHansUi,
     squads: zhHansSquads,
     "run-reviews": zhHansRunReviews,
+    life: zhHansLife,
   },
 };

@@ -26,6 +26,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.WorkspaceID == "" {
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
+	governedLifeTask := isGovernedLifeTask(task)
+	if governedLifeTask {
+		// Life history is reconstructed from Multica's governed context on every
+		// run. Provider-native sessions would retain corrected or permanently
+		// deleted material outside that governance boundary.
+		task.PriorSessionID = ""
+	}
 
 	// task.Repos is the authoritative repo list for this task — when the
 	// claimed task belongs to a project with github_repo resources the server
@@ -318,6 +325,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			agentEnv[k] = v
 		}
 	}
+	if provider == "codebuddy" && governedLifeTask {
+		applyCodeBuddyLifeIsolation(agentEnv, env.RootDir)
+	}
 	if provider == "codex" {
 		cleanupTaskEnv, err := writeTaskContextEnv(env.WorkDir, agentEnv)
 		if err != nil {
@@ -373,6 +383,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		mcpConfig = task.Agent.McpConfig
 	}
 	customArgs := runtimeProfileCustomArgs(profileFixedArgs, agentCustomArgs)
+	if provider == "codebuddy" && governedLifeTask {
+		customArgs = append(customArgs, "--no-session-persistence")
+	}
 	// Two-tier model resolution: an explicit agent.model wins,
 	// then the daemon-wide MULTICA_<PROVIDER>_MODEL env var. If
 	// both are empty we deliberately pass "" through — each
@@ -430,6 +443,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		Timeout:                   d.cfg.AgentTimeout,
 		SemanticInactivityTimeout: d.cfg.CodexSemanticInactivityTimeout,
 		ResumeSessionID:           task.PriorSessionID,
+		DisableSessionPersistence: governedLifeTask,
 		ExtraArgs:                 extraArgs,
 		CustomArgs:                customArgs,
 		AllowedBuiltinTools:       allowedBuiltinToolsForExecutionPolicy(provider, toolPolicy),
@@ -464,6 +478,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
 	if err != nil {
 		return TaskResult{}, err
+	}
+	if governedLifeTask {
+		result.SessionID = ""
 	}
 
 	// Fallback: if session resume failed before establishing a session, retry
@@ -697,6 +714,17 @@ func runtimeProfileCustomArgs(fixedArgs, agentArgs []string) []string {
 	args := make([]string, 0, len(fixedArgs)+len(agentArgs))
 	args = append(args, fixedArgs...)
 	return append(args, agentArgs...)
+}
+
+func isGovernedLifeTask(task Task) bool {
+	return task.IsCompanion || task.LifeJobID != ""
+}
+
+func applyCodeBuddyLifeIsolation(env map[string]string, rootDir string) {
+	env["CODEBUDDY_CONFIG_DIR"] = filepath.Join(rootDir, "codebuddy-life")
+	env["CODEBUDDY_CODE_DISABLE_AUTO_MEMORY"] = "1"
+	env["CODEBUDDY_DISABLE_AUTO_MEMORY"] = "1"
+	env["CODEBUDDY_MEMORY_ENABLED"] = "false"
 }
 
 func agentFailureMessage(provider string, result agent.Result) string {

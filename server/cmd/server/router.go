@@ -940,6 +940,86 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 			r.Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
 
+			// Life companion
+			r.Route("/api/life", func(r chi.Router) {
+				r.Route("/companion", func(r chi.Router) {
+					r.Get("/", h.GetCompanionProfile)
+					r.Put("/", h.UpsertCompanionProfile)
+				})
+				r.Route("/memories", func(r chi.Router) {
+					r.Get("/", h.ListLifeMemories)
+					r.Post("/", h.CreateLifeMemory)
+					r.Route("/{memoryId}", func(r chi.Router) {
+						r.Get("/revisions", h.ListLifeMemoryRevisions)
+						r.Patch("/", h.UpdateLifeMemory)
+						r.Delete("/", h.DeleteLifeMemory)
+						r.Post("/confirm", h.ConfirmLifeMemory)
+						r.Post("/downgrade", h.DowngradeLifeMemory)
+						r.Post("/archive", h.ArchiveLifeMemory)
+					})
+				})
+				r.Route("/identity", func(r chi.Router) {
+					r.Get("/versions", h.ListLifeIdentityVersions)
+					r.Post("/versions", h.CreateLifeIdentityVersion)
+					r.Post("/versions/{versionId}/activate", h.ActivateLifeIdentityVersion)
+				})
+				r.Get("/relationship-events", h.ListLifeRelationshipEvents)
+				r.Post("/relationship-events/{eventId}/resolve", h.ResolveLifeRelationshipEvent)
+				r.Route("/materials", func(r chi.Router) {
+					r.Get("/", h.ListLifeMaterials)
+					r.Post("/", h.CreateLifeMaterial)
+				})
+				r.Get("/topics", h.ListLifeTopics)
+				r.Patch("/topics/{topicId}", h.UpdateLifeTopic)
+				r.Get("/commitments", h.ListLifeCommitments)
+				r.Patch("/commitments/{commitmentId}", h.UpdateLifeCommitment)
+				r.Get("/internal-thoughts", h.ListLifeInternalThoughts)
+				r.Route("/proposals", func(r chi.Router) {
+					r.Get("/", h.ListLifeActionProposals)
+					r.Post("/", h.CreateLifeActionProposal)
+					r.Post("/{proposalId}/confirm", h.ConfirmLifeActionProposal)
+					r.Post("/{proposalId}/reject", h.RejectLifeActionProposal)
+				})
+				r.Get("/experiments", h.ListLifeExperiments)
+				r.Get("/modules", h.ListLifeModules)
+				r.Patch("/modules/{moduleId}", h.UpdateLifeModule)
+				r.Post("/experiment-rounds/{roundId}/stop", h.StopLifeExperimentRound)
+				r.Post("/experiment-rounds/{roundId}/review", h.ReviewLifeExperimentRound)
+				r.Get("/proactive-checks", h.ListLifeProactiveChecks)
+				r.Route("/proactive-policy", func(r chi.Router) {
+					r.Get("/", h.GetLifeProactivePolicy)
+					r.Put("/", h.UpdateLifeProactivePolicy)
+				})
+				r.Route("/observers", func(r chi.Router) {
+					r.Get("/", h.ListLifeObservers)
+					r.Post("/", h.CreateLifeObserver)
+					r.Patch("/{observerId}", h.UpdateLifeObserver)
+					r.Post("/{observerId}/knowledge", h.AddLifeObserverKnowledge)
+					r.Post("/{observerId}/versions", h.CreateLifeObserverVersion)
+					r.Post("/{observerId}/run", h.RunLifeObserver)
+				})
+				r.Get("/observation-seat", h.ListLifeObservationSeat)
+				r.Patch("/observation-seat/topics/{topicId}", h.UpdateLifeObservationTopic)
+				r.Get("/cognition-jobs", h.ListLifeCognitionJobs)
+				r.Route("/upgrade-evaluations", func(r chi.Router) {
+					r.Get("/", h.ListLifeUpgradeEvaluations)
+					r.Post("/", h.CreateLifeUpgradeEvaluation)
+				})
+				r.Route("/chronicle", func(r chi.Router) {
+					r.Get("/", h.ListLifeChronicleEntries)
+					r.Post("/", h.CreateLifeChronicleEntry)
+					r.Patch("/{entryId}/later-understanding", h.UpdateLifeChronicleLaterUnderstanding)
+				})
+				r.Route("/agent", func(r chi.Router) {
+					r.Post("/evidence/resolve", h.ResolveLifeEvidence)
+					r.Post("/memory-candidates", h.CreateCompanionMemoryCandidate)
+					r.Post("/proposals", h.CreateCompanionActionProposal)
+					r.Post("/proposals/{proposalId}/present", h.PresentCompanionActionProposal)
+					r.Post("/proactive-checks", h.CreateCompanionProactiveCheck)
+					r.Post("/jobs/{jobId}/complete", h.CompleteCompanionCognitionJob)
+				})
+			})
+
 			// Inbox
 			r.Route("/api/inbox", func(r chi.Router) {
 				r.Get("/", h.ListInbox)

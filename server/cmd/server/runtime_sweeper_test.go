@@ -605,12 +605,18 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExpireStaleQueuedTasks failed: %v", err)
 	}
-	if len(batch.Tasks) != 1 {
-		t.Fatalf("expected exactly 1 expired task, got %d", len(batch.Tasks))
-	}
 	taskService.HandleFailedTasks(ctx, batch.Tasks)
-	if batch.Tasks[0].ID.Bytes != parseUUIDBytes(oldTaskID) {
-		t.Fatalf("expired the wrong task: got %x", batch.Tasks[0].ID.Bytes)
+	foundOld := false
+	for _, task := range batch.Tasks {
+		if task.ID.Bytes == parseUUIDBytes(oldTaskID) {
+			foundOld = true
+		}
+		if task.ID.Bytes == parseUUIDBytes(freshTaskID) {
+			t.Fatalf("fresh task was expired: %s", freshTaskID)
+		}
+	}
+	if !foundOld {
+		t.Fatalf("test-owned stale task was not expired; batch size=%d", len(batch.Tasks))
 	}
 
 	var oldStatus, oldReason, oldErr string

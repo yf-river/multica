@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -276,25 +275,6 @@ func parseUUIDOrBadRequest(w http.ResponseWriter, s, fieldName string) (pgtype.U
 		return pgtype.UUID{}, false
 	}
 	return u, true
-}
-
-func parseOptionalUUIDOrBadRequest(w http.ResponseWriter, s, fieldName string) (pgtype.UUID, bool) {
-	if s == "" {
-		return pgtype.UUID{}, true
-	}
-	return parseUUIDOrBadRequest(w, s, fieldName)
-}
-
-func parseBoundedInt32OrBadRequest(w http.ResponseWriter, raw, fieldName string, fallback, maxValue int32) (int32, bool) {
-	if raw == "" {
-		return fallback, true
-	}
-	parsed, err := strconv.Atoi(raw)
-	if err != nil || parsed < 1 || parsed > int(maxValue) {
-		writeError(w, http.StatusBadRequest, fieldName+" must be between 1 and "+strconv.Itoa(int(maxValue)))
-		return 0, false
-	}
-	return int32(parsed), true
 }
 
 func parseRFC3339OrBadRequest(w http.ResponseWriter, raw string) (pgtype.Timestamptz, bool) {

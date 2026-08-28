@@ -117,6 +117,22 @@ import type {
   UpdateExternalCredentialProfileRequest,
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
+  CompanionProfileEnvelope,
+  CompanionProfile,
+  LifeMemory,
+  LifeMemoryKind,
+  LifeMemoryListResponse,
+  UpdateLifeMemoryRequest,
+  LifeProposal,
+  LifeProposalListResponse,
+  LifeExperimentListResponse,
+  LifeExperimentRound,
+  LifeChronicleEntry,
+  LifeChronicleListResponse,
+  LifeProactiveCheckListResponse,
+	LifeIdentityListResponse, LifeRelationshipListResponse, LifeMaterialListResponse, LifeInternalThoughtListResponse, LifeTopicListResponse,
+	LifeCommitmentListResponse, LifeProactivePolicy, LifeObserverListResponse, LifeObservationSeatResponse,
+	LifeModuleListResponse, LifeCognitionJobListResponse, LifeUpgradeEvaluationListResponse,
 } from "../types";
 import { generateUUID } from "../utils";
 import { parseOrThrow, parseWithFallback } from "./schema";
@@ -280,6 +296,29 @@ import {
   GitHubInstallationListResponseSchema,
   GitHubPullRequestListResponseSchema,
   WebhookDeliveryResponseSchema,
+  CompanionProfileEnvelopeSchema,
+  CompanionProfileSchema,
+  LifeMemorySchema,
+  LifeMemoryListSchema,
+  LifeProposalSchema,
+  LifeProposalListSchema,
+  LifeExperimentListSchema,
+  LifeExperimentRoundSchema,
+  LifeChronicleEntrySchema,
+  LifeChronicleListSchema,
+  EMPTY_COMPANION_PROFILE,
+  EMPTY_LIFE_MEMORIES,
+  EMPTY_LIFE_PROPOSALS,
+  EMPTY_LIFE_EXPERIMENTS,
+  EMPTY_LIFE_CHRONICLE,
+  LifeProactiveCheckListSchema,
+  EMPTY_LIFE_PROACTIVE_CHECKS,
+	LifeIdentityListSchema, LifeRelationshipListSchema, LifeMaterialListSchema, LifeInternalThoughtListSchema, LifeTopicListSchema,
+	LifeCommitmentListSchema, LifeProactivePolicySchema, LifeObserverListSchema, LifeObservationSeatSchema,
+	LifeModuleListSchema, LifeCognitionJobListSchema, LifeUpgradeEvaluationListSchema,
+	EMPTY_LIFE_IDENTITIES, EMPTY_LIFE_RELATIONSHIPS, EMPTY_LIFE_MATERIALS, EMPTY_LIFE_INTERNAL_THOUGHTS, EMPTY_LIFE_TOPICS,
+	EMPTY_LIFE_COMMITMENTS, EMPTY_LIFE_OBSERVERS, EMPTY_LIFE_OBSERVATION_SEAT, EMPTY_LIFE_MODULES,
+	EMPTY_LIFE_JOBS, EMPTY_LIFE_UPGRADES,
 } from "./schemas";
 
 export interface LoginResponse {
@@ -1599,6 +1638,164 @@ export class ApiClient extends ApiTransport {
     };
     return this.retryUnknownMutationOnce(attempt);
   }
+
+  // Life companion
+  async getCompanionProfile(): Promise<CompanionProfileEnvelope> {
+    const raw = await this.fetch<unknown>("/api/life/companion");
+    return parseWithFallback(raw, CompanionProfileEnvelopeSchema, EMPTY_COMPANION_PROFILE, {
+      endpoint: "GET /api/life/companion",
+    });
+  }
+
+  async setCompanionProfile(agentId: string): Promise<CompanionProfile> {
+    const raw = await this.fetch<unknown>("/api/life/companion", {
+      method: "PUT",
+      body: JSON.stringify({ agent_id: agentId }),
+    });
+    const envelope = parseOrThrow<{ profile: CompanionProfile }>(raw, CompanionProfileEnvelopeSchema, {
+      endpoint: "PUT /api/life/companion",
+    });
+    return parseOrThrow(envelope.profile, CompanionProfileSchema, {
+      endpoint: "PUT /api/life/companion profile",
+      mayHaveCommitted: true,
+    });
+  }
+
+  async listLifeMemories(status?: string): Promise<LifeMemoryListResponse> {
+    const query = status ? `?status=${encodeURIComponent(status)}` : "";
+    const raw = await this.fetch<unknown>(`/api/life/memories${query}`);
+    return parseWithFallback(raw, LifeMemoryListSchema, EMPTY_LIFE_MEMORIES, {
+      endpoint: "GET /api/life/memories",
+    });
+  }
+
+  async updateLifeMemory(id: string, data: UpdateLifeMemoryRequest): Promise<LifeMemory> {
+    const raw = await this.fetch<unknown>(`/api/life/memories/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LifeMemorySchema, { endpoint: "PATCH /api/life/memories/:id" });
+  }
+
+  async confirmLifeMemory(id: string): Promise<LifeMemory> {
+    const raw = await this.fetch<unknown>(`/api/life/memories/${id}/confirm`, { method: "POST" });
+    return parseOrThrow(raw, LifeMemorySchema, { endpoint: "POST /api/life/memories/:id/confirm" });
+  }
+
+  async downgradeLifeMemory(id: string, kind: LifeMemoryKind): Promise<LifeMemory> {
+    const raw = await this.fetch<unknown>(`/api/life/memories/${id}/downgrade`, {
+      method: "POST", body: JSON.stringify({ kind }),
+    });
+    return parseOrThrow(raw, LifeMemorySchema, { endpoint: "POST /api/life/memories/:id/downgrade" });
+  }
+
+  async archiveLifeMemory(id: string): Promise<LifeMemory> {
+    const raw = await this.fetch<unknown>(`/api/life/memories/${id}/archive`, { method: "POST" });
+    return parseOrThrow(raw, LifeMemorySchema, { endpoint: "POST /api/life/memories/:id/archive" });
+  }
+
+  async deleteLifeMemory(id: string): Promise<void> {
+    await this.fetch(`/api/life/memories/${id}`, { method: "DELETE" });
+  }
+
+	async listLifeMemoryRevisions(id: string): Promise<{ revisions: Array<Record<string, unknown>> }> { return this.fetch(`/api/life/memories/${id}/revisions`); }
+
+  async listLifeProposals(): Promise<LifeProposalListResponse> {
+    const raw = await this.fetch<unknown>("/api/life/proposals");
+    return parseWithFallback(raw, LifeProposalListSchema, EMPTY_LIFE_PROPOSALS, {
+      endpoint: "GET /api/life/proposals",
+    });
+  }
+
+  async createLifeProposal(data: Omit<LifeProposal, "id" | "status" | "expires_at" | "confirmed_at" | "executed_at" | "created_at" | "updated_at">): Promise<LifeProposal> {
+    const raw = await this.fetch<unknown>("/api/life/proposals", {
+      method: "POST", body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LifeProposalSchema, { endpoint: "POST /api/life/proposals" });
+  }
+
+  async confirmLifeProposal(id: string): Promise<unknown> {
+    return this.fetch<unknown>(`/api/life/proposals/${id}/confirm`, { method: "POST" });
+  }
+
+	async rejectLifeProposal(id: string): Promise<LifeProposal> {
+		const raw = await this.fetch<unknown>(`/api/life/proposals/${id}/reject`, { method: "POST" });
+		return parseOrThrow(raw, LifeProposalSchema, { endpoint: "POST /api/life/proposals/:id/reject" });
+	}
+
+  async listLifeExperiments(): Promise<LifeExperimentListResponse> {
+    const raw = await this.fetch<unknown>("/api/life/experiments");
+    return parseWithFallback(raw, LifeExperimentListSchema, EMPTY_LIFE_EXPERIMENTS, {
+      endpoint: "GET /api/life/experiments",
+    });
+  }
+
+  async stopLifeExperimentRound(id: string, reason: string): Promise<LifeExperimentRound> {
+    const raw = await this.fetch<unknown>(`/api/life/experiment-rounds/${id}/stop`, {
+      method: "POST", body: JSON.stringify({ reason }),
+    });
+    return parseOrThrow(raw, LifeExperimentRoundSchema, { endpoint: "POST /api/life/experiment-rounds/:id/stop" });
+  }
+
+  async reviewLifeExperimentRound(id: string, data: { outcome: string; feelings: string; burden: string; companion_correction: string }): Promise<LifeExperimentRound> {
+    const raw = await this.fetch<unknown>(`/api/life/experiment-rounds/${id}/review`, {
+      method: "POST", body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LifeExperimentRoundSchema, { endpoint: "POST /api/life/experiment-rounds/:id/review" });
+  }
+
+  async listLifeChronicle(): Promise<LifeChronicleListResponse> {
+    const raw = await this.fetch<unknown>("/api/life/chronicle");
+    return parseWithFallback(raw, LifeChronicleListSchema, EMPTY_LIFE_CHRONICLE, {
+      endpoint: "GET /api/life/chronicle",
+    });
+  }
+
+  async listLifeProactiveChecks(): Promise<LifeProactiveCheckListResponse> {
+    const raw = await this.fetch<unknown>("/api/life/proactive-checks");
+    return parseWithFallback(raw, LifeProactiveCheckListSchema, EMPTY_LIFE_PROACTIVE_CHECKS, {
+      endpoint: "GET /api/life/proactive-checks",
+    });
+  }
+
+  async updateLifeChronicleLaterUnderstanding(id: string, understanding: string): Promise<LifeChronicleEntry> {
+    const raw = await this.fetch<unknown>(`/api/life/chronicle/${id}/later-understanding`, {
+      method: "PATCH", body: JSON.stringify({ understanding_later: understanding }),
+    });
+    return parseOrThrow(raw, LifeChronicleEntrySchema, { endpoint: "PATCH /api/life/chronicle/:id/later-understanding" });
+  }
+
+	async listLifeIdentityVersions(): Promise<LifeIdentityListResponse> {
+		const raw = await this.fetch<unknown>("/api/life/identity/versions");
+		return parseWithFallback(raw, LifeIdentityListSchema, EMPTY_LIFE_IDENTITIES, { endpoint: "GET /api/life/identity/versions" });
+	}
+
+	async createLifeIdentityVersion(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/identity/versions", { method: "POST", body: JSON.stringify(data) }); }
+	async activateLifeIdentityVersion(id: string): Promise<unknown> { return this.fetch(`/api/life/identity/versions/${id}/activate`, { method: "POST" }); }
+	async listLifeRelationshipEvents(): Promise<LifeRelationshipListResponse> { const raw = await this.fetch<unknown>("/api/life/relationship-events"); return parseWithFallback(raw, LifeRelationshipListSchema, EMPTY_LIFE_RELATIONSHIPS, { endpoint: "GET /api/life/relationship-events" }); }
+	async resolveLifeRelationshipEvent(id: string, status: string, resolution: string): Promise<unknown> { return this.fetch(`/api/life/relationship-events/${id}/resolve`, { method: "POST", body: JSON.stringify({ status, resolution }) }); }
+	async listLifeMaterials(): Promise<LifeMaterialListResponse> { const raw = await this.fetch<unknown>("/api/life/materials"); return parseWithFallback(raw, LifeMaterialListSchema, EMPTY_LIFE_MATERIALS, { endpoint: "GET /api/life/materials" }); }
+	async listLifeInternalThoughts(): Promise<LifeInternalThoughtListResponse> { const raw = await this.fetch<unknown>("/api/life/internal-thoughts"); return parseWithFallback(raw, LifeInternalThoughtListSchema, EMPTY_LIFE_INTERNAL_THOUGHTS, { endpoint: "GET /api/life/internal-thoughts" }); }
+	async createLifeMaterial(content: string): Promise<unknown> { return this.fetch("/api/life/materials", { method: "POST", body: JSON.stringify({ content, metadata: {} }) }); }
+	async listLifeTopics(): Promise<LifeTopicListResponse> { const raw = await this.fetch<unknown>("/api/life/topics"); return parseWithFallback(raw, LifeTopicListSchema, EMPTY_LIFE_TOPICS, { endpoint: "GET /api/life/topics" }); }
+	async updateLifeTopic(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/topics/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
+	async listLifeCommitments(): Promise<LifeCommitmentListResponse> { const raw = await this.fetch<unknown>("/api/life/commitments"); return parseWithFallback(raw, LifeCommitmentListSchema, EMPTY_LIFE_COMMITMENTS, { endpoint: "GET /api/life/commitments" }); }
+	async updateLifeCommitment(id: string, data: Record<string, unknown>): Promise<unknown> { return this.fetch(`/api/life/commitments/${id}`, { method: "PATCH", body: JSON.stringify(data) }); }
+	async getLifeProactivePolicy(): Promise<LifeProactivePolicy> { const raw = await this.fetch<unknown>("/api/life/proactive-policy"); return parseOrThrow(raw, LifeProactivePolicySchema, { endpoint: "GET /api/life/proactive-policy" }); }
+	async updateLifeProactivePolicy(data: LifeProactivePolicy | Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/proactive-policy", { method: "PUT", body: JSON.stringify(data) }); }
+	async listLifeObservers(): Promise<LifeObserverListResponse> { const raw = await this.fetch<unknown>("/api/life/observers"); return parseWithFallback(raw, LifeObserverListSchema, EMPTY_LIFE_OBSERVERS, { endpoint: "GET /api/life/observers" }); }
+	async createLifeObserver(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/observers", { method: "POST", body: JSON.stringify(data) }); }
+	async updateLifeObserver(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/observers/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
+	async addLifeObserverKnowledge(id: string, data: { title: string; content: string; source?: string }): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/knowledge`, { method: "POST", body: JSON.stringify(data) }); }
+	async createLifeObserverVersion(id: string, data: Record<string, unknown>): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/versions`, { method: "POST", body: JSON.stringify(data) }); }
+	async runLifeObserver(id: string): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/run`, { method: "POST" }); }
+	async listLifeObservationSeat(): Promise<LifeObservationSeatResponse> { const raw = await this.fetch<unknown>("/api/life/observation-seat"); return parseWithFallback(raw, LifeObservationSeatSchema, EMPTY_LIFE_OBSERVATION_SEAT, { endpoint: "GET /api/life/observation-seat" }); }
+	async updateLifeObservationTopic(id: string, data: { status: string; companion_response?: string }): Promise<unknown> { return this.fetch(`/api/life/observation-seat/topics/${id}`, { method: "PATCH", body: JSON.stringify(data) }); }
+	async listLifeModules(): Promise<LifeModuleListResponse> { const raw = await this.fetch<unknown>("/api/life/modules"); return parseWithFallback(raw, LifeModuleListSchema, EMPTY_LIFE_MODULES, { endpoint: "GET /api/life/modules" }); }
+	async updateLifeModule(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/modules/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
+	async listLifeCognitionJobs(): Promise<LifeCognitionJobListResponse> { const raw = await this.fetch<unknown>("/api/life/cognition-jobs"); return parseWithFallback(raw, LifeCognitionJobListSchema, EMPTY_LIFE_JOBS, { endpoint: "GET /api/life/cognition-jobs" }); }
+	async listLifeUpgradeEvaluations(): Promise<LifeUpgradeEvaluationListResponse> { const raw = await this.fetch<unknown>("/api/life/upgrade-evaluations"); return parseWithFallback(raw, LifeUpgradeEvaluationListSchema, EMPTY_LIFE_UPGRADES, { endpoint: "GET /api/life/upgrade-evaluations" }); }
+	async createLifeUpgradeEvaluation(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/upgrade-evaluations", { method: "POST", body: JSON.stringify(data) }); }
 
   // Chat Sessions
   async listChatSessions(): Promise<ChatSession[]> {

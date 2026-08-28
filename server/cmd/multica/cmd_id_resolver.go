@@ -152,7 +152,7 @@ func fetchIssueRef(ctx context.Context, client *cli.APIClient, ref string) (reso
 	if c.Display == "" {
 		c.Display = c.ID
 	}
-	return resolvedID{ID: c.ID, Display: c.Display}, nil
+	return resolvedID(c), nil
 }
 
 func looksLikeIssueIdentifier(input string) bool {

@@ -252,17 +252,23 @@ type AgentTaskResponse struct {
 	// relativeWorkDir() for the full rules. Older clients can still read
 	// WorkDir directly; newer UIs should prefer RelativeWorkDir.
 	RelativeWorkDir          string                        `json:"relative_work_dir,omitempty"`
-	TriggerCommentID         *string                       `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
-	TriggerThreadID          string                        `json:"trigger_thread_id,omitempty"`           // root comment ID for the triggering thread
-	TriggerCommentContent    string                        `json:"trigger_comment_content,omitempty"`     // content of the triggering comment
-	TriggerSummary           *string                       `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
-	TriggerAuthorType        string                        `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
-	TriggerAuthorName        string                        `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
-	TriggerCommentCreatedAt  string                        `json:"trigger_comment_created_at,omitempty"`  // timestamp of the triggering comment for responsibility-window timelines
-	NewCommentCount          int                           `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
-	NewCommentsSince         string                        `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
-	ChatSessionID            string                        `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
-	ChatMessage              string                        `json:"chat_message,omitempty"`                // user message for chat tasks
+	TriggerCommentID         *string                       `json:"trigger_comment_id,omitempty"`         // comment that triggered this task
+	TriggerThreadID          string                        `json:"trigger_thread_id,omitempty"`          // root comment ID for the triggering thread
+	TriggerCommentContent    string                        `json:"trigger_comment_content,omitempty"`    // content of the triggering comment
+	TriggerSummary           *string                       `json:"trigger_summary,omitempty"`            // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
+	TriggerAuthorType        string                        `json:"trigger_author_type,omitempty"`        // "agent" or "member" — author kind of the triggering comment
+	TriggerAuthorName        string                        `json:"trigger_author_name,omitempty"`        // display name of the triggering comment author
+	TriggerCommentCreatedAt  string                        `json:"trigger_comment_created_at,omitempty"` // timestamp of the triggering comment for responsibility-window timelines
+	NewCommentCount          int                           `json:"new_comment_count,omitempty"`          // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
+	NewCommentsSince         string                        `json:"new_comments_since,omitempty"`         // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
+	ChatSessionID            string                        `json:"chat_session_id,omitempty"`            // non-empty for chat tasks
+	ChatMessage              string                        `json:"chat_message,omitempty"`               // user message for chat tasks
+	ChatMessageIDs           []string                      `json:"chat_message_ids,omitempty"`           // source ids for evidence-backed companion candidates
+	IsCompanion              bool                          `json:"is_companion,omitempty"`               // this agent is the session creator's configured life companion
+	LifeContext              string                        `json:"life_context,omitempty"`               // confirmed memories for the configured companion; JSON data, not instructions
+	LifeJobID                string                        `json:"life_job_id,omitempty"`
+	LifeJobType              string                        `json:"life_job_type,omitempty"`
+	LifeJobInput             json.RawMessage               `json:"life_job_input,omitempty"`
 	ChatMessageAttachments   []protocol.ChatAttachmentMeta `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
 	AutopilotRunID           string                        `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
 	AutopilotID              string                        `json:"autopilot_id,omitempty"`                // autopilot that spawned this task

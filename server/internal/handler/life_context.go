@@ -1,0 +1,335 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+)
+
+const recentLifeMaterialIndexLimit = 200
+
+// buildGovernedLifeContext assembles only governed shared context. Internal
+// observer judgements and private companion thoughts are intentionally kept
+// out of the common context until their own publication rules expose them.
+func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeRequestScope) (string, error) {
+	result := map[string]any{}
+	profile, err := h.Queries.GetCompanionProfile(ctx, db.GetCompanionProfileParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	})
+	if err == nil && len(profile.ReturnContext) > 0 && string(profile.ReturnContext) != "{}" {
+		result["return_context"] = json.RawMessage(profile.ReturnContext)
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	identity, err := h.Queries.GetActiveLifeIdentity(ctx, db.GetActiveLifeIdentityParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	})
+	if err == nil {
+		result["identity"] = map[string]any{
+			"version":               identity.Version,
+			"stable_core":           json.RawMessage(identity.StableCore),
+			"relationship_contract": json.RawMessage(identity.RelationshipContract),
+			"growth_profile":        json.RawMessage(identity.GrowthProfile),
+			"expression_profile":    json.RawMessage(identity.ExpressionProfile),
+			"interests":             json.RawMessage(identity.Interests),
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	memories, err := h.Queries.ListConfirmedLifeMemoriesForContext(ctx, db.ListConfirmedLifeMemoriesForContextParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: 2_147_483_647,
+	})
+	if err != nil {
+		return "", err
+	}
+	memoryItems := make([]map[string]any, 0, len(memories))
+	for _, memory := range memories {
+		memoryItems = append(memoryItems, map[string]any{
+			"id": uuidToString(memory.ID), "kind": memory.Kind,
+			"content": memory.Content, "confidence": memory.Confidence,
+			"uncertainty": memory.Uncertainty, "scope": json.RawMessage(memory.Scope),
+			"valid_from": timestampToPtr(memory.ValidFrom), "valid_to": timestampToPtr(memory.ValidTo),
+		})
+	}
+	result["confirmed_memories"] = memoryItems
+	candidates, err := h.Queries.ListLifeMemoriesByStatus(ctx, db.ListLifeMemoriesByStatusParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: "candidate"})
+	if err != nil {
+		return "", err
+	}
+	candidateItems := make([]map[string]any, 0, len(candidates))
+	for _, memory := range candidates {
+		candidateItems = append(candidateItems, map[string]any{"id": uuidToString(memory.ID), "kind": memory.Kind, "content": memory.Content, "confidence": memory.Confidence, "urgency": memory.Urgency, "uncertainty": memory.Uncertainty, "scope": json.RawMessage(memory.Scope), "review_after": timestampToPtr(memory.ReviewAfter)})
+	}
+	result["candidate_memories_not_facts"] = candidateItems
+
+	topics, err := h.Queries.ListLifeTopics(ctx, db.ListLifeTopicsParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: pgtype.Text{},
+	})
+	if err != nil {
+		return "", err
+	}
+	topicItems := make([]map[string]any, 0, len(topics))
+	for _, topic := range topics {
+		if topic.Status == "archived" || topic.Status == "resolved" {
+			continue
+		}
+		topicItems = append(topicItems, map[string]any{
+			"id": uuidToString(topic.ID), "title": topic.Title, "summary": topic.Summary,
+			"status": topic.Status, "confidence": topic.Confidence,
+			"uncertainty": topic.Uncertainty, "last_observed_at": timestampToString(topic.LastObservedAt),
+		})
+	}
+	result["current_topics"] = topicItems
+
+	commitments, err := h.Queries.ListLifeCommitments(ctx, db.ListLifeCommitmentsParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, Status: pgtype.Text{},
+	})
+	if err != nil {
+		return "", err
+	}
+	commitmentItems := make([]map[string]any, 0, len(commitments))
+	for _, commitment := range commitments {
+		if commitment.Status != "confirmed" {
+			continue
+		}
+		commitmentItems = append(commitmentItems, map[string]any{
+			"id": uuidToString(commitment.ID), "content": commitment.Content,
+			"due_at": timestampToPtr(commitment.DueAt), "revisit_after": timestampToPtr(commitment.RevisitAfter),
+		})
+	}
+	result["confirmed_commitments"] = commitmentItems
+
+	modules, err := h.Queries.ListLifeModules(ctx, db.ListLifeModulesParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if err != nil {
+		return "", err
+	}
+	moduleItems := make([]map[string]any, 0, len(modules))
+	for _, module := range modules {
+		if module.Status != "active" {
+			continue
+		}
+		versions, err := h.Queries.ListLifeModuleVersions(ctx, module.ID)
+		if err != nil {
+			return "", err
+		}
+		for _, version := range versions {
+			if version.Version == module.CurrentVersion {
+				moduleItems = append(moduleItems, map[string]any{"id": uuidToString(module.ID), "name": module.Name, "version": version.Version, "definition": json.RawMessage(version.Definition)})
+				break
+			}
+		}
+	}
+	result["active_life_modules"] = moduleItems
+
+	experiments, err := h.Queries.ListLifeExperiments(ctx, db.ListLifeExperimentsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if err != nil {
+		return "", err
+	}
+	rounds, err := h.Queries.ListLifeExperimentRounds(ctx, db.ListLifeExperimentRoundsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+	if err != nil {
+		return "", err
+	}
+	experimentByID := make(map[string]db.LifeExperiment, len(experiments))
+	for _, experiment := range experiments {
+		experimentByID[uuidToString(experiment.ID)] = experiment
+	}
+	experimentItems := make([]map[string]any, 0)
+	for _, round := range rounds {
+		if round.Status != "running" && round.Status != "awaiting_review" {
+			continue
+		}
+		experiment := experimentByID[uuidToString(round.ExperimentID)]
+		experimentItems = append(experimentItems, map[string]any{"experiment_id": uuidToString(round.ExperimentID), "round_id": uuidToString(round.ID), "title": experiment.Title, "problem": experiment.Problem, "hypothesis": experiment.Hypothesis, "status": round.Status, "plan": json.RawMessage(round.Plan), "ends_at": timestampToPtr(round.EndsAt), "review_draft": json.RawMessage(round.ReviewDraft)})
+	}
+	result["active_experiments"] = experimentItems
+
+	materials, err := h.Queries.ListLifeMaterials(ctx, db.ListLifeMaterialsParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: recentLifeMaterialIndexLimit,
+	})
+	if err != nil {
+		return "", err
+	}
+	materialItems := make([]map[string]any, 0, len(materials))
+	for _, material := range materials {
+		materialItems = append(materialItems, map[string]any{
+			"id": uuidToString(material.ID), "source_type": material.SourceType,
+			"occurred_at": timestampToString(material.OccurredAt),
+			"excerpt":     lifeContextExcerpt(material.Content, 240),
+		})
+	}
+	result["recent_material_index"] = materialItems
+
+	chronicles, err := h.Queries.ListLifeChronicleContextEntries(ctx, db.ListLifeChronicleContextEntriesParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	})
+	if err != nil {
+		return "", err
+	}
+	chronicleItems := make([]map[string]any, 0, len(chronicles))
+	for _, entry := range chronicles {
+		chronicleItems = append(chronicleItems, map[string]any{
+			"id": uuidToString(entry.ID), "period_kind": entry.PeriodKind,
+			"period_start": timestampToString(entry.PeriodStart), "period_end": timestampToString(entry.PeriodEnd),
+			"facts": entry.Facts, "understanding_later": entry.UnderstandingLater,
+		})
+	}
+	result["chronicle_index"] = chronicleItems
+
+	events, err := h.Queries.ListLifeRelationshipEvents(ctx, db.ListLifeRelationshipEventsParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	})
+	if err != nil {
+		return "", err
+	}
+	eventItems := make([]map[string]any, 0, len(events))
+	for _, event := range events {
+		if event.Status == "resolved" {
+			continue
+		}
+		eventItems = append(eventItems, map[string]any{
+			"id": uuidToString(event.ID), "type": event.EventType, "status": event.Status,
+			"user_position": event.UserPosition, "companion_position": event.CompanionPosition,
+			"context": event.Context, "revisit_after": timestampToPtr(event.RevisitAfter),
+		})
+	}
+	result["open_relationship_events"] = eventItems
+
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func lifeContextExcerpt(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes]) + "…"
+}
+
+func (h *Handler) addLifeInternalThoughts(ctx context.Context, result map[string]any, scope lifeRequestScope, agentID pgtype.UUID) error {
+	thoughts, err := h.Queries.ListLifeInternalThoughts(ctx, db.ListLifeInternalThoughtsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: agentID, Status: pgtype.Text{String: "active", Valid: true}})
+	if err != nil {
+		return err
+	}
+	items := make([]map[string]any, 0, len(thoughts))
+	for _, thought := range thoughts {
+		items = append(items, map[string]any{"id": uuidToString(thought.ID), "type": thought.ThoughtType, "title": thought.Title, "content": thought.Content, "metadata": json.RawMessage(thought.Metadata), "last_developed_at": timestampToString(thought.LastDevelopedAt)})
+	}
+	result["agent_internal_thoughts"] = items
+	return nil
+}
+
+func (h *Handler) buildCompanionChatLifeContext(ctx context.Context, scope lifeRequestScope, agentID pgtype.UUID) (string, error) {
+	governed, err := h.buildGovernedLifeContext(ctx, scope)
+	if err != nil {
+		return "", err
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(governed), &result); err != nil {
+		return "", err
+	}
+	if err := h.addLifeInternalThoughts(ctx, result, scope, agentID); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(result)
+	return string(raw), err
+}
+
+func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScope, jobType string, agentID pgtype.UUID) (string, error) {
+	governed, err := h.buildGovernedLifeContext(ctx, scope)
+	if err != nil {
+		return "", err
+	}
+	if jobType == "observation_aggregate" {
+		var result map[string]any
+		if err := json.Unmarshal([]byte(governed), &result); err != nil {
+			return "", err
+		}
+		judgements, err := h.Queries.ListPublishedLifeObserverJudgements(ctx, db.ListPublishedLifeObserverJudgementsParams{
+			WorkspaceID: scope.workspaceID, UserID: scope.userID,
+		})
+		if err != nil {
+			return "", err
+		}
+		items := make([]map[string]any, 0, len(judgements))
+		for _, item := range judgements {
+			items = append(items, map[string]any{
+				"id": uuidToString(item.ID), "observer_name": item.ObserverName, "title": item.Title,
+				"content": item.Content, "evidence": json.RawMessage(item.Evidence),
+				"confidence": item.Confidence, "uncertainty": item.Uncertainty,
+			})
+		}
+		result["published_observer_judgements"] = items
+		topics, err := h.Queries.ListLifeObservationTopics(ctx, db.ListLifeObservationTopicsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID})
+		if err != nil {
+			return "", err
+		}
+		topicItems := make([]map[string]any, 0, len(topics))
+		for _, topic := range topics {
+			if topic.Status == "archived" || topic.Status == "resolved" {
+				continue
+			}
+			topicItems = append(topicItems, map[string]any{"id": uuidToString(topic.ID), "title": topic.Title, "summary": topic.Summary, "status": topic.Status})
+		}
+		result["existing_observation_topics"] = topicItems
+		if err := h.addLifeInternalThoughts(ctx, result, scope, agentID); err != nil {
+			return "", err
+		}
+		raw, err := json.Marshal(result)
+		return string(raw), err
+	}
+	if jobType != "observer_run" {
+		var result map[string]any
+		if err := json.Unmarshal([]byte(governed), &result); err != nil {
+			return "", err
+		}
+		if err := h.addLifeInternalThoughts(ctx, result, scope, agentID); err != nil {
+			return "", err
+		}
+		raw, err := json.Marshal(result)
+		return string(raw), err
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(governed), &result); err != nil {
+		return "", err
+	}
+	observer, err := h.Queries.GetLifeObserverForAgent(ctx, db.GetLifeObserverForAgentParams{
+		WorkspaceID: scope.workspaceID, UserID: scope.userID, AgentID: agentID,
+	})
+	if err != nil {
+		return "", err
+	}
+	version, err := h.Queries.GetCurrentLifeObserverVersion(ctx, observer.ID)
+	if err != nil {
+		return "", err
+	}
+	knowledge, err := h.Queries.ListLifeObserverKnowledge(ctx, observer.ID)
+	if err != nil {
+		return "", err
+	}
+	items := make([]map[string]any, 0, len(knowledge))
+	for _, item := range knowledge {
+		items = append(items, map[string]any{
+			"id": uuidToString(item.ID), "title": item.Title, "content": item.Content, "source": item.Source,
+		})
+	}
+	result["observer_identity"] = map[string]any{
+		"id": uuidToString(observer.ID), "name": observer.Name, "basis_type": observer.BasisType,
+		"personality": json.RawMessage(version.Personality), "perspective": json.RawMessage(version.Perspective),
+		"expression_profile": json.RawMessage(version.ExpressionProfile), "knowledge": items,
+	}
+	if err := h.addLifeInternalThoughts(ctx, result, scope, agentID); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(result)
+	return string(raw), err
+}

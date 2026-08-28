@@ -31,6 +31,7 @@
     "./auth": "./auth/index.ts",
     "./search": "./search/index.ts",
     "./chat": "./chat/index.ts",
+    "./life": "./life/index.ts",
     "./settings": "./settings/index.ts",
     "./lark": "./lark/bind-page.tsx",
     "./platform": "./platform/index.ts",

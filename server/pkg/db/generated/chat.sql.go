@@ -181,6 +181,41 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 	return i, err
 }
 
+const getChatMessageForLifeEvidence = `-- name: GetChatMessageForLifeEvidence :one
+SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms
+FROM chat_message message
+JOIN chat_session session ON session.id = message.chat_session_id
+WHERE message.id = $1
+  AND session.workspace_id = $2
+  AND session.creator_id = $3
+`
+
+type GetChatMessageForLifeEvidenceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+}
+
+type GetChatMessageForLifeEvidenceRow struct {
+	ChatMessage ChatMessage `json:"chat_message"`
+}
+
+func (q *Queries) GetChatMessageForLifeEvidence(ctx context.Context, arg GetChatMessageForLifeEvidenceParams) (GetChatMessageForLifeEvidenceRow, error) {
+	row := q.db.QueryRow(ctx, getChatMessageForLifeEvidence, arg.ID, arg.WorkspaceID, arg.CreatorID)
+	var i GetChatMessageForLifeEvidenceRow
+	err := row.Scan(
+		&i.ChatMessage.ID,
+		&i.ChatMessage.ChatSessionID,
+		&i.ChatMessage.Role,
+		&i.ChatMessage.Content,
+		&i.ChatMessage.TaskID,
+		&i.ChatMessage.CreatedAt,
+		&i.ChatMessage.FailureReason,
+		&i.ChatMessage.ElapsedMs,
+	)
+	return i, err
+}
+
 const getChatResumePointer = `-- name: GetChatResumePointer :one
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE chat_session_id = $1

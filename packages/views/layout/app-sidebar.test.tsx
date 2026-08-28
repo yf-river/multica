@@ -90,6 +90,8 @@ vi.mock("../i18n", () => ({
     t: (sel: (s: any) => string) =>
       sel({
         nav: {
+          companion: "搭子",
+          life: "人生",
           inbox: "收件箱",
           my_issues: "我的 issue",
           issues: "任务",
@@ -126,6 +128,8 @@ vi.mock("@multica/core/paths", () => ({
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
   useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
   useWorkspacePaths: () => ({
+    companion: () => "/acme/companion",
+    life: () => "/acme/life",
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",

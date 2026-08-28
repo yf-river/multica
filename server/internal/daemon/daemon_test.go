@@ -156,6 +156,40 @@ func TestIsBlockedEnvKey(t *testing.T) {
 	}
 }
 
+func TestGovernedLifeTaskIsolation(t *testing.T) {
+	t.Parallel()
+
+	if isGovernedLifeTask(Task{}) {
+		t.Fatal("ordinary task must not use life isolation")
+	}
+	if !isGovernedLifeTask(Task{IsCompanion: true}) {
+		t.Fatal("companion chat must use life isolation")
+	}
+	if !isGovernedLifeTask(Task{LifeJobID: "job-1"}) {
+		t.Fatal("life cognition job must use life isolation")
+	}
+
+	env := map[string]string{
+		"CODEBUDDY_CONFIG_DIR":               "/untrusted",
+		"CODEBUDDY_CODE_DISABLE_AUTO_MEMORY": "0",
+	}
+	applyCodeBuddyLifeIsolation(env, "/workspaces/task-1")
+	if got := env["CODEBUDDY_CONFIG_DIR"]; got != "/workspaces/task-1/codebuddy-life" {
+		t.Fatalf("CODEBUDDY_CONFIG_DIR = %q", got)
+	}
+	for _, key := range []string{
+		"CODEBUDDY_CODE_DISABLE_AUTO_MEMORY",
+		"CODEBUDDY_DISABLE_AUTO_MEMORY",
+	} {
+		if env[key] != "1" {
+			t.Fatalf("%s = %q, want 1", key, env[key])
+		}
+	}
+	if env["CODEBUDDY_MEMORY_ENABLED"] != "false" {
+		t.Fatalf("CODEBUDDY_MEMORY_ENABLED = %q", env["CODEBUDDY_MEMORY_ENABLED"])
+	}
+}
+
 func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	t.Parallel()
 

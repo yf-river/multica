@@ -97,6 +97,14 @@ WHERE task_id = $1 AND role = 'user'
 ORDER BY created_at ASC, id ASC
 LIMIT 1;
 
+-- name: GetChatMessageForLifeEvidence :one
+SELECT sqlc.embed(message)
+FROM chat_message message
+JOIN chat_session session ON session.id = message.chat_session_id
+WHERE message.id = $1
+  AND session.workspace_id = $2
+  AND session.creator_id = $3;
+
 -- name: CreateChatTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id, initiator_user_id)
 VALUES ($1, $2, NULL, 'queued', $3, $4, $5)

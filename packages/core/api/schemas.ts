@@ -16,3 +16,4 @@ export * from "./schemas-pins";
 export * from "./schemas-external-credentials";
 export * from "./schemas-lark";
 export * from "./schemas-github";
+export * from "./schemas-life";
