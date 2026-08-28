@@ -721,7 +721,7 @@ func permissionModeForExecutionPolicy(provider string, policy executionpolicy.Po
 		return ""
 	}
 	if policy.IsLifeCognition() {
-		return "bypassPermissions"
+		return "dontAsk"
 	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return "bypassPermissions"

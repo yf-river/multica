@@ -220,7 +220,7 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if got := allowedToolsForExecutionPolicy("codebuddy", life); len(got) != 1 || got[0] != "Bash(multica life *)" {
 		t.Fatalf("life cognition scoped allowed tools = %v", got)
 	}
-	if got := permissionModeForExecutionPolicy("codebuddy", life); got != "bypassPermissions" {
+	if got := permissionModeForExecutionPolicy("codebuddy", life); got != "dontAsk" {
 		t.Fatalf("life cognition permission mode = %q", got)
 	}
 	if got := maxTurnsForExecutionPolicy(0, life); got != 12 {

@@ -44,8 +44,8 @@ func assertPromptExcludes(t *testing.T, out string, values ...string) {
 func TestBuildLifeJobPromptUsesOnlyTheCurrentJobContract(t *testing.T) {
 	out := BuildPrompt(Task{LifeJobID: "job-1", LifeJobType: "proactive_check"})
 	assertPromptContains(t, out,
-		"proactive_decision{status,trigger_source,reason,message,context_snapshot",
-		"do not inspect the product repository or source code",
+		"proactive_decision:{status:string,trigger_source:string,reason:string,message:string,context_snapshot:object",
+		"inspect the product repository or source code",
 		"never invent an ID",
 		"must be an RFC3339 timestamp",
 		"never submit synthetic or reduced probe outputs",
@@ -55,6 +55,19 @@ func TestBuildLifeJobPromptUsesOnlyTheCurrentJobContract(t *testing.T) {
 		"Record the decision with `multica life check`",
 		"memory_candidates[{kind",
 	)
+}
+
+func TestBuildChronicleLifeJobPromptPinsScalarNarrativeAndDirectSubmission(t *testing.T) {
+	out := BuildPrompt(Task{LifeJobID: "job-chronicle", LifeJobType: "chronicle_generate"})
+	assertPromptContains(t, out,
+		"facts:string",
+		"feelings:string",
+		"actions:string",
+		"--output-json '<JSON object>'",
+		"Do not create a temporary file",
+		"Do not call `--help`",
+	)
+	assertPromptExcludes(t, out, "--output-file <path>")
 }
 
 func tapdSource(resourceID, status string) *protocol.TaskSourceContext {

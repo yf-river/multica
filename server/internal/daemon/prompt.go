@@ -63,7 +63,7 @@ func buildLifeJobPrompt(task Task) string {
 	}
 	b.WriteString("\nUse semantic model judgment and the governed task context. Never upgrade a temporary feeling into a fact, decision, plan, or commitment. Preserve evidence, counterevidence, confidence, uncertainty, and time.\n")
 	b.WriteString("The context contains exact new materials plus compact long-term indexes, not the user's entire raw history. When an older material or chronicle may change the judgment, resolve its typed reference with `multica life evidence resolve --ref material:<id> --ref chronicle:<id>` before concluding. Do not guess unavailable evidence.\n")
-	b.WriteString("For this background job, use only `multica life evidence resolve` when exact older evidence is necessary and `multica life job complete` to submit the result. Do not call other life mutation commands and do not inspect the product repository or source code to infer the contract. Internal thoughts and drafts may be developed freely. Shared memories, tasks, experiments, modules, personality rules, and reality changes still require the user's confirmation.\n")
+	b.WriteString("For this background job, use only `multica life evidence resolve` when exact older evidence is necessary and `multica life job complete` to submit the result. Do not call `--help`, inspect the working directory, create files, call other life mutation commands, or inspect the product repository or source code to infer the contract. Internal thoughts and drafts may be developed freely. Shared memories, tasks, experiments, modules, personality rules, and reality changes still require the user's confirmation.\n")
 	b.WriteString("Return a structured job result using only this job's fields: " + lifeJobOutputContract(task.LifeJobType) + ". Here `evidence` always uses [{source_type,source_id,excerpt,observed_at,stance}], with stance=supports|contradicts|context. Every statement derived from user material must cite its exact sources so permanent deletion can propagate; omit the record when its source cannot be named. Reuse an ID only when that exact ID was supplied by the governed context; never invent an ID. Every non-empty due_at, revisit_after, expires_at, observed_at, period_start, and period_end must be an RFC3339 timestamp, never a prose condition. Omit unsupported conclusions; an empty object is valid only when it is the honest final result, never as a schema probe.\n")
 	b.WriteString("Enum rules: memory kind=current_expression|weak_signal|understanding|fact|plan|commitment; topic status=candidate|active|contradicted|resolved|archived; internal thought type=interest|opinion|question|research|draft; relationship type=conflict|agreement|boundary|reunion and status=open|waiting|resolved|retained_difference; experiment observation type=natural_material|user_checkin|companion_inference|result; observer judgement status=internal|published|withdrawn; observation topic status=open|surfaced|discussing|resolved|archived; chronicle period_kind=day|week|month|year|event.\n")
 	b.WriteString("Shared-change proposal_type=experiment_start|experiment_extend|workspace_issue|agent_action|project_create|module_adoption|memory_change|identity_change. Payloads: workspace_issue{issue_title,issue_description}; agent_action{action_title,action_instructions} queues the companion to use its configured tools only after confirmation; project_create{project_title,project_description}; module_adoption{module_name,module_id?,module_definition,source_experiment_id?}; memory_change{memory_id,memory_action=confirm|correct|downgrade|archive,memory_kind?,memory_content?,memory_confidence?,memory_urgency?,memory_uncertainty?}; identity_change{stable_core,relationship_contract,growth_profile,expression_profile,interests,change_reason}; experiments use {experiment_id?,previous_round_id?,problem,hypothesis,method,plan,starts_at,ends_at,memory_ids,issue_title?,issue_description?}. Never place a shared change only in prose.\n")
@@ -91,35 +91,43 @@ func buildLifeJobPrompt(task Task) string {
 	case "upgrade_evaluation":
 		b.WriteString("Evaluate the candidate personality/model behavior against every supplied relationship scenario. For each scenario, judge semantic understanding, personality consistency, and relationship quality, and separately judge whether the hard relationship principles passed. Put result={total,passed,pass_rate,hard_principles_passed,hard_principles_total,scenarios:[{index,passed,hard_principle_passed,semantics,personality,relationship,reason}],improvements,regressions,unknowns}. Mark the evaluation passed only when every hard principle passes and pass_rate is at least 0.85. Recommend rollback on any core-contract regression.\n")
 	}
-	b.WriteString("When finished, write the structured result to one temporary JSON file and call `multica life job complete --job-id " + task.LifeJobID + " --output-file <path>`. If validation rejects it, correct that same result once from the exact error; never submit synthetic or reduced probe outputs. A successful completion is final: stop immediately and return.\n")
+	b.WriteString("When finished, call `multica life job complete --job-id " + task.LifeJobID + " --output-json '<JSON object>'` directly. Do not create a temporary file. If validation rejects the result, correct that same result once from the exact error; never submit synthetic or reduced probe outputs. A successful completion is final: stop immediately and return.\n")
 	return b.String()
 }
 
 func lifeJobOutputContract(jobType string) string {
-	const evidence = "evidence[{source_type,source_id,excerpt,observed_at,stance}]"
+	const evidence = "evidence:[{source_type:string,source_id:UUID,excerpt:string,observed_at:RFC3339,stance:supports|contradicts|context}]"
+	const memory = "memory_candidates:[{kind:string,content:string,confidence:number,urgency:number,uncertainty:string," + evidence + "}]"
+	const topic = "topics:[{topic_id?:UUID,title:string,summary:string,status:string,confidence:number,uncertainty:string,memory_ids:[UUID],relations:[string]," + evidence + "}]"
+	const commitment = "commitments:[{content:string,source_memory_id:UUID,due_at:RFC3339,revisit_after:RFC3339," + evidence + "}]"
+	const thought = "internal_thoughts:[{type:string,title:string,content:string,metadata:object," + evidence + "}]"
+	const relationship = "relationship_events:[{type:string,status:string,user_position:string,companion_position:string,context:string,revisit_after:RFC3339," + evidence + "}]"
+	const proposal = "action_proposals:[{proposal_type:string,title:string,summary:string,payload:object,expires_at:RFC3339," + evidence + "}]"
+	const proactive = "proactive_decision:{status:string,trigger_source:string,reason:string,message:string,context_snapshot:object," + evidence + "}"
+	const chronicle = "chronicles:[{period_kind:string,period_start:RFC3339,period_end:RFC3339,facts:string,feelings:string,understanding_then:string,actions:string,understanding_later:string," + evidence + "}]"
 	switch jobType {
 	case "understand_materials":
-		return "memory_candidates[{kind,content,confidence,urgency,uncertainty," + evidence + "}], topics[{topic_id?,title,summary,status,confidence,uncertainty,memory_ids,relations," + evidence + "}], commitments[{content,source_memory_id,due_at,revisit_after," + evidence + "}], internal_thoughts[{type,title,content,metadata," + evidence + "}], relationship_events[{type,status,user_position,companion_position,context,revisit_after," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}], proactive_decision{status,trigger_source,reason,message,context_snapshot," + evidence + "}, chronicles[{period_kind,period_start,period_end,facts,feelings,understanding_then,actions,understanding_later," + evidence + "}"
+		return memory + ", " + topic + ", " + commitment + ", " + thought + ", " + relationship + ", " + proposal + ", " + proactive + ", " + chronicle
 	case "review_memories":
-		return "topics[{topic_id,title,summary,status,confidence,uncertainty,memory_ids,relations," + evidence + "}], internal_thoughts[{type,title,content,metadata," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}]"
+		return topic + ", " + thought + ", " + proposal
 	case "develop_thought":
-		return "internal_thoughts[{type,title,content,metadata," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}]"
+		return thought + ", " + proposal
 	case "proactive_check":
-		return "proactive_decision{status,trigger_source,reason,message,context_snapshot," + evidence + "}"
+		return proactive
 	case "proactive_review":
-		return "proactive_assessment{check_id,value_assessment,minimum_interval_hours}"
+		return "proactive_assessment:{check_id:UUID,value_assessment:string,minimum_interval_hours:integer}"
 	case "experiment_check":
-		return "experiment_observations[{round_id,material_id,type,content,observed_at}], experiment_review{round_id,outcome,feelings,burden,companion_correction,module_proposal," + evidence + "}, action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}]"
+		return "experiment_observations:[{round_id:UUID,material_id:UUID,type:string,content:string,observed_at:RFC3339}], experiment_review:{round_id:UUID,outcome:string,feelings:string,burden:string,companion_correction:string,module_proposal:object," + evidence + "}, " + proposal
 	case "observer_run":
-		return "observer_judgements[{status,title,content," + evidence + ",confidence,uncertainty}]"
+		return "observer_judgements:[{status:string,title:string,content:string," + evidence + ",confidence:number,uncertainty:string}]"
 	case "observation_aggregate":
-		return "observation_topics[{topic_id?,title,summary,status,judgement_ids}]"
+		return "observation_topics:[{topic_id?:UUID,title:string,summary:string,status:string,judgement_ids:[UUID]}]"
 	case "chronicle_generate":
-		return "chronicles[{period_kind,period_start,period_end,facts,feelings,understanding_then,actions,understanding_later," + evidence + "}]"
+		return chronicle
 	case "relationship_reunion":
-		return "memory_candidates[{kind,content,confidence,urgency,uncertainty," + evidence + "}], topics[{topic_id?,title,summary,status,confidence,uncertainty,memory_ids,relations," + evidence + "}], commitments[{content,source_memory_id,due_at,revisit_after," + evidence + "}], internal_thoughts[{type,title,content,metadata," + evidence + "}], relationship_events[{type,status,user_position,companion_position,context,revisit_after," + evidence + "}], action_proposals[{proposal_type,title,summary,payload,expires_at," + evidence + "}], proactive_decision{status,trigger_source,reason,message,context_snapshot," + evidence + "}"
+		return memory + ", " + topic + ", " + commitment + ", " + thought + ", " + relationship + ", " + proposal + ", " + proactive
 	case "upgrade_evaluation":
-		return "upgrade_evaluation{evaluation_id,status,result,rollback_recommended," + evidence + "}"
+		return "upgrade_evaluation:{evaluation_id:UUID,status:string,result:object,rollback_recommended:boolean," + evidence + "}"
 	default:
 		return "summary"
 	}
