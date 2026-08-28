@@ -10,6 +10,11 @@ RETURNING *;
 SELECT * FROM life_action_proposal
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
+-- name: GetLifeActionProposalForUpdate :one
+SELECT * FROM life_action_proposal
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+FOR UPDATE;
+
 -- name: ListLifeActionProposals :many
 SELECT * FROM life_action_proposal
 WHERE workspace_id = $1 AND user_id = $2 AND status <> 'internal_draft'

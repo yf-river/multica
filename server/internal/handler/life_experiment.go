@@ -296,7 +296,7 @@ func (h *Handler) ConfirmLifeActionProposal(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	proposal, err := qtx.GetLifeActionProposal(r.Context(), db.GetLifeActionProposalParams{
+	proposal, err := qtx.GetLifeActionProposalForUpdate(r.Context(), db.GetLifeActionProposalForUpdateParams{
 		ID:          proposalID,
 		WorkspaceID: scope.workspaceID,
 		UserID:      scope.userID,

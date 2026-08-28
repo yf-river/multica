@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +23,94 @@ func configureLifeCompanionForTest(t *testing.T, agentID string) {
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM companion_profile WHERE workspace_id = $1 AND user_id = $2`, testWorkspaceID, testUserID)
 	})
+}
+
+func TestLifeProposalConcurrentConfirmationExecutesOnce(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "ConcurrentLifeProposal", nil)
+	configureLifeCompanionForTest(t, agentID)
+	title := "并发确认只创建一次-" + uuid.NewString()
+	proposal := createExperimentProposalForTest(t, "workspace_issue", title, map[string]any{
+		"issue_title":       title,
+		"issue_description": "两个窗口同时确认同一个提案。",
+	})
+
+	start := make(chan struct{})
+	statuses := make(chan int, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			w := callLifeHandler(t, http.MethodPost, "/api/life/proposals/"+proposal.ID+"/confirm", nil,
+				map[string]string{"proposalId": proposal.ID}, testHandler.ConfirmLifeActionProposal)
+			statuses <- w.Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(statuses)
+	got := make([]int, 0, 2)
+	for status := range statuses {
+		got = append(got, status)
+	}
+	sort.Ints(got)
+	if len(got) != 2 || got[0] != http.StatusCreated || got[1] != http.StatusConflict {
+		t.Fatalf("concurrent confirmation statuses = %v, want [201 409]", got)
+	}
+
+	var issueCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id=$1 AND title=$2`, testWorkspaceID, title).Scan(&issueCount); err != nil {
+		t.Fatal(err)
+	}
+	if issueCount != 1 {
+		t.Fatalf("concurrent confirmation created %d tasks, want 1", issueCount)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id=$1 AND title=$2`, testWorkspaceID, title)
+	})
+}
+
+func TestRejectedAndExpiredLifeProposalsNeverExecute(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "InactiveLifeProposal", nil)
+	configureLifeCompanionForTest(t, agentID)
+
+	rejectedTitle := "拒绝后不执行-" + uuid.NewString()
+	rejected := createExperimentProposalForTest(t, "workspace_issue", rejectedTitle, map[string]any{"issue_title": rejectedTitle})
+	w := callLifeHandler(t, http.MethodPost, "/api/life/proposals/"+rejected.ID+"/reject", nil,
+		map[string]string{"proposalId": rejected.ID}, testHandler.RejectLifeActionProposal)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reject proposal: %d %s", w.Code, w.Body.String())
+	}
+	w = callLifeHandler(t, http.MethodPost, "/api/life/proposals/"+rejected.ID+"/confirm", nil,
+		map[string]string{"proposalId": rejected.ID}, testHandler.ConfirmLifeActionProposal)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("confirm rejected proposal: got %d, want 409", w.Code)
+	}
+
+	expiredTitle := "过期后不执行-" + uuid.NewString()
+	expired := createExperimentProposalForTest(t, "workspace_issue", expiredTitle, map[string]any{"issue_title": expiredTitle})
+	mustExec(t, ctx, `UPDATE life_action_proposal SET expires_at=now()-interval '1 minute' WHERE id=$1`, expired.ID)
+	if _, err := testHandler.Queries.ExpireLifeActionProposals(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w = callLifeHandler(t, http.MethodPost, "/api/life/proposals/"+expired.ID+"/confirm", nil,
+		map[string]string{"proposalId": expired.ID}, testHandler.ConfirmLifeActionProposal)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("confirm expired proposal: got %d, want 409", w.Code)
+	}
+
+	var issueCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM issue WHERE workspace_id=$1 AND title=ANY($2::text[])`, testWorkspaceID, []string{rejectedTitle, expiredTitle}).Scan(&issueCount); err != nil {
+		t.Fatal(err)
+	}
+	if issueCount != 0 {
+		t.Fatalf("inactive proposals created %d tasks, want 0", issueCount)
+	}
 }
 
 func createExperimentProposalForTest(t *testing.T, proposalType, title string, payload map[string]any) lifeProposalResponse {

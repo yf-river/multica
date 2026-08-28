@@ -228,6 +228,44 @@ func (q *Queries) GetLifeActionProposal(ctx context.Context, arg GetLifeActionPr
 	return i, err
 }
 
+const getLifeActionProposalForUpdate = `-- name: GetLifeActionProposalForUpdate :one
+SELECT id, workspace_id, user_id, companion_agent_id, proposal_type, status, title, summary, payload, expires_at, confirmed_at, executed_at, failure_reason, created_at, updated_at, rejected_at, rejection_reason, execution_receipt FROM life_action_proposal
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+FOR UPDATE
+`
+
+type GetLifeActionProposalForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetLifeActionProposalForUpdate(ctx context.Context, arg GetLifeActionProposalForUpdateParams) (LifeActionProposal, error) {
+	row := q.db.QueryRow(ctx, getLifeActionProposalForUpdate, arg.ID, arg.WorkspaceID, arg.UserID)
+	var i LifeActionProposal
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.ProposalType,
+		&i.Status,
+		&i.Title,
+		&i.Summary,
+		&i.Payload,
+		&i.ExpiresAt,
+		&i.ConfirmedAt,
+		&i.ExecutedAt,
+		&i.FailureReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RejectedAt,
+		&i.RejectionReason,
+		&i.ExecutionReceipt,
+	)
+	return i, err
+}
+
 const getLifeExperiment = `-- name: GetLifeExperiment :one
 SELECT id, workspace_id, user_id, title, problem, hypothesis, method, created_by_type, created_by_id, created_at, updated_at FROM life_experiment
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3
