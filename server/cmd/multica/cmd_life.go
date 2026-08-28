@@ -54,7 +54,7 @@ var lifeEvidenceCmd = &cobra.Command{
 
 var lifeEvidenceResolveCmd = &cobra.Command{
 	Use:   "resolve",
-	Short: "Resolve material or chronicle references",
+	Short: "Resolve governed life evidence references",
 	RunE:  runLifeEvidenceResolve,
 }
 
@@ -96,7 +96,7 @@ func init() {
 	lifeCheckCmd.Flags().String("trigger", "manual", "schedule, commitment, risk, or manual")
 	lifeCheckCmd.Flags().String("reason", "", "Model judgment explaining the decision (required)")
 	lifeCheckCmd.Flags().String("context-json", "{}", "Context snapshot as a JSON object")
-	lifeEvidenceResolveCmd.Flags().StringSlice("ref", nil, "Evidence reference as material:<uuid> or chronicle:<uuid> (repeatable)")
+	lifeEvidenceResolveCmd.Flags().StringSlice("ref", nil, "Evidence reference as material:<uuid>, chronicle:<uuid>, memory:<uuid>, or observer_knowledge:<uuid> (repeatable)")
 
 	lifeJobCompleteCmd.Flags().String("job-id", "", "Life cognition job ID (required)")
 	lifeJobCompleteCmd.Flags().String("output-json", "{}", "Structured result as a JSON object")
@@ -112,7 +112,7 @@ func runLifeEvidenceResolve(cmd *cobra.Command, _ []string) error {
 	for _, raw := range rawReferences {
 		parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
 		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return fmt.Errorf("invalid --ref %q: expected material:<uuid> or chronicle:<uuid>", raw)
+			return fmt.Errorf("invalid --ref %q: expected <source_type>:<uuid>", raw)
 		}
 		references = append(references, map[string]string{
 			"source_type": strings.TrimSpace(parts[0]),

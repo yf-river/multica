@@ -102,7 +102,7 @@ func lifeMCPTools() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "life_evidence_resolve",
-			"description": "Resolve exact governed material or chronicle evidence for the current life cognition task.",
+			"description": "Resolve exact governed material, chronicle, memory, or observer knowledge for the current life cognition task.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -111,7 +111,7 @@ func lifeMCPTools() []map[string]any {
 						"items": map[string]any{
 							"type": "object", "additionalProperties": false,
 							"properties": map[string]any{
-								"source_type": map[string]any{"type": "string", "enum": []string{"material", "chronicle"}},
+								"source_type": map[string]any{"type": "string", "enum": []string{"material", "chronicle", "memory", "observer_knowledge"}},
 								"source_id":   map[string]any{"type": "string", "format": "uuid"},
 							},
 							"required": []string{"source_type", "source_id"},

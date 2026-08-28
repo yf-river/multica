@@ -781,6 +781,11 @@ WHERE o.id = $1;
 SELECT * FROM life_observer_knowledge
 WHERE observer_id = $1 ORDER BY created_at;
 
+-- name: GetLifeObserverKnowledgeForUser :one
+SELECT k.* FROM life_observer_knowledge k
+JOIN life_observer o ON o.id = k.observer_id
+WHERE k.id = $1 AND o.workspace_id = $2 AND o.user_id = $3 AND o.status = 'active';
+
 -- name: CreateLifeObserverKnowledge :one
 INSERT INTO life_observer_knowledge (observer_id, title, content, source)
 VALUES ($1, $2, $3, $4)
@@ -877,7 +882,7 @@ ORDER BY period_start, id;
 -- name: ListLifeChronicleContextEntries :many
 SELECT * FROM life_chronicle_entry
 WHERE workspace_id = $1 AND user_id = $2 AND status = 'published'
-  AND (period_kind IN ('month', 'year') OR period_end >= now() - interval '90 days')
+  AND (period_kind IN ('month', 'year', 'event') OR period_end >= now() - interval '90 days')
 ORDER BY period_start DESC, id DESC;
 
 -- name: CreateLifeChronicleEvidenceLink :exec

@@ -166,10 +166,36 @@ func TestLifeAgentResolvesOnlyGovernedEvidence(t *testing.T) {
 	`, testWorkspaceID, testUserID, messageID).Scan(&materialID); err != nil {
 		t.Fatalf("load captured life material: %v", err)
 	}
+	memory := createLifeMemoryForTest(t, "chat_message", messageID, "understanding", "这是可按需回取的完整长期认识")
+	observerAgentID := createHandlerTestAgent(t, "LifeEvidenceObserverAgent", nil)
+	w := callLifeHandler(t, http.MethodPost, "/api/life/observers", map[string]any{
+		"agent_id": observerAgentID, "name": "证据观察席", "basis_type": "virtual",
+		"personality": map[string]any{}, "perspective": map[string]any{}, "expression_profile": map[string]any{},
+	}, nil, testHandler.CreateLifeObserver)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create evidence observer: %d %s", w.Code, w.Body.String())
+	}
+	var observer map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &observer)
+	observerID, _ := observer["id"].(string)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM life_observer WHERE id=$1`, observerID)
+	})
+	w = callLifeHandler(t, http.MethodPost, "/api/life/observers/"+observerID+"/knowledge", map[string]any{
+		"title": "观察席完整资料", "content": "这段资料只允许当前用户的人生任务按 ID 回取。", "source": "user",
+	}, map[string]string{"observerId": observerID}, testHandler.AddLifeObserverKnowledge)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create observer knowledge: %d %s", w.Code, w.Body.String())
+	}
+	var knowledge map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &knowledge)
+	knowledgeID, _ := knowledge["id"].(string)
 	taskID := createRunningCompanionTaskForTest(t, agentID, sessionID)
-	w := callCompanionAgentHandler(t, taskID, agentID, http.MethodPost, "/api/life/agent/evidence/resolve", map[string]any{
+	w = callCompanionAgentHandler(t, taskID, agentID, http.MethodPost, "/api/life/agent/evidence/resolve", map[string]any{
 		"references": []map[string]any{
 			{"source_type": "material", "source_id": materialID},
+			{"source_type": "memory", "source_id": memory.ID},
+			{"source_type": "observer_knowledge", "source_id": knowledgeID},
 			{"source_type": "material", "source_id": uuid.NewString()},
 		},
 	}, nil, testHandler.ResolveLifeEvidence)
@@ -178,18 +204,26 @@ func TestLifeAgentResolvesOnlyGovernedEvidence(t *testing.T) {
 	}
 	var response struct {
 		Evidence []struct {
-			Available bool           `json:"available"`
-			Material  map[string]any `json:"material"`
+			Available         bool           `json:"available"`
+			Material          map[string]any `json:"material"`
+			Memory            map[string]any `json:"memory"`
+			ObserverKnowledge map[string]any `json:"observer_knowledge"`
 		} `json:"evidence"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode resolved life evidence: %v", err)
 	}
-	if len(response.Evidence) != 2 || !response.Evidence[0].Available || response.Evidence[1].Available {
+	if len(response.Evidence) != 4 || !response.Evidence[0].Available || !response.Evidence[1].Available || !response.Evidence[2].Available || response.Evidence[3].Available {
 		t.Fatalf("unexpected evidence availability: %#v", response.Evidence)
 	}
 	if response.Evidence[0].Material["content"] != "这是一条只属于当前人生资料库的证据。" {
 		t.Fatalf("resolved material mismatch: %#v", response.Evidence[0].Material)
+	}
+	if response.Evidence[1].Memory["content"] != "这是可按需回取的完整长期认识" {
+		t.Fatalf("resolved memory mismatch: %#v", response.Evidence[1].Memory)
+	}
+	if response.Evidence[2].ObserverKnowledge["content"] != "这段资料只允许当前用户的人生任务按 ID 回取。" {
+		t.Fatalf("resolved observer knowledge mismatch: %#v", response.Evidence[2].ObserverKnowledge)
 	}
 }
 

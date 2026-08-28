@@ -136,6 +136,58 @@ func TestListLifeCognitionJobsReturnsWebContract(t *testing.T) {
 	}
 }
 
+func TestGovernedLifeContextUsesBoundedVersionedIndexes(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	createdIDs := make([]string, 0, candidateLifeMemoryIndexLimit+1)
+	longContent := strings.Repeat("长期候选认识", 80)
+	for index := 0; index < candidateLifeMemoryIndexLimit+1; index++ {
+		var id string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO life_memory (
+				workspace_id, user_id, created_by_type, created_by_id, kind,
+				content, confidence, urgency, uncertainty, updated_at
+			) VALUES ($1, $2, 'member', $2, 'understanding', $3, 0.6, 0.2, $4, $5)
+			RETURNING id
+		`, testWorkspaceID, testUserID, longContent, strings.Repeat("仍需观察", 40), time.Date(2099, 1, 1, 0, 0, index, 0, time.UTC)).Scan(&id); err != nil {
+			t.Fatalf("create context candidate %d: %v", index, err)
+		}
+		createdIDs = append(createdIDs, id)
+	}
+	t.Cleanup(func() {
+		for _, id := range createdIDs {
+			_, _ = testPool.Exec(ctx, `DELETE FROM life_memory WHERE id=$1`, id)
+		}
+	})
+
+	scope := lifeRequestScope{workspaceID: parseUUID(testWorkspaceID), userID: parseUUID(testUserID)}
+	governed, err := testHandler.buildGovernedLifeContext(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contextValue struct {
+		ContextVersion    string `json:"context_version"`
+		CandidateMemories []struct {
+			Content     string `json:"content"`
+			Uncertainty string `json:"uncertainty"`
+		} `json:"candidate_memories_not_facts"`
+	}
+	if err := json.Unmarshal([]byte(governed), &contextValue); err != nil {
+		t.Fatal(err)
+	}
+	if contextValue.ContextVersion != lifeContextVersion {
+		t.Fatalf("unexpected context version: %q", contextValue.ContextVersion)
+	}
+	if len(contextValue.CandidateMemories) != candidateLifeMemoryIndexLimit {
+		t.Fatalf("candidate index must be bounded at %d, got %d", candidateLifeMemoryIndexLimit, len(contextValue.CandidateMemories))
+	}
+	for _, memory := range contextValue.CandidateMemories {
+		if len([]rune(memory.Content)) > 201 || len([]rune(memory.Uncertainty)) > 101 {
+			t.Fatalf("candidate index contains unbounded text: %#v", memory)
+		}
+	}
+}
+
 func TestConfirmedModuleProposalBecomesActiveContext(t *testing.T) {
 	requireHandlerDatabase(t)
 	agentID := createHandlerTestAgent(t, "CompleteLifeModuleCompanion", nil)

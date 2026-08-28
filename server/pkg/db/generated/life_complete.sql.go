@@ -1798,6 +1798,33 @@ func (q *Queries) GetLifeObserverForUser(ctx context.Context, arg GetLifeObserve
 	return i, err
 }
 
+const getLifeObserverKnowledgeForUser = `-- name: GetLifeObserverKnowledgeForUser :one
+SELECT k.id, k.observer_id, k.title, k.content, k.source, k.created_at, k.updated_at FROM life_observer_knowledge k
+JOIN life_observer o ON o.id = k.observer_id
+WHERE k.id = $1 AND o.workspace_id = $2 AND o.user_id = $3 AND o.status = 'active'
+`
+
+type GetLifeObserverKnowledgeForUserParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetLifeObserverKnowledgeForUser(ctx context.Context, arg GetLifeObserverKnowledgeForUserParams) (LifeObserverKnowledge, error) {
+	row := q.db.QueryRow(ctx, getLifeObserverKnowledgeForUser, arg.ID, arg.WorkspaceID, arg.UserID)
+	var i LifeObserverKnowledge
+	err := row.Scan(
+		&i.ID,
+		&i.ObserverID,
+		&i.Title,
+		&i.Content,
+		&i.Source,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getLifeProactivePolicy = `-- name: GetLifeProactivePolicy :one
 SELECT workspace_id, user_id, enabled, timezone, quiet_hours, minimum_interval, next_check_at, last_spoke_at, unanswered_count, updated_at FROM life_proactive_policy WHERE workspace_id = $1 AND user_id = $2
 `
@@ -2415,7 +2442,7 @@ func (q *Queries) ListLifeChatTurnMaterials(ctx context.Context, arg ListLifeCha
 const listLifeChronicleContextEntries = `-- name: ListLifeChronicleContextEntries :many
 SELECT id, workspace_id, user_id, period_start, period_end, facts, feelings, understanding_then, understanding_later, created_at, updated_at, period_kind, actions, status, generated_by, revision FROM life_chronicle_entry
 WHERE workspace_id = $1 AND user_id = $2 AND status = 'published'
-  AND (period_kind IN ('month', 'year') OR period_end >= now() - interval '90 days')
+  AND (period_kind IN ('month', 'year', 'event') OR period_end >= now() - interval '90 days')
 ORDER BY period_start DESC, id DESC
 `
 

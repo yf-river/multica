@@ -238,8 +238,39 @@ func (h *Handler) ResolveLifeEvidence(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to resolve life chronicle")
 				return
 			}
+		case "memory":
+			memory, loadErr := h.Queries.GetLifeMemory(r.Context(), db.GetLifeMemoryParams{
+				ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			})
+			if loadErr == nil {
+				resolved, resolveErr := h.lifeMemoryToResponse(r, memory)
+				if resolveErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to resolve memory evidence")
+					return
+				}
+				item["available"] = true
+				item["memory"] = resolved
+			} else if !errors.Is(loadErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, "failed to resolve life memory")
+				return
+			}
+		case "observer_knowledge":
+			knowledge, loadErr := h.Queries.GetLifeObserverKnowledgeForUser(r.Context(), db.GetLifeObserverKnowledgeForUserParams{
+				ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+			})
+			if loadErr == nil {
+				item["available"] = true
+				item["observer_knowledge"] = map[string]any{
+					"id": uuidToString(knowledge.ID), "observer_id": uuidToString(knowledge.ObserverID),
+					"title": knowledge.Title, "content": knowledge.Content, "source": knowledge.Source,
+					"created_at": timestampToString(knowledge.CreatedAt), "updated_at": timestampToString(knowledge.UpdatedAt),
+				}
+			} else if !errors.Is(loadErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, "failed to resolve observer knowledge")
+				return
+			}
 		default:
-			writeError(w, http.StatusBadRequest, "source_type must be material or chronicle")
+			writeError(w, http.StatusBadRequest, "source_type must be material, chronicle, memory or observer_knowledge")
 			return
 		}
 		items = append(items, item)

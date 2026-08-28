@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	lifeCognitionPollInterval = 15 * time.Second
-	lifeCognitionClaimLimit   = 10
+	lifeCognitionPollInterval   = 15 * time.Second
+	lifeCognitionClaimLimit     = 10
+	lifeCognitionContextVersion = "life-context-v2"
 )
 
 type lifeCognitionTaskContext struct {
@@ -79,6 +80,8 @@ func tickLifeCognitionJobs(ctx context.Context, queries *db.Queries) {
 			failLifeCognitionJob(ctx, queries, job.ID, err)
 			continue
 		}
+		inputObject["context_version"] = lifeCognitionContextVersion
+		inputObject["processing_cursor"] = job.DedupeKey
 		input, err = json.Marshal(inputObject)
 		if err != nil {
 			failLifeCognitionJob(ctx, queries, job.ID, err)
