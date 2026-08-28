@@ -19,6 +19,22 @@ import (
 
 const governedLifeTaskTimeout = 10 * time.Minute
 
+func governedLifeMCPConfig() (json.RawMessage, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve multica executable for life MCP: %w", err)
+	}
+	config, err := json.Marshal(map[string]any{
+		"mcpServers": map[string]any{
+			"life": map[string]any{"command": executable, "args": []string{"life", "mcp"}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build life MCP config: %w", err)
+	}
+	return config, nil
+}
+
 func taskExecutionTimeout(configured time.Duration, governedLifeTask bool) time.Duration {
 	if governedLifeTask && (configured <= 0 || configured > governedLifeTaskTimeout) {
 		return governedLifeTaskTimeout
@@ -36,6 +52,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
 	governedLifeTask := isGovernedLifeTask(task)
+	governedLifeCognition := task.LifeJobID != ""
 	if governedLifeTask {
 		// Life history is reconstructed from Multica's governed context on every
 		// run. Provider-native sessions would retain corrected or permanently
@@ -390,6 +407,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil {
 		agentCustomArgs = task.Agent.CustomArgs
 		mcpConfig = task.Agent.McpConfig
+	}
+	if governedLifeCognition {
+		var err error
+		mcpConfig, err = governedLifeMCPConfig()
+		if err != nil {
+			return TaskResult{}, err
+		}
 	}
 	customArgs := runtimeProfileCustomArgs(profileFixedArgs, agentCustomArgs)
 	if provider == "codebuddy" && governedLifeTask {

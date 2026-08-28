@@ -683,7 +683,7 @@ func allowedBuiltinToolsForExecutionPolicy(provider string, policy executionpoli
 		return nil
 	}
 	if policy.IsLifeCognition() {
-		return []string{"Bash"}
+		return []string{"ToolSearch", "DeferExecuteTool"}
 	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return []string{"Bash"}
@@ -705,7 +705,7 @@ func allowedToolsForExecutionPolicy(provider string, policy executionpolicy.Poli
 		return nil
 	}
 	if policy.IsLifeCognition() {
-		return []string{"Bash(multica life *)"}
+		return []string{"mcp__life__life_evidence_resolve", "mcp__life__life_job_complete"}
 	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return []string{"Bash(multica *)"}
@@ -721,7 +721,7 @@ func permissionModeForExecutionPolicy(provider string, policy executionpolicy.Po
 		return ""
 	}
 	if policy.IsLifeCognition() {
-		return "dontAsk"
+		return "bypassPermissions"
 	}
 	if policy.IsCoordinatorWithoutRepo() {
 		return "bypassPermissions"

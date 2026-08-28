@@ -119,16 +119,24 @@ func runLifeEvidenceResolve(cmd *cobra.Command, _ []string) error {
 			"source_id":   strings.TrimSpace(parts[1]),
 		})
 	}
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	result, err := resolveLifeEvidence(cmd, references)
 	if err != nil {
 		return err
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+func resolveLifeEvidence(cmd *cobra.Command, references []map[string]string) (map[string]any, error) {
+	client, ctx, cancel, err := newAPIClientContext(cmd)
+	if err != nil {
+		return nil, err
 	}
 	defer cancel()
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/life/agent/evidence/resolve", map[string]any{"references": references}, &result); err != nil {
-		return fmt.Errorf("resolve life evidence: %w", err)
+		return nil, fmt.Errorf("resolve life evidence: %w", err)
 	}
-	return cli.PrintJSON(os.Stdout, result)
+	return result, nil
 }
 
 func runLifeJobComplete(cmd *cobra.Command, _ []string) error {
@@ -152,16 +160,24 @@ func runLifeJobComplete(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	client, ctx, cancel, err := newAPIClientContext(cmd)
+	result, err := completeLifeJob(cmd, jobID, output)
 	if err != nil {
 		return err
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+func completeLifeJob(cmd *cobra.Command, jobID string, output map[string]any) (map[string]any, error) {
+	client, ctx, cancel, err := newAPIClientContext(cmd)
+	if err != nil {
+		return nil, err
 	}
 	defer cancel()
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/life/agent/jobs/"+jobID+"/complete", map[string]any{"output": output}, &result); err != nil {
-		return fmt.Errorf("complete life cognition job: %w", err)
+		return nil, fmt.Errorf("complete life cognition job: %w", err)
 	}
-	return cli.PrintJSON(os.Stdout, result)
+	return result, nil
 }
 
 func requireFlag(cmd *cobra.Command, name string) (string, error) {

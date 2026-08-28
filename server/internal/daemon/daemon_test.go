@@ -51,6 +51,29 @@ func TestGovernedLifeTaskTimeoutIsBounded(t *testing.T) {
 	}
 }
 
+func TestGovernedLifeMCPConfigContainsOnlyLocalLifeServer(t *testing.T) {
+	raw, err := governedLifeMCPConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Servers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Servers) != 1 {
+		t.Fatalf("life MCP servers = %v, want only life", config.Servers)
+	}
+	server, ok := config.Servers["life"]
+	if !ok || strings.TrimSpace(server.Command) == "" || len(server.Args) != 2 || server.Args[0] != "life" || server.Args[1] != "mcp" {
+		t.Fatalf("unexpected life MCP server: %+v", server)
+	}
+}
+
 func createDaemonTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -214,13 +237,13 @@ func TestGovernedLifeTaskIsolation(t *testing.T) {
 func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	t.Parallel()
 	life := executionpolicy.Policy{RoleKind: "life_cognition"}
-	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", life); len(got) != 1 || got[0] != "Bash" {
-		t.Fatalf("life cognition allowed tools = %v, want [Bash]", got)
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", life); len(got) != 2 || got[0] != "ToolSearch" || got[1] != "DeferExecuteTool" {
+		t.Fatalf("life cognition built-in tools = %v, want deferred MCP transport only", got)
 	}
-	if got := allowedToolsForExecutionPolicy("codebuddy", life); len(got) != 1 || got[0] != "Bash(multica life *)" {
+	if got := allowedToolsForExecutionPolicy("codebuddy", life); len(got) != 2 || got[0] != "mcp__life__life_evidence_resolve" || got[1] != "mcp__life__life_job_complete" {
 		t.Fatalf("life cognition scoped allowed tools = %v", got)
 	}
-	if got := permissionModeForExecutionPolicy("codebuddy", life); got != "dontAsk" {
+	if got := permissionModeForExecutionPolicy("codebuddy", life); got != "bypassPermissions" {
 		t.Fatalf("life cognition permission mode = %q", got)
 	}
 	if got := maxTurnsForExecutionPolicy(0, life); got != 12 {

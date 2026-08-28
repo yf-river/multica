@@ -64,11 +64,11 @@ func TestBuildChronicleLifeJobPromptPinsScalarNarrativeAndDirectSubmission(t *te
 		"facts:string",
 		"feelings:string",
 		"actions:string",
-		"--output-json '<JSON object>'",
+		"call `life_job_complete` with job_id=`job-chronicle`",
 		"Do not create a temporary file",
-		"Do not call `--help`",
+		"the only business operations available are `life_evidence_resolve` and `life_job_complete`",
 	)
-	assertPromptExcludes(t, out, "--output-file <path>")
+	assertPromptExcludes(t, out, "--output-file <path>", "multica life job complete")
 }
 
 func tapdSource(resourceID, status string) *protocol.TaskSourceContext {
