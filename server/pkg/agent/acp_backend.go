@@ -54,6 +54,7 @@ func executeACPBackend(ctx context.Context, prompt string, opts ExecOptions, cfg
 	args := append(append([]string(nil), spec.baseArgs...), filterCustomArgs(opts.CustomArgs, spec.blockedArgs, cfg.Logger)...)
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	hideAgentWindow(cmd)
+	bindAgentProcessToParent(cmd)
 	cfg.Logger.Info("agent command", "exec", execPath, "args", args)
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd

@@ -47,6 +47,7 @@ func executeStreamCommand(ctx context.Context, timeout time.Duration, spec strea
 
 	cmd := exec.CommandContext(runCtx, spec.executable, spec.args...)
 	hideAgentWindow(cmd)
+	bindAgentProcessToParent(cmd)
 	spec.logger.Info("agent command", "exec", spec.executable, "args", spec.args)
 	cmd.WaitDelay = spec.waitDelay
 	cmd.Dir = spec.cwd

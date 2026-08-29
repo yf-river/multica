@@ -54,6 +54,7 @@ func startClaudeProtocolProcess(
 
 	cmd := exec.CommandContext(runCtx, execPath, args...)
 	hideAgentWindow(cmd)
+	bindAgentProcessToParent(cmd)
 	cfg.Logger.Info("agent command", "exec", execPath, "args", args)
 	cmd.WaitDelay = 10 * time.Second
 	if opts.Cwd != "" {
