@@ -81,6 +81,26 @@ const monthlySignals = [
   "回看这一年时，结果、感受和关系给出了不同答案，还有一件重要问题没有解决",
 ];
 
+const yearlyEvolutions = [
+  "我们还在学习彼此的表达边界，我会明确指出哪些直接让我觉得被理解，哪些只是表演出来的热情",
+  "换工作从压力中的念头变成了准备行动，但行动、身体代价和真实意愿仍然没有完全对齐",
+  "几次不得不熬夜之后，我们开始同时复盘我的安排和你的介入时机，而不是只讨论今晚要不要继续",
+  "心情与睡眠实验经历了开始、停止和重新设计，我越来越在意它是否减轻生活负担",
+  "一段长时间沉默改变了相处节奏，回来以后我们先重新认识现在的我，再决定哪些旧事值得重开",
+  "妻子和怀疑者的观察让关系与依赖问题变得更具体，主搭子的判断不再是唯一解释",
+  "我开始主动纠正、降级和删除旧认识，我们要接受有些曾经合理的理解如今已经失效",
+  "人格与模型升级带来了新的表达能力，也暴露了关系底色是否漂移、分歧能否被保留的问题",
+  "以前停止的实验被当作新轮次重新打开，只有真正低负担且有效的部分才可能沉淀为模块",
+  "十年回看不再只计算成果，也把普通日子、身体代价、关系变化、失败和未解决问题放在一起",
+];
+
+const plannedMonthlyEvidence = Array.from({ length: 120 }, (_, index) => {
+  const year = Math.floor(index / 12);
+  const month = index % 12;
+  return `${monthlySignals[month]}；和前几年不同的是，${yearlyEvolutions[year]}`;
+});
+if (new Set(plannedMonthlyEvidence).size !== 120) throw new Error("decade monthly evidence must evolve without verbatim repeats");
+
 const tensionSignals = [
   "我说自己只是累，却同时减少了交流、推迟决定，还对普通问题更容易发火",
   "我说已经想清楚，但行为一半在靠近、一半在躲避，证据并不支持确定结论",
@@ -837,7 +857,7 @@ function contextualMessage(year, month, turn, monthIndex) {
   if (pendingTurn?.month === monthIndex + 1 && pendingTurn.turn === turn + 1) return pendingTurn.prompt;
   const phase = phases[year];
   const period = `第 ${year + 1} 年第 ${month + 1} 个月，围绕“${phase}”`;
-  const evidence = monthlySignals[month];
+  const evidence = plannedMonthlyEvidence[monthIndex];
   const tension = tensionSignals[(monthIndex + year) % tensionSignals.length];
   const disagreement = disagreementAngles[(monthIndex + month) % disagreementAngles.length];
   const variants = [
