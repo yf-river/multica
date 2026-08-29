@@ -391,6 +391,47 @@ func (q *Queries) GetLifeMemory(ctx context.Context, arg GetLifeMemoryParams) (L
 	return i, err
 }
 
+const getLifeMemoryForUpdate = `-- name: GetLifeMemoryForUpdate :one
+SELECT id, workspace_id, user_id, created_by_type, created_by_id, kind, status, content, confidence, urgency, uncertainty, valid_from, valid_to, confirmed_at, confirmed_by_id, created_at, updated_at, scope, last_reviewed_at, review_after, superseded_by_id FROM life_memory
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+FOR UPDATE
+`
+
+type GetLifeMemoryForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetLifeMemoryForUpdate(ctx context.Context, arg GetLifeMemoryForUpdateParams) (LifeMemory, error) {
+	row := q.db.QueryRow(ctx, getLifeMemoryForUpdate, arg.ID, arg.WorkspaceID, arg.UserID)
+	var i LifeMemory
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.Kind,
+		&i.Status,
+		&i.Content,
+		&i.Confidence,
+		&i.Urgency,
+		&i.Uncertainty,
+		&i.ValidFrom,
+		&i.ValidTo,
+		&i.ConfirmedAt,
+		&i.ConfirmedByID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Scope,
+		&i.LastReviewedAt,
+		&i.ReviewAfter,
+		&i.SupersededByID,
+	)
+	return i, err
+}
+
 const listConfirmedLifeMemoriesForContext = `-- name: ListConfirmedLifeMemoriesForContext :many
 SELECT id, workspace_id, user_id, created_by_type, created_by_id, kind, status, content, confidence, urgency, uncertainty, valid_from, valid_to, confirmed_at, confirmed_by_id, created_at, updated_at, scope, last_reviewed_at, review_after, superseded_by_id FROM life_memory
 WHERE workspace_id = $1 AND user_id = $2 AND status = 'confirmed'

@@ -380,18 +380,18 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM life_material WHERE id=$1`, materialID) })
-	var jobID, taskID, revisionJobID, revisionTaskID, staleJobID, staleTaskID string
+	var jobID, taskID, revisionJobID, revisionTaskID, protectedJobID, protectedTaskID, staleJobID, staleTaskID string
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE workspace_id=$1 AND recipient_id=$2 AND type='life_companion'`, testWorkspaceID, testUserID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_proactive_check WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3`, testWorkspaceID, testUserID, agentID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_action_proposal WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3`, testWorkspaceID, testUserID, agentID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_memory WHERE workspace_id=$1 AND user_id=$2 AND created_by_id=$3`, testWorkspaceID, testUserID, agentID)
-		for _, id := range []string{jobID, revisionJobID, staleJobID} {
+		for _, id := range []string{jobID, revisionJobID, protectedJobID, staleJobID} {
 			if id != "" {
 				_, _ = testPool.Exec(context.Background(), `DELETE FROM life_cognition_job WHERE id=$1`, id)
 			}
 		}
-		for _, id := range []string{taskID, revisionTaskID, staleTaskID} {
+		for _, id := range []string{taskID, revisionTaskID, protectedTaskID, staleTaskID} {
 			if id != "" {
 				_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1`, id)
 			}
@@ -453,6 +453,28 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	}
 	if memoryCount != 1 || revisedContent != "心情记录可能有助于看见压力变化" || revisedStatus != "candidate" || revisionCount != 2 {
 		t.Fatalf("candidate revision count=%d content=%q status=%q revisions=%d", memoryCount, revisedContent, revisedStatus, revisionCount)
+	}
+	w = callLifeHandler(t, http.MethodPost, "/api/life/memories/"+memoryID+"/confirm", nil, map[string]string{"memoryId": memoryID}, testHandler.ConfirmLifeMemory)
+	if w.Code != http.StatusOK {
+		t.Fatalf("confirm revised candidate: %d %s", w.Code, w.Body.String())
+	}
+	if err := testPool.QueryRow(ctx, `INSERT INTO life_cognition_job (workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,started_at,attempt) VALUES ($1,$2,$3,'understand_materials','running',$4,now(),1) RETURNING id`, testWorkspaceID, testUserID, agentID, "protected-test:"+materialID).Scan(&protectedJobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `INSERT INTO agent_task_queue (agent_id,runtime_id,status,priority,initiator_user_id,started_at,context) VALUES ($1,$2,'running',0,$3,now(),$4) RETURNING id`, agentID, handlerTestRuntimeID(t), testUserID, taskContext).Scan(&protectedTaskID); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, protectedJobID, protectedTaskID)
+	protectedOutput := map[string]any{"memory_candidates": []map[string]any{{"memory_id": memoryID, "kind": "fact", "content": "后台不应覆盖这条已确认记忆", "confidence": 0.99, "urgency": 0.9, "uncertainty": "", "evidence": evidence}}}
+	w = callCompanionAgentHandler(t, protectedTaskID, agentID, http.MethodPost, "/api/life/agent/jobs/"+protectedJobID+"/complete", map[string]any{"output": protectedOutput}, map[string]string{"jobId": protectedJobID}, testHandler.CompleteCompanionCognitionJob)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "not available for background revision") {
+		t.Fatalf("background revision of governed memory: %d %s", w.Code, w.Body.String())
+	}
+	if err := testPool.QueryRow(ctx, `SELECT content,status FROM life_memory WHERE id=$1`, memoryID).Scan(&revisedContent, &revisedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if revisedContent != "心情记录可能有助于看见压力变化" || revisedStatus != "confirmed" {
+		t.Fatalf("governed memory changed in background: content=%q status=%q", revisedContent, revisedStatus)
 	}
 	var inboxCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM inbox_item WHERE workspace_id=$1 AND recipient_id=$2 AND type='life_companion' AND body LIKE '%记下来了%'`, testWorkspaceID, testUserID).Scan(&inboxCount); err != nil {

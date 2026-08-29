@@ -527,7 +527,7 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 			if err != nil {
 				return db.LifeCognitionJob{}, fmt.Errorf("invalid memory candidate id")
 			}
-			existing, err := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{ID: memoryID, WorkspaceID: scope.workspaceID, UserID: scope.userID})
+			existing, err := q.GetLifeMemoryForUpdate(ctx, db.GetLifeMemoryForUpdateParams{ID: memoryID, WorkspaceID: scope.workspaceID, UserID: scope.userID})
 			if err != nil {
 				return db.LifeCognitionJob{}, err
 			}

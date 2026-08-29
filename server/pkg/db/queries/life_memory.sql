@@ -19,6 +19,11 @@ RETURNING *;
 SELECT * FROM life_memory
 WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
+-- name: GetLifeMemoryForUpdate :one
+SELECT * FROM life_memory
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+FOR UPDATE;
+
 -- name: ListLifeMemories :many
 SELECT * FROM life_memory
 WHERE workspace_id = $1 AND user_id = $2
