@@ -138,3 +138,17 @@ func TestListIssueBucketsRejectsInvalidStatus(t *testing.T) {
 		t.Fatalf("ListIssueBuckets invalid status: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestListIssueBucketsTreatsCancelledRequestAsClientClosed(t *testing.T) {
+	req := newRequest("GET", "/api/issues/buckets?workspace_id="+testWorkspaceID, nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	testHandler.ListIssueBuckets(w, req)
+
+	if w.Code != 499 {
+		t.Fatalf("ListIssueBuckets cancelled request: expected 499, got %d: %s", w.Code, w.Body.String())
+	}
+}

@@ -19,6 +19,57 @@ func TestBatchDeleteIssues_ReportsFailureAndRollsBackTaskCancellation(t *testing
 	assertIssueDeleteRollback(t, true)
 }
 
+func TestDeleteIssue_DoesNotTraceCascadedTask(t *testing.T) {
+	ctx := context.Background()
+	issueID := createTestIssue(t, "delete trace "+uuid.NewString(), "medium")
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text FROM agent WHERE workspace_id = $1
+		ORDER BY created_at LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load agent: %v", err)
+	}
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at)
+		VALUES ($1, $2, $3, 'running', 0, now())
+		RETURNING id
+	`, agentID, testRuntimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodDelete, "/api/issues/"+issueID, nil), "id", issueID)
+	testHandler.DeleteIssue(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d %s, want 204", w.Code, w.Body.String())
+	}
+
+	var (
+		tasks  int
+		traces int
+	)
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&tasks); err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM task_trace_event
+		WHERE task_id = $1 AND event_type = 'task.cancelled'
+	`, taskID).Scan(&traces); err != nil {
+		t.Fatalf("count cancel traces: %v", err)
+	}
+	if tasks != 0 || traces != 0 {
+		t.Fatalf("cascaded issue task remained: tasks=%d traces=%d", tasks, traces)
+	}
+}
+
 func assertIssueDeleteRollback(t *testing.T, batch bool) {
 	t.Helper()
 	ctx := context.Background()

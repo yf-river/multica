@@ -1389,7 +1389,7 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.TaskService.PublishCancelledTasks(r.Context(), deleted.cancelledTasks, deleted.cancelledEvents)
+	h.TaskService.NotifyCancelledTasks(r.Context(), deleted.cancelledTasks, deleted.cancelledEvents)
 	h.deleteStorageObjects(r.Context(), deleted.attachmentURLs)
 	userID := requestUserID(r)
 	actorType, actorID := resolveActor(r, userID)

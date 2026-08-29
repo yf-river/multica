@@ -313,6 +313,9 @@ SELECT id, workspace_id, title, description, status, priority,
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Warn("ListIssueBuckets query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
 		return
@@ -325,6 +328,9 @@ SELECT id, workspace_id, title, description, status, priority,
 		base := issueListRow{Issue: row.Issue, Summary: row.Summary}
 		dest := append(issueListScanDest(&base), &row.StatusTotal)
 		if err := rows.Scan(dest...); err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			slog.Warn("ListIssueBuckets scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
 			return
@@ -334,6 +340,9 @@ SELECT id, workspace_id, title, description, status, priority,
 		bucketRows = append(bucketRows, row)
 	}
 	if err := rows.Err(); err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Warn("ListIssueBuckets rows failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
 		return

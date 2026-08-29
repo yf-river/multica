@@ -244,7 +244,7 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		h.TaskService.PublishCancelledTasks(r.Context(), result.cancelledTasks, result.cancelledEvents)
+		h.TaskService.NotifyCancelledTasks(r.Context(), result.cancelledTasks, result.cancelledEvents)
 		h.deleteStorageObjects(r.Context(), result.attachmentURLs)
 
 		// Always emit the resolved UUID — frontend caches key by UUID.
