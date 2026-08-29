@@ -22,13 +22,7 @@ func TestBatchDeleteIssues_ReportsFailureAndRollsBackTaskCancellation(t *testing
 func TestDeleteIssue_DoesNotTraceCascadedTask(t *testing.T) {
 	ctx := context.Background()
 	issueID := createTestIssue(t, "delete trace "+uuid.NewString(), "medium")
-	var agentID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id::text FROM agent WHERE workspace_id = $1
-		ORDER BY created_at LIMIT 1
-	`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load agent: %v", err)
-	}
+	agentID := firstTestWorkspaceAgent(t)
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at)
@@ -74,13 +68,8 @@ func assertIssueDeleteRollback(t *testing.T, batch bool) {
 	t.Helper()
 	ctx := context.Background()
 	issueID := createTestIssue(t, "delete rollback "+uuid.NewString(), "medium")
-	var agentID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id::text FROM agent WHERE workspace_id = $1
-		ORDER BY created_at LIMIT 1
-	`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load agent: %v", err)
-	}
+	agentID := firstTestWorkspaceAgent(t)
+
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
@@ -154,4 +143,16 @@ func assertIssueDeleteRollback(t *testing.T, batch bool) {
 	if issues != 1 || taskStatus != "dispatched" || cancelledEvents != 0 {
 		t.Fatalf("partial delete: issues=%d task=%s cancelled_events=%d", issues, taskStatus, cancelledEvents)
 	}
+}
+
+func firstTestWorkspaceAgent(t *testing.T) string {
+	t.Helper()
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id::text FROM agent WHERE workspace_id = $1
+		ORDER BY created_at LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load agent: %v", err)
+	}
+	return agentID
 }

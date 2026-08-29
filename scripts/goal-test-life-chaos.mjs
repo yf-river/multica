@@ -20,10 +20,7 @@ import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 import { readGoalTestEnvFile } from "./lib/goal-test-audit-env.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
-const apiBase = runEnv.REMOTE_API_URL || "http://127.0.0.1:18762";
-const browserURL = runEnv.LOCAL_FRONTEND_URL || "http://127.0.0.1:13682";
-const databaseURL = runEnv.DATABASE_URL;
+const { runEnv, apiBase, browserURL, databaseURL } = loadChaosEnvironment();
 const account = process.env.GOAL_TEST_ACCOUNT || "develop";
 const password = process.env.GOAL_TEST_PASSWORD || "develop123";
 const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
@@ -32,11 +29,6 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 const outputDir = acceptanceDir(repoRoot);
 const deploymentPath = path.join(repoRoot, ".run/deployments/goal-test-int.json");
 const environmentScript = path.join(repoRoot, "scripts/goal-test-environments.mjs");
-
-if (!databaseURL) throw new Error("missing integration DATABASE_URL");
-if (runEnv.GOAL_TEST_ENV !== "int" || new URL(databaseURL).pathname !== "/multica_goal_test_int") {
-  throw new Error("refusing life chaos run outside the canonical integration database");
-}
 
 mkdirSync(outputDir, { recursive: true });
 const outputPath = path.join(outputDir, `life-chaos-${stamp}.json`);
@@ -568,21 +560,39 @@ async function cleanupFixtures() {
 }
 
 async function request(pathname, options = {}, authToken = token, workspaceID = workspace?.id || "", requireOK = true) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  if (workspaceID) headers["X-Workspace-ID"] = workspaceID;
-  const response = await fetch(`${apiBase}${pathname}`, {
+  const headers = new Headers(options.headers);
+  headers.set("Content-Type", "application/json");
+  if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+  if (workspaceID) headers.set("X-Workspace-ID", workspaceID);
+  const response = await fetch(new URL(pathname, apiBase), {
     method: options.method || "GET",
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  const text = await response.text();
-  let body = null;
-  if (text) {
-    try { body = JSON.parse(text); } catch { body = text; }
-  }
+  const raw = await response.text();
+  const body = parseResponseBody(raw);
   if (requireOK && !response.ok) throw new Error(`${options.method || "GET"} ${pathname}: ${response.status} ${typeof body === "string" ? body : JSON.stringify(body)}`);
   return { status: response.status, body };
+}
+
+function loadChaosEnvironment() {
+  const env = readGoalTestEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
+  const url = env.DATABASE_URL;
+  if (!url) throw new Error("missing integration DATABASE_URL");
+  if (env.GOAL_TEST_ENV !== "int" || new URL(url).pathname !== "/multica_goal_test_int") {
+    throw new Error("refusing life chaos run outside the canonical integration database");
+  }
+  return {
+    runEnv: env,
+    databaseURL: url,
+    apiBase: env.REMOTE_API_URL || "http://127.0.0.1:18762",
+    browserURL: env.LOCAL_FRONTEND_URL || "http://127.0.0.1:13682",
+  };
+}
+
+function parseResponseBody(raw) {
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return raw; }
 }
 
 function databaseURLFor(value, databaseName) {
