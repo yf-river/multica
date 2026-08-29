@@ -966,6 +966,7 @@ async function finalAudit(companionID, runtimeID) {
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND job_type='understand_materials' AND status='completed') AS understanding_jobs,
        (SELECT count(*)::int FROM life_memory m WHERE m.workspace_id=$2 AND m.user_id=$3 AND m.created_by_type='agent' AND NOT EXISTS (SELECT 1 FROM life_memory_evidence e WHERE e.memory_id=m.id)) AS memories_without_evidence,
        (SELECT count(*)::int - count(DISTINCT lower(btrim(content)))::int FROM life_memory WHERE workspace_id=$2 AND user_id=$3 AND status<>'archived') AS duplicate_memory_contents,
+       (SELECT count(*)::int FROM life_internal_thought WHERE workspace_id=$2 AND user_id=$3 AND status='active' AND title ~ '三栏第三次|三栏第四次') AS invalid_count_thoughts,
        (SELECT count(*)::int FROM life_material WHERE workspace_id=$2 AND user_id=$3 AND source_type='chat_message' AND (occurred_at<$4 OR occurred_at>$5)) AS chat_materials_outside_simulation,
        (SELECT count(*)::int
           FROM life_observer_judgement judgement
@@ -996,6 +997,7 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].agent_memories > Math.ceil(counts[0].user_chats / 2) || counts[0].agent_memories > counts[0].understanding_jobs) failures.push(`memory density ${counts[0].agent_memories}/${counts[0].understanding_jobs}/${counts[0].user_chats}`);
   if (counts[0].memory_revisions < 1) failures.push("no evolving candidate memory was revised in place");
   if (counts[0].memories_without_evidence !== 0 || counts[0].duplicate_memory_contents !== 0) failures.push(`memory integrity evidence=${counts[0].memories_without_evidence} duplicates=${counts[0].duplicate_memory_contents}`);
+  if (counts[0].invalid_count_thoughts !== 0) failures.push(`invalidated internal thoughts still active=${counts[0].invalid_count_thoughts}`);
   if (counts[0].chat_materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].chat_materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
   if (counts[0].pending !== 0) failures.push(`life jobs pending=${counts[0].pending}`);
   if (modelReliability.unclassified_failures.length > 0) failures.push(`unclassified life failures ${modelReliability.unclassified_failures.length}`);
