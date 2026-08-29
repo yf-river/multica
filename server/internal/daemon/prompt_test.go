@@ -72,6 +72,19 @@ func TestBuildChronicleLifeJobPromptPinsScalarNarrativeAndDirectSubmission(t *te
 	assertPromptExcludes(t, out, "--output-file <path>", "multica life job complete")
 }
 
+func TestUnderstandMaterialsPromptDistinguishesEventsFromDurableMemory(t *testing.T) {
+	out := BuildPrompt(Task{LifeJobID: "job-understand", LifeJobType: "understand_materials"})
+	assertPromptContains(t, out,
+		"Raw events already belong to materials and chronicles",
+		"never create a memory merely to restate what happened",
+		"Producing no memory is the normal result",
+		"candidate memory judgements may be drafted and revised freely",
+		"Confirming, correcting, downgrading, or archiving a governed memory",
+		"memory_id?:UUID",
+		"return that supplied memory_id and revise it instead of creating another memory",
+	)
+}
+
 func TestBuildExperimentCheckPromptDistinguishesRunningAndStoppedRounds(t *testing.T) {
 	out := BuildPrompt(Task{
 		LifeJobID:    "job-experiment",

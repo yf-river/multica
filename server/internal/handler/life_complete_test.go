@@ -380,7 +380,23 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM life_material WHERE id=$1`, materialID) })
-	var jobID, taskID string
+	var jobID, taskID, revisionJobID, revisionTaskID, staleJobID, staleTaskID string
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE workspace_id=$1 AND recipient_id=$2 AND type='life_companion'`, testWorkspaceID, testUserID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_proactive_check WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3`, testWorkspaceID, testUserID, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_action_proposal WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3`, testWorkspaceID, testUserID, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_memory WHERE workspace_id=$1 AND user_id=$2 AND created_by_id=$3`, testWorkspaceID, testUserID, agentID)
+		for _, id := range []string{jobID, revisionJobID, staleJobID} {
+			if id != "" {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM life_cognition_job WHERE id=$1`, id)
+			}
+		}
+		for _, id := range []string{taskID, revisionTaskID, staleTaskID} {
+			if id != "" {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1`, id)
+			}
+		}
+	})
 	if err := testPool.QueryRow(ctx, `INSERT INTO life_cognition_job (workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,started_at,attempt) VALUES ($1,$2,$3,'understand_materials','running',$4,now(),1) RETURNING id`, testWorkspaceID, testUserID, agentID, "test:"+materialID).Scan(&jobID); err != nil {
 		t.Fatal(err)
 	}
@@ -415,6 +431,29 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	if evidenceCount != 1 || !strings.Contains(evidenceExcerpt, "今天第一次记录心情") || !strings.Contains(evidenceExcerpt, "同一份材料里的补充证据") {
 		t.Fatalf("coalesced evidence count=%d excerpt=%q", evidenceCount, evidenceExcerpt)
 	}
+	if err := testPool.QueryRow(ctx, `INSERT INTO life_cognition_job (workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,started_at,attempt) VALUES ($1,$2,$3,'understand_materials','running',$4,now(),1) RETURNING id`, testWorkspaceID, testUserID, agentID, "revision-test:"+materialID).Scan(&revisionJobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `INSERT INTO agent_task_queue (agent_id,runtime_id,status,priority,initiator_user_id,started_at,context) VALUES ($1,$2,'running',0,$3,now(),$4) RETURNING id`, agentID, handlerTestRuntimeID(t), testUserID, taskContext).Scan(&revisionTaskID); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, revisionJobID, revisionTaskID)
+	revisionOutput := map[string]any{"memory_candidates": []map[string]any{{"memory_id": memoryID, "kind": "understanding", "content": "心情记录可能有助于看见压力变化", "confidence": 0.68, "urgency": 0.2, "uncertainty": "仍需跨周期观察", "evidence": evidence}}}
+	w = callCompanionAgentHandler(t, revisionTaskID, agentID, http.MethodPost, "/api/life/agent/jobs/"+revisionJobID+"/complete", map[string]any{"output": revisionOutput}, map[string]string{"jobId": revisionJobID}, testHandler.CompleteCompanionCognitionJob)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revise candidate memory: %d %s", w.Code, w.Body.String())
+	}
+	var memoryCount, revisionCount int
+	var revisedContent, revisedStatus string
+	if err := testPool.QueryRow(ctx, `SELECT count(*), min(content), min(status) FROM life_memory WHERE workspace_id=$1 AND user_id=$2 AND id=$3`, testWorkspaceID, testUserID, memoryID).Scan(&memoryCount, &revisedContent, &revisedStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM life_memory_revision WHERE memory_id=$1`, memoryID).Scan(&revisionCount); err != nil {
+		t.Fatal(err)
+	}
+	if memoryCount != 1 || revisedContent != "心情记录可能有助于看见压力变化" || revisedStatus != "candidate" || revisionCount != 2 {
+		t.Fatalf("candidate revision count=%d content=%q status=%q revisions=%d", memoryCount, revisedContent, revisedStatus, revisionCount)
+	}
 	var inboxCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM inbox_item WHERE workspace_id=$1 AND recipient_id=$2 AND type='life_companion' AND body LIKE '%记下来了%'`, testWorkspaceID, testUserID).Scan(&inboxCount); err != nil {
 		t.Fatal(err)
@@ -448,7 +487,6 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	if containsJSONText(persistedContext, "今天第一次记录心情") || containsJSONText(persistedOutput, "今天第一次记录心情") {
 		t.Fatalf("background task retained forgotten content: context=%s output=%s", persistedContext, persistedOutput)
 	}
-	var staleJobID, staleTaskID string
 	if err := testPool.QueryRow(ctx, `INSERT INTO life_cognition_job (workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,started_at,attempt) VALUES ($1,$2,$3,'understand_materials','running',$4,now(),1) RETURNING id`, testWorkspaceID, testUserID, agentID, "stale-test:"+materialID).Scan(&staleJobID); err != nil {
 		t.Fatal(err)
 	}
@@ -466,15 +504,6 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	if leaked != 0 {
 		t.Fatalf("forgotten source was regenerated from stale task output: %d", leaked)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE workspace_id=$1 AND recipient_id=$2 AND type='life_companion'`, testWorkspaceID, testUserID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_proactive_check WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3`, testWorkspaceID, testUserID, agentID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_memory WHERE workspace_id=$1 AND user_id=$2 AND content='开始尝试记录心情'`, testWorkspaceID, testUserID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_cognition_job WHERE id=$1`, jobID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1`, taskID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_cognition_job WHERE id=$1`, staleJobID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id=$1`, staleTaskID)
-	})
 }
 
 func TestLifeCognitionOutputRejectsFieldsFromAnotherJobType(t *testing.T) {

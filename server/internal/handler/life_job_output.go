@@ -26,6 +26,7 @@ type lifeJobEvidenceOutput struct {
 }
 
 type lifeJobMemoryOutput struct {
+	ID          string                  `json:"memory_id"`
 	Kind        string                  `json:"kind"`
 	Content     string                  `json:"content"`
 	Confidence  float64                 `json:"confidence"`
@@ -224,6 +225,9 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 			return invalidLifeJobOutput("memory_candidates[%d] is invalid", i)
 		}
 		if err := validateLifeJobEvidence("memory_candidates", i, candidate.Evidence); err != nil {
+			return err
+		}
+		if err := validateOptionalLifeJobID("memory_candidates", i, "memory_id", candidate.ID); err != nil {
 			return err
 		}
 	}
@@ -492,7 +496,6 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := h.Queries.WithTx(tx)
 
-	createdMemories := make([]pgtype.UUID, 0, len(output.MemoryCandidates))
 	for _, candidate := range output.MemoryCandidates {
 		if !validLifeMemoryKind(candidate.Kind) || strings.TrimSpace(candidate.Content) == "" || candidate.Confidence < 0 || candidate.Confidence > 1 || candidate.Urgency < 0 || candidate.Urgency > 1 {
 			return db.LifeCognitionJob{}, fmt.Errorf("invalid memory candidate in life job output")
@@ -504,24 +507,46 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 		if forgotten {
 			continue
 		}
-		memory, err := q.CreateLifeMemory(ctx, db.CreateLifeMemoryParams{
-			WorkspaceID: scope.workspaceID, UserID: scope.userID,
-			CreatedByType: "agent", CreatedByID: scope.agentID,
-			Kind: candidate.Kind, Content: strings.TrimSpace(candidate.Content),
-			Confidence: candidate.Confidence, Urgency: candidate.Urgency,
-			Uncertainty: strings.TrimSpace(candidate.Uncertainty),
-		})
-		if err != nil {
-			return db.LifeCognitionJob{}, err
-		}
-		createdMemories = append(createdMemories, memory.ID)
-		if _, err := q.CreateLifeMemoryRevision(ctx, db.CreateLifeMemoryRevisionParams{
-			MemoryID: memory.ID, Revision: 1, Kind: memory.Kind, Status: memory.Status,
-			Content: memory.Content, Confidence: memory.Confidence, Urgency: memory.Urgency,
-			Uncertainty: memory.Uncertainty, Scope: memory.Scope, ChangeType: "created",
-			ChangeReason: "background cognition", ChangedByType: "agent", ChangedByID: scope.agentID,
-		}); err != nil {
-			return db.LifeCognitionJob{}, err
+		var memory db.LifeMemory
+		if strings.TrimSpace(candidate.ID) == "" {
+			memory, err = q.CreateLifeMemory(ctx, db.CreateLifeMemoryParams{
+				WorkspaceID: scope.workspaceID, UserID: scope.userID,
+				CreatedByType: "agent", CreatedByID: scope.agentID,
+				Kind: candidate.Kind, Content: strings.TrimSpace(candidate.Content),
+				Confidence: candidate.Confidence, Urgency: candidate.Urgency,
+				Uncertainty: strings.TrimSpace(candidate.Uncertainty),
+			})
+			if err != nil {
+				return db.LifeCognitionJob{}, err
+			}
+			if err := createLifeMemoryRevision(ctx, q, memory, "created", "background cognition", "agent", scope.agentID); err != nil {
+				return db.LifeCognitionJob{}, err
+			}
+		} else {
+			memoryID, err := util.ParseUUID(candidate.ID)
+			if err != nil {
+				return db.LifeCognitionJob{}, fmt.Errorf("invalid memory candidate id")
+			}
+			existing, err := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{ID: memoryID, WorkspaceID: scope.workspaceID, UserID: scope.userID})
+			if err != nil {
+				return db.LifeCognitionJob{}, err
+			}
+			if existing.Status != "candidate" {
+				return db.LifeCognitionJob{}, invalidLifeJobOutput("memory candidate %s is not available for background revision", candidate.ID)
+			}
+			memory, err = q.UpdateLifeMemoryContent(ctx, db.UpdateLifeMemoryContentParams{
+				ID: existing.ID, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+				Kind: candidate.Kind, Content: strings.TrimSpace(candidate.Content),
+				Confidence: candidate.Confidence, Urgency: candidate.Urgency,
+				Uncertainty: strings.TrimSpace(candidate.Uncertainty),
+				ValidFrom:   existing.ValidFrom, ValidTo: existing.ValidTo,
+			})
+			if err != nil {
+				return db.LifeCognitionJob{}, err
+			}
+			if err := createLifeMemoryRevision(ctx, q, memory, "reviewed", "background cognition", "agent", scope.agentID); err != nil {
+				return db.LifeCognitionJob{}, err
+			}
 		}
 		for _, evidence := range coalesceLifeMemoryEvidence(candidate.Evidence) {
 			sourceID, err := util.ParseUUID(evidence.SourceID)
@@ -1076,7 +1101,6 @@ upgradeEvaluationDone:
 	if err := tx.Commit(ctx); err != nil {
 		return db.LifeCognitionJob{}, err
 	}
-	_ = createdMemories
 	return completed, nil
 }
 

@@ -78,6 +78,10 @@ RETURNING *;
 -- name: CreateLifeMemoryEvidence :one
 INSERT INTO life_memory_evidence (memory_id, source_type, source_id, excerpt, observed_at, stance)
 VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (memory_id, source_type, source_id) DO UPDATE
+SET excerpt = EXCLUDED.excerpt,
+    observed_at = LEAST(life_memory_evidence.observed_at, EXCLUDED.observed_at),
+    stance = EXCLUDED.stance
 RETURNING *;
 
 -- name: ListLifeMemoryEvidence :many
