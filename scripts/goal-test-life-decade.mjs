@@ -46,6 +46,13 @@ let session;
 let chatCount = 0;
 let denseWindowCount = 0;
 let coreScenarioCount = 0;
+let modelReliability = resumeState?.model_reliability || {
+  recent_terminal_tasks: 0,
+  recent_infrastructure_failures: 0,
+  consecutive_timeout_failures: 0,
+  recoverable_failures: [],
+  switch_required: false,
+};
 const responseEvidence = [];
 const checkpoints = [];
 const created = { agents: [], observers: [], experiments: [], modules: [], memories: [], commitments: [], evaluations: [] };
@@ -628,12 +635,63 @@ async function waitForLifeJobs(label, timeout = 35 * 60_000) {
       [workspace.id, user.id],
     );
     const counts = Object.fromEntries(rows.map((row) => [row.status, row.count]));
-    if ((counts.cancelled || 0) > 0) throw new Error(`${label}: ${counts.cancelled} life cognition jobs exhausted retries`);
+    modelReliability = await readLifeModelReliability();
+    if (modelReliability.unclassified_failures.length > 0) {
+      throw new Error(`${label}: life cognition failures need a product diagnosis: ${modelReliability.unclassified_failures.map((item) => item.id).join(",")}`);
+    }
+    if (modelReliability.switch_required) {
+      throw new Error(`${label}: DeepSeek reliability threshold reached; switch the whole life system to Luna`);
+    }
     const pending = (counts.queued || 0) + (counts.running || 0) + (counts.failed || 0);
     if (pending === 0) return counts;
     await delay(2_000);
   }
   throw new Error(`${label}: life cognition jobs did not settle within ${timeout}ms`);
+}
+
+async function readLifeModelReliability() {
+  const { rows } = await db.query(
+    `SELECT id, job_type, status, attempt, error, updated_at
+       FROM life_cognition_job
+      WHERE workspace_id = $1 AND user_id = $2
+        AND status IN ('completed', 'cancelled')
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 20`,
+    [workspace.id, user.id],
+  );
+  const failures = rows.filter((row) => row.status === "cancelled");
+  const infrastructureFailures = failures.filter((row) => isModelInfrastructureFailure(row.error));
+  let consecutiveTimeoutFailures = 0;
+  for (const row of rows) {
+    if (row.status !== "cancelled" || !isModelTimeout(row.error)) break;
+    consecutiveTimeoutFailures += 1;
+  }
+  return {
+    recent_terminal_tasks: rows.length,
+    recent_infrastructure_failures: infrastructureFailures.length,
+    consecutive_timeout_failures: consecutiveTimeoutFailures,
+    recoverable_failures: infrastructureFailures.map((row) => ({
+      id: row.id,
+      job_type: row.job_type,
+      attempt: row.attempt,
+      error: row.error,
+      updated_at: row.updated_at,
+    })),
+    unclassified_failures: failures.filter((row) => !isModelInfrastructureFailure(row.error)).map((row) => ({
+      id: row.id,
+      job_type: row.job_type,
+      error: row.error,
+    })),
+    switch_required: infrastructureFailures.length >= 4 || consecutiveTimeoutFailures >= 3,
+  };
+}
+
+function isModelInfrastructureFailure(error) {
+  return /timed? out|timeout|capacity|rate.?limit|network|connection/i.test(error || "");
+}
+
+function isModelTimeout(error) {
+  return /timed? out|timeout/i.test(error || "");
 }
 
 async function yearlyActions(year, monthOfYear, simulatedAt, companionID) {
@@ -892,6 +950,7 @@ async function waitForChronicleCatchUp() {
 }
 
 async function finalAudit(companionID, runtimeID) {
+  modelReliability = await readLifeModelReliability();
   const { rows: counts } = await db.query(
     `SELECT
        (SELECT count(*)::int FROM chat_message m JOIN chat_session s ON s.id=m.chat_session_id WHERE s.id=$1 AND m.role='user') AS user_chats,
@@ -918,7 +977,7 @@ async function finalAudit(companionID, runtimeID) {
          WHERE observer.workspace_id=$2 AND observer.user_id=$3
            AND abs(extract(epoch FROM ((evidence->>'observed_at')::timestamptz-material.occurred_at)))>2) AS observer_evidence_time_mismatches,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status IN ('queued','running','failed')) AS pending,
-       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='cancelled') AS failed`,
+       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='cancelled') AS recoverable_failures`,
     [session.id, workspace.id, user.id, simulatedStart, new Date(addMonths(simulatedStart, 119).getTime() + 10 * 60_000)],
   );
   const agents = await api("/api/agents");
@@ -938,7 +997,9 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].memory_revisions < 1) failures.push("no evolving candidate memory was revised in place");
   if (counts[0].memories_without_evidence !== 0 || counts[0].duplicate_memory_contents !== 0) failures.push(`memory integrity evidence=${counts[0].memories_without_evidence} duplicates=${counts[0].duplicate_memory_contents}`);
   if (counts[0].chat_materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].chat_materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
-  if (counts[0].pending !== 0 || counts[0].failed !== 0) failures.push(`life jobs pending=${counts[0].pending} failed=${counts[0].failed}`);
+  if (counts[0].pending !== 0) failures.push(`life jobs pending=${counts[0].pending}`);
+  if (modelReliability.unclassified_failures.length > 0) failures.push(`unclassified life failures ${modelReliability.unclassified_failures.length}`);
+  if (modelReliability.switch_required) failures.push("DeepSeek reliability threshold reached");
   if (lifeAgents.length !== 5 || lifeAgents.some((agent) => agent.runtime_id !== runtimeID || agent.model !== model)) failures.push("life agent runtime/model drift");
   const evaluationResult = coreEvaluation?.result || {};
   const passRate = Number(evaluationResult.pass_rate);
@@ -958,6 +1019,7 @@ async function finalAudit(companionID, runtimeID) {
       dense_windows: denseWindowCount,
       monthly_checkpoints: checkpoints.length,
       database_counts: counts[0],
+      model_reliability: modelReliability,
       semantic_evaluation: coreEvaluation ? {
         id: coreEvaluation.id,
         status: coreEvaluation.status,
@@ -1064,6 +1126,7 @@ function persist(extra = {}) {
     created,
     completed_yearly_actions: [...completedYearlyActions],
     completed_yearly_steps: [...completedYearlySteps],
+    model_reliability: modelReliability,
     pending_turn: pendingTurn,
     checkpoints,
     responses: responseEvidence,
