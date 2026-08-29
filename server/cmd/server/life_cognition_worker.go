@@ -15,7 +15,7 @@ import (
 const (
 	lifeCognitionPollInterval   = 15 * time.Second
 	lifeCognitionClaimLimit     = 10
-	lifeCognitionContextVersion = "life-context-v4"
+	lifeCognitionContextVersion = "life-context-v5"
 )
 
 type lifeCognitionTaskContext struct {

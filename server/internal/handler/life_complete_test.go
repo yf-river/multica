@@ -308,7 +308,7 @@ func TestGovernedLifeContextUsesBoundedVersionedIndexes(t *testing.T) {
 		t.Fatalf("candidate index must be bounded at %d, got %d", candidateLifeMemoryIndexLimit, len(contextValue.CandidateMemories))
 	}
 	for _, memory := range contextValue.CandidateMemories {
-		if len([]rune(memory.Content)) > 121 || len([]rune(memory.Uncertainty)) > 81 {
+		if len([]rune(memory.Content)) > 61 || len([]rune(memory.Uncertainty)) > 41 {
 			t.Fatalf("candidate index contains unbounded text: %#v", memory)
 		}
 	}
