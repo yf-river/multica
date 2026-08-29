@@ -265,7 +265,7 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 		}
 	}
 	for i, thought := range output.InternalThoughts {
-		if !oneOf(thought.Type, "interest", "opinion", "question", "research", "draft") || strings.TrimSpace(thought.Title) == "" || strings.TrimSpace(thought.Content) == "" {
+		if !oneOf(thought.Type, "interest", "opinion", "question", "research", "draft") || strings.TrimSpace(thought.Title) == "" || strings.TrimSpace(thought.Content) == "" || thought.Metadata == nil {
 			return invalidLifeJobOutput("internal_thoughts[%d] is invalid", i)
 		}
 		if err := validateLifeJobEvidence("internal_thoughts", i, thought.Evidence); err != nil {
@@ -295,7 +295,7 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 		}
 	}
 	if decision := output.ProactiveDecision; decision != nil {
-		if !oneOf(decision.Status, "silent", "spoke") || !oneOf(decision.TriggerSource, "schedule", "commitment", "risk", "manual") || strings.TrimSpace(decision.Reason) == "" {
+		if !oneOf(decision.Status, "silent", "spoke") || !oneOf(decision.TriggerSource, "schedule", "commitment", "risk", "manual") || strings.TrimSpace(decision.Reason) == "" || decision.ContextSnapshot == nil {
 			return invalidLifeJobOutput("proactive_decision is invalid")
 		}
 		if err := validateLifeJobEvidence("proactive_decision", 0, decision.Evidence); err != nil {
@@ -319,8 +319,8 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 		}
 	}
 	if review := output.ExperimentReview; review != nil {
-		if _, err := util.ParseUUID(review.RoundID); err != nil {
-			return invalidLifeJobOutput("experiment_review.round_id is invalid")
+		if _, err := util.ParseUUID(review.RoundID); err != nil || review.ModuleProposal == nil {
+			return invalidLifeJobOutput("experiment_review is invalid")
 		}
 		if err := validateLifeJobEvidence("experiment_review", 0, review.Evidence); err != nil {
 			return err
@@ -362,7 +362,7 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 		}
 	}
 	if evaluation := output.UpgradeEvaluation; evaluation != nil {
-		if _, err := util.ParseUUID(evaluation.EvaluationID); err != nil || !oneOf(evaluation.Status, "passed", "failed", "unknown") {
+		if _, err := util.ParseUUID(evaluation.EvaluationID); err != nil || !oneOf(evaluation.Status, "passed", "failed", "unknown") || evaluation.Result == nil {
 			return invalidLifeJobOutput("upgrade_evaluation is invalid")
 		}
 		if err := validateLifeJobEvidence("upgrade_evaluation", 0, evaluation.Evidence); err != nil {

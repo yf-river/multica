@@ -633,6 +633,27 @@ func TestLifeCognitionOutputRejectsProseInTimestampFields(t *testing.T) {
 	}
 }
 
+func TestLifeCognitionOutputRejectsMissingJSONObjects(t *testing.T) {
+	tests := []struct {
+		name    string
+		jobType string
+		output  lifeCognitionOutput
+	}{
+		{name: "internal thought metadata", jobType: "understand_materials", output: lifeCognitionOutput{InternalThoughts: []lifeJobThoughtOutput{{Type: "draft", Title: "回看", Content: "继续观察"}}}},
+		{name: "proactive context", jobType: "proactive_check", output: lifeCognitionOutput{ProactiveDecision: &lifeJobProactiveOutput{Status: "silent", TriggerSource: "manual", Reason: "等待用户"}}},
+		{name: "experiment module proposal", jobType: "experiment_check", output: lifeCognitionOutput{ExperimentReview: &lifeJobExperimentReviewOutput{RoundID: uuid.NewString()}}},
+		{name: "upgrade result", jobType: "upgrade_evaluation", output: lifeCognitionOutput{UpgradeEvaluation: &lifeJobUpgradeEvaluationOutput{EvaluationID: uuid.NewString(), Status: "unknown"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var outputErr lifeJobOutputError
+			if err := validateLifeJobOutput(test.jobType, test.output); !errors.As(err, &outputErr) {
+				t.Fatalf("expected governed output error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestObserverOutputAcceptsGovernedKnowledgeAndChronicleEvidence(t *testing.T) {
 	err := validateLifeJobOutput("observer_run", lifeCognitionOutput{
 		ObserverJudgements: []lifeJobObserverJudgementOutput{{

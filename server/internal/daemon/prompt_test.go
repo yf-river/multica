@@ -50,6 +50,7 @@ func TestBuildLifeJobPromptUsesOnlyTheCurrentJobContract(t *testing.T) {
 		"proactive status=silent|spoke and trigger_source=schedule|commitment|risk|manual",
 		"never invent an ID",
 		"must be an RFC3339 timestamp",
+		"Use {} when the object is intentionally empty",
 		"never submit synthetic or reduced probe outputs",
 	)
 	assertPromptExcludes(t, out,
