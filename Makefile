@@ -1,4 +1,4 @@
-.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-life-resilience goal-test-dashboard-click-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-life-resilience goal-test-life-chaos goal-test-dashboard-click-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
@@ -317,6 +317,10 @@ goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI
 goal-test-life-resilience: goal-test-smoke ## Run destructive life proposal, isolation, and two-browser concurrency acceptance
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-life-resilience.mjs
+
+goal-test-life-chaos: goal-test-smoke ## Run real process, database, stale-task, version-skew, and backup recovery acceptance
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-life-chaos.mjs
 
 goal-test-dashboard-click-audit: goal-test-smoke ## Run real-browser dashboard sidebar/navigation click latency audit
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
