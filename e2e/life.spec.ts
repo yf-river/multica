@@ -14,16 +14,20 @@ test.describe("Life", () => {
     await expect(page.getByRole("tab", { name: "观察席" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "编年史" })).toBeVisible();
 
-    const before = await page.getByText(/最近已接入 \d+ 条材料/).textContent();
+    const content = `E2E 人生材料 ${Date.now()}：今天看到一棵很好看的树。`;
     const responsePromise = page.waitForResponse(
       (response) => response.url().includes("/api/life/materials") && response.request().method() === "POST",
     );
+    const readbackPromise = page.waitForResponse(
+      (response) => response.url().includes("/api/life/materials") && response.request().method() === "GET",
+    );
     await page
       .getByPlaceholder("今天发生了什么，或者你现在在想什么？")
-      .fill(`E2E 人生材料 ${Date.now()}：今天看到一棵很好看的树。`);
+      .fill(content);
     await page.getByRole("button", { name: "记下来" }).click();
     expect((await responsePromise).status()).toBe(201);
-    await expect(page.getByText(/最近已接入 \d+ 条材料/)).not.toHaveText(before ?? "");
+    const readback = (await readbackPromise).json() as Promise<{ materials: Array<{ content: string }> }>;
+    expect((await readback).materials.some((item) => item.content === content)).toBe(true);
 
     for (const tab of ["实验", "观察席", "编年史", "记忆"]) {
       await page.getByRole("tab", { name: tab }).click();
