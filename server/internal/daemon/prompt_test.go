@@ -95,6 +95,7 @@ func TestLifePromptSeparatesResolverReferencesFromPersistedEvidence(t *testing.T
 		"Final output evidence source_type is exactly chat_message|task|comment|project|manual|external|memory|experiment_round|chronicle|observer_knowledge",
 		"copy its actual source_type and ID instead of writing material",
 		"Do not claim a first occurrence, ordinal count, or exact frequency",
+		"only that speaker's claim",
 		"already contains the complete new judgements for this job",
 		"do not resolve those IDs as evidence",
 		"Put their IDs directly in observation_topics.judgement_ids",
@@ -626,6 +627,7 @@ func TestBuildChatPromptUsesConfirmedLifeContextAsRevisableData(t *testing.T) {
 		"current message may update or contradict it",
 		"It is a selected index, not a complete event list",
 		"Do not claim a first occurrence, ordinal count, or exact frequency",
+		"only that speaker's claim",
 		"Do not turn a temporary feeling, impulse, or isolated expression into a fact, plan, commitment, or decision",
 		"User message:\n我今天又不想干了",
 	)
