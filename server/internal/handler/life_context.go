@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	lifeContextVersion              = "life-context-v2"
+	lifeContextVersion              = "life-context-v3"
 	confirmedLifeMemoryIndexLimit   = 80
 	candidateLifeMemoryIndexLimit   = 32
 	lifeTopicIndexLimit             = 32
@@ -220,7 +220,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 		chronicleItems = append(chronicleItems, map[string]any{
 			"id": uuidToString(entry.ID), "period_kind": entry.PeriodKind,
 			"period_start": timestampToString(entry.PeriodStart), "period_end": timestampToString(entry.PeriodEnd),
-			"facts": lifeContextExcerpt(entry.Facts, 240), "understanding_later": lifeContextExcerpt(entry.UnderstandingLater, 240),
+			"facts": lifeContextExcerpt(entry.Facts, 120), "understanding_later": lifeContextExcerpt(entry.UnderstandingLater, 120),
 		})
 	}
 	result["chronicle_index"] = chronicleItems
