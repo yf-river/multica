@@ -79,6 +79,90 @@ func TestRunningLifeCognitionJobPersistsGovernedInput(t *testing.T) {
 	}
 }
 
+func TestClaimDueLifeCognitionJobsSerializesMaterialUnderstandingPerLife(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	if _, err := tx.Exec(ctx, `LOCK TABLE life_cognition_job IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE life_cognition_job
+		SET scheduled_at = now() + interval '1 hour'
+		WHERE status IN ('queued', 'failed')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	var agentID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	insertJob := func(jobType, status, key string) pgtype.UUID {
+		var id pgtype.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO life_cognition_job (
+				workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,input,scheduled_at,started_at,attempt
+			) VALUES ($1,$2,$3,$4,$5,$6,'{}'::jsonb,now()-interval '1 day',CASE WHEN $5='running' THEN now() END,CASE WHEN $5='running' THEN 1 ELSE 0 END)
+			RETURNING id
+		`, testWorkspaceID, testUserID, agentID, jobType, status, key).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	suffix := fmt.Sprint(time.Now().UnixNano())
+	runningID := insertJob("understand_materials", "running", "serial-running:"+suffix)
+	queuedID := insertJob("understand_materials", "queued", "serial-queued:"+suffix)
+	chronicleID := insertJob("chronicle_generate", "queued", "serial-chronicle:"+suffix)
+	secondQueuedID := insertJob("understand_materials", "queued", "serial-second-queued:"+suffix)
+	queries := db.New(tx)
+
+	claimed, err := queries.ClaimDueLifeCognitionJobs(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != chronicleID {
+		t.Fatalf("claim with running understanding = %#v, want only chronicle %v", claimed, chronicleID)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE life_cognition_job SET status='completed',completed_at=now() WHERE id=$1`, runningID); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err = queries.ClaimDueLifeCognitionJobs(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || (claimed[0].ID != queuedID && claimed[0].ID != secondQueuedID) {
+		t.Fatalf("claim after understanding completed = %#v, want one queued material understanding", claimed)
+	}
+	remainingID := queuedID
+	if claimed[0].ID == queuedID {
+		remainingID = secondQueuedID
+	}
+	var secondStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM life_cognition_job WHERE id=$1`, remainingID).Scan(&secondStatus); err != nil {
+		t.Fatal(err)
+	}
+	if secondStatus != "queued" {
+		t.Fatalf("second material understanding status = %s, want queued", secondStatus)
+	}
+	if _, err := tx.Exec(ctx, `SAVEPOINT concurrent_understanding`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE life_cognition_job SET status='running' WHERE id=$1`, remainingID); err == nil {
+		t.Fatal("database allowed two running material-understanding jobs for one life")
+	}
+	if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT concurrent_understanding`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMissingLifeChroniclePeriodsCatchUpInDependencyOrder(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")

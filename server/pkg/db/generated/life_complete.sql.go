@@ -152,13 +152,38 @@ func (q *Queries) AttachLifeCognitionJobTask(ctx context.Context, arg AttachLife
 
 const claimDueLifeCognitionJobs = `-- name: ClaimDueLifeCognitionJobs :many
 WITH due AS (
-    SELECT id
-    FROM life_cognition_job
-    WHERE status IN ('queued', 'failed')
-      AND scheduled_at <= now()
-      AND attempt < max_attempts
-    ORDER BY scheduled_at
-    FOR UPDATE SKIP LOCKED
+    SELECT candidate.id
+    FROM life_cognition_job candidate
+    WHERE candidate.status IN ('queued', 'failed')
+      AND candidate.scheduled_at <= now()
+      AND candidate.attempt < candidate.max_attempts
+      AND (
+          candidate.job_type <> 'understand_materials'
+          OR (
+              NOT EXISTS (
+                  SELECT 1
+                  FROM life_cognition_job running
+                  WHERE running.workspace_id = candidate.workspace_id
+                    AND running.user_id = candidate.user_id
+                    AND running.job_type = 'understand_materials'
+                    AND running.status = 'running'
+              )
+              AND candidate.id = (
+                  SELECT next_job.id
+                  FROM life_cognition_job next_job
+                  WHERE next_job.workspace_id = candidate.workspace_id
+                    AND next_job.user_id = candidate.user_id
+                    AND next_job.job_type = 'understand_materials'
+                    AND next_job.status IN ('queued', 'failed')
+                    AND next_job.scheduled_at <= now()
+                    AND next_job.attempt < next_job.max_attempts
+                  ORDER BY next_job.scheduled_at, next_job.created_at, next_job.id
+                  LIMIT 1
+              )
+          )
+      )
+    ORDER BY candidate.scheduled_at, candidate.created_at, candidate.id
+    FOR UPDATE OF candidate SKIP LOCKED
     LIMIT $1
 )
 UPDATE life_cognition_job j
