@@ -412,7 +412,7 @@ func oneOf(value string, allowed ...string) bool {
 
 func validLifeEvidenceSourceType(value string) bool {
 	switch value {
-	case "chat_message", "task", "comment", "project", "manual", "external", "memory", "experiment_round":
+	case "chat_message", "task", "comment", "project", "manual", "external", "memory", "experiment_round", "chronicle", "observer_knowledge":
 		return true
 	default:
 		return false
@@ -446,6 +446,30 @@ func lifeEvidenceWasForgotten(ctx context.Context, q *db.Queries, scope lifeJobT
 				return false, err
 			}
 			if _, err := q.GetLifeMemory(ctx, db.GetLifeMemoryParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID}); errors.Is(err, pgx.ErrNoRows) {
+				return true, nil
+			} else if err != nil {
+				return false, err
+			}
+			continue
+		}
+		if item.SourceType == "chronicle" {
+			id, err := util.ParseUUID(item.SourceID)
+			if err != nil {
+				return false, err
+			}
+			if _, err := q.GetLifeChronicleEntry(ctx, db.GetLifeChronicleEntryParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID}); errors.Is(err, pgx.ErrNoRows) {
+				return true, nil
+			} else if err != nil {
+				return false, err
+			}
+			continue
+		}
+		if item.SourceType == "observer_knowledge" {
+			id, err := util.ParseUUID(item.SourceID)
+			if err != nil {
+				return false, err
+			}
+			if _, err := q.GetLifeObserverKnowledgeForUser(ctx, db.GetLifeObserverKnowledgeForUserParams{ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID}); errors.Is(err, pgx.ErrNoRows) {
 				return true, nil
 			} else if err != nil {
 				return false, err

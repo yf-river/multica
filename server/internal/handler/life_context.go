@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -312,7 +313,7 @@ func (h *Handler) buildCompanionChatLifeContext(ctx context.Context, scope lifeR
 	return string(raw), err
 }
 
-func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScope, jobType string, agentID pgtype.UUID) (string, error) {
+func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScope, jobType string, agentID pgtype.UUID, jobInput json.RawMessage) (string, error) {
 	governed, err := h.buildGovernedLifeContext(ctx, scope)
 	if err != nil {
 		return "", err
@@ -328,8 +329,15 @@ func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScop
 		if err != nil {
 			return "", err
 		}
-		items := make([]map[string]any, 0, min(len(judgements), lifeObserverJudgementIndexLimit))
-		for _, item := range capLifeContextItems(judgements, lifeObserverJudgementIndexLimit) {
+		requested := lifeObservationJudgementIDs(jobInput)
+		items := make([]map[string]any, 0, min(len(requested), lifeObserverJudgementIndexLimit))
+		for _, item := range judgements {
+			if _, ok := requested[uuidToString(item.ID)]; !ok {
+				continue
+			}
+			if len(items) >= lifeObserverJudgementIndexLimit {
+				break
+			}
 			items = append(items, map[string]any{
 				"id": uuidToString(item.ID), "observer_name": lifeContextExcerpt(item.ObserverName, 60), "title": lifeContextExcerpt(item.Title, 80),
 				"content":    lifeContextExcerpt(item.Content, 120),
@@ -403,4 +411,20 @@ func (h *Handler) buildLifeJobContext(ctx context.Context, scope lifeRequestScop
 	}
 	raw, err := json.Marshal(result)
 	return string(raw), err
+}
+
+func lifeObservationJudgementIDs(input json.RawMessage) map[string]struct{} {
+	var value struct {
+		IDs []string `json:"new_judgement_ids"`
+	}
+	if json.Unmarshal(input, &value) != nil {
+		return map[string]struct{}{}
+	}
+	result := make(map[string]struct{}, len(value.IDs))
+	for _, id := range value.IDs {
+		if _, err := util.ParseUUID(id); err == nil {
+			result[id] = struct{}{}
+		}
+	}
+	return result
 }

@@ -87,6 +87,18 @@ func TestUnderstandMaterialsPromptDistinguishesEventsFromDurableMemory(t *testin
 	)
 }
 
+func TestLifePromptSeparatesResolverReferencesFromPersistedEvidence(t *testing.T) {
+	out := BuildPrompt(Task{LifeJobID: "job-observer", LifeJobType: "observation_aggregate"})
+	assertPromptContains(t, out,
+		"Resolver reference source_type is exactly material|chronicle|memory|observer_knowledge",
+		"Final output evidence source_type is exactly chat_message|task|comment|project|manual|external|memory|experiment_round|chronicle|observer_knowledge",
+		"copy its actual source_type and ID instead of writing material",
+		"already contains the complete new judgements for this job",
+		"do not resolve those IDs as evidence",
+		"Put their IDs directly in observation_topics.judgement_ids",
+	)
+}
+
 func TestBuildExperimentCheckPromptDistinguishesRunningAndStoppedRounds(t *testing.T) {
 	out := BuildPrompt(Task{
 		LifeJobID:    "job-experiment",

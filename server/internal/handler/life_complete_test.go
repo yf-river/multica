@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -331,6 +333,21 @@ func TestCurrentLifeJobInputRefreshesContextVersion(t *testing.T) {
 	}
 }
 
+func TestObservationAggregationSelectsOnlyItsNewJudgements(t *testing.T) {
+	first := uuid.NewString()
+	second := uuid.NewString()
+	selected := lifeObservationJudgementIDs(json.RawMessage(fmt.Sprintf(`{"new_judgement_ids":[%q,"invalid",%q,%q]}`, first, second, first)))
+	if len(selected) != 2 {
+		t.Fatalf("selected judgement ids = %d, want 2", len(selected))
+	}
+	if _, ok := selected[first]; !ok {
+		t.Fatalf("first judgement missing: %#v", selected)
+	}
+	if _, ok := selected[second]; !ok {
+		t.Fatalf("second judgement missing: %#v", selected)
+	}
+}
+
 func TestConfirmedModuleProposalBecomesActiveContext(t *testing.T) {
 	requireHandlerDatabase(t)
 	agentID := createHandlerTestAgent(t, "CompleteLifeModuleCompanion", nil)
@@ -613,6 +630,21 @@ func TestLifeCognitionOutputRejectsProseInTimestampFields(t *testing.T) {
 	var outputErr lifeJobOutputError
 	if !errors.As(err, &outputErr) || !strings.Contains(outputErr.Error(), "invalid RFC3339 time") {
 		t.Fatalf("expected precise timestamp validation error, got %v", err)
+	}
+}
+
+func TestObserverOutputAcceptsGovernedKnowledgeAndChronicleEvidence(t *testing.T) {
+	err := validateLifeJobOutput("observer_run", lifeCognitionOutput{
+		ObserverJudgements: []lifeJobObserverJudgementOutput{{
+			Status: "published", Title: "独立判断", Content: "结合观察者资料和编年史", Confidence: 0.7,
+			Evidence: []lifeJobEvidenceOutput{
+				{SourceType: "observer_knowledge", SourceID: uuid.NewString(), Stance: "context"},
+				{SourceType: "chronicle", SourceID: uuid.NewString(), Stance: "supports"},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("governed observer evidence was rejected: %v", err)
 	}
 }
 

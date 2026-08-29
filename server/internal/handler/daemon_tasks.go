@@ -641,7 +641,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		lifeContext, err := h.buildLifeJobContext(r.Context(), lifeRequestScope{
 			workspaceID: parseUUID(lifeJob.WorkspaceID),
 			userID:      parseUUID(lifeJob.UserID),
-		}, lifeJob.JobType, task.AgentID)
+		}, lifeJob.JobType, task.AgentID, lifeInput)
 		if err != nil {
 			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition context", err)
 			outcome = "error_build"
