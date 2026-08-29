@@ -222,6 +222,73 @@ func TestQueueLifeMaterialUnderstandingCoalescesIntoExistingQueuedBatch(t *testi
 	}
 }
 
+func TestLifeChatTurnsQueueOneExactMaterialBatch(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	if _, err := tx.Exec(ctx, `LOCK TABLE life_cognition_job IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	var agentID, sessionID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM life_cognition_job WHERE workspace_id=$1 AND user_id=$2`, testWorkspaceID, testUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO companion_profile (workspace_id,user_id,agent_id)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (workspace_id,user_id) DO UPDATE SET agent_id=EXCLUDED.agent_id
+	`, testWorkspaceID, testUserID, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO chat_session (workspace_id,agent_id,creator_id,title)
+		VALUES ($1,$2,$3,'life chat batching') RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	for index, message := range []struct {
+		role    string
+		content string
+	}{
+		{role: "user", content: "第一轮用户"},
+		{role: "assistant", content: "第一轮搭子"},
+		{role: "user", content: "第二轮用户"},
+		{role: "assistant", content: "第二轮搭子"},
+	} {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO chat_message (chat_session_id,role,content,created_at)
+			VALUES ($1,$2,$3,$4)
+		`, sessionID, message.role, message.content, time.Now().Add(time.Duration(index)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var jobCount, materialCount, cursorCount int
+	var hasLegacySource bool
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*),
+		       max(jsonb_array_length(input->'material_ids')),
+		       max(jsonb_array_length(input->'processing_cursors')),
+		       bool_or(input ? 'chat_session_id' OR input ? 'through_message_id')
+		FROM life_cognition_job
+		WHERE workspace_id=$1 AND user_id=$2
+		  AND job_type='understand_materials' AND status='queued'
+	`, testWorkspaceID, testUserID).Scan(&jobCount, &materialCount, &cursorCount, &hasLegacySource); err != nil {
+		t.Fatal(err)
+	}
+	if jobCount != 1 || materialCount != 4 || cursorCount != 4 || hasLegacySource {
+		t.Fatalf("chat batch jobs/materials/cursors/legacy=%d/%d/%d/%t, want 1/4/4/false", jobCount, materialCount, cursorCount, hasLegacySource)
+	}
+}
+
 func TestMissingLifeChroniclePeriodsCatchUpInDependencyOrder(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
