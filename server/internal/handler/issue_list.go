@@ -220,6 +220,9 @@ LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), w
 	}
 	labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to load issue labels")
 		return
 	}

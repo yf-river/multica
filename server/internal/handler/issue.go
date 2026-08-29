@@ -463,6 +463,9 @@ func (h *Handler) ListChildrenByParents(w http.ResponseWriter, r *http.Request) 
 		ParentIds:   parentIDs,
 	})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list child issues")
 		return
 	}
@@ -485,6 +488,9 @@ func (h *Handler) ChildIssueProgress(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.Queries.ChildIssueProgress(r.Context(), wsUUID)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to get child issue progress")
 		return
 	}

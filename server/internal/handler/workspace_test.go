@@ -21,6 +21,20 @@ type workspaceHandlerFixture struct {
 	ID string
 }
 
+func TestListWorkspacesTreatsCancelledRequestAsClientClosed(t *testing.T) {
+	req := newRequest(http.MethodGet, "/api/workspaces", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	testHandler.ListWorkspaces(w, req)
+
+	if w.Code != 499 {
+		t.Fatalf("ListWorkspaces cancelled request: expected 499, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func newWorkspaceHandlerFixture(t *testing.T, name, slug, prefix, role string) workspaceHandlerFixture {
 	t.Helper()
 	ctx := context.Background()

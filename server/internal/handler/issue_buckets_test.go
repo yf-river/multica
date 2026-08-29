@@ -152,3 +152,17 @@ func TestListIssueBucketsTreatsCancelledRequestAsClientClosed(t *testing.T) {
 		t.Fatalf("ListIssueBuckets cancelled request: expected 499, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestChildIssueProgressTreatsCancelledRequestAsClientClosed(t *testing.T) {
+	req := newRequest("GET", "/api/issues/child-progress?workspace_id="+testWorkspaceID, nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	testHandler.ChildIssueProgress(w, req)
+
+	if w.Code != 499 {
+		t.Fatalf("ChildIssueProgress cancelled request: expected 499, got %d: %s", w.Code, w.Body.String())
+	}
+}
