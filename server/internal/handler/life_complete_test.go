@@ -333,6 +333,44 @@ func TestCurrentLifeJobInputRefreshesContextVersion(t *testing.T) {
 	}
 }
 
+func TestLifeJobContextIncludesBoundedActiveInternalThoughts(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "BoundedInternalThoughtContext", nil)
+	configureLifeCompanionForTest(t, agentID)
+	for index := 0; index < lifeInternalThoughtIndexLimit+1; index++ {
+		mustExec(t, ctx, `
+			INSERT INTO life_internal_thought (
+				workspace_id,user_id,companion_agent_id,thought_type,title,content,status,metadata,last_developed_at
+			) VALUES ($1,$2,$3,'draft',$4,$5,'active','{}'::jsonb,$6)
+		`, testWorkspaceID, testUserID, agentID, fmt.Sprintf("索引想法-%02d", index), "用于验证有界上下文", time.Date(2099, 1, 1, 0, 0, index, 0, time.UTC))
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM life_internal_thought WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3`, testWorkspaceID, testUserID, agentID)
+	})
+	scope := lifeRequestScope{workspaceID: parseUUID(testWorkspaceID), userID: parseUUID(testUserID)}
+	contextJSON, err := testHandler.buildLifeJobContext(ctx, scope, "understand_materials", parseUUID(agentID), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value struct {
+		Thoughts []struct {
+			ID string `json:"id"`
+		} `json:"agent_internal_thoughts"`
+	}
+	if err := json.Unmarshal([]byte(contextJSON), &value); err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Thoughts) != lifeInternalThoughtIndexLimit {
+		t.Fatalf("internal thought index must be bounded at %d, got %d", lifeInternalThoughtIndexLimit, len(value.Thoughts))
+	}
+	for _, thought := range value.Thoughts {
+		if _, err := uuid.Parse(thought.ID); err != nil {
+			t.Fatalf("internal thought index omitted a usable id: %#v", thought)
+		}
+	}
+}
+
 func TestObservationAggregationSelectsOnlyItsNewJudgements(t *testing.T) {
 	first := uuid.NewString()
 	second := uuid.NewString()

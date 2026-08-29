@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	lifeContextVersion              = "life-context-v5"
+	lifeContextVersion              = "life-context-v6"
 	confirmedLifeMemoryIndexLimit   = 24
 	candidateLifeMemoryIndexLimit   = 8
 	lifeTopicIndexLimit             = 12
@@ -21,7 +21,7 @@ const (
 	activeLifeExperimentIndexLimit  = 8
 	recentLifeMaterialIndexLimit    = 8
 	lifeRelationshipEventIndexLimit = 8
-	lifeInternalThoughtIndexLimit   = 8
+	lifeInternalThoughtIndexLimit   = 24
 	lifeObserverKnowledgeIndexLimit = 16
 	lifeObserverJudgementIndexLimit = 12
 	lifeObservationTopicIndexLimit  = 12

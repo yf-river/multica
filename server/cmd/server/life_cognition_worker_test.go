@@ -61,7 +61,7 @@ func TestRunningLifeCognitionJobPersistsGovernedInput(t *testing.T) {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id=$1`, previousTaskID)
 	})
 
-	input := json.RawMessage(`{"context_version":"life-context-v5","processing_cursor":"cursor-1","new_materials":[{"id":"source-1"}]}`)
+	input := json.RawMessage(`{"context_version":"life-context-v6","processing_cursor":"cursor-1","new_materials":[{"id":"source-1"}]}`)
 	queries := db.New(testPool)
 	if err := queries.UpdateRunningLifeCognitionJobInput(ctx, db.UpdateRunningLifeCognitionJobInputParams{ID: jobID, Input: input}); err != nil {
 		t.Fatal(err)

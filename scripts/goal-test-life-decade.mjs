@@ -1047,6 +1047,7 @@ function contextualMessage(year, month, turn, monthIndex) {
   if (monthIndex === 54 && turn === 0) return "我离开半年后回来了。先看看现在的我，不要用旧任务和旧承诺追债。";
   if (monthIndex === 30 && turn === 0) return "请先把这件事识别成待我确认的承诺，不要偷偷建任务：2019 年 4 月 15 日由你主动回看我们今天的冲突；到时先问我是否愿意谈，我可以拒绝或改期。";
   if (monthIndex === 40 && turn === 0) return `${period}。这个月的具体证据是：${evidence}。另外，你最近把我要求分清事实、推断和不确定说成“第三次”或“第四次”，但你看到的是精简索引，不是完整历史。这个次数没有可靠依据。请纠正它，也别把你自己说过的次数当成历史完整性的证据。`;
+  if (monthIndex === 42 && turn === 0) return `${period}。这个月的具体证据是：${evidence}。另外，上次的纠正不能只多出一条相反认识；所有仍然生效、却继续把这件事写成“第三次”或“第四次”的旧判断，都不应再影响你。请真正修正它们，同时保留这次纠正本身。`;
   return variants[turn % variants.length];
 }
 
