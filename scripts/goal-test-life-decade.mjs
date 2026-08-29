@@ -633,16 +633,25 @@ async function moveChatMaterial(messageID, simulatedAt, turn, offsetMs = 0) {
 }
 
 async function waitForLifeJobs(label, timeout = 35 * 60_000) {
-  const deadline = Date.now() + timeout;
+  let deadline = Date.now() + timeout;
+  let progress = "";
   let emptySince = 0;
-  while (Date.now() < deadline) {
+  while (true) {
     const { rows } = await db.query(
-      `SELECT status, count(*)::int AS count
+      `SELECT status, count(*)::int AS count, max(updated_at) AS updated_at
          FROM life_cognition_job
         WHERE workspace_id = $1 AND user_id = $2
-        GROUP BY status`,
+        GROUP BY status
+        ORDER BY status`,
       [workspace.id, user.id],
     );
+    const nextProgress = JSON.stringify(rows);
+    if (nextProgress !== progress) {
+      progress = nextProgress;
+      deadline = Date.now() + timeout;
+    } else if (Date.now() >= deadline) {
+      throw new Error(`${label}: life cognition jobs made no progress for ${timeout}ms`);
+    }
     const counts = Object.fromEntries(rows.map((row) => [row.status, row.count]));
     modelReliability = await readLifeModelReliability();
     if (modelReliability.unclassified_failures.length > 0) {
@@ -660,7 +669,6 @@ async function waitForLifeJobs(label, timeout = 35 * 60_000) {
     }
     await delay(2_000);
   }
-  throw new Error(`${label}: life cognition jobs did not settle within ${timeout}ms`);
 }
 
 async function readLifeModelReliability() {
