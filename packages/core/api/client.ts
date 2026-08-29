@@ -1794,6 +1794,7 @@ export class ApiClient extends ApiTransport {
 	async listLifeModules(): Promise<LifeModuleListResponse> { const raw = await this.fetch<unknown>("/api/life/modules"); return parseWithFallback(raw, LifeModuleListSchema, EMPTY_LIFE_MODULES, { endpoint: "GET /api/life/modules" }); }
 	async updateLifeModule(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/modules/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
 	async listLifeCognitionJobs(): Promise<LifeCognitionJobListResponse> { const raw = await this.fetch<unknown>("/api/life/cognition-jobs"); return parseWithFallback(raw, LifeCognitionJobListSchema, EMPTY_LIFE_JOBS, { endpoint: "GET /api/life/cognition-jobs" }); }
+	async retryLifeCognitionJob(id: string): Promise<unknown> { return this.fetch(`/api/life/cognition-jobs/${id}/retry`, { method: "POST" }); }
 	async listLifeUpgradeEvaluations(): Promise<LifeUpgradeEvaluationListResponse> { const raw = await this.fetch<unknown>("/api/life/upgrade-evaluations"); return parseWithFallback(raw, LifeUpgradeEvaluationListSchema, EMPTY_LIFE_UPGRADES, { endpoint: "GET /api/life/upgrade-evaluations" }); }
 	async createLifeUpgradeEvaluation(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/upgrade-evaluations", { method: "POST", body: JSON.stringify(data) }); }
 

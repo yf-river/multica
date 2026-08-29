@@ -602,7 +602,7 @@ WHERE id = $1 AND status = 'running';
 -- name: UpdateRunningLifeCognitionJobInput :exec
 UPDATE life_cognition_job
 SET input = $2, updated_at = now()
-WHERE id = $1 AND status = 'running' AND task_id IS NULL;
+WHERE id = $1 AND status = 'running';
 
 -- name: CreateLifeCognitionAgentTask :one
 INSERT INTO agent_task_queue (
@@ -639,6 +639,13 @@ SELECT * FROM life_cognition_job
 WHERE workspace_id = $1 AND user_id = $2
 ORDER BY created_at DESC
 LIMIT $3;
+
+-- name: RetryLifeCognitionJob :one
+UPDATE life_cognition_job
+SET status = 'queued', attempt = 0, task_id = NULL, error = '',
+    scheduled_at = now(), started_at = NULL, completed_at = NULL, updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'cancelled'
+RETURNING *;
 
 -- name: UpsertLifeProactivePolicy :one
 INSERT INTO life_proactive_policy (

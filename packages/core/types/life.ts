@@ -231,7 +231,7 @@ export interface LifeObservationSeatResponse { judgements: LifeObserverJudgement
 interface LifeModule { id: string; name: string; status: string; current_version: number; enabled_at: string | null; disabled_at: string | null }
 export interface LifeModuleListResponse { modules: LifeModule[] }
 
-interface LifeCognitionJob { id: string; job_type: string; status: string; input: Record<string, unknown>; output: Record<string, unknown> | null; scheduled_at: string; completed_at: string | null; error: string }
+interface LifeCognitionJob { id: string; job_type: string; status: string; input: Record<string, unknown>; output: Record<string, unknown> | null; scheduled_at: string; completed_at: string | null; error: string; attempt: number; max_attempts: number }
 export interface LifeCognitionJobListResponse { jobs: LifeCognitionJob[] }
 
 interface LifeUpgradeEvaluation { id: string; candidate_label: string; baseline_label: string; scenarios: unknown[]; result: Record<string, unknown> | null; status: string; rollback_recommended: boolean; created_at: string }

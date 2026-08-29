@@ -4120,6 +4120,46 @@ func (q *Queries) ResolveLifeRelationshipEvent(ctx context.Context, arg ResolveL
 	return i, err
 }
 
+const retryLifeCognitionJob = `-- name: RetryLifeCognitionJob :one
+UPDATE life_cognition_job
+SET status = 'queued', attempt = 0, task_id = NULL, error = '',
+    scheduled_at = now(), started_at = NULL, completed_at = NULL, updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND status = 'cancelled'
+RETURNING id, workspace_id, user_id, companion_agent_id, job_type, status, dedupe_key, input, output, task_id, scheduled_at, started_at, completed_at, attempt, max_attempts, error, created_at, updated_at
+`
+
+type RetryLifeCognitionJobParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) RetryLifeCognitionJob(ctx context.Context, arg RetryLifeCognitionJobParams) (LifeCognitionJob, error) {
+	row := q.db.QueryRow(ctx, retryLifeCognitionJob, arg.ID, arg.WorkspaceID, arg.UserID)
+	var i LifeCognitionJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.JobType,
+		&i.Status,
+		&i.DedupeKey,
+		&i.Input,
+		&i.Output,
+		&i.TaskID,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const saveLifeExperimentReviewDraft = `-- name: SaveLifeExperimentReviewDraft :one
 UPDATE life_experiment_round r
 SET review_draft = $4, updated_at = now()
@@ -4590,7 +4630,7 @@ func (q *Queries) UpdateLifeTopic(ctx context.Context, arg UpdateLifeTopicParams
 const updateRunningLifeCognitionJobInput = `-- name: UpdateRunningLifeCognitionJobInput :exec
 UPDATE life_cognition_job
 SET input = $2, updated_at = now()
-WHERE id = $1 AND status = 'running' AND task_id IS NULL
+WHERE id = $1 AND status = 'running'
 `
 
 type UpdateRunningLifeCognitionJobInputParams struct {

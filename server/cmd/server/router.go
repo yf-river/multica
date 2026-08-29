@@ -1001,6 +1001,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/observation-seat", h.ListLifeObservationSeat)
 				r.Patch("/observation-seat/topics/{topicId}", h.UpdateLifeObservationTopic)
 				r.Get("/cognition-jobs", h.ListLifeCognitionJobs)
+				r.Post("/cognition-jobs/{jobId}/retry", h.RetryLifeCognitionJob)
 				r.Route("/upgrade-evaluations", func(r chi.Router) {
 					r.Get("/", h.ListLifeUpgradeEvaluations)
 					r.Post("/", h.CreateLifeUpgradeEvaluation)

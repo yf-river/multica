@@ -818,9 +818,34 @@ func (h *Handler) ListLifeCognitionJobs(w http.ResponseWriter, r *http.Request) 
 			"scheduled_at": timestampToString(row.ScheduledAt),
 			"completed_at": timestampToPtr(row.CompletedAt),
 			"error":        row.Error,
+			"attempt":      row.Attempt,
+			"max_attempts": row.MaxAttempts,
 		})
 	}
 	writeJSON(w, 200, map[string]any{"jobs": items})
+}
+
+func (h *Handler) RetryLifeCognitionJob(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.requireLifeRequestScope(w, r)
+	if !ok {
+		return
+	}
+	id, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "jobId"), "cognition job id")
+	if !ok {
+		return
+	}
+	job, err := h.Queries.RetryLifeCognitionJob(r.Context(), db.RetryLifeCognitionJobParams{
+		ID: id, WorkspaceID: scope.workspaceID, UserID: scope.userID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "cognition job is not retryable")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to retry cognition job")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"id": uuidToString(job.ID), "status": job.Status})
 }
 
 func (h *Handler) RejectLifeActionProposal(w http.ResponseWriter, r *http.Request) {

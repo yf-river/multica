@@ -34,8 +34,8 @@ func TestRunningLifeCognitionJobPersistsGovernedInput(t *testing.T) {
 		t.Skip("no database connection")
 	}
 	ctx := context.Background()
-	var agentID, jobID pgtype.UUID
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+	var agentID, runtimeID, jobID, previousTaskID pgtype.UUID
+	if err := testPool.QueryRow(ctx, `SELECT id,runtime_id FROM agent WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if err := testPool.QueryRow(ctx, `
@@ -46,9 +46,22 @@ func TestRunningLifeCognitionJobPersistsGovernedInput(t *testing.T) {
 	`, testWorkspaceID, testUserID, agentID, "persist-input:"+fmt.Sprint(time.Now().UnixNano())).Scan(&jobID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM life_cognition_job WHERE id=$1`, jobID) })
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id,runtime_id,status,context,initiator_user_id)
+		VALUES ($1,$2,'failed','{}'::jsonb,$3)
+		RETURNING id
+	`, agentID, runtimeID, testUserID).Scan(&previousTaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, jobID, previousTaskID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM life_cognition_job WHERE id=$1`, jobID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id=$1`, previousTaskID)
+	})
 
-	input := json.RawMessage(`{"context_version":"life-context-v3","processing_cursor":"cursor-1","new_materials":[{"id":"source-1"}]}`)
+	input := json.RawMessage(`{"context_version":"life-context-v4","processing_cursor":"cursor-1","new_materials":[{"id":"source-1"}]}`)
 	queries := db.New(testPool)
 	if err := queries.UpdateRunningLifeCognitionJobInput(ctx, db.UpdateRunningLifeCognitionJobInputParams{ID: jobID, Input: input}); err != nil {
 		t.Fatal(err)

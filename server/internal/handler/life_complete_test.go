@@ -204,6 +204,8 @@ func TestListLifeCognitionJobsReturnsWebContract(t *testing.T) {
 			Output      json.RawMessage `json:"output"`
 			ScheduledAt string          `json:"scheduled_at"`
 			CompletedAt *string         `json:"completed_at"`
+			Attempt     int32           `json:"attempt"`
+			MaxAttempts int32           `json:"max_attempts"`
 		} `json:"jobs"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
@@ -215,12 +217,48 @@ func TestListLifeCognitionJobsReturnsWebContract(t *testing.T) {
 			continue
 		}
 		found = true
-		if !containsJSONText(job.Input, "contract") || string(job.Output) != "null" || job.ScheduledAt == "" || job.CompletedAt != nil {
+		if !containsJSONText(job.Input, "contract") || string(job.Output) != "null" || job.ScheduledAt == "" || job.CompletedAt != nil || job.Attempt != 0 || job.MaxAttempts != 3 {
 			t.Fatalf("unexpected cognition job contract: %#v body=%s", job, w.Body.String())
 		}
 	}
 	if !found {
 		t.Fatalf("created cognition job missing: %s", w.Body.String())
+	}
+}
+
+func TestCancelledLifeCognitionJobCanBeExplicitlyRetried(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "RetryLifeJobCompanion", nil)
+	var jobID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO life_cognition_job (
+			workspace_id,user_id,companion_agent_id,job_type,dedupe_key,input,status,
+			attempt,max_attempts,error,scheduled_at,started_at,completed_at
+		) VALUES ($1,$2,$3,'understand_materials',$4,'{}'::jsonb,'cancelled',3,3,'timeout',now(),now(),now())
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID, "retry-cancelled:"+time.Now().UTC().Format(time.RFC3339Nano)).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM life_cognition_job WHERE id=$1`, jobID) })
+
+	w := callLifeHandler(t, http.MethodPost, "/api/life/cognition-jobs/"+jobID+"/retry", nil, map[string]string{"jobId": jobID}, testHandler.RetryLifeCognitionJob)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("retry cancelled cognition job: %d %s", w.Code, w.Body.String())
+	}
+	var status string
+	var attempt int32
+	var taskID pgtype.UUID
+	var jobError string
+	if err := testPool.QueryRow(ctx, `SELECT status,attempt,task_id,error FROM life_cognition_job WHERE id=$1`, jobID).Scan(&status, &attempt, &taskID, &jobError); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" || attempt != 0 || taskID.Valid || jobError != "" {
+		t.Fatalf("unexpected retried job state status=%s attempt=%d task=%v error=%q", status, attempt, taskID, jobError)
+	}
+	w = callLifeHandler(t, http.MethodPost, "/api/life/cognition-jobs/"+jobID+"/retry", nil, map[string]string{"jobId": jobID}, testHandler.RetryLifeCognitionJob)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("queued cognition job must not be retried again: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -270,7 +308,7 @@ func TestGovernedLifeContextUsesBoundedVersionedIndexes(t *testing.T) {
 		t.Fatalf("candidate index must be bounded at %d, got %d", candidateLifeMemoryIndexLimit, len(contextValue.CandidateMemories))
 	}
 	for _, memory := range contextValue.CandidateMemories {
-		if len([]rune(memory.Content)) > 201 || len([]rune(memory.Uncertainty)) > 101 {
+		if len([]rune(memory.Content)) > 121 || len([]rune(memory.Uncertainty)) > 81 {
 			t.Fatalf("candidate index contains unbounded text: %#v", memory)
 		}
 	}

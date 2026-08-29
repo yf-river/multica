@@ -11,23 +11,22 @@ import (
 )
 
 const (
-	lifeContextVersion              = "life-context-v3"
-	confirmedLifeMemoryIndexLimit   = 80
-	candidateLifeMemoryIndexLimit   = 32
-	lifeTopicIndexLimit             = 32
-	lifeCommitmentIndexLimit        = 32
-	activeLifeModuleIndexLimit      = 16
-	activeLifeExperimentIndexLimit  = 16
-	recentLifeMaterialIndexLimit    = 48
-	lifeRelationshipEventIndexLimit = 24
-	lifeInternalThoughtIndexLimit   = 24
-	lifeObserverKnowledgeIndexLimit = 64
-	lifeObserverJudgementIndexLimit = 48
-	lifeObservationTopicIndexLimit  = 32
-	lifeYearChronicleIndexLimit     = 20
+	lifeContextVersion              = "life-context-v4"
+	confirmedLifeMemoryIndexLimit   = 48
+	candidateLifeMemoryIndexLimit   = 24
+	lifeTopicIndexLimit             = 24
+	lifeCommitmentIndexLimit        = 24
+	activeLifeModuleIndexLimit      = 12
+	activeLifeExperimentIndexLimit  = 12
+	recentLifeMaterialIndexLimit    = 24
+	lifeRelationshipEventIndexLimit = 16
+	lifeInternalThoughtIndexLimit   = 16
+	lifeObserverKnowledgeIndexLimit = 40
+	lifeObserverJudgementIndexLimit = 32
+	lifeObservationTopicIndexLimit  = 24
+	lifeYearChronicleIndexLimit     = 12
 	lifeMonthChronicleIndexLimit    = 12
-	lifeEventChronicleIndexLimit    = 20
-	lifeRecentChronicleIndexLimit   = 16
+	lifeEventChronicleIndexLimit    = 12
 )
 
 // buildGovernedLifeContext assembles only governed shared context. Internal
@@ -70,8 +69,8 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	for _, memory := range memories {
 		memoryItems = append(memoryItems, map[string]any{
 			"id": uuidToString(memory.ID), "kind": memory.Kind,
-			"content": lifeContextExcerpt(memory.Content, 240), "confidence": memory.Confidence,
-			"uncertainty": lifeContextExcerpt(memory.Uncertainty, 120), "scope": json.RawMessage(memory.Scope),
+			"content": lifeContextExcerpt(memory.Content, 160), "confidence": memory.Confidence,
+			"uncertainty": lifeContextExcerpt(memory.Uncertainty, 80), "scope": json.RawMessage(memory.Scope),
 			"valid_from": timestampToPtr(memory.ValidFrom), "valid_to": timestampToPtr(memory.ValidTo),
 		})
 	}
@@ -82,7 +81,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	}
 	candidateItems := make([]map[string]any, 0, min(len(candidates), candidateLifeMemoryIndexLimit))
 	for _, memory := range capLifeContextItems(candidates, candidateLifeMemoryIndexLimit) {
-		candidateItems = append(candidateItems, map[string]any{"id": uuidToString(memory.ID), "kind": memory.Kind, "content": lifeContextExcerpt(memory.Content, 200), "confidence": memory.Confidence, "urgency": memory.Urgency, "uncertainty": lifeContextExcerpt(memory.Uncertainty, 100), "scope": json.RawMessage(memory.Scope), "review_after": timestampToPtr(memory.ReviewAfter)})
+		candidateItems = append(candidateItems, map[string]any{"id": uuidToString(memory.ID), "kind": memory.Kind, "content": lifeContextExcerpt(memory.Content, 120), "confidence": memory.Confidence, "urgency": memory.Urgency, "uncertainty": lifeContextExcerpt(memory.Uncertainty, 80), "scope": json.RawMessage(memory.Scope), "review_after": timestampToPtr(memory.ReviewAfter)})
 	}
 	result["candidate_memories_not_facts"] = candidateItems
 
@@ -101,9 +100,9 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 			break
 		}
 		topicItems = append(topicItems, map[string]any{
-			"id": uuidToString(topic.ID), "title": lifeContextExcerpt(topic.Title, 120), "summary": lifeContextExcerpt(topic.Summary, 240),
+			"id": uuidToString(topic.ID), "title": lifeContextExcerpt(topic.Title, 80), "summary": lifeContextExcerpt(topic.Summary, 160),
 			"status": topic.Status, "confidence": topic.Confidence,
-			"uncertainty": lifeContextExcerpt(topic.Uncertainty, 100), "last_observed_at": timestampToString(topic.LastObservedAt),
+			"uncertainty": lifeContextExcerpt(topic.Uncertainty, 80), "last_observed_at": timestampToString(topic.LastObservedAt),
 		})
 	}
 	result["current_topics"] = topicItems
@@ -123,7 +122,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 			break
 		}
 		commitmentItems = append(commitmentItems, map[string]any{
-			"id": uuidToString(commitment.ID), "content": lifeContextExcerpt(commitment.Content, 240),
+			"id": uuidToString(commitment.ID), "content": lifeContextExcerpt(commitment.Content, 160),
 			"due_at": timestampToPtr(commitment.DueAt), "revisit_after": timestampToPtr(commitment.RevisitAfter),
 		})
 	}
@@ -190,7 +189,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 		materialItems = append(materialItems, map[string]any{
 			"id": uuidToString(material.ID), "source_type": material.SourceType,
 			"occurred_at": timestampToString(material.OccurredAt),
-			"excerpt":     lifeContextExcerpt(material.Content, 160),
+			"excerpt":     lifeContextExcerpt(material.Content, 100),
 		})
 	}
 	result["recent_material_index"] = materialItems
@@ -201,10 +200,10 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 	if err != nil {
 		return "", err
 	}
-	chronicleItems := make([]map[string]any, 0, min(len(chronicles), lifeYearChronicleIndexLimit+lifeMonthChronicleIndexLimit+lifeEventChronicleIndexLimit+lifeRecentChronicleIndexLimit))
+	chronicleItems := make([]map[string]any, 0, min(len(chronicles), lifeYearChronicleIndexLimit+lifeMonthChronicleIndexLimit+lifeEventChronicleIndexLimit))
 	chronicleCounts := map[string]int{}
 	for _, entry := range chronicles {
-		limit := lifeRecentChronicleIndexLimit
+		limit := 0
 		switch entry.PeriodKind {
 		case "year":
 			limit = lifeYearChronicleIndexLimit
@@ -213,6 +212,9 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 		case "event":
 			limit = lifeEventChronicleIndexLimit
 		}
+		if limit == 0 {
+			continue
+		}
 		if chronicleCounts[entry.PeriodKind] >= limit {
 			continue
 		}
@@ -220,7 +222,7 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 		chronicleItems = append(chronicleItems, map[string]any{
 			"id": uuidToString(entry.ID), "period_kind": entry.PeriodKind,
 			"period_start": timestampToString(entry.PeriodStart), "period_end": timestampToString(entry.PeriodEnd),
-			"facts": lifeContextExcerpt(entry.Facts, 120), "understanding_later": lifeContextExcerpt(entry.UnderstandingLater, 120),
+			"facts": lifeContextExcerpt(entry.Facts, 100), "understanding_later": lifeContextExcerpt(entry.UnderstandingLater, 100),
 		})
 	}
 	result["chronicle_index"] = chronicleItems
@@ -241,8 +243,8 @@ func (h *Handler) buildGovernedLifeContext(ctx context.Context, scope lifeReques
 		}
 		eventItems = append(eventItems, map[string]any{
 			"id": uuidToString(event.ID), "type": event.EventType, "status": event.Status,
-			"user_position": lifeContextExcerpt(event.UserPosition, 180), "companion_position": lifeContextExcerpt(event.CompanionPosition, 180),
-			"context": lifeContextExcerpt(event.Context, 240), "revisit_after": timestampToPtr(event.RevisitAfter),
+			"user_position": lifeContextExcerpt(event.UserPosition, 120), "companion_position": lifeContextExcerpt(event.CompanionPosition, 120),
+			"context": lifeContextExcerpt(event.Context, 160), "revisit_after": timestampToPtr(event.RevisitAfter),
 		})
 	}
 	result["open_relationship_events"] = eventItems
@@ -276,7 +278,7 @@ func (h *Handler) addLifeInternalThoughts(ctx context.Context, result map[string
 	}
 	items := make([]map[string]any, 0, min(len(thoughts), lifeInternalThoughtIndexLimit))
 	for _, thought := range capLifeContextItems(thoughts, lifeInternalThoughtIndexLimit) {
-		items = append(items, map[string]any{"id": uuidToString(thought.ID), "type": thought.ThoughtType, "title": lifeContextExcerpt(thought.Title, 120), "content": lifeContextExcerpt(thought.Content, 240), "last_developed_at": timestampToString(thought.LastDevelopedAt)})
+		items = append(items, map[string]any{"id": uuidToString(thought.ID), "type": thought.ThoughtType, "title": lifeContextExcerpt(thought.Title, 80), "content": lifeContextExcerpt(thought.Content, 160), "last_developed_at": timestampToString(thought.LastDevelopedAt)})
 	}
 	result["agent_internal_thoughts"] = items
 	return nil

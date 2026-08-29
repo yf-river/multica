@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LifePage } from "./life-page";
 
-const actions = vi.hoisted(() => ({ confirm: vi.fn(), update: vi.fn(), downgrade: vi.fn(), archive: vi.fn(), remove: vi.fn() }));
+const actions = vi.hoisted(() => ({ confirm: vi.fn(), update: vi.fn(), downgrade: vi.fn(), archive: vi.fn(), remove: vi.fn(), retryJob: vi.fn() }));
 
 vi.mock("../../i18n", async () => {
   const resource = (await import("../../locales/zh-Hans/life.json")).default;
@@ -17,7 +17,7 @@ vi.mock("../../i18n", async () => {
   };
 });
 vi.mock("@multica/core/paths", () => ({ useWorkspaceId: () => "ws-1" }));
-vi.mock("@multica/core/api", () => ({ api: {} }));
+vi.mock("@multica/core/api", () => ({ api: { retryLifeCognitionJob: actions.retryJob } }));
 vi.mock("@multica/core/chat", () => ({
   useChatStore: (selector: (value: unknown) => unknown) => selector({
     setOpen: vi.fn(),
@@ -67,6 +67,12 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "proposals") return { isLoading: false, data: { proposals: [] } };
     if (queryKey[0] === "experiments") return { isLoading: false, data: { experiments: [], rounds: [] } };
     if (queryKey[0] === "checks") return { isLoading: false, data: { checks: [] } };
+    if (queryKey[0] === "policy") return { isLoading: false, data: { enabled: true, timezone: "Asia/Shanghai", quiet_hours: {}, minimum_interval_hours: 12, next_check_at: "", unanswered_count: 0 } };
+    if (queryKey[0] === "observers") return { isLoading: false, data: { observers: [] } };
+    if (queryKey[0] === "seat") return { isLoading: false, data: { topics: [], judgements: [] } };
+    if (queryKey[0] === "workspaces") return { isLoading: false, data: [] };
+    if (queryKey[0] === "jobs") return { isLoading: false, data: { jobs: [{ id: "job-1", job_type: "understand_materials", status: "cancelled", input: {}, output: null, scheduled_at: "", completed_at: null, error: "timeout", attempt: 3, max_attempts: 3 }] } };
+    if (queryKey[0] === "upgrades") return { isLoading: false, data: { evaluations: [] } };
     if (queryKey[0] === "identity") return { isLoading: false, data: { versions: [{ id: "identity-1", version: 3, status: "active", stable_core: { traits: ["热烈", "直接"], position: "站在用户一边，但不永远同意" }, relationship_contract: { conflict: "保留分歧但不离开", follow_up: "搭子主动回看" }, growth_profile: {}, expression_profile: {}, interests: [], change_reason: "共同确认" }] } };
     if (queryKey[0] === "relationships") return { isLoading: false, data: { events: [{ id: "event-1", event_type: "agreement", status: "open", context: "忙完后一起复盘", user_position: "希望被主动记得", companion_position: "主动回看但允许拒绝" }] } };
     if (queryKey[0] === "materials") return { isLoading: false, data: { materials: [] } };
@@ -75,7 +81,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "commitments") return { isLoading: false, data: { commitments: [] } };
     return { isLoading: false, data: { entries: [] } };
   },
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useMutation: ({ mutationFn }: { mutationFn: (value: never) => unknown }) => ({ mutate: (value: never) => mutationFn(value), isPending: false }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 
@@ -103,5 +109,13 @@ describe("LifePage memory governance", () => {
     expect(screen.getByText("关系位置")).toBeInTheDocument();
     expect(screen.getByText("共同约定 · 待商量")).toBeInTheDocument();
     expect(screen.queryByText("agreement · open")).not.toBeInTheDocument();
+  });
+
+  it("offers an explicit retry for exhausted cognition", () => {
+    render(<LifePage />);
+    fireEvent.click(screen.getByRole("tab", { name: "观察席" }));
+    expect(screen.getByText("连续处理失败，这部分内容还没有进入长期理解。")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新处理" }));
+    expect(actions.retryJob).toHaveBeenCalledWith("job-1");
   });
 });
