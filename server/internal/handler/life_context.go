@@ -271,6 +271,18 @@ func capLifeContextItems[T any](items []T, limit int) []T {
 	return items[:limit]
 }
 
+func currentLifeJobInput(input json.RawMessage) (json.RawMessage, error) {
+	var value map[string]any
+	if err := json.Unmarshal(input, &value); err != nil || value == nil {
+		if err == nil {
+			err = errors.New("life cognition input must be a JSON object")
+		}
+		return nil, err
+	}
+	value["context_version"] = lifeContextVersion
+	return json.Marshal(value)
+}
+
 func (h *Handler) addLifeInternalThoughts(ctx context.Context, result map[string]any, scope lifeRequestScope, agentID pgtype.UUID) error {
 	thoughts, err := h.Queries.ListLifeInternalThoughts(ctx, db.ListLifeInternalThoughtsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: agentID, Status: pgtype.Text{String: "active", Valid: true}})
 	if err != nil {

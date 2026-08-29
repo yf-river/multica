@@ -3042,6 +3042,8 @@ type claimRuntimeGuardTask struct {
 	PriorWorkDir             string                         `json:"prior_work_dir"`
 	ChatMessage              string                         `json:"chat_message"`
 	LifeContext              string                         `json:"life_context"`
+	LifeJobID                string                         `json:"life_job_id"`
+	LifeJobInput             json.RawMessage                `json:"life_job_input"`
 	IsCompanion              bool                           `json:"is_companion"`
 	ChatMessageIDs           []string                       `json:"chat_message_ids"`
 	ThreadName               string                         `json:"thread_name"`
@@ -3050,6 +3052,68 @@ type claimRuntimeGuardTask struct {
 	ProjectTitle             string                         `json:"project_title"`
 	ProjectResources         []protocol.TaskProjectResource `json:"project_resources"`
 	Repos                    []protocol.TaskRepository      `json:"repos"`
+}
+
+func TestClaimTaskRefreshesQueuedLifeContextVersion(t *testing.T) {
+	requireHandlerDatabase(t)
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var jobID, taskID string
+	input := json.RawMessage(`{"context_version":"life-context-v1","processing_cursor":"queued-before-deploy"}`)
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO life_cognition_job (
+			workspace_id, user_id, companion_agent_id, job_type, status,
+			dedupe_key, input, attempt, max_attempts, started_at
+		) VALUES ($1, $2, $3, 'understand_materials', 'running', $4, $5, 1, 3, now())
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID, "queued-version-refresh:"+t.Name(), input).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	contextValue, err := json.Marshal(lifeCognitionTaskContext{
+		Type: lifeCognitionContextType, JobID: jobID, JobType: "understand_materials",
+		WorkspaceID: testWorkspaceID, UserID: testUserID, Input: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context, initiator_user_id)
+		VALUES ($1, $2, 'queued', 0, $3, $4)
+		RETURNING id
+	`, agentID, runtimeID, contextValue, testUserID).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, jobID, taskID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id=$1`, taskID)
+		mustExec(t, ctx, `DELETE FROM life_cognition_job WHERE id=$1`, jobID)
+	})
+
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if task.LifeJobID != jobID {
+		t.Fatalf("claimed life job = %q, want %q", task.LifeJobID, jobID)
+	}
+	var claimed map[string]any
+	if err := json.Unmarshal(task.LifeJobInput, &claimed); err != nil {
+		t.Fatal(err)
+	}
+	if claimed["context_version"] != lifeContextVersion || claimed["processing_cursor"] != "queued-before-deploy" {
+		t.Fatalf("unexpected claimed life input: %#v", claimed)
+	}
+	var persisted []byte
+	if err := testPool.QueryRow(ctx, `SELECT input FROM life_cognition_job WHERE id=$1`, jobID).Scan(&persisted); err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(persisted, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored["context_version"] != lifeContextVersion {
+		t.Fatalf("persisted context version = %v, want %s", stored["context_version"], lifeContextVersion)
+	}
 }
 
 func claimTaskForRuntimeGuard(t *testing.T, runtimeID, daemonID string) *claimRuntimeGuardTask {

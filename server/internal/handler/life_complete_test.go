@@ -314,6 +314,23 @@ func TestGovernedLifeContextUsesBoundedVersionedIndexes(t *testing.T) {
 	}
 }
 
+func TestCurrentLifeJobInputRefreshesContextVersion(t *testing.T) {
+	input, err := currentLifeJobInput(json.RawMessage(`{"context_version":"life-context-v1","processing_cursor":"cursor-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(input, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value["context_version"] != lifeContextVersion || value["processing_cursor"] != "cursor-1" {
+		t.Fatalf("unexpected refreshed life input: %#v", value)
+	}
+	if _, err := currentLifeJobInput(json.RawMessage(`[]`)); err == nil {
+		t.Fatal("non-object life input must fail closed")
+	}
+}
+
 func TestConfirmedModuleProposalBecomesActiveContext(t *testing.T) {
 	requireHandlerDatabase(t)
 	agentID := createHandlerTestAgent(t, "CompleteLifeModuleCompanion", nil)

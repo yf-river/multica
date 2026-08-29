@@ -617,7 +617,26 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		resp.ThreadName = "人生后台任务：" + lifeJob.JobType
 		resp.LifeJobID = lifeJob.JobID
 		resp.LifeJobType = lifeJob.JobType
-		resp.LifeJobInput = lifeJob.Input
+		lifeInput, err := currentLifeJobInput(lifeJob.Input)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition input", err)
+			outcome = "error_build"
+			return
+		}
+		lifeJobID, err := util.ParseUUID(lifeJob.JobID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition job id", err)
+			outcome = "error_build"
+			return
+		}
+		if err := h.Queries.UpdateRunningLifeCognitionJobInput(r.Context(), db.UpdateRunningLifeCognitionJobInputParams{
+			ID: lifeJobID, Input: lifeInput,
+		}); err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "life cognition input version", err)
+			outcome = "error_build"
+			return
+		}
+		resp.LifeJobInput = lifeInput
 		resp.IsCompanion = true
 		lifeContext, err := h.buildLifeJobContext(r.Context(), lifeRequestScope{
 			workspaceID: parseUUID(lifeJob.WorkspaceID),
