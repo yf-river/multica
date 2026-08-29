@@ -419,6 +419,14 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	if w.Code != http.StatusOK {
 		t.Fatalf("complete cognition job: %d %s", w.Code, w.Body.String())
 	}
+	var taskStatus string
+	var taskResult []byte
+	if err := testPool.QueryRow(ctx, `SELECT status,result FROM agent_task_queue WHERE id=$1`, taskID).Scan(&taskStatus, &taskResult); err != nil {
+		t.Fatal(err)
+	}
+	if taskStatus != "completed" || !containsJSONText(taskResult, "开始尝试记录心情") {
+		t.Fatalf("life task status=%q result=%s", taskStatus, taskResult)
+	}
 	var memoryID string
 	if err := testPool.QueryRow(ctx, `SELECT id FROM life_memory WHERE workspace_id=$1 AND user_id=$2 AND content='开始尝试记录心情'`, testWorkspaceID, testUserID).Scan(&memoryID); err != nil {
 		t.Fatal(err)

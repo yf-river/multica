@@ -458,6 +458,9 @@ func (h *Handler) CompleteCompanionCognitionJob(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to complete life cognition job")
 		return
 	}
+	if _, err := h.TaskService.CompleteTask(r.Context(), scope.taskID, raw, "", ""); err != nil {
+		slog.Error("complete life cognition agent task failed", "job_id", chi.URLParam(r, "jobId"), "task_id", uuidToString(scope.taskID), "error", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": uuidToString(completed.ID), "status": completed.Status,
 		"completed_at": timestampToPtr(completed.CompletedAt), "output": req.Output,
