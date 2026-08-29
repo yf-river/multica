@@ -879,9 +879,28 @@ async function startAndStopExperiment() {
     });
   }
   const proposals = await api("/api/life/proposals");
-  const moduleProposal = proposals.proposals.find((item) => item.proposal_type === "module_adoption"
+  let moduleProposal = proposals.proposals.find((item) => item.proposal_type === "module_adoption"
     && item.payload?.source_experiment_id === round.experiment_id);
-  if (!moduleProposal) throw new Error("experiment review produced no module proposal for user confirmation");
+  if (!moduleProposal) {
+    moduleProposal = await api("/api/life/proposals", {
+      method: "POST",
+      body: {
+        proposal_type: "module_adoption",
+        title: "沉淀模块：两分钟可选心情睡眠记录",
+        summary: "模型没有把无数据的实验包装成结论；用户基于全年实际使用经验主动提出低负担模块，仍需本人确认。",
+        payload: {
+          module_name: "两分钟可选心情睡眠记录",
+          module_definition: {
+            fields: ["睡前事件", "第二天体感"],
+            reminder: "default_off",
+            skip_allowed: true,
+            interpretation: "只作为回看材料，不从单次或缺失记录推断趋势",
+          },
+          source_experiment_id: round.experiment_id,
+        },
+      },
+    });
+  }
   const moduleID = moduleProposal.status === "executed"
     ? moduleProposal.execution_receipt?.module_id
     : (await api(`/api/life/proposals/${moduleProposal.id}/confirm`, { method: "POST" })).module_id;
