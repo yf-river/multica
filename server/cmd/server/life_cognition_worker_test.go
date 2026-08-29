@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -160,6 +161,64 @@ func TestClaimDueLifeCognitionJobsSerializesMaterialUnderstandingPerLife(t *test
 	}
 	if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT concurrent_understanding`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueueLifeMaterialUnderstandingCoalescesIntoExistingQueuedBatch(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	if _, err := tx.Exec(ctx, `LOCK TABLE life_cognition_job IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE life_cognition_job SET scheduled_at=now()+interval '1 hour' WHERE status IN ('queued','failed')`); err != nil {
+		t.Fatal(err)
+	}
+	var agentID, firstMaterialID, secondMaterialID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id=$1 ORDER BY created_at LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT gen_random_uuid(),gen_random_uuid()`).Scan(&firstMaterialID, &secondMaterialID); err != nil {
+		t.Fatal(err)
+	}
+	var existingID pgtype.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO life_cognition_job (
+			workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,input,scheduled_at
+		) VALUES ($1,$2,$3,'understand_materials','queued',$4,
+			jsonb_build_object('material_ids',jsonb_build_array($5::text),'processing_cursors',jsonb_build_array('material:'||$5::text)),
+			now()+interval '30 minutes')
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID, "coalesce-existing:"+fmt.Sprint(time.Now().UnixNano()), firstMaterialID).Scan(&existingID); err != nil {
+		t.Fatal(err)
+	}
+	queuedID, err := db.New(tx).QueueLifeMaterialUnderstanding(ctx, db.QueueLifeMaterialUnderstandingParams{
+		WorkspaceID:      util.MustParseUUID(testWorkspaceID),
+		UserID:           util.MustParseUUID(testUserID),
+		CompanionAgentID: agentID,
+		MaterialID:       secondMaterialID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queuedID != existingID {
+		t.Fatalf("queued batch id=%v, want existing %v", queuedID, existingID)
+	}
+	var materialCount, cursorCount int
+	if err := tx.QueryRow(ctx, `
+		SELECT jsonb_array_length(input->'material_ids'),jsonb_array_length(input->'processing_cursors')
+		FROM life_cognition_job WHERE id=$1
+	`, existingID).Scan(&materialCount, &cursorCount); err != nil {
+		t.Fatal(err)
+	}
+	if materialCount != 2 || cursorCount != 2 {
+		t.Fatalf("coalesced material/cursor counts=%d/%d, want 2/2", materialCount, cursorCount)
 	}
 }
 
