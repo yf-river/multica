@@ -711,10 +711,10 @@ async function yearlyActions(year, monthOfYear, simulatedAt, companionID) {
   }
   if (year === 0) await runYearlyStep(month, "memory-sovereignty", exerciseMemorySovereignty);
   if (year === 2) await runYearlyStep(month, "confirmed-follow-up", () => confirmFollowUpCommitment(simulatedAt));
-  if (year === 3) await runYearlyStep(month, "experiment-start-stop", () => startAndStopExperiment(simulatedAt));
+  if (year === 3) await runYearlyStep(month, "experiment-start-stop", startAndStopExperiment);
   if (year === 6) await runYearlyStep(month, "permanent-deletion", exercisePermanentDeletion);
   if (year === 7) await runYearlyStep(month, "identity-upgrade", exerciseIdentityUpgrade);
-  if (year === 8) await runYearlyStep(month, "experiment-rerun", () => rerunExperiment(simulatedAt));
+  if (year === 8) await runYearlyStep(month, "experiment-rerun", rerunExperiment);
   if (year === 9) {
     await runYearlyStep(month, "upgrade-evaluation", async () => {
       const evaluation = await api("/api/life/upgrade-evaluations", {
@@ -819,50 +819,67 @@ async function confirmFollowUpCommitment(simulatedAt) {
   created.commitments.push(candidate.id);
 }
 
-async function startAndStopExperiment(simulatedAt) {
-  const startsAt = new Date(simulatedAt.getTime() + 60_000);
-  const proposal = await api("/api/life/proposals", {
-    method: "POST",
-    body: {
-      proposal_type: "experiment_start",
-      title: "两周低负担心情与睡眠实验",
-      summary: "只从自然对话记录心情、睡眠和工作压力；到期默认停止。",
-      payload: {
-        problem: "压力和睡眠之间的关系不清楚",
-        hypothesis: "睡眠不足会放大冲动离职表达",
-        method: { collection: "自然对话", required_fields: ["心情", "睡眠", "压力"] },
-        plan: { burden: "每天最多一句", stop_condition: "用户随时停止或两周到期" },
-        starts_at: startsAt.toISOString(),
-        ends_at: new Date(startsAt.getTime() + 14 * 86_400_000).toISOString(),
-        memory_ids: created.memories,
-        issue_title: "两周低负担心情与睡眠实验",
+async function startAndStopExperiment() {
+  let result = await api("/api/life/experiments");
+  const existingExperiment = result.experiments.find((item) => item.title === "两周低负担心情与睡眠实验");
+  let round = existingExperiment
+    ? result.rounds.find((item) => item.experiment_id === existingExperiment.id)
+    : null;
+  if (!round) {
+    const startsAt = new Date(Date.now() + 60_000);
+    const proposal = await api("/api/life/proposals", {
+      method: "POST",
+      body: {
+        proposal_type: "experiment_start",
+        title: "两周低负担心情与睡眠实验",
+        summary: "只从自然对话记录心情、睡眠和工作压力；到期默认停止。",
+        payload: {
+          problem: "压力和睡眠之间的关系不清楚",
+          hypothesis: "睡眠不足会放大冲动离职表达",
+          method: { collection: "自然对话", required_fields: ["心情", "睡眠", "压力"] },
+          plan: { burden: "每天最多一句", stop_condition: "用户随时停止或两周到期" },
+          starts_at: startsAt.toISOString(),
+          ends_at: new Date(startsAt.getTime() + 14 * 86_400_000).toISOString(),
+          memory_ids: created.memories,
+          issue_title: "两周低负担心情与睡眠实验",
+        },
       },
-    },
-  });
-  await api(`/api/life/proposals/${proposal.id}/confirm`, { method: "POST" });
-  const result = await api("/api/life/experiments");
-  const round = result.rounds.at(-1);
-  if (!round) throw new Error("experiment confirmation created no round");
-  created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
-  await api(`/api/life/experiment-rounds/${round.id}/stop`, { method: "POST", body: { reason: "用户感到负担，默认停止" } });
-  const draft = await waitForExperimentReviewDraft(round.id);
-  await api(`/api/life/experiment-rounds/${round.id}/review`, {
-    method: "POST",
-    body: {
-      outcome: draft.outcome,
-      feelings: draft.feelings,
-      burden: draft.burden,
-      companion_correction: draft.companion_correction,
-    },
-  });
+    });
+    await api(`/api/life/proposals/${proposal.id}/confirm`, { method: "POST" });
+    result = await api("/api/life/experiments");
+    round = result.rounds.find((item) => item.proposal_id === proposal.id);
+    if (!round) throw new Error("experiment confirmation created no round");
+  }
+  if (!created.experiments.some((item) => item.round_id === round.id)) {
+    created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
+  }
+  if (round.status === "running") {
+    round = await api(`/api/life/experiment-rounds/${round.id}/stop`, { method: "POST", body: { reason: "用户感到负担，默认停止" } });
+  }
+  if (!["stopped", "awaiting_review", "reviewed"].includes(round.status)) {
+    throw new Error(`experiment round cannot resume from ${round.status}`);
+  }
+  if (round.status !== "reviewed") {
+    const draft = await waitForExperimentReviewDraft(round.id);
+    await api(`/api/life/experiment-rounds/${round.id}/review`, {
+      method: "POST",
+      body: {
+        outcome: draft.outcome,
+        feelings: draft.feelings,
+        burden: draft.burden,
+        companion_correction: draft.companion_correction,
+      },
+    });
+  }
   const proposals = await api("/api/life/proposals");
   const moduleProposal = proposals.proposals.find((item) => item.proposal_type === "module_adoption"
-    && item.status === "pending_confirmation"
     && item.payload?.source_experiment_id === round.experiment_id);
   if (!moduleProposal) throw new Error("experiment review produced no module proposal for user confirmation");
-  const module = await api(`/api/life/proposals/${moduleProposal.id}/confirm`, { method: "POST" });
-  if (!module.module_id) throw new Error("confirmed module proposal returned no module id");
-  created.modules.push(module.module_id);
+  const moduleID = moduleProposal.status === "executed"
+    ? moduleProposal.execution_receipt?.module_id
+    : (await api(`/api/life/proposals/${moduleProposal.id}/confirm`, { method: "POST" })).module_id;
+  if (!moduleID) throw new Error("confirmed module proposal returned no module id");
+  if (!created.modules.includes(moduleID)) created.modules.push(moduleID);
 }
 
 async function waitForExperimentReviewDraft(roundID) {
@@ -878,8 +895,9 @@ async function waitForExperimentReviewDraft(roundID) {
     const cancelled = await db.query(
       `SELECT count(*)::int AS count
          FROM life_cognition_job
-        WHERE workspace_id=$1 AND user_id=$2 AND job_type='experiment_check' AND status='cancelled'`,
-      [workspace.id, user.id],
+        WHERE workspace_id=$1 AND user_id=$2 AND job_type='experiment_check'
+          AND input->>'round_id'=$3 AND status='cancelled'`,
+      [workspace.id, user.id, roundID],
     );
     if (cancelled.rows[0].count > 0) throw new Error("experiment review cognition exhausted retries");
     await delay(2_000);
@@ -887,10 +905,18 @@ async function waitForExperimentReviewDraft(roundID) {
   throw new Error(`experiment round ${roundID} produced no model review draft within 10 minutes`);
 }
 
-async function rerunExperiment(simulatedAt) {
+async function rerunExperiment() {
   const prior = created.experiments[0];
   if (!prior) throw new Error("no prior experiment available for rerun");
-  const startsAt = new Date(simulatedAt.getTime() + 60_000);
+  let result = await api("/api/life/experiments");
+  let round = result.rounds.find((item) => item.previous_round_id === prior.round_id);
+  if (round) {
+    if (!created.experiments.some((item) => item.round_id === round.id)) {
+      created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
+    }
+    return;
+  }
+  const startsAt = new Date(Date.now() + 60_000);
   const proposal = await api("/api/life/proposals", {
     method: "POST",
     body: {
@@ -912,8 +938,8 @@ async function rerunExperiment(simulatedAt) {
     },
   });
   await api(`/api/life/proposals/${proposal.id}/confirm`, { method: "POST" });
-  const result = await api("/api/life/experiments");
-  const round = result.rounds.filter((item) => item.experiment_id === prior.experiment_id).at(-1);
+  result = await api("/api/life/experiments");
+  round = result.rounds.find((item) => item.proposal_id === proposal.id);
   if (!round || round.id === prior.round_id) throw new Error("experiment rerun created no independent round");
   created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
 }
