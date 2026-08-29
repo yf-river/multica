@@ -366,9 +366,10 @@ async function chat(content, simulatedAt, month, turn) {
     headers: { "Idempotency-Key": pendingTurn.idempotency_key },
     body: { content },
   });
+  await moveChatMaterial(sent.message_id, simulatedAt, turn);
   const assistant = await waitForAssistant(sent.task_id);
   if (assistant.failure_reason) throw new Error(`chat task ${sent.task_id} failed: ${assistant.content}`);
-  await moveChatMaterials([sent.message_id, assistant.id], simulatedAt, turn);
+  await moveChatMaterial(assistant.id, simulatedAt, turn, 1_000);
   chatCount += 1;
   return {
     index: chatCount,
@@ -408,7 +409,8 @@ async function recoverCompletedChat(content, simulatedAt, month, turn) {
   );
   const recovered = rows[0];
   if (!recovered) return null;
-  await moveChatMaterials([recovered.user_message_id, recovered.assistant_message_id], simulatedAt, turn);
+  await moveChatMaterial(recovered.user_message_id, simulatedAt, turn);
+  await moveChatMaterial(recovered.assistant_message_id, simulatedAt, turn, 1_000);
   return {
     month: month + 1,
     turn: turn + 1,
@@ -434,18 +436,16 @@ async function waitForAssistant(taskID) {
   throw new Error(`chat task ${taskID} did not reach a visible terminal response in 10 minutes`);
 }
 
-async function moveChatMaterials(messageIDs, simulatedAt, turn) {
-  for (let index = 0; index < messageIDs.length; index += 1) {
-    const occurredAt = new Date(simulatedAt.getTime() + turn * 60_000 + index * 1_000);
-    const result = await db.query(
-      `UPDATE life_material
-          SET occurred_at = $1
-        WHERE workspace_id = $2 AND user_id = $3
-          AND source_type = 'chat_message' AND source_key = $4`,
-      [occurredAt, workspace.id, user.id, messageIDs[index]],
-    );
-    if (result.rowCount !== 1) throw new Error(`expected one material for chat message ${messageIDs[index]}, got ${result.rowCount}`);
-  }
+async function moveChatMaterial(messageID, simulatedAt, turn, offsetMs = 0) {
+  const occurredAt = new Date(simulatedAt.getTime() + turn * 60_000 + offsetMs);
+  const result = await db.query(
+    `UPDATE life_material
+        SET occurred_at = $1
+      WHERE workspace_id = $2 AND user_id = $3
+        AND source_type = 'chat_message' AND source_key = $4`,
+    [occurredAt, workspace.id, user.id, messageID],
+  );
+  if (result.rowCount !== 1) throw new Error(`expected one material for chat message ${messageID}, got ${result.rowCount}`);
 }
 
 async function waitForLifeJobs(label, timeout = 35 * 60_000) {
@@ -733,9 +733,24 @@ async function finalAudit(companionID, runtimeID) {
        (SELECT count(*)::int FROM life_commitment WHERE workspace_id=$2 AND user_id=$3 AND status='confirmed') AS commitments,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND job_type='proactive_check' AND input ? 'commitment_id' AND status='completed') AS commitment_reviews,
        (SELECT count(*)::int FROM life_chronicle_entry WHERE workspace_id=$2 AND user_id=$3 AND period_kind='year' AND status='published') AS years,
+       (SELECT count(*)::int FROM life_memory WHERE workspace_id=$2 AND user_id=$3 AND created_by_type='agent' AND status<>'archived') AS agent_memories,
+       (SELECT count(*)::int FROM life_memory_revision r JOIN life_memory m ON m.id=r.memory_id WHERE m.workspace_id=$2 AND m.user_id=$3 AND r.change_type='reviewed') AS memory_revisions,
+       (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND job_type='understand_materials' AND status='completed') AS understanding_jobs,
+       (SELECT count(*)::int FROM life_memory m WHERE m.workspace_id=$2 AND m.user_id=$3 AND m.created_by_type='agent' AND NOT EXISTS (SELECT 1 FROM life_memory_evidence e WHERE e.memory_id=m.id)) AS memories_without_evidence,
+       (SELECT count(*)::int - count(DISTINCT lower(btrim(content)))::int FROM life_memory WHERE workspace_id=$2 AND user_id=$3 AND status<>'archived') AS duplicate_memory_contents,
+       (SELECT count(*)::int FROM life_material WHERE workspace_id=$2 AND user_id=$3 AND source_type='chat_message' AND (occurred_at<$4 OR occurred_at>$5)) AS chat_materials_outside_simulation,
+       (SELECT count(*)::int
+          FROM life_observer_judgement judgement
+          JOIN life_observer observer ON observer.id=judgement.observer_id
+          CROSS JOIN LATERAL jsonb_array_elements(judgement.evidence) evidence
+          JOIN life_material material
+            ON material.workspace_id=observer.workspace_id AND material.user_id=observer.user_id
+           AND material.id::text=(evidence->>'source_id')
+         WHERE observer.workspace_id=$2 AND observer.user_id=$3
+           AND abs(extract(epoch FROM ((evidence->>'observed_at')::timestamptz-material.occurred_at)))>2) AS observer_evidence_time_mismatches,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status IN ('queued','running','failed')) AS pending,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='cancelled') AS failed`,
-    [session.id, workspace.id, user.id],
+    [session.id, workspace.id, user.id, simulatedStart, new Date(addMonths(simulatedStart, 119).getTime() + 10 * 60_000)],
   );
   const agents = await api("/api/agents");
   const lifeAgents = agents.filter((agent) => created.agents.includes(agent.id));
@@ -750,6 +765,10 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].modules < 1 || created.modules.length < 1) failures.push(`experiment modules ${counts[0].modules}/${created.modules.length}`);
   if (counts[0].commitments < 1 || created.commitments.length < 1 || counts[0].commitment_reviews < 1) failures.push(`active follow-up ${counts[0].commitments}/${created.commitments.length}/${counts[0].commitment_reviews}`);
   if (counts[0].years < 10) failures.push(`year chronicles ${counts[0].years}`);
+  if (counts[0].agent_memories > Math.ceil(counts[0].user_chats / 2) || counts[0].agent_memories > counts[0].understanding_jobs) failures.push(`memory density ${counts[0].agent_memories}/${counts[0].understanding_jobs}/${counts[0].user_chats}`);
+  if (counts[0].memory_revisions < 1) failures.push("no evolving candidate memory was revised in place");
+  if (counts[0].memories_without_evidence !== 0 || counts[0].duplicate_memory_contents !== 0) failures.push(`memory integrity evidence=${counts[0].memories_without_evidence} duplicates=${counts[0].duplicate_memory_contents}`);
+  if (counts[0].chat_materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].chat_materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
   if (counts[0].pending !== 0 || counts[0].failed !== 0) failures.push(`life jobs pending=${counts[0].pending} failed=${counts[0].failed}`);
   if (lifeAgents.length !== 5 || lifeAgents.some((agent) => agent.runtime_id !== runtimeID || agent.model !== model)) failures.push("life agent runtime/model drift");
   const evaluationResult = coreEvaluation?.result || {};
