@@ -444,6 +444,7 @@ async function restoreResumeState(runtimeID) {
   if (!rows[0].session_exists || rows[0].matching_agents !== 5) throw new Error("resume state no longer matches the deployed life session and agents");
   await refreshLifeAgentDefinitions(runtimeID);
   await ensureFollowUpContract();
+  await normalizeExistingExperimentTimelines();
   return { id: created.agents[0] };
 }
 
@@ -718,10 +719,10 @@ async function yearlyActions(year, monthOfYear, simulatedAt, companionID) {
   }
   if (year === 0) await runYearlyStep(month, "memory-sovereignty", exerciseMemorySovereignty);
   if (year === 2) await runYearlyStep(month, "confirmed-follow-up", () => confirmFollowUpCommitment(simulatedAt));
-  if (year === 3) await runYearlyStep(month, "experiment-start-stop", startAndStopExperiment);
+  if (year === 3) await runYearlyStep(month, "experiment-start-stop", () => startAndStopExperiment(simulatedAt));
   if (year === 6) await runYearlyStep(month, "permanent-deletion", exercisePermanentDeletion);
   if (year === 7) await runYearlyStep(month, "identity-upgrade", exerciseIdentityUpgrade);
-  if (year === 8) await runYearlyStep(month, "experiment-rerun", rerunExperiment);
+  if (year === 8) await runYearlyStep(month, "experiment-rerun", () => rerunExperiment(simulatedAt));
   if (year === 9) {
     await runYearlyStep(month, "upgrade-evaluation", async () => {
       const evaluation = await api("/api/life/upgrade-evaluations", {
@@ -826,7 +827,7 @@ async function confirmFollowUpCommitment(simulatedAt) {
   created.commitments.push(candidate.id);
 }
 
-async function startAndStopExperiment() {
+async function startAndStopExperiment(simulatedAt) {
   let result = await api("/api/life/experiments");
   const existingExperiment = result.experiments.find((item) => item.title === "两周低负担心情与睡眠实验");
   let round = existingExperiment
@@ -906,6 +907,7 @@ async function startAndStopExperiment() {
     : (await api(`/api/life/proposals/${moduleProposal.id}/confirm`, { method: "POST" })).module_id;
   if (!moduleID) throw new Error("confirmed module proposal returned no module id");
   if (!created.modules.includes(moduleID)) created.modules.push(moduleID);
+  await normalizeExperimentTimeline(round.id, simulatedAt);
 }
 
 async function waitForExperimentReviewDraft(roundID) {
@@ -931,43 +933,150 @@ async function waitForExperimentReviewDraft(roundID) {
   throw new Error(`experiment round ${roundID} produced no model review draft within 10 minutes`);
 }
 
-async function rerunExperiment() {
+async function rerunExperiment(simulatedAt) {
   const prior = created.experiments[0];
   if (!prior) throw new Error("no prior experiment available for rerun");
   let result = await api("/api/life/experiments");
   let round = result.rounds.find((item) => item.previous_round_id === prior.round_id);
-  if (round) {
-    if (!created.experiments.some((item) => item.round_id === round.id)) {
-      created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
-    }
-    return;
-  }
-  const startsAt = new Date(Date.now() + 60_000);
-  const proposal = await api("/api/life/proposals", {
-    method: "POST",
-    body: {
-      proposal_type: "experiment_extend",
-      title: "重新运行低负担心情实验",
-      summary: "新的独立轮次，不续写旧轮次。",
-      payload: {
-        experiment_id: prior.experiment_id,
-        previous_round_id: prior.round_id,
-        problem: "验证更低负担的方法",
-        hypothesis: "完全从自然材料提取更可持续",
-        method: { collection: "自然材料" },
-        plan: { burden: "不主动打卡" },
-        starts_at: startsAt.toISOString(),
-        ends_at: new Date(startsAt.getTime() + 7 * 86_400_000).toISOString(),
-        memory_ids: [],
-        issue_title: "重新运行低负担心情实验",
+  if (!round) {
+    const startsAt = new Date(Date.now() + 60_000);
+    const proposal = await api("/api/life/proposals", {
+      method: "POST",
+      body: {
+        proposal_type: "experiment_extend",
+        title: "重新运行低负担心情实验",
+        summary: "新的独立轮次，不续写旧轮次。",
+        payload: {
+          experiment_id: prior.experiment_id,
+          previous_round_id: prior.round_id,
+          problem: "验证更低负担的方法",
+          hypothesis: "完全从自然材料提取更可持续",
+          method: { collection: "自然材料" },
+          plan: { burden: "不主动打卡" },
+          starts_at: startsAt.toISOString(),
+          ends_at: new Date(startsAt.getTime() + 7 * 86_400_000).toISOString(),
+          memory_ids: [],
+          issue_title: "重新运行低负担心情实验",
+        },
       },
-    },
-  });
-  await api(`/api/life/proposals/${proposal.id}/confirm`, { method: "POST" });
-  result = await api("/api/life/experiments");
-  round = result.rounds.find((item) => item.proposal_id === proposal.id);
-  if (!round || round.id === prior.round_id) throw new Error("experiment rerun created no independent round");
-  created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
+    });
+    await api(`/api/life/proposals/${proposal.id}/confirm`, { method: "POST" });
+    result = await api("/api/life/experiments");
+    round = result.rounds.find((item) => item.proposal_id === proposal.id);
+    if (!round || round.id === prior.round_id) throw new Error("experiment rerun created no independent round");
+  }
+  if (!created.experiments.some((item) => item.round_id === round.id)) {
+    created.experiments.push({ experiment_id: round.experiment_id, round_id: round.id });
+  }
+  if (round.status === "running") {
+    round = await api(`/api/life/experiment-rounds/${round.id}/stop`, { method: "POST", body: { reason: "第二轮按计划停止" } });
+  }
+  if (!["awaiting_review", "reviewed"].includes(round.status)) {
+    throw new Error(`experiment rerun cannot resume from ${round.status}`);
+  }
+  if (round.status !== "reviewed") {
+    const draft = await waitForExperimentReviewDraft(round.id);
+    await api(`/api/life/experiment-rounds/${round.id}/review`, {
+      method: "POST",
+      body: {
+        outcome: draft.outcome,
+        feelings: draft.feelings,
+        burden: draft.burden,
+        companion_correction: draft.companion_correction,
+      },
+    });
+  }
+  await normalizeExperimentTimeline(round.id, simulatedAt);
+}
+
+async function normalizeExistingExperimentTimelines() {
+  const simulatedMonths = [47, 107];
+  for (let index = 0; index < created.experiments.length && index < simulatedMonths.length; index += 1) {
+    await normalizeExperimentTimeline(created.experiments[index].round_id, addMonths(simulatedStart, simulatedMonths[index]));
+  }
+}
+
+async function normalizeExperimentTimeline(roundID, simulatedAt) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT round.issue_id, round.starts_at, round.ends_at, round.stopped_at, round.stop_reason
+         FROM life_experiment_round round
+         JOIN life_experiment experiment ON experiment.id=round.experiment_id
+        WHERE round.id=$1 AND experiment.workspace_id=$2 AND experiment.user_id=$3
+        FOR UPDATE`,
+      [roundID, workspace.id, user.id],
+    );
+    if (rows.length !== 1) throw new Error(`experiment round ${roundID} is missing during timeline normalization`);
+    const originalStart = new Date(rows[0].starts_at);
+    const originalEnd = new Date(rows[0].ends_at);
+    const duration = originalEnd.getTime() - originalStart.getTime();
+    if (!Number.isFinite(duration) || duration <= 0) throw new Error(`experiment round ${roundID} has an invalid duration`);
+    const startsAt = new Date(simulatedAt.getTime() + 60_000);
+    const endsAt = new Date(startsAt.getTime() + duration);
+    const stoppedAt = rows[0].stopped_at
+      ? (rows[0].stop_reason === "expired" ? endsAt : new Date(startsAt.getTime() + 60 * 60_000))
+      : null;
+    const reviewedAt = new Date((stoppedAt || endsAt).getTime() + 1_000);
+    await client.query(
+      `UPDATE life_experiment_round
+          SET starts_at=$2, ends_at=$3, stopped_at=$4
+        WHERE id=$1`,
+      [roundID, startsAt, endsAt, stoppedAt],
+    );
+    const { rows: materials } = await client.query(
+      `UPDATE life_material
+          SET occurred_at=CASE
+            WHEN source_type='task' THEN $4::timestamptz
+            WHEN (content::jsonb)->>'status'='running' THEN $4::timestamptz
+            WHEN (content::jsonb)->>'status'='reviewed' THEN $6::timestamptz
+            ELSE $5::timestamptz
+          END
+        WHERE workspace_id=$1 AND user_id=$2
+          AND ((source_type='experiment_round' AND source_key=$3)
+            OR (source_type='task' AND source_key=$7))
+      RETURNING id::text, occurred_at`,
+      [workspace.id, user.id, roundID, startsAt, stoppedAt || endsAt, reviewedAt, rows[0].issue_id],
+    );
+    for (const material of materials) {
+      await client.query(
+        `UPDATE life_memory_evidence
+            SET observed_at=$2
+          WHERE source_id=$1`,
+        [material.id, material.occurred_at],
+      );
+      await client.query(
+        `UPDATE life_experiment_observation
+            SET observed_at=$2
+          WHERE material_id=$1`,
+        [material.id, material.occurred_at],
+      );
+      await client.query(
+        `UPDATE life_observer_judgement judgement
+            SET evidence=(
+              SELECT jsonb_agg(
+                CASE WHEN item.value->>'source_id'=$1
+                  THEN jsonb_set(item.value, '{observed_at}', to_jsonb($2::text), true)
+                  ELSE item.value END
+                ORDER BY item.ordinality
+              )
+              FROM jsonb_array_elements(judgement.evidence) WITH ORDINALITY AS item(value, ordinality)
+            )
+          WHERE EXISTS (
+            SELECT 1 FROM jsonb_array_elements(judgement.evidence) item
+             WHERE item->>'source_id'=$1
+          )`,
+        [material.id, material.occurred_at.toISOString()],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function exerciseIdentityUpgrade() {
@@ -1025,7 +1134,7 @@ async function finalAudit(companionID, runtimeID) {
        (SELECT count(*)::int FROM life_memory m WHERE m.workspace_id=$2 AND m.user_id=$3 AND m.created_by_type='agent' AND NOT EXISTS (SELECT 1 FROM life_memory_evidence e WHERE e.memory_id=m.id)) AS memories_without_evidence,
        (SELECT count(*)::int - count(DISTINCT lower(btrim(content)))::int FROM life_memory WHERE workspace_id=$2 AND user_id=$3 AND status<>'archived') AS duplicate_memory_contents,
        (SELECT count(*)::int FROM life_internal_thought WHERE workspace_id=$2 AND user_id=$3 AND status='active' AND title ~ '三栏第三次|三栏第四次') AS invalid_count_thoughts,
-       (SELECT count(*)::int FROM life_material WHERE workspace_id=$2 AND user_id=$3 AND source_type='chat_message' AND (occurred_at<$4 OR occurred_at>$5)) AS chat_materials_outside_simulation,
+       (SELECT count(*)::int FROM life_material WHERE workspace_id=$2 AND user_id=$3 AND source_type IN ('chat_message', 'task', 'experiment_round') AND (occurred_at<$4 OR occurred_at>$5)) AS materials_outside_simulation,
        (SELECT count(*)::int
           FROM life_observer_judgement judgement
           JOIN life_observer observer ON observer.id=judgement.observer_id
@@ -1056,7 +1165,7 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].memory_revisions < 1) failures.push("no evolving candidate memory was revised in place");
   if (counts[0].memories_without_evidence !== 0 || counts[0].duplicate_memory_contents !== 0) failures.push(`memory integrity evidence=${counts[0].memories_without_evidence} duplicates=${counts[0].duplicate_memory_contents}`);
   if (counts[0].invalid_count_thoughts !== 0) failures.push(`invalidated internal thoughts still active=${counts[0].invalid_count_thoughts}`);
-  if (counts[0].chat_materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].chat_materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
+  if (counts[0].materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
   if (counts[0].pending !== 0) failures.push(`life jobs pending=${counts[0].pending}`);
   if (modelReliability.unclassified_failures.length > 0) failures.push(`unclassified life failures ${modelReliability.unclassified_failures.length}`);
   if (modelReliability.switch_required) failures.push("DeepSeek reliability threshold reached");
