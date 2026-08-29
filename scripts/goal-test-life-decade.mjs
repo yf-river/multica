@@ -626,6 +626,7 @@ async function moveChatMaterial(messageID, simulatedAt, turn, offsetMs = 0) {
 
 async function waitForLifeJobs(label, timeout = 35 * 60_000) {
   const deadline = Date.now() + timeout;
+  let emptySince = 0;
   while (Date.now() < deadline) {
     const { rows } = await db.query(
       `SELECT status, count(*)::int AS count
@@ -643,7 +644,12 @@ async function waitForLifeJobs(label, timeout = 35 * 60_000) {
       throw new Error(`${label}: DeepSeek reliability threshold reached; switch the whole life system to Luna`);
     }
     const pending = (counts.queued || 0) + (counts.running || 0) + (counts.failed || 0);
-    if (pending === 0) return counts;
+    if (pending === 0) {
+      if (emptySince === 0) emptySince = Date.now();
+      if (Date.now() - emptySince >= 16_000) return counts;
+    } else {
+      emptySince = 0;
+    }
     await delay(2_000);
   }
   throw new Error(`${label}: life cognition jobs did not settle within ${timeout}ms`);
