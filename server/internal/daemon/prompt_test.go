@@ -85,6 +85,9 @@ func TestUnderstandMaterialsPromptDistinguishesEventsFromDurableMemory(t *testin
 		"Confirming, correcting, downgrading, or archiving a governed memory",
 		"memory_id?:UUID",
 		"return that supplied memory_id and revise it instead of creating another memory",
+		"thought_id?:UUID",
+		"return its supplied thought_id and revise it or set status=archived",
+		"never leave an active contradiction and merely add a correction beside it",
 	)
 }
 

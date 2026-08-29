@@ -56,9 +56,11 @@ type lifeJobCommitmentOutput struct {
 }
 
 type lifeJobThoughtOutput struct {
+	ID       string                  `json:"thought_id"`
 	Type     string                  `json:"type"`
 	Title    string                  `json:"title"`
 	Content  string                  `json:"content"`
+	Status   string                  `json:"status"`
 	Metadata map[string]any          `json:"metadata"`
 	Evidence []lifeJobEvidenceOutput `json:"evidence"`
 }
@@ -265,7 +267,10 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 		}
 	}
 	for i, thought := range output.InternalThoughts {
-		if !oneOf(thought.Type, "interest", "opinion", "question", "research", "draft") || strings.TrimSpace(thought.Title) == "" || strings.TrimSpace(thought.Content) == "" || thought.Metadata == nil {
+		if err := validateOptionalLifeJobID("internal_thoughts", i, "thought_id", thought.ID); err != nil {
+			return err
+		}
+		if !oneOf(thought.Type, "interest", "opinion", "question", "research", "draft") || !oneOf(thought.Status, "", "active", "archived") || strings.TrimSpace(thought.Title) == "" || strings.TrimSpace(thought.Content) == "" || thought.Metadata == nil {
 			return invalidLifeJobOutput("internal_thoughts[%d] is invalid", i)
 		}
 		if err := validateLifeJobEvidence("internal_thoughts", i, thought.Evidence); err != nil {
@@ -718,11 +723,28 @@ func (h *Handler) completeLifeCognitionJob(ctx context.Context, scope lifeJobTas
 			continue
 		}
 		metadata, _ := json.Marshal(item.Metadata)
-		thought, err := q.UpsertLifeInternalThought(ctx, db.UpsertLifeInternalThoughtParams{
-			WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: scope.agentID,
-			ThoughtType: item.Type, Title: strings.TrimSpace(item.Title), Content: strings.TrimSpace(item.Content),
-			Status: "active", Metadata: metadata,
-		})
+		status := item.Status
+		if status == "" {
+			status = "active"
+		}
+		var thought db.LifeInternalThought
+		if strings.TrimSpace(item.ID) == "" {
+			thought, err = q.UpsertLifeInternalThought(ctx, db.UpsertLifeInternalThoughtParams{
+				WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: scope.agentID,
+				ThoughtType: item.Type, Title: strings.TrimSpace(item.Title), Content: strings.TrimSpace(item.Content),
+				Status: status, Metadata: metadata,
+			})
+		} else {
+			thoughtID, parseErr := util.ParseUUID(item.ID)
+			if parseErr != nil {
+				return db.LifeCognitionJob{}, parseErr
+			}
+			thought, err = q.UpdateLifeInternalThought(ctx, db.UpdateLifeInternalThoughtParams{
+				ID: thoughtID, WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: scope.agentID,
+				ThoughtType: item.Type, Title: strings.TrimSpace(item.Title), Content: strings.TrimSpace(item.Content),
+				Status: status, Metadata: metadata,
+			})
+		}
 		if err != nil {
 			return db.LifeCognitionJob{}, err
 		}

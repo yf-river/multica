@@ -544,6 +544,13 @@ DO UPDATE SET content = EXCLUDED.content, status = EXCLUDED.status,
     metadata = EXCLUDED.metadata, last_developed_at = now(), updated_at = now()
 RETURNING *;
 
+-- name: UpdateLifeInternalThought :one
+UPDATE life_internal_thought
+SET thought_type = $5, title = $6, content = $7, status = $8,
+    metadata = $9, last_developed_at = now(), updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND companion_agent_id = $4
+RETURNING *;
+
 -- name: ListDueLifeInternalThoughts :many
 SELECT * FROM life_internal_thought
 WHERE status = 'active' AND last_developed_at <= now() - interval '3 days'

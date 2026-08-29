@@ -511,6 +511,10 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	if evidenceCount != 1 || !strings.Contains(evidenceExcerpt, "今天第一次记录心情") || !strings.Contains(evidenceExcerpt, "同一份材料里的补充证据") {
 		t.Fatalf("coalesced evidence count=%d excerpt=%q", evidenceCount, evidenceExcerpt)
 	}
+	var thoughtID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM life_internal_thought WHERE workspace_id=$1 AND user_id=$2 AND companion_agent_id=$3 AND title='心情记录是否有帮助'`, testWorkspaceID, testUserID, agentID).Scan(&thoughtID); err != nil {
+		t.Fatal(err)
+	}
 	if err := testPool.QueryRow(ctx, `INSERT INTO life_cognition_job (workspace_id,user_id,companion_agent_id,job_type,status,dedupe_key,started_at,attempt) VALUES ($1,$2,$3,'understand_materials','running',$4,now(),1) RETURNING id`, testWorkspaceID, testUserID, agentID, "revision-test:"+materialID).Scan(&revisionJobID); err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +522,10 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 		t.Fatal(err)
 	}
 	mustExec(t, ctx, `UPDATE life_cognition_job SET task_id=$2 WHERE id=$1`, revisionJobID, revisionTaskID)
-	revisionOutput := map[string]any{"memory_candidates": []map[string]any{{"memory_id": memoryID, "kind": "understanding", "content": "心情记录可能有助于看见压力变化", "confidence": 0.68, "urgency": 0.2, "uncertainty": "仍需跨周期观察", "evidence": evidence}}}
+	revisionOutput := map[string]any{
+		"memory_candidates": []map[string]any{{"memory_id": memoryID, "kind": "understanding", "content": "心情记录可能有助于看见压力变化", "confidence": 0.68, "urgency": 0.2, "uncertainty": "仍需跨周期观察", "evidence": evidence}},
+		"internal_thoughts": []map[string]any{{"thought_id": thoughtID, "type": "question", "title": "心情记录是否有帮助", "content": "这个旧问题已被新证据取代", "status": "archived", "metadata": map[string]any{}, "evidence": evidence}},
+	}
 	w = callCompanionAgentHandler(t, revisionTaskID, agentID, http.MethodPost, "/api/life/agent/jobs/"+revisionJobID+"/complete", map[string]any{"output": revisionOutput}, map[string]string{"jobId": revisionJobID}, testHandler.CompleteCompanionCognitionJob)
 	if w.Code != http.StatusOK {
 		t.Fatalf("revise candidate memory: %d %s", w.Code, w.Body.String())
@@ -533,6 +540,13 @@ func TestLifeCognitionOutputMaterializesAndProactiveSpeechReachesInbox(t *testin
 	}
 	if memoryCount != 1 || revisedContent != "心情记录可能有助于看见压力变化" || revisedStatus != "candidate" || revisionCount != 2 {
 		t.Fatalf("candidate revision count=%d content=%q status=%q revisions=%d", memoryCount, revisedContent, revisedStatus, revisionCount)
+	}
+	var thoughtStatus, thoughtContent string
+	if err := testPool.QueryRow(ctx, `SELECT status,content FROM life_internal_thought WHERE id=$1`, thoughtID).Scan(&thoughtStatus, &thoughtContent); err != nil {
+		t.Fatal(err)
+	}
+	if thoughtStatus != "archived" || thoughtContent != "这个旧问题已被新证据取代" {
+		t.Fatalf("internal thought revision status=%q content=%q", thoughtStatus, thoughtContent)
 	}
 	w = callLifeHandler(t, http.MethodPost, "/api/life/memories/"+memoryID+"/confirm", nil, map[string]string{"memoryId": memoryID}, testHandler.ConfirmLifeMemory)
 	if w.Code != http.StatusOK {
@@ -651,6 +665,18 @@ func TestLifeCognitionOutputRejectsMissingJSONObjects(t *testing.T) {
 				t.Fatalf("expected governed output error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestLifeCognitionOutputRejectsInvalidInternalThoughtRevision(t *testing.T) {
+	for _, thought := range []lifeJobThoughtOutput{
+		{ID: "not-a-uuid", Type: "draft", Title: "回看", Content: "继续观察", Status: "active", Metadata: map[string]any{}},
+		{ID: uuid.NewString(), Type: "draft", Title: "回看", Content: "继续观察", Status: "deleted", Metadata: map[string]any{}},
+	} {
+		var outputErr lifeJobOutputError
+		if err := validateLifeJobOutput("understand_materials", lifeCognitionOutput{InternalThoughts: []lifeJobThoughtOutput{thought}}); !errors.As(err, &outputErr) {
+			t.Fatalf("expected governed internal thought revision error, got %v", err)
+		}
 	}
 }
 

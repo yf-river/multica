@@ -4470,6 +4470,56 @@ func (q *Queries) UpdateLifeCommitmentStatus(ctx context.Context, arg UpdateLife
 	return i, err
 }
 
+const updateLifeInternalThought = `-- name: UpdateLifeInternalThought :one
+UPDATE life_internal_thought
+SET thought_type = $5, title = $6, content = $7, status = $8,
+    metadata = $9, last_developed_at = now(), updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND companion_agent_id = $4
+RETURNING id, workspace_id, user_id, companion_agent_id, thought_type, title, content, status, metadata, last_developed_at, created_at, updated_at
+`
+
+type UpdateLifeInternalThoughtParams struct {
+	ID               pgtype.UUID `json:"id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	UserID           pgtype.UUID `json:"user_id"`
+	CompanionAgentID pgtype.UUID `json:"companion_agent_id"`
+	ThoughtType      string      `json:"thought_type"`
+	Title            string      `json:"title"`
+	Content          string      `json:"content"`
+	Status           string      `json:"status"`
+	Metadata         []byte      `json:"metadata"`
+}
+
+func (q *Queries) UpdateLifeInternalThought(ctx context.Context, arg UpdateLifeInternalThoughtParams) (LifeInternalThought, error) {
+	row := q.db.QueryRow(ctx, updateLifeInternalThought,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.CompanionAgentID,
+		arg.ThoughtType,
+		arg.Title,
+		arg.Content,
+		arg.Status,
+		arg.Metadata,
+	)
+	var i LifeInternalThought
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.CompanionAgentID,
+		&i.ThoughtType,
+		&i.Title,
+		&i.Content,
+		&i.Status,
+		&i.Metadata,
+		&i.LastDevelopedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateLifeModuleStatus = `-- name: UpdateLifeModuleStatus :one
 UPDATE life_module
 SET status = $4,
