@@ -61,7 +61,11 @@ const completedYearlySteps = new Set();
 let pendingTurn = resumeState?.pending_turn || null;
 let persistedMonth = Number.isInteger(resumeState?.current_month)
   ? resumeState.current_month
-  : (resumeState?.checkpoints?.length || 0);
+  : Math.max(
+      resumeState?.checkpoints?.length || 0,
+      resumeState?.responses?.at(-1)?.month || 0,
+      resumeState?.pending_turn?.month || 0,
+    );
 
 const phases = [
   "建立关系与表达边界",
