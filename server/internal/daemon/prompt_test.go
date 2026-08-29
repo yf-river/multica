@@ -77,6 +77,8 @@ func TestUnderstandMaterialsPromptDistinguishesEventsFromDurableMemory(t *testin
 	assertPromptContains(t, out,
 		"Raw events already belong to materials and chronicles",
 		"never create a memory merely to restate what happened",
+		"A temporary event, appointment, one-time constraint",
+		"is not a memory even when factually true",
 		"Producing no memory is the normal result",
 		"candidate memory judgements may be drafted and revised freely",
 		"Confirming, correcting, downgrading, or archiving a governed memory",
