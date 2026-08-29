@@ -324,7 +324,10 @@ func validateLifeJobOutput(jobType string, output lifeCognitionOutput) error {
 		}
 	}
 	if review := output.ExperimentReview; review != nil {
-		if _, err := util.ParseUUID(review.RoundID); err != nil || review.ModuleProposal == nil {
+		if _, err := util.ParseUUID(review.RoundID); err != nil ||
+			strings.TrimSpace(review.Outcome) == "" || strings.TrimSpace(review.Feelings) == "" ||
+			strings.TrimSpace(review.Burden) == "" || strings.TrimSpace(review.CompanionCorrection) == "" ||
+			review.ModuleProposal == nil {
 			return invalidLifeJobOutput("experiment_review is invalid")
 		}
 		if err := validateLifeJobEvidence("experiment_review", 0, review.Evidence); err != nil {

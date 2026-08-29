@@ -706,6 +706,32 @@ func TestLifeCognitionOutputRejectsMissingJSONObjects(t *testing.T) {
 	}
 }
 
+func TestLifeCognitionOutputRejectsIncompleteExperimentReview(t *testing.T) {
+	valid := lifeJobExperimentReviewOutput{
+		RoundID: uuid.NewString(), Outcome: "结果", Feelings: "感受", Burden: "负担",
+		CompanionCorrection: "搭子下次少催促", ModuleProposal: map[string]any{},
+	}
+	tests := []struct {
+		name   string
+		mutate func(*lifeJobExperimentReviewOutput)
+	}{
+		{name: "outcome", mutate: func(review *lifeJobExperimentReviewOutput) { review.Outcome = " " }},
+		{name: "feelings", mutate: func(review *lifeJobExperimentReviewOutput) { review.Feelings = " " }},
+		{name: "burden", mutate: func(review *lifeJobExperimentReviewOutput) { review.Burden = " " }},
+		{name: "companion correction", mutate: func(review *lifeJobExperimentReviewOutput) { review.CompanionCorrection = " " }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			review := valid
+			test.mutate(&review)
+			var outputErr lifeJobOutputError
+			if err := validateLifeJobOutput("experiment_check", lifeCognitionOutput{ExperimentReview: &review}); !errors.As(err, &outputErr) {
+				t.Fatalf("expected governed output error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLifeCognitionOutputRejectsInvalidInternalThoughtRevision(t *testing.T) {
 	for _, thought := range []lifeJobThoughtOutput{
 		{ID: "not-a-uuid", Type: "draft", Title: "回看", Content: "继续观察", Status: "active", Metadata: map[string]any{}},
