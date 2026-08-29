@@ -59,6 +59,9 @@ const created = { agents: [], observers: [], experiments: [], modules: [], memor
 const completedYearlyActions = new Set();
 const completedYearlySteps = new Set();
 let pendingTurn = resumeState?.pending_turn || null;
+let persistedMonth = Number.isInteger(resumeState?.current_month)
+  ? resumeState.current_month
+  : (resumeState?.checkpoints?.length || 0);
 
 const phases = [
   "建立关系与表达边界",
@@ -1149,6 +1152,7 @@ async function request(pathname, options, authenticated) {
 }
 
 function persist(extra = {}) {
+  if (Number.isInteger(extra.current_month)) persistedMonth = extra.current_month;
   writeFileSync(resultPath, JSON.stringify({
     schema: "multica.life_decade_acceptance.v1",
     started_at: startedAt.toISOString(),
@@ -1163,6 +1167,7 @@ function persist(extra = {}) {
     completed_yearly_steps: [...completedYearlySteps],
     model_reliability: modelReliability,
     pending_turn: pendingTurn,
+    current_month: persistedMonth,
     checkpoints,
     responses: responseEvidence,
     ...extra,
