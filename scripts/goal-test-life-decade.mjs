@@ -200,6 +200,10 @@ if (laterMonthlyEvidence.length !== 7 || laterMonthlyEvidence.some((year) => yea
   throw new Error("decade later-life evidence must cover seven complete years");
 }
 if (new Set(plannedMonthlyEvidence).size !== 120) throw new Error("decade monthly evidence must evolve without verbatim repeats");
+const monthlyEvidenceForPrompt = plannedMonthlyEvidence.map((evidence) => evidence.replace(/[。！？!?]+$/u, ""));
+if (monthlyEvidenceForPrompt.some((evidence) => /[。！？!?]$/u.test(evidence))) {
+  throw new Error("decade monthly prompt evidence must not retain terminal punctuation");
+}
 const laterEvidenceSegments = new Map();
 for (const [evidenceIndex, evidence] of laterMonthlyEvidence.flat().entries()) {
   const runes = [...evidence];
@@ -969,7 +973,7 @@ function contextualMessage(year, month, turn, monthIndex) {
   if (pendingTurn?.month === monthIndex + 1 && pendingTurn.turn === turn + 1) return pendingTurn.prompt;
   const phase = phases[year];
   const period = `第 ${year + 1} 年第 ${month + 1} 个月，围绕“${phase}”`;
-  const evidence = plannedMonthlyEvidence[monthIndex];
+  const evidence = monthlyEvidenceForPrompt[monthIndex];
   const tension = tensionSignals[(monthIndex + year) % tensionSignals.length];
   const disagreement = disagreementAngles[(monthIndex + month) % disagreementAngles.length];
   const variants = [
