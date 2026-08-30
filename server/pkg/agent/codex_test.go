@@ -237,6 +237,26 @@ func TestCodexHandleServerRequestMCPElicitation(t *testing.T) {
 	}
 }
 
+func TestCodexHandleServerRequestPermissionsApproval(t *testing.T) {
+	t.Parallel()
+
+	c, fs, _ := newTestCodexClient(t)
+	c.handleLine(`{"jsonrpc":"2.0","id":13,"method":"item/permissions/requestApproval","params":{}}`)
+
+	lines := fs.Lines()
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(lines))
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	result := resp["result"].(map[string]any)
+	if result["decision"] != "accept" {
+		t.Fatalf("expected decision=accept, got %v", result["decision"])
+	}
+}
+
 func TestCodexHandleServerRequestUnknownReturnsError(t *testing.T) {
 	t.Parallel()
 

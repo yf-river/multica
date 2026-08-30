@@ -49,11 +49,15 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	}
 
 	startParams := map[string]any{
-		"model":                  nilIfEmpty(opts.Model),
-		"modelProvider":          nil,
-		"profile":                nil,
-		"cwd":                    opts.Cwd,
-		"approvalPolicy":         nil,
+		"model":         nilIfEmpty(opts.Model),
+		"modelProvider": nil,
+		"profile":       nil,
+		"cwd":           opts.Cwd,
+		// The daemon is non-interactive and handles approval requests itself.
+		// An inherited `never` policy rejects governed MCP calls before the
+		// server can execute them, so use the request policy and auto-approve
+		// through handleServerRequest below.
+		"approvalPolicy":         "on-request",
 		"sandbox":                nil,
 		"config":                 nil,
 		"baseInstructions":       nil,
@@ -575,6 +579,8 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 		writeErr = c.respond(id, map[string]any{"decision": "accept"})
 	case "mcpServer/elicitation/request":
 		writeErr = c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
+	case "item/permissions/requestApproval":
+		writeErr = c.respond(id, map[string]any{"decision": "accept"})
 	default:
 		c.cfg.Logger.Warn("codex: unhandled server request", "method", method, "id", id)
 		writeErr = c.respondError(id, -32601, fmt.Sprintf("unhandled server request: %s", method))
