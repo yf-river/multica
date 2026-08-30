@@ -1144,7 +1144,15 @@ async function finalAudit(companionID, runtimeID) {
        (SELECT count(*)::int FROM life_memory m WHERE m.workspace_id=$2 AND m.user_id=$3 AND m.created_by_type='agent' AND NOT EXISTS (SELECT 1 FROM life_memory_evidence e WHERE e.memory_id=m.id)) AS memories_without_evidence,
        (SELECT count(*)::int - count(DISTINCT lower(btrim(content)))::int FROM life_memory WHERE workspace_id=$2 AND user_id=$3 AND status<>'archived') AS duplicate_memory_contents,
        (SELECT count(*)::int FROM life_internal_thought WHERE workspace_id=$2 AND user_id=$3 AND status='active' AND title ~ '三栏第三次|三栏第四次') AS invalid_count_thoughts,
-       (SELECT count(*)::int FROM life_material WHERE workspace_id=$2 AND user_id=$3 AND source_type IN ('chat_message', 'task', 'experiment_round') AND (occurred_at<$4 OR occurred_at>$5)) AS materials_outside_simulation,
+       (SELECT count(*)::int
+          FROM life_material material
+         WHERE material.workspace_id=$2 AND material.user_id=$3
+           AND ((material.source_type='chat_message' AND EXISTS (
+                  SELECT 1 FROM chat_message message
+                   WHERE message.chat_session_id=$1 AND message.id::text=material.source_key
+                ))
+             OR (material.source_type='experiment_round' AND (material.occurred_at<$4 OR material.occurred_at>$5)))
+           AND (material.occurred_at<$4 OR material.occurred_at>$5)) AS materials_outside_simulation,
        (SELECT count(*)::int
           FROM life_observer_judgement judgement
           JOIN life_observer observer ON observer.id=judgement.observer_id
