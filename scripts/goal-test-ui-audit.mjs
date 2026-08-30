@@ -212,6 +212,7 @@ async function auditRoute(page, route) {
   let bodyText = "";
   let title = "";
   let screenshot = "";
+  let readyElapsedMs = null;
   try {
     await page.goto(`${browserURL}${route.path}`, { waitUntil: "domcontentloaded", timeout: 10_000 });
     if (route.finalPathIncludes) {
@@ -223,6 +224,9 @@ async function auditRoute(page, route) {
     }
     bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
     title = await page.title().catch(() => "");
+    // Measure user-visible readiness; saving the screenshot is an audit artifact
+    // and must not inflate the page performance result.
+    readyElapsedMs = Date.now() - startedAt;
     screenshot = path.join(screenshotDir, `${route.id}-${stamp}.png`);
     await page.screenshot({ path: screenshot, fullPage: false, timeout: 5_000 }).catch(() => {});
   } catch (error) {
@@ -231,7 +235,7 @@ async function auditRoute(page, route) {
     auditEvents.detach();
   }
 
-  const elapsedMs = Date.now() - startedAt;
+  const elapsedMs = readyElapsedMs ?? (Date.now() - startedAt);
   const { requests, failedRequests } = auditEvents;
   const routeEvents = auditEvents.errors;
   const badStatuses = responses

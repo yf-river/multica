@@ -232,7 +232,7 @@ async function exerciseVersionSkew() {
   const oldPID = startDetached(path.join(fixtureRoot, "old-server"), [], oldLog);
   try {
     await waitForHTTP(`${apiBase}/health`, 60_000);
-    const login = await fetch(`${browserURL}/auth/login`, {
+    const login = await fetch(`${apiBase}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ account, password }),
