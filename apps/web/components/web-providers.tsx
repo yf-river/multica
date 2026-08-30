@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import packageJson from "../package.json";
@@ -38,10 +38,21 @@ export function WebProviders({
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
 }) {
+  // Keep the first client render identical to the server render. The browser
+  // origin is only available after hydration; deriving it during render makes
+  // CoreProvider receive different websocket props and triggers a hydration
+  // warning on the login page.
+  const [wsUrl, setWsUrl] = useState<string | undefined>(
+    process.env.NEXT_PUBLIC_WS_URL,
+  );
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_WS_URL) setWsUrl(deriveWsUrl());
+  }, []);
+
   return (
     <CoreProvider
       apiBaseUrl={process.env.NEXT_PUBLIC_API_URL}
-      wsUrl={deriveWsUrl()}
+      wsUrl={wsUrl}
       cookieAuth
       onLogin={setLoggedInCookie}
       onLogout={clearLoggedInCookie}
