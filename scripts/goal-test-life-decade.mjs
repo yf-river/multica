@@ -10,7 +10,8 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
 const apiBase = process.env.LIFE_DECADE_API_BASE || runEnv.REMOTE_API_URL || "http://127.0.0.1:18762";
 const databaseURL = process.env.LIFE_DECADE_DATABASE_URL || runEnv.DATABASE_URL;
-const model = "deepseek-v4-pro-ioa";
+const runtimeProvider = process.env.LIFE_DECADE_RUNTIME_PROVIDER || "codex";
+const model = process.env.LIFE_DECADE_MODEL || "gpt-5.6-luna";
 const expectedDatabase = "multica_goal_test_int";
 const lifeJobQuiescence = 65_000;
 const account = process.env.E2E_ACCOUNT || "develop";
@@ -288,7 +289,7 @@ try {
   await login();
   workspace = await findWorkspace();
   user = await currentUser();
-  const runtime = await findCodeBuddyRuntime();
+  const runtime = await findLifeRuntime();
   let companion;
   if (resumeState) {
     companion = await restoreResumeState(runtime.id);
@@ -367,10 +368,10 @@ async function currentUser() {
   return result;
 }
 
-async function findCodeBuddyRuntime() {
+async function findLifeRuntime() {
   const items = await api("/api/runtimes?owner=me");
-  const runtime = items.find((item) => item.provider === "codebuddy" && item.status === "online");
-  if (!runtime) throw new Error("no online CodeBuddy runtime found in integration workspace");
+  const runtime = items.find((item) => item.provider === runtimeProvider && item.status === "online");
+  if (!runtime) throw new Error(`no online ${runtimeProvider} runtime found in integration workspace`);
   return runtime;
 }
 
@@ -658,7 +659,7 @@ async function waitForLifeJobs(label, timeout = 35 * 60_000) {
     if (modelReliability.unclassified_failures.length > 0) {
       throw new Error(`${label}: life cognition failures need a product diagnosis: ${modelReliability.unclassified_failures.map((item) => item.id).join(",")}`);
     }
-    if (modelReliability.switch_required) {
+    if (modelReliability.switch_required && model === "deepseek-v4-pro-ioa") {
       throw new Error(`${label}: DeepSeek reliability threshold reached; switch the whole life system to Luna`);
     }
     const pending = (counts.queued || 0) + (counts.running || 0) + (counts.failed || 0);
@@ -1177,7 +1178,7 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
   if (counts[0].pending !== 0) failures.push(`life jobs pending=${counts[0].pending}`);
   if (modelReliability.unclassified_failures.length > 0) failures.push(`unclassified life failures ${modelReliability.unclassified_failures.length}`);
-  if (modelReliability.switch_required) failures.push("DeepSeek reliability threshold reached");
+  if (modelReliability.switch_required && model === "deepseek-v4-pro-ioa") failures.push("DeepSeek reliability threshold reached");
   if (lifeAgents.length !== 5 || lifeAgents.some((agent) => agent.runtime_id !== runtimeID || agent.model !== model)) failures.push("life agent runtime/model drift");
   const evaluationResult = coreEvaluation?.result || {};
   const passRate = Number(evaluationResult.pass_rate);
