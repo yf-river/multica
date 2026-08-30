@@ -12,6 +12,7 @@ const apiBase = process.env.LIFE_DECADE_API_BASE || runEnv.REMOTE_API_URL || "ht
 const databaseURL = process.env.LIFE_DECADE_DATABASE_URL || runEnv.DATABASE_URL;
 const model = "deepseek-v4-pro-ioa";
 const expectedDatabase = "multica_goal_test_int";
+const lifeJobQuiescence = 65_000;
 const account = process.env.E2E_ACCOUNT || "develop";
 const password = process.env.E2E_PASSWORD || "develop123";
 const workspaceSlug = process.env.E2E_WORKSPACE || "ai-studio";
@@ -663,7 +664,7 @@ async function waitForLifeJobs(label, timeout = 35 * 60_000) {
     const pending = (counts.queued || 0) + (counts.running || 0) + (counts.failed || 0);
     if (pending === 0) {
       if (emptySince === 0) emptySince = Date.now();
-      if (Date.now() - emptySince >= 16_000) return counts;
+      if (Date.now() - emptySince >= lifeJobQuiescence) return counts;
     } else {
       emptySince = 0;
     }
