@@ -168,6 +168,13 @@ func TestLifeIdentityObserverAndPolicyAreUserGoverned(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("run observer: %d %s", w.Code, w.Body.String())
 	}
+	var lastRunAt, nextRunAt time.Time
+	if err := testPool.QueryRow(context.Background(), `SELECT last_run_at, next_run_at FROM life_observer WHERE id=$1`, observerID).Scan(&lastRunAt, &nextRunAt); err != nil {
+		t.Fatalf("read observer schedule after manual run: %v", err)
+	}
+	if !nextRunAt.After(lastRunAt) || !nextRunAt.After(time.Now()) {
+		t.Fatalf("manual run must advance observer schedule: last=%s next=%s", lastRunAt, nextRunAt)
+	}
 
 	w = callLifeHandler(t, http.MethodPut, "/api/life/proactive-policy", map[string]any{"enabled": true, "timezone": "Asia/Shanghai", "quiet_hours": map[string]any{"start": "23:00", "end": "08:00"}, "minimum_interval_hours": 24}, nil, testHandler.UpdateLifeProactivePolicy)
 	if w.Code != http.StatusOK {

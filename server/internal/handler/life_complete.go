@@ -693,11 +693,31 @@ func (h *Handler) RunLifeObserver(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "observer not found")
 		return
 	}
-	key := "manual:" + uuidToString(id) + ":" + time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now()
+	interval := time.Duration(observer.MinimumInterval.Microseconds)*time.Microsecond + time.Duration(observer.MinimumInterval.Days)*24*time.Hour + time.Duration(observer.MinimumInterval.Months)*30*24*time.Hour
+	if interval <= 0 {
+		interval = 12 * time.Hour
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to start observer run")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	q := h.Queries.WithTx(tx)
+	if err := q.AdvanceLifeObserverSchedule(r.Context(), db.AdvanceLifeObserverScheduleParams{ID: id, NextRunAt: pgtype.Timestamptz{Time: now.Add(interval), Valid: true}}); err != nil {
+		writeError(w, 500, "failed to schedule next observer run")
+		return
+	}
+	key := "manual:" + uuidToString(id) + ":" + now.UTC().Format(time.RFC3339Nano)
 	input, _ := json.Marshal(map[string]any{"observer_id": uuidToString(id), "reason": "用户手动要求观察"})
-	job, err := h.Queries.CreateLifeCognitionJob(r.Context(), db.CreateLifeCognitionJobParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: observer.AgentID, JobType: "observer_run", DedupeKey: key, Input: input, ScheduledAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}})
+	job, err := q.CreateLifeCognitionJob(r.Context(), db.CreateLifeCognitionJobParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, CompanionAgentID: observer.AgentID, JobType: "observer_run", DedupeKey: key, Input: input, ScheduledAt: pgtype.Timestamptz{Time: now, Valid: true}})
 	if err != nil {
 		writeError(w, 500, "failed to schedule observer")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit observer run")
 		return
 	}
 	writeJSON(w, 202, map[string]any{"job_id": uuidToString(job.ID)})
