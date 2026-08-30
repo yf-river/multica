@@ -895,7 +895,21 @@ func (h *Handler) ListLifeUpgradeEvaluations(w http.ResponseWriter, r *http.Requ
 		writeError(w, 500, "failed to list upgrade evaluations")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"evaluations": rows})
+	items := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, lifeUpgradeEvaluationResponse(row))
+	}
+	writeJSON(w, 200, map[string]any{"evaluations": items})
+}
+
+func lifeUpgradeEvaluationResponse(row db.LifeUpgradeEvaluation) map[string]any {
+	return map[string]any{
+		"id": uuidToString(row.ID), "workspace_id": uuidToString(row.WorkspaceID), "user_id": uuidToString(row.UserID),
+		"identity_version_id": uuidToString(row.IdentityVersionID), "candidate_label": row.CandidateLabel, "baseline_label": row.BaselineLabel,
+		"scenarios": json.RawMessage(row.Scenarios), "result": json.RawMessage(row.Result), "status": row.Status,
+		"rollback_recommended": row.RollbackRecommended, "started_at": timestampToPtr(row.StartedAt),
+		"completed_at": timestampToPtr(row.CompletedAt), "created_at": timestampToString(row.CreatedAt),
+	}
 }
 
 func (h *Handler) CreateLifeUpgradeEvaluation(w http.ResponseWriter, r *http.Request) {
@@ -958,7 +972,7 @@ func (h *Handler) CreateLifeUpgradeEvaluation(w http.ResponseWriter, r *http.Req
 		writeError(w, 500, "failed to commit upgrade evaluation")
 		return
 	}
-	writeJSON(w, 202, eval)
+	writeJSON(w, 202, lifeUpgradeEvaluationResponse(eval))
 }
 
 func parseUUIDText(raw string) (pgtype.UUID, error) {

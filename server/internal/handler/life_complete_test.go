@@ -16,6 +16,24 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestLifeUpgradeEvaluationResponsePreservesJSON(t *testing.T) {
+	row := db.LifeUpgradeEvaluation{Scenarios: []byte(`[{"index":1}]`), Result: []byte(`{"pass_rate":1}`), Status: "passed"}
+	raw, err := json.Marshal(lifeUpgradeEvaluationResponse(row))
+	if err != nil {
+		t.Fatalf("marshal upgrade evaluation response: %v", err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode upgrade evaluation response: %v", err)
+	}
+	if _, ok := response["scenarios"].([]any); !ok {
+		t.Fatalf("scenarios encoded as %T: %s", response["scenarios"], raw)
+	}
+	if _, ok := response["result"].(map[string]any); !ok {
+		t.Fatalf("result encoded as %T: %s", response["result"], raw)
+	}
+}
+
 func TestCoalesceLifeMemoryEvidenceMergesOneSource(t *testing.T) {
 	items := coalesceLifeMemoryEvidence([]lifeJobEvidenceOutput{
 		{SourceType: "chat_message", SourceID: "source", Excerpt: "first", Stance: "supports"},
