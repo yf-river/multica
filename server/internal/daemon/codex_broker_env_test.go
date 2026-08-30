@@ -27,9 +27,10 @@ func TestPrepareCodexBrokerProcessEnvUsesTaskCodexHome(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	env, err := prepareCodexBrokerProcessEnv(map[string]string{
-		"CODEX_HOME":      "old",
-		"MULTICA_TOKEN":   "secret",
-		"MULTICA_TASK_ID": "task",
+		"CODEX_HOME":                "old",
+		"MULTICA_TOKEN":             "secret",
+		"MULTICA_TASK_ID":           "task",
+		"MULTICA_TASK_CONTEXT_FILE": "/tmp/task_env.json",
 	}, taskHome, logger)
 	if err != nil {
 		t.Fatalf("prepareCodexBrokerProcessEnv: %v", err)
@@ -42,6 +43,9 @@ func TestPrepareCodexBrokerProcessEnvUsesTaskCodexHome(t *testing.T) {
 	}
 	if env["MULTICA_TOKEN"] != "" || env["MULTICA_TASK_ID"] != "" {
 		t.Fatalf("task-scoped env leaked into broker env: %#v", env)
+	}
+	if env["MULTICA_TASK_CONTEXT_FILE"] != "/tmp/task_env.json" {
+		t.Fatalf("task context file missing from broker env: %#v", env)
 	}
 	if env["MULTICA_CODEX_BROKER_SKILLS_HASH"] == "" {
 		t.Fatal("expected task skills hash")

@@ -12,6 +12,14 @@ import (
 const taskContextEnvFile = ".agent_context/task_env.json"
 
 func loadTaskContextEnvFromCWD() protocol.TaskContextEnvironment {
+	if path := strings.TrimSpace(os.Getenv("MULTICA_TASK_CONTEXT_FILE")); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			var env protocol.TaskContextEnvironment
+			if json.Unmarshal(data, &env) == nil {
+				return env
+			}
+		}
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return protocol.TaskContextEnvironment{}

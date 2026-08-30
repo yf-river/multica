@@ -233,7 +233,6 @@ export function LoginPage({
                 placeholder={t(($) => $.common.account_placeholder)}
                 value={account}
                 onChange={(e) => setAccount(e.target.value)}
-                autoFocus
                 required
               />
             </div>

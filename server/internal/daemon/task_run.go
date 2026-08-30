@@ -355,6 +355,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		applyCodeBuddyLifeIsolation(agentEnv, env.RootDir)
 	}
 	if provider == "codex" {
+		// Codex keeps one app-server process per runtime and does not change its
+		// working directory between turns. Point the governed MCP child at the
+		// task-local context file without putting the task token in the broker
+		// process environment.
+		agentEnv["MULTICA_TASK_CONTEXT_FILE"] = filepath.Join(env.WorkDir, taskContextEnvRelPath)
 		cleanupTaskEnv, err := writeTaskContextEnv(env.WorkDir, agentEnv)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("write codex task context env: %w", err)

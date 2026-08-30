@@ -26,6 +26,7 @@ export function CompanionPage() {
   const setActiveSession = useChatStore((state) => state.setActiveSession);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   const initializedRef = useRef(false);
+  const selectedSessionRef = useRef<string | null | undefined>(undefined);
 
   const profile = profileQuery.data?.profile ?? null;
   const availableAgents = useMemo(
@@ -34,18 +35,25 @@ export function CompanionPage() {
   );
 
   useEffect(() => {
-    if (!profile || sessionsQuery.isLoading || initializedRef.current) return;
+    if (!profile || initializedRef.current) return;
     initializedRef.current = true;
+    setSelectedAgentId(profile.agent_id);
+    setOpen(true);
+    setExpanded(true);
+  }, [profile, setExpanded, setOpen, setSelectedAgentId]);
+
+  useEffect(() => {
+    if (!profile || sessionsQuery.isLoading) return;
     const sessions = sessionsQuery.data ?? [];
     const activeSession = sessions.find((session) => session.id === activeSessionId);
     const targetSession = activeSession?.agent_id === profile.agent_id
       ? activeSession
       : sessions.find((session) => session.agent_id === profile.agent_id) ?? null;
-    setSelectedAgentId(profile.agent_id);
-    setActiveSession(targetSession?.id ?? null);
-    setOpen(true);
-    setExpanded(true);
-  }, [activeSessionId, profile, sessionsQuery.data, sessionsQuery.isLoading, setActiveSession, setExpanded, setOpen, setSelectedAgentId]);
+    const targetSessionId = targetSession?.id ?? null;
+    if (targetSessionId === selectedSessionRef.current) return;
+    selectedSessionRef.current = targetSessionId;
+    if (targetSessionId !== activeSessionId) setActiveSession(targetSessionId);
+  }, [activeSessionId, profile, sessionsQuery.data, sessionsQuery.isLoading, setActiveSession]);
 
   useEffect(() => () => {
     setExpanded(false);

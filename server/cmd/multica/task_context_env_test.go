@@ -55,3 +55,17 @@ func TestTaskContextEnvFallbackFeedsCLIAuthAndAttribution(t *testing.T) {
 		t.Fatalf("client attribution = (%q, %q)", client.AgentID, client.TaskID)
 	}
 }
+
+func TestTaskContextEnvExplicitFileWorksOutsideTaskDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task_env.json")
+	if err := os.WriteFile(path, []byte(`{"token":"mat_explicit","workspace_id":"ws-explicit"}`), 0o600); err != nil {
+		t.Fatalf("write task_env: %v", err)
+	}
+	t.Setenv("MULTICA_TASK_CONTEXT_FILE", path)
+	if got := taskContextValue("MULTICA_TOKEN"); got != "mat_explicit" {
+		t.Fatalf("task context token = %q", got)
+	}
+	if got := taskContextValue("MULTICA_WORKSPACE_ID"); got != "ws-explicit" {
+		t.Fatalf("task context workspace = %q", got)
+	}
+}
