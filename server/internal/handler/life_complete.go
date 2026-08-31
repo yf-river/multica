@@ -816,6 +816,9 @@ func (h *Handler) ListLifeCognitionJobs(w http.ResponseWriter, r *http.Request) 
 	}
 	rows, err := h.Queries.ListLifeCognitionJobs(r.Context(), db.ListLifeCognitionJobsParams{WorkspaceID: scope.workspaceID, UserID: scope.userID, Limit: 200})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, 500, "failed to list cognition jobs")
 		return
 	}

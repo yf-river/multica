@@ -98,6 +98,9 @@ func (h *Handler) ListLifeChronicleEntries(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: scope.workspaceID, UserID: scope.userID,
 	})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list chronicle entries")
 		return
 	}
@@ -105,6 +108,9 @@ func (h *Handler) ListLifeChronicleEntries(w http.ResponseWriter, r *http.Reques
 	for _, row := range rows {
 		item, err := h.lifeChronicleToResponse(r, row)
 		if err != nil {
+			if writeClientClosedIfCanceled(w, err) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to load chronicle evidence")
 			return
 		}

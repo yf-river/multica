@@ -7,6 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func callLifeHandler(t *testing.T, method, path string, body any, params map[string]string, fn http.HandlerFunc) *httptest.ResponseRecorder {
@@ -18,6 +22,37 @@ func callLifeHandler(t *testing.T, method, path string, body any, params map[str
 	w := httptest.NewRecorder()
 	fn(w, req)
 	return w
+}
+
+func TestListLifeChronicleEntriesClientCanceledReturns499(t *testing.T) {
+	req := newRequest(http.MethodGet, "/api/life/chronicle", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	newCanceledLifeReadHandler().ListLifeChronicleEntries(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled chronicle read, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+type canceledLifeReadDB struct{}
+
+func (canceledLifeReadDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, context.Canceled
+}
+
+func (canceledLifeReadDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, context.Canceled
+}
+
+func (canceledLifeReadDB) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+	return errorRow{err: context.Canceled}
+}
+
+func newCanceledLifeReadHandler() *Handler {
+	return &Handler{Queries: db.New(canceledLifeReadDB{})}
 }
 
 func createLifeMemoryForTest(t *testing.T, evidenceType, evidenceID, kind, content string) lifeMemoryResponse {

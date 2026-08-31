@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -250,6 +251,19 @@ func TestListLifeCognitionJobsReturnsWebContract(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("created cognition job missing: %s", w.Body.String())
+	}
+}
+
+func TestListLifeCognitionJobsClientCanceledReturns499(t *testing.T) {
+	req := newRequest(http.MethodGet, "/api/life/cognition-jobs", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	newCanceledLifeReadHandler().ListLifeCognitionJobs(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled cognition job read, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
