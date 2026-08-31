@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import pg from "pg";
@@ -10,6 +10,9 @@ import { launchGoalTestBrowser } from "./lib/goal-test-browser-audit.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
+const deploymentPath = path.join(repoRoot, ".run/deployments/goal-test-int.json");
+const deployment = JSON.parse(readFileSync(deploymentPath, "utf8"));
+const deploymentCommit = String(deployment.commit || deployment.build_version || "").trim();
 const apiBase = runEnv.REMOTE_API_URL || "http://127.0.0.1:18762";
 const browserURL = runEnv.LOCAL_FRONTEND_URL || "http://127.0.0.1:13682";
 const databaseURL = runEnv.DATABASE_URL;
@@ -21,6 +24,7 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 const outputDir = acceptanceDir(repoRoot);
 
 if (!databaseURL) throw new Error("missing integration DATABASE_URL");
+if (!deploymentCommit) throw new Error("deployment metadata is missing commit");
 if (runEnv.GOAL_TEST_ENV !== "int" || new URL(databaseURL).pathname !== "/multica_goal_test_int") {
   throw new Error("refusing life resilience run outside the canonical integration database");
 }
@@ -32,7 +36,7 @@ const db = new pg.Pool({ connectionString: databaseURL, max: 4 });
 const evidence = {
   schema: "multica.goal_test.life_resilience.v1",
   generated_at: generatedAt,
-  deployment_commit: runEnv.BUILD_VERSION || "",
+  deployment_commit: deploymentCommit,
   workspace_slug: workspaceSlug,
   checks: [],
   ok: false,

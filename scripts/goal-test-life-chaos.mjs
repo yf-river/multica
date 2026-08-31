@@ -29,6 +29,10 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 const outputDir = acceptanceDir(repoRoot);
 const deploymentPath = path.join(repoRoot, ".run/deployments/goal-test-int.json");
 const environmentScript = path.join(repoRoot, "scripts/goal-test-environments.mjs");
+const deployment = JSON.parse(readFileSync(deploymentPath, "utf8"));
+const deploymentCommit = String(deployment.commit || deployment.build_version || "").trim();
+
+if (!deploymentCommit) throw new Error("deployment metadata is missing commit");
 
 mkdirSync(outputDir, { recursive: true });
 const outputPath = path.join(outputDir, `life-chaos-${stamp}.json`);
@@ -38,7 +42,7 @@ const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "multica-life-chaos-"));
 const evidence = {
   schema: "multica.goal_test.life_chaos.v1",
   generated_at: generatedAt,
-  deployment_commit: runEnv.BUILD_VERSION || "",
+  deployment_commit: deploymentCommit,
   workspace_slug: workspaceSlug,
   checks: [],
   ok: false,

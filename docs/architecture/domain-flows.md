@@ -122,6 +122,16 @@ identity and retention live in
 - Verification: `server/internal/handler/issue_delete_atomicity_test.go` and
   `server/internal/handler/issue_batch_test.go`.
 
+### Activity event receipt
+
+- Squad leader evaluations write `activity_log` and their `activity:created`
+  outbox witness in one transaction. The `activity_receipt` consumer only
+  validates the workspace and acknowledges that already-persisted activity;
+  the handler's post-commit publish remains the realtime hint. If the issue
+  was deleted before delivery, the receipt completes as a terminal no-op
+  because its activity was deleted with the issue.
+- Verification: `server/cmd/server/activity_receipt_test.go`.
+
 ### Gongfeng repository and merge request
 
 - Entries: workspace repository probe/resolve, Project resource create, and

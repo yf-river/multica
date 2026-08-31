@@ -15,6 +15,9 @@ import (
 )
 
 func registerDurableActivityConsumers(dispatcher *eventoutbox.Dispatcher) error {
+	if err := dispatcher.Register(protocol.EventActivityCreated, "activity_receipt", consumeActivityCreatedReceipt); err != nil {
+		return err
+	}
 	if err := dispatcher.Register(protocol.EventIssueCreated, "activity_log", consumeIssueCreatedActivity); err != nil {
 		return err
 	}
@@ -23,6 +26,43 @@ func registerDurableActivityConsumers(dispatcher *eventoutbox.Dispatcher) error 
 	}
 	return registerDurableEvents(dispatcher, "task_issue_projection", consumeTaskTerminalIssueProjection,
 		protocol.EventTaskCompleted, protocol.EventTaskFailed, protocol.EventTaskCancelled)
+}
+
+// consumeActivityCreatedReceipt acknowledges an activity event whose activity
+// row was already written by the originating transaction. The row is a
+// durable witness for the post-commit realtime hint; no second activity is
+// projected. Deleting the issue before delivery is a valid terminal outcome
+// because the activity row is deleted with it.
+func consumeActivityCreatedReceipt(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	if event.Type != protocol.EventActivityCreated {
+		return nil, fmt.Errorf("activity-created receipt has unexpected event type %q", event.Type)
+	}
+	payload, ok := decodeActivityCreatedEvent(event)
+	if !ok {
+		return nil, fmt.Errorf("decode activity-created receipt payload")
+	}
+	issueID, err := util.ParseUUID(payload.IssueID)
+	if err != nil {
+		return nil, fmt.Errorf("activity-created receipt has invalid issue ID: %w", err)
+	}
+	if _, err := util.ParseUUID(payload.Entry.ID); err != nil {
+		return nil, fmt.Errorf("activity-created receipt has invalid activity ID: %w", err)
+	}
+	workspaceID, err := util.ParseUUID(event.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("activity-created receipt has invalid workspace ID: %w", err)
+	}
+	issue, err := queries.GetIssue(ctx, issueID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load issue for activity-created receipt: %w", err)
+	}
+	if util.UUIDToString(issue.WorkspaceID) != util.UUIDToString(workspaceID) {
+		return nil, fmt.Errorf("activity-created receipt workspace mismatch")
+	}
+	return nil, nil
 }
 
 func consumeIssueCreatedActivity(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {

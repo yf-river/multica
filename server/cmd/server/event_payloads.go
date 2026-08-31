@@ -70,6 +70,17 @@ type taskEventPayload struct {
 	Status        string `json:"status"`
 }
 
+type activityCreatedEventPayload struct {
+	IssueID string        `json:"issue_id"`
+	Entry   activityEntry `json:"entry"`
+}
+
+type activityEntry struct {
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Action string `json:"action"`
+}
+
 type issueReactionEventPayload struct {
 	Reaction eventIssueReaction `json:"reaction"`
 }
@@ -126,4 +137,10 @@ func decodeCommentReactionEvent(event events.Event) (commentReactionEventPayload
 	payload, ok := decodeEventPayload[commentReactionEventPayload](event)
 	reaction := payload.Reaction
 	return payload, ok && reaction.ID != "" && reaction.CommentID != "" && reaction.ActorID != "" && reaction.Emoji != ""
+}
+
+func decodeActivityCreatedEvent(event events.Event) (activityCreatedEventPayload, bool) {
+	payload, ok := decodeEventPayload[activityCreatedEventPayload](event)
+	return payload, ok && payload.IssueID != "" && payload.Entry.ID != "" &&
+		payload.Entry.Type == "activity" && payload.Entry.Action != ""
 }
