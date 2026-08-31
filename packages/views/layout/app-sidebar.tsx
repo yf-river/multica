@@ -34,7 +34,6 @@ import {
   X,
   Zap,
   Users,
-  HeartHandshake,
   Sprout,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
@@ -107,7 +106,6 @@ const SIDEBAR_NAV_BUTTON_CLASS =
 // against the current workspace slug at render time (see AppSidebar body).
 // Only parameterless paths are valid nav destinations.
 type NavKey =
-  | "companion"
   | "life"
   | "inbox"
   | "myIssues"
@@ -124,7 +122,6 @@ type NavKey =
 
 // Static schema (key + icon) — labels resolved at render via useT("layout").
 type NavLabelKey =
-  | "companion"
   | "life"
   | "inbox"
   | "my_issues"
@@ -140,7 +137,6 @@ type NavLabelKey =
   | "settings";
 
 const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
-  { key: "companion", labelKey: "companion", icon: HeartHandshake },
   { key: "life", labelKey: "life", icon: Sprout },
   { key: "inbox", labelKey: "inbox", icon: Inbox },
   { key: "myIssues", labelKey: "my_issues", icon: CircleUser },

@@ -245,3 +245,12 @@ describe("AppSidebar workspace nav", () => {
   });
 
 });
+
+describe("AppSidebar personal nav", () => {
+  it("keeps the companion in the chat launcher instead of the sidebar", () => {
+    render(<AppSidebar />);
+
+    expect(screen.queryByText("搭子")).not.toBeInTheDocument();
+    expect(screen.getByText("人生")).toBeInTheDocument();
+  });
+});

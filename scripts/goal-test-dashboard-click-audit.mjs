@@ -28,7 +28,6 @@ const maxApiRequests = 20;
 mkdirSync(artifactRoot, { recursive: true });
 
 const dashboardClicks = [
-  { id: "companion", label: "搭子", link: "搭子", path: `/${workspaceSlug}/companion`, ready: { heading: "搭子" } },
   { id: "life", label: "人生", link: "人生", path: `/${workspaceSlug}/life`, ready: { heading: "人生" } },
   { id: "inbox", label: "收件箱", link: "收件箱", path: `/${workspaceSlug}/inbox`, ready: { heading: "收件箱" } },
   { id: "my-issues", label: "我的任务", link: "我的任务", path: `/${workspaceSlug}/my-issues`, ready: { heading: "我的任务" } },
