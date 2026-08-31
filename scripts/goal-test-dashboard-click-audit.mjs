@@ -28,7 +28,10 @@ const maxApiRequests = 20;
 mkdirSync(artifactRoot, { recursive: true });
 
 const dashboardClicks = [
-  { id: "life", label: "人生", link: "人生", path: `/${workspaceSlug}/life`, ready: { heading: "人生" } },
+  { id: "life-memory", label: "记忆", link: "记忆", path: `/${workspaceSlug}/life?tab=memory`, ready: { heading: "记忆" } },
+  { id: "life-experiment", label: "实验", link: "实验", path: `/${workspaceSlug}/life?tab=experiment`, ready: { heading: "实验" } },
+  { id: "life-observers", label: "观察席", link: "观察席", path: `/${workspaceSlug}/life?tab=observers`, ready: { heading: "观察席" } },
+  { id: "life-chronicle", label: "编年史", link: "编年史", path: `/${workspaceSlug}/life?tab=chronicle`, ready: { heading: "编年史" } },
   { id: "inbox", label: "收件箱", link: "收件箱", path: `/${workspaceSlug}/inbox`, ready: { heading: "收件箱" } },
   { id: "my-issues", label: "我的任务", link: "我的任务", path: `/${workspaceSlug}/my-issues`, ready: { heading: "我的任务" } },
   { id: "issues", label: "任务", link: "任务", path: `/${workspaceSlug}/issues`, ready: { heading: "任务" } },
@@ -192,7 +195,8 @@ async function measureClick(page, item) {
 
 async function clickNavigationLink(page, item) {
   const attempts = [];
-  const targetPattern = `**${item.path}`;
+  const target = targetURL(item);
+  const targetPattern = (url) => url.pathname === target.pathname && url.search === target.search;
   const nativeTimeoutMs = 1_200;
   const retryTimeoutMs = 2_500;
   try {
@@ -236,6 +240,7 @@ async function clickNavigationLink(page, item) {
 
 async function locateNavigationLink(page, item) {
   const links = page.locator("a");
+  const target = targetURL(item);
   const count = await links.count();
   for (let i = 0; i < count; i += 1) {
     const link = links.nth(i);
@@ -247,11 +252,15 @@ async function locateNavigationLink(page, item) {
     } catch {
       continue;
     }
-    if (pathname !== item.path) continue;
+    if (pathname !== target.pathname || new URL(href, browserURL).search !== target.search) continue;
     const box = await link.boundingBox().catch(() => null);
     if (box && box.width > 0 && box.height > 0) return link;
   }
   throw new Error(`visible navigation link not found for ${item.path}`);
+}
+
+function targetURL(item) {
+  return new URL(item.path, browserURL);
 }
 
 async function describeNavigationLink(link) {

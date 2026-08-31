@@ -14,12 +14,17 @@
 
 const encode = (id: string) => encodeURIComponent(id);
 
+/** Tabs exposed by the workspace-scoped life workbench. */
+export const LIFE_TABS = ["memory", "experiment", "observers", "chronicle"] as const;
+export type LifeTab = (typeof LIFE_TABS)[number];
+
 function workspaceScoped(slug: string) {
   const ws = `/${encode(slug)}`;
   return {
     root: () => `${ws}/issues`,
     companion: () => `${ws}/companion`,
     life: () => `${ws}/life`,
+    lifeTab: (tab: LifeTab) => `${ws}/life?tab=${encode(tab)}`,
     usage: () => `${ws}/usage`,
     runReviews: () => `${ws}/run-reviews`,
     issues: () => `${ws}/issues`,

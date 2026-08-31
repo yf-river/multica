@@ -13,7 +13,11 @@
     "memory": "记忆",
     "experiment": "实验",
     "observers": "观察席",
-    "chronicle": "编年史"
+    "chronicle": "编年史",
+    "memory_description": "收拢已经确认的事实、关系与仍在观察的信号。",
+    "experiment_description": "把想法变成可以开始、暂停、复盘和重来的小实验。",
+    "observers_description": "让不同位置的人替你看一眼，发现盲区，也保留分歧。",
+    "chronicle_description": "把走过的日子整理成以后还能回看的上下文。"
   },
   "memory": {
     "empty": "还没有形成任何记忆。",

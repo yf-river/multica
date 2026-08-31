@@ -1,8 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LifePage } from "./life-page";
 
-const actions = vi.hoisted(() => ({ confirm: vi.fn(), update: vi.fn(), downgrade: vi.fn(), archive: vi.fn(), remove: vi.fn(), retryJob: vi.fn() }));
+const { actions, navigation } = vi.hoisted(() => ({
+  actions: { confirm: vi.fn(), update: vi.fn(), downgrade: vi.fn(), archive: vi.fn(), remove: vi.fn(), retryJob: vi.fn() },
+  navigation: { current: { pathname: "/acme/life", searchParams: new URLSearchParams() } },
+}));
 
 vi.mock("../../i18n", async () => {
   const resource = (await import("../../locales/zh-Hans/life.json")).default;
@@ -16,7 +19,13 @@ vi.mock("../../i18n", async () => {
     }),
   };
 });
-vi.mock("@multica/core/paths", () => ({ useWorkspaceId: () => "ws-1" }));
+vi.mock("@multica/core/paths", () => ({
+  LIFE_TABS: ["memory", "experiment", "observers", "chronicle"],
+  useWorkspaceId: () => "ws-1",
+}));
+vi.mock("../../navigation", () => ({
+  useNavigation: () => navigation.current,
+}));
 vi.mock("@multica/core/api", () => ({ api: { retryLifeCognitionJob: actions.retryJob } }));
 vi.mock("@multica/core/chat", () => ({
   useChatStore: (selector: (value: unknown) => unknown) => selector({
@@ -86,6 +95,11 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 }));
 
 describe("LifePage memory governance", () => {
+  beforeEach(() => {
+    navigation.current.searchParams = new URLSearchParams();
+    vi.clearAllMocks();
+  });
+
   it("shows evidence, confidence and uncertainty before confirmation", () => {
     render(<LifePage />);
     expect(screen.getByText("最近出现离职冲动，但尚未形成离职决定")).toBeInTheDocument();
@@ -111,9 +125,15 @@ describe("LifePage memory governance", () => {
     expect(screen.queryByText("agreement · open")).not.toBeInTheDocument();
   });
 
-  it("offers an explicit retry for exhausted cognition", () => {
+  it("falls back to the memory page for an unknown tab", () => {
+    navigation.current.searchParams = new URLSearchParams("tab=unknown");
     render(<LifePage />);
-    fireEvent.click(screen.getByRole("tab", { name: "观察席" }));
+    expect(screen.getAllByRole("heading", { name: /^记忆$/ })).not.toHaveLength(0);
+  });
+
+  it("offers an explicit retry for exhausted cognition", () => {
+    navigation.current.searchParams = new URLSearchParams("tab=observers");
+    render(<LifePage />);
     expect(screen.getByText("连续处理失败，这部分内容还没有进入长期理解。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重新处理" }));
     expect(actions.retryJob).toHaveBeenCalledWith("job-1");

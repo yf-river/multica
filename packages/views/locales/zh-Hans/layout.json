@@ -2,6 +2,10 @@
   "nav": {
     "companion": "搭子",
     "life": "人生",
+    "life_memory": "记忆",
+    "life_experiment": "实验",
+    "life_observers": "观察席",
+    "life_chronicle": "编年史",
     "inbox": "收件箱",
     "my_issues": "我的任务",
     "issues": "任务",

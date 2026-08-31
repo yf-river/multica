@@ -34,7 +34,9 @@ import {
   X,
   Zap,
   Users,
-  Sprout,
+  UsersRound,
+  FlaskConical,
+  ScrollText,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -66,7 +68,13 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useAuthStore } from "@multica/core/auth";
-import { useCurrentWorkspace, useWorkspacePaths, paths } from "@multica/core/paths";
+import {
+  LIFE_TABS,
+  useCurrentWorkspace,
+  useWorkspacePaths,
+  paths,
+  type LifeTab,
+} from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useQuery } from "@tanstack/react-query";
@@ -102,11 +110,10 @@ const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 const SIDEBAR_NAV_BUTTON_CLASS =
   "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground";
 
-// Nav items reference WorkspacePaths method names so they can be resolved
-// against the current workspace slug at render time (see AppSidebar body).
-// Only parameterless paths are valid nav destinations.
+// Top-level navigation references parameterless WorkspacePaths methods and
+// binds them to the current workspace slug at render time. Life tabs use the
+// parameterized destinations defined by `lifeNav` below.
 type NavKey =
-  | "life"
   | "inbox"
   | "myIssues"
   | "issues"
@@ -122,7 +129,6 @@ type NavKey =
 
 // Static schema (key + icon) — labels resolved at render via useT("layout").
 type NavLabelKey =
-  | "life"
   | "inbox"
   | "my_issues"
   | "issues"
@@ -137,9 +143,19 @@ type NavLabelKey =
   | "settings";
 
 const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
-  { key: "life", labelKey: "life", icon: Sprout },
   { key: "inbox", labelKey: "inbox", icon: Inbox },
   { key: "myIssues", labelKey: "my_issues", icon: CircleUser },
+];
+
+const lifeNav: {
+  tab: LifeTab;
+  labelKey: `life_${LifeTab}`;
+  icon: typeof Inbox;
+}[] = [
+  { tab: "memory", labelKey: "life_memory", icon: BookOpenText },
+  { tab: "experiment", labelKey: "life_experiment", icon: FlaskConical },
+  { tab: "observers", labelKey: "life_observers", icon: UsersRound },
+  { tab: "chronicle", labelKey: "life_chronicle", icon: ScrollText },
 ];
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
@@ -163,18 +179,20 @@ function SidebarNavButton({
   isActive,
   label,
   children,
+  className,
 }: {
   icon: typeof Inbox;
   href: string;
   isActive: boolean;
   label: string;
   children?: React.ReactNode;
+  className?: string;
 }) {
   return (
     <SidebarMenuButton
       isActive={isActive}
       render={<AppLink href={href} />}
-      className={SIDEBAR_NAV_BUTTON_CLASS}
+      className={cn(SIDEBAR_NAV_BUTTON_CLASS, className)}
     >
       <Icon />
       <span>{label}</span>
@@ -375,12 +393,17 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname } = useNavigation();
+  const { pathname, searchParams } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
   const workspace = useCurrentWorkspace();
   const p = useWorkspacePaths();
+  const lifeTabFromUrl = searchParams.get("tab");
+  const activeLifeTab: LifeTab = LIFE_TABS.includes(lifeTabFromUrl as LifeTab)
+    ? (lifeTabFromUrl as LifeTab)
+    : "memory";
+  const isLifeRoute = pathname === p.life();
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
 
@@ -600,6 +623,25 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     </SidebarMenuItem>
                   );
                 })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel>{t(($) => $.nav.life)}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                {lifeNav.map((item) => (
+                  <SidebarMenuItem key={item.tab}>
+                    <SidebarNavButton
+                      icon={item.icon}
+                      href={p.lifeTab(item.tab)}
+                      isActive={isLifeRoute && activeLifeTab === item.tab}
+                      label={t(($) => $.nav[item.labelKey])}
+                      className="pl-4"
+                    />
+                  </SidebarMenuItem>
+                ))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

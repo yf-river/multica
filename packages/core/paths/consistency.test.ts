@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { paths, isGlobalPath } from "./paths";
+import { LIFE_TABS, paths, isGlobalPath } from "./paths";
 import { RESERVED_SLUGS } from "./reserved-slugs";
 
 // C4 — current workspace paths always include their workspace slug.
 describe("paths.workspace() shape", () => {
+  it("exposes typed life tab routes without changing the base life route", () => {
+    const ws = paths.workspace("acme");
+
+    expect(ws.life()).toBe("/acme/life");
+    for (const tab of LIFE_TABS) {
+      expect(ws.lifeTab(tab)).toBe(`/acme/life?tab=${tab}`);
+    }
+  });
+
   it("exposes the expected parameterless workspace route methods", () => {
     const ws = paths.workspace("__probe__");
     const parameterlessRoutes = Object.entries(ws)

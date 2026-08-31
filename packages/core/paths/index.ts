@@ -1,5 +1,5 @@
-export { paths, isGlobalPath } from "./paths";
-export type { WorkspacePaths } from "./paths";
+export { paths, isGlobalPath, LIFE_TABS } from "./paths";
+export type { LifeTab, WorkspacePaths } from "./paths";
 export { RESERVED_SLUGS, isReservedSlug } from "./reserved-slugs";
 export { resolvePostAuthDestination } from "./resolve";
 export {

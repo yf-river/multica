@@ -34,20 +34,44 @@ import {
   useStopLifeExperimentRound,
   useUpdateLifeMemory,
 } from "@multica/core/life";
-import { useWorkspaceId } from "@multica/core/paths";
+import { LIFE_TABS, useWorkspaceId, type LifeTab } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { LifeChronicleEntry, LifeExperiment, LifeExperimentRound, LifeIdentityVersion, LifeMemory } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
+import { useNavigation } from "../../navigation";
+
+function parseLifeTab(value: string | null): LifeTab {
+  return LIFE_TABS.includes(value as LifeTab) ? (value as LifeTab) : "memory";
+}
 
 export function LifePage() {
   const { t } = useT("life");
+  const navigation = useNavigation();
   const setOpen = useChatStore((state) => state.setOpen);
   const setExpanded = useChatStore((state) => state.setExpanded);
+  const activeTab = parseLifeTab(navigation.searchParams.get("tab"));
+  const tabCopy: Record<LifeTab, { label: string; description: string }> = {
+    memory: {
+      label: t(($) => $.page.memory),
+      description: t(($) => $.page.memory_description),
+    },
+    experiment: {
+      label: t(($) => $.page.experiment),
+      description: t(($) => $.page.experiment_description),
+    },
+    observers: {
+      label: t(($) => $.page.observers),
+      description: t(($) => $.page.observers_description),
+    },
+    chronicle: {
+      label: t(($) => $.page.chronicle),
+      description: t(($) => $.page.chronicle_description),
+    },
+  };
 
   useEffect(() => {
     setExpanded(false);
@@ -56,21 +80,28 @@ export function LifePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <PageHeader><h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1></PageHeader>
-      <Tabs defaultValue="memory" className="min-h-0 flex-1 gap-0">
-        <div className="px-6 pt-3">
-          <TabsList variant="line">
-            <TabsTrigger value="memory">{t(($) => $.page.memory)}</TabsTrigger>
-            <TabsTrigger value="experiment">{t(($) => $.page.experiment)}</TabsTrigger>
-            <TabsTrigger value="observers">{t(($) => $.page.observers)}</TabsTrigger>
-            <TabsTrigger value="chronicle">{t(($) => $.page.chronicle)}</TabsTrigger>
-          </TabsList>
+      <PageHeader>
+        <div className="flex min-w-0 items-center gap-2 text-sm">
+          <h1 className="shrink-0 font-medium">{t(($) => $.page.title)}</h1>
+          <span className="text-muted-foreground/50" aria-hidden="true">/</span>
+          <span className="truncate text-muted-foreground">{tabCopy[activeTab].label}</span>
         </div>
-        <TabsContent value="memory" className="min-h-0 overflow-y-auto p-6"><MemoryPanel /></TabsContent>
-        <TabsContent value="experiment" className="min-h-0 overflow-y-auto p-6"><ExperimentPanel /></TabsContent>
-        <TabsContent value="observers" className="min-h-0 overflow-y-auto p-6"><ObserversPanel /></TabsContent>
-        <TabsContent value="chronicle" className="min-h-0 overflow-y-auto p-6"><ChroniclePanel /></TabsContent>
-      </Tabs>
+      </PageHeader>
+      <main className="min-h-0 flex-1 overflow-y-auto bg-muted/20">
+        <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8 md:py-8">
+          <header className="mb-6 space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-brand">{t(($) => $.page.title)}</p>
+            <h2 className="text-base font-medium tracking-tight">{tabCopy[activeTab].label}</h2>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{tabCopy[activeTab].description}</p>
+          </header>
+          <div className="min-w-0">
+            {activeTab === "memory" && <MemoryPanel />}
+            {activeTab === "experiment" && <ExperimentPanel />}
+            {activeTab === "observers" && <ObserversPanel />}
+            {activeTab === "chronicle" && <ChroniclePanel />}
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
@@ -98,18 +129,18 @@ function MemoryPanel() {
   if ([query, identities, relationships, topics, commitments, materials, thoughts].some((item) => item.isLoading)) return <QueryLoading />;
   const memories = query.data?.memories ?? [];
   const activeIdentity = identities.data?.versions.find((version) => version.status === "active");
-  return <div className="mx-auto max-w-3xl space-y-8">
-    <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.identity_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.identity_description)}</p></div>
+  return <div className="w-full max-w-5xl space-y-6 lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0">
+    <section className="space-y-3 rounded-lg border border-border/80 bg-background p-4 md:p-5 lg:col-span-2"><div><h2 className="text-sm font-medium">{t(($) => $.complete.identity_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.identity_description)}</p></div>
       {activeIdentity ? <IdentitySummary identity={activeIdentity} /> : <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_identity)}</p>}
       {(identities.data?.versions ?? []).filter((version) => version.status === "draft").map((version) => <IdentityDraftRow key={version.id} identity={version} />)}
       <IdentityEditor identity={activeIdentity} />
       {(relationships.data?.events ?? []).filter((event) => event.status !== "resolved").map((event) => <article key={event.id} className="rounded-lg border p-4"><div className="text-xs font-medium">{relationshipEventLabel(event.event_type, t)} · {relationshipStatusLabel(event.status, t)}</div><p className="mt-2 text-sm">{event.context}</p><div className="mt-3 grid gap-1 text-xs text-muted-foreground"><span>{t(($) => $.complete.your_position, { value: event.user_position || t(($) => $.complete.missing) })}</span><span>{t(($) => $.complete.companion_position, { value: event.companion_position || t(($) => $.complete.missing) })}</span></div><Button className="mt-3" size="sm" variant="outline" onClick={() => resolveEvent.mutate(event.id)}>{t(($) => $.complete.finish_review)}</Button></article>)}
     </section>
-    <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.material_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.material_description)}</p></div><Textarea value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t(($) => $.complete.material_placeholder)}/><Button size="sm" disabled={!material.trim() || addMaterial.isPending} onClick={() => addMaterial.mutate()}><Plus />{t(($) => $.complete.record)}</Button><p className="text-xs text-muted-foreground">{t(($) => $.complete.material_count, { count: materials.data?.materials.length ?? 0 })}</p></section>
-    <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.thought_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.thought_description)}</p></div>{(thoughts.data?.thoughts ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_thoughts)}</p> : thoughts.data?.thoughts.map((thought) => <article key={thought.id} className="rounded-lg border p-4"><div className="flex items-center justify-between gap-3"><span className="text-sm font-medium">{thought.title}</span><span className="text-xs text-muted-foreground">{thought.thought_type}</span></div><p className="mt-2 text-sm text-muted-foreground">{thought.content}</p><p className="mt-2 text-xs text-muted-foreground">{t(($) => $.complete.last_developed, { time: new Date(thought.last_developed_at).toLocaleString() })}</p></article>)}</section>
-    <section className="space-y-3"><h2 className="text-sm font-medium">{t(($) => $.complete.topic_title)}</h2>{(topics.data?.topics ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_topics)}</p> : topics.data?.topics.map((topic) => <article key={topic.id} className="rounded-lg border p-4"><div className="flex justify-between text-xs"><span className="font-medium">{topic.title}</span><span className="text-muted-foreground">{Math.round(topic.confidence * 100)}%</span></div><p className="mt-2 text-sm text-muted-foreground">{topic.summary}</p>{topic.status === "candidate" && <Button className="mt-3" size="sm" onClick={() => updateTopic.mutate({ id: topic.id, status: "active" })}>{t(($) => $.complete.confirm)}</Button>}{topic.status === "active" && <Button className="mt-3" size="sm" variant="outline" onClick={() => updateTopic.mutate({ id: topic.id, status: "resolved" })}>{t(($) => $.complete.complete)}</Button>}</article>)}</section>
-    <section className="space-y-3"><h2 className="text-sm font-medium">{t(($) => $.complete.commitment_title)}</h2>{(commitments.data?.commitments ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_commitments)}</p> : commitments.data?.commitments.map((item) => <article key={item.id} className="flex items-start gap-3 rounded-lg border p-4"><div className="min-w-0 flex-1"><div className="text-sm">{item.content}</div><div className="mt-1 text-xs text-muted-foreground">{item.status}{item.due_at ? ` · ${new Date(item.due_at).toLocaleString()}` : ""}</div></div>{item.status === "candidate" && <Button size="sm" onClick={() => updateCommitment.mutate({ id: item.id, status: "confirmed" })}>{t(($) => $.complete.confirm)}</Button>}{item.status === "confirmed" && <Button size="sm" variant="outline" onClick={() => updateCommitment.mutate({ id: item.id, status: "completed" })}>{t(($) => $.complete.complete)}</Button>}</article>)}</section>
-    <section className="space-y-3"><h2 className="text-sm font-medium">{t(($) => $.complete.memory_title)}</h2>{memories.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.memory.empty)}</p> : memories.map((memory) => <MemoryRow key={memory.id} memory={memory} />)}</section>
+    <section className="space-y-3 rounded-lg border border-border/80 bg-background p-4 md:p-5"><div><h2 className="text-sm font-medium">{t(($) => $.complete.material_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.material_description)}</p></div><Textarea value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t(($) => $.complete.material_placeholder)}/><Button size="sm" disabled={!material.trim() || addMaterial.isPending} onClick={() => addMaterial.mutate()}><Plus />{t(($) => $.complete.record)}</Button><p className="text-xs text-muted-foreground">{t(($) => $.complete.material_count, { count: materials.data?.materials.length ?? 0 })}</p></section>
+    <section className="space-y-3 rounded-lg border border-border/80 bg-background p-4 md:p-5"><div><h2 className="text-sm font-medium">{t(($) => $.complete.thought_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.thought_description)}</p></div>{(thoughts.data?.thoughts ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_thoughts)}</p> : thoughts.data?.thoughts.map((thought) => <article key={thought.id} className="rounded-lg border p-4"><div className="flex items-center justify-between gap-3"><span className="text-sm font-medium">{thought.title}</span><span className="text-xs text-muted-foreground">{thought.thought_type}</span></div><p className="mt-2 text-sm text-muted-foreground">{thought.content}</p><p className="mt-2 text-xs text-muted-foreground">{t(($) => $.complete.last_developed, { time: new Date(thought.last_developed_at).toLocaleString() })}</p></article>)}</section>
+    <section className="space-y-3 rounded-lg border border-border/80 bg-background p-4 md:p-5"><h2 className="text-sm font-medium">{t(($) => $.complete.topic_title)}</h2>{(topics.data?.topics ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_topics)}</p> : topics.data?.topics.map((topic) => <article key={topic.id} className="rounded-lg border p-4"><div className="flex justify-between text-xs"><span className="font-medium">{topic.title}</span><span className="text-muted-foreground">{Math.round(topic.confidence * 100)}%</span></div><p className="mt-2 text-sm text-muted-foreground">{topic.summary}</p>{topic.status === "candidate" && <Button className="mt-3" size="sm" onClick={() => updateTopic.mutate({ id: topic.id, status: "active" })}>{t(($) => $.complete.confirm)}</Button>}{topic.status === "active" && <Button className="mt-3" size="sm" variant="outline" onClick={() => updateTopic.mutate({ id: topic.id, status: "resolved" })}>{t(($) => $.complete.complete)}</Button>}</article>)}</section>
+    <section className="space-y-3 rounded-lg border border-border/80 bg-background p-4 md:p-5"><h2 className="text-sm font-medium">{t(($) => $.complete.commitment_title)}</h2>{(commitments.data?.commitments ?? []).length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.complete.no_commitments)}</p> : commitments.data?.commitments.map((item) => <article key={item.id} className="flex items-start gap-3 rounded-lg border p-4"><div className="min-w-0 flex-1"><div className="text-sm">{item.content}</div><div className="mt-1 text-xs text-muted-foreground">{item.status}{item.due_at ? ` · ${new Date(item.due_at).toLocaleString()}` : ""}</div></div>{item.status === "candidate" && <Button size="sm" onClick={() => updateCommitment.mutate({ id: item.id, status: "confirmed" })}>{t(($) => $.complete.confirm)}</Button>}{item.status === "confirmed" && <Button size="sm" variant="outline" onClick={() => updateCommitment.mutate({ id: item.id, status: "completed" })}>{t(($) => $.complete.complete)}</Button>}</article>)}</section>
+    <section className="space-y-3 rounded-lg border border-border/80 bg-background p-4 md:p-5 lg:col-span-2"><h2 className="text-sm font-medium">{t(($) => $.complete.memory_title)}</h2>{memories.length === 0 ? <p className="text-sm text-muted-foreground">{t(($) => $.memory.empty)}</p> : memories.map((memory) => <MemoryRow key={memory.id} memory={memory} />)}</section>
   </div>;
 }
 
@@ -265,7 +296,7 @@ function ExperimentPanel() {
   const modules = modulesQuery.data?.modules ?? [];
   if (pending.length === 0 && experiments.length === 0 && modules.length === 0) return <p className="text-sm text-muted-foreground">{t(($) => $.experiment.none)}</p>;
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="w-full max-w-5xl space-y-6">
       {pending.length > 0 && <section className="space-y-3">
         <h2 className="text-sm font-medium">{t(($) => $.experiment.pending)}</h2>
         {pending.map((proposal) => <article key={proposal.id} className="space-y-2 rounded-lg border p-4"><div className="text-xs text-muted-foreground">{proposal.proposal_type}</div><div className="text-sm font-medium">{proposal.title}</div><p className="text-sm text-muted-foreground">{proposal.summary}</p>{proposal.payload.hypothesis && <p className="text-xs text-muted-foreground">{proposal.payload.hypothesis}</p>}<div className="flex gap-2"><Button size="sm" disabled={confirm.isPending} onClick={() => confirm.mutate(proposal.id)}><Check />{t(($) => $.complete.confirm_execute)}</Button><Button size="sm" variant="outline" disabled={reject.isPending} onClick={() => reject.mutate(proposal.id)}><X />{t(($) => $.complete.reject)}</Button></div></article>)}
@@ -348,7 +379,7 @@ function ObserversPanel() {
   const checks = checksQuery.data?.checks ?? [];
   const observers = observersQuery.data?.observers ?? [];
   const jobs = jobsQuery.data?.jobs ?? [];
-  return <div className="mx-auto max-w-3xl space-y-8">
+  return <div className="w-full max-w-5xl space-y-6">
     <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.proactive_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.proactive_description)}</p></div><div className="grid gap-3 rounded-lg border p-4"><div className="flex flex-wrap items-end gap-3"><label className="space-y-1 text-xs"><span>{t(($) => $.complete.minimum_interval)}</span><Input className="w-28" type="number" min={1} value={intervalHours} onChange={(event) => setIntervalHours(Number(event.target.value))}/></label><Button size="sm" variant={policyQuery.data?.enabled ? "outline" : "default"} onClick={() => updatePolicy.mutate(!policyQuery.data?.enabled)}>{policyQuery.data?.enabled ? t(($) => $.complete.pause_proactive) : t(($) => $.complete.enable_proactive)}</Button><span className="text-xs text-muted-foreground">{t(($) => $.complete.next_check, { value: policyQuery.data?.next_check_at ? new Date(policyQuery.data.next_check_at).toLocaleString() : "—" })}</span></div><Textarea placeholder={t(($) => $.complete.quiet_hours)} value={quietHours} onChange={(event) => setQuietHours(event.target.value)}/><Button className="w-fit" size="sm" variant="outline" onClick={() => updatePolicy.mutate(policyQuery.data?.enabled ?? true)}>{t(($) => $.complete.save_policy)}</Button></div></section>
     <section className="space-y-3"><div><h2 className="text-sm font-medium">{t(($) => $.complete.perspectives_title)}</h2><p className="mt-1 text-xs text-muted-foreground">{t(($) => $.complete.perspectives_description)}</p></div>
       {observers.map((observer) => <article key={observer.id} className="space-y-3 rounded-lg border p-4"><div className="flex items-center gap-3"><div className="min-w-0 flex-1"><div className="text-sm font-medium">{observer.name}</div><div className="text-xs text-muted-foreground">{t(($) => $.complete.observer_meta, { basis: observer.basis_type, status: observer.status, count: observer.knowledge.length })}</div></div><Button size="sm" variant="outline" onClick={() => runObserver.mutate(observer.id)}><Eye />{t(($) => $.complete.run_now)}</Button><Button size="sm" variant="ghost" onClick={() => updateObserver.mutate({ id: observer.id, status: observer.status === "active" ? "paused" : "active" })}>{observer.status === "active" ? t(($) => $.complete.pause) : t(($) => $.complete.enable)}</Button></div><details><summary className="cursor-pointer text-xs text-muted-foreground">{t(($) => $.complete.identity_and_perspective)}</summary><pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify({ personality: observer.personality, perspective: observer.perspective }, null, 2)}</pre></details><div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => setKnowledgeDraft({ observer_id: observer.id, title: "", content: "" })}><Plus />{t(($) => $.complete.add_knowledge)}</Button><Button size="sm" variant="ghost" onClick={() => setObserverVersionDraft({ observer_id: observer.id, personality: JSON.stringify(observer.personality, null, 2), perspective: JSON.stringify(observer.perspective, null, 2), expression_profile: JSON.stringify(observer.expression_profile, null, 2), change_reason: "" })}>{t(($) => $.complete.edit_identity)}</Button></div></article>)}
@@ -369,7 +400,7 @@ function ChroniclePanel() {
   if (query.isLoading) return <QueryLoading />;
   const entries = query.data?.entries ?? [];
   if (entries.length === 0) return <p className="text-sm text-muted-foreground">{t(($) => $.chronicle.empty)}</p>;
-  return <div className="mx-auto max-w-3xl space-y-4">{entries.map((entry) => <ChronicleRow key={entry.id} entry={entry} />)}</div>;
+  return <div className="w-full max-w-4xl space-y-4">{entries.map((entry) => <ChronicleRow key={entry.id} entry={entry} />)}</div>;
 }
 
 function ChronicleRow({ entry }: { entry: LifeChronicleEntry }) {

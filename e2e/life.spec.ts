@@ -1,18 +1,23 @@
 import { expect, test } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
 
+const lifeTabs = [
+  { label: "记忆", value: "memory" },
+  { label: "实验", value: "experiment" },
+  { label: "观察席", value: "observers" },
+  { label: "编年史", value: "chronicle" },
+] as const;
+
 test.describe("Life", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsDefault(page);
   });
 
   test("life navigation and material flow survive refresh", async ({ page }) => {
-    await page.getByRole("link", { name: "人生", exact: true }).click();
-    await expect(page).toHaveURL(/\/life$/);
-    await expect(page.getByRole("tab", { name: "记忆" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "实验" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "观察席" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "编年史" })).toBeVisible();
+    await page.getByRole("link", { name: "记忆", exact: true }).click();
+    await expect(page).toHaveURL(/\/life\?tab=memory$/);
+    await expect(page.getByRole("heading", { name: "人生", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab")).toHaveCount(0);
 
     const content = `E2E 人生材料 ${Date.now()}：今天看到一棵很好看的树。`;
     const responsePromise = page.waitForResponse(
@@ -29,24 +34,31 @@ test.describe("Life", () => {
     const readback = (await readbackPromise).json() as Promise<{ materials: Array<{ content: string }> }>;
     expect((await readback).materials.some((item) => item.content === content)).toBe(true);
 
-    for (const tab of ["实验", "观察席", "编年史", "记忆"]) {
-      await page.getByRole("tab", { name: tab }).click();
-      await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
+    for (const tab of lifeTabs.slice(1)) {
+      await page.getByRole("link", { name: tab.label, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`\\/life\\?tab=${tab.value}$`));
+      await expect(page.getByRole("heading", { name: tab.label, exact: true }).first()).toBeVisible();
     }
 
+    await page.getByRole("link", { name: "记忆", exact: true }).click();
+    await expect(page).toHaveURL(/\/life\?tab=memory$/);
     await page.reload();
     await waitForPageText(page, "随手留下材料");
-    await expect(page.getByRole("tab", { name: "记忆" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "人生", exact: true })).toBeVisible();
+    await expect(page.getByRole("tab")).toHaveCount(0);
   });
 
-  test("companion and life remain usable in a narrow window", async ({ page }) => {
-    await page.setViewportSize({ width: 768, height: 900 });
-    await page.getByRole("link", { name: "搭子", exact: true }).click();
-    await expect(page).toHaveURL(/\/companion$/);
-    await waitForPageText(page, "搭子");
+  test("life links and companion launcher remain usable in narrow windows", async ({ page }) => {
+    await page.setViewportSize({ width: 767, height: 900 });
+    const sidebarTrigger = page.locator('[data-sidebar="trigger"]');
+    await expect(sidebarTrigger).toBeVisible();
+    await sidebarTrigger.click();
+    await expect(page.getByRole("link", { name: "记忆", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "搭子", exact: true })).toHaveCount(0);
+    await page.getByRole("link", { name: "观察席", exact: true }).click();
+    await expect(page).toHaveURL(/\/life\?tab=observers$/);
+    await waitForPageText(page, "第三方视角");
 
-    await page.goto((await page.url()).replace(/\/companion$/, "/life"));
-    await waitForPageText(page, "人格与关系");
-    await expect(page.getByRole("tab", { name: "编年史" })).toBeVisible();
+    await expect(page.getByTestId("chat-fab")).toBeVisible();
   });
 });

@@ -50,6 +50,42 @@ const routes = [
     uiContract: { forbiddenText: forbiddenAcceptanceTexts },
   },
   {
+    id: "life-memory",
+    label: "人生 · 记忆",
+    path: `/${workspaceSlug}/life?tab=memory`,
+    expect: ["人生", "记忆"],
+    finalPathIncludes: `/life?tab=memory`,
+    readyHeading: "记忆",
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "life-experiment",
+    label: "人生 · 实验",
+    path: `/${workspaceSlug}/life?tab=experiment`,
+    expect: ["人生", "实验"],
+    finalPathIncludes: `/life?tab=experiment`,
+    readyHeading: "实验",
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "life-observers",
+    label: "人生 · 观察席",
+    path: `/${workspaceSlug}/life?tab=observers`,
+    expect: ["人生", "观察席"],
+    finalPathIncludes: `/life?tab=observers`,
+    readyHeading: "观察席",
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "life-chronicle",
+    label: "人生 · 编年史",
+    path: `/${workspaceSlug}/life?tab=chronicle`,
+    expect: ["人生", "编年史"],
+    finalPathIncludes: `/life?tab=chronicle`,
+    readyHeading: "编年史",
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
     id: "issues",
     label: "任务",
     path: `/${workspaceSlug}/issues`,
@@ -219,6 +255,9 @@ async function auditRoute(page, route) {
       await page.waitForURL((url) => url.href.includes(route.finalPathIncludes), { timeout: 8_000 }).catch(() => {});
     }
     await waitForRouteText(page, route.expect);
+    if (route.readyHeading) {
+      await page.getByRole("heading", { name: route.readyHeading, exact: true }).first().waitFor({ state: "visible", timeout: 8_000 });
+    }
     if (route.readySelector) {
       await page.locator(route.readySelector).first().waitFor({ state: "visible", timeout: 8_000 });
     }

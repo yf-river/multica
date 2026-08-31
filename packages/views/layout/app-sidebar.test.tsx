@@ -37,7 +37,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarFooter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroupContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenuButton: ({
@@ -92,6 +92,10 @@ vi.mock("../i18n", () => ({
         nav: {
           companion: "搭子",
           life: "人生",
+          life_memory: "记忆",
+          life_experiment: "实验",
+          life_observers: "观察席",
+          life_chronicle: "编年史",
           inbox: "收件箱",
           my_issues: "我的 issue",
           issues: "任务",
@@ -125,11 +129,13 @@ vi.mock("@multica/core/auth", () => ({
     selector({ user: { id: "user-1", account: "test", name: "Test User" } }),
 }));
 vi.mock("@multica/core/paths", () => ({
+  LIFE_TABS: ["memory", "experiment", "observers", "chronicle"],
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
   useCurrentWorkspace: () => ({ id: "ws-1", name: "Acme", slug: "acme" }),
   useWorkspacePaths: () => ({
     companion: () => "/acme/companion",
     life: () => "/acme/life",
+    lifeTab: (tab: string) => `/acme/life?tab=${tab}`,
     inbox: () => "/acme/inbox",
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
@@ -251,6 +257,55 @@ describe("AppSidebar personal nav", () => {
     render(<AppSidebar />);
 
     expect(screen.queryByText("搭子")).not.toBeInTheDocument();
-    expect(screen.getByText("人生")).toBeInTheDocument();
+    expect(screen.getByText("记忆")).toBeInTheDocument();
+  });
+});
+
+describe("AppSidebar life nav", () => {
+  beforeEach(() => {
+    navigation.current.pathname = "/acme/life";
+    navigation.current.searchParams = new URLSearchParams();
+    detail.current = { isPending: false, isError: false, data: null, error: null };
+  });
+
+  it("renders the four life tabs as query links", () => {
+    const { container } = render(<AppSidebar />);
+
+    expect(container.textContent).toContain("人生");
+    const tabs = ["memory", "experiment", "observers", "chronicle"] as const;
+    for (const tab of tabs) {
+      expect(container.querySelector(`button[data-href="/acme/life?tab=${tab}"]`)).toBeInTheDocument();
+    }
+    expect(container.querySelector('button[data-href="/acme/life"]')).not.toBeInTheDocument();
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('button[data-href^="/acme/life?tab="]')].map(
+        (button) => button.dataset.href,
+      ),
+    ).toEqual(tabs.map((tab) => `/acme/life?tab=${tab}`));
+  });
+
+  it("activates the tab from the URL and defaults to memory", () => {
+    const { container, rerender } = render(<AppSidebar />);
+
+    expect(container.querySelector('button[data-href="/acme/life?tab=memory"]')).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(container.querySelector('button[data-href="/acme/life?tab=experiment"]')).not.toHaveAttribute("data-active");
+
+    navigation.current.searchParams = new URLSearchParams("tab=observers");
+    rerender(<AppSidebar />);
+    expect(container.querySelector('button[data-href="/acme/life?tab=observers"]')).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(container.querySelector('button[data-href="/acme/life?tab=memory"]')).not.toHaveAttribute("data-active");
+
+    navigation.current.searchParams = new URLSearchParams("tab=unknown");
+    rerender(<AppSidebar />);
+    expect(container.querySelector('button[data-href="/acme/life?tab=memory"]')).toHaveAttribute(
+      "data-active",
+      "true",
+    );
   });
 });
