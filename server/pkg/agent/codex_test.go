@@ -676,7 +676,7 @@ func TestCodexBrokerTurnEventLeaseDrainsBeforeReset(t *testing.T) {
 	c, _, _ := newTestCodexClient(t)
 	c.beginBrokerTurn(nil, nil, nil)
 	c.setThreadID("thr-lease")
-	if !c.enterTurnEvent("item/started", "thr-lease", "", "") {
+	if !c.enterTurnEvent("item/started", "thr-lease", "", "", false) {
 		t.Fatal("expected active turn event to acquire its lease")
 	}
 
@@ -728,6 +728,92 @@ func TestCodexBrokerLateEventsDoNotCrossTurns(t *testing.T) {
 		t.Fatalf("same-thread late event was not fenced: %+v", messages)
 	}
 	c.endBrokerTurn()
+}
+
+func TestCodexBrokerStaleTerminalErrorsDoNotCrossTurns(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	doneCount := 0
+	c.beginBrokerTurn(nil, nil, func(bool) { doneCount++ })
+	c.setThreadID("thr-one")
+	c.markTurnStarted("turn-one")
+	c.endBrokerTurn()
+
+	// A terminal error with no turn identity cannot be attributed to the new
+	// same-thread turn, so it must be ignored while the broker is active.
+	c.beginBrokerTurn(nil, nil, func(bool) { doneCount++ })
+	c.setThreadID("thr-one")
+	c.handleLine(`{"jsonrpc":"2.0","method":"error","params":{"threadId":"thr-one","error":{"message":"stale"},"willRetry":false}}`)
+	if doneCount != 0 {
+		t.Fatalf("unscoped stale terminal error completed the new turn, done=%d", doneCount)
+	}
+	if got := c.getTurnError(); got != "" {
+		t.Fatalf("unscoped stale terminal error was captured: %q", got)
+	}
+
+	// The v2 direct turnId field fences an old error even after the new turn
+	// has started on the same thread.
+	c.markTurnStarted("turn-two")
+	c.handleLine(`{"jsonrpc":"2.0","method":"error","params":{"threadId":"thr-one","turnId":"turn-one","error":{"message":"old"},"willRetry":false}}`)
+	if doneCount != 0 {
+		t.Fatalf("stale top-level turnId error completed the new turn, done=%d", doneCount)
+	}
+	if got := c.getTurnError(); got != "" {
+		t.Fatalf("stale top-level turnId error was captured: %q", got)
+	}
+
+	// A current, properly scoped terminal error still completes the turn.
+	c.handleLine(`{"jsonrpc":"2.0","method":"error","params":{"threadId":"thr-one","turnId":"turn-two","error":{"message":"current"},"willRetry":false}}`)
+	if doneCount != 1 {
+		t.Fatalf("current terminal error did not complete the turn, done=%d", doneCount)
+	}
+	if got := c.getTurnError(); got != "current" {
+		t.Fatalf("current terminal error = %q, want current", got)
+	}
+	c.endBrokerTurn()
+}
+
+func TestCodexBrokerThreadStatusIdleDoesNotCrossTurns(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	doneCount := 0
+	c.beginBrokerTurn(nil, nil, func(bool) { doneCount++ })
+	c.setThreadID("thr-one")
+	c.markTurnStarted("turn-one")
+	c.endBrokerTurn()
+
+	c.beginBrokerTurn(nil, nil, func(bool) { doneCount++ })
+	c.setThreadID("thr-one")
+	c.markTurnStarted("turn-two")
+	c.handleLine(`{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thr-one","status":{"type":"idle"}}}`)
+	if doneCount != 0 {
+		t.Fatalf("thread-level idle status completed the new turn, done=%d", doneCount)
+	}
+
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-one","turn":{"id":"turn-two","status":"completed"}}}`)
+	if doneCount != 1 {
+		t.Fatalf("current turn/completed did not complete the turn, done=%d", doneCount)
+	}
+	c.endBrokerTurn()
+}
+
+func TestCodexThreadResponsePublishesIdentityBeforeNotification(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	response := make(chan rpcResult, 1)
+	c.mu.Lock()
+	c.pending[1] = &pendingRPC{ch: response, method: "thread/start"}
+	c.mu.Unlock()
+	c.handleLine(`{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thr-response"}}}`)
+	if got := c.currentThreadID(); got != "thr-response" {
+		t.Fatalf("thread identity = %q, want thr-response", got)
+	}
+	if result := <-response; result.err != nil {
+		t.Fatalf("thread response error = %v", result.err)
+	}
 }
 
 func TestCodexRawThreadStatusIdle(t *testing.T) {
@@ -889,6 +975,30 @@ func TestExtractNestedString(t *testing.T) {
 		if got := extractNestedString(map[string]any{"a": tc.value}, "a", "b"); got != tc.want {
 			t.Errorf("got %q, want %q", got, tc.want)
 		}
+	}
+}
+
+func TestExtractCodexTurnID(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+		want   string
+	}{
+		{name: "direct", params: map[string]any{"turnId": "turn-direct"}, want: "turn-direct"},
+		{name: "nested", params: map[string]any{"turn": map[string]any{"id": "turn-nested"}}, want: "turn-nested"},
+		{name: "direct takes precedence", params: map[string]any{
+			"turnId": "turn-direct",
+			"turn":   map[string]any{"id": "turn-nested"},
+		}, want: "turn-direct"},
+		{name: "empty", params: map[string]any{}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractCodexTurnID(tc.params); got != tc.want {
+				t.Fatalf("extractCodexTurnID() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

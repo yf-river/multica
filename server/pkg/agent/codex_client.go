@@ -371,6 +371,12 @@ func (c *codexClient) setThreadID(threadID string) {
 	c.turnMu.Unlock()
 }
 
+func (c *codexClient) currentThreadID() string {
+	c.turnMu.Lock()
+	defer c.turnMu.Unlock()
+	return c.threadID
+}
+
 func (c *codexClient) currentTurnID() string {
 	c.turnMu.Lock()
 	defer c.turnMu.Unlock()
@@ -431,9 +437,21 @@ func (c *codexClient) rememberRetiredEventLocked(kind, id string) {
 		return
 	}
 	if len(c.retiredEventOrder) >= maxRetiredCodexEvents {
-		oldest := c.retiredEventOrder[0]
-		c.retiredEventOrder = c.retiredEventOrder[1:]
-		delete(c.retiredEventIDs, oldest)
+		// Keep thread and turn identities for the lifetime of the broker. Only
+		// item IDs are high-cardinality and may be evicted from the bounded
+		// history.
+		oldestIndex := -1
+		for index, existing := range c.retiredEventOrder {
+			if strings.HasPrefix(existing, "item\x00") {
+				oldestIndex = index
+				break
+			}
+		}
+		if oldestIndex >= 0 {
+			oldest := c.retiredEventOrder[oldestIndex]
+			c.retiredEventOrder = append(c.retiredEventOrder[:oldestIndex], c.retiredEventOrder[oldestIndex+1:]...)
+			delete(c.retiredEventIDs, oldest)
+		}
 	}
 	c.retiredEventIDs[key] = struct{}{}
 	c.retiredEventOrder = append(c.retiredEventOrder, key)
@@ -467,21 +485,23 @@ func (c *codexClient) retireCurrentTurnLocked() {
 	}
 }
 
-func (c *codexClient) enterTurnEvent(method, threadID, turnID, itemID string) bool {
+func (c *codexClient) enterTurnEvent(method, threadID, turnID, itemID string, terminalError bool) bool {
 	c.turnMu.Lock()
 	c.initTurnSyncLocked()
-	if c.brokerTurnActive && c.threadID == "" && method == "turn/started" && threadID != "" && !c.isRetiredEventLocked("thread", threadID) {
-		// The turn/start response and its first notification are delivered by
-		// different goroutines. Adopt the first main-thread notification while
-		// holding the same lock used by the lifecycle fence.
-		c.threadID = threadID
-	}
 	if c.turnEnding ||
-		(c.brokerTurnActive && threadID == "" && c.threadID == "") ||
+		(c.brokerTurnActive && c.threadID == "") ||
+		// ErrorNotification.turnId is required by the v2 protocol. A terminal
+		// error without that identity cannot be attributed after a same-thread
+		// resume, so never let it terminate an active broker turn.
+		(c.brokerTurnActive && terminalError && turnID == "") ||
 		(threadID != "" && c.threadID != "" && threadID != c.threadID) ||
 		(c.threadID == "" && c.isRetiredEventLocked("thread", threadID)) ||
 		(c.turnTerminal && method != "turn/completed") ||
 		(c.turnTerminal && method == "turn/completed" && turnID != c.turnID) ||
+		// Thread status is not turn-scoped. In broker mode an idle update that
+		// arrives after a same-thread turn has started may belong to the prior
+		// turn, so turn/completed remains the only completion signal.
+		(c.brokerTurnActive && method == "thread/status/changed") ||
 		(method == "thread/status/changed" && !c.turnStarted) ||
 		c.isRetiredEventLocked("turn", turnID) ||
 		c.isRetiredEventLocked("item", itemID) {
@@ -762,6 +782,9 @@ func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
 	}
 
 	if errData, hasErr := raw["error"]; hasErr {
+		if pr.method == "thread/start" || pr.method == "thread/resume" {
+			c.setThreadID("")
+		}
 		var rpcErr struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
@@ -769,7 +792,14 @@ func (c *codexClient) handleResponse(raw map[string]json.RawMessage) {
 		_ = json.Unmarshal(errData, &rpcErr)
 		pr.ch <- rpcResult{err: fmt.Errorf("%s: %s (code=%d)", pr.method, rpcErr.Message, rpcErr.Code)}
 	} else {
-		pr.ch <- rpcResult{result: raw["result"]}
+		result := raw["result"]
+		if pr.method == "thread/start" || pr.method == "thread/resume" {
+			// Publish the thread identity before waking the turn goroutine. The
+			// reader may have another notification ready immediately after this
+			// response, so doing this in the caller would leave a scheduling gap.
+			c.setThreadID(extractThreadID(result))
+		}
+		pr.ch <- rpcResult{result: result}
 	}
 }
 
@@ -818,12 +848,17 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	// turn's terminal line after the waiting goroutine has already returned.
 	// The lease and retired IDs keep those lines out of the next turn.
 	threadID, _ := params["threadId"].(string)
-	turnID := extractNestedString(params, "turn", "id")
+	turnID := extractCodexTurnID(params)
 	itemID := ""
 	if item, ok := params["item"].(map[string]any); ok {
 		itemID, _ = item["id"].(string)
 	}
-	if !c.enterTurnEvent(method, threadID, turnID, itemID) {
+	terminalError := false
+	if method == "error" {
+		willRetry, _ := params["willRetry"].(bool)
+		terminalError = !willRetry
+	}
+	if !c.enterTurnEvent(method, threadID, turnID, itemID, terminalError) {
 		return
 	}
 	defer c.finishTurnEvent()
@@ -834,7 +869,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		c.emitMessage(Message{Type: MessageStatus, Status: "running", SessionID: threadID})
 
 	case "turn/completed":
-		turnID := extractNestedString(params, "turn", "id")
+		turnID := extractCodexTurnID(params)
 		status := extractNestedString(params, "turn", "status")
 		threadID, _ := params["threadId"].(string)
 		c.cfg.Logger.Info("codex turn/completed received", "thread_id", threadID, "turn_id", turnID, "status", status)
@@ -906,7 +941,7 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	if item, ok := params["item"].(map[string]any); ok {
 		itemID, _ = item["id"].(string)
 	}
-	if !c.enterTurnEvent(method, threadID, extractNestedString(params, "turn", "id"), itemID) {
+	if !c.enterTurnEvent(method, threadID, extractCodexTurnID(params), itemID, false) {
 		return
 	}
 	defer c.finishTurnEvent()
@@ -1355,6 +1390,15 @@ func extractNestedString(m map[string]any, keys ...string) string {
 	}
 	s, _ := current.(string)
 	return s
+}
+
+// extractCodexTurnID accepts both the v2 direct turnId field and the nested
+// turn.id shape used by turn/started and turn/completed notifications.
+func extractCodexTurnID(params map[string]any) string {
+	if id, ok := params["turnId"].(string); ok && id != "" {
+		return id
+	}
+	return extractNestedString(params, "turn", "id")
 }
 
 func nilIfEmpty(s string) any {

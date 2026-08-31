@@ -496,13 +496,13 @@ func (c *codexClient) endBrokerTurn() {
 	c.turnEnding = true
 	c.brokerTurnActive = false
 	c.turnTerminal = true
-	c.retireCurrentTurnLocked()
 	c.onMessage = nil
 	c.onSemanticActivity = nil
 	c.onTurnDone = nil
 	for c.activeEvents > 0 || c.activeCallbacks > 0 {
 		c.turnIdle.Wait()
 	}
+	c.retireCurrentTurnLocked()
 	c.turnMu.Unlock()
 }
 
