@@ -36,6 +36,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 		resumeResult, err := c.request(ctx, "thread/resume", resumeParams)
 		if err == nil {
 			if threadID := extractThreadID(resumeResult); threadID != "" {
+				c.setThreadID(threadID)
 				return threadID, true, nil
 			}
 			logger.Warn("codex thread/resume returned no thread ID; falling back to thread/start", "prior_thread_id", priorThreadID)
@@ -76,6 +77,7 @@ func (c *codexClient) startOrResumeThread(ctx context.Context, opts ExecOptions,
 	if threadID == "" {
 		return "", false, fmt.Errorf("codex thread/start returned no thread ID")
 	}
+	c.setThreadID(threadID)
 	c.trySetThreadName(ctx, threadID, opts.ThreadName, logger)
 	return threadID, false, nil
 }
@@ -302,10 +304,18 @@ func describeCodexSemanticActivity(msg Message) string {
 // ── codexClient: JSON-RPC 2.0 transport ──
 
 type codexClient struct {
-	cfg                Config
-	stdin              interface{ Write([]byte) (int, error) }
-	mu                 sync.Mutex
-	writeMu            sync.Mutex
+	cfg     Config
+	stdin   interface{ Write([]byte) (int, error) }
+	mu      sync.Mutex
+	writeMu sync.Mutex
+	// turnMu protects the active turn state and callback lifecycle. The
+	// app-server reader runs independently of the goroutine waiting for a
+	// turn, so a cancellation can otherwise clear a callback while the reader
+	// is dispatching its final notification.
+	turnMu             sync.Mutex
+	turnIdle           *sync.Cond
+	turnEnding         bool
+	activeCallbacks    int
 	nextID             int
 	pending            map[int]*pendingRPC
 	processDone        chan struct{}
@@ -341,6 +351,114 @@ func (c *codexClient) getTurnError() string {
 	c.turnErrorMu.Lock()
 	defer c.turnErrorMu.Unlock()
 	return c.turnError
+}
+
+func (c *codexClient) initTurnSyncLocked() {
+	if c.turnIdle == nil {
+		c.turnIdle = sync.NewCond(&c.turnMu)
+	}
+}
+
+func (c *codexClient) setThreadID(threadID string) {
+	c.turnMu.Lock()
+	c.threadID = threadID
+	c.turnMu.Unlock()
+}
+
+func (c *codexClient) currentTurnID() string {
+	c.turnMu.Lock()
+	defer c.turnMu.Unlock()
+	return c.turnID
+}
+
+func (c *codexClient) markTurnStarted(turnID string) string {
+	c.turnMu.Lock()
+	c.turnStarted = true
+	if turnID != "" {
+		c.turnID = turnID
+	}
+	threadID := c.threadID
+	c.turnMu.Unlock()
+	return threadID
+}
+
+func (c *codexClient) isTurnStarted() bool {
+	c.turnMu.Lock()
+	defer c.turnMu.Unlock()
+	return c.turnStarted
+}
+
+func (c *codexClient) isForeignThread(threadID string) bool {
+	if threadID == "" {
+		return false
+	}
+	c.turnMu.Lock()
+	defer c.turnMu.Unlock()
+	return c.threadID != "" && threadID != c.threadID
+}
+
+func (c *codexClient) markTurnCompleted(turnID string) bool {
+	c.turnMu.Lock()
+	defer c.turnMu.Unlock()
+	if c.completedTurnIDs == nil {
+		c.completedTurnIDs = map[string]bool{}
+	}
+	if turnID == "" || c.completedTurnIDs[turnID] {
+		return false
+	}
+	c.completedTurnIDs[turnID] = true
+	return true
+}
+
+func (c *codexClient) finishCallback() {
+	c.turnMu.Lock()
+	c.activeCallbacks--
+	if c.activeCallbacks == 0 && c.turnIdle != nil {
+		c.turnIdle.Broadcast()
+	}
+	c.turnMu.Unlock()
+}
+
+func (c *codexClient) emitMessage(msg Message) {
+	c.turnMu.Lock()
+	c.initTurnSyncLocked()
+	if c.turnEnding || c.onMessage == nil {
+		c.turnMu.Unlock()
+		return
+	}
+	callback := c.onMessage
+	c.activeCallbacks++
+	c.turnMu.Unlock()
+	defer c.finishCallback()
+	callback(msg)
+}
+
+func (c *codexClient) emitSemanticActivity(description string) {
+	c.turnMu.Lock()
+	c.initTurnSyncLocked()
+	if c.turnEnding || c.onSemanticActivity == nil {
+		c.turnMu.Unlock()
+		return
+	}
+	callback := c.onSemanticActivity
+	c.activeCallbacks++
+	c.turnMu.Unlock()
+	defer c.finishCallback()
+	callback(description)
+}
+
+func (c *codexClient) emitTurnDone(aborted bool) {
+	c.turnMu.Lock()
+	c.initTurnSyncLocked()
+	if c.turnEnding || c.onTurnDone == nil {
+		c.turnMu.Unlock()
+		return
+	}
+	callback := c.onTurnDone
+	c.activeCallbacks++
+	c.turnMu.Unlock()
+	defer c.finishCallback()
+	callback(aborted)
 }
 
 type pendingRPC struct {
@@ -612,19 +730,14 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	// every handler below. If a future codex revision introduces notifications
 	// without threadId, they fall through (ok=false) — re-audit this guard
 	// when bumping codex.
-	if threadID, ok := params["threadId"].(string); ok && c.threadID != "" && threadID != c.threadID {
+	if threadID, ok := params["threadId"].(string); ok && c.isForeignThread(threadID) {
 		return
 	}
 
 	switch method {
 	case "turn/started":
-		c.turnStarted = true
-		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
-			c.turnID = turnID
-		}
-		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
-		}
+		threadID := c.markTurnStarted(extractNestedString(params, "turn", "id"))
+		c.emitMessage(Message{Type: MessageStatus, Status: "running", SessionID: threadID})
 
 	case "turn/completed":
 		turnID := extractNestedString(params, "turn", "id")
@@ -644,14 +757,8 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			c.setTurnError(errMsg)
 		}
 
-		if c.completedTurnIDs == nil {
-			c.completedTurnIDs = map[string]bool{}
-		}
-		if turnID != "" {
-			if c.completedTurnIDs[turnID] {
-				return
-			}
-			c.completedTurnIDs[turnID] = true
+		if turnID != "" && !c.markTurnCompleted(turnID) {
+			return
 		}
 
 		// Extract usage from turn/completed if present (e.g. params.turn.usage).
@@ -659,9 +766,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			c.extractUsageFromMap(turn)
 		}
 
-		if c.onTurnDone != nil {
-			c.onTurnDone(aborted)
-		}
+		c.emitTurnDone(aborted)
 
 	case "error":
 		// Top-level protocol error. Retrying notifications (willRetry=true) are
@@ -674,27 +779,21 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		}
 		if errMsg != "" {
 			c.cfg.Logger.Warn("codex error notification", "message", errMsg, "will_retry", willRetry)
-			if c.onSemanticActivity != nil {
-				if willRetry {
-					c.onSemanticActivity("error:retry")
-				} else {
-					c.onSemanticActivity("error:terminal")
-				}
+			if willRetry {
+				c.emitSemanticActivity("error:retry")
+			} else {
+				c.emitSemanticActivity("error:terminal")
 			}
 			if !willRetry {
 				c.setTurnError(errMsg)
-				if c.onTurnDone != nil {
-					c.onTurnDone(false)
-				}
+				c.emitTurnDone(false)
 			}
 		}
 
 	case "thread/status/changed":
 		statusType := extractNestedString(params, "status", "type")
-		if statusType == "idle" && c.turnStarted {
-			if c.onTurnDone != nil {
-				c.onTurnDone(false)
-			}
+		if statusType == "idle" && c.isTurnStarted() {
+			c.emitTurnDone(false)
 		}
 
 	default:
@@ -708,8 +807,8 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)
-	if strings.HasPrefix(method, "item/") && c.onSemanticActivity != nil {
-		c.onSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
+	if strings.HasPrefix(method, "item/") {
+		c.emitSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
 	}
 	if item == nil {
 		return
@@ -718,54 +817,44 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	switch {
 	case method == "item/started" && itemType == "commandExecution":
 		command, _ := item["command"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "exec_command",
-				CallID: itemID,
-				Input:  map[string]any{"command": command},
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolUse,
+			Tool:   "exec_command",
+			CallID: itemID,
+			Input:  map[string]any{"command": command},
+		})
 
 	case method == "item/completed" && itemType == "commandExecution":
 		output, _ := item["aggregatedOutput"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "exec_command",
-				CallID: itemID,
-				Output: output,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolResult,
+			Tool:   "exec_command",
+			CallID: itemID,
+			Output: output,
+		})
 
 	case method == "item/started" && itemType == "fileChange":
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: itemID,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolUse,
+			Tool:   "patch_apply",
+			CallID: itemID,
+		})
 
 	case method == "item/completed" && itemType == "fileChange":
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "patch_apply",
-				CallID: itemID,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolResult,
+			Tool:   "patch_apply",
+			CallID: itemID,
+		})
 
 	case method == "item/completed" && itemType == "agentMessage":
 		text, _ := item["text"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
+		if text != "" {
+			c.emitMessage(Message{Type: MessageText, Content: text})
 		}
 		phase, _ := item["phase"].(string)
-		if phase == "final_answer" && c.turnStarted {
-			if c.onTurnDone != nil {
-				c.onTurnDone(false)
-			}
+		if phase == "final_answer" && c.isTurnStarted() {
+			c.emitTurnDone(false)
 		}
 	}
 }

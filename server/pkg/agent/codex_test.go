@@ -625,6 +625,50 @@ func TestCodexRawItemAgentMessageFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestCodexBrokerCallbacksDrainBeforeTurnEnds(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	callbackStarted := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	callbackFinished := make(chan struct{})
+	c.beginBrokerTurn(func(Message) {
+		close(callbackStarted)
+		<-releaseCallback
+		close(callbackFinished)
+	}, nil, nil)
+
+	go c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"commandExecution","id":"item-1","command":"true"}}}`)
+	select {
+	case <-callbackStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected notification callback to start")
+	}
+
+	ended := make(chan struct{})
+	go func() {
+		c.endBrokerTurn()
+		close(ended)
+	}()
+	select {
+	case <-ended:
+		t.Fatal("endBrokerTurn returned while a callback was still running")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(releaseCallback)
+	<-callbackFinished
+	select {
+	case <-ended:
+	case <-time.After(time.Second):
+		t.Fatal("endBrokerTurn did not wait for the callback to drain")
+	}
+
+	// A late notification after turn teardown is ignored, so its callback
+	// cannot send into channels that the caller has already closed.
+	c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"commandExecution","id":"item-2","command":"true"}}}`)
+}
+
 func TestCodexRawThreadStatusIdle(t *testing.T) {
 	t.Parallel()
 

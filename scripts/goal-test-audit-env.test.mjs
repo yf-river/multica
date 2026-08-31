@@ -66,6 +66,8 @@ test("goal-test environments keep local uploads site-relative", () => {
   const end = source.indexOf("function ensureStableSecretKey");
   assert.ok(start >= 0 && end > start);
   assert.match(source.slice(start, end), /`LOCAL_UPLOAD_BASE_URL=`/);
+  assert.match(source.slice(start, end), /`LOCAL_UPLOAD_DIR=\$\{uploadRoot\}`/);
+  assert.match(source.slice(start, end), /chmodSync\(file, 0o600\)/);
   assert.match(source.slice(start, end), /`CODEBUDDY_INTERNET_ENVIRONMENT=\$\{/);
 });
 

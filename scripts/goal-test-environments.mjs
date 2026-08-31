@@ -2,6 +2,7 @@ import { spawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   copyFileSync,
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -65,6 +66,7 @@ const serviceEnvKeys = {
     "MULTICA_APP_URL",
     "FRONTEND_ORIGIN",
     "FRONTEND_PORT",
+    "LOCAL_UPLOAD_DIR",
     "LOCAL_UPLOAD_BASE_URL",
     "CORS_ALLOWED_ORIGINS",
     "ALLOW_SIGNUP",
@@ -255,6 +257,8 @@ function ensureEnvironment(item) {
   mkdirSync(deploymentDir, { recursive: true });
   const daemonWorkspacesRoot = path.join(workspacesDir, `goal-test-${item.name}`);
   mkdirSync(daemonWorkspacesRoot, { recursive: true });
+  const uploadRoot = path.join(runDir, "uploads", `goal-test-${item.name}`);
+  mkdirSync(uploadRoot, { recursive: true });
   const file = envPath(item);
   const base = readEnvFile(path.join(repoRoot, ".env.worktree"));
   const databaseURL = deriveDatabaseURL(base.DATABASE_URL, item.databaseName);
@@ -277,6 +281,7 @@ function ensureEnvironment(item) {
     `FRONTEND_PORT=${item.frontendPort}`,
     `FRONTEND_ORIGIN=${frontendURL}`,
     `REMOTE_API_URL=http://127.0.0.1:${item.backendPort}`,
+    `LOCAL_UPLOAD_DIR=${uploadRoot}`,
     // The web app proxies site-relative uploads to this environment's API.
     // An inherited worktree value would point browsers at the wrong port.
     `LOCAL_UPLOAD_BASE_URL=`,
@@ -289,6 +294,7 @@ function ensureEnvironment(item) {
     ...codexRunnerEnvLines(codexRunner),
   ];
   writeFileSync(file, `${lines.join("\n")}\n`);
+  chmodSync(file, 0o600);
   return file;
 }
 

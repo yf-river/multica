@@ -190,7 +190,7 @@ func (b *CodexBrokerBackend) runTurn(ctx context.Context, proc *codexBrokerProce
 		poison = isCodexTransportError(err)
 		return Result{Status: "failed", Error: codexFailureError(err.Error(), proc.stderrTail()), DurationMs: time.Since(startTime).Milliseconds()}, poison
 	}
-	c.threadID = threadID
+	c.setThreadID(threadID)
 	if resumed {
 		cfg.Logger.Info("codex broker thread resumed", "thread_id", threadID, "pid", proc.pid())
 	} else {
@@ -274,14 +274,16 @@ func (b *CodexBrokerBackend) runTurn(ctx context.Context, proc *codexBrokerProce
 			waitingForTurn = false
 			poison = true
 			finalStatus = "timeout"
-			timeoutDiagnostic = codexTimeoutDiagnostic{Kind: codexTimeoutFirstTurnNoProgress, Timeout: firstTurnNoProgressTimeout, LastActivity: lastSemanticActivityDescription, ThreadID: threadID, TurnID: c.turnID, Model: opts.Model}
-			cfg.Logger.Warn(CodexFirstTurnNoProgressMarker, "pid", proc.pid(), "thread_id", threadID, "turn_id", c.turnID, "timeout", firstTurnNoProgressTimeout.String(), "last_activity", lastSemanticActivityDescription)
+			turnID := c.currentTurnID()
+			timeoutDiagnostic = codexTimeoutDiagnostic{Kind: codexTimeoutFirstTurnNoProgress, Timeout: firstTurnNoProgressTimeout, LastActivity: lastSemanticActivityDescription, ThreadID: threadID, TurnID: turnID, Model: opts.Model}
+			cfg.Logger.Warn(CodexFirstTurnNoProgressMarker, "pid", proc.pid(), "thread_id", threadID, "turn_id", turnID, "timeout", firstTurnNoProgressTimeout.String(), "last_activity", lastSemanticActivityDescription)
 		case <-semanticTimer.C:
 			waitingForTurn = false
 			poison = true
 			finalStatus = "timeout"
-			timeoutDiagnostic = codexTimeoutDiagnostic{Kind: codexTimeoutSemanticInactivity, Timeout: semanticInactivityTimeout, LastActivity: lastSemanticActivityDescription, ThreadID: threadID, TurnID: c.turnID, Model: opts.Model}
-			cfg.Logger.Warn(CodexSemanticInactivityMarker, "pid", proc.pid(), "thread_id", threadID, "turn_id", c.turnID, "timeout", semanticInactivityTimeout.String(), "last_activity", lastSemanticActivityDescription, "idle_for", time.Since(lastSemanticActivity).Round(time.Millisecond).String())
+			turnID := c.currentTurnID()
+			timeoutDiagnostic = codexTimeoutDiagnostic{Kind: codexTimeoutSemanticInactivity, Timeout: semanticInactivityTimeout, LastActivity: lastSemanticActivityDescription, ThreadID: threadID, TurnID: turnID, Model: opts.Model}
+			cfg.Logger.Warn(CodexSemanticInactivityMarker, "pid", proc.pid(), "thread_id", threadID, "turn_id", turnID, "timeout", semanticInactivityTimeout.String(), "last_activity", lastSemanticActivityDescription, "idle_for", time.Since(lastSemanticActivity).Round(time.Millisecond).String())
 		case <-ctx.Done():
 			finishRunContextDone()
 		case <-c.processDone:
@@ -462,25 +464,39 @@ func (p *codexBrokerProcess) stderrTail() string {
 }
 
 func (c *codexClient) beginBrokerTurn(onMessage func(Message), onSemanticActivity func(string), onTurnDone func(bool)) {
+	c.turnMu.Lock()
+	c.initTurnSyncLocked()
+	for c.activeCallbacks > 0 {
+		c.turnIdle.Wait()
+	}
 	c.threadID = ""
 	c.turnID = ""
 	c.turnStarted = false
 	c.completedTurnIDs = map[string]bool{}
+	c.turnEnding = false
+	c.onMessage = onMessage
+	c.onSemanticActivity = onSemanticActivity
+	c.onTurnDone = onTurnDone
+	c.turnMu.Unlock()
 	c.usageMu.Lock()
 	c.usage = TokenUsage{}
 	c.usageMu.Unlock()
 	c.turnErrorMu.Lock()
 	c.turnError = ""
 	c.turnErrorMu.Unlock()
-	c.onMessage = onMessage
-	c.onSemanticActivity = onSemanticActivity
-	c.onTurnDone = onTurnDone
 }
 
 func (c *codexClient) endBrokerTurn() {
+	c.turnMu.Lock()
+	c.initTurnSyncLocked()
+	c.turnEnding = true
 	c.onMessage = nil
 	c.onSemanticActivity = nil
 	c.onTurnDone = nil
+	for c.activeCallbacks > 0 {
+		c.turnIdle.Wait()
+	}
+	c.turnMu.Unlock()
 }
 
 func cloneEnvMap(in map[string]string) map[string]string {
