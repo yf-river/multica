@@ -556,7 +556,7 @@ async function cleanupFixtures() {
   for (const id of issues) await request(`/api/issues/${id}`, { method: "DELETE" }).catch(() => {});
   if (projectResource?.id) await request(`/api/projects/${project.id}/resources/${projectResource.id}`, { method: "DELETE" }).catch(() => {});
   if (project?.id) await request(`/api/projects/${project.id}`, { method: "DELETE" }).catch(() => {});
-  if (agent?.id) await request(`/api/agents/${agent.id}`, { method: "DELETE" }).catch(() => {});
+  if (agent?.id) await request(`/api/agents/${agent.id}/archive`, { method: "POST", body: {} }).catch(() => {});
 }
 
 async function request(pathname, options = {}, authToken = token, workspaceID = workspace?.id || "", requireOK = true) {

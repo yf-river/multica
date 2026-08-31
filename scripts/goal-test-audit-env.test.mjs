@@ -66,4 +66,43 @@ test("goal-test environments keep local uploads site-relative", () => {
   const end = source.indexOf("function ensureStableSecretKey");
   assert.ok(start >= 0 && end > start);
   assert.match(source.slice(start, end), /`LOCAL_UPLOAD_BASE_URL=`/);
+  assert.match(source.slice(start, end), /`CODEBUDDY_INTERNET_ENVIRONMENT=\$\{/);
+});
+
+test("goal-test service processes use an explicit inherited environment allowlist", () => {
+  const source = fs.readFileSync(path.join(scriptsDir, "goal-test-environments.mjs"), "utf8");
+  const start = source.indexOf("function runtimeFromEnvironmentFile");
+  const end = source.indexOf("function startWebProcess");
+  assert.ok(start >= 0 && end > start);
+  const runtimeBody = source.slice(start, end);
+  assert.doesNotMatch(runtimeBody, /\.\.\.process\.env/);
+  assert.match(source, /const runtimeInheritedEnvKeys = \[/);
+  for (const key of [
+    "GONGFENG_ACCESS_TOKEN",
+    "GONGFENG_PRIVATE_TOKEN",
+    "TENCENT_DOCS_TOKEN",
+    "TENCENT_MEETING_TOKEN",
+    "OPENAI_API_KEY",
+    "HAI_API_KEY",
+    "SSH_AUTH_SOCK",
+    "SSH_CLIENT",
+    "SSH_CONNECTION",
+    "CODEX_REMOTE_PAYLOAD",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+  ]) {
+    assert.doesNotMatch(runtimeBody, new RegExp(`['\"]${key}['\"]`));
+  }
+  assert.match(source, /serverEnv: serviceEnvironment\(env, "server"\)/);
+  assert.match(source, /webEnv: serviceEnvironment\(env, "web"\)/);
+  assert.match(source, /daemonEnv: serviceEnvironment\(env, "daemon"\)/);
+  const webKeys = source.slice(source.indexOf("  web: ["), source.indexOf("  daemon: ["));
+  const daemonKeys = source.slice(source.indexOf("  daemon: ["), source.indexOf("};\nconst serviceInheritedEnvKeys"));
+  for (const key of ["DATABASE_URL", "POSTGRES_PASSWORD", "JWT_SECRET", "MULTICA_EXTERNAL_CREDENTIAL_KEY"]) {
+    assert.doesNotMatch(webKeys, new RegExp(`\"${key}\"`));
+    assert.doesNotMatch(daemonKeys, new RegExp(`\"${key}\"`));
+  }
+  const detachedBody = source.slice(source.indexOf("function startDetached"), source.indexOf("function waitForHTTP"));
+  assert.match(detachedBody, /--noprofile/);
+  assert.match(detachedBody, /--norc/);
 });

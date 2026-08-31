@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   copyFileSync,
@@ -23,6 +23,161 @@ const logArchiveDir = path.join(runDir, "log-archive");
 const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = "9.134.129.162";
 const demoAvatarPath = "/images/huyunfei-landscape-avatar.png";
+const runtimeInheritedEnvKeys = [
+  "HOME",
+  "PATH",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "TMPDIR",
+  "TZ",
+  "GOTOOLCHAIN",
+  "GOPATH",
+  "GOROOT",
+  "GOENV_ROOT",
+  "GOCACHE",
+  "GOMODCACHE",
+  "GOPROXY",
+  "GONOSUMDB",
+  "GOPRIVATE",
+  "GOFLAGS",
+  "CGO_ENABLED",
+  "CC",
+  "CXX",
+  "PNPM_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "CODEBUDDY_INTERNET_ENVIRONMENT",
+];
+const serviceEnvKeys = {
+  server: [
+    "GOAL_TEST_ENV",
+    "DATABASE_URL",
+    "PORT",
+    "JWT_SECRET",
+    "MULTICA_EXTERNAL_CREDENTIAL_KEY",
+    "MULTICA_APP_URL",
+    "FRONTEND_ORIGIN",
+    "FRONTEND_PORT",
+    "LOCAL_UPLOAD_BASE_URL",
+    "CORS_ALLOWED_ORIGINS",
+    "ALLOW_SIGNUP",
+    "ALLOWED_ACCOUNTS",
+  ],
+  web: [
+    "GOAL_TEST_ENV",
+    "REMOTE_API_URL",
+    "FRONTEND_PORT",
+    "FRONTEND_ORIGIN",
+    "CORS_ALLOWED_ORIGINS",
+    "DOCS_URL",
+    "STANDALONE",
+    "NEXT_PUBLIC_API_URL",
+    "NEXT_PUBLIC_WS_URL",
+    "NEXT_PUBLIC_APP_VERSION",
+  ],
+  daemon: [
+    "GOAL_TEST_ENV",
+    "MULTICA_SERVER_URL",
+    "MULTICA_APP_URL",
+    "MULTICA_HTTP_TIMEOUT",
+    "MULTICA_DEBUG",
+    "MULTICA_WORKSPACES_ROOT",
+    "MULTICA_DAEMON_ID",
+    "MULTICA_DAEMON_DEVICE_NAME",
+    "MULTICA_AGENT_RUNTIME_NAME",
+    "MULTICA_DAEMON_POLL_INTERVAL",
+    "MULTICA_DAEMON_HEARTBEAT_INTERVAL",
+    "MULTICA_AGENT_TIMEOUT",
+    "MULTICA_AGENT_IDLE_WATCHDOG",
+    "MULTICA_AGENT_TOOL_WATCHDOG",
+    "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT",
+    "MULTICA_DAEMON_MAX_CONCURRENT_TASKS",
+    "MULTICA_LAUNCHED_BY",
+    "MULTICA_AGENT_PROVIDERS",
+    "MULTICA_GC_ENABLED",
+    "MULTICA_GC_INTERVAL",
+    "MULTICA_GC_TTL",
+    "MULTICA_GC_ORPHAN_TTL",
+    "MULTICA_GC_ARTIFACT_TTL",
+    "MULTICA_GC_ARTIFACT_PATTERNS",
+    "MULTICA_CLAUDE_PATH",
+    "MULTICA_CLAUDE_MODEL",
+    "MULTICA_CLAUDE_ARGS",
+    "MULTICA_CODEX_PATH",
+    "MULTICA_CODEX_MODEL",
+    "MULTICA_CODEX_ARGS",
+    "MULTICA_CODEX_HOME",
+    "MULTICA_CODEX_IMAGE_GENERATION",
+    "MULTICA_CODEBUDDY_PATH",
+    "MULTICA_CODEBUDDY_MODEL",
+    "MULTICA_CODEBUDDY_ARGS",
+    "MULTICA_OPENCODE_PATH",
+    "MULTICA_OPENCODE_MODEL",
+    "MULTICA_GEMINI_PATH",
+    "MULTICA_GEMINI_MODEL",
+    "MULTICA_CURSOR_PATH",
+    "MULTICA_CURSOR_MODEL",
+    "MULTICA_COPILOT_PATH",
+    "MULTICA_COPILOT_MODEL",
+    "MULTICA_HERMES_PATH",
+    "MULTICA_HERMES_MODEL",
+    "MULTICA_PI_PATH",
+    "MULTICA_PI_MODEL",
+    "MULTICA_KIMI_PATH",
+    "MULTICA_KIMI_MODEL",
+    "MULTICA_KIRO_PATH",
+    "MULTICA_KIRO_MODEL",
+    "MULTICA_ANTIGRAVITY_PATH",
+    "MULTICA_ANTIGRAVITY_MODEL",
+    "CODEX_HOME",
+    "GOTOOLCHAIN",
+    "GOPATH",
+    "GOROOT",
+    "GOENV_ROOT",
+    "GOCACHE",
+    "GOMODCACHE",
+    "GOPROXY",
+    "GONOSUMDB",
+    "GOPRIVATE",
+    "GOFLAGS",
+    "CGO_ENABLED",
+    "CC",
+    "CXX",
+  ],
+};
+const serviceInheritedEnvKeys = runtimeInheritedEnvKeys.filter((key) => ![
+  "GOTOOLCHAIN",
+  "GOPATH",
+  "GOROOT",
+  "GOENV_ROOT",
+  "GOCACHE",
+  "GOMODCACHE",
+  "GOPROXY",
+  "GONOSUMDB",
+  "GOPRIVATE",
+  "GOFLAGS",
+  "CGO_ENABLED",
+  "CC",
+  "CXX",
+  "CODEBUDDY_INTERNET_ENVIRONMENT",
+].includes(key));
+
+function spawnSync(command, args, options = {}) {
+  const normalizedArgs = command === "bash" && args[0] === "-lc"
+    ? ["--noprofile", "--norc", "-c", ...args.slice(1)]
+    : args;
+  return nodeSpawnSync(command, normalizedArgs, {
+    ...options,
+    env: options.env || (command === "bash" ? safeInheritedEnvironment() : process.env),
+  });
+}
 const profiles = {
   prod: {
     name: "prod",
@@ -130,6 +285,7 @@ function ensureEnvironment(item) {
     `CORS_ALLOWED_ORIGINS=${frontendURL},http://127.0.0.1:${item.frontendPort},http://localhost:${item.frontendPort}`,
     `ALLOW_SIGNUP=false`,
     `ALLOWED_ACCOUNTS=develop`,
+    `CODEBUDDY_INTERNET_ENVIRONMENT=${base.CODEBUDDY_INTERNET_ENVIRONMENT || process.env.CODEBUDDY_INTERNET_ENVIRONMENT || "ioa"}`,
     ...codexRunnerEnvLines(codexRunner),
   ];
   writeFileSync(file, `${lines.join("\n")}\n`);
@@ -155,7 +311,7 @@ function sharedEnvironmentSecretDir() {
 }
 
 async function deployEnvironment(item, build) {
-  const { envFile, env } = buildEnvironmentRuntime(item);
+  const { envFile, env, serverEnv, webEnv, daemonEnv } = buildEnvironmentRuntime(item);
   const deploymentStartedAt = new Date().toISOString();
   const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
   mkdirSync(runDir, { recursive: true });
@@ -164,7 +320,7 @@ async function deployEnvironment(item, build) {
     run("make", ["build"], env);
     run("pnpm", ["--filter", "@multica/web", "build"], env);
   }
-  run("bash", ["-lc", "cd server && ./bin/migrate up"], env);
+  run("./bin/migrate", ["up"], env, path.join(repoRoot, "server"));
   seedDemoIdentity(env.DATABASE_URL, item);
   const daemonProfilePath = ensureDaemonProfile(item, env);
   stopPid(pidPath(item, "server"));
@@ -177,18 +333,18 @@ async function deployEnvironment(item, build) {
   waitForPortFree(item.frontendPort, 15_000);
   const archivedLogs = resetDeploymentLogs(item, deploymentStartedAt, deploymentCommit);
 
-  let serverPID = startDetached("./server/bin/server", [], env, logPath(item, "server"));
+  let serverPID = startDetached("./server/bin/server", [], serverEnv, logPath(item, "server"));
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
   serverPID = listeningPID(item.backendPort) || serverPID;
   refreshDaemonProfileToken(item);
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
     : ["--dir", "apps/web", "exec", "next", "dev", "-p", item.frontendPort, "-H", "0.0.0.0"];
-  let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
+  let webPID = startDetached("pnpm", webArgs, webEnv, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
   const webPrewarm = await prewarmDevWebRoutes(item);
-  const daemonPID = startDetached("./server/bin/multica", daemonStartArgs(item), env, logPath(item, "daemon"));
+  const daemonPID = startDetached("./server/bin/multica", daemonStartArgs(item), daemonEnv, logPath(item, "daemon"));
 
   writeFileSync(pidPath(item, "server"), `${serverPID}\n`);
   writeFileSync(pidPath(item, "web"), `${webPID}\n`);
@@ -235,7 +391,7 @@ async function deployEnvironment(item, build) {
 }
 
 async function startDevWeb(item, action) {
-  const { env } = buildDeployedEnvironmentRuntime(item);
+  const { env, webEnv } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   const existingPID = listeningPID(item.frontendPort);
   const existing = inspectPID(existingPID);
@@ -256,7 +412,7 @@ async function startDevWeb(item, action) {
   stopPid(pidPath(item, "web"));
   killPort(item.frontendPort);
   waitForPortFree(item.frontendPort, 15_000);
-  const webPID = startWebProcess(item, env);
+  const webPID = startWebProcess(item, webEnv);
   const webPrewarm = await prewarmDevWebRoutes(item);
   updateFastDeploymentMetadata(item, env, { web: webPID }, action, { web_prewarm: webPrewarm });
   console.log(JSON.stringify({
@@ -271,14 +427,14 @@ async function startDevWeb(item, action) {
 }
 
 async function restartDevServer(item) {
-  const { env } = buildDeployedEnvironmentRuntime(item);
+  const { env, serverEnv, daemonEnv } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   ensureDatabase(env.DATABASE_URL, item.databaseName);
   buildServerBinary(env);
   stopPid(pidPath(item, "server"));
   killPort(item.backendPort);
   waitForPortFree(item.backendPort, 15_000);
-  let serverPID = startDetached("./server/bin/server", [], env, logPath(item, "server"));
+  let serverPID = startDetached("./server/bin/server", [], serverEnv, logPath(item, "server"));
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
   serverPID = listeningPID(item.backendPort) || serverPID;
   refreshDaemonProfileToken(item);
@@ -308,13 +464,13 @@ async function prewarmDevWebOnly(item) {
 }
 
 function restartDevDaemon(item) {
-  const { env } = buildDeployedEnvironmentRuntime(item);
+  const { env, daemonEnv } = buildDeployedEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   buildMulticaBinary(env);
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 10_000);
   refreshDaemonProfileToken(item);
   stopPid(pidPath(item, "daemon"));
-  const daemonPID = startDaemonProcess(item, env);
+  const daemonPID = startDaemonProcess(item, daemonEnv);
   updateFastDeploymentMetadata(item, env, { daemon: daemonPID }, "dev-daemon", {
     codex_runner: summarizeCodexRunnerEnv(item, env),
   });
@@ -336,7 +492,7 @@ function runDevCheck(item) {
   ];
   for (const [cmd, args] of checks) {
     const started = Date.now();
-    const res = spawnSync(cmd, args, { cwd: repoRoot, env: process.env, encoding: "utf8" });
+    const res = spawnSync(cmd, args, { cwd: repoRoot, env: safeInheritedEnvironment(), encoding: "utf8" });
     results.push({
       command: [cmd, ...args].join(" "),
       status: res.status === 0 ? "passed" : "failed",
@@ -379,14 +535,38 @@ function buildDeployedEnvironmentRuntime(item) {
 
 function runtimeFromEnvironmentFile(item, envFile) {
   const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
+  const inherited = safeInheritedEnvironment();
   const env = {
-    ...process.env,
+    ...inherited,
     ...readEnvFile(envFile),
     HOSTNAME: "0.0.0.0",
     NEXT_PUBLIC_APP_VERSION: deploymentCommit,
     REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
   };
-  return { envFile, env };
+  return {
+    envFile,
+    env,
+    serverEnv: serviceEnvironment(env, "server"),
+    webEnv: serviceEnvironment(env, "web"),
+    daemonEnv: serviceEnvironment(env, "daemon"),
+  };
+}
+
+function safeInheritedEnvironment(extra = {}) {
+  return {
+    ...Object.fromEntries(
+      runtimeInheritedEnvKeys
+        .filter((key) => process.env[key] !== undefined)
+        .map((key) => [key, process.env[key]]),
+    ),
+    ...extra,
+  };
+}
+
+function serviceEnvironment(env, role) {
+  const keys = new Set([...serviceInheritedEnvKeys, ...(serviceEnvKeys[role] || [])]);
+  if (role === "daemon") keys.add("CODEBUDDY_INTERNET_ENVIRONMENT");
+  return Object.fromEntries([...keys].filter((key) => env[key] !== undefined).map((key) => [key, env[key]]));
 }
 
 function startWebProcess(item, env) {
@@ -507,7 +687,7 @@ function prewarmDevWebRoute({ base, route, cookie, timeoutSec }) {
       "-H",
       `Cookie: ${cookie}`,
       `${base}${route}`,
-    ], { cwd: repoRoot, env: { ...process.env, NO_PROXY: "*", no_proxy: "*" } });
+    ], { cwd: repoRoot, env: safeInheritedEnvironment({ NO_PROXY: "*", no_proxy: "*" }) });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -1188,7 +1368,7 @@ function run(command, args, env, cwd = repoRoot) {
 
 function startDetached(command, args, env, logFile) {
   const shellCommand = `setsid ${shellQuote(command)} ${args.map(shellQuote).join(" ")} >> ${shellQuote(logFile)} 2>&1 < /dev/null & echo $!`;
-  const res = spawnSync("bash", ["-lc", shellCommand], { cwd: repoRoot, env, encoding: "utf8" });
+  const res = spawnSync("bash", ["--noprofile", "--norc", "-c", shellCommand], { cwd: repoRoot, env, encoding: "utf8" });
   if (res.status !== 0) fail(`start failed: ${shellCommand}\n${res.stderr}`);
   return Number(res.stdout.trim().split(/\s+/).pop());
 }
@@ -1207,13 +1387,13 @@ function stopPid(file) {
   if (!existsSync(file)) return;
   const pid = Number(readFileSync(file, "utf8").trim());
   if (!pid) return;
-  spawnSync("bash", ["-lc", `kill ${pid} 2>/dev/null || true; sleep 1; kill -9 ${pid} 2>/dev/null || true`]);
+  spawnSync("bash", ["--noprofile", "--norc", "-c", `kill ${pid} 2>/dev/null || true; sleep 1; kill -9 ${pid} 2>/dev/null || true`], { env: safeInheritedEnvironment() });
 }
 
 function killPort(port) {
   const numericPort = Number(port);
-  spawnSync("bash", ["-lc", `fuser -k ${numericPort}/tcp 2>/dev/null || true`]);
-  spawnSync("bash", ["-lc", `lsof -ti:${numericPort} | xargs -r kill -9 2>/dev/null || true`]);
+  spawnSync("bash", ["--noprofile", "--norc", "-c", `fuser -k ${numericPort}/tcp 2>/dev/null || true`], { env: safeInheritedEnvironment() });
+  spawnSync("bash", ["--noprofile", "--norc", "-c", `lsof -ti:${numericPort} | xargs -r kill -9 2>/dev/null || true`], { env: safeInheritedEnvironment() });
   const pid = listeningPID(port);
   if (pid) spawnSync("kill", ["-9", String(pid)]);
 }
@@ -1221,7 +1401,7 @@ function killPort(port) {
 function waitForPortFree(port, timeoutMs) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const res = spawnSync("bash", ["-lc", `lsof -iTCP:${Number(port)} -sTCP:LISTEN -n -P >/dev/null 2>&1`]);
+    const res = spawnSync("bash", ["--noprofile", "--norc", "-c", `lsof -iTCP:${Number(port)} -sTCP:LISTEN -n -P >/dev/null 2>&1`], { env: safeInheritedEnvironment() });
     if (res.status !== 0) return;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
   }
@@ -1235,12 +1415,12 @@ function killStaleProcesses(item) {
     `multica daemon start .*--profile ${item.daemonProfile}`,
   ];
   for (const pattern of patterns) {
-    spawnSync("bash", ["-lc", `pgrep -f ${shellQuote(pattern)} | xargs -r kill -9 2>/dev/null || true`]);
+    spawnSync("bash", ["--noprofile", "--norc", "-c", `pgrep -f ${shellQuote(pattern)} | xargs -r kill -9 2>/dev/null || true`], { env: safeInheritedEnvironment() });
   }
 }
 
 function listeningPID(port) {
-  const res = spawnSync("bash", ["-lc", `ss -ltnp '( sport = :${Number(port)} )' 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -1`], { encoding: "utf8" });
+  const res = spawnSync("bash", ["--noprofile", "--norc", "-c", `ss -ltnp '( sport = :${Number(port)} )' 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | head -1`], { env: safeInheritedEnvironment(), encoding: "utf8" });
   const pid = Number(res.stdout.trim());
   return Number.isFinite(pid) && pid > 0 ? pid : 0;
 }
@@ -1256,7 +1436,7 @@ function processGroupCommand(pid) {
   if (!pid) return "";
   const pgid = spawnSync("ps", ["-p", String(pid), "-o", "pgid="], { encoding: "utf8" }).stdout.trim();
   if (!pgid) return "";
-  const res = spawnSync("bash", ["-lc", `ps -eo pgid=,args= | awk '$1 == ${Number(pgid)} { sub(/^[[:space:]]*[0-9]+[[:space:]]+/, ""); print }'`], { encoding: "utf8" });
+  const res = spawnSync("bash", ["--noprofile", "--norc", "-c", `ps -eo pgid=,args= | awk '$1 == ${Number(pgid)} { sub(/^[[:space:]]*[0-9]+[[:space:]]+/, ""); print }'`], { env: safeInheritedEnvironment(), encoding: "utf8" });
   return res.stdout;
 }
 
