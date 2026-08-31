@@ -282,7 +282,7 @@ async function waitForReadySignal(page, ready, timeout) {
     return;
   }
   if (ready.heading) {
-    await page.getByRole("heading", { name: ready.heading, exact: true }).waitFor({ state: "visible", timeout });
+    await page.getByRole("heading", { name: ready.heading, exact: true }).first().waitFor({ state: "visible", timeout });
     return;
   }
   throw new Error("ready signal is missing");
