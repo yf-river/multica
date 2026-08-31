@@ -865,7 +865,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 
 	switch method {
 	case "turn/started":
-		threadID := c.markTurnStarted(extractNestedString(params, "turn", "id"))
+		threadID := c.markTurnStarted(extractCodexTurnID(params))
 		c.emitMessage(Message{Type: MessageStatus, Status: "running", SessionID: threadID})
 
 	case "turn/completed":
