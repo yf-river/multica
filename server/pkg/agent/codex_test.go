@@ -637,8 +637,9 @@ func TestCodexBrokerCallbacksDrainBeforeTurnEnds(t *testing.T) {
 		<-releaseCallback
 		close(callbackFinished)
 	}, nil, nil)
+	c.setThreadID("thr-callback")
 
-	go c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"commandExecution","id":"item-1","command":"true"}}}`)
+	go c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-callback","item":{"type":"commandExecution","id":"item-1","command":"true"}}}`)
 	select {
 	case <-callbackStarted:
 	case <-time.After(time.Second):
@@ -674,7 +675,8 @@ func TestCodexBrokerTurnEventLeaseDrainsBeforeReset(t *testing.T) {
 
 	c, _, _ := newTestCodexClient(t)
 	c.beginBrokerTurn(nil, nil, nil)
-	if !c.enterTurnEvent("") {
+	c.setThreadID("thr-lease")
+	if !c.enterTurnEvent("item/started", "thr-lease", "", "") {
 		t.Fatal("expected active turn event to acquire its lease")
 	}
 
@@ -695,6 +697,37 @@ func TestCodexBrokerTurnEventLeaseDrainsBeforeReset(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("endBrokerTurn did not wait for the event lease to drain")
 	}
+}
+
+func TestCodexBrokerLateEventsDoNotCrossTurns(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	var messages []Message
+	c.beginBrokerTurn(func(msg Message) { messages = append(messages, msg) }, nil, nil)
+	c.setThreadID("thr-one")
+	c.markTurnStarted("turn-one")
+	c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-one","item":{"type":"commandExecution","id":"item-one","command":"true"}}}`)
+	c.endBrokerTurn()
+
+	// A delayed line can arrive after teardown and before the next thread has
+	// been assigned. It must not be treated as the next turn's event.
+	c.beginBrokerTurn(func(msg Message) { messages = append(messages, msg) }, nil, nil)
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-one","turn":{"id":"turn-one","status":"completed"}}}`)
+	if len(messages) != 1 {
+		t.Fatalf("late completion crossed into the new turn, messages=%d", len(messages))
+	}
+
+	// Resuming the same thread is also safe: the retired turn and item IDs
+	// fence old notifications while the new turn continues normally.
+	c.setThreadID("thr-one")
+	c.markTurnStarted("turn-two")
+	c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-one","item":{"type":"commandExecution","id":"item-one","command":"stale"}}}`)
+	c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-one","item":{"type":"commandExecution","id":"item-two","command":"fresh"}}}`)
+	if len(messages) != 2 || messages[1].Input["command"] != "fresh" {
+		t.Fatalf("same-thread late event was not fenced: %+v", messages)
+	}
+	c.endBrokerTurn()
 }
 
 func TestCodexRawThreadStatusIdle(t *testing.T) {

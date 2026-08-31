@@ -315,6 +315,8 @@ type codexClient struct {
 	turnMu             sync.Mutex
 	turnIdle           *sync.Cond
 	turnEnding         bool
+	brokerTurnActive   bool
+	turnTerminal       bool
 	activeEvents       int
 	activeCallbacks    int
 	nextID             int
@@ -327,8 +329,11 @@ type codexClient struct {
 	onSemanticActivity func(description string)
 	onTurnDone         func(aborted bool)
 
-	turnStarted      bool
-	completedTurnIDs map[string]bool
+	turnStarted       bool
+	completedTurnIDs  map[string]bool
+	seenItemIDs       map[string]struct{}
+	retiredEventIDs   map[string]struct{}
+	retiredEventOrder []string
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
@@ -389,6 +394,12 @@ func (c *codexClient) isTurnStarted() bool {
 	return c.turnStarted
 }
 
+func (c *codexClient) markTurnTerminal() {
+	c.turnMu.Lock()
+	c.turnTerminal = true
+	c.turnMu.Unlock()
+}
+
 func (c *codexClient) markTurnCompleted(turnID string) bool {
 	c.turnMu.Lock()
 	defer c.turnMu.Unlock()
@@ -402,10 +413,78 @@ func (c *codexClient) markTurnCompleted(turnID string) bool {
 	return true
 }
 
-func (c *codexClient) enterTurnEvent(threadID string) bool {
+const maxRetiredCodexEvents = 2048
+
+func retiredCodexEventKey(kind, id string) string {
+	return kind + "\x00" + id
+}
+
+func (c *codexClient) rememberRetiredEventLocked(kind, id string) {
+	if id == "" {
+		return
+	}
+	if c.retiredEventIDs == nil {
+		c.retiredEventIDs = make(map[string]struct{})
+	}
+	key := retiredCodexEventKey(kind, id)
+	if _, exists := c.retiredEventIDs[key]; exists {
+		return
+	}
+	if len(c.retiredEventOrder) >= maxRetiredCodexEvents {
+		oldest := c.retiredEventOrder[0]
+		c.retiredEventOrder = c.retiredEventOrder[1:]
+		delete(c.retiredEventIDs, oldest)
+	}
+	c.retiredEventIDs[key] = struct{}{}
+	c.retiredEventOrder = append(c.retiredEventOrder, key)
+}
+
+func (c *codexClient) isRetiredEventLocked(kind, id string) bool {
+	if id == "" || c.retiredEventIDs == nil {
+		return false
+	}
+	_, exists := c.retiredEventIDs[retiredCodexEventKey(kind, id)]
+	return exists
+}
+
+func (c *codexClient) rememberItemID(itemID string) {
+	if itemID == "" {
+		return
+	}
+	c.turnMu.Lock()
+	if c.seenItemIDs == nil {
+		c.seenItemIDs = make(map[string]struct{})
+	}
+	c.seenItemIDs[itemID] = struct{}{}
+	c.turnMu.Unlock()
+}
+
+func (c *codexClient) retireCurrentTurnLocked() {
+	c.rememberRetiredEventLocked("thread", c.threadID)
+	c.rememberRetiredEventLocked("turn", c.turnID)
+	for itemID := range c.seenItemIDs {
+		c.rememberRetiredEventLocked("item", itemID)
+	}
+}
+
+func (c *codexClient) enterTurnEvent(method, threadID, turnID, itemID string) bool {
 	c.turnMu.Lock()
 	c.initTurnSyncLocked()
-	if c.turnEnding || (threadID != "" && c.threadID != "" && threadID != c.threadID) {
+	if c.brokerTurnActive && c.threadID == "" && method == "turn/started" && threadID != "" && !c.isRetiredEventLocked("thread", threadID) {
+		// The turn/start response and its first notification are delivered by
+		// different goroutines. Adopt the first main-thread notification while
+		// holding the same lock used by the lifecycle fence.
+		c.threadID = threadID
+	}
+	if c.turnEnding ||
+		(c.brokerTurnActive && threadID == "" && c.threadID == "") ||
+		(threadID != "" && c.threadID != "" && threadID != c.threadID) ||
+		(c.threadID == "" && c.isRetiredEventLocked("thread", threadID)) ||
+		(c.turnTerminal && method != "turn/completed") ||
+		(c.turnTerminal && method == "turn/completed" && turnID != c.turnID) ||
+		(method == "thread/status/changed" && !c.turnStarted) ||
+		c.isRetiredEventLocked("turn", turnID) ||
+		c.isRetiredEventLocked("item", itemID) {
 		c.turnMu.Unlock()
 		return false
 	}
@@ -734,17 +813,17 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 }
 
 func (c *codexClient) handleRawNotification(method string, params map[string]any) {
-	// Ignore notifications from threads other than the one we are tracking.
-	// Codex multiplexes subagent threads (e.g. memory consolidation) on the
-	// same stdio pipe; only our thread should drive turn lifecycle and output.
-	//
-	// The v2 app-server-protocol schema guarantees a top-level threadId on
-	// every notification, so this dispatch-level guard transparently covers
-	// every handler below. If a future codex revision introduces notifications
-	// without threadId, they fall through (ok=false) — re-audit this guard
-	// when bumping codex.
+	// Claim the notification before touching turn state. Codex multiplexes
+	// subagent threads on the same pipe, and stdout can deliver a previous
+	// turn's terminal line after the waiting goroutine has already returned.
+	// The lease and retired IDs keep those lines out of the next turn.
 	threadID, _ := params["threadId"].(string)
-	if !c.enterTurnEvent(threadID) {
+	turnID := extractNestedString(params, "turn", "id")
+	itemID := ""
+	if item, ok := params["item"].(map[string]any); ok {
+		itemID, _ = item["id"].(string)
+	}
+	if !c.enterTurnEvent(method, threadID, turnID, itemID) {
 		return
 	}
 	defer c.finishTurnEvent()
@@ -775,6 +854,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		if turnID != "" && !c.markTurnCompleted(turnID) {
 			return
 		}
+		c.markTurnTerminal()
 
 		// Extract usage from turn/completed if present (e.g. params.turn.usage).
 		if turn, ok := params["turn"].(map[string]any); ok {
@@ -801,6 +881,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			}
 			if !willRetry {
 				c.setTurnError(errMsg)
+				c.markTurnTerminal()
 				c.emitTurnDone(false)
 			}
 		}
@@ -808,6 +889,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	case "thread/status/changed":
 		statusType := extractNestedString(params, "status", "type")
 		if statusType == "idle" && c.isTurnStarted() {
+			c.markTurnTerminal()
 			c.emitTurnDone(false)
 		}
 
@@ -820,7 +902,11 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 
 func (c *codexClient) handleItemNotification(method string, params map[string]any) {
 	threadID, _ := params["threadId"].(string)
-	if !c.enterTurnEvent(threadID) {
+	itemID := ""
+	if item, ok := params["item"].(map[string]any); ok {
+		itemID, _ = item["id"].(string)
+	}
+	if !c.enterTurnEvent(method, threadID, extractNestedString(params, "turn", "id"), itemID) {
 		return
 	}
 	defer c.finishTurnEvent()
@@ -831,6 +917,7 @@ func (c *codexClient) handleItemNotificationActive(method string, params map[str
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)
+	c.rememberItemID(itemID)
 	if strings.HasPrefix(method, "item/") {
 		c.emitSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
 	}
@@ -878,6 +965,7 @@ func (c *codexClient) handleItemNotificationActive(method string, params map[str
 		}
 		phase, _ := item["phase"].(string)
 		if phase == "final_answer" && c.isTurnStarted() {
+			c.markTurnTerminal()
 			c.emitTurnDone(false)
 		}
 	}

@@ -469,6 +469,7 @@ func (c *codexClient) beginBrokerTurn(onMessage func(Message), onSemanticActivit
 	for c.activeEvents > 0 || c.activeCallbacks > 0 {
 		c.turnIdle.Wait()
 	}
+	c.retireCurrentTurnLocked()
 	c.usageMu.Lock()
 	c.usage = TokenUsage{}
 	c.usageMu.Unlock()
@@ -478,8 +479,11 @@ func (c *codexClient) beginBrokerTurn(onMessage func(Message), onSemanticActivit
 	c.threadID = ""
 	c.turnID = ""
 	c.turnStarted = false
+	c.turnTerminal = false
 	c.completedTurnIDs = map[string]bool{}
+	c.seenItemIDs = map[string]struct{}{}
 	c.turnEnding = false
+	c.brokerTurnActive = true
 	c.onMessage = onMessage
 	c.onSemanticActivity = onSemanticActivity
 	c.onTurnDone = onTurnDone
@@ -490,6 +494,9 @@ func (c *codexClient) endBrokerTurn() {
 	c.turnMu.Lock()
 	c.initTurnSyncLocked()
 	c.turnEnding = true
+	c.brokerTurnActive = false
+	c.turnTerminal = true
+	c.retireCurrentTurnLocked()
 	c.onMessage = nil
 	c.onSemanticActivity = nil
 	c.onTurnDone = nil
