@@ -71,8 +71,8 @@ test("runtime environment helpers are inventoried", () => {
 });
 
 test("implicit database and websocket contracts are visible", () => {
-  assert.equal(inventory.persistence.database.functions.length, 9);
-  assert.equal(inventory.persistence.database.triggers.length, 4);
+  assert.equal(inventory.persistence.database.functions.length, 15);
+  assert.equal(inventory.persistence.database.triggers.length, 9);
   assert.ok(inventory.persistence.database.indexes.length >= 140);
   assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
 });
