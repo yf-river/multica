@@ -59,3 +59,11 @@ test("verification and fast actions preserve the deployed environment file", () 
     assert.match(functionBody(name, nextName), /buildDeployedEnvironmentRuntime\(item\)/);
   }
 });
+
+test("goal-test environments keep local uploads site-relative", () => {
+  const source = fs.readFileSync(path.join(scriptsDir, "goal-test-environments.mjs"), "utf8");
+  const start = source.indexOf("function ensureEnvironment");
+  const end = source.indexOf("function ensureStableSecretKey");
+  assert.ok(start >= 0 && end > start);
+  assert.match(source.slice(start, end), /`LOCAL_UPLOAD_BASE_URL=`/);
+});

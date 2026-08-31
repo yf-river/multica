@@ -122,6 +122,9 @@ function ensureEnvironment(item) {
     `FRONTEND_PORT=${item.frontendPort}`,
     `FRONTEND_ORIGIN=${frontendURL}`,
     `REMOTE_API_URL=http://127.0.0.1:${item.backendPort}`,
+    // The web app proxies site-relative uploads to this environment's API.
+    // An inherited worktree value would point browsers at the wrong port.
+    `LOCAL_UPLOAD_BASE_URL=`,
     `NEXT_PUBLIC_API_URL=`,
     `NEXT_PUBLIC_WS_URL=`,
     `CORS_ALLOWED_ORIGINS=${frontendURL},http://127.0.0.1:${item.frontendPort},http://localhost:${item.frontendPort}`,
