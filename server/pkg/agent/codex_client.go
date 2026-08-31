@@ -315,6 +315,7 @@ type codexClient struct {
 	turnMu             sync.Mutex
 	turnIdle           *sync.Cond
 	turnEnding         bool
+	activeEvents       int
 	activeCallbacks    int
 	nextID             int
 	pending            map[int]*pendingRPC
@@ -388,15 +389,6 @@ func (c *codexClient) isTurnStarted() bool {
 	return c.turnStarted
 }
 
-func (c *codexClient) isForeignThread(threadID string) bool {
-	if threadID == "" {
-		return false
-	}
-	c.turnMu.Lock()
-	defer c.turnMu.Unlock()
-	return c.threadID != "" && threadID != c.threadID
-}
-
 func (c *codexClient) markTurnCompleted(turnID string) bool {
 	c.turnMu.Lock()
 	defer c.turnMu.Unlock()
@@ -408,6 +400,27 @@ func (c *codexClient) markTurnCompleted(turnID string) bool {
 	}
 	c.completedTurnIDs[turnID] = true
 	return true
+}
+
+func (c *codexClient) enterTurnEvent(threadID string) bool {
+	c.turnMu.Lock()
+	c.initTurnSyncLocked()
+	if c.turnEnding || (threadID != "" && c.threadID != "" && threadID != c.threadID) {
+		c.turnMu.Unlock()
+		return false
+	}
+	c.activeEvents++
+	c.turnMu.Unlock()
+	return true
+}
+
+func (c *codexClient) finishTurnEvent() {
+	c.turnMu.Lock()
+	c.activeEvents--
+	if c.activeEvents == 0 && c.activeCallbacks == 0 && c.turnIdle != nil {
+		c.turnIdle.Broadcast()
+	}
+	c.turnMu.Unlock()
 }
 
 func (c *codexClient) finishCallback() {
@@ -730,9 +743,11 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	// every handler below. If a future codex revision introduces notifications
 	// without threadId, they fall through (ok=false) — re-audit this guard
 	// when bumping codex.
-	if threadID, ok := params["threadId"].(string); ok && c.isForeignThread(threadID) {
+	threadID, _ := params["threadId"].(string)
+	if !c.enterTurnEvent(threadID) {
 		return
 	}
+	defer c.finishTurnEvent()
 
 	switch method {
 	case "turn/started":
@@ -798,12 +813,21 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 
 	default:
 		if strings.HasPrefix(method, "item/") {
-			c.handleItemNotification(method, params)
+			c.handleItemNotificationActive(method, params)
 		}
 	}
 }
 
 func (c *codexClient) handleItemNotification(method string, params map[string]any) {
+	threadID, _ := params["threadId"].(string)
+	if !c.enterTurnEvent(threadID) {
+		return
+	}
+	defer c.finishTurnEvent()
+	c.handleItemNotificationActive(method, params)
+}
+
+func (c *codexClient) handleItemNotificationActive(method string, params map[string]any) {
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)

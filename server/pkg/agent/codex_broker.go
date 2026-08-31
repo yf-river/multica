@@ -466,9 +466,15 @@ func (p *codexBrokerProcess) stderrTail() string {
 func (c *codexClient) beginBrokerTurn(onMessage func(Message), onSemanticActivity func(string), onTurnDone func(bool)) {
 	c.turnMu.Lock()
 	c.initTurnSyncLocked()
-	for c.activeCallbacks > 0 {
+	for c.activeEvents > 0 || c.activeCallbacks > 0 {
 		c.turnIdle.Wait()
 	}
+	c.usageMu.Lock()
+	c.usage = TokenUsage{}
+	c.usageMu.Unlock()
+	c.turnErrorMu.Lock()
+	c.turnError = ""
+	c.turnErrorMu.Unlock()
 	c.threadID = ""
 	c.turnID = ""
 	c.turnStarted = false
@@ -478,12 +484,6 @@ func (c *codexClient) beginBrokerTurn(onMessage func(Message), onSemanticActivit
 	c.onSemanticActivity = onSemanticActivity
 	c.onTurnDone = onTurnDone
 	c.turnMu.Unlock()
-	c.usageMu.Lock()
-	c.usage = TokenUsage{}
-	c.usageMu.Unlock()
-	c.turnErrorMu.Lock()
-	c.turnError = ""
-	c.turnErrorMu.Unlock()
 }
 
 func (c *codexClient) endBrokerTurn() {
@@ -493,7 +493,7 @@ func (c *codexClient) endBrokerTurn() {
 	c.onMessage = nil
 	c.onSemanticActivity = nil
 	c.onTurnDone = nil
-	for c.activeCallbacks > 0 {
+	for c.activeEvents > 0 || c.activeCallbacks > 0 {
 		c.turnIdle.Wait()
 	}
 	c.turnMu.Unlock()

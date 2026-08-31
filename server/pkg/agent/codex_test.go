@@ -669,6 +669,34 @@ func TestCodexBrokerCallbacksDrainBeforeTurnEnds(t *testing.T) {
 	c.handleLine(`{"jsonrpc":"2.0","method":"item/started","params":{"item":{"type":"commandExecution","id":"item-2","command":"true"}}}`)
 }
 
+func TestCodexBrokerTurnEventLeaseDrainsBeforeReset(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	c.beginBrokerTurn(nil, nil, nil)
+	if !c.enterTurnEvent("") {
+		t.Fatal("expected active turn event to acquire its lease")
+	}
+
+	ended := make(chan struct{})
+	go func() {
+		c.endBrokerTurn()
+		close(ended)
+	}()
+	select {
+	case <-ended:
+		t.Fatal("endBrokerTurn reset the turn while an event was still active")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	c.finishTurnEvent()
+	select {
+	case <-ended:
+	case <-time.After(time.Second):
+		t.Fatal("endBrokerTurn did not wait for the event lease to drain")
+	}
+}
+
 func TestCodexRawThreadStatusIdle(t *testing.T) {
 	t.Parallel()
 
