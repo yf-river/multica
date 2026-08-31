@@ -337,6 +337,7 @@ try {
   } else {
     await waitForLifeJobs("final", 35 * 60_000);
     await waitForChronicleCatchUp();
+    await normalizeLifeDerivedEvidenceTimes();
     const audit = await finalAudit(companion.id, runtime.id);
     persist({ status: "passed", audit });
     if (audit.failures.length > 0) throw new Error(`decade audit failed: ${audit.failures.join("; ")}`);
@@ -1089,6 +1090,95 @@ async function normalizeExperimentTimeline(roundID, simulatedAt) {
   }
 }
 
+async function normalizeLifeDerivedEvidenceTimes() {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `WITH matches AS (
+         SELECT evidence.memory_id, evidence.source_type, evidence.source_id,
+                material.occurred_at,
+                row_number() OVER (
+                  PARTITION BY evidence.memory_id, evidence.source_type, evidence.source_id
+                  ORDER BY (material.id = evidence.source_id) DESC, material.occurred_at DESC, material.id
+                ) AS rank
+           FROM life_memory_evidence evidence
+           JOIN life_memory memory ON memory.id = evidence.memory_id
+           JOIN life_material material
+             ON material.workspace_id = memory.workspace_id AND material.user_id = memory.user_id
+            AND material.source_type = evidence.source_type
+            AND (material.id = evidence.source_id OR material.source_key = evidence.source_id::text)
+          WHERE memory.workspace_id = $1 AND memory.user_id = $2
+       )
+       UPDATE life_memory_evidence evidence
+          SET observed_at = matches.occurred_at
+         FROM matches
+        WHERE matches.rank = 1
+          AND evidence.memory_id = matches.memory_id
+          AND evidence.source_type = matches.source_type
+          AND evidence.source_id = matches.source_id
+          AND abs(extract(epoch FROM (evidence.observed_at - matches.occurred_at))) > 2`,
+      [workspace.id, user.id],
+    );
+    await client.query(
+      `UPDATE life_experiment_observation observation
+          SET observed_at = material.occurred_at
+         FROM life_experiment_round round
+         JOIN life_experiment experiment ON experiment.id = round.experiment_id
+         JOIN life_material material ON true
+        WHERE observation.material_id IS NOT NULL
+          AND observation.material_id = material.id
+          AND experiment.workspace_id = $1 AND experiment.user_id = $2
+          AND abs(extract(epoch FROM (observation.observed_at - material.occurred_at))) > 2`,
+      [workspace.id, user.id],
+    );
+    await client.query(
+      `WITH rebuilt AS (
+         SELECT judgement.id,
+                jsonb_agg(
+                  CASE
+                    WHEN material.occurred_at IS NOT NULL
+                     AND (
+                       NULLIF(item.value->>'observed_at', '') IS NULL
+                       OR abs(extract(epoch FROM ((item.value->>'observed_at')::timestamptz - material.occurred_at))) > 2
+                     )
+                    THEN jsonb_set(item.value, '{observed_at}', to_jsonb(material.occurred_at), true)
+                    ELSE item.value
+                  END
+                  ORDER BY item.ordinality
+                ) AS evidence
+           FROM life_observer_judgement judgement
+           JOIN life_observer observer ON observer.id = judgement.observer_id
+           CROSS JOIN LATERAL jsonb_array_elements(COALESCE(judgement.evidence, '[]'::jsonb))
+             WITH ORDINALITY AS item(value, ordinality)
+           LEFT JOIN LATERAL (
+             SELECT source.occurred_at
+               FROM life_material source
+              WHERE source.workspace_id = observer.workspace_id AND source.user_id = observer.user_id
+                AND source.source_type = item.value->>'source_type'
+                AND (source.id::text = item.value->>'source_id' OR source.source_key = item.value->>'source_id')
+              ORDER BY (source.id::text = item.value->>'source_id') DESC, source.occurred_at DESC, source.id
+              LIMIT 1
+           ) material ON true
+          WHERE observer.workspace_id = $1 AND observer.user_id = $2
+          GROUP BY judgement.id
+       )
+       UPDATE life_observer_judgement judgement
+          SET evidence = rebuilt.evidence
+         FROM rebuilt
+        WHERE judgement.id = rebuilt.id
+          AND judgement.evidence IS DISTINCT FROM rebuilt.evidence`,
+      [workspace.id, user.id],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function exerciseIdentityUpgrade() {
   const identity = await api("/api/life/identity/versions", {
     method: "POST",
@@ -1157,11 +1247,34 @@ async function finalAudit(companionID, runtimeID) {
           FROM life_observer_judgement judgement
           JOIN life_observer observer ON observer.id=judgement.observer_id
           CROSS JOIN LATERAL jsonb_array_elements(judgement.evidence) evidence
-          JOIN life_material material
-            ON material.workspace_id=observer.workspace_id AND material.user_id=observer.user_id
-           AND material.id::text=(evidence->>'source_id')
+          JOIN LATERAL (
+            SELECT source.occurred_at
+              FROM life_material source
+             WHERE source.workspace_id=observer.workspace_id AND source.user_id=observer.user_id
+               AND source.source_type=evidence->>'source_type'
+               AND (source.id::text=(evidence->>'source_id') OR source.source_key=(evidence->>'source_id'))
+             ORDER BY (source.id::text=(evidence->>'source_id')) DESC, source.occurred_at DESC, source.id
+             LIMIT 1
+          ) material ON true
          WHERE observer.workspace_id=$2 AND observer.user_id=$3
-           AND abs(extract(epoch FROM ((evidence->>'observed_at')::timestamptz-material.occurred_at)))>2) AS observer_evidence_time_mismatches,
+           AND (
+             NULLIF(evidence->>'observed_at', '') IS NULL
+             OR abs(extract(epoch FROM ((evidence->>'observed_at')::timestamptz-material.occurred_at)))>2
+           )) AS observer_evidence_time_mismatches,
+       (SELECT count(*)::int
+          FROM life_memory_evidence evidence
+          JOIN life_memory memory ON memory.id=evidence.memory_id
+          JOIN LATERAL (
+            SELECT source.occurred_at
+              FROM life_material source
+             WHERE source.workspace_id=memory.workspace_id AND source.user_id=memory.user_id
+               AND source.source_type=evidence.source_type
+               AND (source.id=evidence.source_id OR source.source_key=evidence.source_id::text)
+             ORDER BY (source.id=evidence.source_id) DESC, source.occurred_at DESC, source.id
+             LIMIT 1
+          ) material ON true
+         WHERE memory.workspace_id=$2 AND memory.user_id=$3
+           AND abs(extract(epoch FROM (evidence.observed_at-material.occurred_at)))>2) AS memory_evidence_time_mismatches,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status IN ('queued','running','failed')) AS pending,
        (SELECT count(*)::int FROM life_cognition_job WHERE workspace_id=$2 AND user_id=$3 AND status='cancelled') AS recoverable_failures`,
     [session.id, workspace.id, user.id, simulatedStart, new Date(addMonths(simulatedStart, 119).getTime() + 10 * 60_000)],
@@ -1183,7 +1296,7 @@ async function finalAudit(companionID, runtimeID) {
   if (counts[0].memory_revisions < 1) failures.push("no evolving candidate memory was revised in place");
   if (counts[0].memories_without_evidence !== 0 || counts[0].duplicate_memory_contents !== 0) failures.push(`memory integrity evidence=${counts[0].memories_without_evidence} duplicates=${counts[0].duplicate_memory_contents}`);
   if (counts[0].invalid_count_thoughts !== 0) failures.push(`invalidated internal thoughts still active=${counts[0].invalid_count_thoughts}`);
-  if (counts[0].materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches}`);
+  if (counts[0].materials_outside_simulation !== 0 || counts[0].observer_evidence_time_mismatches !== 0 || counts[0].memory_evidence_time_mismatches !== 0) failures.push(`simulated time drift materials=${counts[0].materials_outside_simulation} observer_evidence=${counts[0].observer_evidence_time_mismatches} memory_evidence=${counts[0].memory_evidence_time_mismatches}`);
   if (counts[0].pending !== 0) failures.push(`life jobs pending=${counts[0].pending}`);
   if (modelReliability.unclassified_failures.length > 0) failures.push(`unclassified life failures ${modelReliability.unclassified_failures.length}`);
   if (modelReliability.switch_required && model === "deepseek-v4-pro-ioa") failures.push("DeepSeek reliability threshold reached");
