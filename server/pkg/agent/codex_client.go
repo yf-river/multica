@@ -935,19 +935,6 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	}
 }
 
-func (c *codexClient) handleItemNotification(method string, params map[string]any) {
-	threadID, _ := params["threadId"].(string)
-	itemID := ""
-	if item, ok := params["item"].(map[string]any); ok {
-		itemID, _ = item["id"].(string)
-	}
-	if !c.enterTurnEvent(method, threadID, extractCodexTurnID(params), itemID, false) {
-		return
-	}
-	defer c.finishTurnEvent()
-	c.handleItemNotificationActive(method, params)
-}
-
 func (c *codexClient) handleItemNotificationActive(method string, params map[string]any) {
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
