@@ -358,6 +358,9 @@ SELECT id, workspace_id, title, description, status, priority,
 	prefix := h.getIssuePrefix(ctx, wsUUID)
 	labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to load issue labels")
 		return
 	}
