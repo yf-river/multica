@@ -108,7 +108,7 @@ function QuickMaterialRecorder() {
   const qc = useQueryClient();
   const [material, setMaterial] = useState("");
   const add = useMutation({ mutationFn: () => api.createLifeMaterial(material), onSuccess: () => setMaterial(""), onSettled: () => qc.invalidateQueries({ queryKey: lifeKeys.materials(wsId) }) });
-  return <section data-testid="memory-quick-record" className="mb-5 rounded-xl border border-border/70 bg-background p-4"><div className="flex flex-wrap items-center gap-3"><Textarea className="min-h-10 flex-1" value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t(($) => $.complete.material_placeholder)} /><Button size="sm" disabled={!material.trim() || add.isPending} onClick={() => add.mutate()}><Plus />{t(($) => $.complete.record)}</Button></div></section>;
+  return <section data-testid="memory-quick-record" className="mb-5 rounded-xl border border-border/70 bg-background p-4"><div className="mb-3 text-sm font-medium">{t(($) => $.complete.material_title)}</div><div className="flex flex-wrap items-center gap-3"><Textarea className="min-h-10 flex-1" value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t(($) => $.complete.material_placeholder)} /><Button size="sm" disabled={!material.trim() || add.isPending} onClick={() => add.mutate()}><Plus />{t(($) => $.complete.record)}</Button></div></section>;
 }
 
 function QueryLoading() {
