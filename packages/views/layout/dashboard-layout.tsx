@@ -36,7 +36,7 @@ export function DashboardLayout({
     >
       <SidebarProvider className="h-svh">
         <AppSidebar searchSlot={searchSlot} />
-        <SidebarInset className={`relative overflow-hidden ${isLife ? "md:m-0 md:rounded-none" : ""}`}>
+        <SidebarInset className={`relative overflow-hidden ${isLife ? "md:!m-0 md:!rounded-none" : ""}`}>
           <NavigationProgress />
           {children}
           <ModalRegistry />
