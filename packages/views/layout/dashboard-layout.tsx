@@ -6,6 +6,7 @@ import { ModalRegistry } from "../modals/registry";
 import { AppSidebar } from "./app-sidebar";
 import { DashboardGuard } from "./dashboard-guard";
 import { NavigationProgress } from "./navigation-progress";
+import { useNavigation } from "../navigation";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -23,6 +24,8 @@ export function DashboardLayout({
   searchSlot,
   loadingIndicator,
 }: DashboardLayoutProps) {
+  const { pathname } = useNavigation();
+  const isLife = pathname.includes("/life");
   return (
     <DashboardGuard
       loadingFallback={
@@ -33,7 +36,7 @@ export function DashboardLayout({
     >
       <SidebarProvider className="h-svh">
         <AppSidebar searchSlot={searchSlot} />
-        <SidebarInset className="relative overflow-hidden">
+        <SidebarInset className={`relative overflow-hidden ${isLife ? "md:m-0 md:rounded-none" : ""}`}>
           <NavigationProgress />
           {children}
           <ModalRegistry />

@@ -70,13 +70,13 @@ export function ChatFab() {
         data-testid="chat-fab"
         aria-label={tooltip}
         className={cn(
-          "absolute bottom-2 right-2 z-50 flex size-10 cursor-pointer items-center justify-center rounded-full ring-1 ring-foreground/10 bg-card text-muted-foreground shadow-sm transition-transform hover:scale-110 hover:text-accent-foreground active:scale-95",
+          "fixed bottom-5 right-5 z-50 flex h-12 cursor-pointer items-center gap-2 rounded-full border border-brand/20 bg-background px-2.5 pr-4 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-brand/5",
           // Impulse the button itself while a chat task is running — no
           // outer ring to keep things calm.
           isRunning && "animate-chat-impulse",
         )}
       >
-        <MessageCircle className="size-5" />
+        <span className="relative flex size-8 items-center justify-center rounded-full bg-brand text-brand-foreground"><MessageCircle className="size-4" /><span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-background bg-success" /></span><span>{t(($) => $.fab.companion)}</span>
         {unreadSessionCount > 0 && (
           <span className="pointer-events-none absolute -top-0.5 -right-0.5 flex min-w-4 h-4 items-center justify-center rounded-full bg-brand px-1 text-xs font-semibold leading-none text-background">
             {unreadSessionCount > 9 ? "9+" : unreadSessionCount}

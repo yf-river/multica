@@ -726,10 +726,9 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
           </SidebarGroup>
         </SidebarContent>
 
-        <SidebarFooter className="p-2">
-          <div className="flex justify-end">
-            <HelpLauncher />
-          </div>
+        <SidebarFooter className="gap-2 p-3">
+          <div className="flex items-center justify-between border-t border-border/60 pt-3 text-xs text-muted-foreground"><span>{t(($) => $.sidebar.version_footer)}</span><span>{t(($) => $.sidebar.shortcut_footer)}</span></div>
+          <div className="flex justify-end"><HelpLauncher /></div>
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
