@@ -118,17 +118,10 @@ const (
 	// taskRunFailureReason in daemon/daemon.go.
 	ReasonSkillBundleUnavailable Reason = "skill_bundle_unavailable"
 
-	// ReasonRuntimeCLITimeout: a local runtime CLI the daemon must call
-	// during task preparation did not answer within its deadline — today
-	// that is OpenClaw config discovery (`openclaw config file`), which on
-	// a slow host takes 8-11s against a deadline that used to be 5s
-	// (#7112). Platform-side: the agent process was never launched and no
-	// provider was contacted. Deliberately NOT retryable — the stall is
-	// local and deterministic, so retrying re-pays the same wall-clock and
-	// fails identically. The user-facing fix is to raise
-	// MULTICA_OPENCLAW_CLI_TIMEOUT or speed the CLI up, which is why the
-	// copy names the CLI instead of blaming the network. Written by
-	// taskRunFailureReason in daemon/daemon.go.
+	// ReasonRuntimeCLITimeout: a local runtime CLI needed during task
+	// preparation did not answer within its deadline. The agent process was
+	// never launched and no provider was contacted; retrying is not useful
+	// while the local runtime remains unavailable.
 	ReasonRuntimeCLITimeout Reason = "runtime_cli_timeout"
 
 	// ReasonInvalidTaskIdentity: the daemon refused a claimed task because

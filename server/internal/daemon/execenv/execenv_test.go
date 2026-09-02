@@ -1190,7 +1190,7 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 func TestReuseSkillRefreshIsCanonicalAcrossProviders(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"claude", "codebuddy", "openclaw", "copilot", "qwen", ""} {
+	for _, provider := range []string{"claude", "codebuddy", "copilot", "qwen", ""} {
 		provider := provider
 		name := provider
 		if name == "" {
@@ -1872,58 +1872,6 @@ func TestWriteContextFilesInjectsNameIntoNamelessFrontmatter(t *testing.T) {
 	}
 }
 
-// OpenClaw's native skill scanner reads {workspaceDir}/skills/. The daemon
-// pairs writeContextFiles with a per-task synthesized openclaw-config.json
-// (see openclaw_config.go) that pins agents.defaults.workspace to workDir,
-// so writing skills to {workDir}/skills/ is what the CLI actually scans.
-// This test pins the post-MUL-2219 write path; the previous fallback into
-// .agent_context/skills/ was a dead drop the openclaw scanner never read.
-func TestWriteContextFilesOpenclawNativeSkills(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	ctx := TaskContextForEnv{
-		IssueID: "openclaw-skill-test",
-		AgentSkills: []SkillContextForEnv{
-			{
-				Name:    "Go Conventions",
-				Content: "Follow Go conventions.",
-				Files: []SkillFileContextForEnv{
-					{Path: "templates/example.go", Content: "package main"},
-				},
-			},
-		},
-	}
-
-	if err := writeContextFiles(dir, "openclaw", ctx, nil); err != nil {
-		t.Fatalf("writeContextFiles failed: %v", err)
-	}
-
-	skillMd, err := os.ReadFile(filepath.Join(dir, "skills", "go-conventions", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("failed to read skills/go-conventions/SKILL.md: %v", err)
-	}
-	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
-		t.Error("SKILL.md missing content")
-	}
-
-	supportFile, err := os.ReadFile(filepath.Join(dir, "skills", "go-conventions", "templates", "example.go"))
-	if err != nil {
-		t.Fatalf("failed to read supporting file: %v", err)
-	}
-	if string(supportFile) != "package main" {
-		t.Errorf("supporting file content = %q, want %q", string(supportFile), "package main")
-	}
-
-	// The pre-MUL-2219 fallback path must NOT be written: openclaw never scans it.
-	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
-		t.Error(".agent_context/skills/ MUST NOT be written for openclaw — the scanner does not read that path")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".openclaw", "skills")); !os.IsNotExist(err) {
-		t.Error(".openclaw/skills/ MUST NOT be written — openclaw never scans that path; writing there is a dead drop")
-	}
-}
-
 func TestWriteContextFilesKiroNativeSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -2387,7 +2335,7 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 	t.Cleanup(func() { runtimeGOOS = saved })
 
 	for _, host := range []string{"linux", "darwin", "windows"} {
-		for _, provider := range []string{"claude", "opencode", "openclaw", "hermes", "kimi", "reasonix", "kiro", "cursor"} {
+		for _, provider := range []string{"claude", "opencode", "hermes", "kimi", "reasonix", "kiro", "cursor"} {
 			t.Run(provider+"/"+host, func(t *testing.T) {
 				runtimeGOOS = host
 				dir := t.TempDir()

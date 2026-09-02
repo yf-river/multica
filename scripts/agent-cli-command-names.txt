@@ -14,7 +14,6 @@ kimi
 kiro-cli
 mcode
 omp
-openclaw
 opencode
 pi
 qodercli

@@ -19,7 +19,7 @@ import (
 // back-to-back — measured at 0.012–0.033ms apart on a real host. 400ms is orders
 // of magnitude longer than that, and short enough that the calls task setup
 // makes cost about a second in the misbehaving case instead of a full
-// openclawCLITimeout each.
+// a full command timeout each.
 //
 // What that sizing does *not* cover, and what the caller's `complete` rule has
 // to: a gap between output that is not the answer and the answer itself. On the
@@ -34,8 +34,7 @@ import (
 // this package that qualifies is JSONOutputComplete, because a document has to
 // parse as a whole and because upstream keeps incidental output off a `--json`
 // stdout entirely. Judging human-readable output by shape does not qualify, and
-// the `config file` rule that tried was removed rather than retuned — see
-// openclawOutputComplete in internal/daemon/execenv.
+// human-readable output by shape does not qualify.
 //
 // It is also the window in which a *late* failure can still be observed: a CLI
 // that prints a complete answer and then exits non-zero is reported as the
@@ -75,14 +74,10 @@ func JSONOutputComplete(stdout []byte) bool {
 //
 // # Why "output is enough" beats "wait for exit"
 //
-// Measured on a host running openclaw 2026.5.27:
-//
-//	openclaw --version    258ms  exits cleanly
-//	openclaw config file    60s  correct path printed, then never exits
-//	openclaw agents list    60s  correct list printed, then never exits
+// Some one-shot CLIs print a complete answer but keep helper processes alive.
 //
 // Waiting for exit turns two working commands into a task-fatal error, and they
-// sit on the task's critical path (Prepare -> prepareOpenclawConfig). The
+// sit on the task's critical path during preparation. The
 // contract of those commands is "print a value"; once the value has arrived,
 // whether the process tidies itself up is not the caller's business.
 //
@@ -105,8 +100,7 @@ func JSONOutputComplete(stdout []byte) bool {
 // neither is sufficient alone:
 //
 //   - `complete` accepts the buffer. Idle alone is not enough, because the CLI
-//     may be pausing between a banner and the real answer — `openclaw config
-//     file` prints Doctor warning UI first (see MUL-3136), and cutting off there
+//     may be pausing between a banner and the real answer, and cutting off there
 //     yields the banner instead of the path. The rule carries the whole weight of
 //     that distinction: review broke a rule that judged the path by *shape* with a
 //     warning line that was itself a path, so a rule has to be one the CLI's
@@ -132,7 +126,7 @@ func JSONOutputComplete(stdout []byte) bool {
 //  2. Descendants that are still in the leader's process group are signalled
 //     before returning, and the signal is repeated across collectReapWindow so one
 //     that was mid-fork does not escape. A descendant that left the group is out
-//     of reach on Unix — OpenClaw's helper was measured with its own PGID and SID —
+//     of reach on Unix when a helper leaves its process group,
 //     which is why guarantee 1 does not depend on the kill landing. Windows is
 //     different: the Job Object owns the tree irrespective of groups.
 //  3. Output is not abandoned while something may still be writing it: after the
@@ -140,8 +134,7 @@ func JSONOutputComplete(stdout []byte) bool {
 //     answer is in. Leader exit alone is not treated as completion.
 //  4. Retention is bounded — collectStdoutLimit for the answer (reported, not
 //     silently truncated) and collectStderrTail for the diagnostic sample.
-//  5. The command's real exit status is reported, which openclawShimDiagnostic
-//     depends on (it type-switches on *exec.ExitError).
+//  5. The command's real exit status is reported to callers.
 //
 // Use this only for commands whose entire output is a short one-shot response.
 // Anything that streams incrementally (agent execution) must keep its own

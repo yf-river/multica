@@ -5996,7 +5996,7 @@ func providerDisplayName(name string) string {
 // 2.13.0 ACP smoke — see the call site. Still unprobed: grok, qoder, codebuddy.
 func providerNeedsInlineSystemPrompt(provider string) bool {
 	switch provider {
-	case "openclaw", "kimi", "traecli", "qwenpaw":
+	case "kimi", "traecli", "qwenpaw":
 		return true
 	default:
 		return false
@@ -7274,10 +7274,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			cursorMcpAuthSource = strings.TrimSpace(task.Agent.CustomEnv[execenv.CursorMcpAuthSourceEnv])
 		}
 	}
-	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
-	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
-	// failures fail soft to local mode — a broken JSON blob must never block
-	// task dispatch.
 	var agentEnvOverrides map[string]string
 	var agentCustomArgs []string
 	if task.Agent != nil {
@@ -7981,14 +7977,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 	}
 	// Some providers do not reliably load the per-task runtime config files we
-	// write into the task workdir:
-	//   - openclaw is pinned to the task workdir via the per-task config we
-	//     synthesize (see prepareOpenclawConfig), so AGENTS.md / .agent_context/
-	//     in the workdir ARE picked up by the CLI. Inline injection is retained
-	//     as a belt-and-suspenders for older openclaw releases until that load
-	//     path stabilises in production; remove this once a release tracks the
-	//     workdir bootstrap reliably end-to-end.
-	//   - kimi is wrapped through its own CLI whose cwd handling is opaque
+	// write into the task workdir. Kimi is wrapped through its own CLI whose cwd handling is opaque
 	//     enough that we can't trust the file-based path either.
 	// Pass the full runtime brief inline (CLI catalog + workflow steps + agent
 	// identity/persona + skills + project context) so the backend prepends the
@@ -9270,40 +9259,6 @@ func convertDisabledRuntimeSkillsForEnv(agentData *AgentData, runtimeID, provide
 	return result
 }
 
-// composeOpenclawIncludeRoots returns the value the daemon should set for
-// OPENCLAW_INCLUDE_ROOTS on the child openclaw process so its `$include`
-// loader will follow the wrapper's reference out of envRoot into the
-// user's active config directory.
-//
-// addRoot is the directory we must grant (typically dirname of the user's
-// active openclaw.json). userValue is whatever the daemon's own
-// environment already has under OPENCLAW_INCLUDE_ROOTS — the user's own
-// cross-directory layout. We prepend addRoot, dedupe by string equality,
-// drop empty path segments, and return ok=false when there's nothing to
-// grant (addRoot is empty — fresh install case), so callers can leave the
-// env var alone in that case.
-//
-// Path separator is the OS-native list separator (`:` on Unix, `;` on
-// Windows) to match how OpenClaw splits the env var.
-func composeOpenclawIncludeRoots(addRoot, userValue string) (string, bool) {
-	if addRoot == "" {
-		return "", false
-	}
-	parts := []string{addRoot}
-	seen := map[string]struct{}{addRoot: {}}
-	for _, p := range strings.Split(userValue, string(os.PathListSeparator)) {
-		if p == "" {
-			continue
-		}
-		if _, dup := seen[p]; dup {
-			continue
-		}
-		seen[p] = struct{}{}
-		parts = append(parts, p)
-	}
-	return strings.Join(parts, string(os.PathListSeparator)), true
-}
-
 // ensureTaskTempDir creates this task's private temp directory and returns it
 // with its execution lock held. The caller owns the lock for the lifetime of
 // the run and must release it before removing the directory — see the cleanup
@@ -9384,7 +9339,7 @@ func isBlockedEnvKey(key string) bool {
 		return true
 	}
 	switch upper {
-	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "REASONIX_STATE_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv, "OPENCLAW_CONFIG_PATH", "OPENCLAW_INCLUDE_ROOTS":
+	case "HOME", "PATH", "USER", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "CODEX_HOME", "REASONIX_STATE_HOME", "CURSOR_DATA_DIR", execenv.CursorMcpAuthSourceEnv:
 		return true
 	}
 	return false

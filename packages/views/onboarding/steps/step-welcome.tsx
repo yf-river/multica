@@ -244,7 +244,7 @@ function WelcomeIllustration() {
         actor={{
           kind: "agent",
           name: t(($) => $.welcome.illustration.card4_actor_name),
-          provider: "openclaw",
+          provider: "hermes",
         }}
         issueId="MCA-42"
         content={t(($) => $.welcome.illustration.card4_body)}
@@ -276,7 +276,6 @@ type ProviderName =
   | "claude"
   | "codex"
   | "opencode"
-  | "openclaw"
   | "hermes"
   | "kimi"
   | "kiro"

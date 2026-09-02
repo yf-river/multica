@@ -1,0 +1,3 @@
+-- Retired built-in rows are intentionally not recreated. This migration is
+-- irreversible because the removed templates and generated agents had no
+-- canonical source records.

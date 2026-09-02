@@ -291,16 +291,6 @@ func loadRuntimeMcpServerConfigs(provider string) (map[string]any, bool, error) 
 			configHome = filepath.Join(home, ".config")
 		}
 		path, key, format = filepath.Join(configHome, "opencode", "opencode.json"), "mcp", "json"
-	case "openclaw":
-		path = strings.TrimSpace(os.Getenv("CLAWDBOT_CONFIG_PATH"))
-		if path == "" {
-			stateDir := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR"))
-			if stateDir == "" {
-				stateDir = filepath.Join(home, ".openclaw")
-			}
-			path = filepath.Join(stateDir, "openclaw.json")
-		}
-		key, format = "mcp.servers", "json"
 	default:
 		return map[string]any{}, false, nil
 	}
@@ -425,16 +415,6 @@ func listRuntimeLocalMcpServers(provider string) ([]runtimeLocalMcpServerSummary
 			configHome = filepath.Join(home, ".config")
 		}
 		path, key, source, format = filepath.Join(configHome, "opencode", "opencode.json"), "mcp", "User config", "json"
-	case "openclaw":
-		path = strings.TrimSpace(os.Getenv("CLAWDBOT_CONFIG_PATH"))
-		if path == "" {
-			stateDir := strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR"))
-			if stateDir == "" {
-				stateDir = filepath.Join(home, ".openclaw")
-			}
-			path = filepath.Join(stateDir, "openclaw.json")
-		}
-		key, source, format = "mcp.servers", "User config", "json"
 	case "omp":
 		// Inventory scope: omp discovers servers from a multi-level precedence
 		// chain (.omp/mcp.json, .omp/.mcp.json, profile/user-level configs, and

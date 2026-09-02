@@ -35,7 +35,6 @@ import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
-import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -56,8 +55,7 @@ export type DetailTab =
   | "general"
   | "access"
   | "env"
-  | "custom_args"
-  | "runtime_config";
+  | "custom_args";
 
 type SecondaryTab = {
   id: DetailTab;
@@ -70,8 +68,7 @@ type SecondaryTab = {
     | "general"
     | "access"
     | "environment"
-    | "custom_args"
-    | "runtime_config";
+    | "custom_args";
 };
 
 const CAPABILITY_TABS: SecondaryTab[] = [
@@ -87,7 +84,6 @@ const SETTINGS_TABS: SecondaryTab[] = [
   { id: "access", labelKey: "access" },
   { id: "env", labelKey: "environment" },
   { id: "custom_args", labelKey: "custom_args" },
-  { id: "runtime_config", labelKey: "runtime_config" },
 ];
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
@@ -226,7 +222,6 @@ export function AgentOverviewPane({
         // showing the tab to anyone else guarantees a 403 on "Reveal & edit".
         // The server stays the boundary; this only removes a dead entry point.
         if (tab.id === "env") return canEdit;
-        if (tab.id === "runtime_config") return false;
         return true;
       }),
     [canEdit, runtime?.provider],
@@ -481,13 +476,6 @@ export function AgentOverviewPane({
                     <CustomArgsTab
                       agent={agent}
                       runtimeDevice={runtime ?? undefined}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
-                      onDirtyChange={setActiveDirty}
-                    />
-                  )}
-                  {effectiveView === "runtime_config" && (
-                    <RuntimeConfigTab
-                      agent={agent}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
                     />

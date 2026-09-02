@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 func TestResolveAgentExecutablePath_PreservesDispatchShimName(t *testing.T) {
@@ -1441,7 +1439,6 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 	for _, name := range []string{
 		"MULTICA_CLAUDE_PATH",
 		"MULTICA_OPENCODE_PATH",
-		"MULTICA_OPENCLAW_PATH",
 		"MULTICA_HERMES_PATH",
 		"MULTICA_PI_PATH",
 		"MULTICA_CURSOR_PATH",
@@ -1455,23 +1452,3 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 		t.Setenv(name, filepath.Join(missingDir, strings.ToLower(name)))
 	}
 }
-
-// =============================================================================
-// CLI config Backends.OpenClaw overrides (issue #3875)
-// =============================================================================
-
-// writeCLIConfigForProfile is a minimal helper for the override tests:
-// stages a HOME, writes a config.json under the given profile (empty profile
-// = default), and returns the resolved path so tests can assert against it.
-func writeCLIConfigForProfile(t *testing.T, profile string, cfg cli.CLIConfig) {
-	t.Helper()
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		t.Fatalf("write cli config: %v", err)
-	}
-}
-
-// TestApplyOpenclawOverride_DoesNothingWhenNil verifies the early-return
-// path. A daemon started with no override should not Setenv anything; the
-// existing probe / spawn flow remains undisturbed.
