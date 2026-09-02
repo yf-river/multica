@@ -783,7 +783,7 @@ func buildPendingHumanConfirmationTimelineNode(root issueExecutionNodeResponse, 
 		selected = laterPendingHumanConfirmationCandidate(selected, candidate)
 	}
 	for _, task := range tasks {
-		if !isPMCoordinatorTask(task) || !isTerminalTimelineStatus(task.Status) {
+		if !task.IsLeaderTask || !isTerminalTimelineStatus(task.Status) {
 			continue
 		}
 		taskSignalAt, ok := parseTaskCompletedAt(task)
@@ -890,14 +890,6 @@ func isStillPendingHumanConfirmation(root issueExecutionNodeResponse, taskID str
 		}
 	}
 	return true
-}
-
-func isPMCoordinatorTask(task AgentTaskResponse) bool {
-	if task.IsLeaderTask {
-		return true
-	}
-	name := strings.ToLower(taskAgentName(task))
-	return strings.Contains(name, "pm") || strings.Contains(name, "项目经理") || strings.Contains(name, "coordinator")
 }
 
 func taskAgentName(task AgentTaskResponse) string {
@@ -1277,7 +1269,7 @@ func artifactKind(filename, contentType string) string {
 
 func timelineTaskSummary(task AgentTaskResponse) string {
 	resultSummary := taskResultIntentSummary(task.Result)
-	if (isPMCoordinatorTask(task) || isTerminalTimelineStatus(task.Status)) && resultSummary != "" {
+	if (task.IsLeaderTask || isTerminalTimelineStatus(task.Status)) && resultSummary != "" {
 		return resultSummary
 	}
 	if summary := ptrString(task.TriggerSummary); summary != "" {

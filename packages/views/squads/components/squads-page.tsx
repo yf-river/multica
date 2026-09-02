@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Archive,
   ArchiveRestore,
@@ -8,24 +8,20 @@ import {
   ArrowUp,
   ChevronDown,
   Filter,
-  Loader2,
   Plus,
   Users,
   X,
 } from "lucide-react";
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,
   memberListOptions,
   squadListOptions,
-  workspaceKeys,
 } from "@multica/core/workspace/queries";
-import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes";
 import { useAuthStore } from "@multica/core/auth";
 import { canManageWorkspace, resolveCurrentMember } from "@multica/core/permissions";
-import { api } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
 import {
   useSquadsViewStore,
@@ -38,27 +34,9 @@ import {
 } from "@multica/core/squads/stores";
 import type {
   Agent,
-  EnsureInternalSquadTemplateRequest,
   Squad,
-  SquadScope,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
-import { Input } from "@multica/ui/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@multica/ui/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@multica/ui/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -97,23 +75,13 @@ import {
   ListGridRowMenuButton,
   ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
-import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
-import {
-  ResourceScopeBadge,
-  resourceSegmentedOptionClass,
-} from "../../common/resource-scope";
-import { useNavigation, useRowLink } from "../../navigation";
+import { ResourceScopeBadge } from "../../common/resource-scope";
+import { useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { indexBy } from "../../common/collections";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
-import {
-  bestRuntimeForPMProvider,
-  PM_DEFAULT_PROVIDER,
-  pmProviderChoices,
-  preferredPMModel,
-} from "./pm-runtime-selection";
 import { SquadArchiveDialog, useRestoreSquad } from "./squad-lifecycle";
 import { SquadAvatar } from "./squad-avatar";
 
@@ -129,8 +97,6 @@ const COLUMN_WIDTHS: Record<SquadColumnKey, number> = {
   creator: 144,
   created: 104,
 };
-const DEFAULT_PM_SQUAD_NAME = "pm";
-
 // Zero-width tracks still retain the seven 12px grid gaps.
 const FIXED_TRACKS_WIDTH = 224 + LEADER_WIDTH + 7 * 12;
 
@@ -149,17 +115,6 @@ function columnTrackVars(
     "--sqc-leader": `${LEADER_WIDTH}px`,
     "--sqc-kebab": showActions ? "1.75rem" : "0px",
   } as React.CSSProperties;
-}
-
-function providerLabel(provider: string) {
-  const labels: Record<string, string> = {
-    codex: "Codex",
-    codebuddy: "CodeBuddy",
-    claude: "Claude",
-    cursor: "Cursor",
-    kimi: "Kimi",
-  };
-  return labels[provider.toLowerCase()] ?? provider;
 }
 
 function NameCell({ squad }: { squad: Squad }) {
@@ -299,35 +254,6 @@ function SquadRowActions({ squad }: { squad: Squad }) {
         />
       )}
     </span>
-  );
-}
-
-function SquadScopeToggle({
-  value,
-  onChange,
-}: {
-  value: SquadScope;
-  onChange: (value: SquadScope) => void;
-}) {
-  const { t } = useT("squads");
-  const options: SquadScope[] = ["workspace", "personal"];
-  return (
-    <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
-      {options.map((option) => (
-        <button
-          key={option}
-          type="button"
-          onClick={() => onChange(option)}
-          className={
-            resourceSegmentedOptionClass(value === option)
-          }
-        >
-          {option === "personal"
-            ? t(($) => $.page.scope_personal)
-            : t(($) => $.page.scope_workspace)}
-        </button>
-      ))}
-    </div>
   );
 }
 
@@ -718,8 +644,6 @@ export function SquadsPage() {
   const wsId = useWorkspaceId();
   const p = useWorkspacePaths();
   const rowLink = useRowLink();
-  const navigation = useNavigation();
-  const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
 
   const { data: squads = [], isLoading } = useQuery({
@@ -728,120 +652,12 @@ export function SquadsPage() {
   });
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: runtimes = [] } = useQuery({
-    ...runtimeListOptions(wsId),
-    enabled: !!wsId,
-  });
-
   const agentsById = useMemo(() => indexBy(agents, (agent) => agent.id), [agents]);
   const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
   const isWorkspaceAdmin = canManageWorkspace(
     resolveCurrentMember(members, currentUser?.id).role,
   );
-  const [pmDialogOpen, setPmDialogOpen] = useState(false);
-  const [pmName, setPmName] = useState(DEFAULT_PM_SQUAD_NAME);
-  const [pmProvider, setPmProvider] = useState(PM_DEFAULT_PROVIDER);
-  const [pmModel, setPmModel] = useState("");
-  const [pmModelTouched, setPmModelTouched] = useState(false);
-  const [pmScope, setPmScope] = useState<SquadScope>("workspace");
-  const providerChoices = useMemo(() => {
-    return pmProviderChoices(runtimes, pmScope, currentUser?.id ?? null);
-  }, [runtimes, pmScope, currentUser]);
-  useEffect(() => {
-    if (providerChoices.length === 0) {
-      setPmModel("");
-      setPmModelTouched(false);
-      return;
-    }
-    if (providerChoices.includes(pmProvider)) return;
-    setPmProvider(
-      providerChoices.includes(PM_DEFAULT_PROVIDER)
-        ? PM_DEFAULT_PROVIDER
-        : providerChoices[0]!,
-    );
-    setPmModel("");
-    setPmModelTouched(false);
-  }, [providerChoices, pmProvider]);
-  const selectedPmRuntime = useMemo(
-    () =>
-      bestRuntimeForPMProvider(
-        runtimes,
-        pmProvider,
-        pmScope,
-        currentUser?.id ?? null,
-      ),
-    [runtimes, pmProvider, pmScope, currentUser],
-  );
-  const selectedPmRuntimeModelsRuntimeId =
-    pmDialogOpen && selectedPmRuntime?.status === "online"
-      ? selectedPmRuntime.id
-      : null;
-  const pmRuntimeModelsQuery = useQuery(
-    runtimeModelsOptions(selectedPmRuntimeModelsRuntimeId),
-  );
-  const suggestedPmModel = useMemo(
-    () => preferredPMModel(pmRuntimeModelsQuery.data?.models ?? []),
-    [pmRuntimeModelsQuery.data],
-  );
-  const pmModelDiscoveryPending =
-    Boolean(selectedPmRuntime) && pmRuntimeModelsQuery.isLoading;
-  useEffect(() => {
-    if (!pmDialogOpen || pmModelTouched) return;
-    if (pmRuntimeModelsQuery.isLoading) return;
-    if (!suggestedPmModel) return;
-    if (pmModel !== suggestedPmModel) {
-      setPmModel(suggestedPmModel);
-    }
-  }, [
-    pmDialogOpen,
-    pmModel,
-    pmModelTouched,
-    pmRuntimeModelsQuery.isLoading,
-    suggestedPmModel,
-  ]);
-  const ensureInternalSquad = useMutation({
-    mutationFn: (payload: EnsureInternalSquadTemplateRequest) =>
-      api.ensureInternalSquadTemplate(payload),
-    onSuccess: (result) => {
-      toast.success(t(($) => $.pm_dialog.ready_toast, { name: result.squad.name }));
-      setPmDialogOpen(false);
-      const detailPath = p.squadDetail(result.squad.id);
-      navigation.push(detailPath);
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
-    },
-    onError: (err) => toast.error(err instanceof Error ? err.message : String(err)),
-  });
-  const openPmDialog = () => {
-    const defaultProvider = providerChoices.includes(PM_DEFAULT_PROVIDER)
-      ? PM_DEFAULT_PROVIDER
-      : providerChoices[0];
-    if (!providerChoices.includes(pmProvider)) {
-      setPmProvider(defaultProvider ?? PM_DEFAULT_PROVIDER);
-    }
-    setPmName(DEFAULT_PM_SQUAD_NAME);
-    setPmModel("");
-    setPmModelTouched(false);
-    setPmDialogOpen(true);
-  };
-  const handlePmScopeChange = (nextScope: SquadScope) => {
-    if (nextScope === pmScope) return;
-    setPmScope(nextScope);
-    setPmModel("");
-    setPmModelTouched(false);
-  };
-  const ensurePmSquad = () => {
-    const name = pmName.trim();
-    if (!name) return;
-    ensureInternalSquad.mutate({
-      template_key: "user-center",
-      name,
-      runtime_provider: pmProvider,
-      scope: pmScope,
-      ...(pmModel.trim() ? { model: pmModel.trim() } : {}),
-    });
-  };
 
   const scope = useSquadsViewStore((s) => s.scope);
   const setScope = useSquadsViewStore((s) => s.setScope);
@@ -952,122 +768,6 @@ export function SquadsPage() {
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      <Dialog open={pmDialogOpen} onOpenChange={setPmDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t(($) => $.pm_dialog.title)}</DialogTitle>
-            <DialogDescription>
-              {t(($) => $.pm_dialog.description)}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <div className="mb-1.5 text-xs text-muted-foreground">
-                {t(($) => $.pm_dialog.name_label)}
-              </div>
-              <Input
-                autoFocus
-                value={pmName}
-                onChange={(event) => setPmName(event.target.value)}
-                placeholder={t(($) => $.pm_dialog.name_placeholder)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") ensurePmSquad();
-                }}
-              />
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {t(($) => $.pm_dialog.name_hint)}
-              </p>
-            </div>
-            <div>
-              <div className="mb-1.5 text-xs text-muted-foreground">
-                {t(($) => $.pm_dialog.scope_label)}
-              </div>
-              <SquadScopeToggle
-                value={pmScope}
-                onChange={handlePmScopeChange}
-              />
-            </div>
-            <div>
-              <div className="mb-1.5 text-xs text-muted-foreground">
-                {t(($) => $.pm_dialog.runtime_label)}
-              </div>
-              <Select
-                value={pmProvider}
-                onValueChange={(value) => {
-                  if (!value) return;
-                  setPmProvider(value);
-                  setPmModel("");
-                  setPmModelTouched(false);
-                }}
-              >
-                <SelectTrigger className="w-full" disabled={providerChoices.length === 0}>
-                  <SelectValue>
-                    {providerChoices.length === 0
-                      ? t(($) => $.pm_dialog.no_runtime)
-                      : providerLabel(pmProvider)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent align="start">
-                  {providerChoices.map((provider) => (
-                    <SelectItem key={provider} value={provider}>
-                      {providerLabel(provider)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {selectedPmRuntime
-                  ? t(($) => $.pm_dialog.runtime_online, {
-                      name: selectedPmRuntime.name,
-                    })
-                  : providerChoices.length === 0
-                    ? pmScope === "workspace"
-                      ? t(($) => $.pm_dialog.workspace_runtime_missing)
-                      : t(($) => $.pm_dialog.personal_runtime_missing)
-                    : t(($) => $.pm_dialog.provider_runtime_offline, {
-                        provider: providerLabel(pmProvider),
-                      })}
-              </p>
-            </div>
-
-            <ModelDropdown
-              runtimeId={selectedPmRuntime?.id ?? null}
-              runtimeOnline={selectedPmRuntime?.status === "online"}
-              value={pmModel}
-              onChange={(value) => {
-                setPmModel(value);
-                setPmModelTouched(true);
-              }}
-              disabled={!selectedPmRuntime}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setPmDialogOpen(false)}
-              disabled={ensureInternalSquad.isPending}
-            >
-              {t(($) => $.pm_dialog.cancel)}
-            </Button>
-            <Button
-              onClick={ensurePmSquad}
-              disabled={
-                ensureInternalSquad.isPending ||
-                !pmName.trim() ||
-                providerChoices.length === 0 ||
-                !selectedPmRuntime ||
-                pmModelDiscoveryPending
-              }
-            >
-              {ensureInternalSquad.isPending && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-              {t(($) => $.pm_dialog.submit)}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <PageHeader className="justify-between px-5">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-muted-foreground" />
@@ -1079,19 +779,6 @@ export function SquadsPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1 px-2.5"
-            data-testid="ensure-pm-squad"
-            disabled={ensureInternalSquad.isPending}
-            onClick={openPmDialog}
-          >
-            {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
-            <span className="hidden lg:inline">
-              {t(($) => $.pm_dialog.button)}
-            </span>
-          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -1120,16 +807,6 @@ export function SquadsPage() {
             <Plus className="size-3.5" />
             {t(($) => $.page.new_button)}
           </Button>
-          <div className="flex flex-wrap justify-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={ensureInternalSquad.isPending}
-              onClick={openPmDialog}
-            >
-              {t(($) => $.pm_dialog.button)}
-            </Button>
-          </div>
         </div>
       ) : (
         <>

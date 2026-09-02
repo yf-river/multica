@@ -480,7 +480,7 @@ describe("buildRunReviewEventRows", () => {
       timelineNode({
         node_id: "approval:wakeup",
         node_type: "approval",
-        summary: "唤醒 PM",
+        summary: "唤醒 coordinator",
         status: "completed",
       }),
     ]);
@@ -569,40 +569,40 @@ describe("buildRunReviewEventRows", () => {
     expect(groups[0]?.events.map((event) => event.id)).toEqual(["message:1", "trace:2"]);
   });
 
-  it("labels repeated PM task groups by task intent instead of only agent name", () => {
+  it("labels repeated coordinator task groups by task intent instead of only agent name", () => {
     const labels = buildEventTaskLabelById([
       timelineNode({
-        node_id: "task:pm-summary",
-        agent_name: "pm-v2 · PM-项目经理",
+        node_id: "task:coordinator-summary",
+        agent_name: "coordinator-v2 · 协调者",
         summary: "需求摘要生成",
       }),
       timelineNode({
-        node_id: "task:pm-wait",
-        agent_name: "pm-v2 · PM-项目经理",
+        node_id: "task:coordinator-wait",
+        agent_name: "coordinator-v2 · 协调者",
         summary: "等待用户确认密码策略边界",
       }),
     ]);
 
-    expect(labels.get("pm-summary")).toBe("需求摘要生成");
-    expect(labels.get("pm-wait")).toBe("等待用户确认密码策略边界");
+    expect(labels.get("coordinator-summary")).toBe("需求摘要生成");
+    expect(labels.get("coordinator-wait")).toBe("等待用户确认密码策略边界");
   });
 
-  it("ignores markdown dividers when labeling PM task groups", () => {
+  it("ignores markdown dividers when labeling coordinator task groups", () => {
     const labels = buildEventTaskLabelById([
       timelineNode({
-        node_id: "task:pm-wait",
-        agent_name: "pm-v2 · PM-项目经理",
+        node_id: "task:coordinator-wait",
+        agent_name: "coordinator-v2 · 协调者",
         summary: "---",
       }),
       timelineNode({
-        node_id: "task:pm-heading",
-        agent_name: "pm-v2 · PM-项目经理",
+        node_id: "task:coordinator-heading",
+        agent_name: "coordinator-v2 · 协调者",
         summary: "---\n\n## 01-需求澄清已完成，需等待用户确认",
       }),
     ]);
 
-    expect(labels.get("pm-wait")).toBe("pm-v2 · PM-项目经理");
-    expect(labels.get("pm-heading")).toBe("01-需求澄清已完成，需等待用户确认");
+    expect(labels.get("coordinator-wait")).toBe("coordinator-v2 · 协调者");
+    expect(labels.get("coordinator-heading")).toBe("01-需求澄清已完成，需等待用户确认");
   });
 
   it("keeps duplicate user input snapshots out of the default visible event stream", () => {
@@ -614,7 +614,7 @@ describe("buildRunReviewEventRows", () => {
         trace_events: [
           trace({
             id: "input-1",
-            task_id: "pm-1",
+            task_id: "coordinator-1",
             event_type: "user_input.received",
             event_name: "用户输入已接收",
             status: "completed",
@@ -628,7 +628,7 @@ describe("buildRunReviewEventRows", () => {
           }),
           trace({
             id: "input-2",
-            task_id: "pm-2",
+            task_id: "coordinator-2",
             event_type: "user_input.received",
             event_name: "用户输入已接收",
             status: "completed",
@@ -1215,14 +1215,14 @@ describe("buildRunReviewEventRows", () => {
   it("aggregates repeated runs from the same agent node", () => {
     const baseNode = timelineNode({
       node_id: "task:base",
-      agent_id: "agent-pm",
-      agent_name: "PM-项目经理",
+      agent_id: "agent-coordinator",
+      agent_name: "协调者",
       input_tokens: 10,
       output_tokens: 20,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      summary: "pm run",
+      summary: "coordinator run",
       artifacts: [artifact({
         id: "att-old",
         filename: "handoff.md",
@@ -1252,8 +1252,8 @@ describe("buildRunReviewEventRows", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      key: "agent-pm",
-      label: "PM-项目经理",
+      key: "agent-coordinator",
+      label: "协调者",
       runCount: 2,
       taskIds: ["task-1", "task-2"],
     });
@@ -1265,17 +1265,17 @@ describe("buildRunReviewEventRows", () => {
     expect(rows[0]?.node.artifacts?.[0]?.id).toBe("att-new");
   });
 
-  it("keeps repeated PM runs on one horizontal timeline row while keeping node aggregation available", () => {
+  it("keeps repeated coordinator runs on one horizontal timeline row while keeping node aggregation available", () => {
     const baseNode = timelineNode({
-      node_id: "task:pm-1",
-      agent_id: "agent-pm",
-      agent_name: "PM-项目经理",
+      node_id: "task:coordinator-1",
+      agent_id: "agent-coordinator",
+      agent_name: "协调者",
       input_tokens: 10,
       output_tokens: 20,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      summary: "pm run",
+      summary: "coordinator run",
       artifacts: [],
     });
 
@@ -1283,16 +1283,16 @@ describe("buildRunReviewEventRows", () => {
       baseNode,
       {
         ...baseNode,
-        node_id: "task:pm-2",
+        node_id: "task:coordinator-2",
         started_at: "2026-06-09T10:02:00.000Z",
         completed_at: "2026-06-09T10:03:00.000Z",
       },
     ]);
 
     expect(timelineRows).toHaveLength(1);
-    expect(timelineRows[0]?.label).toBe("PM-项目经理");
-    expect(timelineRows[0]?.key).toBe("agent-pm");
-    expect(timelineRows[0]?.segments?.map((segment) => segment.key)).toEqual(["agent-pm:pm-1", "agent-pm:pm-2"]);
+    expect(timelineRows[0]?.label).toBe("协调者");
+    expect(timelineRows[0]?.key).toBe("agent-coordinator");
+    expect(timelineRows[0]?.segments?.map((segment) => segment.key)).toEqual(["agent-coordinator:coordinator-1", "agent-coordinator:coordinator-2"]);
     expect(timelineRows[0]?.segments?.map((segment) => segment.ordinal)).toEqual([1, 2]);
     expect(timelineRows[0]?.segments?.map((segment) => segment.total)).toEqual([2, 2]);
     expect(timelineRows[0]?.node?.duration_ms).toBe(120_000);
@@ -1302,19 +1302,19 @@ describe("buildRunReviewEventRows", () => {
 
   it("keeps human confirmation and child waits on dedicated horizontal timeline rows", () => {
     const agentNode = timelineNode({
-      node_id: "task:pm-1",
-      agent_id: "agent-pm",
-      agent_name: "PM-项目经理",
+      node_id: "task:coordinator-1",
+      agent_id: "agent-coordinator",
+      agent_name: "协调者",
       input_tokens: 10,
       output_tokens: 20,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      summary: "pm run",
+      summary: "coordinator run",
       artifacts: [],
     });
     const waitNode = timelineNode({
-      node_id: "human_confirmation:comment-1:pm-2",
+      node_id: "human_confirmation:comment-1:coordinator-2",
       node_type: "human_confirmation",
       started_at: "2026-06-09T10:01:00.000Z",
       completed_at: "2026-06-09T10:06:00.000Z",
@@ -1339,7 +1339,7 @@ describe("buildRunReviewEventRows", () => {
       [agentNode, waitNode, childNode],
     );
 
-    expect(rows.map((row) => row.key)).toEqual(["human-confirmation", "child-issue-wait", "agent-pm"]);
+    expect(rows.map((row) => row.key)).toEqual(["human-confirmation", "child-issue-wait", "agent-coordinator"]);
     expect(rows[0]).toMatchObject({
       label: "人工确认",
       kind: "human_confirmation",
@@ -1347,7 +1347,7 @@ describe("buildRunReviewEventRows", () => {
     });
     expect(rows[0]?.segments).toHaveLength(1);
     expect(rows[0]?.segments[0]).toMatchObject({
-      key: "human_confirmation:comment-1:pm-2",
+      key: "human_confirmation:comment-1:coordinator-2",
       label: "等待人工确认：确认继续",
       durationMs: 300_000,
       tokenTotal: 0,
@@ -1383,36 +1383,36 @@ describe("buildRunReviewEventRows", () => {
 
   it("uses agent responsibility windows without separate dispatch wait segments", () => {
     const firstRun = timelineNode({
-      node_id: "task:pm-1",
-      agent_id: "agent-pm",
-      agent_name: "PM-项目经理",
+      node_id: "task:coordinator-1",
+      agent_id: "agent-coordinator",
+      agent_name: "协调者",
       actual_started_at: "2026-06-09T10:00:00.000Z",
       input_tokens: 10,
       output_tokens: 20,
       message_count: 1,
       agent_turn_count: 1,
       trace_event_count: 1,
-      summary: "pm first run",
+      summary: "coordinator first run",
       artifacts: [],
     });
     const secondRun = {
       ...firstRun,
-      node_id: "task:pm-2",
+      node_id: "task:coordinator-2",
       started_at: "2026-06-09T10:01:00.000Z",
       actual_started_at: "2026-06-09T10:06:00.000Z",
       completed_at: "2026-06-09T10:07:00.000Z",
       duration_ms: 360_000,
-      summary: "pm second run",
+      summary: "coordinator second run",
     } as IssueTimelineNode;
 
     const agentRows = buildTimelineAgentRows([firstRun, secondRun]);
     const rows = buildTimelineBarRows(agentRows, [], [firstRun, secondRun]);
 
-    expect(rows.map((row) => row.key)).toEqual(["agent-pm"]);
+    expect(rows.map((row) => row.key)).toEqual(["agent-coordinator"]);
     expect(rows[0]?.segments.map((segment) => segment.node.node_type)).toEqual(["agent_task", "agent_task"]);
     expect(rows[0]?.segments[1]).toMatchObject({
-      key: "agent-pm:pm-2",
-      label: "PM-项目经理",
+      key: "agent-coordinator:coordinator-2",
+      label: "协调者",
       durationMs: 360_000,
       tokenTotal: 30,
     });
@@ -1439,8 +1439,8 @@ describe("buildRunReviewEventRows", () => {
   it("does not inflate short timeline runs to one minute", () => {
     const node = timelineNode({
       node_id: "task:short-run",
-      agent_id: "agent-pm",
-      agent_name: "PM-项目经理",
+      agent_id: "agent-coordinator",
+      agent_name: "协调者",
       started_at: "2026-06-09T10:00:00.000Z",
       completed_at: "2026-06-09T10:00:20.000Z",
       duration_ms: 20_000,

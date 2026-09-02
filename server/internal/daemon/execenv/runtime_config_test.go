@@ -449,7 +449,7 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 
 	for _, want := range []string{
 		"Squad-leader / coordinator guardrail",
-		"If your Agent Identity says PM, coordinator, dispatcher, reviewer, or stage owner rather than developer",
+		"If your Agent Identity says coordinator, dispatcher, reviewer, or stage owner rather than developer",
 		"do not check out repositories, edit files, run implementation tests, or claim implementation is complete",
 		"A coordinator must not run repo-inspection, build, test, or wait/poll commands",
 		"`git`, `rg`, `cat`, `find`, `sed`, `ls`, `go test`, `pnpm`, `npm`, `make`, `sleep`, `watch`, `multica issue runs`, or `multica issue activity`",
@@ -479,14 +479,14 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 	}
 }
 
-func TestStageChainPMCoordinatorGetsEntryRule(t *testing.T) {
+func TestStageChainCoordinatorGetsEntryRule(t *testing.T) {
 	t.Parallel()
 	const issueID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 	ctx := TaskContextForEnv{
 		IssueID:           issueID,
 		IsSquadLeader:     true,
-		AgentName:         "PM-项目经理",
-		AgentInstructions: "PM -> 01-需求澄清 -> 02-方案设计\nstage_chain",
+		AgentName:         "协调者",
+		AgentInstructions: "stage_chain",
 		ExecutionPolicy: TaskExecutionPolicyForEnv{
 			RoleKind:      "coordinator",
 			CanAccessRepo: false,
@@ -494,34 +494,21 @@ func TestStageChainPMCoordinatorGetsEntryRule(t *testing.T) {
 	}
 	out := buildMetaSkillContent("claude", ctx)
 
-	for _, want := range []string{
-		"Stage-chain PM entry rule from your squad instructions",
-		"this assignment-triggered PM turn is never an implementation turn",
-		"Your first PM turn must dispatch `01-需求澄清`",
-		"the complete successful outcome is only",
-		"run `multica squad activity " + issueID + " action --reason \"dispatch 01\"`",
-		"return a short Markdown final output",
-		"Do not call `multica issue comment add`",
-		"do not run any other tools after the activity call",
-		"This task has no native file-write tool",
-		"Example final output shape",
-		"调度 01-需求澄清",
-	} {
+	for _, want := range []string{"Stage-chain coordinator entry rule", "not an implementation turn", "configured stage", "mention://agent"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("stage-chain PM runtime brief missing %q\n--- output ---\n%s", want, out)
+			t.Fatalf("stage-chain coordinator runtime brief missing %q\n--- output ---\n%s", want, out)
 		}
 	}
 }
 
-func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
+func TestStageChainCoordinatorGetsCommentTriggerRule(t *testing.T) {
 	t.Parallel()
 	ctx := TaskContextForEnv{
-		IssueID:          "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
-		TriggerCommentID: "11111111-1111-1111-1111-111111111111",
-		IsSquadLeader:    true,
-		AgentName:        "PM-项目经理",
-		AgentInstructions: "PM -> 01-需求澄清 -> 02-方案设计\n" +
-			"stage_chain",
+		IssueID:           "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+		TriggerCommentID:  "11111111-1111-1111-1111-111111111111",
+		IsSquadLeader:     true,
+		AgentName:         "协调者",
+		AgentInstructions: "stage_chain",
 		ExecutionPolicy: TaskExecutionPolicyForEnv{
 			RoleKind:      "coordinator",
 			CanAccessRepo: false,
@@ -530,19 +517,17 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 	out := buildMetaSkillContent("claude", ctx)
 
 	for _, want := range []string{
-		"Stage-chain PM rule from your squad instructions",
+		"Stage-chain coordinator rule from your squad instructions",
 		"only review the latest stage output or human reply",
-		"Do not implement, inspect repositories, create MRs, run tests, or simulate 01-05 inside this PM task",
+		"Do not implement, inspect repositories, create MRs, run tests, or simulate stages inside this coordinator task",
 		"your final assistant output must repeat that exact dispatch comment",
 		"Do not replace it with a summary",
-		"Stage-chain PM transition rule",
-		"advance exactly one step in the chain: 01→02, 02→03, 03→04, 04→05, and 05→done",
+		"Stage-chain transition rule",
 		"Do not repeat or paraphrase the completed stage handoff as your own final output",
-		"If the completed stage is 03 or 04, your visible PM output must be a dispatch comment for 04 or 05",
 		"Stage-chain dispatch verification rule",
 		"A stage is actually dispatched only when the platform has a real queued, dispatched, running, or completed task for that target agent",
 		"re-dispatch with exactly one real mention instead of recording `no_action`",
-		"Stage-chain PM wait/block rule",
+		"Stage-chain wait/block rule",
 		"Do not record only `no_action`",
 		"silence leaves the issue stuck with no user-readable state",
 		"Stage-chain clarification closure rule",
@@ -551,9 +536,6 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"Stage-chain cross-project gate",
 		"create or reuse the required child issue with `--parent`, target `--project`, executable assignee, and `--status todo`, then wait",
 		"do not dispatch the parent issue to `04-开发` or `05-验证测试`",
-		"Stage-chain verification dispatch rule",
-		"harness/sandbox/run-password-e2e.sh",
-		"A basic gRPC service-list or `GetPrivateBuiltinSuperAdminTenantId` smoke is not enough for password business E2E",
 		"This task has no native file-write tool",
 		"final assistant output",
 		"the platform will automatically post it as a reply under the triggering comment",
@@ -561,7 +543,7 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action",
 	} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("stage-chain PM comment-trigger brief missing %q\n--- output ---\n%s", want, out)
+			t.Fatalf("stage-chain coordinator comment-trigger brief missing %q\n--- output ---\n%s", want, out)
 		}
 	}
 	for _, banned := range []string{
@@ -569,7 +551,7 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"Write the reply body to a UTF-8 file",
 	} {
 		if strings.Contains(out, banned) {
-			t.Fatalf("stage-chain PM coordinator comment-trigger brief should not require file-write reply form %q\n--- output ---\n%s", banned, out)
+			t.Fatalf("stage-chain coordinator comment-trigger brief should not require file-write reply form %q\n--- output ---\n%s", banned, out)
 		}
 	}
 }
@@ -579,7 +561,7 @@ func TestTaskCapabilityPolicyNoRepoBlocksHostPathInspection(t *testing.T) {
 	out := buildMetaSkillContent("codex", TaskContextForEnv{
 		IssueID: "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
 		ExecutionPolicy: TaskExecutionPolicyForEnv{
-			RoleKey:          "pm",
+			RoleKey:          "coordinator",
 			RoleKind:         "coordinator",
 			CanAccessRepo:    false,
 			CanEditRepo:      false,

@@ -1,0 +1,1 @@
+-- Irreversible data removal: retired built-in squad data cannot be restored.

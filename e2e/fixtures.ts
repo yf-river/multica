@@ -46,33 +46,6 @@ interface AgentResponse {
   status: string;
 }
 
-interface DaemonClaimResponse {
-  task: null | {
-    id: string;
-    runtime_id: string;
-    status: string;
-  };
-}
-
-
-interface InternalSquadTemplateAgent {
-  id: string;
-  name: string;
-  role_key: string;
-  role: string;
-}
-
-interface InternalSquadTemplateResponse {
-  squad: {
-    id: string;
-    name: string;
-    leader_id: string;
-    sop_profile: Record<string, unknown>;
-    member_count: number;
-  };
-  agents: InternalSquadTemplateAgent[];
-}
-
 interface SquadLeaderTask {
   id: string;
   status: string;
@@ -83,21 +56,8 @@ interface SquadLeaderTask {
   error?: string | null;
 }
 
-interface TaskExecutionEvidence {
-  usage: Array<Record<string, unknown>>;
-  messages: Array<Record<string, unknown>>;
-  trace_events: Array<Record<string, unknown>>;
-}
 
 
-interface IssueSystemComment {
-  id: string;
-  content: string;
-  author_type: string;
-  parent_id: string | null;
-  type: string;
-  created_at: string;
-}
 
 interface SquadSOPRun {
   id: string;
@@ -120,19 +80,6 @@ interface SquadSOPRun {
     created_by_type: string;
     task_id: string | null;
   }>;
-}
-
-interface ObservabilitySummary {
-  指标: Record<string, unknown>;
-  task_trace_total: number;
-  model_breakdown: Array<Record<string, unknown>>;
-  runtime_breakdown: Array<Record<string, unknown>>;
-}
-
-interface InternalSquadTemplateStats {
-  squad_count: number;
-  agent_count: number;
-  member_count: number;
 }
 
 export class TestApiClient {
@@ -322,121 +269,6 @@ export class TestApiClient {
     this.createdRuntimeIds.push(runtime.id);
     return { daemonId, runtime };
   }
-
-  async bindAgentsToRuntime(agents: Array<{ id: string }>, runtimeId: string) {
-    for (const agent of agents) {
-      const res = await this.authedFetch(`/api/agents/${agent.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ runtime_id: runtimeId }),
-      });
-      if (!res.ok) {
-        throw new Error(`Failed to bind agent ${agent.id} to runtime: ${res.status} ${await res.text()}`);
-      }
-    }
-  }
-
-  async completeNextDaemonModelList(
-    runtimeId: string,
-    models = [
-      { id: "deepseek-v4-pro-ioa", label: "DeepSeek V4 Pro", provider: "deepseek", default: true },
-      { id: "glm-5.2-ioa", label: "GLM 5.2", provider: "zhipu", default: false },
-    ],
-  ) {
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const heartbeat = await this.authedFetch("/api/daemon/heartbeat", {
-        method: "POST",
-        body: JSON.stringify({ runtime_id: runtimeId }),
-      });
-      if (!heartbeat.ok) {
-        throw new Error(`daemon heartbeat failed: ${heartbeat.status} ${await heartbeat.text()}`);
-      }
-      const ack = (await heartbeat.json()) as { pending_model_list?: { id: string } };
-      const requestId = ack.pending_model_list?.id;
-      if (requestId) {
-        const result = await this.authedFetch(
-          `/api/daemon/runtimes/${runtimeId}/models/${requestId}/result`,
-          {
-            method: "POST",
-            body: JSON.stringify({ status: "completed", supported: true, models }),
-          },
-        );
-        if (!result.ok) {
-          throw new Error(`report model list failed: ${result.status} ${await result.text()}`);
-        }
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    throw new Error(`runtime ${runtimeId} received no model-list request`);
-  }
-
-  async claimDaemonTask(runtimeId: string) {
-    const res = await this.authedFetch(`/api/daemon/runtimes/${runtimeId}/tasks/claim`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to claim daemon task: ${res.status} ${await res.text()}`);
-    }
-    return (await res.json()) as DaemonClaimResponse;
-  }
-
-  async startDaemonTask(taskId: string) {
-    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/start`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to start daemon task: ${res.status} ${await res.text()}`);
-    }
-  }
-
-  async reportDaemonTaskUsage(taskId: string, usage: { provider?: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens?: number; cache_write_tokens?: number }) {
-    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/usage`, {
-      method: "POST",
-      body: JSON.stringify({
-        usage: [
-          {
-            provider: usage.provider ?? "codebuddy",
-            model: usage.model,
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            cache_read_tokens: usage.cache_read_tokens ?? 0,
-            cache_write_tokens: usage.cache_write_tokens ?? 0,
-          },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to report daemon task usage: ${res.status} ${await res.text()}`);
-    }
-  }
-
-  async reportDaemonTaskMessages(taskId: string, content: string | Array<Record<string, unknown>>) {
-    const messages = Array.isArray(content) ? content : [{ seq: 1, type: "text", content }];
-    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ messages }),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to report daemon task messages: ${res.status} ${await res.text()}`);
-    }
-  }
-
-  async completeDaemonTask(taskId: string, output: string) {
-    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/complete`, {
-      method: "POST",
-      body: JSON.stringify({
-        output,
-        session_id: `e2e-session-${taskId}`,
-        work_dir: `/tmp/multica-e2e/${taskId}`,
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to complete daemon task: ${res.status} ${await res.text()}`);
-    }
-  }
-
   async createIssue(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/issues", {
       method: "POST",
@@ -576,82 +408,6 @@ export class TestApiClient {
     await this.authedFetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
-  async updateIssue(issueId: string, opts?: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/issues/${issueId}`, {
-      method: "PUT",
-      body: JSON.stringify(opts ?? {}),
-    });
-    if (!res.ok) {
-      throw new Error(`update issue failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
-  async ensureInternalSquadTemplate(
-    templateKey: "user-center" | "multica-coding",
-    options: {
-      name?: string;
-      runtime_provider?: string;
-      model?: string;
-      scope?: "workspace" | "personal";
-    } = {},
-  ): Promise<InternalSquadTemplateResponse> {
-    const res = await this.authedFetch("/api/squads/internal-template", {
-      method: "POST",
-      body: JSON.stringify({ template_key: templateKey, ...options }),
-    });
-    if (!res.ok) {
-      throw new Error(`ensure internal squad template failed: ${res.status} ${await res.text()}`);
-    }
-    const data = (await res.json()) as InternalSquadTemplateResponse;
-    if (data?.squad?.id) {
-      this.createdSquadIds.push(data.squad.id);
-    }
-    return data;
-  }
-
-  rememberSquad(id: string) {
-    if (id && !this.createdSquadIds.includes(id)) {
-      this.createdSquadIds.push(id);
-    }
-  }
-
-  async getInternalSquadTemplateStats(
-    templateName: string,
-    agentNamePrefix: string,
-  ): Promise<InternalSquadTemplateStats> {
-    if (!this.workspaceId) {
-      throw new Error("Cannot inspect internal squad template before workspace is selected");
-    }
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const result = await client.query<InternalSquadTemplateStats>(
-        `
-          WITH target_squads AS (
-            SELECT id FROM squad WHERE workspace_id = $1 AND name = $2 AND archived_at IS NULL
-          ),
-          target_agents AS (
-            SELECT id FROM agent
-            WHERE workspace_id = $1 AND name LIKE ($3 || ' · %') AND archived_at IS NULL
-          )
-          SELECT
-            (SELECT count(*)::int FROM target_squads) AS squad_count,
-            (SELECT count(*)::int FROM target_agents) AS agent_count,
-            (
-              SELECT count(*)::int
-              FROM squad_member sm
-              JOIN target_squads s ON s.id = sm.squad_id
-            ) AS member_count
-        `,
-        [this.workspaceId, templateName, agentNamePrefix],
-      );
-      return result.rows[0] ?? { squad_count: 0, agent_count: 0, member_count: 0 };
-    } finally {
-      await client.end();
-    }
-  }
-
   async deleteIssue(id: string) {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
   }
@@ -664,21 +420,6 @@ export class TestApiClient {
     return res.json();
   }
 
-  async getWorkspaceObservabilitySummary(params?: { squad_id?: string; project_id?: string }): Promise<ObservabilitySummary> {
-    if (!this.workspaceId) {
-      throw new Error("Cannot get observability summary before workspace is selected");
-    }
-    const search = new URLSearchParams();
-    if (params?.squad_id) search.set("squad_id", params.squad_id);
-    if (params?.project_id) search.set("project_id", params.project_id);
-    const res = await this.authedFetch(
-      `/api/workspaces/${this.workspaceId}/observability/summary${search.toString() ? `?${search}` : ""}`,
-    );
-    if (!res.ok) {
-      throw new Error(`get workspace observability summary failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
 
   async findLeaderTask(issueId: string, leaderAgentId: string): Promise<SquadLeaderTask | null> {
     const client = new pg.Client(DATABASE_URL);
@@ -706,94 +447,6 @@ export class TestApiClient {
       await client.end();
     }
   }
-
-  async getTaskExecutionEvidence(taskId: string): Promise<TaskExecutionEvidence> {
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const usage = await client.query<Record<string, unknown>>(
-        `
-          SELECT provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, created_at, updated_at
-          FROM task_usage
-          WHERE task_id = $1
-          ORDER BY created_at ASC
-        `,
-        [taskId],
-      );
-      const messages = await client.query<Record<string, unknown>>(
-        `
-          SELECT seq, type, tool, content, input, output, created_at
-          FROM task_message
-          WHERE task_id = $1
-          ORDER BY seq ASC
-        `,
-        [taskId],
-      );
-      const traceEvents = await client.query<Record<string, unknown>>(
-        `
-          SELECT source, event_type, event_name, status, provider, model, input_tokens, output_tokens, failure_reason, created_at
-          FROM task_trace_event
-          WHERE task_id = $1
-          ORDER BY created_at ASC
-        `,
-        [taskId],
-      );
-      return {
-        usage: usage.rows,
-        messages: messages.rows,
-        trace_events: traceEvents.rows,
-      };
-    } finally {
-      await client.end();
-    }
-  }
-
-  async getLatestSystemComment(issueId: string): Promise<IssueSystemComment | null> {
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const result = await client.query<IssueSystemComment>(
-        `
-          SELECT
-            id::text,
-            content,
-            author_type,
-            parent_id::text,
-            type,
-            created_at
-          FROM comment
-          WHERE issue_id = $1 AND author_type = 'system'
-          ORDER BY created_at DESC
-          LIMIT 1
-        `,
-        [issueId],
-      );
-      return result.rows[0] ?? null;
-    } finally {
-      await client.end();
-    }
-  }
-
-  async completeSquadLeaderTaskViaDaemon(task: SquadLeaderTask, output: string) {
-    if (task.status === "queued") {
-      const claimed = await this.claimDaemonTask(task.runtime_id);
-      if (claimed.task?.id && claimed.task.id !== task.id) {
-        throw new Error(`claimed unexpected task ${claimed.task.id}; expected ${task.id}`);
-      }
-    }
-    await this.startDaemonTask(task.id);
-    await this.reportDaemonTaskUsage(task.id, {
-      provider: "codebuddy",
-      model: "deepseek-v4-pro-ioa",
-      input_tokens: 36,
-      output_tokens: 19,
-      cache_read_tokens: 5,
-      cache_write_tokens: 7,
-    });
-    await this.reportDaemonTaskMessages(task.id, output);
-    await this.completeDaemonTask(task.id, output);
-  }
-
 
   async cleanupSeededRuntimes() {
     if (!this.workspaceId || this.createdRuntimeIds.length === 0) {

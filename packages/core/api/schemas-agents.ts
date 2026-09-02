@@ -116,10 +116,6 @@ export const SquadMemberSchema = z.object({
 export const SquadMemberListSchema = z.array(SquadMemberSchema);
 export const EMPTY_SQUAD_MEMBERS: SquadMember[] = [];
 
-export const InternalSquadTemplateResponseSchema = z.object({
-  squad: SquadSchema.pick({ id: true, name: true }),
-}).loose();
-
 const SquadSOPRunSchema = z.object({
   current_step_key: z.string().default(""),
   started_at: z.string(),

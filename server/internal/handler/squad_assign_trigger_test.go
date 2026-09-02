@@ -266,7 +266,7 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 			workspace_id, name, description, runtime_mode, runtime_config,
 			runtime_id, scope, max_concurrent_tasks, owner_id, instructions
 		)
-		VALUES ($1, 'pm', $2, 'local', '{}'::jsonb, $3, 'personal', 1, $4, '')
+		VALUES ($1, 'coordinator', $2, 'local', '{}'::jsonb, $3, 'personal', 1, $4, '')
 		RETURNING id
 	`, testWorkspaceID, opts.agentDescription, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -276,7 +276,7 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 	profile := map[string]any{
 		"profile_key": opts.profileKey,
 		"steps": []map[string]string{
-			{"key": "pm", "name": "pm", "role_key": "pm"},
+			{"key": "coordinator", "name": "coordinator", "role_key": "coordinator"},
 			{"key": "05-verify", "name": "05-测试", "role_key": "05-verify"},
 		},
 	}
@@ -391,10 +391,10 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 	}
 
 	status, currentStep, completedAt := loadSOPRunState(t, fixture.runID)
-	if status != "已完成" || currentStep != "pm" || completedAt == nil {
-		t.Fatalf("SOP run = status %s step %s completed_at %v, want 已完成/pm/non-nil", status, currentStep, completedAt)
+	if status != "已完成" || currentStep != "coordinator" || completedAt == nil {
+		t.Fatalf("SOP run = status %s step %s completed_at %v, want 已完成/coordinator/non-nil", status, currentStep, completedAt)
 	}
-	completedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "pm", "步骤完成")
+	completedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "coordinator", "步骤完成")
 	if completedEvents != 1 {
 		t.Fatalf("completed event count = %d, want 1", completedEvents)
 	}
@@ -426,8 +426,8 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 
 	failStartedSOPTask(t, fixture, "provider failed after queuing continuation", "api_invalid_request")
 	status, currentStep, completedAt := loadSOPRunState(t, fixture.runID)
-	if status != "进行中" || currentStep != "pm" || completedAt != nil {
-		t.Fatalf("SOP run = status %s step %s completed_at %v, want 进行中/pm/nil", status, currentStep, completedAt)
+	if status != "进行中" || currentStep != "coordinator" || completedAt != nil {
+		t.Fatalf("SOP run = status %s step %s completed_at %v, want 进行中/coordinator/nil", status, currentStep, completedAt)
 	}
 	failedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "", "步骤失败")
 	if failedEvents != 0 {
@@ -449,7 +449,7 @@ func TestFailTaskWithDeliveryCommentAdvancesSquadSOPForReview(t *testing.T) {
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, source_task_id)
-		VALUES ($1, $2, 'agent', $3, '## 04-开发完成\n\n验证通过，等待 PM 复核。', 'comment', $4)
+		VALUES ($1, $2, 'agent', $3, '## 04-开发完成\n\n验证通过，等待 coordinator 复核。', 'comment', $4)
 	`, fixture.issueID, testWorkspaceID, fixture.agentID, fixture.taskID); err != nil {
 		t.Fatalf("create delivery comment: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestFailTaskWithDeliveryCommentAdvancesSquadSOPForReview(t *testing.T) {
 
 	issueStatus := loadSOPTestIssueStatus(t, fixture.issueID)
 	if issueStatus == "blocked" {
-		t.Fatalf("issue status = blocked, want delivery comment to preserve PM review path")
+		t.Fatalf("issue status = blocked, want delivery comment to preserve coordinator review path")
 	}
 
 	runStatus, currentStep, completedAt := loadSOPRunState(t, fixture.runID)
@@ -466,7 +466,7 @@ func TestFailTaskWithDeliveryCommentAdvancesSquadSOPForReview(t *testing.T) {
 		t.Fatalf("SOP run = status %s step %s completed_at %v, want 进行中/05-verify/nil", runStatus, currentStep, completedAt)
 	}
 
-	completedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "pm", "步骤完成")
+	completedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "coordinator", "步骤完成")
 	failedEvents := countSOPStepEvents(t, fixture.runID, fixture.taskID, "", "步骤失败")
 	var failureComments int
 	if err := testPool.QueryRow(ctx, `
@@ -550,8 +550,8 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 	`, fixture.runID).Scan(&runStatus, &currentStep); err != nil {
 		t.Fatalf("load SOP run: %v", err)
 	}
-	if runStatus != "已失败" || currentStep != "pm" {
-		t.Fatalf("SOP run = status %s step %s, want 已失败/pm", runStatus, currentStep)
+	if runStatus != "已失败" || currentStep != "coordinator" {
+		t.Fatalf("SOP run = status %s step %s, want 已失败/coordinator", runStatus, currentStep)
 	}
 
 	var content string
@@ -566,8 +566,8 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 	}
 	for _, want := range []string{
 		"## 阶段执行失败",
-		"- 阶段：pm",
-		"- Agent：pm",
+		"- 阶段：coordinator",
+		"- Agent：coordinator",
 		"- 失败类型：agent_error.model_not_found_or_unavailable",
 		"当前 issue 已阻塞",
 		"原始错误较长，已保留在任务运行记录中。",

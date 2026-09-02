@@ -285,7 +285,6 @@ import { AgentCreatePanel } from "./quick-create-issue";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, modals: enModals } };
 const PROMPT_PLACEHOLDER = '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"';
-const PM_SQUAD = { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null };
 
 function renderPanel(props: React.ComponentProps<typeof AgentCreatePanel>) {
   return render(
@@ -406,90 +405,6 @@ describe("AgentCreatePanel", () => {
         status: "todo",
         priority: "none",
         attachment_ids: ["019ec09d-6222-722b-bdfa-427b105d80be"],
-      });
-    });
-  });
-
-  it.each([
-    ["defaults to the visible pm squad so SOP quick-create uses squad dispatch", false],
-    ["upgrades a persisted PM leader agent preference to the pm squad", true],
-  ])("%s", async (_name, persistedAgent) => {
-    if (persistedAgent) {
-      mockQuickCreateStore.lastActorType = "agent";
-      mockQuickCreateStore.lastActorId = "agent-1";
-    }
-    mockSquadsData.list = [PM_SQUAD];
-
-    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
-
-    await enterPromptAndSubmit(userEvent.setup(), "Create a TAPD requirement");
-
-    await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        squad_id: "squad-pm",
-        prompt: "Create a TAPD requirement",
-        project_id: undefined,
-        status: "todo",
-        priority: "none",
-      });
-    });
-    expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-pm");
-  });
-
-  it("promotes the selected PM leader agent once the pm squad list loads", async () => {
-    mockQuickCreateStore.lastActorType = "agent";
-    mockQuickCreateStore.lastActorId = "agent-1";
-    const user = userEvent.setup();
-    const props = { onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() };
-
-    const view = renderPanel(props);
-
-    expect(screen.getByRole("button", { name: "Bohan" })).toBeInTheDocument();
-
-    mockSquadsData.list = [PM_SQUAD];
-    view.rerender(
-      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-        <AgentCreatePanel {...props} />
-      </I18nProvider>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "pm" })).toBeInTheDocument();
-    });
-
-    await enterPromptAndSubmit(user, "Create a TAPD requirement");
-
-    await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        squad_id: "squad-pm",
-        prompt: "Create a TAPD requirement",
-        project_id: undefined,
-        status: "todo",
-        priority: "none",
-      });
-    });
-  });
-
-  it("keeps an explicit agent seed even when a pm squad is visible", async () => {
-    mockSquadsData.list = [PM_SQUAD];
-    const user = userEvent.setup();
-
-    renderPanel({
-      onClose: vi.fn(),
-      isExpanded: false,
-      setIsExpanded: vi.fn(),
-      data: { agent_id: "agent-1" },
-    });
-
-    await enterPromptAndSubmit(user, "Create with explicit agent");
-
-    await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        agent_id: "agent-1",
-        prompt: "Create with explicit agent",
-        project_id: undefined,
-        status: "todo",
-        priority: "none",
       });
     });
   });

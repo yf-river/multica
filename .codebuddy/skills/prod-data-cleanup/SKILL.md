@@ -30,8 +30,6 @@ description: Clean goal-test production-stable test data through public APIs wit
 清理前必须确认计划不会删除这些长期对象：
 
 - 项目：`usercenter`、`gateway`、`ida-deployment`
-- 智能体：`pm`、`01`、`02`、`03`、`04`、`05`
-- 小队：`pm`
 - 稳定提示词、稳定业务训练资产、当前用户要求保留的演示数据
 
 如果需要把生产环境压回 SOP canonical 形态，只能在用户明确要求后使用 `CANONICAL_SOP_ONLY=1`。

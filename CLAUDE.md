@@ -54,7 +54,6 @@ make goal-test-smart-verify MODE=final DRY_RUN=1
 make goal-test-ui-audit
 make goal-test-ui-acceptance
 make goal-test-dashboard-click-audit
-make goal-test-real-agent-e2e
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=precommit
 RUN_PRODUCTION_ACCEPTANCE=1 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
@@ -94,7 +93,6 @@ AI Studio gate applicability:
 - UI acceptance gate: `make goal-test-ui-acceptance`; use for broad deployed UI behavior without forcing every long daemon path.
 - Broad gate: `make goal-test-smoke` or `make goal-test-ui-acceptance`; use for wave or milestone closure when current UI, observability, and deployed behavior must be demonstrated together.
 - Training UI gate: `make goal-test-training-performance-audit`; use for current training pages, route panels, datasets, test suites, evaluation records, or performance-sensitive training navigation.
-- Real-agent gate: `make goal-test-real-agent-e2e`; use when real-agent dispatch or cross-project runtime behavior changed.
 - Performance gates: `make goal-test-dashboard-click-audit` and `make goal-test-public-training-performance-audit`; use only when the affected surface or milestone requires that evidence.
 
 ## Architecture

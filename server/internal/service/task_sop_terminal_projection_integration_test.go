@@ -464,7 +464,7 @@ func seedSquadTerminalProjectionFixture(
 			id, workspace_id, name, runtime_mode, runtime_config, scope,
 			status, runtime_id
 		) VALUES
-			($1, $3, 'Leader', 'local', '{"internal_squad":{"role_key":"pm"}}', 'workspace', 'idle', $4),
+			($1, $3, 'Leader', 'local', '{"internal_squad":{"role_key":"coordinator"}}', 'workspace', 'idle', $4),
 			($2, $3, 'Worker', 'local', '{"internal_squad":{"role_key":"worker"}}', 'workspace', 'working', $4)
 	`, fixture.leaderID, fixture.workerID, fixture.workspaceID, runtimeID)
 	mustExec(`

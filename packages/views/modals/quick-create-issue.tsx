@@ -131,11 +131,6 @@ export function AgentCreatePanel({
       ),
     [squads, visibleAgentIds],
   );
-  const pmSquad = useMemo(
-    () => visibleSquads.find((s) => s.name.trim().toLowerCase() === "pm"),
-    [visibleSquads],
-  );
-
   const lastActorType = useQuickCreateStore((s) => s.lastActorType);
   const lastActorId = useQuickCreateStore((s) => s.lastActorId);
   const setLastActor = useQuickCreateStore((s) => s.setLastActor);
@@ -145,7 +140,6 @@ export function AgentCreatePanel({
   const setPrompt = useQuickCreateStore((s) => s.setPrompt);
   const keepOpen = useQuickCreateStore((s) => s.keepOpen);
   const setKeepOpen = useQuickCreateStore((s) => s.setKeepOpen);
-  const hasExplicitActorSeed = Boolean(data?.agent_id || data?.squad_id);
 
   // Resolve a candidate actor against the currently-visible agents / squads.
   // Returns null when the candidate doesn't exist in this workspace right
@@ -170,9 +164,7 @@ export function AgentCreatePanel({
 
   const seedActor = useCallback((): ActorSelection | null => {
     // Caller-provided seed wins (e.g. shell pre-seeds with `agent_id` /
-    // `squad_id`). When a persisted preference points at the PM squad's
-    // leader agent, upgrade it to the squad so dispatch receives the squad
-    // briefing instead of a direct-agent task.
+    // `squad_id`).
     const dataAgent = data?.agent_id;
     const dataSquad = data?.squad_id;
     const explicitActor =
@@ -180,17 +172,9 @@ export function AgentCreatePanel({
     if (explicitActor) return explicitActor;
 
     const persistedActor = resolveActor(lastActorType, lastActorId);
-    if (
-      persistedActor?.type === "agent" &&
-      pmSquad &&
-      pmSquad.leader_id === persistedActor.id
-    ) {
-      return { type: "squad", id: pmSquad.id } as const;
-    }
     if (persistedActor) return persistedActor;
 
     return (
-      (pmSquad ? ({ type: "squad", id: pmSquad.id } as const) : null) ||
       (visibleAgents[0]
         ? ({ type: "agent", id: visibleAgents[0].id } as const)
         : null)
@@ -201,7 +185,6 @@ export function AgentCreatePanel({
     data?.squad_id,
     lastActorType,
     lastActorId,
-    pmSquad,
     visibleAgents,
   ]);
 
@@ -209,18 +192,9 @@ export function AgentCreatePanel({
 
   // Re-seed once visible lists resolve (queries may be empty on first render).
   useEffect(() => {
-    if (
-      !hasExplicitActorSeed &&
-      actor?.type === "agent" &&
-      pmSquad &&
-      pmSquad.leader_id === actor.id
-    ) {
-      setActor({ type: "squad", id: pmSquad.id });
-      return;
-    }
     if (actor && resolveActor(actor.type, actor.id)) return;
     setActor(seedActor());
-  }, [actor, hasExplicitActorSeed, pmSquad, resolveActor, seedActor]);
+  }, [actor, resolveActor, seedActor]);
 
   const selectedAgent = useMemo<Agent | undefined>(() => {
     if (!actor) return undefined;

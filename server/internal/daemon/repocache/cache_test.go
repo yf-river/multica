@@ -285,7 +285,7 @@ func issueWorktreeParams(t *testing.T, sourceRepo string) WorktreeParams {
 		WorkspaceID:        "ws-1",
 		RepoURL:            sourceRepo,
 		WorkDir:            t.TempDir(),
-		AgentName:          "PM",
+		AgentName:          "coordinator",
 		TaskID:             "task-1",
 		BranchNameOverride: "agent/issue/issue123",
 		PreserveExisting:   true,
@@ -678,7 +678,7 @@ func TestCreateWorktreeReportsExistingWorktreeExcludeFailure(t *testing.T) {
 		WorkspaceID:      "ws-1",
 		RepoURL:          sourceRepo,
 		WorkDir:          t.TempDir(),
-		AgentName:        "PM",
+		AgentName:        "coordinator",
 		TaskID:           "exclude-failure",
 		PreserveExisting: true,
 	}

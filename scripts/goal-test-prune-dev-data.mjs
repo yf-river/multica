@@ -24,8 +24,8 @@ const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 
 const CANONICAL_PROJECT_TITLES = new Set(["usercenter", "gateway", "ida-deployment"]);
-const CANONICAL_AGENT_NAMES = new Set(["pm", "01", "02", "03", "04", "05"]);
-const CANONICAL_SQUAD_NAMES = new Set(["pm"]);
+const CANONICAL_AGENT_NAMES = new Set();
+const CANONICAL_SQUAD_NAMES = new Set();
 
 const PROTECTED_NAMES = new Set([
   ...CANONICAL_PROJECT_TITLES,
@@ -54,8 +54,6 @@ const DEV_PATTERNS = [
   /验收\s*Agent/i,
   /Codex\s*验收/i,
   /数据集版本治理/,
-  /user-center 小队/,
-  /Multica 编码小队/,
   /SOP Delivery Squad/,
   /柳贵测试开发/,
 ];

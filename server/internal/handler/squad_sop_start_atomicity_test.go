@@ -94,7 +94,7 @@ func TestStartTask_SquadSOPEventFailureRollsBackTaskAndIssue(t *testing.T) {
 	if taskStatus != "dispatched" || issueStatus != "todo" || startEvents != 0 {
 		t.Fatalf("partial start: task=%s issue=%s events=%d", taskStatus, issueStatus, startEvents)
 	}
-	if runStatus != "进行中" || currentStep != "pm" {
-		t.Fatalf("run changed to %s/%s, want 进行中/pm", runStatus, currentStep)
+	if runStatus != "进行中" || currentStep != "coordinator" {
+		t.Fatalf("run changed to %s/%s, want 进行中/coordinator", runStatus, currentStep)
 	}
 }

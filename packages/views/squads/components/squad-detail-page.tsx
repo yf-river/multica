@@ -1300,10 +1300,10 @@ function SquadInstructionsTab({
 
       <div>
         <div className="text-sm font-medium text-foreground">
-          {t(($) => $.instructions_tab.pm_prompt_label)}
+          {t(($) => $.instructions_tab.instructions_label)}
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {t(($) => $.instructions_tab.pm_prompt_description)}
+          {t(($) => $.instructions_tab.instructions_description)}
         </div>
       </div>
       <div className="min-h-80 rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">

@@ -155,17 +155,17 @@ func TestEnqueueTaskForSquadLeaderForcesFreshSession(t *testing.T) {
 func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 	requireHandlerDatabase(t)
 	ctx := context.Background()
-	_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
-	_, _ = testPool.Exec(ctx, `DELETE FROM squad_member WHERE member_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
-	_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name IN ($2, $3)`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
+	_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, "协调者", "澄清者")
+	_, _ = testPool.Exec(ctx, `DELETE FROM squad_member WHERE member_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, "协调者", "澄清者")
+	_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name IN ($2, $3)`, testWorkspaceID, "协调者", "澄清者")
 
-	pmID := createHandlerTestSOPAgent(t, projectSOPAgentPM, "pm")
-	clarifyID := createHandlerTestSOPAgent(t, projectSOPAgent01, "01-clarify")
+	pmID := createHandlerTestSOPAgent(t, "协调者", "coordinator")
+	clarifyID := createHandlerTestSOPAgent(t, "澄清者", "01-clarify")
 
 	squadID := createHandlerTestSquad(t, "SOP Role Key Mention Squad", pmID)
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO squad_member (squad_id, member_type, member_id, role)
-		VALUES ($1, 'agent', $2, 'PM'), ($1, 'agent', $3, '01')
+		VALUES ($1, 'agent', $2, 'coordinator'), ($1, 'agent', $3, '01')
 	`, squadID, pmID, clarifyID); err != nil {
 		t.Fatalf("create squad members: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 	issueID := uuidToString(createAssignedSquadCommentIssue(t, "sop role-key mention trigger", "todo", squadID, pgtype.UUID{}).ID)
 
 	w, _ := (handlerCommentIssueFixture{ID: issueID}).postComment(t, map[string]any{
-		"content": "## PM 调度\n\n请 **01-需求澄清** (@01-clarify) 开始澄清。",
+		"content": "## coordinator 调度\n\n请 **01-需求澄清** (@01-clarify) 开始澄清。",
 	}, map[string]string{
 		"X-Actor-Source": "task_token",
 		"X-Agent-ID":     pmID,
@@ -334,7 +334,7 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 	profile := `{
 		"profile_key":"test-sop",
 		"steps":[
-			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"coordinator","name":"coordinator","role_key":"coordinator"},
 			{"key":"01-clarify","name":"01-需求澄清","role_key":"01-clarify"},
 			{"key":"02-design","name":"02-方案设计","role_key":"02-design"}
 		]
@@ -432,7 +432,7 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 const finalSOPTestProfile = `{
 	"profile_key":"test-final-sop",
 	"steps":[
-		{"key":"pm","name":"pm","role_key":"pm"},
+		{"key":"coordinator","name":"coordinator","role_key":"coordinator"},
 		{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
 	]
 }`
@@ -676,7 +676,7 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 	profile := `{
 		"profile_key":"test-child-auto-close",
 		"steps":[
-			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"coordinator","name":"coordinator","role_key":"coordinator"},
 			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
 		]
 	}`
@@ -795,12 +795,12 @@ type crossProjectGateSOPFixture struct {
 func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGateSOPFixture {
 	t.Helper()
 	ctx := context.Background()
-	leaderID := createHandlerTestAgent(t, "Cross Project Gate PM "+randomID()[:8], nil)
+	leaderID := createHandlerTestAgent(t, "Cross Project Gate coordinator "+randomID()[:8], nil)
 	implementID := createHandlerTestSOPAgent(t, "Cross Project Gate 04 "+randomID()[:8], "04-implement")
 	profile := `{
 		"mode":"stage_chain",
 		"steps":[
-			{"key":"pm","role_key":"pm"},
+			{"key":"coordinator","role_key":"coordinator"},
 			{"key":"01","role_key":"01-clarify"},
 			{"key":"02","role_key":"02-design"},
 			{"key":"03","role_key":"03-task-split"},
@@ -830,7 +830,7 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
 		VALUES ($1, $2, 'agent', $3, $4)
-	`, testWorkspaceID, issueID, leaderID, "## 03-task-split\n\nrequired cross-project dependencies:\n- ida-deployment: required，待 PM 创建 child issue"); err != nil {
+	`, testWorkspaceID, issueID, leaderID, "## 03-task-split\n\nrequired cross-project dependencies:\n- ida-deployment: required，待 coordinator 创建 child issue"); err != nil {
 		t.Fatalf("insert 03 comment: %v", err)
 	}
 	return crossProjectGateSOPFixture{
@@ -852,7 +852,7 @@ func insertSOPPMMentionComment(t *testing.T, fx crossProjectGateSOPFixture) db.C
 		VALUES ($1, $2, 'agent', $3, $4)
 		RETURNING id
 	`, testWorkspaceID, fx.IssueID, fx.LeaderID, content).Scan(&commentID); err != nil {
-		t.Fatalf("insert pm comment: %v", err)
+		t.Fatalf("insert coordinator comment: %v", err)
 	}
 	return db.Comment{
 		ID:          util.MustParseUUID(commentID),

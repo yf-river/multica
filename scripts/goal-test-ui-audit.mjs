@@ -159,8 +159,6 @@ const forbiddenText = [
   "Agent运行数",
   "Agent执行",
   "Agent 最终交付",
-  "创建 user-center 需求澄清提示词",
-  "user-center 模板",
   "查看当前 Workspace",
   "API Token",
   "Token ·",

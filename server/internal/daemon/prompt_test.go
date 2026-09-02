@@ -473,7 +473,7 @@ func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
 		TriggerCommentID:      "comment-456",
 		TriggerCommentContent: "请产出 03-task-split",
 		TriggerAuthorType:     "agent",
-		TriggerAuthorName:     "PM-项目经理",
+		TriggerAuthorName:     "协调者",
 		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKey:       "03-task-split",
 			RoleKind:      "planning_stage",

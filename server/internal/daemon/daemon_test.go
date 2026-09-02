@@ -113,12 +113,12 @@ func TestLoadProjectSkillsForPolicyFiltersSOPStageSkills(t *testing.T) {
 		writeDaemonTestProjectSkill(t, repoDir, name)
 	}
 
-	pmSkills, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "none"})
+	coordinatorSkills, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "none"})
 	if err != nil {
-		t.Fatalf("load PM skills: %v", err)
+		t.Fatalf("load coordinator skills: %v", err)
 	}
-	if len(pmSkills) != 0 {
-		t.Fatalf("PM should not receive project skills, got %+v", pmSkills)
+	if len(coordinatorSkills) != 0 {
+		t.Fatalf("coordinator should not receive project skills, got %+v", coordinatorSkills)
 	}
 
 	stageSkills, err := loadProjectSkillsForPolicy(repoDir, executionpolicy.Policy{ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}})
@@ -255,32 +255,32 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 		}
 	}
 
-	pm := executionpolicy.Policy{RoleKind: "coordinator", CanAccessRepo: false}
-	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash" {
+	coordinator := executionpolicy.Policy{RoleKind: "coordinator", CanAccessRepo: false}
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", coordinator); len(got) != 1 || got[0] != "Bash" {
 		t.Fatalf("coordinator allowed tools = %v, want [Bash]", got)
 	}
-	if got := allowedToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash(multica *)" {
+	if got := allowedToolsForExecutionPolicy("codebuddy", coordinator); len(got) != 1 || got[0] != "Bash(multica *)" {
 		t.Fatalf("coordinator scoped allowed tools = %v, want [Bash(multica *)]", got)
 	}
-	if got := permissionModeForExecutionPolicy("codebuddy", pm); got != "bypassPermissions" {
+	if got := permissionModeForExecutionPolicy("codebuddy", coordinator); got != "bypassPermissions" {
 		t.Fatalf("codebuddy coordinator permission mode = %q, want bypassPermissions", got)
 	}
-	if got := maxTurnsForExecutionPolicy(0, pm); got != 12 {
+	if got := maxTurnsForExecutionPolicy(0, coordinator); got != 12 {
 		t.Fatalf("coordinator default max turns = %d, want 12", got)
 	}
-	if got := maxTurnsForExecutionPolicy(5, pm); got != 5 {
+	if got := maxTurnsForExecutionPolicy(5, coordinator); got != 5 {
 		t.Fatalf("configured coordinator max turns = %d, want 5", got)
 	}
-	if !needsInlineSystemPrompt("codebuddy", pm) {
+	if !needsInlineSystemPrompt("codebuddy", coordinator) {
 		t.Fatal("codebuddy coordinator should receive inline system prompt")
 	}
-	if !needsInlineSystemPrompt("claude", pm) {
+	if !needsInlineSystemPrompt("claude", coordinator) {
 		t.Fatal("claude coordinator should receive inline system prompt")
 	}
-	if needsInlineSystemPrompt("codex", pm) {
+	if needsInlineSystemPrompt("codex", coordinator) {
 		t.Fatal("codex coordinator should not use claude-family inline prompt path")
 	}
-	denied := disallowedToolsForExecutionPolicy("codebuddy", pm)
+	denied := disallowedToolsForExecutionPolicy("codebuddy", coordinator)
 	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "Read", "Grep", "Glob", "Edit"} {
 		if !containsString(denied, want) {
 			t.Fatalf("coordinator denied tools missing %q: %v", want, denied)
@@ -353,11 +353,11 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 		}
 	}
 
-	if got := allowedBuiltinToolsForExecutionPolicy("codex", pm); got != nil {
+	if got := allowedBuiltinToolsForExecutionPolicy("codex", coordinator); got != nil {
 		t.Fatalf("codex tool envelope = %v, want nil", got)
 	}
 
-	summaryPolicy := executionPolicyForToolEnvelope(Task{SourceSummaryPrompt: "summarize"}, pm)
+	summaryPolicy := executionPolicyForToolEnvelope(Task{SourceSummaryPrompt: "summarize"}, coordinator)
 	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", summaryPolicy); got != nil {
 		t.Fatalf("source-summary allowed tools = %v, want nil", got)
 	}
@@ -689,7 +689,7 @@ func TestBuildPromptNoRepoBoundedStageDoesNotPromptCLIReads(t *testing.T) {
 		TriggerCommentID:      "comment-1",
 		TriggerCommentContent: "调度 01-需求澄清",
 		TriggerAuthorType:     "agent",
-		TriggerAuthorName:     "PM-项目经理",
+		TriggerAuthorName:     "协调者",
 		ExecutionPolicy: &executionpolicy.Policy{
 			RoleKind:      "planning_stage",
 			CanAccessRepo: false,

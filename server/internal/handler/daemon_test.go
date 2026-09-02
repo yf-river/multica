@@ -203,9 +203,9 @@ func insertChatUserMessageFixture(t *testing.T, ctx context.Context, sessionID, 
 }
 
 func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
-	pm := taskExecutionPolicyForRole("pm", true)
-	if pm.RoleKey != "pm" || pm.CanAccessRepo || pm.CanEditRepo || pm.ProjectSkillMode != "none" {
-		t.Fatalf("PM policy = %+v, want coordinator with no repo access", pm)
+	coordinator := taskExecutionPolicyForRole("coordinator", true)
+	if coordinator.RoleKey != "coordinator" || coordinator.CanAccessRepo || coordinator.CanEditRepo || coordinator.ProjectSkillMode != "none" {
+		t.Fatalf("coordinator policy = %+v, want coordinator with no repo access", coordinator)
 	}
 	stage01 := taskExecutionPolicyForRole("01-clarify", false)
 	if stage01.RoleKey != "01-clarify" || stage01.CanAccessRepo || stage01.CanEditRepo || stage01.ProjectSkillMode != "none" {
@@ -248,16 +248,16 @@ func TestNoRepoBoundedStageSkipsPriorSession(t *testing.T) {
 	if stage03.IsNoRepoBoundedStage() {
 		t.Fatalf("03 policy should keep normal provider session behavior: %+v", stage03)
 	}
-	pm := taskExecutionPolicyForRole("pm", true)
-	if pm.IsNoRepoBoundedStage() {
-		t.Fatalf("PM coordinator policy should not be treated as no-repo bounded stage: %+v", pm)
+	coordinator := taskExecutionPolicyForRole("coordinator", true)
+	if coordinator.IsNoRepoBoundedStage() {
+		t.Fatalf("coordinator policy should not be treated as no-repo bounded stage: %+v", coordinator)
 	}
 }
 
 func TestTaskExecutionPolicyReadsInternalSquadRoleKey(t *testing.T) {
 	agent := db.Agent{
 		Name:          "任意显示名",
-		RuntimeConfig: []byte(`{"internal_squad":{"template_key":"user-center-sop-flow","role_key":"05-verify"}}`),
+		RuntimeConfig: []byte(`{"squad":{"profile_key":"custom-stage-chain","role_key":"05-verify"}}`),
 	}
 	policy := taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), false)
 	if policy.RoleKey != "05-verify" || policy.RoleKind != "verification_stage" || !policy.CanAccessRepo || policy.CanEditRepo || policy.ProjectSkillMode != "verification" {
@@ -2918,7 +2918,7 @@ func TestCompleteTask_AssignmentTriggered_UsesIntermediateDispatchMentionWhenFin
 	fixture := createRunningCompleteTask(t, ctx, "mul-3314 intermediate dispatch mention fixture", 3314, "")
 	targetAgentID := createHandlerTestMentionTargetAgent(t, "Intermediate Dispatch Target 01 "+uuid.NewString())
 	dispatchOutput := "调度 01-需求澄清：请补齐需求边界。 [@01-需求澄清](mention://agent/" + targetAgentID + ")"
-	finalSummary := "已完成 PM 首轮调度，活动记录已写入。等待 01-需求澄清完成后继续推进。"
+	finalSummary := "已完成 协调者首轮调度，活动记录已写入。等待 01-需求澄清完成后继续推进。"
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_message (task_id, seq, type, content)

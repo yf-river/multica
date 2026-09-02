@@ -1,4 +1,4 @@
-.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-life-resilience goal-test-life-chaos goal-test-dashboard-click-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-life-resilience goal-test-life-chaos goal-test-dashboard-click-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
@@ -285,12 +285,6 @@ goal-test-e2e: goal-test-e2e-preflight ## Run goal-test Playwright with fixed in
 goal-test-e2e-all: goal-test-e2e-preflight ## Run all goal-test Playwright specs with fixed int env
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs --project=chromium
-
-goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Agent E2E for the user-center squad
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	RUN_REAL_AGENT_E2E=1 \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts --project=chromium
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight

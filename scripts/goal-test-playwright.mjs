@@ -15,8 +15,7 @@ const cliArgs = process.argv.slice(2);
 const specArgs = splitWords(process.env.SPEC || "");
 const extraArgs = splitWords(process.env.ARGS || "");
 const defaultArgs = [
-  "e2e/squad-sop-ui.spec.ts",
-  "e2e/coding-squad-ui.spec.ts",
+  "e2e/navigation.spec.ts",
   "--project=chromium",
 ];
 const args = [...(cliArgs.length > 0 ? cliArgs : specArgs.length > 0 ? specArgs : defaultArgs), ...extraArgs];

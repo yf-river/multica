@@ -127,7 +127,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 		Tasks: []AgentTaskResponse{
 			{
 				ID:          "task-1",
-				AgentID:     "agent-pm",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
@@ -135,7 +135,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 			},
 			{
 				ID:                      "task-2",
-				AgentID:                 "agent-pm",
+				AgentID:                 "agent-coordinator",
 				Status:                  "completed",
 				StartedAt:               timelineTestStringPtr("2026-06-09T10:12:00Z"),
 				CompletedAt:             timelineTestStringPtr("2026-06-09T10:14:00Z"),
@@ -194,7 +194,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 		Tasks: []AgentTaskResponse{
 			{
 				ID:          "task-1",
-				AgentID:     "agent-pm",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
@@ -202,7 +202,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 				Result: map[string]any{
 					"output": "等待用户补充确认后，我将继续推进 02-方案设计。",
 				},
-				Agent: &protocol.TaskAgent{Name: "pm-v2 · PM-项目经理"},
+				Agent: &protocol.TaskAgent{Name: "coordinator-v2 · 协调者"},
 			},
 		},
 		ActivityLogs: []issueActivityBriefResponse{
@@ -210,7 +210,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 				ID:        "activity-1",
 				IssueID:   "issue-1",
 				ActorType: "agent",
-				ActorID:   "agent-pm",
+				ActorID:   "agent-coordinator",
 				Action:    "squad_leader_evaluated",
 				Details: map[string]any{
 					"task_id":      "task-1",
@@ -244,7 +244,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	}
 	taskNode := timelineTestNodeByID(t, nodes, "task:task-1")
 	if taskNode.Summary != "等待用户补充确认后，我将继续推进 02-方案设计。" {
-		t.Fatalf("PM task summary = %q, want task result intent", taskNode.Summary)
+		t.Fatalf("coordinator task summary = %q, want task result intent", taskNode.Summary)
 	}
 	refs := map[string]bool{}
 	for _, ref := range waitNode.EvidenceRefs {
@@ -263,7 +263,7 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 		Tasks: []AgentTaskResponse{
 			{
 				ID:          "task-1",
-				AgentID:     "agent-pm",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
@@ -271,7 +271,7 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 				Result: map[string]any{
 					"output": "---\n\n## 01-需求澄清已完成，需等待用户确认\n\n请确认边界后继续。",
 				},
-				Agent: &protocol.TaskAgent{Name: "pm-v2 · PM-项目经理"},
+				Agent: &protocol.TaskAgent{Name: "coordinator-v2 · 协调者"},
 			},
 		},
 	}
@@ -281,7 +281,7 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 	waitNode := timelineTestNodeByID(t, nodes, "human_confirmation:pending:task-1")
 
 	if taskNode.Summary != "01-需求澄清已完成，需等待用户确认" {
-		t.Fatalf("PM task summary = %q, want markdown heading", taskNode.Summary)
+		t.Fatalf("coordinator task summary = %q, want markdown heading", taskNode.Summary)
 	}
 	if waitNode.Summary != "01-需求澄清已完成，需等待用户确认" {
 		t.Fatalf("pending human confirmation summary = %q, want markdown heading", waitNode.Summary)
@@ -292,7 +292,7 @@ func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T)
 	summary := timelineTaskSummary(AgentTaskResponse{
 		ID:             "task-1",
 		Status:         "completed",
-		TriggerSummary: timelineTestStringPtr("## PM 审阅 04-implement 追加改动\n\n请 05 继续验证。"),
+		TriggerSummary: timelineTestStringPtr("## 协调者审阅 04-implement 追加改动\n\n请 05 继续验证。"),
 		Result: map[string]any{
 			"output": "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。",
 		},
@@ -310,7 +310,7 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 		Tasks: []AgentTaskResponse{
 			{
 				ID:          "task-1",
-				AgentID:     "agent-pm",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
@@ -318,7 +318,7 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 			},
 			{
 				ID:          "task-2",
-				AgentID:     "agent-pm",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:05:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:06:00Z"),
@@ -348,16 +348,16 @@ func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) 
 		Issue: IssueResponse{ID: "parent-issue"},
 		Tasks: []AgentTaskResponse{
 			{
-				ID:          "pm-1",
-				AgentID:     "agent-pm",
+				ID:          "coordinator-1",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:01:00Z"),
 				CreatedAt:   "2026-06-09T10:00:00Z",
 			},
 			{
-				ID:          "pm-2",
-				AgentID:     "agent-pm",
+				ID:          "coordinator-2",
+				AgentID:     "agent-coordinator",
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:10:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:11:00Z"),
@@ -489,7 +489,7 @@ func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *t
 func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *testing.T) {
 	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
 		{
-			NodeID:        "task:pm-recovered",
+			NodeID:        "task:coordinator-recovered",
 			NodeType:      "agent_task",
 			Status:        "failed",
 			FailureReason: "runtime_recovery",

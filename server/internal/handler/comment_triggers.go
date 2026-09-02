@@ -291,7 +291,7 @@ func isStageChainSOPProfile(raw []byte) (bool, error) {
 		return true, nil
 	}
 	required := map[string]bool{
-		"pm": true, "01-clarify": true, "02-design": true,
+		"01-clarify": true, "02-design": true,
 		"03-task-split": true, "04-implement": true, "05-verify": true,
 	}
 	for _, step := range profile.Steps {
@@ -351,8 +351,8 @@ func containsRequiredCrossProjectDependency(content string) bool {
 		return false
 	}
 	requiredMarkers := []string{
-		"待 pm 创建 child issue",
-		"pm 下一步先创建/复用对应 child issue",
+		"待协调者创建 child issue",
+		"协调者下一步先创建/复用对应 child issue",
 		"创建/复用对应目标项目 child issue",
 		"必须创建 child issue",
 		"需要创建 child issue",
@@ -416,7 +416,7 @@ func requiredCrossProjectSectionHasEntries(text string) bool {
 			strings.Contains(line, "不需要") {
 			continue
 		}
-		if strings.Contains(lower, "待 pm") ||
+		if strings.Contains(lower, "待协调者") ||
 			strings.Contains(lower, "child issue") ||
 			strings.Contains(lower, "handoff-") ||
 			strings.Contains(line, "子任务") ||
@@ -428,7 +428,7 @@ func requiredCrossProjectSectionHasEntries(text string) bool {
 }
 
 func createBlockedParentSOPStageCommentInTx(ctx context.Context, queries *db.Queries, issue db.Issue, stageName string) (events.Event, error) {
-	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请 PM 先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
+	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请协调者先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
 	comment, err := queries.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -927,8 +927,6 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 
 func normalizeSOPRoleAlias(value string) (string, bool) {
 	switch normalizeSOPRoleMentionKey(value) {
-	case "pm":
-		return "pm", true
 	case "01", "01-clarify":
 		return "01-clarify", true
 	case "02", "02-design":

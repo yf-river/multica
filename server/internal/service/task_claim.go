@@ -394,7 +394,7 @@ func squadSOPFailureComment(ctx context.Context, queries *db.Queries, task db.Ag
 	fmt.Fprintf(&b, "- Agent：%s\n", agent.Name)
 	fmt.Fprintf(&b, "- Task：%s\n", util.UUIDToString(task.ID))
 	fmt.Fprintf(&b, "- 失败类型：%s\n", reason)
-	b.WriteString("- 处理结果：SOP 运行已标记为失败，当前 issue 已阻塞，等待 PM 或人工确认后重试。\n")
+	b.WriteString("- 处理结果：SOP 运行已标记为失败，当前 issue 已阻塞，等待协调者或人工确认后重试。\n")
 	if summary := taskFailureSummary(errMsg); summary != "" {
 		fmt.Fprintf(&b, "- 错误摘要：%s\n", summary)
 	}

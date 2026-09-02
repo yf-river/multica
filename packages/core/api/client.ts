@@ -106,9 +106,6 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatus,
-  InternalSquadTemplateKey,
-  EnsureInternalSquadTemplateRequest,
-  InternalSquadTemplateResponse,
   CreateSquadRequest,
   UpdateSquadRequest,
   ExternalCredentialProvider,
@@ -276,7 +273,6 @@ import {
   PinnedItemListSchema,
   SquadMemberSchema,
   SquadMemberListSchema,
-  InternalSquadTemplateResponseSchema,
   EMPTY_PROJECT,
   EMPTY_PROJECTS,
   EMPTY_SEARCH_PROJECTS,
@@ -1790,13 +1786,11 @@ export class ApiClient extends ApiTransport {
 	async createLifeObserverVersion(id: string, data: Record<string, unknown>): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/versions`, { method: "POST", body: JSON.stringify(data) }); }
 	async runLifeObserver(id: string): Promise<unknown> { return this.fetch(`/api/life/observers/${id}/run`, { method: "POST" }); }
 	async listLifeObservationSeat(): Promise<LifeObservationSeatResponse> { const raw = await this.fetch<unknown>("/api/life/observation-seat"); return parseWithFallback(raw, LifeObservationSeatSchema, EMPTY_LIFE_OBSERVATION_SEAT, { endpoint: "GET /api/life/observation-seat" }); }
-	async updateLifeObservationTopic(id: string, data: { status: string; companion_response?: string }): Promise<unknown> { return this.fetch(`/api/life/observation-seat/topics/${id}`, { method: "PATCH", body: JSON.stringify(data) }); }
 	async listLifeModules(): Promise<LifeModuleListResponse> { const raw = await this.fetch<unknown>("/api/life/modules"); return parseWithFallback(raw, LifeModuleListSchema, EMPTY_LIFE_MODULES, { endpoint: "GET /api/life/modules" }); }
 	async updateLifeModule(id: string, status: string): Promise<unknown> { return this.fetch(`/api/life/modules/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); }
 	async listLifeCognitionJobs(): Promise<LifeCognitionJobListResponse> { const raw = await this.fetch<unknown>("/api/life/cognition-jobs"); return parseWithFallback(raw, LifeCognitionJobListSchema, EMPTY_LIFE_JOBS, { endpoint: "GET /api/life/cognition-jobs" }); }
 	async retryLifeCognitionJob(id: string): Promise<unknown> { return this.fetch(`/api/life/cognition-jobs/${id}/retry`, { method: "POST" }); }
 	async listLifeUpgradeEvaluations(): Promise<LifeUpgradeEvaluationListResponse> { const raw = await this.fetch<unknown>("/api/life/upgrade-evaluations"); return parseWithFallback(raw, LifeUpgradeEvaluationListSchema, EMPTY_LIFE_UPGRADES, { endpoint: "GET /api/life/upgrade-evaluations" }); }
-	async createLifeUpgradeEvaluation(data: Record<string, unknown>): Promise<unknown> { return this.fetch("/api/life/upgrade-evaluations", { method: "POST", body: JSON.stringify(data) }); }
 
   // Chat Sessions
   async listChatSessions(): Promise<ChatSession[]> {
@@ -2246,20 +2240,6 @@ export class ApiClient extends ApiTransport {
       }) as Squad;
     };
     return this.retryUnknownMutationOnce(attempt);
-  }
-
-  async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {
-    const body =
-      typeof template === "string" ? { template_key: template } : template;
-    const raw = await this.fetch<unknown>("/api/squads/internal-template", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    return parseOrThrow(
-      raw,
-      InternalSquadTemplateResponseSchema,
-      { endpoint: "POST /api/squads/internal-template", mayHaveCommitted: true },
-    );
   }
 
   async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {

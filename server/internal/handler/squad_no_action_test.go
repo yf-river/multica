@@ -322,7 +322,7 @@ func TestCreateComment_SquadLeaderNoActionAllowsMentionDispatch(t *testing.T) {
 	recordSquadLeaderEvaluationForTask(t, fx, "no_action")
 
 	w := fx.postTaskComment(t, map[string]any{
-		"content":   "继续调度 [@PM-项目经理](mention://agent/" + fx.LeaderID + ") 处理。",
+		"content":   "继续调度 [@协调者](mention://agent/" + fx.LeaderID + ") 处理。",
 		"parent_id": fx.TriggerCommentID,
 	})
 	if w.Code != http.StatusCreated {

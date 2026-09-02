@@ -22,7 +22,7 @@ func TestDispatchCommentFromTaskMessages(t *testing.T) {
 			messages: []db.TaskMessage{
 				textTaskMessage("中间总结，无 mention"),
 				textTaskMessage(dispatch),
-				textTaskMessage("已完成 PM 首轮调度，等待下一阶段。"),
+				textTaskMessage("已完成 协调者首轮调度，等待下一阶段。"),
 			},
 			want: dispatch,
 		},

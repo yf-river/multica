@@ -755,9 +755,12 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 
 func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) executionpolicy.Policy {
 	key := strings.ToLower(strings.TrimSpace(roleKey))
-	if isSquadLeader || key == "pm" {
+	if isSquadLeader {
+		if key == "" {
+			key = "coordinator"
+		}
 		return executionpolicy.Policy{
-			RoleKey:          "pm",
+			RoleKey:          key,
 			RoleKind:         "coordinator",
 			CanAccessRepo:    false,
 			CanEditRepo:      false,

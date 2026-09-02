@@ -16,7 +16,7 @@ import (
 func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
 	raw, err := json.Marshal(map[string]any{
 		"steps": []map[string]string{
-			{"key": "pm", "name": "pm", "role_key": "pm"},
+			{"key": "coordinator", "name": "协调者", "role_key": "coordinator"},
 			{"key": "02-design", "name": "02-方案设计", "role_key": "02-design"},
 			{"key": "05-verify", "name": "05-测试", "role_key": "05-verify"},
 		},
@@ -36,8 +36,8 @@ func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
 		t.Fatalf("matched step=%+v index=%d, want 02-design/1", step, index)
 	}
 	v2Agent := db.Agent{
-		Name:          "pm-v2 · 02-方案设计",
-		RuntimeConfig: []byte(`{"internal_squad":{"template_key":"user-center-sop-flow-v2","role_key":"02-design"}}`),
+		Name:          "协调者 · 02-方案设计",
+		RuntimeConfig: []byte(`{"internal_squad":{"role_key":"02-design"}}`),
 	}
 	step, index, ok = matchSquadSOPStepForAgentRecord(steps, v2Agent)
 	if !ok || step.Key != "02-design" || index != 1 {

@@ -43,20 +43,6 @@ export interface CreateSquadRequest {
   }>;
 }
 
-export type InternalSquadTemplateKey = "user-center" | "multica-coding";
-
-export interface EnsureInternalSquadTemplateRequest {
-  template_key: InternalSquadTemplateKey;
-  name?: string;
-  runtime_provider?: string;
-  model?: string;
-  scope?: SquadScope;
-}
-
-export interface InternalSquadTemplateResponse {
-  squad: Pick<Squad, "id" | "name">;
-}
-
 export type UpdateSquadRequest = Partial<Omit<CreateSquadRequest, "members">> & {
   instructions?: string;
 };
