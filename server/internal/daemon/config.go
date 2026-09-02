@@ -14,7 +14,6 @@ import (
 	"github.com/mattn/go-shellwords"
 
 	"github.com/multica-ai/multica/server/internal/cli"
-	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
 
@@ -230,9 +229,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		if oc := openclawOverrideFrom(cliCfg); oc != nil {
-			applyOpenclawOverride(oc)
-		}
 		// Per-machine custom-runtime command path overrides (MUL-3284).
 		// Copy into our own map so later mutation of the loaded config can't
 		// alias daemon state, and so an empty map normalizes to nil.
@@ -931,7 +927,7 @@ func isExecutableFile(path string) bool {
 // descriptor registry (agent.BuiltinRuntimeCommands) so adding a new fork
 // doesn't require editing this list by hand.
 var defaultAgentCommandNames = append([]string{
-	"claude", "codex", "opencode", "codearts", "deveco", "openclaw", "hermes",
+	"claude", "codex", "opencode", "codearts", "deveco", "hermes",
 	"pi", "cursor-agent", "copilot", "kimi", "reasonix", "dsh", "kiro-cli", "codebuddy", "agy", "qodercli", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode", "dim", "zeroclaw",
 }, agent.BuiltinRuntimeCommands()...)
 
@@ -1189,22 +1185,5 @@ func openclawOverrideFrom(cfg cli.CLIConfig) *cli.OpenClawOverride {
 //   - We deliberately do not unset on later reload: the daemon's lifecycle is
 //     "exit and respawn" (cmd_daemon.go), not in-process reconfigure.
 func applyOpenclawOverride(oc *cli.OpenClawOverride) {
-	if oc == nil {
-		return
-	}
-	if oc.BinaryPath != "" {
-		if _, set := os.LookupEnv("MULTICA_OPENCLAW_PATH"); !set {
-			_ = os.Setenv("MULTICA_OPENCLAW_PATH", oc.BinaryPath)
-		}
-	}
-	if oc.StateDir != "" {
-		if _, set := os.LookupEnv("OPENCLAW_STATE_DIR"); !set {
-			_ = os.Setenv("OPENCLAW_STATE_DIR", oc.StateDir)
-		}
-	}
-	if oc.CLITimeout != "" {
-		if _, set := os.LookupEnv(execenv.OpenclawCLITimeoutEnv); !set {
-			_ = os.Setenv(execenv.OpenclawCLITimeoutEnv, oc.CLITimeout)
-		}
-	}
+	_ = oc
 }

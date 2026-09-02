@@ -5563,15 +5563,6 @@ func taskRunFailureReason(err error) string {
 	if errors.Is(err, errSkillBundleUnavailable) {
 		return taskfailure.ReasonSkillBundleUnavailable.String()
 	}
-	// Structural, not textual: the message ends in "context deadline exceeded",
-	// which Classify routes to agent_error.provider_network — "the connection to
-	// the model provider dropped, check your network" for a stall that is purely
-	// local, plus an auto-retry of a failure that is deterministic on the host.
-	// The sentinel survives the preparation helper boundary via
-	// preparationErrorKind (#7112).
-	if errors.Is(err, execenv.ErrOpenclawCLITimeout) {
-		return taskfailure.ReasonRuntimeCLITimeout.String()
-	}
 	return taskfailure.Classify(err.Error()).String()
 }
 
@@ -7203,10 +7194,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "codex" && resolvedVersion != "" {
 		codexVersion = resolvedVersion
 	}
-	openclawBin := ""
-	if provider == "openclaw" {
-		openclawBin = entry.Path
-	}
 	// Resolve any local_directory assignment again here so runTask can plumb
 	// LocalWorkDir into execenv. handleTask already validated + locked the
 	// path for worker tasks; leader tasks intentionally skip the assignment.
@@ -7291,11 +7278,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
 	// failures fail soft to local mode — a broken JSON blob must never block
 	// task dispatch.
-	var openclawMode string
-	var openclawGateway execenv.OpenclawGatewayPin
-	if task.Agent != nil && provider == "openclaw" {
-		openclawMode, openclawGateway = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig, d.logger)
-	}
 	var agentEnvOverrides map[string]string
 	var agentCustomArgs []string
 	if task.Agent != nil {
@@ -7438,10 +7420,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Provider:              provider,
 			CodexVersion:          codexVersion,
 			ResumeSessionID:       task.PriorSessionID,
-			OpenclawBin:           openclawBin,
 			McpConfig:             effectiveMcpConfig,
 			CursorMcpAuthSource:   cursorMcpAuthSource,
-			OpenclawGateway:       openclawGateway,
 			HermesSourceHome:      hermesSourceHome,
 			HermesSourceMustExist: hermesSourceMustExist,
 			HermesEnv:             hermesEnv,
@@ -7488,10 +7468,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			EnvRootPreclaimed:     true,
 			Provider:              provider,
 			CodexVersion:          codexVersion,
-			OpenclawBin:           openclawBin,
 			McpConfig:             effectiveMcpConfig,
 			CursorMcpAuthSource:   cursorMcpAuthSource,
-			OpenclawGateway:       openclawGateway,
 			HermesSourceHome:      hermesSourceHome,
 			HermesSourceMustExist: hermesSourceMustExist,
 			HermesEnv:             hermesEnv,
@@ -7841,22 +7819,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.CursorDataDir != "" {
 		agentEnv["CURSOR_DATA_DIR"] = env.CursorDataDir
 	}
-	// Point OpenClaw at the per-task synthesized config. The config pins
-	// agents.defaults.workspace (and any agents.list[].workspace) to the
-	// task workdir, so the CLI's native skill scanner picks up the per-task
-	// skills written under {workDir}/skills/. Falls back silently when the
-	// preparer didn't run (non-openclaw provider, or write failure).
-	if env.OpenclawConfigPath != "" {
-		agentEnv["OPENCLAW_CONFIG_PATH"] = env.OpenclawConfigPath
-	}
-	// Grant the wrapper config permission to $include the user's active
-	// config across directories. OpenClaw's $include defaults to confining
-	// resolution to the wrapper's own directory; without this, the
-	// wrapper-out-of-envRoot $include into ~/.openclaw/openclaw.json is
-	// rejected and the run boots with no user-registered agents.
-	if rootsValue, ok := composeOpenclawIncludeRoots(env.OpenclawIncludeRoot, os.Getenv("OPENCLAW_INCLUDE_ROOTS")); ok {
-		agentEnv["OPENCLAW_INCLUDE_ROOTS"] = rootsValue
-	}
 	// Inject user-configured custom environment variables (e.g. ANTHROPIC_API_KEY,
 	// ANTHROPIC_BASE_URL for router/proxy mode, or CLAUDE_CODE_USE_BEDROCK for
 	// Bedrock). These are set per-agent via the agent settings UI.
@@ -8015,7 +7977,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		McpConfig:              mcpConfig,
 		ThinkingLevel:          thinkingLevel,
 		ServiceTier:            serviceTier,
-		OpenclawMode:           openclawMode,
 		ClaudeSettingsPath:     env.ClaudeSettingsPath,
 		QwenpawWorkspace:       env.QwenpawWorkspace,
 	}

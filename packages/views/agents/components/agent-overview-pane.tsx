@@ -226,7 +226,7 @@ export function AgentOverviewPane({
         // showing the tab to anyone else guarantees a 403 on "Reveal & edit".
         // The server stays the boundary; this only removes a dead entry point.
         if (tab.id === "env") return canEdit;
-        if (tab.id === "runtime_config") return runtime?.provider === "openclaw";
+        if (tab.id === "runtime_config") return false;
         return true;
       }),
     [canEdit, runtime?.provider],

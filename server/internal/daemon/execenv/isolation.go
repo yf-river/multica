@@ -31,75 +31,9 @@ type preparationRequest struct {
 	Reuse   *ReuseParams   `json:"reuse,omitempty"`
 }
 
-// preparationOpenclawGatewayPin is the private helper-protocol view of an
-// OpenclawGatewayPin. Defining a new type intentionally drops MarshalJSON,
-// whose public/logging contract masks Token. The helper needs the real token
-// over its stdin pipe so it can materialize a working per-task wrapper.
-type preparationOpenclawGatewayPin OpenclawGatewayPin
-
-type preparationPrepareParams struct {
-	*PrepareParams
-	OpenclawGateway preparationOpenclawGatewayPin `json:"OpenclawGateway"`
-}
-
-type preparationReuseParams struct {
-	*ReuseParams
-	OpenclawGateway preparationOpenclawGatewayPin `json:"OpenclawGateway"`
-}
-
-type preparationRequestPayload struct {
-	Action  string                    `json:"action"`
-	Prepare *preparationPrepareParams `json:"prepare,omitempty"`
-	Reuse   *preparationReuseParams   `json:"reuse,omitempty"`
-}
-
 type preparationResponse struct {
 	Environment *Environment `json:"environment,omitempty"`
 	Error       string       `json:"error,omitempty"`
-	// ErrorKind names the error class the parent must be able to recognise
-	// structurally. Error itself only crosses the pipe as text, so an
-	// errors.Is-based classification on the daemon side would otherwise be
-	// impossible — the daemon would be back to substring-matching, which is
-	// exactly what routed a local openclaw CLI stall into
-	// agent_error.provider_network. Empty means "no special class".
-	ErrorKind string `json:"error_kind,omitempty"`
-}
-
-// preparationErrorKindOpenclawCLITimeout marks a helper failure caused by the
-// local openclaw CLI missing its deadline (ErrOpenclawCLITimeout).
-const preparationErrorKindOpenclawCLITimeout = "openclaw_cli_timeout"
-
-// preparationKindError re-attaches a sentinel to an error that crossed the
-// helper boundary as text, so the daemon's classifier sees the same
-// errors.Is result it would have seen in-process.
-type preparationKindError struct {
-	msg  string
-	kind error
-}
-
-func (e *preparationKindError) Error() string { return e.msg }
-
-func (e *preparationKindError) Unwrap() error { return e.kind }
-
-// preparationErrorKind names the class of err for the wire, or "" when it has
-// none.
-func preparationErrorKind(err error) string {
-	if errors.Is(err, ErrOpenclawCLITimeout) {
-		return preparationErrorKindOpenclawCLITimeout
-	}
-	return ""
-}
-
-// rehydratePreparationError rebuilds a typed error from the wire pair. An
-// unknown kind (helper newer than the daemon) degrades to a plain error with
-// the original message rather than being dropped.
-func rehydratePreparationError(message, kind string) error {
-	switch kind {
-	case preparationErrorKindOpenclawCLITimeout:
-		return &preparationKindError{msg: message, kind: ErrOpenclawCLITimeout}
-	default:
-		return errors.New(message)
-	}
 }
 
 // PrepareIsolated executes Prepare in a killable helper process. command must
@@ -205,7 +139,7 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 		return nil, fmt.Errorf("execenv: decode preparation response: %w", err)
 	}
 	if response.Error != "" {
-		return nil, rehydratePreparationError(response.Error, response.ErrorKind)
+		return nil, errors.New(response.Error)
 	}
 	if response.Environment != nil {
 		// logger is intentionally omitted from JSON. Reattach the owning daemon's
@@ -215,25 +149,8 @@ func runPreparationProcess(ctx context.Context, command []string, request prepar
 	return response.Environment, nil
 }
 
-// marshalPreparationRequest builds the private parent-to-helper payload. A
-// methodless view is required for OpenclawGateway so its bearer token survives
-// this trusted local process boundary; ordinary json.Marshal calls on the
-// public type remain redacted.
 func marshalPreparationRequest(request preparationRequest) ([]byte, error) {
-	payload := preparationRequestPayload{Action: request.Action}
-	if request.Prepare != nil {
-		payload.Prepare = &preparationPrepareParams{
-			PrepareParams:   request.Prepare,
-			OpenclawGateway: preparationOpenclawGatewayPin(request.Prepare.OpenclawGateway),
-		}
-	}
-	if request.Reuse != nil {
-		payload.Reuse = &preparationReuseParams{
-			ReuseParams:     request.Reuse,
-			OpenclawGateway: preparationOpenclawGatewayPin(request.Reuse.OpenclawGateway),
-		}
-	}
-	return json.Marshal(payload)
+	return json.Marshal(request)
 }
 
 func decodePreparationRequest(in io.Reader) (preparationRequest, error) {
@@ -266,7 +183,6 @@ func RunPreparationHelper(in io.Reader, out io.Writer, logger *slog.Logger) erro
 		response.Environment = env
 		if err != nil {
 			response.Error = err.Error()
-			response.ErrorKind = preparationErrorKind(err)
 		}
 	case preparationActionReuse:
 		if request.Reuse == nil || request.Prepare != nil {

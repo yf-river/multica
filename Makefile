@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree remove-worktree db-up db-down db-drop db-reset selfhost selfhost-build selfhost-stop up down status list destroy gc env-exec api-dev web-dev desktop-dev
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree remove-worktree db-up db-down db-drop db-reset selfhost selfhost-build selfhost-stop up down status list destroy gc env-exec api-dev web-dev
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -70,7 +70,7 @@ endef
 ##@ Help
 
 help: ## Show available make targets and common local workflows
-	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nQuick start:\n  \033[36mmake up\033[0m           Start this checkout'"'"'s environment (C=api,web,daemon,desktop)\n  \033[36mmake status\033[0m       Show what is running, and prove it is yours\n  \033[36mmake down\033[0m         Stop it again, keeping the database\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
+	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nQuick start:\n  \033[36mmake up\033[0m           Start this checkout'"'"'s environment (C=api,web,daemon)\n  \033[36mmake status\033[0m       Show what is running, and prove it is yours\n  \033[36mmake down\033[0m         Stop it again, keeping the database\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
 		/^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -151,10 +151,9 @@ selfhost-stop: ## Stop the self-hosted Docker Compose stack
 #
 #   make up                     api + web
 #   make up C=api,web,daemon    add the agent daemon
-#   make up C=desktop           Electron against this environment's backend
 #   make up ARGS=--ephemeral    agent-owned, expires, collected by `make gc`
 
-up: ## Start this checkout's environment (C=api,web,daemon,desktop; default api,web)
+up: ## Start this checkout's environment (C=api,web,daemon; default api,web)
 	@bash scripts/dev-env.sh up $(if $(C),--components $(C)) $(ARGS)
 
 down: ## Stop this environment's processes, keeping its database and profile
@@ -172,7 +171,7 @@ destroy: ## Stop this environment, drop its database and profile, free its slot
 gc: ## Collect environments whose directory is gone or whose TTL expired
 	@bash scripts/dev-env.sh gc $(ARGS)
 
-env-exec: ## Run a command with this environment's variables (ARGS="-- pnpm dev:desktop")
+env-exec: ## Run a command with this environment's variables
 	@bash scripts/dev-env.sh exec $(ARGS)
 
 # Single-component entry points. No database preflight: `up` has already proven
@@ -185,9 +184,6 @@ api-dev: ## Run only the Go backend for the current env file
 
 web-dev: ## Run only the Next.js dev server for the current env file
 	pnpm dev:web
-
-desktop-dev: ## Run only the Electron desktop app for the current env file
-	pnpm dev:desktop
 
 # ---------- One-click commands ----------
 ##@ One-click

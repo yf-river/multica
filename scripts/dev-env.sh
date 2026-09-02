@@ -39,7 +39,7 @@ DEV_CODE_DEFAULT=888888
 WORKSPACE_NAME="${MULTICA_DEV_WORKSPACE_NAME:-Dev}"
 WORKSPACE_SLUG="${MULTICA_DEV_WORKSPACE_SLUG:-dev}"
 
-ALL_COMPONENTS="api web daemon desktop"
+ALL_COMPONENTS="api web daemon"
 DEFAULT_COMPONENTS="api web"
 
 # An agent runs with TMPDIR=/tmp/multica-task-<id>, deleted when the run ends.

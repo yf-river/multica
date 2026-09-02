@@ -31,15 +31,6 @@
       "ignoreDependencies": ["postcss-load-config"]
     },
 
-    "apps/desktop": {
-      // window-state.node-test.mjs is run by hand (`node --test`, see its
-      // header) rather than by a package script, so nothing imports it.
-      "entry": ["eslint.config.mjs", "src/main/*.node-test.mjs"],
-      // Consumed by `extends` in tsconfig.node.json / tsconfig.web.json.
-      // knip follows `extends` from the default tsconfig.json only.
-      "ignoreDependencies": ["@multica/tsconfig"]
-    },
-
     "apps/docs": {},
 
     // The three shared packages export raw .ts/.tsx compiled by their

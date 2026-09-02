@@ -109,17 +109,6 @@ type ExecOptions struct {
 	// routing; empty means inherit local Codex config.
 	// Other providers ignore this field.
 	ServiceTier string
-	// OpenclawMode chooses between local (embedded) and gateway routing for
-	// the openclaw backend. "" or "local" keeps the historical behaviour —
-	// the daemon spawns `openclaw agent --local …` and the agent loop runs
-	// in-process on the daemon host. "gateway" instructs the daemon to drop
-	// the --local flag and let openclaw route the turn through a Gateway (the
-	// user's globally-configured one, or an endpoint pinned in the per-task
-	// config wrapper that the daemon writes from execenv.OpenclawGatewayPin —
-	// see server/internal/daemon/execenv/openclaw_config.go). Other backends
-	// ignore this field, mirroring ThinkingLevel's renderer-side fall-through
-	// pattern. See issue #3260.
-	OpenclawMode string
 	// ClaudeSettingsPath is a daemon-owned, task-local settings file passed
 	// through Claude Code's --settings flag. It currently carries restrictive
 	// runtime-skill overrides only; other providers ignore it.
@@ -255,7 +244,7 @@ type Result struct {
 
 // Config configures a Backend instance.
 type Config struct {
-	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, codearts, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw, mcode, dim, zeroclaw)
+	ExecutablePath string            // path to CLI binary
 	CLIVersion     string            // detected version paired with ExecutablePath; observation only, never used to choose behavior
 	Env            map[string]string // extra environment variables
 	Logger         *slog.Logger
@@ -290,7 +279,7 @@ type Config struct {
 }
 
 // New creates a Backend for the given agent type.
-// Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "codearts", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "dsh", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw", "mcode".
+// Supported types are the providers listed in SupportedTypes.
 //
 // SupportedTypes is the canonical whitelist of agent types eligible to back a
 // custom runtime profile. It MUST stay in lockstep with the
@@ -317,7 +306,6 @@ var SupportedTypes = []string{
 	"opencode",
 	"codearts",
 	"deveco",
-	"openclaw",
 	"hermes",
 	"pi",
 	"cursor",
@@ -406,8 +394,6 @@ func New(agentType string, cfg Config) (Backend, error) {
 		return newCodeArtsBackend(cfg)
 	case "deveco":
 		return &devecoBackend{cfg: cfg}, nil
-	case "openclaw":
-		return &openclawBackend{cfg: cfg}, nil
 	case "hermes":
 		return &hermesBackend{cfg: cfg}, nil
 	case "pi":
@@ -475,7 +461,6 @@ var launchHeaders = map[string]string{
 	"reasonix":    "reasonix acp",
 	"dsh":         "dsh --profile multica (stdio)",
 	"kiro":        "kiro-cli acp",
-	"openclaw":    "openclaw agent (json)",
 	"opencode":    "opencode run (json)",
 	"pi":          "pi (json mode)",
 	"qoder":       "qodercli --acp",

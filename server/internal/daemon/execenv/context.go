@@ -379,14 +379,6 @@ func skillsDirPath(workDir, provider string) string {
 		// is anchored at the task workdir via `deveco run --dir <workDir>` +
 		// the PWD override in devecoBackend, same anchor OpenCode uses.
 		return filepath.Join(workDir, ".deveco", "skills")
-	case "openclaw":
-		// OpenClaw's native skill scanner reads <workspaceDir>/skills/. The
-		// daemon pairs this with a per-task synthesized openclaw-config.json
-		// (see openclaw_config.go) that pins agents.defaults.workspace to
-		// workDir, so writing here is what the CLI actually scans. Before
-		// MUL-2219 this used to fall back to .agent_context/skills/, which
-		// no openclaw scan path ever inspected.
-		return filepath.Join(workDir, "skills")
 	case "pi":
 		// Pi natively discovers skills from .pi/skills/ in the workdir.
 		return filepath.Join(workDir, ".pi", "skills")

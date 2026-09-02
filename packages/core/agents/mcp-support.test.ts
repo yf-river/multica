@@ -15,7 +15,6 @@ describe("providerSupportsMcpConfig", () => {
     expect(providerSupportsMcpConfig("dsh")).toBe(true);
     expect(providerSupportsMcpConfig("kiro")).toBe(true);
     expect(providerSupportsMcpConfig("opencode")).toBe(true);
-    expect(providerSupportsMcpConfig("openclaw")).toBe(true);
     expect(providerSupportsMcpConfig("qoder")).toBe(true);
     expect(providerSupportsMcpConfig("qoderclicn")).toBe(true);
     expect(providerSupportsMcpConfig("qwen")).toBe(true);

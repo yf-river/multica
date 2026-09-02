@@ -396,8 +396,6 @@ export function ProviderLogo({
       return <DevecoLogo className={className} />;
     case "codearts":
       return <CodeArtsLogo className={className} />;
-    case "openclaw":
-      return <OpenClawLogo className={className} />;
     case "hermes":
       return <HermesLogo className={className} />;
     case "pi":
