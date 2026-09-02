@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS public.life_chronicle_evidence;
+DROP TABLE IF EXISTS public.life_chronicle_entry;
+DROP TABLE IF EXISTS public.life_proactive_check;
+DROP TABLE IF EXISTS public.life_experiment_memory;
+DROP TABLE IF EXISTS public.life_experiment_round;
+DROP TABLE IF EXISTS public.life_experiment;
+DROP TABLE IF EXISTS public.life_action_proposal;
+DROP TABLE IF EXISTS public.life_memory_dependency;
+DROP TABLE IF EXISTS public.life_memory_evidence;
+DROP TABLE IF EXISTS public.life_memory;
+DROP TABLE IF EXISTS public.companion_profile;

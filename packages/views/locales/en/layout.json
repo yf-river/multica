@@ -11,7 +11,12 @@
     "usage": "Analytics",
     "runtimes": "Runtimes",
     "skills": "Skills",
-    "settings": "Settings"
+    "settings": "Settings",
+    "life": "Life",
+    "memory": "Memory",
+    "experiment": "Experiments",
+    "observers": "Observation seat",
+    "chronicle": "Chronicle"
   },
   "tab": {
     "issue": "Issue",

@@ -2,8 +2,9 @@ export {
   paths,
   isGlobalPath,
   AGENT_FOCUS_CONVERSATION_STARTERS,
+  LIFE_TABS,
 } from "./paths";
-export type { WorkspacePaths } from "./paths";
+export type { WorkspacePaths, LifeTab } from "./paths";
 export { RESERVED_SLUGS, isReservedSlug } from "./reserved-slugs";
 export {
   WORKSPACE_PAGES,
@@ -41,3 +42,4 @@ export {
   useCurrentWorkspace,
   useWorkspacePaths,
 } from "./hooks";
+export { useWorkspaceId } from "../hooks";

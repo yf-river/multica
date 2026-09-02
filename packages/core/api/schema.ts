@@ -53,3 +53,14 @@ export function parseWithFallback<T>(
   );
   return fallback;
 }
+
+export function parseOrThrow<T>(data: unknown, schema: ZodType, opts: ParseOptions & { mayHaveCommitted?: boolean }): T {
+  const result = schema.safeParse(data);
+  if (result.success) return result.data as T;
+  schemaLogger.warn(`API response failed schema validation: ${opts.endpoint}`, {
+    endpoint: opts.endpoint,
+    issues: result.error.issues,
+    received: data,
+  });
+  throw new Error(`API response format invalid: ${opts.endpoint}`);
+}

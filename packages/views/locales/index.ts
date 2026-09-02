@@ -49,6 +49,7 @@ import zhHansUsage from "./zh-Hans/usage.json";
 import zhHansUi from "./zh-Hans/ui.json";
 import zhHansSquads from "./zh-Hans/squads.json";
 import zhHansBilling from "./zh-Hans/billing.json";
+import zhHansLife from "./zh-Hans/life.json";
 import koCommon from "./ko/common.json";
 import koAuth from "./ko/auth.json";
 import koSettings from "./ko/settings.json";
@@ -130,6 +131,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: enUi,
     squads: enSquads,
     billing: enBilling,
+    life: zhHansLife,
   },
   "zh-Hans": {
     common: zhHansCommon,
@@ -157,6 +159,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: zhHansUi,
     squads: zhHansSquads,
     billing: zhHansBilling,
+    life: zhHansLife,
   },
   ko: {
     common: koCommon,
@@ -184,6 +187,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: koUi,
     squads: koSquads,
     billing: koBilling,
+    life: zhHansLife,
   },
   ja: {
     common: jaCommon,
@@ -211,5 +215,6 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: jaUi,
     squads: jaSquads,
     billing: jaBilling,
+    life: zhHansLife,
   },
 };

@@ -861,6 +861,50 @@ func (q *Queries) GetChatMessageByTaskAssistant(ctx context.Context, taskID pgty
 	return i, err
 }
 
+const getChatMessageForLifeEvidence = `-- name: GetChatMessageForLifeEvidence :one
+SELECT message.id, message.chat_session_id, message.role, message.content, message.task_id, message.created_at, message.failure_reason, message.elapsed_ms, message.message_kind, message.channel_media_pending_until, message.channel_ingested, message.quick_actions, message.channel_context_revision, message.channel_outbound_type, message.channel_outbound_installation_id, message.channel_outbound_chat_id, message.channel_outbound_message_ids
+FROM chat_message message
+JOIN chat_session session ON session.id = message.chat_session_id
+WHERE message.id = $1
+  AND session.workspace_id = $2
+  AND session.creator_id = $3
+`
+
+type GetChatMessageForLifeEvidenceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+}
+
+type GetChatMessageForLifeEvidenceRow struct {
+	ChatMessage ChatMessage `json:"chat_message"`
+}
+
+func (q *Queries) GetChatMessageForLifeEvidence(ctx context.Context, arg GetChatMessageForLifeEvidenceParams) (GetChatMessageForLifeEvidenceRow, error) {
+	row := q.db.QueryRow(ctx, getChatMessageForLifeEvidence, arg.ID, arg.WorkspaceID, arg.CreatorID)
+	var i GetChatMessageForLifeEvidenceRow
+	err := row.Scan(
+		&i.ChatMessage.ID,
+		&i.ChatMessage.ChatSessionID,
+		&i.ChatMessage.Role,
+		&i.ChatMessage.Content,
+		&i.ChatMessage.TaskID,
+		&i.ChatMessage.CreatedAt,
+		&i.ChatMessage.FailureReason,
+		&i.ChatMessage.ElapsedMs,
+		&i.ChatMessage.MessageKind,
+		&i.ChatMessage.ChannelMediaPendingUntil,
+		&i.ChatMessage.ChannelIngested,
+		&i.ChatMessage.QuickActions,
+		&i.ChatMessage.ChannelContextRevision,
+		&i.ChatMessage.ChannelOutboundType,
+		&i.ChatMessage.ChannelOutboundInstallationID,
+		&i.ChatMessage.ChannelOutboundChatID,
+		&i.ChatMessage.ChannelOutboundMessageIds,
+	)
+	return i, err
+}
+
 const getChatSession = `-- name: GetChatSession :one
 SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id, explicitly_created_at FROM chat_session
 WHERE id = $1

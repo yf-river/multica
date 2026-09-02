@@ -122,7 +122,8 @@ type NavKey =
   | "usage"
   | "runtimes"
   | "skills"
-  | "settings";
+  | "settings"
+  | "life";
 
 // Static schema (key only) — labels resolved at render via useT("layout"),
 // icons derived from the destination path via routeIconForPath.
@@ -138,7 +139,8 @@ type NavLabelKey =
   | "usage"
   | "runtimes"
   | "skills"
-  | "settings";
+  | "settings"
+  | "life";
 
 // Nav icons are NOT declared here: they are derived from each item's
 // destination path at render time, so the sidebar and the desktop tab bar
@@ -156,6 +158,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "agents", labelKey: "agents" },
   { key: "squads", labelKey: "squads" },
   { key: "usage", labelKey: "usage" },
+  { key: "life", labelKey: "life" },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
@@ -163,6 +166,13 @@ const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "skills", labelKey: "skills" },
   { key: "settings", labelKey: "settings" },
 ];
+
+const lifeNav = [
+  { tab: "memory", labelKey: "memory" },
+  { tab: "experiment", labelKey: "experiment" },
+  { tab: "observers", labelKey: "observers" },
+  { tab: "chronicle", labelKey: "chronicle" },
+] as const;
 
 function DraftDot() {
   const hasDraft = useIssueDraftStore((s) => s.hasDraft());
@@ -867,6 +877,26 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       >
                         <Icon />
                         <span>{t(($) => $.nav[item.labelKey])}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel>{t(($) => $.nav.life)}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-0.5">
+                {lifeNav.map((item) => {
+                  const href = p.lifeTab(item.tab);
+                  const Icon = routeIconForPath(href);
+                  const isActive = pathname.startsWith(p.life());
+                  return (
+                    <SidebarMenuItem key={item.tab}>
+                      <SidebarMenuButton isActive={isActive && new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("tab") === item.tab} render={<AppLink href={href} />} className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground">
+                        <Icon /><span>{t(($) => $.nav[item.labelKey])}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );

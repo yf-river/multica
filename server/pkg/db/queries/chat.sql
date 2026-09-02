@@ -1083,6 +1083,14 @@ SELECT
 WHERE lock_task_owner_rows($1, NULL, $2)
 RETURNING *;
 
+-- name: GetChatMessageForLifeEvidence :one
+SELECT sqlc.embed(message)
+FROM chat_message message
+JOIN chat_session session ON session.id = message.chat_session_id
+WHERE message.id = $1
+  AND session.workspace_id = $2
+  AND session.creator_id = $3;
+
 -- name: PromoteChannelChatTasksIfMediaReady :many
 -- Media completion may race with the 3s run batcher. Promote every original
 -- channel task waiting for this session only after all unexpired media markers

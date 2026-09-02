@@ -14,6 +14,9 @@
 
 const encode = (id: string) => encodeURIComponent(id);
 
+export const LIFE_TABS = ["memory", "experiment", "observers", "chronicle"] as const;
+export type LifeTab = (typeof LIFE_TABS)[number];
+
 /**
  * `?focus=` token that scrolls the agent's Instructions tab to its
  * conversation-starters editor and flashes it. Lives here because it is URL
@@ -65,6 +68,9 @@ function workspaceScoped(slug: string) {
     runtimeSettings: (machineId: string, runtimeId: string) =>
       `${ws}/runtimes/${encode(machineId)}/runtime/${encode(runtimeId)}`,
     skills: () => `${ws}/skills`,
+    life: () => `${ws}/life`,
+    companion: () => `${ws}/companion`,
+    lifeTab: (tab: LifeTab) => `${ws}/life?tab=${encode(tab)}`,
     skillDetail: (id: string) => `${ws}/skills/${encode(id)}`,
     settings: () => `${ws}/settings`,
     attachmentPreview: (id: string) => `${ws}/attachments/${encode(id)}/preview`,

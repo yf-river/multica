@@ -3328,3 +3328,5 @@ export const EMPTY_JOIN_SHARE_LINK_RESPONSE: {
   workspace_id: "",
   workspace_slug: "",
 };
+
+export * from "./schemas-life";

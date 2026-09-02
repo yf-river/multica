@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dbstartup"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
@@ -540,6 +541,11 @@ func main() {
 	defer analyticsClient.Close()
 
 	queries := db.New(pool)
+	bus.SetPersister(func(event events.Event) {
+		if _, err := eventoutbox.Enqueue(context.Background(), queries, event); err != nil {
+			slog.Warn("event outbox enqueue failed", "event_type", event.Type, "error", err)
+		}
+	})
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
@@ -660,6 +666,13 @@ func main() {
 		go runAutopilotQuotaReconciler(autopilotCtx, autopilotSvc)
 	}
 	go runDBStatsLogger(sweepCtx, pool)
+	if dispatcher, err := eventoutbox.NewDispatcher(queries, pool, bus, fmt.Sprintf("api-%d", os.Getpid())); err != nil {
+		slog.Warn("event outbox dispatcher disabled", "error", err)
+	} else {
+		go dispatcher.Run(sweepCtx)
+	}
+	go runLifeExperimentSweeper(sweepCtx, queries)
+	go runLifeCognitionWorker(sweepCtx, queries)
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}

@@ -167,6 +167,7 @@ export type {
   ChatDraftRestoresResponse,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
+export type * from "./life";
 export type {
   Project,
   ProjectStatus,

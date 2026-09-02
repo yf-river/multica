@@ -561,6 +561,17 @@ type CommentReaction struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type CompanionProfile struct {
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	UserID                   pgtype.UUID        `json:"user_id"`
+	AgentID                  pgtype.UUID        `json:"agent_id"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	LastInteractionAt        pgtype.Timestamptz `json:"last_interaction_at"`
+	ReturnContext            []byte             `json:"return_context"`
+	CurrentIdentityVersionID pgtype.UUID        `json:"current_identity_version_id"`
+}
+
 type ContactSalesInquiry struct {
 	ID              pgtype.UUID        `json:"id"`
 	FirstName       string             `json:"first_name"`
@@ -631,6 +642,33 @@ type DingtalkGroupRoute struct {
 	Revision          int64              `json:"revision"`
 	DiscoveredAt      pgtype.Timestamptz `json:"discovered_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DomainEventDelivery struct {
+	EventID  pgtype.UUID `json:"event_id"`
+	Consumer string      `json:"consumer"`
+}
+
+type DomainEventOutbox struct {
+	ID               pgtype.UUID        `json:"id"`
+	EventType        string             `json:"event_type"`
+	StreamKey        pgtype.Text        `json:"stream_key"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ActorType        pgtype.Text        `json:"actor_type"`
+	ActorID          pgtype.Text        `json:"actor_id"`
+	TaskID           pgtype.Text        `json:"task_id"`
+	ChatSessionID    pgtype.Text        `json:"chat_session_id"`
+	Payload          []byte             `json:"payload"`
+	Attempts         int32              `json:"attempts"`
+	AvailableAt      pgtype.Timestamptz `json:"available_at"`
+	LeaseOwner       pgtype.Text        `json:"lease_owner"`
+	LeaseUntil       pgtype.Timestamptz `json:"lease_until"`
+	LastError        pgtype.Text        `json:"last_error"`
+	ProcessedAt      pgtype.Timestamptz `json:"processed_at"`
+	DeadLetteredAt   pgtype.Timestamptz `json:"dead_lettered_at"`
+	DeadLetterReason pgtype.Text        `json:"dead_letter_reason"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	SequenceNo       pgtype.Int8        `json:"sequence_no"`
 }
 
 type Feedback struct {
@@ -1005,6 +1043,462 @@ type LarkUserBinding struct {
 	LarkOpenID     string             `json:"lark_open_id"`
 	UnionID        pgtype.Text        `json:"union_id"`
 	BoundAt        pgtype.Timestamptz `json:"bound_at"`
+}
+
+type LifeActionProposal struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	CompanionAgentID pgtype.UUID        `json:"companion_agent_id"`
+	ProposalType     string             `json:"proposal_type"`
+	Status           string             `json:"status"`
+	Title            string             `json:"title"`
+	Summary          string             `json:"summary"`
+	Payload          []byte             `json:"payload"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	ConfirmedAt      pgtype.Timestamptz `json:"confirmed_at"`
+	ExecutedAt       pgtype.Timestamptz `json:"executed_at"`
+	FailureReason    string             `json:"failure_reason"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	RejectedAt       pgtype.Timestamptz `json:"rejected_at"`
+	RejectionReason  string             `json:"rejection_reason"`
+	ExecutionReceipt []byte             `json:"execution_receipt"`
+}
+
+type LifeChronicleEntry struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	PeriodStart        pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd          pgtype.Timestamptz `json:"period_end"`
+	Facts              string             `json:"facts"`
+	Feelings           string             `json:"feelings"`
+	UnderstandingThen  string             `json:"understanding_then"`
+	UnderstandingLater string             `json:"understanding_later"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	PeriodKind         string             `json:"period_kind"`
+	Actions            string             `json:"actions"`
+	Status             string             `json:"status"`
+	GeneratedBy        string             `json:"generated_by"`
+	Revision           int32              `json:"revision"`
+}
+
+type LifeChronicleEvidence struct {
+	EntryID    pgtype.UUID        `json:"entry_id"`
+	SourceType string             `json:"source_type"`
+	SourceID   pgtype.UUID        `json:"source_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeChronicleRevision struct {
+	ID                 pgtype.UUID        `json:"id"`
+	EntryID            pgtype.UUID        `json:"entry_id"`
+	Revision           int32              `json:"revision"`
+	Facts              string             `json:"facts"`
+	Feelings           string             `json:"feelings"`
+	UnderstandingThen  string             `json:"understanding_then"`
+	UnderstandingLater string             `json:"understanding_later"`
+	Actions            string             `json:"actions"`
+	ChangeReason       string             `json:"change_reason"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeCognitionJob struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	CompanionAgentID pgtype.UUID        `json:"companion_agent_id"`
+	JobType          string             `json:"job_type"`
+	Status           string             `json:"status"`
+	DedupeKey        string             `json:"dedupe_key"`
+	Input            []byte             `json:"input"`
+	Output           []byte             `json:"output"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	ScheduledAt      pgtype.Timestamptz `json:"scheduled_at"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	Attempt          int32              `json:"attempt"`
+	MaxAttempts      int32              `json:"max_attempts"`
+	Error            string             `json:"error"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeCommitment struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	SourceMemoryID pgtype.UUID        `json:"source_memory_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	Content        string             `json:"content"`
+	Status         string             `json:"status"`
+	DueAt          pgtype.Timestamptz `json:"due_at"`
+	RevisitAfter   pgtype.Timestamptz `json:"revisit_after"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt    pgtype.Timestamptz `json:"cancelled_at"`
+	Outcome        string             `json:"outcome"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeDerivation struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	SourceType  string             `json:"source_type"`
+	SourceID    string             `json:"source_id"`
+	TargetType  string             `json:"target_type"`
+	TargetID    pgtype.UUID        `json:"target_id"`
+	JobID       pgtype.UUID        `json:"job_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeExperiment struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	UserID        pgtype.UUID        `json:"user_id"`
+	Title         string             `json:"title"`
+	Problem       string             `json:"problem"`
+	Hypothesis    string             `json:"hypothesis"`
+	Method        []byte             `json:"method"`
+	CreatedByType string             `json:"created_by_type"`
+	CreatedByID   pgtype.UUID        `json:"created_by_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeExperimentMemory struct {
+	RoundID   pgtype.UUID        `json:"round_id"`
+	MemoryID  pgtype.UUID        `json:"memory_id"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeExperimentObservation struct {
+	ID              pgtype.UUID        `json:"id"`
+	RoundID         pgtype.UUID        `json:"round_id"`
+	MaterialID      pgtype.UUID        `json:"material_id"`
+	ObservationType string             `json:"observation_type"`
+	Content         string             `json:"content"`
+	CapturedBy      string             `json:"captured_by"`
+	ObservedAt      pgtype.Timestamptz `json:"observed_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeExperimentRound struct {
+	ID              pgtype.UUID        `json:"id"`
+	ExperimentID    pgtype.UUID        `json:"experiment_id"`
+	PreviousRoundID pgtype.UUID        `json:"previous_round_id"`
+	ProposalID      pgtype.UUID        `json:"proposal_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	Status          string             `json:"status"`
+	Plan            []byte             `json:"plan"`
+	StartsAt        pgtype.Timestamptz `json:"starts_at"`
+	EndsAt          pgtype.Timestamptz `json:"ends_at"`
+	StoppedAt       pgtype.Timestamptz `json:"stopped_at"`
+	StopReason      string             `json:"stop_reason"`
+	ConfirmedAt     pgtype.Timestamptz `json:"confirmed_at"`
+	ConfirmedByID   pgtype.UUID        `json:"confirmed_by_id"`
+	Review          []byte             `json:"review"`
+	ReviewedAt      pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ReviewDraft     []byte             `json:"review_draft"`
+}
+
+type LifeForgetTombstone struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	SourceType  string             `json:"source_type"`
+	SourceKey   string             `json:"source_key"`
+	ContentHash string             `json:"content_hash"`
+	ForgottenAt pgtype.Timestamptz `json:"forgotten_at"`
+}
+
+type LifeIdentityVersion struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	UserID               pgtype.UUID        `json:"user_id"`
+	Version              int32              `json:"version"`
+	Status               string             `json:"status"`
+	StableCore           []byte             `json:"stable_core"`
+	RelationshipContract []byte             `json:"relationship_contract"`
+	GrowthProfile        []byte             `json:"growth_profile"`
+	ExpressionProfile    []byte             `json:"expression_profile"`
+	Interests            []byte             `json:"interests"`
+	ChangeReason         string             `json:"change_reason"`
+	ConfirmedAt          pgtype.Timestamptz `json:"confirmed_at"`
+	ConfirmedByID        pgtype.UUID        `json:"confirmed_by_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeInternalThought struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	CompanionAgentID pgtype.UUID        `json:"companion_agent_id"`
+	ThoughtType      string             `json:"thought_type"`
+	Title            string             `json:"title"`
+	Content          string             `json:"content"`
+	Status           string             `json:"status"`
+	Metadata         []byte             `json:"metadata"`
+	LastDevelopedAt  pgtype.Timestamptz `json:"last_developed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeMaterial struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	SourceType     string             `json:"source_type"`
+	SourceKey      string             `json:"source_key"`
+	SourceRevision string             `json:"source_revision"`
+	Content        string             `json:"content"`
+	Metadata       []byte             `json:"metadata"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+	IngestedAt     pgtype.Timestamptz `json:"ingested_at"`
+}
+
+type LifeMemory struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	CreatedByType  string             `json:"created_by_type"`
+	CreatedByID    pgtype.UUID        `json:"created_by_id"`
+	Kind           string             `json:"kind"`
+	Status         string             `json:"status"`
+	Content        string             `json:"content"`
+	Confidence     float64            `json:"confidence"`
+	Urgency        float64            `json:"urgency"`
+	Uncertainty    string             `json:"uncertainty"`
+	ValidFrom      pgtype.Timestamptz `json:"valid_from"`
+	ValidTo        pgtype.Timestamptz `json:"valid_to"`
+	ConfirmedAt    pgtype.Timestamptz `json:"confirmed_at"`
+	ConfirmedByID  pgtype.UUID        `json:"confirmed_by_id"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	Scope          []byte             `json:"scope"`
+	LastReviewedAt pgtype.Timestamptz `json:"last_reviewed_at"`
+	ReviewAfter    pgtype.Timestamptz `json:"review_after"`
+	SupersededByID pgtype.UUID        `json:"superseded_by_id"`
+}
+
+type LifeMemoryDependency struct {
+	SourceMemoryID  pgtype.UUID        `json:"source_memory_id"`
+	DerivedMemoryID pgtype.UUID        `json:"derived_memory_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeMemoryEvidence struct {
+	MemoryID   pgtype.UUID        `json:"memory_id"`
+	SourceType string             `json:"source_type"`
+	SourceID   pgtype.UUID        `json:"source_id"`
+	Excerpt    string             `json:"excerpt"`
+	ObservedAt pgtype.Timestamptz `json:"observed_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	Stance     string             `json:"stance"`
+}
+
+type LifeMemoryRevision struct {
+	ID            pgtype.UUID        `json:"id"`
+	MemoryID      pgtype.UUID        `json:"memory_id"`
+	Revision      int32              `json:"revision"`
+	Kind          string             `json:"kind"`
+	Status        string             `json:"status"`
+	Content       string             `json:"content"`
+	Confidence    float64            `json:"confidence"`
+	Urgency       float64            `json:"urgency"`
+	Uncertainty   string             `json:"uncertainty"`
+	Scope         []byte             `json:"scope"`
+	ChangeType    string             `json:"change_type"`
+	ChangeReason  string             `json:"change_reason"`
+	ChangedByType string             `json:"changed_by_type"`
+	ChangedByID   pgtype.UUID        `json:"changed_by_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeModule struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	UserID             pgtype.UUID        `json:"user_id"`
+	SourceExperimentID pgtype.UUID        `json:"source_experiment_id"`
+	Name               string             `json:"name"`
+	Status             string             `json:"status"`
+	CurrentVersion     int32              `json:"current_version"`
+	EnabledAt          pgtype.Timestamptz `json:"enabled_at"`
+	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeModuleVersion struct {
+	ModuleID      pgtype.UUID        `json:"module_id"`
+	Version       int32              `json:"version"`
+	Definition    []byte             `json:"definition"`
+	ChangeReason  string             `json:"change_reason"`
+	ConfirmedAt   pgtype.Timestamptz `json:"confirmed_at"`
+	ConfirmedByID pgtype.UUID        `json:"confirmed_by_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeObservationTopic struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	Title             string             `json:"title"`
+	Summary           string             `json:"summary"`
+	Status            string             `json:"status"`
+	CompanionResponse string             `json:"companion_response"`
+	SurfacedAt        pgtype.Timestamptz `json:"surfaced_at"`
+	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeObservationTopicJudgement struct {
+	TopicID     pgtype.UUID        `json:"topic_id"`
+	JudgementID pgtype.UUID        `json:"judgement_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeObserver struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	Name            string             `json:"name"`
+	BasisType       string             `json:"basis_type"`
+	Status          string             `json:"status"`
+	CurrentVersion  int32              `json:"current_version"`
+	MinimumInterval pgtype.Interval    `json:"minimum_interval"`
+	NextRunAt       pgtype.Timestamptz `json:"next_run_at"`
+	LastRunAt       pgtype.Timestamptz `json:"last_run_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeObserverJudgement struct {
+	ID          pgtype.UUID        `json:"id"`
+	ObserverID  pgtype.UUID        `json:"observer_id"`
+	Status      string             `json:"status"`
+	Title       string             `json:"title"`
+	Content     string             `json:"content"`
+	Evidence    []byte             `json:"evidence"`
+	Confidence  float64            `json:"confidence"`
+	Uncertainty string             `json:"uncertainty"`
+	PublishedAt pgtype.Timestamptz `json:"published_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeObserverKnowledge struct {
+	ID         pgtype.UUID        `json:"id"`
+	ObserverID pgtype.UUID        `json:"observer_id"`
+	Title      string             `json:"title"`
+	Content    string             `json:"content"`
+	Source     string             `json:"source"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeObserverVersion struct {
+	ObserverID        pgtype.UUID        `json:"observer_id"`
+	Version           int32              `json:"version"`
+	Personality       []byte             `json:"personality"`
+	Perspective       []byte             `json:"perspective"`
+	ExpressionProfile []byte             `json:"expression_profile"`
+	ChangeReason      string             `json:"change_reason"`
+	ConfirmedAt       pgtype.Timestamptz `json:"confirmed_at"`
+	ConfirmedByID     pgtype.UUID        `json:"confirmed_by_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeProactiveCheck struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	CompanionAgentID pgtype.UUID        `json:"companion_agent_id"`
+	Status           string             `json:"status"`
+	TriggerSource    string             `json:"trigger_source"`
+	Reason           string             `json:"reason"`
+	ContextSnapshot  []byte             `json:"context_snapshot"`
+	CheckedAt        pgtype.Timestamptz `json:"checked_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Message          string             `json:"message"`
+	UserRespondedAt  pgtype.Timestamptz `json:"user_responded_at"`
+	ValueAssessment  string             `json:"value_assessment"`
+}
+
+type LifeProactivePolicy struct {
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Enabled         bool               `json:"enabled"`
+	Timezone        string             `json:"timezone"`
+	QuietHours      []byte             `json:"quiet_hours"`
+	MinimumInterval pgtype.Interval    `json:"minimum_interval"`
+	NextCheckAt     pgtype.Timestamptz `json:"next_check_at"`
+	LastSpokeAt     pgtype.Timestamptz `json:"last_spoke_at"`
+	UnansweredCount int32              `json:"unanswered_count"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeRelationshipEvent struct {
+	ID                           pgtype.UUID        `json:"id"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	UserID                       pgtype.UUID        `json:"user_id"`
+	EventType                    string             `json:"event_type"`
+	Status                       string             `json:"status"`
+	UserPosition                 string             `json:"user_position"`
+	CompanionPosition            string             `json:"companion_position"`
+	Context                      string             `json:"context"`
+	RevisitAfter                 pgtype.Timestamptz `json:"revisit_after"`
+	Resolution                   string             `json:"resolution"`
+	RelationshipChangeProposalID pgtype.UUID        `json:"relationship_change_proposal_id"`
+	ResolvedAt                   pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeTopic struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Title           string             `json:"title"`
+	Summary         string             `json:"summary"`
+	Status          string             `json:"status"`
+	Confidence      float64            `json:"confidence"`
+	Uncertainty     string             `json:"uncertainty"`
+	FirstObservedAt pgtype.Timestamptz `json:"first_observed_at"`
+	LastObservedAt  pgtype.Timestamptz `json:"last_observed_at"`
+	LastReviewedAt  pgtype.Timestamptz `json:"last_reviewed_at"`
+	ReviewAfter     pgtype.Timestamptz `json:"review_after"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LifeTopicMemory struct {
+	TopicID   pgtype.UUID        `json:"topic_id"`
+	MemoryID  pgtype.UUID        `json:"memory_id"`
+	Relation  string             `json:"relation"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type LifeUpgradeEvaluation struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	IdentityVersionID   pgtype.UUID        `json:"identity_version_id"`
+	CandidateLabel      string             `json:"candidate_label"`
+	BaselineLabel       string             `json:"baseline_label"`
+	Scenarios           []byte             `json:"scenarios"`
+	Result              []byte             `json:"result"`
+	Status              string             `json:"status"`
+	RollbackRecommended bool               `json:"rollback_recommended"`
+	StartedAt           pgtype.Timestamptz `json:"started_at"`
+	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type Member struct {
